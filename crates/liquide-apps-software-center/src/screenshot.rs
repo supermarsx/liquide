@@ -36,7 +36,9 @@ impl Screenshot {
     /// Aspect ratio.
     #[must_use]
     pub fn aspect_ratio(&self) -> f64 {
-        if self.height == 0 { return 0.0; }
+        if self.height == 0 {
+            return 0.0;
+        }
         self.width as f64 / self.height as f64
     }
 }
@@ -50,20 +52,29 @@ pub struct Gallery {
 impl Gallery {
     #[must_use]
     pub fn new(screenshots: Vec<Screenshot>) -> Self {
-        Self { screenshots, current: 0 }
+        Self {
+            screenshots,
+            current: 0,
+        }
     }
 
     /// Get all screenshots.
     #[must_use]
-    pub fn screenshots(&self) -> &[Screenshot] { &self.screenshots }
+    pub fn screenshots(&self) -> &[Screenshot] {
+        &self.screenshots
+    }
 
     /// Get current screenshot.
     #[must_use]
-    pub fn current(&self) -> Option<&Screenshot> { self.screenshots.get(self.current) }
+    pub fn current(&self) -> Option<&Screenshot> {
+        self.screenshots.get(self.current)
+    }
 
     /// Number of screenshots.
     #[must_use]
-    pub fn count(&self) -> usize { self.screenshots.len() }
+    pub fn count(&self) -> usize {
+        self.screenshots.len()
+    }
 
     /// Navigate to the next screenshot.
     pub fn next(&mut self) {
@@ -92,5 +103,7 @@ impl Gallery {
 
     /// Current index.
     #[must_use]
-    pub fn current_index(&self) -> usize { self.current }
+    pub fn current_index(&self) -> usize {
+        self.current
+    }
 }

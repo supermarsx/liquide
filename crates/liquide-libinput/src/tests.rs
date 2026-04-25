@@ -31,7 +31,10 @@ mod tests {
         let caps = DeviceCapability::KEY.union(DeviceCapability::ABS);
         let class = classify_device(caps, true);
         // Touchpad has ABS + multitouch
-        assert!(matches!(class, DeviceClass::Touchpad | DeviceClass::Touchscreen));
+        assert!(matches!(
+            class,
+            DeviceClass::Touchpad | DeviceClass::Touchscreen
+        ));
     }
 
     #[test]
@@ -74,7 +77,9 @@ mod tests {
             name: "Keyboard".to_string(),
             device_class: DeviceClass::Keyboard,
             capabilities: DeviceCapability::KEY,
-            vendor_id: 0, product_id: 0, bus_type: 0,
+            vendor_id: 0,
+            product_id: 0,
+            bus_type: 0,
         });
         assert!(seat.has_keyboard);
     }

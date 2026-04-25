@@ -30,6 +30,10 @@ pub struct OverviewAnimator {
     slots: Vec<AnimatedSlot>,
     /// Original rects keyed by window id (for enter/exit interpolation).
     originals: Vec<(u64, OverviewRect)>,
+    /// When true, uses a linear curve (prefers-reduced-motion).
+    reduced_motion: bool,
+    /// When true, uses an over-damped spring curve instead of ease_out_cubic.
+    spring: bool,
 }
 
 impl OverviewAnimator {
@@ -41,22 +45,19 @@ impl OverviewAnimator {
             progress: 0.0,
             slots: Vec::new(),
             originals: Vec::new(),
+            reduced_motion: false,
+            spring: false,
         }
     }
 
     /// Begin the enter animation: windows move from their original positions to
     /// the computed grid slots.
-    pub fn begin_enter(
-        &mut self,
-        slots: Vec<OverviewSlot>,
-        originals: &[(u64, OverviewRect)],
-    ) {
+    pub fn begin_enter(&mut self, slots: Vec<OverviewSlot>, originals: &[(u64, OverviewRect)]) {
         self.originals = originals.to_vec();
         self.slots = slots
             .into_iter()
             .map(|slot| {
-                let orig = find_original(&self.originals, slot.window_id)
-                    .unwrap_or(slot.target);
+                let orig = find_original(&self.originals, slot.window_id).unwrap_or(slot.target);
                 AnimatedSlot {
                     slot,
                     current: orig,
@@ -69,12 +70,50 @@ impl OverviewAnimator {
     }
 
     /// Begin the exit animation: windows move back to their original positions.
+    ///
+    /// If called while `Entering`, snapshots the current interpolated rect so
+    /// the exit animation starts from the visible on-screen position — not
+    /// from the fully-enlarged grid slot. This prevents a visual "snap".
     pub fn begin_exit(&mut self) {
         if self.phase == OverviewPhase::Hidden {
             return;
         }
+
+        // Snapshot current interpolated rects BEFORE flipping phase.
+        // The exit interpolation uses `anim.slot.target` as its source, so we
+        // override that with the current rect. Originals are left intact so
+        // windows still land at their restored positions.
+        if self.phase == OverviewPhase::Entering {
+            for anim in &mut self.slots {
+                anim.slot.target = anim.current;
+            }
+        }
+
         self.phase = OverviewPhase::Exiting;
         self.progress = 0.0;
+    }
+
+    /// Use a critically-damped spring curve instead of ease-out-cubic.
+    ///
+    /// When `reduced_motion` is true the animator will use a linear curve
+    /// (respecting `prefers-reduced-motion`).
+    pub fn set_reduced_motion(&mut self, reduced: bool) {
+        self.reduced_motion = reduced;
+    }
+
+    /// Enable the spring-option (critically damped).
+    pub fn set_spring(&mut self, spring: bool) {
+        self.spring = spring;
+    }
+
+    fn ease(&self, t: f32) -> f32 {
+        if self.reduced_motion {
+            t.clamp(0.0, 1.0)
+        } else if self.spring {
+            spring_out(t)
+        } else {
+            ease_out_cubic(t)
+        }
     }
 
     /// Advance the animation by `dt_ms` milliseconds.
@@ -88,7 +127,7 @@ impl OverviewAnimator {
                     self.progress = 1.0;
                     self.phase = OverviewPhase::Active;
                 }
-                let t = ease_out_cubic(self.progress);
+                let t = self.ease(self.progress);
                 self.interpolate_enter(t);
                 self.phase != OverviewPhase::Active
             }
@@ -98,7 +137,7 @@ impl OverviewAnimator {
                     self.progress = 1.0;
                     self.phase = OverviewPhase::Hidden;
                 }
-                let t = ease_out_cubic(self.progress);
+                let t = self.ease(self.progress);
                 self.interpolate_exit(t);
                 self.phase != OverviewPhase::Hidden
             }
@@ -120,8 +159,8 @@ impl OverviewAnimator {
 
     fn interpolate_enter(&mut self, t: f32) {
         for anim in &mut self.slots {
-            let orig = find_original(&self.originals, anim.slot.window_id)
-                .unwrap_or(anim.slot.target);
+            let orig =
+                find_original(&self.originals, anim.slot.window_id).unwrap_or(anim.slot.target);
             anim.current = lerp_rect(&orig, &anim.slot.target, t);
             anim.opacity = t;
         }
@@ -129,8 +168,8 @@ impl OverviewAnimator {
 
     fn interpolate_exit(&mut self, t: f32) {
         for anim in &mut self.slots {
-            let orig = find_original(&self.originals, anim.slot.window_id)
-                .unwrap_or(anim.slot.target);
+            let orig =
+                find_original(&self.originals, anim.slot.window_id).unwrap_or(anim.slot.target);
             anim.current = lerp_rect(&anim.slot.target, &orig, t);
             anim.opacity = 1.0 - t;
         }
@@ -148,6 +187,17 @@ fn find_original(originals: &[(u64, OverviewRect)], id: u64) -> Option<OverviewR
 pub fn ease_out_cubic(t: f32) -> f32 {
     let inv = 1.0 - t.clamp(0.0, 1.0);
     1.0 - inv * inv * inv
+}
+
+/// Over-damped spring approximation in `[0, 1]` reaching 1 at t=1.
+///
+/// Uses `1 - exp(-6t)` normalized so that `f(0) = 0` and `f(1) = 1`.
+pub fn spring_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let k = 6.0_f32;
+    let raw = 1.0 - (-k * t).exp();
+    let norm = 1.0 - (-k).exp();
+    (raw / norm).clamp(0.0, 1.0)
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -293,5 +343,45 @@ mod tests {
         let mut anim = OverviewAnimator::new();
         anim.begin_exit();
         assert_eq!(anim.phase, OverviewPhase::Hidden);
+    }
+
+    #[test]
+    fn exit_during_enter_starts_from_current() {
+        let mut anim = OverviewAnimator::new();
+        anim.begin_enter(vec![make_slot(1)], &[make_original(1)]);
+        // Tick part-way through enter: 30% of 300 ms = 90 ms.
+        anim.tick(anim.enter_duration_ms * 0.3);
+        let mid = anim.animated_slots()[0].current;
+        assert!(mid.x > 0.0 && mid.x < 200.0, "enter partial: {:?}", mid);
+
+        // Interrupt — exit should start from this interpolated position.
+        anim.begin_exit();
+        let start = anim.animated_slots()[0].current;
+        assert!(
+            (start.x - mid.x).abs() < 0.01,
+            "exit begin must snapshot current"
+        );
+        // At very small dt the position should be still near `mid`, not snap to grid.
+        anim.tick(1.0);
+        let after = anim.animated_slots()[0].current;
+        let drift = (after.x - mid.x).abs();
+        assert!(drift < 20.0, "no snap — drift {} after 1 ms", drift);
+    }
+
+    #[test]
+    fn reduced_motion_uses_linear() {
+        let mut anim = OverviewAnimator::new();
+        anim.set_reduced_motion(true);
+        anim.begin_enter(vec![make_slot(1)], &[make_original(1)]);
+        anim.tick(anim.enter_duration_ms * 0.5);
+        // At 50% progress with linear curve, x should be midpoint of 0..200 = 100.
+        let cur = anim.animated_slots()[0].current;
+        assert!((cur.x - 100.0).abs() < 5.0, "linear at 50%: x={}", cur.x);
+    }
+
+    #[test]
+    fn spring_out_endpoints() {
+        assert!((spring_out(0.0) - 0.0).abs() < 0.001);
+        assert!((spring_out(1.0) - 1.0).abs() < 0.001);
     }
 }

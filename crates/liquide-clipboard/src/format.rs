@@ -58,7 +58,10 @@ impl ClipboardFormat {
     /// Check if this format is text-based.
     #[must_use]
     pub fn is_text(&self) -> bool {
-        matches!(self, Self::PlainText | Self::Html | Self::RichText | Self::FileUriList)
+        matches!(
+            self,
+            Self::PlainText | Self::Html | Self::RichText | Self::FileUriList
+        )
     }
 
     /// Check if this format is an image.

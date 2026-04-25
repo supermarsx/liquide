@@ -54,6 +54,8 @@ bitflags! {
         const MODAL            = 0x100000;
         /// `:autofill` — auto-filled form element.
         const AUTOFILL         = 0x200000;
+        /// `:only-child` — element is the sole child of its parent.
+        const ONLY_CHILD       = 0x400000;
     }
 }
 
@@ -66,8 +68,9 @@ impl Serialize for PseudoStateFlags {
 impl<'de> Deserialize<'de> for PseudoStateFlags {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let bits = u32::deserialize(deserializer)?;
-        PseudoStateFlags::from_bits(bits)
-            .ok_or_else(|| serde::de::Error::custom(format!("invalid PseudoStateFlags bits: {bits:#x}")))
+        PseudoStateFlags::from_bits(bits).ok_or_else(|| {
+            serde::de::Error::custom(format!("invalid PseudoStateFlags bits: {bits:#x}"))
+        })
     }
 }
 
@@ -138,6 +141,9 @@ impl PseudoStateFlags {
         if self.contains(Self::AUTOFILL) {
             names.push("autofill");
         }
+        if self.contains(Self::ONLY_CHILD) {
+            names.push("only-child");
+        }
         names
     }
 
@@ -165,6 +171,7 @@ impl PseudoStateFlags {
             "fullscreen" => Some(Self::FULLSCREEN),
             "modal" => Some(Self::MODAL),
             "autofill" => Some(Self::AUTOFILL),
+            "only-child" => Some(Self::ONLY_CHILD),
             _ => None,
         }
     }

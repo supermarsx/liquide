@@ -2,8 +2,8 @@
 
 use liquide_dom::PseudoStateFlags;
 
-use crate::types::{element_ids, DockItemInfo};
 use crate::template::{Component, TemplateNode};
+use crate::types::{element_ids, DockItemInfo};
 
 /// Dock component that renders the application dock.
 ///
@@ -49,20 +49,13 @@ impl Component for DockComponent<'_> {
                     .attr("data-index", &i.to_string())
                     .pseudo_if(PseudoStateFlags::HOVER, self.hover_index == Some(i))
                     // Icon sub-element (CSS can style this + use data-icon for rendering)
-                    .child(
-                        TemplateNode::el("dock-item-icon")
-                            .attr("data-icon", &item.icon),
-                    )
+                    .child(TemplateNode::el("dock-item-icon").attr("data-icon", &item.icon))
                     // Label sub-element (for accessibility / tooltip display)
                     .child(
-                        TemplateNode::el("dock-item-label")
-                            .child(TemplateNode::text(&item.label)),
+                        TemplateNode::el("dock-item-label").child(TemplateNode::text(&item.label)),
                     )
                     // Running indicator dot
-                    .child(
-                        TemplateNode::el("dock-indicator")
-                            .class_if("running", item.is_running),
-                    )
+                    .child(TemplateNode::el("dock-indicator").class_if("running", item.is_running))
             }))
     }
 
@@ -146,9 +139,15 @@ mod tests {
         };
         let tree = comp.render();
 
-        assert!(!tree.children[0].pseudo_states.contains(PseudoStateFlags::HOVER));
-        assert!(tree.children[1].pseudo_states.contains(PseudoStateFlags::HOVER));
-        assert!(!tree.children[2].pseudo_states.contains(PseudoStateFlags::HOVER));
+        assert!(!tree.children[0]
+            .pseudo_states
+            .contains(PseudoStateFlags::HOVER));
+        assert!(tree.children[1]
+            .pseudo_states
+            .contains(PseudoStateFlags::HOVER));
+        assert!(!tree.children[2]
+            .pseudo_states
+            .contains(PseudoStateFlags::HOVER));
     }
 
     #[test]

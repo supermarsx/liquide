@@ -25,7 +25,10 @@ fn manifest_serde_roundtrip_json() {
         name: "Test Plugin".into(),
         version: "1.0.0".into(),
         abi_version: ABI_VERSION,
-        extension_points: vec![ExtensionPoint::InputFilter, ExtensionPoint::ClipboardTransform],
+        extension_points: vec![
+            ExtensionPoint::InputFilter,
+            ExtensionPoint::ClipboardTransform,
+        ],
         requested_memory_bytes: 1024 * 1024,
     };
     let json = serde_json::to_vec(&manifest).unwrap();
@@ -35,7 +38,10 @@ fn manifest_serde_roundtrip_json() {
     assert_eq!(decoded.version, manifest.version);
     assert_eq!(decoded.abi_version, manifest.abi_version);
     assert_eq!(decoded.extension_points, manifest.extension_points);
-    assert_eq!(decoded.requested_memory_bytes, manifest.requested_memory_bytes);
+    assert_eq!(
+        decoded.requested_memory_bytes,
+        manifest.requested_memory_bytes
+    );
 }
 
 #[test]
@@ -287,7 +293,10 @@ fn plugin_result_serde_roundtrip() {
 fn plugin_result_debug() {
     assert_eq!(format!("{:?}", PluginResult::Ok), "Ok");
     assert_eq!(format!("{:?}", PluginResult::Error), "Error");
-    assert_eq!(format!("{:?}", PluginResult::PermissionDenied), "PermissionDenied");
+    assert_eq!(
+        format!("{:?}", PluginResult::PermissionDenied),
+        "PermissionDenied"
+    );
 }
 
 // =========================================================================

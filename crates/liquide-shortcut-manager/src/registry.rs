@@ -117,9 +117,7 @@ impl ShortcutRegistry {
 
         for ctx in &sorted_contexts {
             for entry in &self.entries {
-                if entry.enabled
-                    && entry.binding.matches(modifiers, key)
-                    && entry.context == **ctx
+                if entry.enabled && entry.binding.matches(modifiers, key) && entry.context == **ctx
                 {
                     return Some(&entry.action);
                 }
@@ -228,7 +226,12 @@ mod tests {
     use crate::action::*;
     use crate::binding::*;
 
-    fn entry(mods: u8, key: KeyCode, action: ShortcutAction, ctx: ShortcutContext) -> ShortcutEntry {
+    fn entry(
+        mods: u8,
+        key: KeyCode,
+        action: ShortcutAction,
+        ctx: ShortcutContext,
+    ) -> ShortcutEntry {
         ShortcutEntry {
             binding: KeyBinding::new(mods, key),
             action,
@@ -250,16 +253,16 @@ mod tests {
         .unwrap();
 
         let result = reg.lookup(MOD_ALT, &KeyCode::F4, &[ShortcutContext::Global]);
-        assert_eq!(
-            result,
-            Some(&ShortcutAction::Window(WindowAction::Close))
-        );
+        assert_eq!(result, Some(&ShortcutAction::Window(WindowAction::Close)));
     }
 
     #[test]
     fn lookup_no_match() {
         let reg = ShortcutRegistry::new();
-        assert!(reg.lookup(MOD_CTRL, &KeyCode::A, &[ShortcutContext::Global]).is_none());
+        assert!(
+            reg.lookup(MOD_CTRL, &KeyCode::A, &[ShortcutContext::Global])
+                .is_none()
+        );
     }
 
     #[test]
@@ -388,8 +391,13 @@ mod tests {
     fn rebind_success() {
         let mut reg = ShortcutRegistry::new();
         let action = ShortcutAction::Window(WindowAction::Close);
-        reg.register(entry(MOD_ALT, KeyCode::F4, action.clone(), ShortcutContext::Global))
-            .unwrap();
+        reg.register(entry(
+            MOD_ALT,
+            KeyCode::F4,
+            action.clone(),
+            ShortcutContext::Global,
+        ))
+        .unwrap();
 
         let old = reg
             .rebind(&action, KeyBinding::new(MOD_CTRL, KeyCode::W))
@@ -576,7 +584,10 @@ mod tests {
         })
         .unwrap();
 
-        assert!(reg.lookup(MOD_CTRL, &KeyCode::D, &[ShortcutContext::Global]).is_none());
+        assert!(
+            reg.lookup(MOD_CTRL, &KeyCode::D, &[ShortcutContext::Global])
+                .is_none()
+        );
     }
 
     #[test]
@@ -698,10 +709,7 @@ mod tests {
             &KeyCode::P,
             &[ShortcutContext::Custom("editor".into())],
         );
-        assert_eq!(
-            result,
-            Some(&ShortcutAction::Custom("palette".into()))
-        );
+        assert_eq!(result, Some(&ShortcutAction::Custom("palette".into())));
 
         // Different custom context should not match
         let result = reg.lookup(

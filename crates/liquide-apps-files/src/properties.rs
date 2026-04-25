@@ -82,9 +82,15 @@ pub fn format_size(bytes: u64) -> String {
 pub fn format_permissions(mode: u32) -> String {
     let mut s = String::with_capacity(9);
     let bits = [
-        (0o400, 'r'), (0o200, 'w'), (0o100, 'x'),
-        (0o040, 'r'), (0o020, 'w'), (0o010, 'x'),
-        (0o004, 'r'), (0o002, 'w'), (0o001, 'x'),
+        (0o400, 'r'),
+        (0o200, 'w'),
+        (0o100, 'x'),
+        (0o040, 'r'),
+        (0o020, 'w'),
+        (0o010, 'x'),
+        (0o004, 'r'),
+        (0o002, 'w'),
+        (0o001, 'x'),
     ];
     for (bit, ch) in bits {
         if mode & bit != 0 {
@@ -101,11 +107,7 @@ pub fn format_permissions(mode: u32) -> String {
 /// Supports ~50 common file types with extension-based detection.
 #[must_use]
 pub fn detect_mime_type(path: &str) -> String {
-    let ext = path
-        .rsplit('.')
-        .next()
-        .filter(|e| *e != path)
-        .unwrap_or("");
+    let ext = path.rsplit('.').next().filter(|e| *e != path).unwrap_or("");
     match ext.to_lowercase().as_str() {
         // Text
         "txt" | "text" => "text/plain".into(),
@@ -179,7 +181,9 @@ pub fn detect_mime_type(path: &str) -> String {
         "xls" => "application/vnd.ms-excel".into(),
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
         "ppt" => "application/vnd.ms-powerpoint".into(),
-        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation".into(),
+        "pptx" => {
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation".into()
+        }
         "odt" => "application/vnd.oasis.opendocument.text".into(),
 
         // Archives

@@ -11,8 +11,7 @@ where
 {
     let mut buf = Vec::new();
     ciborium::into_writer(value, &mut buf).expect("CBOR serialize failed");
-    let decoded: T =
-        ciborium::from_reader(buf.as_slice()).expect("CBOR deserialize failed");
+    let decoded: T = ciborium::from_reader(buf.as_slice()).expect("CBOR deserialize failed");
     decoded
 }
 
@@ -27,10 +26,7 @@ fn client_hello_cbor_roundtrip() {
         supported_codecs: vec!["h265".into(), "av1".into()],
         supported_audio_codecs: vec!["opus".into()],
         supported_compressions: vec!["lz4".into(), "zstd".into()],
-        capabilities: BTreeMap::from([
-            ("clipboard".into(), true),
-            ("file_transfer".into(), false),
-        ]),
+        capabilities: BTreeMap::from([("clipboard".into(), true), ("file_transfer".into(), false)]),
         display: DisplayInfo {
             width: 1920,
             height: 1080,
@@ -98,10 +94,7 @@ fn server_hello_cbor_roundtrip() {
         ]),
         session_id: "sess-abc123".into(),
         resume_accepted: None,
-        features: BTreeMap::from([
-            ("tile_mode".into(), true),
-            ("hdr".into(), false),
-        ]),
+        features: BTreeMap::from([("tile_mode".into(), true), ("hdr".into(), false)]),
     };
     let decoded = cbor_roundtrip(&msg);
     assert_eq!(msg, decoded);

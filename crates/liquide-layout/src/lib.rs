@@ -351,13 +351,15 @@ impl TextMeasurer for DefaultTextMeasurer {
                     .sum();
 
                 // Apply text-indent to first line only
-                let indent = if i == 0 { props.text_indent.max(0.0) } else { 0.0 };
+                let indent = if i == 0 {
+                    props.text_indent.max(0.0)
+                } else {
+                    0.0
+                };
 
                 if let Some(max_w) = max_width {
-                    let allows_wrap = matches!(
-                        props.white_space,
-                        WhiteSpace::PreWrap | WhiteSpace::PreLine
-                    );
+                    let allows_wrap =
+                        matches!(props.white_space, WhiteSpace::PreWrap | WhiteSpace::PreLine);
                     let effective_w = if i == 0 { max_w - indent } else { max_w };
                     if allows_wrap && line_width > effective_w && effective_w > 0.0 {
                         let avg_char_w = if line_text.is_empty() {

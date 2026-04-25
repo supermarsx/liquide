@@ -24,7 +24,9 @@ impl FontTextMeasurer {
     }
 
     fn lock_font_db(&self) -> RwLockReadGuard<'_, FontDatabase> {
-        self.font_db.read().unwrap_or_else(|poison| poison.into_inner())
+        self.font_db
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 }
 
@@ -62,7 +64,13 @@ impl TextMeasurer for FontTextMeasurer {
             let space_extra = props.word_spacing;
             let w: f32 = transformed
                 .chars()
-                .map(|ch| if ch == ' ' { char_width + space_extra } else { char_width })
+                .map(|ch| {
+                    if ch == ' ' {
+                        char_width + space_extra
+                    } else {
+                        char_width
+                    }
+                })
                 .sum();
             (w, metrics.line_height)
         };
@@ -123,8 +131,7 @@ impl TextMeasurer for FontTextMeasurer {
                     if allows_wrap && hw > avail && avail > 0.0 {
                         let char_count = hard_line.chars().count().max(1) as f32;
                         let cpl = (avail / (hw / char_count)).floor().max(1.0) as u32;
-                        let lc =
-                            ((char_count as u32 + cpl - 1) / cpl).max(1);
+                        let lc = ((char_count as u32 + cpl - 1) / cpl).max(1);
                         total_lines += lc;
                         max_line_width = max_line_width.max(max_w.min(hw + effective_indent));
                     } else {

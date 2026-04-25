@@ -23,10 +23,7 @@ pub enum RenderPriority {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenderTaskKind {
     /// Render a window
-    Window { 
-        window_id: u64,
-        is_focused: bool,
-    },
+    Window { window_id: u64, is_focused: bool },
     /// Render the dock/taskbar
     Dock,
     /// Render the status bar
@@ -34,13 +31,9 @@ pub enum RenderTaskKind {
     /// Render the desktop background
     Background,
     /// Render animated wallpaper
-    Wallpaper {
-        frame: u64,
-    },
+    Wallpaper { frame: u64 },
     /// Composite multiple layers
-    Composite {
-        layer_ids: Vec<u64>,
-    },
+    Composite { layer_ids: Vec<u64> },
 }
 
 impl RenderTaskKind {
@@ -55,14 +48,19 @@ impl RenderTaskKind {
                 }
             }
             RenderTaskKind::Dock | RenderTaskKind::StatusBar => RenderPriority::Interactive,
-            RenderTaskKind::Background | RenderTaskKind::Wallpaper { .. } => RenderPriority::Decorative,
+            RenderTaskKind::Background | RenderTaskKind::Wallpaper { .. } => {
+                RenderPriority::Decorative
+            }
             RenderTaskKind::Composite { .. } => RenderPriority::Interactive,
         }
     }
-    
+
     /// Check if this task can be batched with others
     pub fn is_batchable(&self) -> bool {
-        matches!(self, RenderTaskKind::Background | RenderTaskKind::Wallpaper { .. })
+        matches!(
+            self,
+            RenderTaskKind::Background | RenderTaskKind::Wallpaper { .. }
+        )
     }
 }
 
@@ -81,12 +79,12 @@ impl RenderData {
             format,
         }
     }
-    
+
     /// Get data reference
     pub fn data(&self) -> &[u8] {
         &self.data
     }
-    
+
     /// Get data format
     pub fn format(&self) -> RenderDataFormat {
         self.format
@@ -120,19 +118,19 @@ pub enum RenderDataFormat {
 pub struct RenderTask {
     /// Unique task ID
     pub id: u64,
-    
+
     /// Task kind
     pub kind: RenderTaskKind,
-    
+
     /// Task priority
     pub priority: RenderPriority,
-    
+
     /// Render data
     pub data: Option<RenderData>,
-    
+
     /// Task creation timestamp
     pub created_at: Instant,
-    
+
     /// Expected completion deadline
     pub deadline: Option<Instant>,
 }
@@ -150,30 +148,30 @@ impl RenderTask {
             deadline: None,
         }
     }
-    
+
     /// Set priority
     pub fn with_priority(mut self, priority: RenderPriority) -> Self {
         self.priority = priority;
         self
     }
-    
+
     /// Set render data
     pub fn with_data(mut self, data: RenderData) -> Self {
         self.data = Some(data);
         self
     }
-    
+
     /// Set deadline
     pub fn with_deadline(mut self, deadline: Duration) -> Self {
         self.deadline = Some(self.created_at + deadline);
         self
     }
-    
+
     /// Check if task has exceeded deadline
     pub fn is_overdue(&self) -> bool {
         self.deadline.map_or(false, |d| Instant::now() > d)
     }
-    
+
     /// Get age of task
     pub fn age(&self) -> Duration {
         self.created_at.elapsed()
@@ -185,16 +183,16 @@ impl RenderTask {
 pub struct RenderOutput {
     /// Task ID
     pub task_id: u64,
-    
+
     /// Rendered data
     pub data: Option<RenderData>,
-    
+
     /// Render duration
     pub duration: Duration,
-    
+
     /// Whether render was successful
     pub success: bool,
-    
+
     /// Error message if failed
     pub error: Option<String>,
 }
@@ -210,7 +208,7 @@ impl RenderOutput {
             error: None,
         }
     }
-    
+
     /// Create a failed output
     pub fn failure(task_id: u64, duration: Duration, error: String) -> Self {
         Self {
@@ -226,7 +224,7 @@ impl RenderOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_task_priority_ordering() {
         assert!(RenderPriority::Critical < RenderPriority::Focused);
@@ -234,24 +232,30 @@ mod tests {
         assert!(RenderPriority::Interactive < RenderPriority::Background);
         assert!(RenderPriority::Background < RenderPriority::Decorative);
     }
-    
+
     #[test]
     fn test_task_default_priority() {
-        let focused = RenderTaskKind::Window { window_id: 1, is_focused: true };
+        let focused = RenderTaskKind::Window {
+            window_id: 1,
+            is_focused: true,
+        };
         assert_eq!(focused.default_priority(), RenderPriority::Focused);
-        
-        let background = RenderTaskKind::Window { window_id: 2, is_focused: false };
+
+        let background = RenderTaskKind::Window {
+            window_id: 2,
+            is_focused: false,
+        };
         assert_eq!(background.default_priority(), RenderPriority::Background);
-        
+
         let dock = RenderTaskKind::Dock;
         assert_eq!(dock.default_priority(), RenderPriority::Interactive);
     }
-    
+
     #[test]
     fn test_task_deadline() {
-        let task = RenderTask::new(1, RenderTaskKind::Dock)
-            .with_deadline(Duration::from_millis(16));
-        
+        let task =
+            RenderTask::new(1, RenderTaskKind::Dock).with_deadline(Duration::from_millis(16));
+
         assert!(task.deadline.is_some());
         assert!(!task.is_overdue());
     }
@@ -261,7 +265,13 @@ mod tests {
         assert!(RenderTaskKind::Background.is_batchable());
         assert!(RenderTaskKind::Wallpaper { frame: 0 }.is_batchable());
         assert!(!RenderTaskKind::Dock.is_batchable());
-        assert!(!RenderTaskKind::Window { window_id: 1, is_focused: true }.is_batchable());
+        assert!(
+            !RenderTaskKind::Window {
+                window_id: 1,
+                is_focused: true
+            }
+            .is_batchable()
+        );
     }
 
     #[test]
@@ -282,14 +292,15 @@ mod tests {
 
     #[test]
     fn test_task_with_priority_override() {
-        let task = RenderTask::new(1, RenderTaskKind::Dock)
-            .with_priority(RenderPriority::Critical);
+        let task = RenderTask::new(1, RenderTaskKind::Dock).with_priority(RenderPriority::Critical);
         assert_eq!(task.priority, RenderPriority::Critical);
     }
 
     #[test]
     fn test_composite_default_priority() {
-        let kind = RenderTaskKind::Composite { layer_ids: vec![1, 2, 3] };
+        let kind = RenderTaskKind::Composite {
+            layer_ids: vec![1, 2, 3],
+        };
         assert_eq!(kind.default_priority(), RenderPriority::Interactive);
     }
 

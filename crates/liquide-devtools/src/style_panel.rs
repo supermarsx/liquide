@@ -2,11 +2,11 @@
 //! element, grouped by category with inherited property tracking.
 
 use liquide_dom::NodeId;
-use liquide_style_engine::computed::{
-    AlignContent, AlignItems, AlignSelf, BoxSizing, Display, FlexDirection,
-    FlexWrap, JustifyContent, Position, Visibility,
-};
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::{
+    AlignContent, AlignItems, AlignSelf, BoxSizing, Display, FlexDirection, FlexWrap,
+    JustifyContent, Position, Visibility,
+};
 use serde::{Deserialize, Serialize};
 
 /// A single property entry in the style inspector.
@@ -187,7 +187,8 @@ impl StyleInspector {
                 .filter(|p| {
                     p.category == *cat
                         && (self.show_inherited || !p.inherited)
-                        && (self.show_defaults || p.value != "auto" && p.value != "0px" && p.value != "none")
+                        && (self.show_defaults
+                            || p.value != "auto" && p.value != "0px" && p.value != "none")
                 })
                 .collect();
 
@@ -228,103 +229,370 @@ impl StyleInspector {
         let mut props = Vec::with_capacity(80);
 
         // ── Layout ──
-        props.push(prop("display", format_display(style.display), StyleCategory::Layout));
-        props.push(prop("visibility", format_visibility(style.visibility), StyleCategory::Layout));
-        props.push(prop("box-sizing", format_box_sizing(style.box_sizing), StyleCategory::Layout));
-        props.push(prop("overflow-x", format!("{:?}", style.overflow_x), StyleCategory::Layout));
-        props.push(prop("overflow-y", format!("{:?}", style.overflow_y), StyleCategory::Layout));
+        props.push(prop(
+            "display",
+            format_display(style.display),
+            StyleCategory::Layout,
+        ));
+        props.push(prop(
+            "visibility",
+            format_visibility(style.visibility),
+            StyleCategory::Layout,
+        ));
+        props.push(prop(
+            "box-sizing",
+            format_box_sizing(style.box_sizing),
+            StyleCategory::Layout,
+        ));
+        props.push(prop(
+            "overflow-x",
+            format!("{:?}", style.overflow_x),
+            StyleCategory::Layout,
+        ));
+        props.push(prop(
+            "overflow-y",
+            format!("{:?}", style.overflow_y),
+            StyleCategory::Layout,
+        ));
         if style.float != Default::default() {
-            props.push(prop("float", format!("{:?}", style.float), StyleCategory::Layout));
+            props.push(prop(
+                "float",
+                format!("{:?}", style.float),
+                StyleCategory::Layout,
+            ));
         }
         if style.clear != Default::default() {
-            props.push(prop("clear", format!("{:?}", style.clear), StyleCategory::Layout));
+            props.push(prop(
+                "clear",
+                format!("{:?}", style.clear),
+                StyleCategory::Layout,
+            ));
         }
 
         // ── Box Model ──
         props.push(prop("width", format_dim(&style.width), StyleCategory::Box));
-        props.push(prop("height", format_dim(&style.height), StyleCategory::Box));
-        props.push(prop("min-width", format_dim(&style.min_width), StyleCategory::Box));
-        props.push(prop("min-height", format_dim(&style.min_height), StyleCategory::Box));
-        props.push(prop("max-width", format_dim(&style.max_width), StyleCategory::Box));
-        props.push(prop("max-height", format_dim(&style.max_height), StyleCategory::Box));
-        props.push(prop("margin-top", format_dim(&style.margin.top), StyleCategory::Box));
-        props.push(prop("margin-right", format_dim(&style.margin.right), StyleCategory::Box));
-        props.push(prop("margin-bottom", format_dim(&style.margin.bottom), StyleCategory::Box));
-        props.push(prop("margin-left", format_dim(&style.margin.left), StyleCategory::Box));
-        props.push(prop("padding-top", format_dim(&style.padding.top), StyleCategory::Box));
-        props.push(prop("padding-right", format_dim(&style.padding.right), StyleCategory::Box));
-        props.push(prop("padding-bottom", format_dim(&style.padding.bottom), StyleCategory::Box));
-        props.push(prop("padding-left", format_dim(&style.padding.left), StyleCategory::Box));
+        props.push(prop(
+            "height",
+            format_dim(&style.height),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "min-width",
+            format_dim(&style.min_width),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "min-height",
+            format_dim(&style.min_height),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "max-width",
+            format_dim(&style.max_width),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "max-height",
+            format_dim(&style.max_height),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "margin-top",
+            format_dim(&style.margin.top),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "margin-right",
+            format_dim(&style.margin.right),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "margin-bottom",
+            format_dim(&style.margin.bottom),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "margin-left",
+            format_dim(&style.margin.left),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "padding-top",
+            format_dim(&style.padding.top),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "padding-right",
+            format_dim(&style.padding.right),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "padding-bottom",
+            format_dim(&style.padding.bottom),
+            StyleCategory::Box,
+        ));
+        props.push(prop(
+            "padding-left",
+            format_dim(&style.padding.left),
+            StyleCategory::Box,
+        ));
 
         // ── Position ──
-        props.push(prop("position", format_position(style.position), StyleCategory::Position));
+        props.push(prop(
+            "position",
+            format_position(style.position),
+            StyleCategory::Position,
+        ));
         props.push(prop("top", format_dim(&style.top), StyleCategory::Position));
-        props.push(prop("right", format_dim(&style.right), StyleCategory::Position));
-        props.push(prop("bottom", format_dim(&style.bottom), StyleCategory::Position));
-        props.push(prop("left", format_dim(&style.left), StyleCategory::Position));
-        props.push(prop("z-index", match style.z_index { Some(z) => format!("{}", z), None => "auto".to_string() }, StyleCategory::Position));
+        props.push(prop(
+            "right",
+            format_dim(&style.right),
+            StyleCategory::Position,
+        ));
+        props.push(prop(
+            "bottom",
+            format_dim(&style.bottom),
+            StyleCategory::Position,
+        ));
+        props.push(prop(
+            "left",
+            format_dim(&style.left),
+            StyleCategory::Position,
+        ));
+        props.push(prop(
+            "z-index",
+            match style.z_index {
+                Some(z) => format!("{}", z),
+                None => "auto".to_string(),
+            },
+            StyleCategory::Position,
+        ));
 
         // ── Typography ──
-        props.push(prop("font-size", format!("{}px", style.font_size), StyleCategory::Typography));
-        props.push(prop("font-weight", format!("{}", style.font_weight), StyleCategory::Typography));
-        props.push(prop("font-family", style.font_family.join(", "), StyleCategory::Typography));
-        props.push(prop("line-height", format!("{:?}", style.line_height), StyleCategory::Typography));
-        props.push(prop("text-align", format!("{:?}", style.text_align), StyleCategory::Typography));
-        props.push(prop("color", format_color(&style.color), StyleCategory::Typography));
-        props.push(prop("white-space", format!("{:?}", style.white_space), StyleCategory::Typography));
-        props.push(prop("letter-spacing", format!("{}px", style.letter_spacing), StyleCategory::Typography));
-        props.push(prop("word-spacing", format!("{}px", style.word_spacing), StyleCategory::Typography));
-        props.push(prop("text-indent", format!("{}px", style.text_indent), StyleCategory::Typography));
+        props.push(prop(
+            "font-size",
+            format!("{}px", style.font_size),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "font-weight",
+            format!("{}", style.font_weight),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "font-family",
+            style.font_family.join(", "),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "line-height",
+            format!("{:?}", style.line_height),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "text-align",
+            format!("{:?}", style.text_align),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "color",
+            format_color(&style.color),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "white-space",
+            format!("{:?}", style.white_space),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "letter-spacing",
+            format!("{}px", style.letter_spacing),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "word-spacing",
+            format!("{}px", style.word_spacing),
+            StyleCategory::Typography,
+        ));
+        props.push(prop(
+            "text-indent",
+            format!("{}px", style.text_indent),
+            StyleCategory::Typography,
+        ));
 
         // ── Background ──
-        props.push(prop("background-color", format_color(&style.background_color), StyleCategory::Background));
-        props.push(prop("opacity", format!("{}", style.opacity), StyleCategory::Background));
+        props.push(prop(
+            "background-color",
+            format_color(&style.background_color),
+            StyleCategory::Background,
+        ));
+        props.push(prop(
+            "opacity",
+            format!("{}", style.opacity),
+            StyleCategory::Background,
+        ));
 
         // ── Border ──
-        props.push(prop("border-top-width", format!("{}px", style.border_width.top), StyleCategory::Border));
-        props.push(prop("border-right-width", format!("{}px", style.border_width.right), StyleCategory::Border));
-        props.push(prop("border-bottom-width", format!("{}px", style.border_width.bottom), StyleCategory::Border));
-        props.push(prop("border-left-width", format!("{}px", style.border_width.left), StyleCategory::Border));
-        props.push(prop("border-top-color", format_color(&style.border_color.top), StyleCategory::Border));
-        props.push(prop("border-top-style", format!("{:?}", style.border_style.top), StyleCategory::Border));
-        props.push(prop("border-radius-tl", format!("{}px", style.border_radius.top_left), StyleCategory::Border));
-        props.push(prop("border-radius-tr", format!("{}px", style.border_radius.top_right), StyleCategory::Border));
-        props.push(prop("border-radius-bl", format!("{}px", style.border_radius.bottom_left), StyleCategory::Border));
-        props.push(prop("border-radius-br", format!("{}px", style.border_radius.bottom_right), StyleCategory::Border));
+        props.push(prop(
+            "border-top-width",
+            format!("{}px", style.border_width.top),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-right-width",
+            format!("{}px", style.border_width.right),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-bottom-width",
+            format!("{}px", style.border_width.bottom),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-left-width",
+            format!("{}px", style.border_width.left),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-top-color",
+            format_color(&style.border_color.top),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-top-style",
+            format!("{:?}", style.border_style.top),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-radius-tl",
+            format!("{}px", style.border_radius.top_left),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-radius-tr",
+            format!("{}px", style.border_radius.top_right),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-radius-bl",
+            format!("{}px", style.border_radius.bottom_left),
+            StyleCategory::Border,
+        ));
+        props.push(prop(
+            "border-radius-br",
+            format!("{}px", style.border_radius.bottom_right),
+            StyleCategory::Border,
+        ));
 
         // ── Flexbox ──
         if matches!(style.display, Display::Flex | Display::InlineFlex) {
-            props.push(prop("flex-direction", format_flex_dir(style.flex_direction), StyleCategory::Flex));
-            props.push(prop("flex-wrap", format_flex_wrap(style.flex_wrap), StyleCategory::Flex));
-            props.push(prop("justify-content", format_justify(style.justify_content), StyleCategory::Flex));
-            props.push(prop("align-items", format_align_items(style.align_items), StyleCategory::Flex));
-            props.push(prop("align-content", format_align_content(style.align_content), StyleCategory::Flex));
-            props.push(prop("gap", format!("{:?} {:?}", style.row_gap, style.column_gap), StyleCategory::Flex));
+            props.push(prop(
+                "flex-direction",
+                format_flex_dir(style.flex_direction),
+                StyleCategory::Flex,
+            ));
+            props.push(prop(
+                "flex-wrap",
+                format_flex_wrap(style.flex_wrap),
+                StyleCategory::Flex,
+            ));
+            props.push(prop(
+                "justify-content",
+                format_justify(style.justify_content),
+                StyleCategory::Flex,
+            ));
+            props.push(prop(
+                "align-items",
+                format_align_items(style.align_items),
+                StyleCategory::Flex,
+            ));
+            props.push(prop(
+                "align-content",
+                format_align_content(style.align_content),
+                StyleCategory::Flex,
+            ));
+            props.push(prop(
+                "gap",
+                format!("{:?} {:?}", style.row_gap, style.column_gap),
+                StyleCategory::Flex,
+            ));
         }
-        props.push(prop("flex-grow", format!("{}", style.flex_grow), StyleCategory::Flex));
-        props.push(prop("flex-shrink", format!("{}", style.flex_shrink), StyleCategory::Flex));
-        props.push(prop("flex-basis", format_dim(&style.flex_basis), StyleCategory::Flex));
-        props.push(prop("align-self", format_align_self(style.align_self), StyleCategory::Flex));
-        props.push(prop("order", format!("{}", style.order), StyleCategory::Flex));
+        props.push(prop(
+            "flex-grow",
+            format!("{}", style.flex_grow),
+            StyleCategory::Flex,
+        ));
+        props.push(prop(
+            "flex-shrink",
+            format!("{}", style.flex_shrink),
+            StyleCategory::Flex,
+        ));
+        props.push(prop(
+            "flex-basis",
+            format_dim(&style.flex_basis),
+            StyleCategory::Flex,
+        ));
+        props.push(prop(
+            "align-self",
+            format_align_self(style.align_self),
+            StyleCategory::Flex,
+        ));
+        props.push(prop(
+            "order",
+            format!("{}", style.order),
+            StyleCategory::Flex,
+        ));
 
         // ── Grid ──
         if matches!(style.display, Display::Grid | Display::InlineGrid) {
-            props.push(prop("grid-template-columns", format!("{:?}", style.grid_template_columns), StyleCategory::Grid));
-            props.push(prop("grid-template-rows", format!("{:?}", style.grid_template_rows), StyleCategory::Grid));
-            props.push(prop("grid-auto-flow", format!("{:?}", style.grid_auto_flow), StyleCategory::Grid));
-            props.push(prop("gap", format!("{:?} {:?}", style.row_gap, style.column_gap), StyleCategory::Grid));
+            props.push(prop(
+                "grid-template-columns",
+                format!("{:?}", style.grid_template_columns),
+                StyleCategory::Grid,
+            ));
+            props.push(prop(
+                "grid-template-rows",
+                format!("{:?}", style.grid_template_rows),
+                StyleCategory::Grid,
+            ));
+            props.push(prop(
+                "grid-auto-flow",
+                format!("{:?}", style.grid_auto_flow),
+                StyleCategory::Grid,
+            ));
+            props.push(prop(
+                "gap",
+                format!("{:?} {:?}", style.row_gap, style.column_gap),
+                StyleCategory::Grid,
+            ));
         }
 
         // ── Visual ──
-        props.push(prop("cursor", format!("{:?}", style.cursor), StyleCategory::Visual));
-        props.push(prop("pointer-events", format!("{:?}", style.pointer_events), StyleCategory::Visual));
+        props.push(prop(
+            "cursor",
+            format!("{:?}", style.cursor),
+            StyleCategory::Visual,
+        ));
+        props.push(prop(
+            "pointer-events",
+            format!("{:?}", style.pointer_events),
+            StyleCategory::Visual,
+        ));
 
         // ── Transform ──
         if !style.transform.is_empty() {
-            props.push(prop("transform", format!("{:?}", style.transform), StyleCategory::Transform));
+            props.push(prop(
+                "transform",
+                format!("{:?}", style.transform),
+                StyleCategory::Transform,
+            ));
         }
         if !style.transition.is_empty() {
-            props.push(prop("transition", format!("{} transitions", style.transition.len()), StyleCategory::Animation));
+            props.push(prop(
+                "transition",
+                format!("{} transitions", style.transition.len()),
+                StyleCategory::Animation,
+            ));
         }
 
         props
@@ -497,6 +765,8 @@ fn format_dim(d: &Dimension) -> String {
         Dimension::MinContent => "min-content".into(),
         Dimension::FitContent(inner) => format!("fit-content({})", format_dim(inner)),
         Dimension::Calc(_) => "calc(…)".into(),
+        // TODO(t9 Phase 2): proper formatting for dynamic viewport units.
+        _ => format!("{d:?}"),
     }
 }
 
@@ -528,17 +798,41 @@ mod tests {
 
     #[test]
     fn test_category_from_id() {
-        assert_eq!(StyleCategory::from_id("layout"), Some(StyleCategory::Layout));
+        assert_eq!(
+            StyleCategory::from_id("layout"),
+            Some(StyleCategory::Layout)
+        );
         assert_eq!(StyleCategory::from_id("box"), Some(StyleCategory::Box));
-        assert_eq!(StyleCategory::from_id("typography"), Some(StyleCategory::Typography));
-        assert_eq!(StyleCategory::from_id("background"), Some(StyleCategory::Background));
-        assert_eq!(StyleCategory::from_id("border"), Some(StyleCategory::Border));
+        assert_eq!(
+            StyleCategory::from_id("typography"),
+            Some(StyleCategory::Typography)
+        );
+        assert_eq!(
+            StyleCategory::from_id("background"),
+            Some(StyleCategory::Background)
+        );
+        assert_eq!(
+            StyleCategory::from_id("border"),
+            Some(StyleCategory::Border)
+        );
         assert_eq!(StyleCategory::from_id("flex"), Some(StyleCategory::Flex));
         assert_eq!(StyleCategory::from_id("grid"), Some(StyleCategory::Grid));
-        assert_eq!(StyleCategory::from_id("position"), Some(StyleCategory::Position));
-        assert_eq!(StyleCategory::from_id("visual"), Some(StyleCategory::Visual));
-        assert_eq!(StyleCategory::from_id("transform"), Some(StyleCategory::Transform));
-        assert_eq!(StyleCategory::from_id("animation"), Some(StyleCategory::Animation));
+        assert_eq!(
+            StyleCategory::from_id("position"),
+            Some(StyleCategory::Position)
+        );
+        assert_eq!(
+            StyleCategory::from_id("visual"),
+            Some(StyleCategory::Visual)
+        );
+        assert_eq!(
+            StyleCategory::from_id("transform"),
+            Some(StyleCategory::Transform)
+        );
+        assert_eq!(
+            StyleCategory::from_id("animation"),
+            Some(StyleCategory::Animation)
+        );
         assert_eq!(StyleCategory::from_id("other"), Some(StyleCategory::Other));
         assert_eq!(StyleCategory::from_id("nonexistent"), None);
     }

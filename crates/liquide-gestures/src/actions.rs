@@ -79,9 +79,7 @@ impl GestureBinding {
                 SwipeDirection::Up => self.four_finger_up.clone(),
                 SwipeDirection::Down => self.four_finger_down.clone(),
             },
-            GestureEvent::Pinch { scale, phase, .. }
-                if *phase == GesturePhase::Ended =>
-            {
+            GestureEvent::Pinch { scale, phase, .. } if *phase == GesturePhase::Ended => {
                 if *scale < 0.7 {
                     self.pinch_in.clone()
                 } else if *scale > 1.3 {

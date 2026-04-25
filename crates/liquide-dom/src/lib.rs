@@ -38,7 +38,9 @@ pub use attrs::AttributeMap;
 pub use class_list::ClassList;
 pub use dirty::DirtyFlags;
 pub use document::Document;
-pub use events::{dispatch_event, Event, EventListener, EventPhase, EventTargetMap, ListenerOptions};
+pub use events::{
+    Event, EventListener, EventPhase, EventTargetMap, ListenerOptions, dispatch_event,
+};
 pub use node::{Node, NodeData, NodeId, PseudoType};
 pub use pseudo::PseudoStateFlags;
 pub use tag::Tag;

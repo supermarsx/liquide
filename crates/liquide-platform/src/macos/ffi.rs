@@ -12,7 +12,7 @@
 #![allow(clippy::upper_case_acronyms)]
 #![allow(dead_code)]
 
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::os::raw::{c_char, c_int, c_uint};
 
 // ---------------------------------------------------------------------------
@@ -174,12 +174,10 @@ pub const kCGImageAlphaNoneSkipFirst: u32 = 6;
 pub const kCGBitmapByteOrder32Little: u32 = 2 << 12;
 
 /// Bitmap info for BGRA8 (little-endian 32-bit with alpha in the first byte).
-pub const kCGBitmapInfoBGRA8: u32 =
-    kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
+pub const kCGBitmapInfoBGRA8: u32 = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
 
 /// Bitmap info for BGRA8 with no alpha (skip first).
-pub const kCGBitmapInfoBGRA8NoAlpha: u32 =
-    kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little;
+pub const kCGBitmapInfoBGRA8NoAlpha: u32 = kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little;
 
 // ---------------------------------------------------------------------------
 // Objective-C runtime functions
@@ -532,11 +530,5 @@ pub unsafe fn nsstring(s: &str) -> id {
     let cls = unsafe { class(b"NSString\0") };
     let alloc = unsafe { msg_send_id(cls, sel(b"alloc\0")) };
     let c_str = CString::new(s).expect("interior NUL in string passed to nsstring()");
-    unsafe {
-        msg_send_id_cstr(
-            alloc,
-            sel(b"initWithUTF8String:\0"),
-            c_str.as_ptr(),
-        )
-    }
+    unsafe { msg_send_id_cstr(alloc, sel(b"initWithUTF8String:\0"), c_str.as_ptr()) }
 }

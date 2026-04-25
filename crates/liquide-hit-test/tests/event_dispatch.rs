@@ -12,8 +12,8 @@ use liquide_hit_test::engine::HitTestEngine;
 use liquide_hit_test::event::{DomEvent, DomEventKind, MouseButton, Propagation};
 use liquide_layout::geometry::{Point, Rect};
 use liquide_layout::tree::{BoxType, LayoutTree};
-use liquide_style_engine::computed::ComputedStyle;
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::ComputedStyle;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -178,10 +178,7 @@ fn prevent_default_and_stop_propagation_are_independent() {
     event.prevent_default();
     event.stop_propagation();
 
-    assert!(
-        event.default_prevented,
-        "default should still be prevented"
-    );
+    assert!(event.default_prevented, "default should still be prevented");
     assert_eq!(
         event.propagation,
         Propagation::StopPropagation,
@@ -231,30 +228,38 @@ fn non_bubbling_events_list() {
 #[test]
 fn bubbling_events_list() {
     assert!(DomEventKind::MouseMove { x: 0.0, y: 0.0 }.bubbles());
-    assert!(DomEventKind::MouseDown {
-        button: MouseButton::Left,
-        x: 0.0,
-        y: 0.0
-    }
-    .bubbles());
-    assert!(DomEventKind::MouseUp {
-        button: MouseButton::Left,
-        x: 0.0,
-        y: 0.0
-    }
-    .bubbles());
-    assert!(DomEventKind::Click {
-        button: MouseButton::Left,
-        x: 0.0,
-        y: 0.0
-    }
-    .bubbles());
+    assert!(
+        DomEventKind::MouseDown {
+            button: MouseButton::Left,
+            x: 0.0,
+            y: 0.0
+        }
+        .bubbles()
+    );
+    assert!(
+        DomEventKind::MouseUp {
+            button: MouseButton::Left,
+            x: 0.0,
+            y: 0.0
+        }
+        .bubbles()
+    );
+    assert!(
+        DomEventKind::Click {
+            button: MouseButton::Left,
+            x: 0.0,
+            y: 0.0
+        }
+        .bubbles()
+    );
     assert!(DomEventKind::Scroll { dx: 0.0, dy: 1.0 }.bubbles());
-    assert!(DomEventKind::KeyDown {
-        key: 0,
-        modifiers: 0
-    }
-    .bubbles());
+    assert!(
+        DomEventKind::KeyDown {
+            key: 0,
+            modifiers: 0
+        }
+        .bubbles()
+    );
 }
 
 // ── Dispatcher: hover chain management ───────────────────────────────────
@@ -436,9 +441,5 @@ fn mouse_down_sets_focus() {
         &engine,
     );
 
-    assert_eq!(
-        dispatcher.focus(),
-        Some(child),
-        "clicking should set focus"
-    );
+    assert_eq!(dispatcher.focus(), Some(child), "clicking should set focus");
 }

@@ -34,6 +34,35 @@ impl MonitorScale {
     pub fn is_hidpi(&self) -> bool {
         self.scale_factor > 1.0
     }
+
+    /// Convert a logical pixel measurement to a **physical pixel** (f64) at
+    /// this monitor's scale, **without rounding**.
+    ///
+    /// Use this when you need sub-pixel precision (e.g. stroke tessellation,
+    /// subpixel-accurate hit testing). For a snapped-to-pixel result use
+    /// [`logical_to_physical_snapped`](Self::logical_to_physical_snapped).
+    #[inline]
+    pub fn logical_to_physical(&self, logical: f64) -> f64 {
+        logical * self.scale_factor
+    }
+
+    /// Convert a physical pixel measurement to logical pixels at this
+    /// monitor's scale, **without rounding**.
+    #[inline]
+    pub fn physical_to_logical(&self, physical: f64) -> f64 {
+        if self.scale_factor == 0.0 {
+            physical
+        } else {
+            physical / self.scale_factor
+        }
+    }
+
+    /// Convert a logical pixel measurement to a physical pixel, snapping to
+    /// the nearest integer pixel boundary.
+    #[inline]
+    pub fn logical_to_physical_snapped(&self, logical: f64) -> f64 {
+        (logical * self.scale_factor).round()
+    }
 }
 
 impl std::fmt::Display for MonitorScale {
@@ -63,10 +92,7 @@ pub enum ScaleEvent {
         target_monitor: MonitorId,
     },
     /// The global/fallback scale was changed.
-    GlobalScaleChanged {
-        old_scale: f64,
-        new_scale: f64,
-    },
+    GlobalScaleChanged { old_scale: f64, new_scale: f64 },
 }
 
 /// Manages per-monitor scale factors and resolves window-to-monitor scale mapping.
@@ -103,10 +129,8 @@ impl ScaleManager {
 
     /// Register a monitor with its scale and screen bounds (in logical pixels).
     pub fn add_monitor(&mut self, scale: MonitorScale, bounds: LogicalRect) {
-        self.monitors.insert(
-            scale.monitor_id,
-            MonitorEntry { scale, bounds },
-        );
+        self.monitors
+            .insert(scale.monitor_id, MonitorEntry { scale, bounds });
     }
 
     /// Remove a monitor from tracking.
@@ -168,8 +192,7 @@ impl ScaleManager {
                 let area = overlap.area();
                 // On tie, prefer the monitor with the lower ID for determinism.
                 if area > best_area
-                    || (area == best_area
-                        && best_id.is_some_and(|id| entry.scale.monitor_id < id))
+                    || (area == best_area && best_id.is_some_and(|id| entry.scale.monitor_id < id))
                 {
                     best_area = area;
                     best_id = Some(entry.scale.monitor_id);

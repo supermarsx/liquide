@@ -52,10 +52,16 @@ impl VirtualTerminal {
             use std::ffi::CString;
 
             let path = format!("/dev/tty{vt_number}");
-            let c_path = CString::new(path.clone()).map_err(|e| LogindError::VtAllocation(e.to_string()))?;
+            let c_path =
+                CString::new(path.clone()).map_err(|e| LogindError::VtAllocation(e.to_string()))?;
 
             // SAFETY: opening a TTY device with standard flags.
-            let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC | libc::O_NOCTTY) };
+            let fd = unsafe {
+                libc::open(
+                    c_path.as_ptr(),
+                    libc::O_RDWR | libc::O_CLOEXEC | libc::O_NOCTTY,
+                )
+            };
             if fd < 0 {
                 return Err(LogindError::VtAllocation(format!(
                     "failed to open {path}: {}",

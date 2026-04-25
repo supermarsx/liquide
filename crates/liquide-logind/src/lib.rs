@@ -12,16 +12,16 @@
 //! For systems without systemd, a seatd backend is provided as fallback.
 
 pub mod error;
+pub mod privileges;
 pub mod seat;
 pub mod session;
 pub mod vt;
-pub mod privileges;
 
 pub use error::{LogindError, Result};
-pub use seat::{SeatBackend, SeatInfo, LogindSeat, SeatdSeat, StubSeat};
+pub use privileges::Privileges;
+pub use seat::{LogindSeat, SeatBackend, SeatInfo, SeatdSeat, StubSeat};
 pub use session::{SessionInfo, SessionProvider, SessionState as LogindSessionState};
 pub use vt::{VirtualTerminal, VtMode};
-pub use privileges::Privileges;
 
 #[cfg(test)]
 mod tests;

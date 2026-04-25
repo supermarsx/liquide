@@ -10,11 +10,21 @@ pub struct Rect {
 impl Rect {
     /// Create a new rectangle.
     pub const fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// A zero-sized rectangle at the origin.
-    pub const ZERO: Self = Self { x: 0, y: 0, width: 0, height: 0 };
+    pub const ZERO: Self = Self {
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+    };
 
     /// Right edge (exclusive).
     #[inline]
@@ -81,7 +91,12 @@ impl Rect {
 
     /// Grow (or shrink with negative values) all edges by the given amount.
     pub fn inflate(&self, dx: i32, dy: i32) -> Rect {
-        Rect::new(self.x - dx, self.y - dy, self.width + 2 * dx, self.height + 2 * dy)
+        Rect::new(
+            self.x - dx,
+            self.y - dy,
+            self.width + 2 * dx,
+            self.height + 2 * dy,
+        )
     }
 
     /// Area in pixels (can be zero or negative if degenerate).

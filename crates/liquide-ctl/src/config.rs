@@ -60,8 +60,8 @@ impl CtlConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content =
-            std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
         let config: Self =
             toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
         Ok(config)

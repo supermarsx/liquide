@@ -1,9 +1,13 @@
-use liquide_compositor::geometry::Rect;
-use crate::window::*;
 use crate::layout::*;
+use crate::window::*;
+use liquide_compositor::geometry::Rect;
 
 fn make_window(id: u64) -> Window {
-    Window::new(WindowId(id), format!("Win{id}"), Rect::new(0.0, 0.0, 200.0, 150.0))
+    Window::new(
+        WindowId(id),
+        format!("Win{id}"),
+        Rect::new(0.0, 0.0, 200.0, 150.0),
+    )
 }
 
 #[test]
@@ -76,7 +80,12 @@ fn layout_name() {
 fn tiling_three_windows_wraps() {
     let layout = TilingLayout::new(0.0, 2);
     let screen = Rect::new(0.0, 0.0, 1000.0, 1000.0);
-    let mut wins = vec![make_window(1), make_window(2), make_window(3), make_window(4)];
+    let mut wins = vec![
+        make_window(1),
+        make_window(2),
+        make_window(3),
+        make_window(4),
+    ];
     layout.arrange(&mut wins, screen);
     assert!((wins[0].bounds.y - wins[1].bounds.y).abs() < 0.001);
     assert!((wins[2].bounds.y - wins[3].bounds.y).abs() < 0.001);

@@ -165,7 +165,10 @@ unsafe fn brightness_sse2(buf: &mut [u8], factor: f32) {
     for i in 0..pixels {
         let off = i * 4;
         let pixel = _mm_cvtsi32_si128(i32::from_le_bytes([
-            buf[off], buf[off + 1], buf[off + 2], buf[off + 3],
+            buf[off],
+            buf[off + 1],
+            buf[off + 2],
+            buf[off + 3],
         ]));
         let pixel_16 = _mm_unpacklo_epi8(pixel, zero);
         let pixel_32 = _mm_unpacklo_epi16(pixel_16, zero);
@@ -213,7 +216,10 @@ unsafe fn contrast_sse2(buf: &mut [u8], factor: f32) {
         let off = i * 4;
         let alpha = buf[off + 3];
         let pixel = _mm_cvtsi32_si128(i32::from_le_bytes([
-            buf[off], buf[off + 1], buf[off + 2], buf[off + 3],
+            buf[off],
+            buf[off + 1],
+            buf[off + 2],
+            buf[off + 3],
         ]));
         let pixel_16 = _mm_unpacklo_epi8(pixel, zero);
         let pixel_32 = _mm_unpacklo_epi16(pixel_16, zero);
@@ -253,7 +259,10 @@ unsafe fn grayscale_sse2(buf: &mut [u8]) {
         let off = i * 4;
         let alpha = buf[off + 3];
         let pixel = _mm_cvtsi32_si128(i32::from_le_bytes([
-            buf[off], buf[off + 1], buf[off + 2], buf[off + 3],
+            buf[off],
+            buf[off + 1],
+            buf[off + 2],
+            buf[off + 3],
         ]));
         let pixel_16 = _mm_unpacklo_epi8(pixel, zero);
         let pixel_32 = _mm_unpacklo_epi16(pixel_16, zero);
@@ -303,7 +312,10 @@ unsafe fn color_matrix_sse2(buf: &mut [u8], m: &[f32; 20]) {
     for i in 0..pixels {
         let off = i * 4;
         let pixel = _mm_cvtsi32_si128(i32::from_le_bytes([
-            buf[off], buf[off + 1], buf[off + 2], buf[off + 3],
+            buf[off],
+            buf[off + 1],
+            buf[off + 2],
+            buf[off + 3],
         ]));
         let pixel_16 = _mm_unpacklo_epi8(pixel, zero);
         let pixel_32 = _mm_unpacklo_epi16(pixel_16, zero);
@@ -450,7 +462,12 @@ mod tests {
 
         for i in 0..buf.len() {
             let diff = (buf[i] as i16 - buf_scalar[i] as i16).abs();
-            assert!(diff <= 1, "byte {i}: simd={} scalar={}", buf[i], buf_scalar[i]);
+            assert!(
+                diff <= 1,
+                "byte {i}: simd={} scalar={}",
+                buf[i],
+                buf_scalar[i]
+            );
         }
     }
 }

@@ -7,7 +7,7 @@ pub enum ThemeVariant {
     Light,
     Dark,
     HighContrast,
-    /// Detect from OS / environment.
+    /// Follow the host-provided system theme preference.
     Auto,
 }
 
@@ -29,6 +29,16 @@ impl ThemeVariant {
             Self::Dark => "dark",
             Self::HighContrast => "high-contrast",
             Self::Auto => "auto",
+        }
+    }
+
+    pub fn resolve_auto(self, system_preference: Self) -> Self {
+        match self {
+            Self::Auto => match system_preference {
+                Self::Auto => Self::Dark,
+                resolved => resolved,
+            },
+            resolved => resolved,
         }
     }
 }

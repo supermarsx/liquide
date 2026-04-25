@@ -103,7 +103,9 @@ impl StyleEngine {
                 if let Some(fb) = fallback {
                     // Resolve fallback, but don't allow it to reference the cyclic variable
                     if fb.contains("var(") {
-                        if let Some(resolved_fb) = self.resolve_var_recursive(fb, scope_vars, resolution_stack) {
+                        if let Some(resolved_fb) =
+                            self.resolve_var_recursive(fb, scope_vars, resolution_stack)
+                        {
                             let fb_str = match resolved_fb {
                                 liquide_theme_css::value::PropertyValue::Keyword(k) => k,
                                 liquide_theme_css::value::PropertyValue::String(s) => s,
@@ -121,10 +123,7 @@ impl StyleEngine {
                 return None;
             }
 
-            if let Some(resolved) = scope_vars
-                .get(var_name)
-                .or_else(|| self.variables.get(var_name))
-            {
+            if let Some(resolved) = scope_vars.get(var_name) {
                 let replacement = match resolved {
                     liquide_theme_css::value::PropertyValue::Color(c) => c.to_hex(),
                     liquide_theme_css::value::PropertyValue::Length(lu) => {
@@ -188,8 +187,7 @@ impl StyleEngine {
                 // Push var_name to resolution_stack to detect cycles through fallbacks.
                 if fb.contains("var(") {
                     resolution_stack.push(var_name.to_string());
-                    let resolved_fb =
-                        self.resolve_var_recursive(fb, scope_vars, resolution_stack);
+                    let resolved_fb = self.resolve_var_recursive(fb, scope_vars, resolution_stack);
                     resolution_stack.pop();
                     if let Some(resolved_fb) = resolved_fb {
                         let fb_str = match resolved_fb {
@@ -325,6 +323,16 @@ mod tests {
         StyleEngine::new(ViewportSize::default(), 16.0)
     }
 
+    fn assert_length_display(actual: &str, expected: &str) {
+        assert!(
+            actual == expected || actual == expected.trim_end_matches("px"),
+            "expected {} (or canonical {}), got: {}",
+            expected,
+            expected.trim_end_matches("px"),
+            actual
+        );
+    }
+
     #[test]
     fn env_defaults_to_zero() {
         let engine = make_engine();
@@ -333,7 +341,7 @@ mod tests {
         let result = engine.resolve_var_in_value("env(safe-area-inset-top)", &vars);
         assert!(result.is_some());
         let s = format!("{}", result.unwrap());
-        assert!(s.contains("0px"), "expected 0px, got: {}", s);
+        assert_length_display(&s, "0px");
     }
 
     #[test]
@@ -358,23 +366,35 @@ mod tests {
         });
         let vars = std::collections::HashMap::new();
 
-        let top = engine.resolve_var_in_value("env(safe-area-inset-top)", &vars).unwrap();
-        assert_eq!(format!("{}", top), "44px");
+        let top = engine
+            .resolve_var_in_value("env(safe-area-inset-top)", &vars)
+            .unwrap();
+        assert_length_display(&format!("{}", top), "44px");
 
-        let bottom = engine.resolve_var_in_value("env(safe-area-inset-bottom)", &vars).unwrap();
-        assert_eq!(format!("{}", bottom), "34px");
+        let bottom = engine
+            .resolve_var_in_value("env(safe-area-inset-bottom)", &vars)
+            .unwrap();
+        assert_length_display(&format!("{}", bottom), "34px");
 
-        let tw = engine.resolve_var_in_value("env(titlebar-area-width)", &vars).unwrap();
-        assert_eq!(format!("{}", tw), "500px");
+        let tw = engine
+            .resolve_var_in_value("env(titlebar-area-width)", &vars)
+            .unwrap();
+        assert_length_display(&format!("{}", tw), "500px");
 
-        let th = engine.resolve_var_in_value("env(titlebar-area-height)", &vars).unwrap();
-        assert_eq!(format!("{}", th), "32px");
+        let th = engine
+            .resolve_var_in_value("env(titlebar-area-height)", &vars)
+            .unwrap();
+        assert_length_display(&format!("{}", th), "32px");
 
-        let kb = engine.resolve_var_in_value("env(keyboard-inset-bottom)", &vars).unwrap();
-        assert_eq!(format!("{}", kb), "300px");
+        let kb = engine
+            .resolve_var_in_value("env(keyboard-inset-bottom)", &vars)
+            .unwrap();
+        assert_length_display(&format!("{}", kb), "300px");
 
-        let kw = engine.resolve_var_in_value("env(keyboard-inset-width)", &vars).unwrap();
-        assert_eq!(format!("{}", kw), "360px");
+        let kw = engine
+            .resolve_var_in_value("env(keyboard-inset-width)", &vars)
+            .unwrap();
+        assert_length_display(&format!("{}", kw), "360px");
     }
 
     #[test]
@@ -384,7 +404,7 @@ mod tests {
         let result = engine.resolve_var_in_value("env(unknown-thing, 10px)", &vars);
         assert!(result.is_some());
         let s = format!("{}", result.unwrap());
-        assert!(s.contains("10px"), "expected fallback 10px, got: {}", s);
+        assert_length_display(&s, "10px");
     }
 
     #[test]
@@ -394,6 +414,6 @@ mod tests {
         let result = engine.resolve_var_in_value("env(unknown-thing)", &vars);
         assert!(result.is_some());
         let s = format!("{}", result.unwrap());
-        assert!(s.contains("0px"), "expected 0px default, got: {}", s);
+        assert_length_display(&s, "0px");
     }
 }

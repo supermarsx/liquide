@@ -28,12 +28,19 @@ impl CaptureRegion {
         let y = y1.min(y2);
         let width = (x1 - x2).unsigned_abs();
         let height = (y1 - y2).unsigned_abs();
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     pub fn contains(&self, px: i32, py: i32) -> bool {
-        px >= self.x && px < self.x + self.width as i32
-            && py >= self.y && py < self.y + self.height as i32
+        px >= self.x
+            && px < self.x + self.width as i32
+            && py >= self.y
+            && py < self.y + self.height as i32
     }
 }
 
@@ -150,12 +157,24 @@ impl ScreenCapture {
         self
     }
 
-    pub fn mode(&self) -> CaptureMode { self.mode }
-    pub fn delay(&self) -> u32 { self.delay_secs }
-    pub fn include_cursor(&self) -> bool { self.include_cursor }
-    pub fn include_decorations(&self) -> bool { self.include_decorations }
-    pub fn wants_flash(&self) -> bool { self.flash_effect }
-    pub fn wants_sound(&self) -> bool { self.sound_effect }
+    pub fn mode(&self) -> CaptureMode {
+        self.mode
+    }
+    pub fn delay(&self) -> u32 {
+        self.delay_secs
+    }
+    pub fn include_cursor(&self) -> bool {
+        self.include_cursor
+    }
+    pub fn include_decorations(&self) -> bool {
+        self.include_decorations
+    }
+    pub fn wants_flash(&self) -> bool {
+        self.flash_effect
+    }
+    pub fn wants_sound(&self) -> bool {
+        self.sound_effect
+    }
 
     // Region selection methods
     pub fn begin_selection(&mut self, x: i32, y: i32) {
@@ -191,7 +210,9 @@ impl ScreenCapture {
         self.selection_end = None;
     }
 
-    pub fn is_selecting(&self) -> bool { self.selecting }
+    pub fn is_selecting(&self) -> bool {
+        self.selecting
+    }
 
     pub fn current_selection(&self) -> Option<CaptureRegion> {
         match (self.selection_start, self.selection_end) {
@@ -212,10 +233,10 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let off = (y * stride + x * 4) as usize;
-                pixels[off] = (x & 0xFF) as u8;           // B
-                pixels[off + 1] = (y & 0xFF) as u8;       // G
+                pixels[off] = (x & 0xFF) as u8; // B
+                pixels[off + 1] = (y & 0xFF) as u8; // G
                 pixels[off + 2] = ((x + y) & 0xFF) as u8; // R
-                pixels[off + 3] = 255;                     // A
+                pixels[off + 3] = 255; // A
             }
         }
         CaptureResult {
@@ -223,7 +244,12 @@ mod tests {
             height: h,
             stride,
             pixels,
-            region: CaptureRegion { x: 0, y: 0, width: w, height: h },
+            region: CaptureRegion {
+                x: 0,
+                y: 0,
+                width: w,
+                height: h,
+            },
             timestamp: 1000,
         }
     }
@@ -247,12 +273,17 @@ mod tests {
 
     #[test]
     fn region_contains() {
-        let r = CaptureRegion { x: 10, y: 20, width: 100, height: 50 };
-        assert!(r.contains(10, 20));   // top-left corner
-        assert!(r.contains(50, 40));   // interior
+        let r = CaptureRegion {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+        };
+        assert!(r.contains(10, 20)); // top-left corner
+        assert!(r.contains(50, 40)); // interior
         assert!(!r.contains(110, 20)); // right edge (exclusive)
-        assert!(!r.contains(10, 70));  // bottom edge (exclusive)
-        assert!(!r.contains(9, 20));   // just outside left
+        assert!(!r.contains(10, 70)); // bottom edge (exclusive)
+        assert!(!r.contains(9, 20)); // just outside left
     }
 
     #[test]
@@ -274,7 +305,12 @@ mod tests {
     #[test]
     fn crop_returns_correct_subregion() {
         let cap = make_capture(10, 10);
-        let region = CaptureRegion { x: 2, y: 3, width: 4, height: 5 };
+        let region = CaptureRegion {
+            x: 2,
+            y: 3,
+            width: 4,
+            height: 5,
+        };
         let cropped = cap.crop(region).unwrap();
         assert_eq!(cropped.width, 4);
         assert_eq!(cropped.height, 5);
@@ -289,7 +325,12 @@ mod tests {
     #[test]
     fn crop_out_of_bounds_returns_none() {
         let cap = make_capture(10, 10);
-        let region = CaptureRegion { x: 20, y: 20, width: 5, height: 5 };
+        let region = CaptureRegion {
+            x: 20,
+            y: 20,
+            width: 5,
+            height: 5,
+        };
         assert!(cap.crop(region).is_none());
     }
 

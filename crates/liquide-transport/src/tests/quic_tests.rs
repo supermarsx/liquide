@@ -1,8 +1,8 @@
 use bytes::Bytes;
 
+use crate::Transport;
 use crate::listener::quic::QuicListener;
 use crate::quic::QuicTransport;
-use crate::Transport;
 
 use super::test_helpers::{generate_self_signed, make_quinn_server_config};
 
@@ -30,7 +30,8 @@ async fn quic_connect_send_recv() {
         let _ = transport.recv().await;
     });
 
-    let mut client = QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
+    let mut client =
+        QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
     client.connect(addr).await.unwrap();
     assert!(client.is_connected());
     assert_eq!(client.peer_addr(), Some(addr));
@@ -67,13 +68,11 @@ async fn quic_multiple_messages() {
         let _ = transport.recv().await;
     });
 
-    let mut client = QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
+    let mut client =
+        QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
     client.connect(addr).await.unwrap();
     for i in 0u32..10 {
-        client
-            .send(Bytes::from(format!("quic-{i}")))
-            .await
-            .unwrap();
+        client.send(Bytes::from(format!("quic-{i}"))).await.unwrap();
     }
     let ack = client.recv().await.unwrap();
     assert_eq!(&ack[..], b"done");
@@ -104,14 +103,12 @@ async fn quic_from_connection() {
         let _ = transport.recv().await;
     });
 
-    let mut client = QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
+    let mut client =
+        QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
     client.connect(addr).await.unwrap();
     // Send initial message — this creates the STREAM frame that the
     // server's accept_bi() needs to see.
-    client
-        .send(Bytes::from_static(b"ping"))
-        .await
-        .unwrap();
+    client.send(Bytes::from_static(b"ping")).await.unwrap();
     let msg = client.recv().await.unwrap();
     assert_eq!(&msg[..], b"from_connection");
     client.close().await.unwrap();
@@ -156,7 +153,8 @@ async fn quic_large_message() {
         let _ = transport.recv().await;
     });
 
-    let mut client = QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
+    let mut client =
+        QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
     client.connect(addr).await.unwrap();
     client.send(Bytes::from(data)).await.unwrap();
     let ack = client.recv().await.unwrap();
@@ -179,7 +177,8 @@ async fn quic_local_addr() {
         let _ = listener.accept().await;
     });
 
-    let mut client = QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
+    let mut client =
+        QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
     client.connect(addr).await.unwrap();
     assert!(client.local_addr().is_some());
     client.close().await.unwrap();
@@ -200,16 +199,14 @@ async fn quic_bidirectional_interleaved() {
         for i in 0u32..5 {
             let msg = transport.recv().await.unwrap();
             assert_eq!(&msg[..], format!("c{i}").as_bytes());
-            transport
-                .send(Bytes::from(format!("s{i}")))
-                .await
-                .unwrap();
+            transport.send(Bytes::from(format!("s{i}"))).await.unwrap();
         }
         // Hold alive until client closes
         let _ = transport.recv().await;
     });
 
-    let mut client = QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
+    let mut client =
+        QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
     client.connect(addr).await.unwrap();
     for i in 0u32..5 {
         client.send(Bytes::from(format!("c{i}"))).await.unwrap();
@@ -234,7 +231,8 @@ async fn quic_message_too_large() {
         let _ = listener.accept().await;
     });
 
-    let mut client = QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
+    let mut client =
+        QuicTransport::with_client_config(QuicTransport::insecure_client_config()).unwrap();
     client.connect(addr).await.unwrap();
     let huge = vec![0u8; crate::MAX_MESSAGE_SIZE + 1];
     let err = client.send(Bytes::from(huge)).await;

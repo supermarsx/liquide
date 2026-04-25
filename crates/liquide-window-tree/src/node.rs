@@ -51,12 +51,17 @@ impl WindowNode {
         title: String,
     ) -> Self {
         // Compute a default client rect (caption=30px, border=1px if present).
-        let border = if style.contains(WindowStyle::BORDER) || style.contains(WindowStyle::THICK_FRAME) {
-            1
+        let border =
+            if style.contains(WindowStyle::BORDER) || style.contains(WindowStyle::THICK_FRAME) {
+                1
+            } else {
+                0
+            };
+        let caption = if style.contains(WindowStyle::CAPTION) {
+            30
         } else {
             0
         };
-        let caption = if style.contains(WindowStyle::CAPTION) { 30 } else { 0 };
         let client_rect = Rect::new(
             bounds.x + border,
             bounds.y + border + caption,
@@ -105,8 +110,7 @@ impl WindowNode {
     /// Whether this window is always-on-top.
     #[inline]
     pub fn is_topmost(&self) -> bool {
-        self.flags.contains(WindowFlags::TOPMOST)
-            || self.ex_style.contains(WindowExStyle::TOPMOST)
+        self.flags.contains(WindowFlags::TOPMOST) || self.ex_style.contains(WindowExStyle::TOPMOST)
     }
 
     /// Whether this window is a child window.

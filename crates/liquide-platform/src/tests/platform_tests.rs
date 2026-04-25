@@ -1,6 +1,6 @@
-use crate::{NullPlatform, PlatformBackend, PlatformError};
 use crate::event_loop::PlatformEvent;
 use crate::window_host::{NativeWindowHandle, NativeWindowParams};
+use crate::{NullPlatform, PlatformBackend, PlatformError};
 use liquide_compositor::geometry::Rect;
 
 // ── NullPlatform tests ─────────────────────────────────────────────
@@ -289,8 +289,8 @@ fn native_tray_handle_equality() {
 
 #[test]
 fn native_tray_handle_hash_consistent() {
-    use std::collections::HashSet;
     use crate::tray::NativeTrayHandle;
+    use std::collections::HashSet;
     let mut set = HashSet::new();
     set.insert(NativeTrayHandle(10));
     set.insert(NativeTrayHandle(20));
@@ -352,6 +352,13 @@ fn null_platform_preferred_color_scheme() {
 
 #[test]
 fn color_scheme_changed_event_constructible() {
-    let event = PlatformEvent::ColorSchemeChanged { scheme: crate::ColorScheme::Dark };
-    assert!(matches!(event, PlatformEvent::ColorSchemeChanged { scheme: crate::ColorScheme::Dark }));
+    let event = PlatformEvent::ColorSchemeChanged {
+        scheme: crate::ColorScheme::Dark,
+    };
+    assert!(matches!(
+        event,
+        PlatformEvent::ColorSchemeChanged {
+            scheme: crate::ColorScheme::Dark
+        }
+    ));
 }

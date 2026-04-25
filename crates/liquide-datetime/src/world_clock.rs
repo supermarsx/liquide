@@ -65,13 +65,17 @@ impl WorldClock {
     /// UTC offset 0 as a fallback.
     pub fn all_times(&self, now_utc: &DateTime) -> Vec<(String, DateTime)> {
         let db = TimeZoneDatabase::new();
-        self.clocks.iter().map(|entry| {
-            let offset = db.find(&entry.timezone_id)
-                .map(|tz| tz.utc_offset_minutes)
-                .unwrap_or(0);
-            let local = now_utc.with_offset_minutes(offset);
-            (entry.label.clone(), local)
-        }).collect()
+        self.clocks
+            .iter()
+            .map(|entry| {
+                let offset = db
+                    .find(&entry.timezone_id)
+                    .map(|tz| tz.utc_offset_minutes)
+                    .unwrap_or(0);
+                let local = now_utc.with_offset_minutes(offset);
+                (entry.label.clone(), local)
+            })
+            .collect()
     }
 
     /// Number of clock entries.

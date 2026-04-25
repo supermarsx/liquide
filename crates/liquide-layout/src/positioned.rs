@@ -49,9 +49,10 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     // If `position-anchor` is set, look up the referenced anchor's rect
     // and use it as the reference for positioning instead of the
     // containing block.  `position-area` further constrains alignment.
-    let anchor_rect = style.position_anchor.as_ref().and_then(|anchor_ref| {
-        tree.anchor_registry.get(anchor_ref).copied()
-    });
+    let anchor_rect = style
+        .position_anchor
+        .as_ref()
+        .and_then(|anchor_ref| tree.anchor_registry.get(anchor_ref).copied());
     let position_area = style.position_area.clone();
 
     // Resolve width/height
@@ -138,14 +139,18 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             BoxSizing::ContentBox => pad_left + pad_right + border_left + border_right,
             BoxSizing::BorderBox => 0.0,
         };
-        if let Some(min_w) = style.min_width.resolve_px(
-            cb.width, base_font_size, font_size, viewport_w, viewport_h,
-        ) {
+        if let Some(min_w) =
+            style
+                .min_width
+                .resolve_px(cb.width, base_font_size, font_size, viewport_w, viewport_h)
+        {
             stf = stf.max(min_w + horiz_extra);
         }
-        if let Some(max_w) = style.max_width.resolve_px(
-            cb.width, base_font_size, font_size, viewport_w, viewport_h,
-        ) {
+        if let Some(max_w) =
+            style
+                .max_width
+                .resolve_px(cb.width, base_font_size, font_size, viewport_w, viewport_h)
+        {
             stf = stf.min(max_w + horiz_extra);
         }
         Some(stf)
@@ -223,26 +228,34 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         BoxSizing::ContentBox => pad_top + pad_bottom + border_top + border_bottom,
         BoxSizing::BorderBox => 0.0,
     };
-    if let Some(min_w) = style.min_width.resolve_px(
-        cb.width, base_font_size, font_size, viewport_w, viewport_h,
-    ) {
+    if let Some(min_w) =
+        style
+            .min_width
+            .resolve_px(cb.width, base_font_size, font_size, viewport_w, viewport_h)
+    {
         outer_w = outer_w.max(min_w + horiz_box_extra);
     }
-    if let Some(max_w) = style.max_width.resolve_px(
-        cb.width, base_font_size, font_size, viewport_w, viewport_h,
-    ) {
+    if let Some(max_w) =
+        style
+            .max_width
+            .resolve_px(cb.width, base_font_size, font_size, viewport_w, viewport_h)
+    {
         outer_w = outer_w.min(max_w + horiz_box_extra);
     }
 
     // Apply min-height / max-height constraints (same box-sizing adjustment).
-    if let Some(min_h) = style.min_height.resolve_px(
-        cb.height, base_font_size, font_size, viewport_w, viewport_h,
-    ) {
+    if let Some(min_h) =
+        style
+            .min_height
+            .resolve_px(cb.height, base_font_size, font_size, viewport_w, viewport_h)
+    {
         outer_h = outer_h.max(min_h + vert_box_extra);
     }
-    if let Some(max_h) = style.max_height.resolve_px(
-        cb.height, base_font_size, font_size, viewport_w, viewport_h,
-    ) {
+    if let Some(max_h) =
+        style
+            .max_height
+            .resolve_px(cb.height, base_font_size, font_size, viewport_w, viewport_h)
+    {
         outer_h = outer_h.min(max_h + vert_box_extra);
     }
 
@@ -252,12 +265,19 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     // ── Calculate position ──────────────────────────────────────────────
     let (x, y) = if let Some(anchor) = anchor_rect {
         // Anchor positioning: place relative to the anchor element's rect.
-        anchor_position(anchor, cb, outer_w, outer_h, position_area.as_deref(), viewport_w, viewport_h)
+        anchor_position(
+            anchor,
+            cb,
+            outer_w,
+            outer_h,
+            position_area.as_deref(),
+            viewport_w,
+            viewport_h,
+        )
     } else if is_sticky {
         // Sticky positioning: the element is first laid out in normal flow,
         // then clamped to stay within the containing block's visible area.
-        let flow_rect = intrinsic_box
-            .and_then(|id| tree.get(id).map(|b| b.border_rect));
+        let flow_rect = intrinsic_box.and_then(|id| tree.get(id).map(|b| b.border_rect));
         let normal_x = cb.x + flow_rect.map_or(0.0, |r| r.x);
         let normal_y = cb.y + flow_rect.map_or(0.0, |r| r.y);
 
@@ -350,7 +370,7 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             image_measurer,
             content_w,
             content_h,
-            0.0,  // children use local coords (0,0 = content origin)
+            0.0, // children use local coords (0,0 = content origin)
             0.0,
             viewport_w,
             viewport_h,
@@ -654,14 +674,30 @@ fn parse_position_area(area: &str) -> (GridSpan, GridSpan) {
 
     for &kw in parts.iter().take(2) {
         match kw {
-            "top" => { row = row.or(Some(GridSpan::Start)); }
-            "bottom" => { row = row.or(Some(GridSpan::End)); }
-            "span-top" => { row = row.or(Some(GridSpan::SpanStart)); }
-            "span-bottom" => { row = row.or(Some(GridSpan::SpanEnd)); }
-            "left" => { col = col.or(Some(GridSpan::Start)); }
-            "right" => { col = col.or(Some(GridSpan::End)); }
-            "span-left" => { col = col.or(Some(GridSpan::SpanStart)); }
-            "span-right" => { col = col.or(Some(GridSpan::SpanEnd)); }
+            "top" => {
+                row = row.or(Some(GridSpan::Start));
+            }
+            "bottom" => {
+                row = row.or(Some(GridSpan::End));
+            }
+            "span-top" => {
+                row = row.or(Some(GridSpan::SpanStart));
+            }
+            "span-bottom" => {
+                row = row.or(Some(GridSpan::SpanEnd));
+            }
+            "left" => {
+                col = col.or(Some(GridSpan::Start));
+            }
+            "right" => {
+                col = col.or(Some(GridSpan::End));
+            }
+            "span-left" => {
+                col = col.or(Some(GridSpan::SpanStart));
+            }
+            "span-right" => {
+                col = col.or(Some(GridSpan::SpanEnd));
+            }
             "center" => ambiguous.push(GridSpan::Center),
             "span-all" => ambiguous.push(GridSpan::SpanAll),
             "start" | "self-start" => ambiguous.push(GridSpan::Start),
@@ -678,7 +714,10 @@ fn parse_position_area(area: &str) -> (GridSpan, GridSpan) {
         }
     }
 
-    (row.unwrap_or(GridSpan::SpanAll), col.unwrap_or(GridSpan::SpanAll))
+    (
+        row.unwrap_or(GridSpan::SpanAll),
+        col.unwrap_or(GridSpan::SpanAll),
+    )
 }
 
 /// Compute the inset-modified containing block (IMCB) rectangle for a
@@ -722,13 +761,7 @@ fn compute_grid_rect(anchor: Rect, cb: Rect, row: GridSpan, col: GridSpan) -> Re
 ///
 /// Start-side spans align to the end (closest to anchor), end-side spans
 /// align to the start (closest to anchor), and center/span-all center.
-fn align_in_rect(
-    rect: Rect,
-    elem_w: f32,
-    elem_h: f32,
-    row: GridSpan,
-    col: GridSpan,
-) -> (f32, f32) {
+fn align_in_rect(rect: Rect, elem_w: f32, elem_h: f32, row: GridSpan, col: GridSpan) -> (f32, f32) {
     let x = match col {
         GridSpan::Start | GridSpan::SpanStart => rect.x + rect.width - elem_w,
         GridSpan::End | GridSpan::SpanEnd => rect.x,
@@ -751,58 +784,133 @@ mod tests {
 
     #[test]
     fn parse_single_row_keywords() {
-        assert_eq!(parse_position_area("top"), (GridSpan::Start, GridSpan::SpanAll));
-        assert_eq!(parse_position_area("bottom"), (GridSpan::End, GridSpan::SpanAll));
-        assert_eq!(parse_position_area("span-top"), (GridSpan::SpanStart, GridSpan::SpanAll));
-        assert_eq!(parse_position_area("span-bottom"), (GridSpan::SpanEnd, GridSpan::SpanAll));
+        assert_eq!(
+            parse_position_area("top"),
+            (GridSpan::Start, GridSpan::SpanAll)
+        );
+        assert_eq!(
+            parse_position_area("bottom"),
+            (GridSpan::End, GridSpan::SpanAll)
+        );
+        assert_eq!(
+            parse_position_area("span-top"),
+            (GridSpan::SpanStart, GridSpan::SpanAll)
+        );
+        assert_eq!(
+            parse_position_area("span-bottom"),
+            (GridSpan::SpanEnd, GridSpan::SpanAll)
+        );
     }
 
     #[test]
     fn parse_single_col_keywords() {
-        assert_eq!(parse_position_area("left"), (GridSpan::SpanAll, GridSpan::Start));
-        assert_eq!(parse_position_area("right"), (GridSpan::SpanAll, GridSpan::End));
-        assert_eq!(parse_position_area("span-left"), (GridSpan::SpanAll, GridSpan::SpanStart));
-        assert_eq!(parse_position_area("span-right"), (GridSpan::SpanAll, GridSpan::SpanEnd));
+        assert_eq!(
+            parse_position_area("left"),
+            (GridSpan::SpanAll, GridSpan::Start)
+        );
+        assert_eq!(
+            parse_position_area("right"),
+            (GridSpan::SpanAll, GridSpan::End)
+        );
+        assert_eq!(
+            parse_position_area("span-left"),
+            (GridSpan::SpanAll, GridSpan::SpanStart)
+        );
+        assert_eq!(
+            parse_position_area("span-right"),
+            (GridSpan::SpanAll, GridSpan::SpanEnd)
+        );
     }
 
     #[test]
     fn parse_single_ambiguous() {
-        assert_eq!(parse_position_area("center"), (GridSpan::Center, GridSpan::Center));
-        assert_eq!(parse_position_area("span-all"), (GridSpan::SpanAll, GridSpan::SpanAll));
-        assert_eq!(parse_position_area("start"), (GridSpan::Start, GridSpan::Start));
+        assert_eq!(
+            parse_position_area("center"),
+            (GridSpan::Center, GridSpan::Center)
+        );
+        assert_eq!(
+            parse_position_area("span-all"),
+            (GridSpan::SpanAll, GridSpan::SpanAll)
+        );
+        assert_eq!(
+            parse_position_area("start"),
+            (GridSpan::Start, GridSpan::Start)
+        );
         assert_eq!(parse_position_area("end"), (GridSpan::End, GridSpan::End));
     }
 
     #[test]
     fn parse_two_keywords() {
-        assert_eq!(parse_position_area("top left"), (GridSpan::Start, GridSpan::Start));
-        assert_eq!(parse_position_area("top right"), (GridSpan::Start, GridSpan::End));
-        assert_eq!(parse_position_area("bottom left"), (GridSpan::End, GridSpan::Start));
-        assert_eq!(parse_position_area("bottom right"), (GridSpan::End, GridSpan::End));
-        assert_eq!(parse_position_area("top center"), (GridSpan::Start, GridSpan::Center));
-        assert_eq!(parse_position_area("bottom center"), (GridSpan::End, GridSpan::Center));
-        assert_eq!(parse_position_area("center left"), (GridSpan::Center, GridSpan::Start));
-        assert_eq!(parse_position_area("center right"), (GridSpan::Center, GridSpan::End));
+        assert_eq!(
+            parse_position_area("top left"),
+            (GridSpan::Start, GridSpan::Start)
+        );
+        assert_eq!(
+            parse_position_area("top right"),
+            (GridSpan::Start, GridSpan::End)
+        );
+        assert_eq!(
+            parse_position_area("bottom left"),
+            (GridSpan::End, GridSpan::Start)
+        );
+        assert_eq!(
+            parse_position_area("bottom right"),
+            (GridSpan::End, GridSpan::End)
+        );
+        assert_eq!(
+            parse_position_area("top center"),
+            (GridSpan::Start, GridSpan::Center)
+        );
+        assert_eq!(
+            parse_position_area("bottom center"),
+            (GridSpan::End, GridSpan::Center)
+        );
+        assert_eq!(
+            parse_position_area("center left"),
+            (GridSpan::Center, GridSpan::Start)
+        );
+        assert_eq!(
+            parse_position_area("center right"),
+            (GridSpan::Center, GridSpan::End)
+        );
     }
 
     #[test]
     fn parse_reversed_order() {
         // Column keyword first, row keyword second — should still resolve correctly.
-        assert_eq!(parse_position_area("left top"), (GridSpan::Start, GridSpan::Start));
-        assert_eq!(parse_position_area("right bottom"), (GridSpan::End, GridSpan::End));
+        assert_eq!(
+            parse_position_area("left top"),
+            (GridSpan::Start, GridSpan::Start)
+        );
+        assert_eq!(
+            parse_position_area("right bottom"),
+            (GridSpan::End, GridSpan::End)
+        );
     }
 
     #[test]
     fn parse_span_combinations() {
-        assert_eq!(parse_position_area("span-top right"), (GridSpan::SpanStart, GridSpan::End));
-        assert_eq!(parse_position_area("bottom span-left"), (GridSpan::End, GridSpan::SpanStart));
+        assert_eq!(
+            parse_position_area("span-top right"),
+            (GridSpan::SpanStart, GridSpan::End)
+        );
+        assert_eq!(
+            parse_position_area("bottom span-left"),
+            (GridSpan::End, GridSpan::SpanStart)
+        );
     }
 
     #[test]
     fn parse_empty_and_unknown() {
         assert_eq!(parse_position_area(""), (GridSpan::End, GridSpan::SpanAll));
-        assert_eq!(parse_position_area("  "), (GridSpan::End, GridSpan::SpanAll));
-        assert_eq!(parse_position_area("bogus"), (GridSpan::End, GridSpan::SpanAll));
+        assert_eq!(
+            parse_position_area("  "),
+            (GridSpan::End, GridSpan::SpanAll)
+        );
+        assert_eq!(
+            parse_position_area("bogus"),
+            (GridSpan::End, GridSpan::SpanAll)
+        );
     }
 
     // ── compute_grid_rect ──────────────────────────────────────────────
@@ -845,21 +953,36 @@ mod tests {
 
     #[test]
     fn grid_rect_span_all() {
-        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::SpanAll, GridSpan::SpanAll);
+        let r = compute_grid_rect(
+            test_anchor(),
+            test_cb(),
+            GridSpan::SpanAll,
+            GridSpan::SpanAll,
+        );
         assert_eq!(r, Rect::new(0.0, 0.0, 800.0, 600.0));
     }
 
     #[test]
     fn grid_rect_span_start() {
         // SpanStart row = CB.top through anchor.bottom.
-        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::SpanStart, GridSpan::Center);
+        let r = compute_grid_rect(
+            test_anchor(),
+            test_cb(),
+            GridSpan::SpanStart,
+            GridSpan::Center,
+        );
         assert_eq!(r, Rect::new(100.0, 0.0, 50.0, 230.0));
     }
 
     #[test]
     fn grid_rect_span_end() {
         // SpanEnd row = anchor.top through CB.bottom.
-        let r = compute_grid_rect(test_anchor(), test_cb(), GridSpan::SpanEnd, GridSpan::Center);
+        let r = compute_grid_rect(
+            test_anchor(),
+            test_cb(),
+            GridSpan::SpanEnd,
+            GridSpan::Center,
+        );
         assert_eq!(r, Rect::new(100.0, 200.0, 50.0, 400.0));
     }
 
@@ -867,9 +990,7 @@ mod tests {
 
     #[test]
     fn default_below_anchor() {
-        let (x, y) = anchor_position(
-            test_anchor(), test_cb(), 40.0, 20.0, None, 800.0, 600.0,
-        );
+        let (x, y) = anchor_position(test_anchor(), test_cb(), 40.0, 20.0, None, 800.0, 600.0);
         assert_eq!(x, 100.0);
         assert_eq!(y, 230.0);
     }
@@ -877,7 +998,13 @@ mod tests {
     #[test]
     fn position_area_top() {
         let (x, y) = anchor_position(
-            test_anchor(), test_cb(), 40.0, 20.0, Some("top"), 800.0, 600.0,
+            test_anchor(),
+            test_cb(),
+            40.0,
+            20.0,
+            Some("top"),
+            800.0,
+            600.0,
         );
         // IMCB: (0, 0, 800, 200) — row Start, col SpanAll.
         // Align: y = 200-20 = 180 (end of IMCB), x = (800-40)/2 = 380 (centered).
@@ -888,7 +1015,13 @@ mod tests {
     #[test]
     fn position_area_bottom_right() {
         let (x, y) = anchor_position(
-            test_anchor(), test_cb(), 40.0, 20.0, Some("bottom right"), 800.0, 600.0,
+            test_anchor(),
+            test_cb(),
+            40.0,
+            20.0,
+            Some("bottom right"),
+            800.0,
+            600.0,
         );
         // IMCB: (150, 230, 650, 370) — row End, col End.
         // Align: y = 230 (start of IMCB), x = 150 (start of IMCB).
@@ -899,7 +1032,13 @@ mod tests {
     #[test]
     fn position_area_top_left() {
         let (x, y) = anchor_position(
-            test_anchor(), test_cb(), 40.0, 20.0, Some("top left"), 800.0, 600.0,
+            test_anchor(),
+            test_cb(),
+            40.0,
+            20.0,
+            Some("top left"),
+            800.0,
+            600.0,
         );
         // IMCB: (0, 0, 100, 200) — row Start, col Start.
         // Align: y = 200-20 = 180 (end toward anchor), x = 100-40 = 60.
@@ -934,7 +1073,13 @@ mod tests {
     #[test]
     fn no_flip_when_not_overflowing() {
         let (x, y) = anchor_position(
-            test_anchor(), test_cb(), 40.0, 20.0, Some("bottom"), 800.0, 600.0,
+            test_anchor(),
+            test_cb(),
+            40.0,
+            20.0,
+            Some("bottom"),
+            800.0,
+            600.0,
         );
         // IMCB (bottom): (0, 230, 800, 370). Elem fits — no flip.
         assert_eq!(x, 380.0);

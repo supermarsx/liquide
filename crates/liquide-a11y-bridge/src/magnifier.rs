@@ -20,16 +20,18 @@ pub struct Rect {
 impl Rect {
     #[must_use]
     pub fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Check if a point lies inside this rectangle.
     #[must_use]
     pub fn contains(&self, px: f64, py: f64) -> bool {
-        px >= self.x
-            && px < self.x + self.width
-            && py >= self.y
-            && py < self.y + self.height
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
     }
 
     /// Centre point.
@@ -174,31 +176,25 @@ impl MagnifierState {
     #[must_use]
     pub fn lens_rect(&self, lens: &MagnifierLens) -> Rect {
         match lens {
-            MagnifierLens::FullScreen => {
-                Rect::new(0.0, 0.0, self.screen_width, self.screen_height)
-            }
+            MagnifierLens::FullScreen => Rect::new(0.0, 0.0, self.screen_width, self.screen_height),
             MagnifierLens::TopHalf => {
                 Rect::new(0.0, 0.0, self.screen_width, self.screen_height / 2.0)
             }
-            MagnifierLens::BottomHalf => {
-                Rect::new(
-                    0.0,
-                    self.screen_height / 2.0,
-                    self.screen_width,
-                    self.screen_height / 2.0,
-                )
-            }
+            MagnifierLens::BottomHalf => Rect::new(
+                0.0,
+                self.screen_height / 2.0,
+                self.screen_width,
+                self.screen_height / 2.0,
+            ),
             MagnifierLens::LeftHalf => {
                 Rect::new(0.0, 0.0, self.screen_width / 2.0, self.screen_height)
             }
-            MagnifierLens::RightHalf => {
-                Rect::new(
-                    self.screen_width / 2.0,
-                    0.0,
-                    self.screen_width / 2.0,
-                    self.screen_height,
-                )
-            }
+            MagnifierLens::RightHalf => Rect::new(
+                self.screen_width / 2.0,
+                0.0,
+                self.screen_width / 2.0,
+                self.screen_height,
+            ),
             MagnifierLens::Custom(r) => *r,
         }
     }

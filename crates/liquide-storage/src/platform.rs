@@ -27,7 +27,9 @@ use std::path::Path;
 /// Read a sysfs file and return its trimmed contents.
 #[cfg(target_os = "linux")]
 fn read_sysfs(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Read a sysfs file and parse as u64.
@@ -151,8 +153,8 @@ fn list_partitions_for_device(
         };
 
         let uuid = read_sysfs(&part_path.join("uuid"));
-        let is_system = mount_point.as_deref() == Some("/")
-            || mount_point.as_deref() == Some("/boot");
+        let is_system =
+            mount_point.as_deref() == Some("/") || mount_point.as_deref() == Some("/boot");
 
         partitions.push(Partition {
             id: dev_path,
@@ -322,9 +324,7 @@ pub fn unmount_partition(partition_id: &str) -> Result<(), StorageError> {
 #[cfg(target_os = "linux")]
 pub fn eject_device(device_id: &str) -> Result<(), StorageError> {
     // Eject by writing to /sys/block/<dev>/device/delete after unmounting all partitions.
-    let dev_name = device_id
-        .strip_prefix("/dev/")
-        .unwrap_or(device_id);
+    let dev_name = device_id.strip_prefix("/dev/").unwrap_or(device_id);
 
     // First unmount all mounted partitions of this device.
     let mounts = parse_proc_mounts();
@@ -432,7 +432,7 @@ mod win32_storage {
     #[repr(C)]
     pub struct StoragePropertyQuery {
         pub property_id: u32,
-        pub query_type: u32,   // PropertyStandardQuery = 0
+        pub query_type: u32, // PropertyStandardQuery = 0
         pub additional: [u8; 1],
     }
 
@@ -636,7 +636,8 @@ pub fn list_devices() -> Result<Vec<StorageDevice>, StorageError> {
 
         // Determine if this is the system partition (where Windows is installed).
         let is_system = {
-            let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+            let sys_root =
+                std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
             sys_root
                 .to_uppercase()
                 .starts_with(&letter.to_uppercase().to_string())
@@ -780,7 +781,10 @@ pub fn list_devices() -> Result<Vec<StorageDevice>, StorageError> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("diskutil exit {}: {stderr}", output.status)));
+        return Err(StorageError::CommandFailed(format!(
+            "diskutil exit {}: {stderr}",
+            output.status
+        )));
     }
 
     // Parse plist output to find disk identifiers, then query each with diskutil info.
@@ -972,9 +976,13 @@ fn enumerate_macos_partitions(disk_id: &str) -> Result<Vec<Partition>, StorageEr
 
         let dev_path = format!("/dev/{part_id}");
         let label = get_field("VolumeName");
-        let fstype = get_field("FilesystemType").or_else(|| get_field("Type")).unwrap_or_default();
+        let fstype = get_field("FilesystemType")
+            .or_else(|| get_field("Type"))
+            .unwrap_or_default();
         let mount_point = get_field("MountPoint").filter(|s| !s.is_empty());
-        let size = get_field("TotalSize").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let size = get_field("TotalSize")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
         let available = get_field("FreeSpace")
             .or_else(|| get_field("APFSContainerFree"))
             .and_then(|s| s.parse::<u64>().ok())
@@ -1018,7 +1026,9 @@ pub fn mount_partition(partition_id: &str, _mount_point: &str) -> Result<(), Sto
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("diskutil mount: {stderr}")));
+        return Err(StorageError::CommandFailed(format!(
+            "diskutil mount: {stderr}"
+        )));
     }
     Ok(())
 }
@@ -1032,7 +1042,9 @@ pub fn unmount_partition(partition_id: &str) -> Result<(), StorageError> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(StorageError::CommandFailed(format!("diskutil unmount: {stderr}")));
+        return Err(StorageError::CommandFailed(format!(
+            "diskutil unmount: {stderr}"
+        )));
     }
     Ok(())
 }

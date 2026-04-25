@@ -64,7 +64,15 @@ impl WindowTree {
         let parent_id = parent.unwrap_or(self.desktop_id);
         let id = alloc_window_id();
 
-        let node = WindowNode::new(id, Some(parent_id), class_id, style, ex_style, bounds, title.into());
+        let node = WindowNode::new(
+            id,
+            Some(parent_id),
+            class_id,
+            style,
+            ex_style,
+            bounds,
+            title.into(),
+        );
         self.nodes.insert(id, node);
 
         // Link as the topmost child (prepend to child list).
@@ -323,34 +331,50 @@ impl WindowTree {
     /// Iterate children of a window in z-order (front-to-back).
     pub fn children(&self, id: WindowId) -> WindowChildIter<'_> {
         let first = self.nodes.get(&id).and_then(|n| n.first_child);
-        WindowChildIter { nodes: &self.nodes, current: first }
+        WindowChildIter {
+            nodes: &self.nodes,
+            current: first,
+        }
     }
 
     /// Iterate children in reverse z-order (back-to-front).
     pub fn children_back(&self, id: WindowId) -> WindowChildIterRev<'_> {
         // Walk to last child.
         let last = self.last_child(id);
-        WindowChildIterRev { nodes: &self.nodes, current: last }
+        WindowChildIterRev {
+            nodes: &self.nodes,
+            current: last,
+        }
     }
 
     /// Iterate ancestors (parent, grandparent, ..., root).
     /// Does NOT include `id` itself.
     pub fn ancestors(&self, id: WindowId) -> AncestorIter<'_> {
         let parent = self.nodes.get(&id).and_then(|n| n.parent);
-        AncestorIter { nodes: &self.nodes, current: parent }
+        AncestorIter {
+            nodes: &self.nodes,
+            current: parent,
+        }
     }
 
     /// Depth-first pre-order traversal of the subtree rooted at `id`
     /// (includes `id` itself).
     pub fn descendants_dfs(&self, id: WindowId) -> DfsIter<'_> {
-        DfsIter { nodes: &self.nodes, stack: vec![id] }
+        DfsIter {
+            nodes: &self.nodes,
+            stack: vec![id],
+        }
     }
 
     /// Iterate siblings of `id` (excluding itself), front-to-back.
     pub fn siblings(&self, id: WindowId) -> SiblingIter<'_> {
         let parent = self.nodes.get(&id).and_then(|n| n.parent);
         let first = parent.and_then(|pid| self.nodes.get(&pid).and_then(|p| p.first_child));
-        SiblingIter { nodes: &self.nodes, self_id: id, current: first }
+        SiblingIter {
+            nodes: &self.nodes,
+            self_id: id,
+            current: first,
+        }
     }
 
     // -----------------------------------------------------------------------

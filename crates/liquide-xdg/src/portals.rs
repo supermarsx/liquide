@@ -266,7 +266,9 @@ impl NotificationPortal for MockPortal {
     }
 
     fn withdraw(&mut self, notification_id: &str) -> RequestHandle {
-        self.request(PortalRequest::WithdrawNotification(notification_id.to_string()))
+        self.request(PortalRequest::WithdrawNotification(
+            notification_id.to_string(),
+        ))
     }
 }
 
@@ -311,7 +313,10 @@ mod tests {
 
     #[test]
     fn notification_priority_default() {
-        assert_eq!(NotificationPriority::default(), NotificationPriority::Normal);
+        assert_eq!(
+            NotificationPriority::default(),
+            NotificationPriority::Normal
+        );
     }
 
     #[test]

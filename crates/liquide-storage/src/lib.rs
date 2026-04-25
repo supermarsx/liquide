@@ -34,8 +34,8 @@ pub mod event;
 pub mod filesystem;
 pub mod manager;
 pub mod monitor;
-pub mod platform;
 pub mod partition;
+pub mod platform;
 
 // Re-export primary types at crate root for convenience.
 pub use analyzer::{DirUsage, DiskUsage, FileInfo};
@@ -96,10 +96,7 @@ mod tests {
     fn filesystem_display() {
         assert_eq!(format!("{}", FileSystem::NTFS), "NTFS");
         assert_eq!(format!("{}", FileSystem::Ext4), "ext4");
-        assert_eq!(
-            format!("{}", FileSystem::Unknown("foo".into())),
-            "foo"
-        );
+        assert_eq!(format!("{}", FileSystem::Unknown("foo".into())), "foo");
     }
 
     #[test]

@@ -50,18 +50,11 @@ pub enum Win32AppEvent {
     /// A new window was created / discovered.
     WindowOpened(Win32AppInfo),
     /// A window was closed.
-    WindowClosed {
-        hwnd: u64,
-        pid: u32,
-    },
+    WindowClosed { hwnd: u64, pid: u32 },
     /// A window changed state (title, focus, minimize, etc.).
     WindowChanged(Win32AppInfo),
     /// A window gained focus.
-    WindowFocused {
-        hwnd: u64,
-    },
+    WindowFocused { hwnd: u64 },
     /// A window lost focus.
-    WindowUnfocused {
-        hwnd: u64,
-    },
+    WindowUnfocused { hwnd: u64 },
 }

@@ -5,17 +5,17 @@ pub mod profile;
 pub mod registry;
 
 pub use action::{
-    action_category, action_display_name, AppAction, DesktopAction, ShortcutAction, SystemAction,
-    WindowAction,
+    AppAction, DesktopAction, ShortcutAction, SystemAction, WindowAction, action_category,
+    action_display_name,
 };
 pub use binding::{
-    KeyBinding, KeyChord, KeyCode, ParseError, MOD_ALT, MOD_CTRL, MOD_HYPER, MOD_NONE, MOD_SHIFT,
-    MOD_SUPER,
+    KeyBinding, KeyChord, KeyCode, MOD_ALT, MOD_CTRL, MOD_HYPER, MOD_NONE, MOD_SHIFT, MOD_SUPER,
+    ParseError,
 };
 pub use defaults::register_defaults;
 pub use profile::{
-    apply_profile, export_profile, profile_accessibility, profile_compact, profile_default,
-    ShortcutProfile,
+    ShortcutProfile, apply_profile, export_profile, profile_accessibility, profile_compact,
+    profile_default,
 };
 pub use registry::{
     ConflictError, ShortcutContext, ShortcutEntry, ShortcutRegistry, ShortcutSource,

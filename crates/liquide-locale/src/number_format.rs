@@ -55,7 +55,7 @@ fn rules_for_locale(locale: &Locale) -> NumberFormatRules {
         },
         ("fr", _) => NumberFormatRules {
             decimal_sep: ",",
-            thousands_sep: "\u{202f}",  // narrow no-break space
+            thousands_sep: "\u{202f}", // narrow no-break space
             grouping: 3,
             currency_symbol: "\u{20ac}",
             currency_prefix: false,
@@ -117,8 +117,8 @@ fn rules_for_locale(locale: &Locale) -> NumberFormatRules {
             percent_space: false,
         },
         ("ar", _) => NumberFormatRules {
-            decimal_sep: "\u{066b}",  // Arabic decimal separator
-            thousands_sep: "\u{066c}",  // Arabic thousands separator
+            decimal_sep: "\u{066b}",   // Arabic decimal separator
+            thousands_sep: "\u{066c}", // Arabic thousands separator
             grouping: 3,
             currency_symbol: "ر.س",
             currency_prefix: false,
@@ -127,7 +127,7 @@ fn rules_for_locale(locale: &Locale) -> NumberFormatRules {
         },
         ("ru", _) => NumberFormatRules {
             decimal_sep: ",",
-            thousands_sep: "\u{00a0}",  // no-break space
+            thousands_sep: "\u{00a0}", // no-break space
             grouping: 3,
             currency_symbol: "\u{20bd}",
             currency_prefix: false,
@@ -137,7 +137,7 @@ fn rules_for_locale(locale: &Locale) -> NumberFormatRules {
         ("hi", _) => NumberFormatRules {
             decimal_sep: ".",
             thousands_sep: ",",
-            grouping: 3,  // simplified; Hindi uses 3 for last group, 2 for rest
+            grouping: 3, // simplified; Hindi uses 3 for last group, 2 for rest
             currency_symbol: "\u{20b9}",
             currency_prefix: true,
             currency_space: false,
@@ -245,7 +245,11 @@ pub fn format_number(value: f64, locale: &Locale) -> String {
         return "NaN".to_string();
     }
     if value.is_infinite() {
-        return if value > 0.0 { "\u{221e}".to_string() } else { "-\u{221e}".to_string() };
+        return if value > 0.0 {
+            "\u{221e}".to_string()
+        } else {
+            "-\u{221e}".to_string()
+        };
     }
 
     let negative = value < 0.0;

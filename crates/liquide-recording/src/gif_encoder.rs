@@ -84,8 +84,7 @@ impl GifEncoder {
         self.output.push(4); // block size
         // Packed: disposal=none(0), user input=0, transparent=0
         self.output.push(0x00);
-        self.output
-            .extend_from_slice(&self.delay_cs.to_le_bytes());
+        self.output.extend_from_slice(&self.delay_cs.to_le_bytes());
         self.output.push(0); // transparent color index (unused)
         self.output.push(0); // block terminator
 
@@ -93,10 +92,8 @@ impl GifEncoder {
         self.output.push(0x2C); // image separator
         self.output.extend_from_slice(&0u16.to_le_bytes()); // left
         self.output.extend_from_slice(&0u16.to_le_bytes()); // top
-        self.output
-            .extend_from_slice(&self.width.to_le_bytes());
-        self.output
-            .extend_from_slice(&self.height.to_le_bytes());
+        self.output.extend_from_slice(&self.width.to_le_bytes());
+        self.output.extend_from_slice(&self.height.to_le_bytes());
         self.output.push(0x00); // packed: no local color table, not interlaced
 
         // --- Quantize RGBA to palette indices ---

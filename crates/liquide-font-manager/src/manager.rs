@@ -107,12 +107,7 @@ impl FontManager {
         let key = family.to_lowercase();
         self.family_index
             .get(&key)
-            .map(|indices| {
-                indices
-                    .iter()
-                    .filter_map(|&i| self.fonts.get(i))
-                    .collect()
-            })
+            .map(|indices| indices.iter().filter_map(|&i| self.fonts.get(i)).collect())
             .unwrap_or_default()
     }
 
@@ -163,10 +158,7 @@ impl FontManager {
         }
 
         // Validate extension.
-        let ext = source
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("");
         if FontFormat::from_extension(ext).is_none() {
             return Err(FontError::UnsupportedFormat {
                 path: path.to_string(),
@@ -185,11 +177,10 @@ impl FontManager {
         std::fs::copy(source, &dest)?;
 
         let dest_str = dest.to_string_lossy().to_string();
-        let info = FontInfo::from_path(&dest_str, false).ok_or_else(|| {
-            FontError::InstallFailed {
+        let info =
+            FontInfo::from_path(&dest_str, false).ok_or_else(|| FontError::InstallFailed {
                 reason: format!("could not parse font metadata from {dest_str}"),
-            }
-        })?;
+            })?;
 
         tracing::info!(
             family = %info.family,

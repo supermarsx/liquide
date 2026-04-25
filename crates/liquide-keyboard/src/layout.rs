@@ -98,7 +98,10 @@ impl DeadKey {
     /// Attempt to compose a base character with this dead key's accent.
     /// Returns the composed character, or the fallback if no combination exists.
     pub fn compose(&self, base: char) -> char {
-        self.combinations.get(&base).copied().unwrap_or(self.fallback)
+        self.combinations
+            .get(&base)
+            .copied()
+            .unwrap_or(self.fallback)
     }
 
     /// Check whether a composition exists for the given base character.

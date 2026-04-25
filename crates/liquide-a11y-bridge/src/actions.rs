@@ -210,7 +210,10 @@ impl std::fmt::Debug for ActionHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ActionHandler")
             .field("action_sets", &self.action_sets)
-            .field("callbacks", &format!("({} callbacks)", self.callbacks.len()))
+            .field(
+                "callbacks",
+                &format!("({} callbacks)", self.callbacks.len()),
+            )
             .finish()
     }
 }
@@ -222,7 +225,10 @@ impl std::fmt::Debug for ActionHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     #[test]
     fn action_set_add_contains() {
@@ -285,10 +291,13 @@ mod tests {
         let fired_clone = Arc::clone(&fired);
 
         handler.set_actions(1, ActionSet::from_actions(&[AccessibleAction::Click]));
-        handler.set_callback(1, Box::new(move |_id, _action| {
-            fired_clone.store(true, Ordering::SeqCst);
-            true
-        }));
+        handler.set_callback(
+            1,
+            Box::new(move |_id, _action| {
+                fired_clone.store(true, Ordering::SeqCst);
+                true
+            }),
+        );
 
         assert!(handler.perform_action(1, AccessibleAction::Click));
         assert!(fired.load(Ordering::SeqCst));

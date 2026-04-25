@@ -142,9 +142,9 @@ impl CssTestRunner {
 
         for (node_idx, assertion) in &test.assertions {
             let node_id = nodes[*node_idx];
-            let style = style_map
-                .get(node_id)
-                .unwrap_or_else(|| panic!("[{}] No style found for node index {}", test.name, node_idx));
+            let style = style_map.get(node_id).unwrap_or_else(|| {
+                panic!("[{}] No style found for node index {}", test.name, node_idx)
+            });
 
             if let Err(msg) = (assertion.check)(style) {
                 panic!(
@@ -558,7 +558,10 @@ fn box_sizing_content_box() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("box-sizing", box_sizing == BoxSizing::ContentBox))],
+        assertions: vec![(
+            0,
+            assert_style!("box-sizing", box_sizing == BoxSizing::ContentBox),
+        )],
     });
 }
 
@@ -573,7 +576,10 @@ fn box_sizing_border_box() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("box-sizing", box_sizing == BoxSizing::BorderBox))],
+        assertions: vec![(
+            0,
+            assert_style!("box-sizing", box_sizing == BoxSizing::BorderBox),
+        )],
     });
 }
 
@@ -603,7 +609,10 @@ fn width_percent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("width", width == Dimension::Percent(50.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("width", width == Dimension::Percent(50.0)),
+        )],
     });
 }
 
@@ -633,7 +642,10 @@ fn height_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("height", height == Dimension::Px(300.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("height", height == Dimension::Px(300.0)),
+        )],
     });
 }
 
@@ -648,7 +660,10 @@ fn min_width_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("min-width", min_width == Dimension::Px(100.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("min-width", min_width == Dimension::Px(100.0)),
+        )],
     });
 }
 
@@ -663,7 +678,10 @@ fn max_width_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("max-width", max_width == Dimension::Px(500.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("max-width", max_width == Dimension::Px(500.0)),
+        )],
     });
 }
 
@@ -678,7 +696,10 @@ fn max_width_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("max-width", max_width == Dimension::None))],
+        assertions: vec![(
+            0,
+            assert_dimension!("max-width", max_width == Dimension::None),
+        )],
     });
 }
 
@@ -693,7 +714,10 @@ fn min_height_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("min-height", min_height == Dimension::Px(50.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("min-height", min_height == Dimension::Px(50.0)),
+        )],
     });
 }
 
@@ -708,7 +732,10 @@ fn max_height_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("max-height", max_height == Dimension::Px(800.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("max-height", max_height == Dimension::Px(800.0)),
+        )],
     });
 }
 
@@ -724,10 +751,22 @@ fn margin_all_sides() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(10.0))),
-            (0, assert_side!("margin-right", margin.right == Dimension::Px(10.0))),
-            (0, assert_side!("margin-bottom", margin.bottom == Dimension::Px(10.0))),
-            (0, assert_side!("margin-left", margin.left == Dimension::Px(10.0))),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-right", margin.right == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-bottom", margin.bottom == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Px(10.0)),
+            ),
         ],
     });
 }
@@ -745,7 +784,10 @@ fn margin_auto() {
         }),
         assertions: vec![
             (0, assert_side!("margin-top", margin.top == Dimension::Auto)),
-            (0, assert_side!("margin-left", margin.left == Dimension::Auto)),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Auto),
+            ),
         ],
     });
 }
@@ -762,10 +804,22 @@ fn margin_individual_sides() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(5.0))),
-            (0, assert_side!("margin-right", margin.right == Dimension::Px(10.0))),
-            (0, assert_side!("margin-bottom", margin.bottom == Dimension::Px(15.0))),
-            (0, assert_side!("margin-left", margin.left == Dimension::Px(20.0))),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(5.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-right", margin.right == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-bottom", margin.bottom == Dimension::Px(15.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Px(20.0)),
+            ),
         ],
     });
 }
@@ -782,10 +836,22 @@ fn padding_all_sides() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("padding-top", padding.top == Dimension::Px(20.0))),
-            (0, assert_side!("padding-right", padding.right == Dimension::Px(20.0))),
-            (0, assert_side!("padding-bottom", padding.bottom == Dimension::Px(20.0))),
-            (0, assert_side!("padding-left", padding.left == Dimension::Px(20.0))),
+            (
+                0,
+                assert_side!("padding-top", padding.top == Dimension::Px(20.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-right", padding.right == Dimension::Px(20.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-bottom", padding.bottom == Dimension::Px(20.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-left", padding.left == Dimension::Px(20.0)),
+            ),
         ],
     });
 }
@@ -794,7 +860,8 @@ fn padding_all_sides() {
 fn padding_individual_sides() {
     CssTestRunner::run(&CssTestCase {
         name: "padding individual sides",
-        css: "div { padding-top: 2px; padding-right: 4px; padding-bottom: 6px; padding-left: 8px; }",
+        css:
+            "div { padding-top: 2px; padding-right: 4px; padding-bottom: 6px; padding-left: 8px; }",
         build_dom: Box::new(|doc| {
             let root = doc.root();
             let div = doc.create_element("div");
@@ -802,10 +869,22 @@ fn padding_individual_sides() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("padding-top", padding.top == Dimension::Px(2.0))),
-            (0, assert_side!("padding-right", padding.right == Dimension::Px(4.0))),
-            (0, assert_side!("padding-bottom", padding.bottom == Dimension::Px(6.0))),
-            (0, assert_side!("padding-left", padding.left == Dimension::Px(8.0))),
+            (
+                0,
+                assert_side!("padding-top", padding.top == Dimension::Px(2.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-right", padding.right == Dimension::Px(4.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-bottom", padding.bottom == Dimension::Px(6.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-left", padding.left == Dimension::Px(8.0)),
+            ),
         ],
     });
 }
@@ -821,9 +900,10 @@ fn padding_percent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("padding-top", padding.top == Dimension::Percent(5.0))),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!("padding-top", padding.top == Dimension::Percent(5.0)),
+        )],
     });
 }
 
@@ -839,10 +919,22 @@ fn border_width_all() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side_f32!("border-width-top", border_width.top == 2.0)),
-            (0, assert_side_f32!("border-width-right", border_width.right == 2.0)),
-            (0, assert_side_f32!("border-width-bottom", border_width.bottom == 2.0)),
-            (0, assert_side_f32!("border-width-left", border_width.left == 2.0)),
+            (
+                0,
+                assert_side_f32!("border-width-top", border_width.top == 2.0),
+            ),
+            (
+                0,
+                assert_side_f32!("border-width-right", border_width.right == 2.0),
+            ),
+            (
+                0,
+                assert_side_f32!("border-width-bottom", border_width.bottom == 2.0),
+            ),
+            (
+                0,
+                assert_side_f32!("border-width-left", border_width.left == 2.0),
+            ),
         ],
     });
 }
@@ -859,8 +951,20 @@ fn border_style_solid() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Solid)),
-            (0, assert_side!("border-style-left", border_style.left == BorderLineStyle::Solid)),
+            (
+                0,
+                assert_side!(
+                    "border-style-top",
+                    border_style.top == BorderLineStyle::Solid
+                ),
+            ),
+            (
+                0,
+                assert_side!(
+                    "border-style-left",
+                    border_style.left == BorderLineStyle::Solid
+                ),
+            ),
         ],
     });
 }
@@ -876,9 +980,13 @@ fn border_style_dashed() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Dashed)),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!(
+                "border-style-top",
+                border_style.top == BorderLineStyle::Dashed
+            ),
+        )],
     });
 }
 
@@ -893,9 +1001,13 @@ fn border_style_dotted() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Dotted)),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!(
+                "border-style-top",
+                border_style.top == BorderLineStyle::Dotted
+            ),
+        )],
     });
 }
 
@@ -911,10 +1023,28 @@ fn border_radius_uniform() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_corner_f32!("border-top-left-radius", border_radius.top_left == 8.0)),
-            (0, assert_corner_f32!("border-top-right-radius", border_radius.top_right == 8.0)),
-            (0, assert_corner_f32!("border-bottom-right-radius", border_radius.bottom_right == 8.0)),
-            (0, assert_corner_f32!("border-bottom-left-radius", border_radius.bottom_left == 8.0)),
+            (
+                0,
+                assert_corner_f32!("border-top-left-radius", border_radius.top_left == 8.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("border-top-right-radius", border_radius.top_right == 8.0),
+            ),
+            (
+                0,
+                assert_corner_f32!(
+                    "border-bottom-right-radius",
+                    border_radius.bottom_right == 8.0
+                ),
+            ),
+            (
+                0,
+                assert_corner_f32!(
+                    "border-bottom-left-radius",
+                    border_radius.bottom_left == 8.0
+                ),
+            ),
         ],
     });
 }
@@ -930,8 +1060,9 @@ fn border_color_hex() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, StyleAssertion {
+        assertions: vec![(
+            0,
+            StyleAssertion {
                 description: "border-color-top red",
                 check: Box::new(|style| {
                     if style.border_color.top.r == 255 && style.border_color.top.g == 0 {
@@ -940,8 +1071,8 @@ fn border_color_hex() {
                         Err(format!("expected red, got {:?}", style.border_color.top))
                     }
                 }),
-            }),
-        ],
+            },
+        )],
     });
 }
 
@@ -960,7 +1091,10 @@ fn position_offsets() {
             (0, assert_style!("position", position == Position::Absolute)),
             (0, assert_dimension!("top", top == Dimension::Px(10.0))),
             (0, assert_dimension!("right", right == Dimension::Px(20.0))),
-            (0, assert_dimension!("bottom", bottom == Dimension::Px(30.0))),
+            (
+                0,
+                assert_dimension!("bottom", bottom == Dimension::Px(30.0)),
+            ),
             (0, assert_dimension!("left", left == Dimension::Px(40.0))),
         ],
     });
@@ -1022,7 +1156,10 @@ fn visibility_hidden() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("visibility", visibility == Visibility::Hidden))],
+        assertions: vec![(
+            0,
+            assert_style!("visibility", visibility == Visibility::Hidden),
+        )],
     });
 }
 
@@ -1097,7 +1234,10 @@ fn height_vh_units() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("height", height == Dimension::Vh(100.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("height", height == Dimension::Vh(100.0)),
+        )],
     });
 }
 
@@ -1112,7 +1252,10 @@ fn width_min_content() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("width", width == Dimension::MinContent))],
+        assertions: vec![(
+            0,
+            assert_dimension!("width", width == Dimension::MinContent),
+        )],
     });
 }
 
@@ -1127,7 +1270,10 @@ fn width_max_content() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("width", width == Dimension::MaxContent))],
+        assertions: vec![(
+            0,
+            assert_dimension!("width", width == Dimension::MaxContent),
+        )],
     });
 }
 
@@ -1236,7 +1382,10 @@ fn background_color_hex() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_color!("background-color", background_color == (0, 255, 0)))],
+        assertions: vec![(
+            0,
+            assert_color!("background-color", background_color == (0, 255, 0)),
+        )],
     });
 }
 
@@ -1251,7 +1400,10 @@ fn background_color_named() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_color!("background-color", background_color == (255, 255, 255)))],
+        assertions: vec![(
+            0,
+            assert_color!("background-color", background_color == (255, 255, 255)),
+        )],
     });
 }
 
@@ -1303,16 +1455,19 @@ fn font_weight_bold() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-weight: bold (700)",
-            check: Box::new(|style| {
-                if style.font_weight == 700 {
-                    Ok(())
-                } else {
-                    Err(format!("expected 700, got {}", style.font_weight))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-weight: bold (700)",
+                check: Box::new(|style| {
+                    if style.font_weight == 700 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 700, got {}", style.font_weight))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -1327,16 +1482,19 @@ fn font_weight_numeric() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-weight: 300",
-            check: Box::new(|style| {
-                if style.font_weight == 300 {
-                    Ok(())
-                } else {
-                    Err(format!("expected 300, got {}", style.font_weight))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-weight: 300",
+                check: Box::new(|style| {
+                    if style.font_weight == 300 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 300, got {}", style.font_weight))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -1351,7 +1509,10 @@ fn font_style_italic() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("font-style", font_style == FontStyle::Italic))],
+        assertions: vec![(
+            0,
+            assert_style!("font-style", font_style == FontStyle::Italic),
+        )],
     });
 }
 
@@ -1366,7 +1527,10 @@ fn text_align_center() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-align", text_align == TextAlign::Center))],
+        assertions: vec![(
+            0,
+            assert_style!("text-align", text_align == TextAlign::Center),
+        )],
     });
 }
 
@@ -1381,7 +1545,10 @@ fn text_align_right() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-align", text_align == TextAlign::Right))],
+        assertions: vec![(
+            0,
+            assert_style!("text-align", text_align == TextAlign::Right),
+        )],
     });
 }
 
@@ -1396,7 +1563,10 @@ fn text_align_justify() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-align", text_align == TextAlign::Justify))],
+        assertions: vec![(
+            0,
+            assert_style!("text-align", text_align == TextAlign::Justify),
+        )],
     });
 }
 
@@ -1411,7 +1581,10 @@ fn text_transform_uppercase() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-transform", text_transform == TextTransform::Uppercase))],
+        assertions: vec![(
+            0,
+            assert_style!("text-transform", text_transform == TextTransform::Uppercase),
+        )],
     });
 }
 
@@ -1426,7 +1599,10 @@ fn text_transform_lowercase() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-transform", text_transform == TextTransform::Lowercase))],
+        assertions: vec![(
+            0,
+            assert_style!("text-transform", text_transform == TextTransform::Lowercase),
+        )],
     });
 }
 
@@ -1441,7 +1617,13 @@ fn text_transform_capitalize() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-transform", text_transform == TextTransform::Capitalize))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "text-transform",
+                text_transform == TextTransform::Capitalize
+            ),
+        )],
     });
 }
 
@@ -1456,7 +1638,10 @@ fn text_overflow_ellipsis() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-overflow", text_overflow == TextOverflow::Ellipsis))],
+        assertions: vec![(
+            0,
+            assert_style!("text-overflow", text_overflow == TextOverflow::Ellipsis),
+        )],
     });
 }
 
@@ -1471,7 +1656,10 @@ fn line_height_number() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("line-height", line_height == LineHeight::Number(1.5)))],
+        assertions: vec![(
+            0,
+            assert_style!("line-height", line_height == LineHeight::Number(1.5)),
+        )],
     });
 }
 
@@ -1486,7 +1674,10 @@ fn line_height_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("line-height", line_height == LineHeight::Px(24.0)))],
+        assertions: vec![(
+            0,
+            assert_style!("line-height", line_height == LineHeight::Px(24.0)),
+        )],
     });
 }
 
@@ -1501,7 +1692,10 @@ fn letter_spacing_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style_f32!("letter-spacing", letter_spacing == 2.0))],
+        assertions: vec![(
+            0,
+            assert_style_f32!("letter-spacing", letter_spacing == 2.0),
+        )],
     });
 }
 
@@ -1576,16 +1770,22 @@ fn background_color_transparent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "background-color alpha = 0",
-            check: Box::new(|style| {
-                if style.background_color.a == 0 {
-                    Ok(())
-                } else {
-                    Err(format!("expected alpha=0, got {}", style.background_color.a))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "background-color alpha = 0",
+                check: Box::new(|style| {
+                    if style.background_color.a == 0 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected alpha=0, got {}",
+                            style.background_color.a
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -1600,7 +1800,10 @@ fn writing_mode_vertical_rl() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("writing-mode", writing_mode == WritingMode::VerticalRl))],
+        assertions: vec![(
+            0,
+            assert_style!("writing-mode", writing_mode == WritingMode::VerticalRl),
+        )],
     });
 }
 
@@ -1615,7 +1818,10 @@ fn writing_mode_vertical_lr() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("writing-mode", writing_mode == WritingMode::VerticalLr))],
+        assertions: vec![(
+            0,
+            assert_style!("writing-mode", writing_mode == WritingMode::VerticalLr),
+        )],
     });
 }
 
@@ -1651,7 +1857,10 @@ fn flex_direction_row() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::Flex)),
-            (0, assert_style!("flex-direction", flex_direction == FlexDirection::Row)),
+            (
+                0,
+                assert_style!("flex-direction", flex_direction == FlexDirection::Row),
+            ),
         ],
     });
 }
@@ -1667,7 +1876,10 @@ fn flex_direction_column() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("flex-direction", flex_direction == FlexDirection::Column))],
+        assertions: vec![(
+            0,
+            assert_style!("flex-direction", flex_direction == FlexDirection::Column),
+        )],
     });
 }
 
@@ -1682,7 +1894,13 @@ fn flex_direction_row_reverse() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("flex-direction", flex_direction == FlexDirection::RowReverse))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "flex-direction",
+                flex_direction == FlexDirection::RowReverse
+            ),
+        )],
     });
 }
 
@@ -1697,7 +1915,13 @@ fn flex_direction_column_reverse() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("flex-direction", flex_direction == FlexDirection::ColumnReverse))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "flex-direction",
+                flex_direction == FlexDirection::ColumnReverse
+            ),
+        )],
     });
 }
 
@@ -1742,7 +1966,10 @@ fn flex_wrap_wrap_reverse() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("flex-wrap", flex_wrap == FlexWrap::WrapReverse))],
+        assertions: vec![(
+            0,
+            assert_style!("flex-wrap", flex_wrap == FlexWrap::WrapReverse),
+        )],
     });
 }
 
@@ -1757,7 +1984,10 @@ fn justify_content_center() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("justify-content", justify_content == JustifyContent::Center))],
+        assertions: vec![(
+            0,
+            assert_style!("justify-content", justify_content == JustifyContent::Center),
+        )],
     });
 }
 
@@ -1772,7 +2002,13 @@ fn justify_content_space_between() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("justify-content", justify_content == JustifyContent::SpaceBetween))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "justify-content",
+                justify_content == JustifyContent::SpaceBetween
+            ),
+        )],
     });
 }
 
@@ -1787,7 +2023,13 @@ fn justify_content_space_around() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("justify-content", justify_content == JustifyContent::SpaceAround))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "justify-content",
+                justify_content == JustifyContent::SpaceAround
+            ),
+        )],
     });
 }
 
@@ -1802,7 +2044,13 @@ fn justify_content_space_evenly() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("justify-content", justify_content == JustifyContent::SpaceEvenly))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "justify-content",
+                justify_content == JustifyContent::SpaceEvenly
+            ),
+        )],
     });
 }
 
@@ -1817,7 +2065,13 @@ fn justify_content_flex_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("justify-content", justify_content == JustifyContent::FlexEnd))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "justify-content",
+                justify_content == JustifyContent::FlexEnd
+            ),
+        )],
     });
 }
 
@@ -1832,7 +2086,10 @@ fn align_items_center() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-items", align_items == AlignItems::Center))],
+        assertions: vec![(
+            0,
+            assert_style!("align-items", align_items == AlignItems::Center),
+        )],
     });
 }
 
@@ -1847,7 +2104,10 @@ fn align_items_flex_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-items", align_items == AlignItems::FlexStart))],
+        assertions: vec![(
+            0,
+            assert_style!("align-items", align_items == AlignItems::FlexStart),
+        )],
     });
 }
 
@@ -1862,7 +2122,10 @@ fn align_items_flex_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-items", align_items == AlignItems::FlexEnd))],
+        assertions: vec![(
+            0,
+            assert_style!("align-items", align_items == AlignItems::FlexEnd),
+        )],
     });
 }
 
@@ -1877,7 +2140,10 @@ fn align_items_stretch() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-items", align_items == AlignItems::Stretch))],
+        assertions: vec![(
+            0,
+            assert_style!("align-items", align_items == AlignItems::Stretch),
+        )],
     });
 }
 
@@ -1893,7 +2159,10 @@ fn align_self_center() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_style!("align-self", align_self == AlignSelf::Center))],
+        assertions: vec![(
+            0,
+            assert_style!("align-self", align_self == AlignSelf::Center),
+        )],
     });
 }
 
@@ -1941,7 +2210,10 @@ fn flex_basis_px() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_dimension!("flex-basis", flex_basis == Dimension::Px(100.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("flex-basis", flex_basis == Dimension::Px(100.0)),
+        )],
     });
 }
 
@@ -1957,7 +2229,10 @@ fn flex_basis_auto() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_dimension!("flex-basis", flex_basis == Dimension::Auto))],
+        assertions: vec![(
+            0,
+            assert_dimension!("flex-basis", flex_basis == Dimension::Auto),
+        )],
     });
 }
 
@@ -1973,26 +2248,32 @@ fn gap_px() {
             vec![div]
         }),
         assertions: vec![
-            (0, StyleAssertion {
-                description: "gap width",
-                check: Box::new(|style| {
-                    if style.gap.width == Dimension::Px(10.0) {
-                        Ok(())
-                    } else {
-                        Err(format!("expected Px(10.0), got {:?}", style.gap.width))
-                    }
-                }),
-            }),
-            (0, StyleAssertion {
-                description: "gap height",
-                check: Box::new(|style| {
-                    if style.gap.height == Dimension::Px(10.0) {
-                        Ok(())
-                    } else {
-                        Err(format!("expected Px(10.0), got {:?}", style.gap.height))
-                    }
-                }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "gap width",
+                    check: Box::new(|style| {
+                        if style.gap.width == Dimension::Px(10.0) {
+                            Ok(())
+                        } else {
+                            Err(format!("expected Px(10.0), got {:?}", style.gap.width))
+                        }
+                    }),
+                },
+            ),
+            (
+                0,
+                StyleAssertion {
+                    description: "gap height",
+                    check: Box::new(|style| {
+                        if style.gap.height == Dimension::Px(10.0) {
+                            Ok(())
+                        } else {
+                            Err(format!("expected Px(10.0), got {:?}", style.gap.height))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -2009,16 +2290,19 @@ fn order_value() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "order",
-            check: Box::new(|style| {
-                if style.order == 3 {
-                    Ok(())
-                } else {
-                    Err(format!("expected 3, got {}", style.order))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "order",
+                check: Box::new(|style| {
+                    if style.order == 3 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 3, got {}", style.order))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -2033,7 +2317,10 @@ fn align_content_center() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-content", align_content == AlignContent::Center))],
+        assertions: vec![(
+            0,
+            assert_style!("align-content", align_content == AlignContent::Center),
+        )],
     });
 }
 
@@ -2048,7 +2335,10 @@ fn align_content_space_between() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-content", align_content == AlignContent::SpaceBetween))],
+        assertions: vec![(
+            0,
+            assert_style!("align-content", align_content == AlignContent::SpaceBetween),
+        )],
     });
 }
 
@@ -2077,11 +2367,26 @@ fn flex_container_with_children() {
             vec![container, item1, item2]
         }),
         assertions: vec![
-            (0, assert_style!("container display", display == Display::Flex)),
-            (0, assert_style!("container flex-direction", flex_direction == FlexDirection::Row)),
+            (
+                0,
+                assert_style!("container display", display == Display::Flex),
+            ),
+            (
+                0,
+                assert_style!(
+                    "container flex-direction",
+                    flex_direction == FlexDirection::Row
+                ),
+            ),
             (1, assert_style_f32!("item1 flex-grow", flex_grow == 1.0)),
-            (1, assert_style_f32!("item1 flex-shrink", flex_shrink == 0.0)),
-            (1, assert_dimension!("item1 flex-basis", flex_basis == Dimension::Px(50.0))),
+            (
+                1,
+                assert_style_f32!("item1 flex-shrink", flex_shrink == 0.0),
+            ),
+            (
+                1,
+                assert_dimension!("item1 flex-basis", flex_basis == Dimension::Px(50.0)),
+            ),
             (2, assert_style_f32!("item2 flex-grow", flex_grow == 1.0)),
         ],
     });
@@ -2102,7 +2407,10 @@ fn grid_auto_flow_row() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Row))],
+        assertions: vec![(
+            0,
+            assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Row),
+        )],
     });
 }
 
@@ -2117,7 +2425,10 @@ fn grid_auto_flow_column() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Column))],
+        assertions: vec![(
+            0,
+            assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Column),
+        )],
     });
 }
 
@@ -2132,19 +2443,25 @@ fn grid_template_columns_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-template-columns",
-            check: Box::new(|style| {
-                if style.grid_template_columns.len() == 2
-                    && style.grid_template_columns[0] == TrackSize::Px(100.0)
-                    && style.grid_template_columns[1] == TrackSize::Px(200.0)
-                {
-                    Ok(())
-                } else {
-                    Err(format!("expected [100px, 200px], got {:?}", style.grid_template_columns))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-template-columns",
+                check: Box::new(|style| {
+                    if style.grid_template_columns.len() == 2
+                        && style.grid_template_columns[0] == TrackSize::Px(100.0)
+                        && style.grid_template_columns[1] == TrackSize::Px(200.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected [100px, 200px], got {:?}",
+                            style.grid_template_columns
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -2159,19 +2476,25 @@ fn grid_template_columns_fr() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-template-columns fr",
-            check: Box::new(|style| {
-                if style.grid_template_columns.len() == 2
-                    && style.grid_template_columns[0] == TrackSize::Fr(1.0)
-                    && style.grid_template_columns[1] == TrackSize::Fr(2.0)
-                {
-                    Ok(())
-                } else {
-                    Err(format!("expected [1fr, 2fr], got {:?}", style.grid_template_columns))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-template-columns fr",
+                check: Box::new(|style| {
+                    if style.grid_template_columns.len() == 2
+                        && style.grid_template_columns[0] == TrackSize::Fr(1.0)
+                        && style.grid_template_columns[1] == TrackSize::Fr(2.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected [1fr, 2fr], got {:?}",
+                            style.grid_template_columns
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -2186,19 +2509,25 @@ fn grid_template_rows_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-template-rows",
-            check: Box::new(|style| {
-                if style.grid_template_rows.len() == 2
-                    && style.grid_template_rows[0] == TrackSize::Px(50.0)
-                    && style.grid_template_rows[1] == TrackSize::Px(100.0)
-                {
-                    Ok(())
-                } else {
-                    Err(format!("expected [50px, 100px], got {:?}", style.grid_template_rows))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-template-rows",
+                check: Box::new(|style| {
+                    if style.grid_template_rows.len() == 2
+                        && style.grid_template_rows[0] == TrackSize::Px(50.0)
+                        && style.grid_template_rows[1] == TrackSize::Px(100.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected [50px, 100px], got {:?}",
+                            style.grid_template_rows
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -2214,16 +2543,21 @@ fn grid_column_line() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-column placement",
-            check: Box::new(|style| {
-                if style.grid_column.start == GridLine::Line(1) && style.grid_column.end == GridLine::Line(3) {
-                    Ok(())
-                } else {
-                    Err(format!("expected 1/3, got {:?}", style.grid_column))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-column placement",
+                check: Box::new(|style| {
+                    if style.grid_column.start == GridLine::Line(1)
+                        && style.grid_column.end == GridLine::Line(3)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 1/3, got {:?}", style.grid_column))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -2239,16 +2573,19 @@ fn grid_row_span() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-row span",
-            check: Box::new(|style| {
-                if style.grid_row.start == GridLine::Span(2) {
-                    Ok(())
-                } else {
-                    Err(format!("expected span 2, got {:?}", style.grid_row.start))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-row span",
+                check: Box::new(|style| {
+                    if style.grid_row.start == GridLine::Span(2) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected span 2, got {:?}", style.grid_row.start))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -2313,8 +2650,20 @@ fn overflow_hidden() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_style!("overflow-x", overflow_x == liquide_compositor::scene::Overflow::Hidden)),
-            (0, assert_style!("overflow-y", overflow_y == liquide_compositor::scene::Overflow::Hidden)),
+            (
+                0,
+                assert_style!(
+                    "overflow-x",
+                    overflow_x == liquide_compositor::scene::Overflow::Hidden
+                ),
+            ),
+            (
+                0,
+                assert_style!(
+                    "overflow-y",
+                    overflow_y == liquide_compositor::scene::Overflow::Hidden
+                ),
+            ),
         ],
     });
 }
@@ -2331,8 +2680,20 @@ fn overflow_scroll() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_style!("overflow-x", overflow_x == liquide_compositor::scene::Overflow::Scroll)),
-            (0, assert_style!("overflow-y", overflow_y == liquide_compositor::scene::Overflow::Scroll)),
+            (
+                0,
+                assert_style!(
+                    "overflow-x",
+                    overflow_x == liquide_compositor::scene::Overflow::Scroll
+                ),
+            ),
+            (
+                0,
+                assert_style!(
+                    "overflow-y",
+                    overflow_y == liquide_compositor::scene::Overflow::Scroll
+                ),
+            ),
         ],
     });
 }
@@ -2349,8 +2710,20 @@ fn overflow_auto() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_style!("overflow-x", overflow_x == liquide_compositor::scene::Overflow::Auto)),
-            (0, assert_style!("overflow-y", overflow_y == liquide_compositor::scene::Overflow::Auto)),
+            (
+                0,
+                assert_style!(
+                    "overflow-x",
+                    overflow_x == liquide_compositor::scene::Overflow::Auto
+                ),
+            ),
+            (
+                0,
+                assert_style!(
+                    "overflow-y",
+                    overflow_y == liquide_compositor::scene::Overflow::Auto
+                ),
+            ),
         ],
     });
 }
@@ -2411,7 +2784,10 @@ fn pointer_events_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("pointer-events", pointer_events == PointerEvents::None))],
+        assertions: vec![(
+            0,
+            assert_style!("pointer-events", pointer_events == PointerEvents::None),
+        )],
     });
 }
 
@@ -2426,7 +2802,10 @@ fn object_fit_cover() {
             doc.append_child(root, img);
             vec![img]
         }),
-        assertions: vec![(0, assert_style!("object-fit", object_fit == ObjectFit::Cover))],
+        assertions: vec![(
+            0,
+            assert_style!("object-fit", object_fit == ObjectFit::Cover),
+        )],
     });
 }
 
@@ -2441,7 +2820,10 @@ fn object_fit_contain() {
             doc.append_child(root, img);
             vec![img]
         }),
-        assertions: vec![(0, assert_style!("object-fit", object_fit == ObjectFit::Contain))],
+        assertions: vec![(
+            0,
+            assert_style!("object-fit", object_fit == ObjectFit::Contain),
+        )],
     });
 }
 
@@ -2471,7 +2853,10 @@ fn isolation_isolate() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("isolation", isolation == Isolation::Isolate))],
+        assertions: vec![(
+            0,
+            assert_style!("isolation", isolation == Isolation::Isolate),
+        )],
     });
 }
 
@@ -2486,7 +2871,13 @@ fn backface_visibility_hidden() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("backface-visibility", backface_visibility == BackfaceVisibility::Hidden))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "backface-visibility",
+                backface_visibility == BackfaceVisibility::Hidden
+            ),
+        )],
     });
 }
 
@@ -2501,7 +2892,10 @@ fn user_select_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("user-select", user_select == UserSelect::None))],
+        assertions: vec![(
+            0,
+            assert_style!("user-select", user_select == UserSelect::None),
+        )],
     });
 }
 
@@ -2516,7 +2910,13 @@ fn border_collapse_collapse() {
             doc.append_child(root, table);
             vec![table]
         }),
-        assertions: vec![(0, assert_style!("border-collapse", border_collapse == BorderCollapse::Collapse))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "border-collapse",
+                border_collapse == BorderCollapse::Collapse
+            ),
+        )],
     });
 }
 
@@ -2531,7 +2931,10 @@ fn scroll_behavior_smooth() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("scroll-behavior", scroll_behavior == ScrollBehavior::Smooth))],
+        assertions: vec![(
+            0,
+            assert_style!("scroll-behavior", scroll_behavior == ScrollBehavior::Smooth),
+        )],
     });
 }
 
@@ -2546,7 +2949,13 @@ fn content_visibility_auto() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("content-visibility", content_visibility == ContentVisibility::Auto))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "content-visibility",
+                content_visibility == ContentVisibility::Auto
+            ),
+        )],
     });
 }
 
@@ -2561,7 +2970,13 @@ fn content_visibility_hidden() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("content-visibility", content_visibility == ContentVisibility::Hidden))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "content-visibility",
+                content_visibility == ContentVisibility::Hidden
+            ),
+        )],
     });
 }
 
@@ -2576,7 +2991,10 @@ fn list_style_type_disc() {
             doc.append_child(root, li);
             vec![li]
         }),
-        assertions: vec![(0, assert_style!("list-style-type", list_style_type == ListStyleType::Disc))],
+        assertions: vec![(
+            0,
+            assert_style!("list-style-type", list_style_type == ListStyleType::Disc),
+        )],
     });
 }
 
@@ -2591,7 +3009,10 @@ fn list_style_type_none() {
             doc.append_child(root, li);
             vec![li]
         }),
-        assertions: vec![(0, assert_style!("list-style-type", list_style_type == ListStyleType::None))],
+        assertions: vec![(
+            0,
+            assert_style!("list-style-type", list_style_type == ListStyleType::None),
+        )],
     });
 }
 
@@ -2606,7 +3027,13 @@ fn list_style_position_inside() {
             doc.append_child(root, li);
             vec![li]
         }),
-        assertions: vec![(0, assert_style!("list-style-position", list_style_position == ListStylePosition::Inside))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "list-style-position",
+                list_style_position == ListStylePosition::Inside
+            ),
+        )],
     });
 }
 
@@ -2621,7 +3048,10 @@ fn border_spacing_px() {
             doc.append_child(root, table);
             vec![table]
         }),
-        assertions: vec![(0, assert_style_f32!("border-spacing", border_spacing == 4.0))],
+        assertions: vec![(
+            0,
+            assert_style_f32!("border-spacing", border_spacing == 4.0),
+        )],
     });
 }
 
@@ -2660,7 +3090,10 @@ fn color_inherits_to_child() {
         }),
         assertions: vec![
             (0, assert_color!("parent color", color == (255, 0, 0))),
-            (1, assert_color!("child inherits color", color == (255, 0, 0))),
+            (
+                1,
+                assert_color!("child inherits color", color == (255, 0, 0)),
+            ),
         ],
     });
 }
@@ -2681,7 +3114,10 @@ fn font_size_inherits() {
         }),
         assertions: vec![
             (0, assert_style_f32!("parent font-size", font_size == 32.0)),
-            (1, assert_style_f32!("child inherits font-size", font_size == 32.0)),
+            (
+                1,
+                assert_style_f32!("child inherits font-size", font_size == 32.0),
+            ),
         ],
     });
 }
@@ -2702,7 +3138,10 @@ fn display_does_not_inherit() {
         }),
         assertions: vec![
             (0, assert_style!("parent display", display == Display::Flex)),
-            (1, assert_style!("child default display", display == Display::Block)),
+            (
+                1,
+                assert_style!("child default display", display == Display::Block),
+            ),
         ],
     });
 }
@@ -2722,26 +3161,35 @@ fn font_family_inherits() {
             vec![parent, child]
         }),
         assertions: vec![
-            (0, StyleAssertion {
-                description: "parent font-family",
-                check: Box::new(|style| {
-                    if style.font_family.contains(&"Helvetica".to_string()) {
-                        Ok(())
-                    } else {
-                        Err(format!("expected Helvetica, got {:?}", style.font_family))
-                    }
-                }),
-            }),
-            (1, StyleAssertion {
-                description: "child inherits font-family",
-                check: Box::new(|style| {
-                    if style.font_family.contains(&"Helvetica".to_string()) {
-                        Ok(())
-                    } else {
-                        Err(format!("expected Helvetica inherited, got {:?}", style.font_family))
-                    }
-                }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "parent font-family",
+                    check: Box::new(|style| {
+                        if style.font_family.contains(&"Helvetica".to_string()) {
+                            Ok(())
+                        } else {
+                            Err(format!("expected Helvetica, got {:?}", style.font_family))
+                        }
+                    }),
+                },
+            ),
+            (
+                1,
+                StyleAssertion {
+                    description: "child inherits font-family",
+                    check: Box::new(|style| {
+                        if style.font_family.contains(&"Helvetica".to_string()) {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "expected Helvetica inherited, got {:?}",
+                                style.font_family
+                            ))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -2761,8 +3209,14 @@ fn text_align_inherits() {
             vec![parent, child]
         }),
         assertions: vec![
-            (0, assert_style!("parent text-align", text_align == TextAlign::Center)),
-            (1, assert_style!("child inherits text-align", text_align == TextAlign::Center)),
+            (
+                0,
+                assert_style!("parent text-align", text_align == TextAlign::Center),
+            ),
+            (
+                1,
+                assert_style!("child inherits text-align", text_align == TextAlign::Center),
+            ),
         ],
     });
 }
@@ -2782,8 +3236,17 @@ fn line_height_inherits() {
             vec![parent, child]
         }),
         assertions: vec![
-            (0, assert_style!("parent line-height", line_height == LineHeight::Number(1.6))),
-            (1, assert_style!("child inherits line-height", line_height == LineHeight::Number(1.6))),
+            (
+                0,
+                assert_style!("parent line-height", line_height == LineHeight::Number(1.6)),
+            ),
+            (
+                1,
+                assert_style!(
+                    "child inherits line-height",
+                    line_height == LineHeight::Number(1.6)
+                ),
+            ),
         ],
     });
 }
@@ -2803,8 +3266,17 @@ fn visibility_inherits() {
             vec![parent, child]
         }),
         assertions: vec![
-            (0, assert_style!("parent visibility", visibility == Visibility::Hidden)),
-            (1, assert_style!("child inherits visibility", visibility == Visibility::Hidden)),
+            (
+                0,
+                assert_style!("parent visibility", visibility == Visibility::Hidden),
+            ),
+            (
+                1,
+                assert_style!(
+                    "child inherits visibility",
+                    visibility == Visibility::Hidden
+                ),
+            ),
         ],
     });
 }
@@ -2824,8 +3296,20 @@ fn writing_mode_inherits() {
             vec![parent, child]
         }),
         assertions: vec![
-            (0, assert_style!("parent writing-mode", writing_mode == WritingMode::VerticalRl)),
-            (1, assert_style!("child inherits writing-mode", writing_mode == WritingMode::VerticalRl)),
+            (
+                0,
+                assert_style!(
+                    "parent writing-mode",
+                    writing_mode == WritingMode::VerticalRl
+                ),
+            ),
+            (
+                1,
+                assert_style!(
+                    "child inherits writing-mode",
+                    writing_mode == WritingMode::VerticalRl
+                ),
+            ),
         ],
     });
 }
@@ -2845,8 +3329,14 @@ fn direction_inherits() {
             vec![parent, child]
         }),
         assertions: vec![
-            (0, assert_style!("parent direction", direction == Direction::Rtl)),
-            (1, assert_style!("child inherits direction", direction == Direction::Rtl)),
+            (
+                0,
+                assert_style!("parent direction", direction == Direction::Rtl),
+            ),
+            (
+                1,
+                assert_style!("child inherits direction", direction == Direction::Rtl),
+            ),
         ],
     });
 }
@@ -2866,8 +3356,14 @@ fn letter_spacing_inherits() {
             vec![parent, child]
         }),
         assertions: vec![
-            (0, assert_style_f32!("parent letter-spacing", letter_spacing == 3.0)),
-            (1, assert_style_f32!("child inherits letter-spacing", letter_spacing == 3.0)),
+            (
+                0,
+                assert_style_f32!("parent letter-spacing", letter_spacing == 3.0),
+            ),
+            (
+                1,
+                assert_style_f32!("child inherits letter-spacing", letter_spacing == 3.0),
+            ),
         ],
     });
 }
@@ -2949,7 +3445,10 @@ fn multiple_class_specificity() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_color!("two classes beat one", color == (0, 128, 0)))],
+        assertions: vec![(
+            0,
+            assert_color!("two classes beat one", color == (0, 128, 0)),
+        )],
     });
 }
 
@@ -2969,7 +3468,10 @@ fn descendant_selector_specificity() {
             doc.append_child(div, span);
             vec![div, span]
         }),
-        assertions: vec![(1, assert_color!("descendant specificity", color == (0, 128, 0)))],
+        assertions: vec![(
+            1,
+            assert_color!("descendant specificity", color == (0, 128, 0)),
+        )],
     });
 }
 
@@ -3010,7 +3512,10 @@ fn media_query_prefers_color_scheme_light() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_color!("light scheme active", color == (0, 128, 0)))],
+        assertions: vec![(
+            0,
+            assert_color!("light scheme active", color == (0, 128, 0)),
+        )],
     });
 }
 
@@ -3099,7 +3604,10 @@ fn supports_nonexistent_property() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_color!("@supports unsupported", color == (255, 0, 0)))],
+        assertions: vec![(
+            0,
+            assert_color!("@supports unsupported", color == (255, 0, 0)),
+        )],
     });
 }
 
@@ -3149,8 +3657,14 @@ fn scope_basic() {
             vec![scoped, unscoped]
         }),
         assertions: vec![
-            (0, assert_color!("scoped button green", color == (0, 128, 0))),
-            (1, assert_color!("unscoped button red", color == (255, 0, 0))),
+            (
+                0,
+                assert_color!("scoped button green", color == (0, 128, 0)),
+            ),
+            (
+                1,
+                assert_color!("unscoped button red", color == (255, 0, 0)),
+            ),
         ],
     });
 }
@@ -3273,17 +3787,20 @@ fn selector_does_not_match() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "should not match .special",
-            check: Box::new(|style| {
-                // Default color is black (0,0,0), not red
-                if style.color.r == 0 {
-                    Ok(())
-                } else {
-                    Err(format!("unexpected red color: r={}", style.color.r))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "should not match .special",
+                check: Box::new(|style| {
+                    // Default color is black (0,0,0), not red
+                    if style.color.r == 0 {
+                        Ok(())
+                    } else {
+                        Err(format!("unexpected red color: r={}", style.color.r))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3301,8 +3818,14 @@ fn selector_universal() {
             vec![div, span]
         }),
         assertions: vec![
-            (0, assert_color!("universal matches div", color == (255, 0, 0))),
-            (1, assert_color!("universal matches span", color == (255, 0, 0))),
+            (
+                0,
+                assert_color!("universal matches div", color == (255, 0, 0)),
+            ),
+            (
+                1,
+                assert_color!("universal matches span", color == (255, 0, 0)),
+            ),
         ],
     });
 }
@@ -3322,17 +3845,20 @@ fn contain_strict() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "contain strict",
-            check: Box::new(|style| {
-                let c = &style.contain;
-                if c.size && c.layout && c.style && c.paint {
-                    Ok(())
-                } else {
-                    Err(format!("expected strict containment, got {:?}", c))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "contain strict",
+                check: Box::new(|style| {
+                    let c = &style.contain;
+                    if c.size && c.layout && c.style && c.paint {
+                        Ok(())
+                    } else {
+                        Err(format!("expected strict containment, got {:?}", c))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3347,17 +3873,20 @@ fn contain_content() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "contain content",
-            check: Box::new(|style| {
-                let c = &style.contain;
-                if !c.size && c.layout && c.style && c.paint {
-                    Ok(())
-                } else {
-                    Err(format!("expected content containment, got {:?}", c))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "contain content",
+                check: Box::new(|style| {
+                    let c = &style.contain;
+                    if !c.size && c.layout && c.style && c.paint {
+                        Ok(())
+                    } else {
+                        Err(format!("expected content containment, got {:?}", c))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3372,16 +3901,22 @@ fn contain_layout_only() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "contain layout only",
-            check: Box::new(|style| {
-                if style.contain.layout {
-                    Ok(())
-                } else {
-                    Err(format!("expected layout containment, got {:?}", style.contain))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "contain layout only",
+                check: Box::new(|style| {
+                    if style.contain.layout {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected layout containment, got {:?}",
+                            style.contain
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3396,16 +3931,22 @@ fn contain_paint_only() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "contain paint only",
-            check: Box::new(|style| {
-                if style.contain.paint {
-                    Ok(())
-                } else {
-                    Err(format!("expected paint containment, got {:?}", style.contain))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "contain paint only",
+                check: Box::new(|style| {
+                    if style.contain.paint {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected paint containment, got {:?}",
+                            style.contain
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3424,7 +3965,13 @@ fn container_type_inline_size() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("container-type", container_type == ContainerType::InlineSize))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "container-type",
+                container_type == ContainerType::InlineSize
+            ),
+        )],
     });
 }
 
@@ -3439,7 +3986,10 @@ fn container_type_size() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("container-type", container_type == ContainerType::Size))],
+        assertions: vec![(
+            0,
+            assert_style!("container-type", container_type == ContainerType::Size),
+        )],
     });
 }
 
@@ -3458,7 +4008,10 @@ fn inline_size_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("inline-size", inline_size == Dimension::Px(200.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("inline-size", inline_size == Dimension::Px(200.0)),
+        )],
     });
 }
 
@@ -3473,7 +4026,10 @@ fn block_size_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("block-size", block_size == Dimension::Px(300.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("block-size", block_size == Dimension::Px(300.0)),
+        )],
     });
 }
 
@@ -3488,7 +4044,13 @@ fn margin_inline_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("margin-inline-start", margin_inline_start == Dimension::Px(10.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "margin-inline-start",
+                margin_inline_start == Dimension::Px(10.0)
+            ),
+        )],
     });
 }
 
@@ -3503,7 +4065,13 @@ fn margin_inline_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("margin-inline-end", margin_inline_end == Dimension::Px(20.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "margin-inline-end",
+                margin_inline_end == Dimension::Px(20.0)
+            ),
+        )],
     });
 }
 
@@ -3518,7 +4086,13 @@ fn padding_inline_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("padding-inline-start", padding_inline_start == Dimension::Px(15.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "padding-inline-start",
+                padding_inline_start == Dimension::Px(15.0)
+            ),
+        )],
     });
 }
 
@@ -3533,7 +4107,13 @@ fn padding_block_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("padding-block-start", padding_block_start == Dimension::Px(8.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "padding-block-start",
+                padding_block_start == Dimension::Px(8.0)
+            ),
+        )],
     });
 }
 
@@ -3548,7 +4128,13 @@ fn inset_inline_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("inset-inline-start", inset_inline_start == Dimension::Px(5.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "inset-inline-start",
+                inset_inline_start == Dimension::Px(5.0)
+            ),
+        )],
     });
 }
 
@@ -3567,16 +4153,19 @@ fn transform_translate() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform translate",
-            check: Box::new(|style| {
-                if !style.transform.is_empty() {
-                    Ok(())
-                } else {
-                    Err("expected transform, got empty".into())
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform translate",
+                check: Box::new(|style| {
+                    if !style.transform.is_empty() {
+                        Ok(())
+                    } else {
+                        Err("expected transform, got empty".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3591,16 +4180,19 @@ fn transform_scale() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform scale",
-            check: Box::new(|style| {
-                if !style.transform.is_empty() {
-                    Ok(())
-                } else {
-                    Err("expected transform, got empty".into())
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform scale",
+                check: Box::new(|style| {
+                    if !style.transform.is_empty() {
+                        Ok(())
+                    } else {
+                        Err("expected transform, got empty".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3615,16 +4207,19 @@ fn transform_rotate() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform rotate",
-            check: Box::new(|style| {
-                if !style.transform.is_empty() {
-                    Ok(())
-                } else {
-                    Err("expected transform, got empty".into())
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform rotate",
+                check: Box::new(|style| {
+                    if !style.transform.is_empty() {
+                        Ok(())
+                    } else {
+                        Err("expected transform, got empty".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -3639,7 +4234,13 @@ fn transform_style_preserve_3d() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("transform-style", transform_style == TransformStyle::Preserve3d))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "transform-style",
+                transform_style == TransformStyle::Preserve3d
+            ),
+        )],
     });
 }
 
@@ -3659,18 +4260,33 @@ fn border_shorthand() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side_f32!("border-width-top", border_width.top == 1.0)),
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Solid)),
-            (0, StyleAssertion {
-                description: "border-color-top red",
-                check: Box::new(|style| {
-                    if style.border_color.top.r == 255 {
-                        Ok(())
-                    } else {
-                        Err(format!("expected red border, got {:?}", style.border_color.top))
-                    }
-                }),
-            }),
+            (
+                0,
+                assert_side_f32!("border-width-top", border_width.top == 1.0),
+            ),
+            (
+                0,
+                assert_side!(
+                    "border-style-top",
+                    border_style.top == BorderLineStyle::Solid
+                ),
+            ),
+            (
+                0,
+                StyleAssertion {
+                    description: "border-color-top red",
+                    check: Box::new(|style| {
+                        if style.border_color.top.r == 255 {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "expected red border, got {:?}",
+                                style.border_color.top
+                            ))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -3687,10 +4303,22 @@ fn margin_shorthand_two_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(10.0))),
-            (0, assert_side!("margin-right", margin.right == Dimension::Px(20.0))),
-            (0, assert_side!("margin-bottom", margin.bottom == Dimension::Px(10.0))),
-            (0, assert_side!("margin-left", margin.left == Dimension::Px(20.0))),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-right", margin.right == Dimension::Px(20.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-bottom", margin.bottom == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Px(20.0)),
+            ),
         ],
     });
 }
@@ -3707,10 +4335,22 @@ fn margin_shorthand_three_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(10.0))),
-            (0, assert_side!("margin-right", margin.right == Dimension::Px(20.0))),
-            (0, assert_side!("margin-bottom", margin.bottom == Dimension::Px(30.0))),
-            (0, assert_side!("margin-left", margin.left == Dimension::Px(20.0))),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-right", margin.right == Dimension::Px(20.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-bottom", margin.bottom == Dimension::Px(30.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Px(20.0)),
+            ),
         ],
     });
 }
@@ -3727,10 +4367,22 @@ fn margin_shorthand_four_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(1.0))),
-            (0, assert_side!("margin-right", margin.right == Dimension::Px(2.0))),
-            (0, assert_side!("margin-bottom", margin.bottom == Dimension::Px(3.0))),
-            (0, assert_side!("margin-left", margin.left == Dimension::Px(4.0))),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(1.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-right", margin.right == Dimension::Px(2.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-bottom", margin.bottom == Dimension::Px(3.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Px(4.0)),
+            ),
         ],
     });
 }
@@ -3747,10 +4399,22 @@ fn padding_shorthand_two_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("padding-top", padding.top == Dimension::Px(5.0))),
-            (0, assert_side!("padding-right", padding.right == Dimension::Px(10.0))),
-            (0, assert_side!("padding-bottom", padding.bottom == Dimension::Px(5.0))),
-            (0, assert_side!("padding-left", padding.left == Dimension::Px(10.0))),
+            (
+                0,
+                assert_side!("padding-top", padding.top == Dimension::Px(5.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-right", padding.right == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-bottom", padding.bottom == Dimension::Px(5.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-left", padding.left == Dimension::Px(10.0)),
+            ),
         ],
     });
 }
@@ -3785,13 +4449,34 @@ fn full_box_model_test() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::Block)),
-            (0, assert_style!("box-sizing", box_sizing == BoxSizing::BorderBox)),
+            (
+                0,
+                assert_style!("box-sizing", box_sizing == BoxSizing::BorderBox),
+            ),
             (0, assert_dimension!("width", width == Dimension::Px(300.0))),
-            (0, assert_dimension!("height", height == Dimension::Px(200.0))),
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(10.0))),
-            (0, assert_side!("padding-top", padding.top == Dimension::Px(20.0))),
-            (0, assert_side_f32!("border-width-top", border_width.top == 1.0)),
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Solid)),
+            (
+                0,
+                assert_dimension!("height", height == Dimension::Px(200.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-top", padding.top == Dimension::Px(20.0)),
+            ),
+            (
+                0,
+                assert_side_f32!("border-width-top", border_width.top == 1.0),
+            ),
+            (
+                0,
+                assert_side!(
+                    "border-style-top",
+                    border_style.top == BorderLineStyle::Solid
+                ),
+            ),
         ],
     });
 }
@@ -3820,11 +4505,26 @@ fn flex_layout_complete() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::Flex)),
-            (0, assert_style!("flex-direction", flex_direction == FlexDirection::Column)),
+            (
+                0,
+                assert_style!("flex-direction", flex_direction == FlexDirection::Column),
+            ),
             (0, assert_style!("flex-wrap", flex_wrap == FlexWrap::Wrap)),
-            (0, assert_style!("justify-content", justify_content == JustifyContent::SpaceBetween)),
-            (0, assert_style!("align-items", align_items == AlignItems::Center)),
-            (0, assert_style!("align-content", align_content == AlignContent::Stretch)),
+            (
+                0,
+                assert_style!(
+                    "justify-content",
+                    justify_content == JustifyContent::SpaceBetween
+                ),
+            ),
+            (
+                0,
+                assert_style!("align-items", align_items == AlignItems::Center),
+            ),
+            (
+                0,
+                assert_style!("align-content", align_content == AlignContent::Stretch),
+            ),
         ],
     });
 }
@@ -3851,27 +4551,42 @@ fn grid_layout_complete() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::Grid)),
-            (0, assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Row)),
-            (0, StyleAssertion {
-                description: "grid-template-columns count",
-                check: Box::new(|style| {
-                    if style.grid_template_columns.len() == 3 {
-                        Ok(())
-                    } else {
-                        Err(format!("expected 3 columns, got {}", style.grid_template_columns.len()))
-                    }
-                }),
-            }),
-            (0, StyleAssertion {
-                description: "grid-template-rows count",
-                check: Box::new(|style| {
-                    if style.grid_template_rows.len() == 2 {
-                        Ok(())
-                    } else {
-                        Err(format!("expected 2 rows, got {}", style.grid_template_rows.len()))
-                    }
-                }),
-            }),
+            (
+                0,
+                assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Row),
+            ),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-template-columns count",
+                    check: Box::new(|style| {
+                        if style.grid_template_columns.len() == 3 {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "expected 3 columns, got {}",
+                                style.grid_template_columns.len()
+                            ))
+                        }
+                    }),
+                },
+            ),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-template-rows count",
+                    check: Box::new(|style| {
+                        if style.grid_template_rows.len() == 2 {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "expected 2 rows, got {}",
+                                style.grid_template_rows.len()
+                            ))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -3901,21 +4616,39 @@ fn typography_complete() {
         }),
         assertions: vec![
             (0, assert_style_f32!("font-size", font_size == 18.0)),
-            (0, StyleAssertion {
-                description: "font-weight 600",
-                check: Box::new(|style| {
-                    if style.font_weight == 600 {
-                        Ok(())
-                    } else {
-                        Err(format!("expected 600, got {}", style.font_weight))
-                    }
-                }),
-            }),
-            (0, assert_style!("font-style", font_style == FontStyle::Italic)),
-            (0, assert_style!("line-height", line_height == LineHeight::Number(1.5))),
-            (0, assert_style_f32!("letter-spacing", letter_spacing == 1.0)),
-            (0, assert_style!("text-align", text_align == TextAlign::Center)),
-            (0, assert_style!("text-transform", text_transform == TextTransform::Uppercase)),
+            (
+                0,
+                StyleAssertion {
+                    description: "font-weight 600",
+                    check: Box::new(|style| {
+                        if style.font_weight == 600 {
+                            Ok(())
+                        } else {
+                            Err(format!("expected 600, got {}", style.font_weight))
+                        }
+                    }),
+                },
+            ),
+            (
+                0,
+                assert_style!("font-style", font_style == FontStyle::Italic),
+            ),
+            (
+                0,
+                assert_style!("line-height", line_height == LineHeight::Number(1.5)),
+            ),
+            (
+                0,
+                assert_style_f32!("letter-spacing", letter_spacing == 1.0),
+            ),
+            (
+                0,
+                assert_style!("text-align", text_align == TextAlign::Center),
+            ),
+            (
+                0,
+                assert_style!("text-transform", text_transform == TextTransform::Uppercase),
+            ),
         ],
     });
 }
@@ -3980,9 +4713,18 @@ fn deep_inheritance_chain() {
             (0, assert_color!("root color", color == (255, 0, 0))),
             (0, assert_style_f32!("root font-size", font_size == 20.0)),
             (1, assert_color!("mid inherits color", color == (255, 0, 0))),
-            (1, assert_style_f32!("mid font-size override", font_size == 24.0)),
-            (2, assert_color!("leaf inherits color from root", color == (255, 0, 0))),
-            (2, assert_style_f32!("leaf inherits font-size from mid", font_size == 24.0)),
+            (
+                1,
+                assert_style_f32!("mid font-size override", font_size == 24.0),
+            ),
+            (
+                2,
+                assert_color!("leaf inherits color from root", color == (255, 0, 0)),
+            ),
+            (
+                2,
+                assert_style_f32!("leaf inherits font-size from mid", font_size == 24.0),
+            ),
         ],
     });
 }
@@ -4010,7 +4752,10 @@ fn deep_inheritance_overridden_at_leaf() {
         assertions: vec![
             (0, assert_color!("root red", color == (255, 0, 0))),
             (1, assert_color!("mid inherits red", color == (255, 0, 0))),
-            (2, assert_color!("leaf overrides to blue", color == (0, 0, 255))),
+            (
+                2,
+                assert_color!("leaf overrides to blue", color == (0, 0, 255)),
+            ),
         ],
     });
 }
@@ -4030,7 +4775,10 @@ fn empty_stylesheet() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("default display", display == Display::Block))],
+        assertions: vec![(
+            0,
+            assert_style!("default display", display == Display::Block),
+        )],
     });
 }
 
@@ -4046,8 +4794,14 @@ fn no_matching_rules() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_style!("default display", display == Display::Block)),
-            (0, assert_style!("default position", position == Position::Static)),
+            (
+                0,
+                assert_style!("default display", display == Display::Block),
+            ),
+            (
+                0,
+                assert_style!("default position", position == Position::Static),
+            ),
         ],
     });
 }
@@ -4093,15 +4847,36 @@ fn default_values_are_sane() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_style!("default display", display == Display::Block)),
-            (0, assert_style!("default position", position == Position::Static)),
-            (0, assert_style!("default box-sizing", box_sizing == BoxSizing::ContentBox)),
-            (0, assert_style!("default visibility", visibility == Visibility::Visible)),
+            (
+                0,
+                assert_style!("default display", display == Display::Block),
+            ),
+            (
+                0,
+                assert_style!("default position", position == Position::Static),
+            ),
+            (
+                0,
+                assert_style!("default box-sizing", box_sizing == BoxSizing::ContentBox),
+            ),
+            (
+                0,
+                assert_style!("default visibility", visibility == Visibility::Visible),
+            ),
             (0, assert_style!("default float", float == Float::None)),
             (0, assert_style!("default clear", clear == Clear::None)),
             (0, assert_style_f32!("default opacity", opacity == 1.0)),
-            (0, assert_style!("default flex-direction", flex_direction == FlexDirection::Row)),
-            (0, assert_style!("default flex-wrap", flex_wrap == FlexWrap::NoWrap)),
+            (
+                0,
+                assert_style!(
+                    "default flex-direction",
+                    flex_direction == FlexDirection::Row
+                ),
+            ),
+            (
+                0,
+                assert_style!("default flex-wrap", flex_wrap == FlexWrap::NoWrap),
+            ),
         ],
     });
 }
@@ -4118,8 +4893,14 @@ fn zero_dimensions() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_dimension!("width zero", width == Dimension::Px(0.0))),
-            (0, assert_dimension!("height zero", height == Dimension::Px(0.0))),
+            (
+                0,
+                assert_dimension!("width zero", width == Dimension::Px(0.0)),
+            ),
+            (
+                0,
+                assert_dimension!("height zero", height == Dimension::Px(0.0)),
+            ),
         ],
     });
 }
@@ -4267,7 +5048,10 @@ fn flex_basis_percent() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_dimension!("flex-basis", flex_basis == Dimension::Percent(50.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("flex-basis", flex_basis == Dimension::Percent(50.0)),
+        )],
     });
 }
 
@@ -4283,7 +5067,10 @@ fn flex_basis_zero() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_dimension!("flex-basis", flex_basis == Dimension::Px(0.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("flex-basis", flex_basis == Dimension::Px(0.0)),
+        )],
     });
 }
 
@@ -4299,7 +5086,10 @@ fn flex_basis_content() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_dimension!("flex-basis", flex_basis == Dimension::Content))],
+        assertions: vec![(
+            0,
+            assert_dimension!("flex-basis", flex_basis == Dimension::Content),
+        )],
     });
 }
 
@@ -4315,16 +5105,19 @@ fn order_negative() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "order",
-            check: Box::new(|style| {
-                if style.order == -1 {
-                    Ok(())
-                } else {
-                    Err(format!("expected -1, got {}", style.order))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "order",
+                check: Box::new(|style| {
+                    if style.order == -1 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected -1, got {}", style.order))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -4340,16 +5133,19 @@ fn order_zero() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "order",
-            check: Box::new(|style| {
-                if style.order == 0 {
-                    Ok(())
-                } else {
-                    Err(format!("expected 0, got {}", style.order))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "order",
+                check: Box::new(|style| {
+                    if style.order == 0 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 0, got {}", style.order))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -4365,8 +5161,14 @@ fn gap_row_and_column_separate() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_dimension!("row-gap", row_gap == Dimension::Px(10.0))),
-            (0, assert_dimension!("column-gap", column_gap == Dimension::Px(20.0))),
+            (
+                0,
+                assert_dimension!("row-gap", row_gap == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_dimension!("column-gap", column_gap == Dimension::Px(20.0)),
+            ),
         ],
     });
 }
@@ -4382,16 +5184,19 @@ fn gap_percent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "gap percent",
-            check: Box::new(|style| {
-                if style.gap.width == Dimension::Percent(5.0) {
-                    Ok(())
-                } else {
-                    Err(format!("expected Percent(5.0), got {:?}", style.gap.width))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "gap percent",
+                check: Box::new(|style| {
+                    if style.gap.width == Dimension::Percent(5.0) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected Percent(5.0), got {:?}", style.gap.width))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -4406,7 +5211,10 @@ fn align_items_baseline() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-items", align_items == AlignItems::Baseline))],
+        assertions: vec![(
+            0,
+            assert_style!("align-items", align_items == AlignItems::Baseline),
+        )],
     });
 }
 
@@ -4422,7 +5230,10 @@ fn align_self_flex_start() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_style!("align-self", align_self == AlignSelf::FlexStart))],
+        assertions: vec![(
+            0,
+            assert_style!("align-self", align_self == AlignSelf::FlexStart),
+        )],
     });
 }
 
@@ -4438,7 +5249,10 @@ fn align_self_flex_end() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_style!("align-self", align_self == AlignSelf::FlexEnd))],
+        assertions: vec![(
+            0,
+            assert_style!("align-self", align_self == AlignSelf::FlexEnd),
+        )],
     });
 }
 
@@ -4454,7 +5268,10 @@ fn align_self_stretch() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_style!("align-self", align_self == AlignSelf::Stretch))],
+        assertions: vec![(
+            0,
+            assert_style!("align-self", align_self == AlignSelf::Stretch),
+        )],
     });
 }
 
@@ -4470,7 +5287,10 @@ fn align_self_auto() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_style!("align-self", align_self == AlignSelf::Auto))],
+        assertions: vec![(
+            0,
+            assert_style!("align-self", align_self == AlignSelf::Auto),
+        )],
     });
 }
 
@@ -4486,7 +5306,10 @@ fn align_self_baseline() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_style!("align-self", align_self == AlignSelf::Baseline))],
+        assertions: vec![(
+            0,
+            assert_style!("align-self", align_self == AlignSelf::Baseline),
+        )],
     });
 }
 
@@ -4501,7 +5324,10 @@ fn align_content_flex_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-content", align_content == AlignContent::FlexStart))],
+        assertions: vec![(
+            0,
+            assert_style!("align-content", align_content == AlignContent::FlexStart),
+        )],
     });
 }
 
@@ -4516,7 +5342,10 @@ fn align_content_flex_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-content", align_content == AlignContent::FlexEnd))],
+        assertions: vec![(
+            0,
+            assert_style!("align-content", align_content == AlignContent::FlexEnd),
+        )],
     });
 }
 
@@ -4531,7 +5360,10 @@ fn align_content_space_around() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-content", align_content == AlignContent::SpaceAround))],
+        assertions: vec![(
+            0,
+            assert_style!("align-content", align_content == AlignContent::SpaceAround),
+        )],
     });
 }
 
@@ -4546,7 +5378,10 @@ fn align_content_space_evenly() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-content", align_content == AlignContent::SpaceEvenly))],
+        assertions: vec![(
+            0,
+            assert_style!("align-content", align_content == AlignContent::SpaceEvenly),
+        )],
     });
 }
 
@@ -4561,7 +5396,10 @@ fn align_content_stretch() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("align-content", align_content == AlignContent::Stretch))],
+        assertions: vec![(
+            0,
+            assert_style!("align-content", align_content == AlignContent::Stretch),
+        )],
     });
 }
 
@@ -4576,7 +5414,13 @@ fn justify_content_flex_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("justify-content", justify_content == JustifyContent::FlexStart))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "justify-content",
+                justify_content == JustifyContent::FlexStart
+            ),
+        )],
     });
 }
 
@@ -4594,7 +5438,10 @@ fn flex_item_min_width() {
         }),
         assertions: vec![
             (0, assert_style_f32!("flex-grow", flex_grow == 1.0)),
-            (0, assert_dimension!("min-width", min_width == Dimension::Px(100.0))),
+            (
+                0,
+                assert_dimension!("min-width", min_width == Dimension::Px(100.0)),
+            ),
         ],
     });
 }
@@ -4613,7 +5460,10 @@ fn flex_item_max_width() {
         }),
         assertions: vec![
             (0, assert_style_f32!("flex-grow", flex_grow == 1.0)),
-            (0, assert_dimension!("max-width", max_width == Dimension::Px(300.0))),
+            (
+                0,
+                assert_dimension!("max-width", max_width == Dimension::Px(300.0)),
+            ),
         ],
     });
 }
@@ -4632,16 +5482,21 @@ fn flex_wrap_with_gap() {
         }),
         assertions: vec![
             (0, assert_style!("flex-wrap", flex_wrap == FlexWrap::Wrap)),
-            (0, StyleAssertion {
-                description: "gap",
-                check: Box::new(|style| {
-                    if style.gap.width == Dimension::Px(12.0) && style.gap.height == Dimension::Px(12.0) {
-                        Ok(())
-                    } else {
-                        Err(format!("expected 12px gap, got {:?}", style.gap))
-                    }
-                }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "gap",
+                    check: Box::new(|style| {
+                        if style.gap.width == Dimension::Px(12.0)
+                            && style.gap.height == Dimension::Px(12.0)
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!("expected 12px gap, got {:?}", style.gap))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -4699,8 +5554,17 @@ fn flex_column_reverse_with_items() {
             vec![col, item]
         }),
         assertions: vec![
-            (0, assert_style!("flex-direction", flex_direction == FlexDirection::ColumnReverse)),
-            (0, assert_style!("align-items", align_items == AlignItems::Stretch)),
+            (
+                0,
+                assert_style!(
+                    "flex-direction",
+                    flex_direction == FlexDirection::ColumnReverse
+                ),
+            ),
+            (
+                0,
+                assert_style!("align-items", align_items == AlignItems::Stretch),
+            ),
             (1, assert_style_f32!("flex-shrink", flex_shrink == 0.0)),
         ],
     });
@@ -4733,7 +5597,10 @@ fn flex_basis_rem() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_dimension!("flex-basis", flex_basis == Dimension::Rem(5.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("flex-basis", flex_basis == Dimension::Rem(5.0)),
+        )],
     });
 }
 
@@ -4760,18 +5627,45 @@ fn flex_item_order_precedence() {
             vec![a, b, c]
         }),
         assertions: vec![
-            (0, StyleAssertion {
-                description: "order a",
-                check: Box::new(|style| { if style.order == 2 { Ok(()) } else { Err(format!("expected 2, got {}", style.order)) } }),
-            }),
-            (1, StyleAssertion {
-                description: "order b",
-                check: Box::new(|style| { if style.order == -1 { Ok(()) } else { Err(format!("expected -1, got {}", style.order)) } }),
-            }),
-            (2, StyleAssertion {
-                description: "order c",
-                check: Box::new(|style| { if style.order == 0 { Ok(()) } else { Err(format!("expected 0, got {}", style.order)) } }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "order a",
+                    check: Box::new(|style| {
+                        if style.order == 2 {
+                            Ok(())
+                        } else {
+                            Err(format!("expected 2, got {}", style.order))
+                        }
+                    }),
+                },
+            ),
+            (
+                1,
+                StyleAssertion {
+                    description: "order b",
+                    check: Box::new(|style| {
+                        if style.order == -1 {
+                            Ok(())
+                        } else {
+                            Err(format!("expected -1, got {}", style.order))
+                        }
+                    }),
+                },
+            ),
+            (
+                2,
+                StyleAssertion {
+                    description: "order c",
+                    check: Box::new(|style| {
+                        if style.order == 0 {
+                            Ok(())
+                        } else {
+                            Err(format!("expected 0, got {}", style.order))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -4790,7 +5684,10 @@ fn flex_inline_flex_display() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::InlineFlex)),
-            (0, assert_style!("flex-direction", flex_direction == FlexDirection::Row)),
+            (
+                0,
+                assert_style!("flex-direction", flex_direction == FlexDirection::Row),
+            ),
         ],
     });
 }
@@ -4839,7 +5736,10 @@ fn flex_basis_em() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, assert_dimension!("flex-basis", flex_basis == Dimension::Em(3.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("flex-basis", flex_basis == Dimension::Em(3.0)),
+        )],
     });
 }
 
@@ -4858,7 +5758,10 @@ fn grid_auto_flow_row_dense() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::RowDense))],
+        assertions: vec![(
+            0,
+            assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::RowDense),
+        )],
     });
 }
 
@@ -4873,7 +5776,13 @@ fn grid_auto_flow_column_dense() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::ColumnDense))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "grid-auto-flow",
+                grid_auto_flow == GridAutoFlow::ColumnDense
+            ),
+        )],
     });
 }
 
@@ -4888,19 +5797,25 @@ fn grid_template_columns_auto() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-template-columns auto",
-            check: Box::new(|style| {
-                if style.grid_template_columns.len() == 2
-                    && style.grid_template_columns[0] == TrackSize::Auto
-                    && style.grid_template_columns[1] == TrackSize::Auto
-                {
-                    Ok(())
-                } else {
-                    Err(format!("expected [auto, auto], got {:?}", style.grid_template_columns))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-template-columns auto",
+                check: Box::new(|style| {
+                    if style.grid_template_columns.len() == 2
+                        && style.grid_template_columns[0] == TrackSize::Auto
+                        && style.grid_template_columns[1] == TrackSize::Auto
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected [auto, auto], got {:?}",
+                            style.grid_template_columns
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -4915,20 +5830,26 @@ fn grid_template_columns_mixed() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid mixed columns",
-            check: Box::new(|style| {
-                if style.grid_template_columns.len() == 3
-                    && style.grid_template_columns[0] == TrackSize::Px(200.0)
-                    && style.grid_template_columns[1] == TrackSize::Fr(1.0)
-                    && style.grid_template_columns[2] == TrackSize::Auto
-                {
-                    Ok(())
-                } else {
-                    Err(format!("expected [200px, 1fr, auto], got {:?}", style.grid_template_columns))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid mixed columns",
+                check: Box::new(|style| {
+                    if style.grid_template_columns.len() == 3
+                        && style.grid_template_columns[0] == TrackSize::Px(200.0)
+                        && style.grid_template_columns[1] == TrackSize::Fr(1.0)
+                        && style.grid_template_columns[2] == TrackSize::Auto
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected [200px, 1fr, auto], got {:?}",
+                            style.grid_template_columns
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -4943,18 +5864,27 @@ fn grid_template_rows_fr() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid rows 3x1fr",
-            check: Box::new(|style| {
-                if style.grid_template_rows.len() == 3
-                    && style.grid_template_rows.iter().all(|t| *t == TrackSize::Fr(1.0))
-                {
-                    Ok(())
-                } else {
-                    Err(format!("expected [1fr, 1fr, 1fr], got {:?}", style.grid_template_rows))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid rows 3x1fr",
+                check: Box::new(|style| {
+                    if style.grid_template_rows.len() == 3
+                        && style
+                            .grid_template_rows
+                            .iter()
+                            .all(|t| *t == TrackSize::Fr(1.0))
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected [1fr, 1fr, 1fr], got {:?}",
+                            style.grid_template_rows
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -4969,16 +5899,22 @@ fn grid_auto_columns_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-auto-columns",
-            check: Box::new(|style| {
-                if style.grid_auto_columns == TrackSize::Px(100.0) {
-                    Ok(())
-                } else {
-                    Err(format!("expected Px(100), got {:?}", style.grid_auto_columns))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-auto-columns",
+                check: Box::new(|style| {
+                    if style.grid_auto_columns == TrackSize::Px(100.0) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected Px(100), got {:?}",
+                            style.grid_auto_columns
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -4993,16 +5929,19 @@ fn grid_auto_rows_fr() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-auto-rows",
-            check: Box::new(|style| {
-                if style.grid_auto_rows == TrackSize::Fr(1.0) {
-                    Ok(())
-                } else {
-                    Err(format!("expected Fr(1.0), got {:?}", style.grid_auto_rows))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-auto-rows",
+                check: Box::new(|style| {
+                    if style.grid_auto_rows == TrackSize::Fr(1.0) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected Fr(1.0), got {:?}", style.grid_auto_rows))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5019,20 +5958,35 @@ fn grid_column_start_end() {
             vec![item]
         }),
         assertions: vec![
-            (0, StyleAssertion {
-                description: "grid-column-start",
-                check: Box::new(|style| {
-                    if style.grid_column_start == GridLine::Line(2) { Ok(()) }
-                    else { Err(format!("expected Line(2), got {:?}", style.grid_column_start)) }
-                }),
-            }),
-            (0, StyleAssertion {
-                description: "grid-column-end",
-                check: Box::new(|style| {
-                    if style.grid_column_end == GridLine::Line(4) { Ok(()) }
-                    else { Err(format!("expected Line(4), got {:?}", style.grid_column_end)) }
-                }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-column-start",
+                    check: Box::new(|style| {
+                        if style.grid_column_start == GridLine::Line(2) {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "expected Line(2), got {:?}",
+                                style.grid_column_start
+                            ))
+                        }
+                    }),
+                },
+            ),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-column-end",
+                    check: Box::new(|style| {
+                        if style.grid_column_end == GridLine::Line(4) {
+                            Ok(())
+                        } else {
+                            Err(format!("expected Line(4), got {:?}", style.grid_column_end))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -5050,20 +6004,32 @@ fn grid_row_start_end() {
             vec![item]
         }),
         assertions: vec![
-            (0, StyleAssertion {
-                description: "grid-row-start",
-                check: Box::new(|style| {
-                    if style.grid_row_start == GridLine::Line(1) { Ok(()) }
-                    else { Err(format!("expected Line(1), got {:?}", style.grid_row_start)) }
-                }),
-            }),
-            (0, StyleAssertion {
-                description: "grid-row-end",
-                check: Box::new(|style| {
-                    if style.grid_row_end == GridLine::Line(3) { Ok(()) }
-                    else { Err(format!("expected Line(3), got {:?}", style.grid_row_end)) }
-                }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-row-start",
+                    check: Box::new(|style| {
+                        if style.grid_row_start == GridLine::Line(1) {
+                            Ok(())
+                        } else {
+                            Err(format!("expected Line(1), got {:?}", style.grid_row_start))
+                        }
+                    }),
+                },
+            ),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-row-end",
+                    check: Box::new(|style| {
+                        if style.grid_row_end == GridLine::Line(3) {
+                            Ok(())
+                        } else {
+                            Err(format!("expected Line(3), got {:?}", style.grid_row_end))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -5080,13 +6046,22 @@ fn grid_column_span_3() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-column span 3",
-            check: Box::new(|style| {
-                if style.grid_column.start == GridLine::Span(3) { Ok(()) }
-                else { Err(format!("expected span 3, got {:?}", style.grid_column.start)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-column span 3",
+                check: Box::new(|style| {
+                    if style.grid_column.start == GridLine::Span(3) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected span 3, got {:?}",
+                            style.grid_column.start
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5102,16 +6077,21 @@ fn grid_row_line_placement() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-row placement",
-            check: Box::new(|style| {
-                if style.grid_row.start == GridLine::Line(2) && style.grid_row.end == GridLine::Line(5) {
-                    Ok(())
-                } else {
-                    Err(format!("expected 2/5, got {:?}", style.grid_row))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-row placement",
+                check: Box::new(|style| {
+                    if style.grid_row.start == GridLine::Line(2)
+                        && style.grid_row.end == GridLine::Line(5)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 2/5, got {:?}", style.grid_row))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5127,8 +6107,14 @@ fn grid_gap_separate() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_dimension!("row-gap", row_gap == Dimension::Px(8.0))),
-            (0, assert_dimension!("column-gap", column_gap == Dimension::Px(16.0))),
+            (
+                0,
+                assert_dimension!("row-gap", row_gap == Dimension::Px(8.0)),
+            ),
+            (
+                0,
+                assert_dimension!("column-gap", column_gap == Dimension::Px(16.0)),
+            ),
         ],
     });
 }
@@ -5144,16 +6130,22 @@ fn grid_template_areas_basic() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-template-areas",
-            check: Box::new(|style| {
-                if style.grid_template_areas.len() == 2 {
-                    Ok(())
-                } else {
-                    Err(format!("expected 2 area rows, got {}", style.grid_template_areas.len()))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-template-areas",
+                check: Box::new(|style| {
+                    if style.grid_template_areas.len() == 2 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 2 area rows, got {}",
+                            style.grid_template_areas.len()
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5170,13 +6162,22 @@ fn grid_inline_display() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::InlineGrid)),
-            (0, StyleAssertion {
-                description: "2 columns",
-                check: Box::new(|style| {
-                    if style.grid_template_columns.len() == 2 { Ok(()) }
-                    else { Err(format!("expected 2, got {}", style.grid_template_columns.len())) }
-                }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "2 columns",
+                    check: Box::new(|style| {
+                        if style.grid_template_columns.len() == 2 {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "expected 2, got {}",
+                                style.grid_template_columns.len()
+                            ))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -5192,13 +6193,19 @@ fn grid_auto_rows_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-auto-rows 50px",
-            check: Box::new(|style| {
-                if style.grid_auto_rows == TrackSize::Px(50.0) { Ok(()) }
-                else { Err(format!("expected Px(50), got {:?}", style.grid_auto_rows)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-auto-rows 50px",
+                check: Box::new(|style| {
+                    if style.grid_auto_rows == TrackSize::Px(50.0) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected Px(50), got {:?}", style.grid_auto_rows))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5213,13 +6220,19 @@ fn grid_auto_columns_fr() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-auto-columns fr",
-            check: Box::new(|style| {
-                if style.grid_auto_columns == TrackSize::Fr(1.0) { Ok(()) }
-                else { Err(format!("expected Fr(1), got {:?}", style.grid_auto_columns)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-auto-columns fr",
+                check: Box::new(|style| {
+                    if style.grid_auto_columns == TrackSize::Fr(1.0) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected Fr(1), got {:?}", style.grid_auto_columns))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5234,19 +6247,25 @@ fn grid_template_columns_percent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid cols percent",
-            check: Box::new(|style| {
-                if style.grid_template_columns.len() == 2
-                    && style.grid_template_columns[0] == TrackSize::Percent(50.0)
-                    && style.grid_template_columns[1] == TrackSize::Percent(50.0)
-                {
-                    Ok(())
-                } else {
-                    Err(format!("expected [50%, 50%], got {:?}", style.grid_template_columns))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid cols percent",
+                check: Box::new(|style| {
+                    if style.grid_template_columns.len() == 2
+                        && style.grid_template_columns[0] == TrackSize::Percent(50.0)
+                        && style.grid_template_columns[1] == TrackSize::Percent(50.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected [50%, 50%], got {:?}",
+                            style.grid_template_columns
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5262,13 +6281,22 @@ fn grid_column_negative_line() {
             doc.append_child(root, item);
             vec![item]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "grid-column-end -1",
-            check: Box::new(|style| {
-                if style.grid_column_end == GridLine::Line(-1) { Ok(()) }
-                else { Err(format!("expected Line(-1), got {:?}", style.grid_column_end)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "grid-column-end -1",
+                check: Box::new(|style| {
+                    if style.grid_column_end == GridLine::Line(-1) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected Line(-1), got {:?}",
+                            style.grid_column_end
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5283,13 +6311,22 @@ fn grid_five_column_layout() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "5 columns",
-            check: Box::new(|style| {
-                if style.grid_template_columns.len() == 5 { Ok(()) }
-                else { Err(format!("expected 5, got {}", style.grid_template_columns.len())) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "5 columns",
+                check: Box::new(|style| {
+                    if style.grid_template_columns.len() == 5 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 5, got {}",
+                            style.grid_template_columns.len()
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5306,8 +6343,14 @@ fn grid_item_with_alignment() {
             vec![item]
         }),
         assertions: vec![
-            (0, assert_style!("align-self", align_self == AlignSelf::Center)),
-            (0, assert_style!("justify-self", justify_self == JustifySelf::End)),
+            (
+                0,
+                assert_style!("align-self", align_self == AlignSelf::Center),
+            ),
+            (
+                0,
+                assert_style!("justify-self", justify_self == JustifySelf::End),
+            ),
         ],
     });
 }
@@ -5323,7 +6366,10 @@ fn grid_container_justify_items() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("justify-items", justify_items == JustifyItems::Center))],
+        assertions: vec![(
+            0,
+            assert_style!("justify-items", justify_items == JustifyItems::Center),
+        )],
     });
 }
 
@@ -5340,26 +6386,36 @@ fn grid_column_row_combined() {
             vec![item]
         }),
         assertions: vec![
-            (0, StyleAssertion {
-                description: "grid-column 1/3",
-                check: Box::new(|style| {
-                    if style.grid_column.start == GridLine::Line(1) && style.grid_column.end == GridLine::Line(3) {
-                        Ok(())
-                    } else {
-                        Err(format!("got {:?}", style.grid_column))
-                    }
-                }),
-            }),
-            (0, StyleAssertion {
-                description: "grid-row 2/4",
-                check: Box::new(|style| {
-                    if style.grid_row.start == GridLine::Line(2) && style.grid_row.end == GridLine::Line(4) {
-                        Ok(())
-                    } else {
-                        Err(format!("got {:?}", style.grid_row))
-                    }
-                }),
-            }),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-column 1/3",
+                    check: Box::new(|style| {
+                        if style.grid_column.start == GridLine::Line(1)
+                            && style.grid_column.end == GridLine::Line(3)
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!("got {:?}", style.grid_column))
+                        }
+                    }),
+                },
+            ),
+            (
+                0,
+                StyleAssertion {
+                    description: "grid-row 2/4",
+                    check: Box::new(|style| {
+                        if style.grid_row.start == GridLine::Line(2)
+                            && style.grid_row.end == GridLine::Line(4)
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!("got {:?}", style.grid_row))
+                        }
+                    }),
+                },
+            ),
         ],
     });
 }
@@ -5375,14 +6431,21 @@ fn grid_single_column_fr() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "1 column",
-            check: Box::new(|style| {
-                if style.grid_template_columns.len() == 1
-                    && style.grid_template_columns[0] == TrackSize::Fr(1.0)
-                { Ok(()) } else { Err(format!("got {:?}", style.grid_template_columns)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "1 column",
+                check: Box::new(|style| {
+                    if style.grid_template_columns.len() == 1
+                        && style.grid_template_columns[0] == TrackSize::Fr(1.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("got {:?}", style.grid_template_columns))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5401,13 +6464,19 @@ fn transform_skew() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform skew",
-            check: Box::new(|style| {
-                if !style.transform.is_empty() { Ok(()) }
-                else { Err("expected transform, got empty".into()) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform skew",
+                check: Box::new(|style| {
+                    if !style.transform.is_empty() {
+                        Ok(())
+                    } else {
+                        Err("expected transform, got empty".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5422,13 +6491,19 @@ fn transform_matrix() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform matrix identity",
-            check: Box::new(|style| {
-                if !style.transform.is_empty() { Ok(()) }
-                else { Err("expected transform, got empty".into()) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform matrix identity",
+                check: Box::new(|style| {
+                    if !style.transform.is_empty() {
+                        Ok(())
+                    } else {
+                        Err("expected transform, got empty".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5443,21 +6518,33 @@ fn transform_translate3d() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform translate3d",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Translate3d(x, y, z) if (*x - 10.0).abs() < 0.01
-                            && (*y - 20.0).abs() < 0.01
-                            && (*z - 30.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected translate3d(10,20,30), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform translate3d",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Translate3d(x, y, z)
+                                if (*x - 10.0).abs() < 0.01
+                                    && (*y - 20.0).abs() < 0.01
+                                    && (*z - 30.0).abs() < 0.01 =>
+                            {
+                                Ok(())
+                            }
+                            other => {
+                                Err(format!("expected translate3d(10,20,30), got {:?}", other))
+                            }
+                        }
+                    } else {
+                        Err(format!(
+                            "expected 1 transform, got {}",
+                            style.transform.len()
+                        ))
                     }
-                } else {
-                    Err(format!("expected 1 transform, got {}", style.transform.len()))
-                }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5472,13 +6559,19 @@ fn transform_rotate3d() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform rotate3d",
-            check: Box::new(|style| {
-                if !style.transform.is_empty() && style.transform[0].is_3d() { Ok(()) }
-                else { Err(format!("expected 3d transform, got {:?}", style.transform)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform rotate3d",
+                check: Box::new(|style| {
+                    if !style.transform.is_empty() && style.transform[0].is_3d() {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 3d transform, got {:?}", style.transform))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5493,21 +6586,31 @@ fn transform_scale3d() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform scale3d",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Scale3d(x, y, z) if (*x - 2.0).abs() < 0.01
-                            && (*y - 2.0).abs() < 0.01
-                            && (*z - 2.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected scale3d(2,2,2), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform scale3d",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Scale3d(x, y, z)
+                                if (*x - 2.0).abs() < 0.01
+                                    && (*y - 2.0).abs() < 0.01
+                                    && (*z - 2.0).abs() < 0.01 =>
+                            {
+                                Ok(())
+                            }
+                            other => Err(format!("expected scale3d(2,2,2), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!(
+                            "expected 1 transform, got {}",
+                            style.transform.len()
+                        ))
                     }
-                } else {
-                    Err(format!("expected 1 transform, got {}", style.transform.len()))
-                }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5522,19 +6625,25 @@ fn transform_perspective_fn() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform perspective fn",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::PerspectiveFn(v) if (*v - 500.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected perspective(500), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform perspective fn",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::PerspectiveFn(v) if (*v - 500.0).abs() < 0.01 => Ok(()),
+                            other => Err(format!("expected perspective(500), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!(
+                            "expected 1 transform, got {}",
+                            style.transform.len()
+                        ))
                     }
-                } else {
-                    Err(format!("expected 1 transform, got {}", style.transform.len()))
-                }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5549,13 +6658,22 @@ fn transform_multiple() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "multiple transforms",
-            check: Box::new(|style| {
-                if style.transform.len() == 2 { Ok(()) }
-                else { Err(format!("expected 2 transforms, got {}", style.transform.len())) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "multiple transforms",
+                check: Box::new(|style| {
+                    if style.transform.len() == 2 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 2 transforms, got {}",
+                            style.transform.len()
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5570,19 +6688,26 @@ fn transform_translate_values() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "translate values",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Translate(x, y) if (*x - 50.0).abs() < 0.01 && (*y - 100.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected translate(50,100), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "translate values",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Translate(x, y)
+                                if (*x - 50.0).abs() < 0.01 && (*y - 100.0).abs() < 0.01 =>
+                            {
+                                Ok(())
+                            }
+                            other => Err(format!("expected translate(50,100), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!("expected 1, got {}", style.transform.len()))
                     }
-                } else {
-                    Err(format!("expected 1, got {}", style.transform.len()))
-                }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5597,19 +6722,26 @@ fn transform_scale_xy() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "scale values",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Scale(x, y) if (*x - 1.5).abs() < 0.01 && (*y - 2.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected scale(1.5,2), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "scale values",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Scale(x, y)
+                                if (*x - 1.5).abs() < 0.01 && (*y - 2.0).abs() < 0.01 =>
+                            {
+                                Ok(())
+                            }
+                            other => Err(format!("expected scale(1.5,2), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!("expected 1, got {}", style.transform.len()))
                     }
-                } else {
-                    Err(format!("expected 1, got {}", style.transform.len()))
-                }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5624,19 +6756,22 @@ fn transform_rotate_value() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "rotate 90deg",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Rotate(v) if (*v - 90.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected rotate(90), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "rotate 90deg",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Rotate(v) if (*v - 90.0).abs() < 0.01 => Ok(()),
+                            other => Err(format!("expected rotate(90), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!("expected 1, got {}", style.transform.len()))
                     }
-                } else {
-                    Err(format!("expected 1, got {}", style.transform.len()))
-                }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5651,16 +6786,24 @@ fn transform_origin_center() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform-origin default 50% 50%",
-            check: Box::new(|style| {
-                if style.transform_origin.x == Dimension::Percent(50.0)
-                    && style.transform_origin.y == Dimension::Percent(50.0)
-                { Ok(()) } else {
-                    Err(format!("expected 50%/50%, got {:?}", style.transform_origin))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform-origin default 50% 50%",
+                check: Box::new(|style| {
+                    if style.transform_origin.x == Dimension::Percent(50.0)
+                        && style.transform_origin.y == Dimension::Percent(50.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 50%/50%, got {:?}",
+                            style.transform_origin
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5675,16 +6818,21 @@ fn transform_origin_top_left() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform-origin top left",
-            check: Box::new(|style| {
-                if style.transform_origin.x == Dimension::Percent(0.0)
-                    && style.transform_origin.y == Dimension::Percent(0.0)
-                { Ok(()) } else {
-                    Err(format!("expected 0%/0%, got {:?}", style.transform_origin))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform-origin top left",
+                check: Box::new(|style| {
+                    if style.transform_origin.x == Dimension::Percent(0.0)
+                        && style.transform_origin.y == Dimension::Percent(0.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 0%/0%, got {:?}", style.transform_origin))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5699,16 +6847,24 @@ fn transform_origin_bottom_right() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform-origin bottom right",
-            check: Box::new(|style| {
-                if style.transform_origin.x == Dimension::Percent(100.0)
-                    && style.transform_origin.y == Dimension::Percent(100.0)
-                { Ok(()) } else {
-                    Err(format!("expected 100%/100%, got {:?}", style.transform_origin))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform-origin bottom right",
+                check: Box::new(|style| {
+                    if style.transform_origin.x == Dimension::Percent(100.0)
+                        && style.transform_origin.y == Dimension::Percent(100.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 100%/100%, got {:?}",
+                            style.transform_origin
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5723,16 +6879,24 @@ fn transform_origin_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform-origin px values",
-            check: Box::new(|style| {
-                if style.transform_origin.x == Dimension::Px(10.0)
-                    && style.transform_origin.y == Dimension::Px(20.0)
-                { Ok(()) } else {
-                    Err(format!("expected 10px/20px, got {:?}", style.transform_origin))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform-origin px values",
+                check: Box::new(|style| {
+                    if style.transform_origin.x == Dimension::Px(10.0)
+                        && style.transform_origin.y == Dimension::Px(20.0)
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 10px/20px, got {:?}",
+                            style.transform_origin
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5747,13 +6911,19 @@ fn perspective_length() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "perspective 800px",
-            check: Box::new(|style| {
-                if style.perspective == Perspective::Length(800.0) { Ok(()) }
-                else { Err(format!("expected Length(800), got {:?}", style.perspective)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "perspective 800px",
+                check: Box::new(|style| {
+                    if style.perspective == Perspective::Length(800.0) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected Length(800), got {:?}", style.perspective))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5768,13 +6938,19 @@ fn perspective_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "perspective none",
-            check: Box::new(|style| {
-                if style.perspective == Perspective::None { Ok(()) }
-                else { Err(format!("expected None, got {:?}", style.perspective)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "perspective none",
+                check: Box::new(|style| {
+                    if style.perspective == Perspective::None {
+                        Ok(())
+                    } else {
+                        Err(format!("expected None, got {:?}", style.perspective))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5789,7 +6965,13 @@ fn backface_visibility_visible() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("backface-visibility", backface_visibility == BackfaceVisibility::Visible))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "backface-visibility",
+                backface_visibility == BackfaceVisibility::Visible
+            ),
+        )],
     });
 }
 
@@ -5804,7 +6986,10 @@ fn transform_style_flat() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("transform-style", transform_style == TransformStyle::Flat))],
+        assertions: vec![(
+            0,
+            assert_style!("transform-style", transform_style == TransformStyle::Flat),
+        )],
     });
 }
 
@@ -5819,13 +7004,22 @@ fn transform_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transform none",
-            check: Box::new(|style| {
-                if style.transform.is_empty() { Ok(()) }
-                else { Err(format!("expected empty, got {} transforms", style.transform.len())) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transform none",
+                check: Box::new(|style| {
+                    if style.transform.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected empty, got {} transforms",
+                            style.transform.len()
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5840,13 +7034,22 @@ fn transform_skew_single_axis() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "skew single",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 { Ok(()) }
-                else { Err(format!("expected 1 transform, got {}", style.transform.len())) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "skew single",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 1 transform, got {}",
+                            style.transform.len()
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5861,13 +7064,22 @@ fn transform_three_functions() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "three transforms",
-            check: Box::new(|style| {
-                if style.transform.len() == 3 { Ok(()) }
-                else { Err(format!("expected 3 transforms, got {}", style.transform.len())) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "three transforms",
+                check: Box::new(|style| {
+                    if style.transform.len() == 3 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 3 transforms, got {}",
+                            style.transform.len()
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -5882,17 +7094,26 @@ fn transform_scale_uniform() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "scale uniform",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Scale(x, y) if (*x - 3.0).abs() < 0.01 && (*y - 3.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected scale(3,3), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "scale uniform",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Scale(x, y)
+                                if (*x - 3.0).abs() < 0.01 && (*y - 3.0).abs() < 0.01 =>
+                            {
+                                Ok(())
+                            }
+                            other => Err(format!("expected scale(3,3), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!("expected 1, got {}", style.transform.len()))
                     }
-                } else { Err(format!("expected 1, got {}", style.transform.len())) }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5907,17 +7128,22 @@ fn transform_translate_single_value() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "translate single",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Translate(x, _) if (*x - 25.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected translate(25, 0), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "translate single",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Translate(x, _) if (*x - 25.0).abs() < 0.01 => Ok(()),
+                            other => Err(format!("expected translate(25, 0), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!("expected 1, got {}", style.transform.len()))
                     }
-                } else { Err(format!("expected 1, got {}", style.transform.len())) }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5932,17 +7158,22 @@ fn transform_rotate_negative() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "rotate negative",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Rotate(v) if (*v - (-45.0)).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected rotate(-45), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "rotate negative",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Rotate(v) if (*v - (-45.0)).abs() < 0.01 => Ok(()),
+                            other => Err(format!("expected rotate(-45), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!("expected 1, got {}", style.transform.len()))
                     }
-                } else { Err(format!("expected 1, got {}", style.transform.len())) }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5957,17 +7188,22 @@ fn transform_rotate_360() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "rotate 360",
-            check: Box::new(|style| {
-                if style.transform.len() == 1 {
-                    match &style.transform[0] {
-                        Transform::Rotate(v) if (*v - 360.0).abs() < 0.01 => Ok(()),
-                        other => Err(format!("expected rotate(360), got {:?}", other)),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "rotate 360",
+                check: Box::new(|style| {
+                    if style.transform.len() == 1 {
+                        match &style.transform[0] {
+                            Transform::Rotate(v) if (*v - 360.0).abs() < 0.01 => Ok(()),
+                            other => Err(format!("expected rotate(360), got {:?}", other)),
+                        }
+                    } else {
+                        Err(format!("expected 1, got {}", style.transform.len()))
                     }
-                } else { Err(format!("expected 1, got {}", style.transform.len())) }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -5986,13 +7222,22 @@ fn transition_property_all() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition-property",
-            check: Box::new(|style| {
-                if style.transition_property.as_deref() == Some("all") { Ok(()) }
-                else { Err(format!("expected 'all', got {:?}", style.transition_property)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition-property",
+                check: Box::new(|style| {
+                    if style.transition_property.as_deref() == Some("all") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 'all', got {:?}",
+                            style.transition_property
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6007,13 +7252,22 @@ fn transition_duration_ms() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition-duration",
-            check: Box::new(|style| {
-                if style.transition_duration.as_deref() == Some("300ms") { Ok(()) }
-                else { Err(format!("expected '300ms', got {:?}", style.transition_duration)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition-duration",
+                check: Box::new(|style| {
+                    if style.transition_duration.as_deref() == Some("300ms") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected '300ms', got {:?}",
+                            style.transition_duration
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6028,13 +7282,22 @@ fn transition_timing_function_ease() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition-timing-function",
-            check: Box::new(|style| {
-                if style.transition_timing_function.as_deref() == Some("ease") { Ok(()) }
-                else { Err(format!("expected 'ease', got {:?}", style.transition_timing_function)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition-timing-function",
+                check: Box::new(|style| {
+                    if style.transition_timing_function.as_deref() == Some("ease") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 'ease', got {:?}",
+                            style.transition_timing_function
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6049,13 +7312,19 @@ fn transition_delay_s() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition-delay",
-            check: Box::new(|style| {
-                if style.transition_delay.as_deref() == Some("0.5s") { Ok(()) }
-                else { Err(format!("expected '0.5s', got {:?}", style.transition_delay)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition-delay",
+                check: Box::new(|style| {
+                    if style.transition_delay.as_deref() == Some("0.5s") {
+                        Ok(())
+                    } else {
+                        Err(format!("expected '0.5s', got {:?}", style.transition_delay))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6070,17 +7339,27 @@ fn transition_shorthand() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition shorthand parsed",
-            check: Box::new(|style| {
-                if !style.transition.is_empty() {
-                    let t = &style.transition[0];
-                    if t.property == "opacity" && (t.duration_ms - 200.0).abs() < 0.01
-                        && t.timing_function == TimingFunction::EaseIn
-                    { Ok(()) } else { Err(format!("got {:?}", t)) }
-                } else { Err("empty transitions".into()) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition shorthand parsed",
+                check: Box::new(|style| {
+                    if !style.transition.is_empty() {
+                        let t = &style.transition[0];
+                        if t.property == "opacity"
+                            && (t.duration_ms - 200.0).abs() < 0.01
+                            && t.timing_function == TimingFunction::EaseIn
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!("got {:?}", t))
+                        }
+                    } else {
+                        Err("empty transitions".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6095,17 +7374,27 @@ fn transition_shorthand_with_delay() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition with delay",
-            check: Box::new(|style| {
-                if !style.transition.is_empty() {
-                    let t = &style.transition[0];
-                    if t.property == "color" && (t.duration_ms - 500.0).abs() < 0.01
-                        && (t.delay_ms - 100.0).abs() < 0.01
-                    { Ok(()) } else { Err(format!("got {:?}", t)) }
-                } else { Err("empty transitions".into()) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition with delay",
+                check: Box::new(|style| {
+                    if !style.transition.is_empty() {
+                        let t = &style.transition[0];
+                        if t.property == "color"
+                            && (t.duration_ms - 500.0).abs() < 0.01
+                            && (t.delay_ms - 100.0).abs() < 0.01
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!("got {:?}", t))
+                        }
+                    } else {
+                        Err("empty transitions".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6120,13 +7409,19 @@ fn transition_timing_linear() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "timing linear",
-            check: Box::new(|style| {
-                if style.transition_timing_function.as_deref() == Some("linear") { Ok(()) }
-                else { Err(format!("got {:?}", style.transition_timing_function)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "timing linear",
+                check: Box::new(|style| {
+                    if style.transition_timing_function.as_deref() == Some("linear") {
+                        Ok(())
+                    } else {
+                        Err(format!("got {:?}", style.transition_timing_function))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6141,13 +7436,19 @@ fn transition_timing_ease_in_out() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "timing ease-in-out",
-            check: Box::new(|style| {
-                if style.transition_timing_function.as_deref() == Some("ease-in-out") { Ok(()) }
-                else { Err(format!("got {:?}", style.transition_timing_function)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "timing ease-in-out",
+                check: Box::new(|style| {
+                    if style.transition_timing_function.as_deref() == Some("ease-in-out") {
+                        Ok(())
+                    } else {
+                        Err(format!("got {:?}", style.transition_timing_function))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6162,13 +7463,19 @@ fn animation_name() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "animation-name",
-            check: Box::new(|style| {
-                if style.animation_name.as_deref() == Some("fadeIn") { Ok(()) }
-                else { Err(format!("expected 'fadeIn', got {:?}", style.animation_name)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "animation-name",
+                check: Box::new(|style| {
+                    if style.animation_name.as_deref() == Some("fadeIn") {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 'fadeIn', got {:?}", style.animation_name))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6183,13 +7490,19 @@ fn animation_duration() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "animation-duration",
-            check: Box::new(|style| {
-                if style.animation_duration.as_deref() == Some("1s") { Ok(()) }
-                else { Err(format!("expected '1s', got {:?}", style.animation_duration)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "animation-duration",
+                check: Box::new(|style| {
+                    if style.animation_duration.as_deref() == Some("1s") {
+                        Ok(())
+                    } else {
+                        Err(format!("expected '1s', got {:?}", style.animation_duration))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6204,13 +7517,22 @@ fn animation_iteration_count_infinite() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "animation-iteration-count",
-            check: Box::new(|style| {
-                if style.animation_iteration_count == AnimationIterationCount::Infinite { Ok(()) }
-                else { Err(format!("expected Infinite, got {:?}", style.animation_iteration_count)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "animation-iteration-count",
+                check: Box::new(|style| {
+                    if style.animation_iteration_count == AnimationIterationCount::Infinite {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected Infinite, got {:?}",
+                            style.animation_iteration_count
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6225,13 +7547,22 @@ fn animation_iteration_count_finite() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "animation-iteration-count 3",
-            check: Box::new(|style| {
-                if style.animation_iteration_count == AnimationIterationCount::Finite(3.0) { Ok(()) }
-                else { Err(format!("expected Finite(3), got {:?}", style.animation_iteration_count)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "animation-iteration-count 3",
+                check: Box::new(|style| {
+                    if style.animation_iteration_count == AnimationIterationCount::Finite(3.0) {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected Finite(3), got {:?}",
+                            style.animation_iteration_count
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6246,7 +7577,13 @@ fn animation_direction_reverse() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-direction", animation_direction == AnimationDirection::Reverse))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-direction",
+                animation_direction == AnimationDirection::Reverse
+            ),
+        )],
     });
 }
 
@@ -6261,7 +7598,13 @@ fn animation_direction_alternate() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-direction", animation_direction == AnimationDirection::Alternate))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-direction",
+                animation_direction == AnimationDirection::Alternate
+            ),
+        )],
     });
 }
 
@@ -6276,7 +7619,13 @@ fn animation_direction_alternate_reverse() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-direction", animation_direction == AnimationDirection::AlternateReverse))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-direction",
+                animation_direction == AnimationDirection::AlternateReverse
+            ),
+        )],
     });
 }
 
@@ -6291,7 +7640,13 @@ fn animation_fill_mode_forwards() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-fill-mode", animation_fill_mode == AnimationFillMode::Forwards))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-fill-mode",
+                animation_fill_mode == AnimationFillMode::Forwards
+            ),
+        )],
     });
 }
 
@@ -6306,7 +7661,13 @@ fn animation_fill_mode_backwards() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-fill-mode", animation_fill_mode == AnimationFillMode::Backwards))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-fill-mode",
+                animation_fill_mode == AnimationFillMode::Backwards
+            ),
+        )],
     });
 }
 
@@ -6321,7 +7682,13 @@ fn animation_fill_mode_both() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-fill-mode", animation_fill_mode == AnimationFillMode::Both))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-fill-mode",
+                animation_fill_mode == AnimationFillMode::Both
+            ),
+        )],
     });
 }
 
@@ -6336,7 +7703,13 @@ fn animation_fill_mode_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-fill-mode", animation_fill_mode == AnimationFillMode::None))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-fill-mode",
+                animation_fill_mode == AnimationFillMode::None
+            ),
+        )],
     });
 }
 
@@ -6351,7 +7724,13 @@ fn animation_play_state_paused() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-play-state", animation_play_state == AnimationPlayState::Paused))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-play-state",
+                animation_play_state == AnimationPlayState::Paused
+            ),
+        )],
     });
 }
 
@@ -6366,7 +7745,13 @@ fn animation_play_state_running() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-play-state", animation_play_state == AnimationPlayState::Running))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-play-state",
+                animation_play_state == AnimationPlayState::Running
+            ),
+        )],
     });
 }
 
@@ -6381,13 +7766,19 @@ fn animation_delay() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "animation-delay",
-            check: Box::new(|style| {
-                if style.animation_delay.as_deref() == Some("500ms") { Ok(()) }
-                else { Err(format!("expected '500ms', got {:?}", style.animation_delay)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "animation-delay",
+                check: Box::new(|style| {
+                    if style.animation_delay.as_deref() == Some("500ms") {
+                        Ok(())
+                    } else {
+                        Err(format!("expected '500ms', got {:?}", style.animation_delay))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6402,13 +7793,22 @@ fn animation_timing_function() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "animation-timing-function",
-            check: Box::new(|style| {
-                if style.animation_timing_function.as_deref() == Some("ease-in") { Ok(()) }
-                else { Err(format!("expected 'ease-in', got {:?}", style.animation_timing_function)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "animation-timing-function",
+                check: Box::new(|style| {
+                    if style.animation_timing_function.as_deref() == Some("ease-in") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 'ease-in', got {:?}",
+                            style.animation_timing_function
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6423,20 +7823,29 @@ fn animation_shorthand() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "animation shorthand",
-            check: Box::new(|style| {
-                if !style.animation.is_empty() {
-                    let a = &style.animation[0];
-                    if a.name == "slide"
-                        && (a.duration_ms - 1000.0).abs() < 0.01
-                        && a.timing_function == TimingFunction::EaseInOut
-                        && a.iteration_count == AnimationIterationCount::Infinite
-                        && a.direction == AnimationDirection::Alternate
-                    { Ok(()) } else { Err(format!("got {:?}", a)) }
-                } else { Err("empty animation".into()) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "animation shorthand",
+                check: Box::new(|style| {
+                    if !style.animation.is_empty() {
+                        let a = &style.animation[0];
+                        if a.name == "slide"
+                            && (a.duration_ms - 1000.0).abs() < 0.01
+                            && a.timing_function == TimingFunction::EaseInOut
+                            && a.iteration_count == AnimationIterationCount::Infinite
+                            && a.direction == AnimationDirection::Alternate
+                        {
+                            Ok(())
+                        } else {
+                            Err(format!("got {:?}", a))
+                        }
+                    } else {
+                        Err("empty animation".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6451,14 +7860,22 @@ fn animation_shorthand_simple() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "simple animation shorthand",
-            check: Box::new(|style| {
-                if !style.animation.is_empty() && style.animation[0].name == "fadeIn"
-                    && (style.animation[0].duration_ms - 300.0).abs() < 0.01
-                { Ok(()) } else { Err(format!("got {:?}", style.animation)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "simple animation shorthand",
+                check: Box::new(|style| {
+                    if !style.animation.is_empty()
+                        && style.animation[0].name == "fadeIn"
+                        && (style.animation[0].duration_ms - 300.0).abs() < 0.01
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("got {:?}", style.animation))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6473,13 +7890,19 @@ fn transition_property_opacity() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition-property opacity",
-            check: Box::new(|style| {
-                if style.transition_property.as_deref() == Some("opacity") { Ok(()) }
-                else { Err(format!("got {:?}", style.transition_property)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition-property opacity",
+                check: Box::new(|style| {
+                    if style.transition_property.as_deref() == Some("opacity") {
+                        Ok(())
+                    } else {
+                        Err(format!("got {:?}", style.transition_property))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6494,13 +7917,19 @@ fn transition_duration_seconds() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "transition-duration 1s",
-            check: Box::new(|style| {
-                if style.transition_duration.as_deref() == Some("1s") { Ok(()) }
-                else { Err(format!("got {:?}", style.transition_duration)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "transition-duration 1s",
+                check: Box::new(|style| {
+                    if style.transition_duration.as_deref() == Some("1s") {
+                        Ok(())
+                    } else {
+                        Err(format!("got {:?}", style.transition_duration))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6515,7 +7944,13 @@ fn animation_direction_normal() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-direction", animation_direction == AnimationDirection::Normal))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-direction",
+                animation_direction == AnimationDirection::Normal
+            ),
+        )],
     });
 }
 
@@ -6530,7 +7965,13 @@ fn animation_composition_add() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-composition", animation_composition == AnimationComposition::Add))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-composition",
+                animation_composition == AnimationComposition::Add
+            ),
+        )],
     });
 }
 
@@ -6545,7 +7986,13 @@ fn animation_composition_accumulate() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("animation-composition", animation_composition == AnimationComposition::Accumulate))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "animation-composition",
+                animation_composition == AnimationComposition::Accumulate
+            ),
+        )],
     });
 }
 
@@ -6560,7 +8007,13 @@ fn transition_behavior_allow_discrete() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("transition-behavior", transition_behavior == TransitionBehavior::AllowDiscrete))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "transition-behavior",
+                transition_behavior == TransitionBehavior::AllowDiscrete
+            ),
+        )],
     });
 }
 
@@ -6572,10 +8025,12 @@ fn transition_behavior_allow_discrete() {
 fn media_query_min_width() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(1024.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (min-width: 800px) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6589,10 +8044,12 @@ fn media_query_min_width() {
 fn media_query_max_width() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(600.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (max-width: 800px) { div { color: blue; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6606,10 +8063,12 @@ fn media_query_max_width() {
 fn media_query_min_width_not_matching() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(600.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (min-width: 800px) { div { color: blue; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6623,10 +8082,12 @@ fn media_query_min_width_not_matching() {
 fn media_query_min_height() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_height(900.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (min-height: 600px) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6640,10 +8101,12 @@ fn media_query_min_height() {
 fn media_query_max_height() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_height(400.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (max-height: 600px) { div { color: blue; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6658,10 +8121,12 @@ fn media_query_orientation_landscape() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(1024.0);
     engine.set_viewport_height(768.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (orientation: landscape) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6676,10 +8141,12 @@ fn media_query_orientation_portrait() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(768.0);
     engine.set_viewport_height(1024.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (orientation: portrait) { div { color: blue; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6693,10 +8160,12 @@ fn media_query_orientation_portrait() {
 fn media_query_and_compound() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(1024.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (min-width: 800px) and (max-width: 1200px) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6710,10 +8179,12 @@ fn media_query_and_compound() {
 fn media_query_not() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(1024.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media not (max-width: 600px) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6727,10 +8198,12 @@ fn media_query_not() {
 fn media_query_prefers_reduced_motion() {
     let mut engine = StyleEngine::default();
     engine.set_prefers_reduced_motion(true);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (prefers-reduced-motion: reduce) { div { color: blue; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6744,10 +8217,12 @@ fn media_query_prefers_reduced_motion() {
 fn media_query_prefers_contrast_high() {
     let mut engine = StyleEngine::default();
     engine.set_prefers_contrast("high");
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (prefers-contrast: high) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6761,10 +8236,12 @@ fn media_query_prefers_contrast_high() {
 fn media_query_hover_hover() {
     let mut engine = StyleEngine::default();
     engine.set_hover_available(true);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (hover: hover) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6778,10 +8255,12 @@ fn media_query_hover_hover() {
 fn media_query_pointer_fine() {
     let mut engine = StyleEngine::default();
     engine.set_pointer_type("fine");
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (pointer: fine) { div { color: blue; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6823,7 +8302,10 @@ fn supports_transform() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_color!("@supports transform", color == (0, 128, 0)))],
+        assertions: vec![(
+            0,
+            assert_color!("@supports transform", color == (0, 128, 0)),
+        )],
     });
 }
 
@@ -6892,7 +8374,10 @@ fn container_type_normal() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("container-type", container_type == ContainerType::Normal))],
+        assertions: vec![(
+            0,
+            assert_style!("container-type", container_type == ContainerType::Normal),
+        )],
     });
 }
 
@@ -6907,13 +8392,22 @@ fn container_name_value() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "container-name",
-            check: Box::new(|style| {
-                if style.container_name.as_deref() == Some("sidebar") { Ok(()) }
-                else { Err(format!("expected 'sidebar', got {:?}", style.container_name)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "container-name",
+                check: Box::new(|style| {
+                    if style.container_name.as_deref() == Some("sidebar") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 'sidebar', got {:?}",
+                            style.container_name
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -6921,10 +8415,12 @@ fn container_name_value() {
 fn media_query_display_mode_standalone() {
     let mut engine = StyleEngine::default();
     engine.set_display_mode("standalone");
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (display-mode: standalone) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6939,10 +8435,12 @@ fn media_query_aspect_ratio() {
     let mut engine = StyleEngine::default();
     engine.set_viewport_width(1920.0);
     engine.set_viewport_height(1080.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (min-aspect-ratio: 16/9) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -6956,10 +8454,12 @@ fn media_query_aspect_ratio() {
 fn media_query_resolution() {
     let mut engine = StyleEngine::default();
     engine.set_resolution_dpi(192.0);
-    engine.add_stylesheet(r#"
+    engine.add_stylesheet(
+        r#"
         div { color: red; }
         @media (min-resolution: 2dppx) { div { color: green; } }
-    "#);
+    "#,
+    );
     let mut doc = Document::new();
     let root = doc.root();
     let div = doc.create_element("div");
@@ -7020,7 +8520,10 @@ fn aspect_ratio_auto() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("aspect-ratio", aspect_ratio == AspectRatio::Auto))],
+        assertions: vec![(
+            0,
+            assert_style!("aspect-ratio", aspect_ratio == AspectRatio::Auto),
+        )],
     });
 }
 
@@ -7035,15 +8538,20 @@ fn aspect_ratio_value() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "aspect-ratio",
-            check: Box::new(|style| {
-                match &style.aspect_ratio {
-                    AspectRatio::Ratio(w, h) if (*w - 16.0).abs() < 0.01 && (*h - 9.0).abs() < 0.01 => Ok(()),
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "aspect-ratio",
+                check: Box::new(|style| match &style.aspect_ratio {
+                    AspectRatio::Ratio(w, h)
+                        if (*w - 16.0).abs() < 0.01 && (*h - 9.0).abs() < 0.01 =>
+                    {
+                        Ok(())
+                    }
                     other => Err(format!("expected 16/9, got {:?}", other)),
-                }
-            }),
-        })],
+                }),
+            },
+        )],
     });
 }
 
@@ -7058,13 +8566,19 @@ fn column_count_value() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "column-count",
-            check: Box::new(|style| {
-                if style.column_count == Some(3) { Ok(()) }
-                else { Err(format!("expected Some(3), got {:?}", style.column_count)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "column-count",
+                check: Box::new(|style| {
+                    if style.column_count == Some(3) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected Some(3), got {:?}", style.column_count))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -7079,7 +8593,10 @@ fn column_width_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("column-width", column_width == Dimension::Px(200.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("column-width", column_width == Dimension::Px(200.0)),
+        )],
     });
 }
 
@@ -7094,7 +8611,10 @@ fn column_gap_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("column-gap", column_gap == Dimension::Px(20.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("column-gap", column_gap == Dimension::Px(20.0)),
+        )],
     });
 }
 
@@ -7109,7 +8629,10 @@ fn object_fit_fill() {
             doc.append_child(root, img);
             vec![img]
         }),
-        assertions: vec![(0, assert_style!("object-fit", object_fit == ObjectFit::Fill))],
+        assertions: vec![(
+            0,
+            assert_style!("object-fit", object_fit == ObjectFit::Fill),
+        )],
     });
 }
 
@@ -7124,7 +8647,10 @@ fn object_fit_none() {
             doc.append_child(root, img);
             vec![img]
         }),
-        assertions: vec![(0, assert_style!("object-fit", object_fit == ObjectFit::None))],
+        assertions: vec![(
+            0,
+            assert_style!("object-fit", object_fit == ObjectFit::None),
+        )],
     });
 }
 
@@ -7139,7 +8665,10 @@ fn object_fit_scale_down() {
             doc.append_child(root, img);
             vec![img]
         }),
-        assertions: vec![(0, assert_style!("object-fit", object_fit == ObjectFit::ScaleDown))],
+        assertions: vec![(
+            0,
+            assert_style!("object-fit", object_fit == ObjectFit::ScaleDown),
+        )],
     });
 }
 
@@ -7154,7 +8683,10 @@ fn white_space_nowrap() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("white-space", white_space == WhiteSpace::NoWrap))],
+        assertions: vec![(
+            0,
+            assert_style!("white-space", white_space == WhiteSpace::NoWrap),
+        )],
     });
 }
 
@@ -7169,7 +8701,10 @@ fn white_space_pre() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("white-space", white_space == WhiteSpace::Pre))],
+        assertions: vec![(
+            0,
+            assert_style!("white-space", white_space == WhiteSpace::Pre),
+        )],
     });
 }
 
@@ -7184,7 +8719,10 @@ fn white_space_pre_wrap() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("white-space", white_space == WhiteSpace::PreWrap))],
+        assertions: vec![(
+            0,
+            assert_style!("white-space", white_space == WhiteSpace::PreWrap),
+        )],
     });
 }
 
@@ -7199,7 +8737,10 @@ fn white_space_pre_line() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("white-space", white_space == WhiteSpace::PreLine))],
+        assertions: vec![(
+            0,
+            assert_style!("white-space", white_space == WhiteSpace::PreLine),
+        )],
     });
 }
 
@@ -7214,7 +8755,10 @@ fn word_break_break_all() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("word-break", word_break == WordBreak::BreakAll))],
+        assertions: vec![(
+            0,
+            assert_style!("word-break", word_break == WordBreak::BreakAll),
+        )],
     });
 }
 
@@ -7229,7 +8773,10 @@ fn word_break_keep_all() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("word-break", word_break == WordBreak::KeepAll))],
+        assertions: vec![(
+            0,
+            assert_style!("word-break", word_break == WordBreak::KeepAll),
+        )],
     });
 }
 
@@ -7244,7 +8791,10 @@ fn overflow_wrap_anywhere() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("overflow-wrap", overflow_wrap == OverflowWrap::Anywhere))],
+        assertions: vec![(
+            0,
+            assert_style!("overflow-wrap", overflow_wrap == OverflowWrap::Anywhere),
+        )],
     });
 }
 
@@ -7259,7 +8809,10 @@ fn overflow_wrap_break_word() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("overflow-wrap", overflow_wrap == OverflowWrap::BreakWord))],
+        assertions: vec![(
+            0,
+            assert_style!("overflow-wrap", overflow_wrap == OverflowWrap::BreakWord),
+        )],
     });
 }
 
@@ -7379,7 +8932,10 @@ fn user_select_text() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("user-select", user_select == UserSelect::Text))],
+        assertions: vec![(
+            0,
+            assert_style!("user-select", user_select == UserSelect::Text),
+        )],
     });
 }
 
@@ -7394,7 +8950,10 @@ fn user_select_all() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("user-select", user_select == UserSelect::All))],
+        assertions: vec![(
+            0,
+            assert_style!("user-select", user_select == UserSelect::All),
+        )],
     });
 }
 
@@ -7409,7 +8968,10 @@ fn scroll_behavior_auto() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("scroll-behavior", scroll_behavior == ScrollBehavior::Auto))],
+        assertions: vec![(
+            0,
+            assert_style!("scroll-behavior", scroll_behavior == ScrollBehavior::Auto),
+        )],
     });
 }
 
@@ -7424,7 +8986,13 @@ fn content_visibility_visible() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("content-visibility", content_visibility == ContentVisibility::Visible))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "content-visibility",
+                content_visibility == ContentVisibility::Visible
+            ),
+        )],
     });
 }
 
@@ -7439,7 +9007,13 @@ fn border_collapse_separate() {
             doc.append_child(root, table);
             vec![table]
         }),
-        assertions: vec![(0, assert_style!("border-collapse", border_collapse == BorderCollapse::Separate))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "border-collapse",
+                border_collapse == BorderCollapse::Separate
+            ),
+        )],
     });
 }
 
@@ -7454,7 +9028,10 @@ fn list_style_type_decimal() {
             doc.append_child(root, li);
             vec![li]
         }),
-        assertions: vec![(0, assert_style!("list-style-type", list_style_type == ListStyleType::Decimal))],
+        assertions: vec![(
+            0,
+            assert_style!("list-style-type", list_style_type == ListStyleType::Decimal),
+        )],
     });
 }
 
@@ -7469,7 +9046,10 @@ fn list_style_type_circle() {
             doc.append_child(root, li);
             vec![li]
         }),
-        assertions: vec![(0, assert_style!("list-style-type", list_style_type == ListStyleType::Circle))],
+        assertions: vec![(
+            0,
+            assert_style!("list-style-type", list_style_type == ListStyleType::Circle),
+        )],
     });
 }
 
@@ -7484,7 +9064,10 @@ fn list_style_type_square() {
             doc.append_child(root, li);
             vec![li]
         }),
-        assertions: vec![(0, assert_style!("list-style-type", list_style_type == ListStyleType::Square))],
+        assertions: vec![(
+            0,
+            assert_style!("list-style-type", list_style_type == ListStyleType::Square),
+        )],
     });
 }
 
@@ -7499,7 +9082,13 @@ fn list_style_position_outside() {
             doc.append_child(root, li);
             vec![li]
         }),
-        assertions: vec![(0, assert_style!("list-style-position", list_style_position == ListStylePosition::Outside))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "list-style-position",
+                list_style_position == ListStylePosition::Outside
+            ),
+        )],
     });
 }
 
@@ -7529,16 +9118,23 @@ fn color_hex_8digit_alpha() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "8-digit hex color",
-            check: Box::new(|style| {
-                if style.color.r == 255 && style.color.g == 0 && style.color.b == 0 && style.color.a == 128 {
-                    Ok(())
-                } else {
-                    Err(format!("expected rgba(255,0,0,128), got {:?}", style.color))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "8-digit hex color",
+                check: Box::new(|style| {
+                    if style.color.r == 255
+                        && style.color.g == 0
+                        && style.color.b == 0
+                        && style.color.a == 128
+                    {
+                        Ok(())
+                    } else {
+                        Err(format!("expected rgba(255,0,0,128), got {:?}", style.color))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -7553,16 +9149,19 @@ fn color_rgba_function() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "rgba color",
-            check: Box::new(|style| {
-                if style.color.r == 0 && style.color.b == 255 && style.color.a == 128 {
-                    Ok(())
-                } else {
-                    Err(format!("expected rgba(0,0,255,128), got {:?}", style.color))
-                }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "rgba color",
+                check: Box::new(|style| {
+                    if style.color.r == 0 && style.color.b == 255 && style.color.a == 128 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected rgba(0,0,255,128), got {:?}", style.color))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -7578,10 +9177,28 @@ fn border_radius_individual() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_corner_f32!("border-top-left-radius", border_radius.top_left == 4.0)),
-            (0, assert_corner_f32!("border-top-right-radius", border_radius.top_right == 8.0)),
-            (0, assert_corner_f32!("border-bottom-right-radius", border_radius.bottom_right == 12.0)),
-            (0, assert_corner_f32!("border-bottom-left-radius", border_radius.bottom_left == 16.0)),
+            (
+                0,
+                assert_corner_f32!("border-top-left-radius", border_radius.top_left == 4.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("border-top-right-radius", border_radius.top_right == 8.0),
+            ),
+            (
+                0,
+                assert_corner_f32!(
+                    "border-bottom-right-radius",
+                    border_radius.bottom_right == 12.0
+                ),
+            ),
+            (
+                0,
+                assert_corner_f32!(
+                    "border-bottom-left-radius",
+                    border_radius.bottom_left == 16.0
+                ),
+            ),
         ],
     });
 }
@@ -7598,10 +9215,22 @@ fn border_width_individual() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side_f32!("border-width-top", border_width.top == 1.0)),
-            (0, assert_side_f32!("border-width-right", border_width.right == 2.0)),
-            (0, assert_side_f32!("border-width-bottom", border_width.bottom == 3.0)),
-            (0, assert_side_f32!("border-width-left", border_width.left == 4.0)),
+            (
+                0,
+                assert_side_f32!("border-width-top", border_width.top == 1.0),
+            ),
+            (
+                0,
+                assert_side_f32!("border-width-right", border_width.right == 2.0),
+            ),
+            (
+                0,
+                assert_side_f32!("border-width-bottom", border_width.bottom == 3.0),
+            ),
+            (
+                0,
+                assert_side_f32!("border-width-left", border_width.left == 4.0),
+            ),
         ],
     });
 }
@@ -7647,7 +9276,10 @@ fn text_align_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-align", text_align == TextAlign::Start))],
+        assertions: vec![(
+            0,
+            assert_style!("text-align", text_align == TextAlign::Start),
+        )],
     });
 }
 
@@ -7677,13 +9309,19 @@ fn font_weight_normal() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-weight normal",
-            check: Box::new(|style| {
-                if style.font_weight == 400 { Ok(()) }
-                else { Err(format!("expected 400, got {}", style.font_weight)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-weight normal",
+                check: Box::new(|style| {
+                    if style.font_weight == 400 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 400, got {}", style.font_weight))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -7698,13 +9336,19 @@ fn font_weight_900() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-weight 900",
-            check: Box::new(|style| {
-                if style.font_weight == 900 { Ok(()) }
-                else { Err(format!("expected 900, got {}", style.font_weight)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-weight 900",
+                check: Box::new(|style| {
+                    if style.font_weight == 900 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 900, got {}", style.font_weight))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -7719,7 +9363,10 @@ fn font_style_normal() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("font-style", font_style == FontStyle::Normal))],
+        assertions: vec![(
+            0,
+            assert_style!("font-style", font_style == FontStyle::Normal),
+        )],
     });
 }
 
@@ -7734,7 +9381,10 @@ fn font_style_oblique() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("font-style", font_style == FontStyle::Oblique))],
+        assertions: vec![(
+            0,
+            assert_style!("font-style", font_style == FontStyle::Oblique),
+        )],
     });
 }
 
@@ -7750,8 +9400,20 @@ fn overflow_xy_individual() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_style!("overflow-x", overflow_x == liquide_compositor::scene::Overflow::Scroll)),
-            (0, assert_style!("overflow-y", overflow_y == liquide_compositor::scene::Overflow::Hidden)),
+            (
+                0,
+                assert_style!(
+                    "overflow-x",
+                    overflow_x == liquide_compositor::scene::Overflow::Scroll
+                ),
+            ),
+            (
+                0,
+                assert_style!(
+                    "overflow-y",
+                    overflow_y == liquide_compositor::scene::Overflow::Hidden
+                ),
+            ),
         ],
     });
 }
@@ -7801,7 +9463,13 @@ fn padding_inline_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("padding-inline-end", padding_inline_end == Dimension::Px(12.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "padding-inline-end",
+                padding_inline_end == Dimension::Px(12.0)
+            ),
+        )],
     });
 }
 
@@ -7816,7 +9484,13 @@ fn padding_block_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("padding-block-end", padding_block_end == Dimension::Px(16.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "padding-block-end",
+                padding_block_end == Dimension::Px(16.0)
+            ),
+        )],
     });
 }
 
@@ -7831,7 +9505,13 @@ fn margin_block_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("margin-block-start", margin_block_start == Dimension::Px(24.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "margin-block-start",
+                margin_block_start == Dimension::Px(24.0)
+            ),
+        )],
     });
 }
 
@@ -7846,7 +9526,10 @@ fn margin_block_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("margin-block-end", margin_block_end == Dimension::Px(32.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("margin-block-end", margin_block_end == Dimension::Px(32.0)),
+        )],
     });
 }
 
@@ -7861,7 +9544,10 @@ fn inset_inline_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("inset-inline-end", inset_inline_end == Dimension::Px(10.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("inset-inline-end", inset_inline_end == Dimension::Px(10.0)),
+        )],
     });
 }
 
@@ -7876,7 +9562,13 @@ fn inset_block_start() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("inset-block-start", inset_block_start == Dimension::Px(15.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!(
+                "inset-block-start",
+                inset_block_start == Dimension::Px(15.0)
+            ),
+        )],
     });
 }
 
@@ -7891,7 +9583,10 @@ fn inset_block_end() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("inset-block-end", inset_block_end == Dimension::Px(20.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("inset-block-end", inset_block_end == Dimension::Px(20.0)),
+        )],
     });
 }
 
@@ -7906,7 +9601,10 @@ fn min_inline_size() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("min-inline-size", min_inline_size == Dimension::Px(50.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("min-inline-size", min_inline_size == Dimension::Px(50.0)),
+        )],
     });
 }
 
@@ -7921,7 +9619,10 @@ fn max_inline_size() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("max-inline-size", max_inline_size == Dimension::Px(600.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("max-inline-size", max_inline_size == Dimension::Px(600.0)),
+        )],
     });
 }
 
@@ -7936,7 +9637,10 @@ fn min_block_size() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("min-block-size", min_block_size == Dimension::Px(100.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("min-block-size", min_block_size == Dimension::Px(100.0)),
+        )],
     });
 }
 
@@ -7951,7 +9655,10 @@ fn max_block_size() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("max-block-size", max_block_size == Dimension::Px(400.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("max-block-size", max_block_size == Dimension::Px(400.0)),
+        )],
     });
 }
 
@@ -7970,7 +9677,13 @@ fn overscroll_behavior_x_contain() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("overscroll-behavior-x", overscroll_behavior_x == OverscrollBehavior::Contain))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "overscroll-behavior-x",
+                overscroll_behavior_x == OverscrollBehavior::Contain
+            ),
+        )],
     });
 }
 
@@ -7985,7 +9698,13 @@ fn overscroll_behavior_y_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("overscroll-behavior-y", overscroll_behavior_y == OverscrollBehavior::None))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "overscroll-behavior-y",
+                overscroll_behavior_y == OverscrollBehavior::None
+            ),
+        )],
     });
 }
 
@@ -8001,8 +9720,20 @@ fn scroll_padding_all() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("scroll-padding-top", scroll_padding.top == Dimension::Px(10.0))),
-            (0, assert_side!("scroll-padding-right", scroll_padding.right == Dimension::Px(10.0))),
+            (
+                0,
+                assert_side!(
+                    "scroll-padding-top",
+                    scroll_padding.top == Dimension::Px(10.0)
+                ),
+            ),
+            (
+                0,
+                assert_side!(
+                    "scroll-padding-right",
+                    scroll_padding.right == Dimension::Px(10.0)
+                ),
+            ),
         ],
     });
 }
@@ -8018,9 +9749,10 @@ fn scroll_margin_all() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("scroll-margin-top", scroll_margin.top == Dimension::Px(5.0))),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!("scroll-margin-top", scroll_margin.top == Dimension::Px(5.0)),
+        )],
     });
 }
 
@@ -8039,7 +9771,10 @@ fn break_before_page() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("break-before", break_before == BreakValue::Page))],
+        assertions: vec![(
+            0,
+            assert_style!("break-before", break_before == BreakValue::Page),
+        )],
     });
 }
 
@@ -8054,7 +9789,10 @@ fn break_after_avoid() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("break-after", break_after == BreakValue::Avoid))],
+        assertions: vec![(
+            0,
+            assert_style!("break-after", break_after == BreakValue::Avoid),
+        )],
     });
 }
 
@@ -8069,7 +9807,10 @@ fn break_inside_avoid() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("break-inside", break_inside == BreakValue::Avoid))],
+        assertions: vec![(
+            0,
+            assert_style!("break-inside", break_inside == BreakValue::Avoid),
+        )],
     });
 }
 
@@ -8084,13 +9825,19 @@ fn orphans_value() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "orphans",
-            check: Box::new(|style| {
-                if style.orphans == 3 { Ok(()) }
-                else { Err(format!("expected 3, got {}", style.orphans)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "orphans",
+                check: Box::new(|style| {
+                    if style.orphans == 3 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 3, got {}", style.orphans))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8105,13 +9852,19 @@ fn widows_value() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "widows",
-            check: Box::new(|style| {
-                if style.widows == 2 { Ok(()) }
-                else { Err(format!("expected 2, got {}", style.widows)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "widows",
+                check: Box::new(|style| {
+                    if style.widows == 2 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 2, got {}", style.widows))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8145,13 +9898,22 @@ fn text_decoration_underline() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "text-decoration-line",
-            check: Box::new(|style| {
-                if style.text_decoration_line.as_deref() == Some("underline") { Ok(()) }
-                else { Err(format!("expected 'underline', got {:?}", style.text_decoration_line)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "text-decoration-line",
+                check: Box::new(|style| {
+                    if style.text_decoration_line.as_deref() == Some("underline") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 'underline', got {:?}",
+                            style.text_decoration_line
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8166,13 +9928,22 @@ fn text_decoration_line_through() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "text-decoration-line",
-            check: Box::new(|style| {
-                if style.text_decoration_line.as_deref() == Some("line-through") { Ok(()) }
-                else { Err(format!("expected 'line-through', got {:?}", style.text_decoration_line)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "text-decoration-line",
+                check: Box::new(|style| {
+                    if style.text_decoration_line.as_deref() == Some("line-through") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 'line-through', got {:?}",
+                            style.text_decoration_line
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8187,7 +9958,10 @@ fn text_overflow_clip() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-overflow", text_overflow == TextOverflow::Clip))],
+        assertions: vec![(
+            0,
+            assert_style!("text-overflow", text_overflow == TextOverflow::Clip),
+        )],
     });
 }
 
@@ -8202,7 +9976,10 @@ fn vertical_align_middle() {
             doc.append_child(root, span);
             vec![span]
         }),
-        assertions: vec![(0, assert_style!("vertical-align", vertical_align == VerticalAlign::Middle))],
+        assertions: vec![(
+            0,
+            assert_style!("vertical-align", vertical_align == VerticalAlign::Middle),
+        )],
     });
 }
 
@@ -8247,13 +10024,19 @@ fn font_feature_settings() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-feature-settings",
-            check: Box::new(|style| {
-                if style.font_feature_settings.is_some() { Ok(()) }
-                else { Err("expected Some font-feature-settings".into()) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-feature-settings",
+                check: Box::new(|style| {
+                    if style.font_feature_settings.is_some() {
+                        Ok(())
+                    } else {
+                        Err("expected Some font-feature-settings".into())
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8268,7 +10051,10 @@ fn line_height_normal() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("line-height", line_height == LineHeight::Normal))],
+        assertions: vec![(
+            0,
+            assert_style!("line-height", line_height == LineHeight::Normal),
+        )],
     });
 }
 
@@ -8283,7 +10069,10 @@ fn text_transform_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-transform", text_transform == TextTransform::None))],
+        assertions: vec![(
+            0,
+            assert_style!("text-transform", text_transform == TextTransform::None),
+        )],
     });
 }
 
@@ -8317,12 +10106,30 @@ fn card_component_styles() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::Flex)),
-            (0, assert_style!("flex-direction", flex_direction == FlexDirection::Column)),
+            (
+                0,
+                assert_style!("flex-direction", flex_direction == FlexDirection::Column),
+            ),
             (0, assert_dimension!("width", width == Dimension::Px(320.0))),
-            (0, assert_side!("padding-top", padding.top == Dimension::Px(16.0))),
-            (0, assert_corner_f32!("border-radius", border_radius.top_left == 8.0)),
-            (0, assert_style!("box-sizing", box_sizing == BoxSizing::BorderBox)),
-            (0, assert_style!("overflow-x", overflow_x == liquide_compositor::scene::Overflow::Hidden)),
+            (
+                0,
+                assert_side!("padding-top", padding.top == Dimension::Px(16.0)),
+            ),
+            (
+                0,
+                assert_corner_f32!("border-radius", border_radius.top_left == 8.0),
+            ),
+            (
+                0,
+                assert_style!("box-sizing", box_sizing == BoxSizing::BorderBox),
+            ),
+            (
+                0,
+                assert_style!(
+                    "overflow-x",
+                    overflow_x == liquide_compositor::scene::Overflow::Hidden
+                ),
+            ),
             (0, assert_color!("bg", background_color == (255, 255, 255))),
         ],
     });
@@ -8358,8 +10165,14 @@ fn modal_overlay_styles() {
             (0, assert_dimension!("top", top == Dimension::Px(0.0))),
             (0, assert_style!("z-index", z_index == Some(1000))),
             (0, assert_style!("display", display == Display::Flex)),
-            (0, assert_style!("justify-content", justify_content == JustifyContent::Center)),
-            (0, assert_style!("align-items", align_items == AlignItems::Center)),
+            (
+                0,
+                assert_style!("justify-content", justify_content == JustifyContent::Center),
+            ),
+            (
+                0,
+                assert_style!("align-items", align_items == AlignItems::Center),
+            ),
             (0, assert_style_f32!("opacity", opacity == 0.8)),
         ],
     });
@@ -8388,16 +10201,34 @@ fn responsive_grid_with_items() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::Grid)),
-            (0, StyleAssertion {
-                description: "3 columns",
-                check: Box::new(|style| {
-                    if style.grid_template_columns.len() == 3 { Ok(()) }
-                    else { Err(format!("expected 3, got {}", style.grid_template_columns.len())) }
-                }),
-            }),
-            (0, assert_side!("grid padding", padding.top == Dimension::Px(24.0))),
-            (1, assert_side!("cell padding", padding.top == Dimension::Px(8.0))),
-            (1, assert_corner_f32!("cell radius", border_radius.top_left == 4.0)),
+            (
+                0,
+                StyleAssertion {
+                    description: "3 columns",
+                    check: Box::new(|style| {
+                        if style.grid_template_columns.len() == 3 {
+                            Ok(())
+                        } else {
+                            Err(format!(
+                                "expected 3, got {}",
+                                style.grid_template_columns.len()
+                            ))
+                        }
+                    }),
+                },
+            ),
+            (
+                0,
+                assert_side!("grid padding", padding.top == Dimension::Px(24.0)),
+            ),
+            (
+                1,
+                assert_side!("cell padding", padding.top == Dimension::Px(8.0)),
+            ),
+            (
+                1,
+                assert_corner_f32!("cell radius", border_radius.top_left == 4.0),
+            ),
         ],
     });
 }
@@ -8427,10 +10258,22 @@ fn sidebar_nav_styles() {
         }),
         assertions: vec![
             (0, assert_style!("display", display == Display::Flex)),
-            (0, assert_style!("flex-direction", flex_direction == FlexDirection::Column)),
+            (
+                0,
+                assert_style!("flex-direction", flex_direction == FlexDirection::Column),
+            ),
             (0, assert_dimension!("width", width == Dimension::Px(260.0))),
-            (0, assert_dimension!("min-height", min_height == Dimension::Vh(100.0))),
-            (0, assert_style!("overflow-y", overflow_y == liquide_compositor::scene::Overflow::Auto)),
+            (
+                0,
+                assert_dimension!("min-height", min_height == Dimension::Vh(100.0)),
+            ),
+            (
+                0,
+                assert_style!(
+                    "overflow-y",
+                    overflow_y == liquide_compositor::scene::Overflow::Auto
+                ),
+            ),
         ],
     });
 }
@@ -8450,13 +10293,22 @@ fn anchor_name_property() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "anchor-name",
-            check: Box::new(|style| {
-                if style.anchor_name.as_deref() == Some("--tooltip-anchor") { Ok(()) }
-                else { Err(format!("expected '--tooltip-anchor', got {:?}", style.anchor_name)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "anchor-name",
+                check: Box::new(|style| {
+                    if style.anchor_name.as_deref() == Some("--tooltip-anchor") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected '--tooltip-anchor', got {:?}",
+                            style.anchor_name
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8471,13 +10323,22 @@ fn position_anchor_property() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "position-anchor",
-            check: Box::new(|style| {
-                if style.position_anchor.as_deref() == Some("--tooltip-anchor") { Ok(()) }
-                else { Err(format!("expected '--tooltip-anchor', got {:?}", style.position_anchor)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "position-anchor",
+                check: Box::new(|style| {
+                    if style.position_anchor.as_deref() == Some("--tooltip-anchor") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected '--tooltip-anchor', got {:?}",
+                            style.position_anchor
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8492,13 +10353,22 @@ fn view_transition_name_property() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "view-transition-name",
-            check: Box::new(|style| {
-                if style.view_transition_name.as_deref() == Some("hero") { Ok(()) }
-                else { Err(format!("expected 'hero', got {:?}", style.view_transition_name)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "view-transition-name",
+                check: Box::new(|style| {
+                    if style.view_transition_name.as_deref() == Some("hero") {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected 'hero', got {:?}",
+                            style.view_transition_name
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8528,13 +10398,22 @@ fn contain_size_only() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "contain size",
-            check: Box::new(|style| {
-                if style.contain.size { Ok(()) }
-                else { Err(format!("expected size containment, got {:?}", style.contain)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "contain size",
+                check: Box::new(|style| {
+                    if style.contain.size {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected size containment, got {:?}",
+                            style.contain
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8549,13 +10428,22 @@ fn contain_style_only() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "contain style",
-            check: Box::new(|style| {
-                if style.contain.style { Ok(()) }
-                else { Err(format!("expected style containment, got {:?}", style.contain)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "contain style",
+                check: Box::new(|style| {
+                    if style.contain.style {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected style containment, got {:?}",
+                            style.contain
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8570,13 +10458,19 @@ fn will_change_transform() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "will-change",
-            check: Box::new(|style| {
-                if style.will_change.contains(&"transform".to_string()) { Ok(()) }
-                else { Err(format!("expected 'transform', got {:?}", style.will_change)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "will-change",
+                check: Box::new(|style| {
+                    if style.will_change.contains(&"transform".to_string()) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 'transform', got {:?}", style.will_change))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8591,13 +10485,19 @@ fn will_change_opacity() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "will-change opacity",
-            check: Box::new(|style| {
-                if style.will_change.contains(&"opacity".to_string()) { Ok(()) }
-                else { Err(format!("expected 'opacity', got {:?}", style.will_change)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "will-change opacity",
+                check: Box::new(|style| {
+                    if style.will_change.contains(&"opacity".to_string()) {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 'opacity', got {:?}", style.will_change))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -8612,7 +10512,10 @@ fn pointer_events_auto() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("pointer-events", pointer_events == PointerEvents::Auto))],
+        assertions: vec![(
+            0,
+            assert_style!("pointer-events", pointer_events == PointerEvents::Auto),
+        )],
     });
 }
 
@@ -8627,7 +10530,10 @@ fn table_layout_fixed() {
             doc.append_child(root, table);
             vec![table]
         }),
-        assertions: vec![(0, assert_style!("table-layout", table_layout == TableLayout::Fixed))],
+        assertions: vec![(
+            0,
+            assert_style!("table-layout", table_layout == TableLayout::Fixed),
+        )],
     });
 }
 
@@ -8642,7 +10548,10 @@ fn empty_cells_hide() {
             doc.append_child(root, td);
             vec![td]
         }),
-        assertions: vec![(0, assert_style!("empty-cells", empty_cells == EmptyCells::Hide))],
+        assertions: vec![(
+            0,
+            assert_style!("empty-cells", empty_cells == EmptyCells::Hide),
+        )],
     });
 }
 
@@ -8657,7 +10566,10 @@ fn caption_side_bottom() {
             doc.append_child(root, cap);
             vec![cap]
         }),
-        assertions: vec![(0, assert_style!("caption-side", caption_side == CaptionSide::Bottom))],
+        assertions: vec![(
+            0,
+            assert_style!("caption-side", caption_side == CaptionSide::Bottom),
+        )],
     });
 }
 
@@ -8672,7 +10584,10 @@ fn text_align_left() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-align", text_align == TextAlign::Left))],
+        assertions: vec![(
+            0,
+            assert_style!("text-align", text_align == TextAlign::Left),
+        )],
     });
 }
 
@@ -8732,7 +10647,10 @@ fn height_percent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("height", height == Dimension::Percent(50.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("height", height == Dimension::Percent(50.0)),
+        )],
     });
 }
 
@@ -8747,7 +10665,10 @@ fn width_fit_content() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("width", width == Dimension::FitContent))],
+        assertions: vec![(
+            0,
+            assert_dimension!("width", width == Dimension::FitContent),
+        )],
     });
 }
 
@@ -8762,7 +10683,10 @@ fn visibility_collapse() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("visibility", visibility == Visibility::Collapse))],
+        assertions: vec![(
+            0,
+            assert_style!("visibility", visibility == Visibility::Collapse),
+        )],
     });
 }
 
@@ -8777,7 +10701,10 @@ fn visibility_visible() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("visibility", visibility == Visibility::Visible))],
+        assertions: vec![(
+            0,
+            assert_style!("visibility", visibility == Visibility::Visible),
+        )],
     });
 }
 
@@ -8852,9 +10779,13 @@ fn border_style_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::None)),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!(
+                "border-style-top",
+                border_style.top == BorderLineStyle::None
+            ),
+        )],
     });
 }
 
@@ -8869,9 +10800,13 @@ fn border_style_double() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Double)),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!(
+                "border-style-top",
+                border_style.top == BorderLineStyle::Double
+            ),
+        )],
     });
 }
 
@@ -8887,10 +10822,22 @@ fn border_radius_two_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_corner_f32!("top-left", border_radius.top_left == 4.0)),
-            (0, assert_corner_f32!("top-right", border_radius.top_right == 8.0)),
-            (0, assert_corner_f32!("bottom-right", border_radius.bottom_right == 4.0)),
-            (0, assert_corner_f32!("bottom-left", border_radius.bottom_left == 8.0)),
+            (
+                0,
+                assert_corner_f32!("top-left", border_radius.top_left == 4.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("top-right", border_radius.top_right == 8.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("bottom-right", border_radius.bottom_right == 4.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("bottom-left", border_radius.bottom_left == 8.0),
+            ),
         ],
     });
 }
@@ -8906,9 +10853,10 @@ fn margin_percent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Percent(5.0))),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!("margin-top", margin.top == Dimension::Percent(5.0)),
+        )],
     });
 }
 
@@ -8926,7 +10874,10 @@ fn inset_shorthand() {
         assertions: vec![
             (0, assert_dimension!("top", top == Dimension::Px(10.0))),
             (0, assert_dimension!("right", right == Dimension::Px(10.0))),
-            (0, assert_dimension!("bottom", bottom == Dimension::Px(10.0))),
+            (
+                0,
+                assert_dimension!("bottom", bottom == Dimension::Px(10.0)),
+            ),
             (0, assert_dimension!("left", left == Dimension::Px(10.0))),
         ],
     });
@@ -8958,7 +10909,10 @@ fn min_width_zero() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("min-width", min_width == Dimension::Px(0.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("min-width", min_width == Dimension::Px(0.0)),
+        )],
     });
 }
 
@@ -8973,7 +10927,10 @@ fn max_height_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("max-height", max_height == Dimension::None))],
+        assertions: vec![(
+            0,
+            assert_dimension!("max-height", max_height == Dimension::None),
+        )],
     });
 }
 
@@ -9085,7 +11042,10 @@ fn width_min_content() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("width", width == Dimension::MinContent))],
+        assertions: vec![(
+            0,
+            assert_dimension!("width", width == Dimension::MinContent),
+        )],
     });
 }
 
@@ -9100,7 +11060,10 @@ fn width_max_content() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("width", width == Dimension::MaxContent))],
+        assertions: vec![(
+            0,
+            assert_dimension!("width", width == Dimension::MaxContent),
+        )],
     });
 }
 
@@ -9116,10 +11079,22 @@ fn padding_three_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("padding-top", padding.top == Dimension::Px(10.0))),
-            (0, assert_side!("padding-right", padding.right == Dimension::Px(20.0))),
-            (0, assert_side!("padding-bottom", padding.bottom == Dimension::Px(30.0))),
-            (0, assert_side!("padding-left", padding.left == Dimension::Px(20.0))),
+            (
+                0,
+                assert_side!("padding-top", padding.top == Dimension::Px(10.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-right", padding.right == Dimension::Px(20.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-bottom", padding.bottom == Dimension::Px(30.0)),
+            ),
+            (
+                0,
+                assert_side!("padding-left", padding.left == Dimension::Px(20.0)),
+            ),
         ],
     });
 }
@@ -9136,10 +11111,22 @@ fn margin_four_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(1.0))),
-            (0, assert_side!("margin-right", margin.right == Dimension::Px(2.0))),
-            (0, assert_side!("margin-bottom", margin.bottom == Dimension::Px(3.0))),
-            (0, assert_side!("margin-left", margin.left == Dimension::Px(4.0))),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(1.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-right", margin.right == Dimension::Px(2.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-bottom", margin.bottom == Dimension::Px(3.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Px(4.0)),
+            ),
         ],
     });
 }
@@ -9157,7 +11144,10 @@ fn margin_auto() {
         }),
         assertions: vec![
             (0, assert_side!("margin-top", margin.top == Dimension::Auto)),
-            (0, assert_side!("margin-left", margin.left == Dimension::Auto)),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Auto),
+            ),
         ],
     });
 }
@@ -9174,9 +11164,18 @@ fn margin_auto_horizontal() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side!("margin-top", margin.top == Dimension::Px(0.0))),
-            (0, assert_side!("margin-left", margin.left == Dimension::Auto)),
-            (0, assert_side!("margin-right", margin.right == Dimension::Auto)),
+            (
+                0,
+                assert_side!("margin-top", margin.top == Dimension::Px(0.0)),
+            ),
+            (
+                0,
+                assert_side!("margin-left", margin.left == Dimension::Auto),
+            ),
+            (
+                0,
+                assert_side!("margin-right", margin.right == Dimension::Auto),
+            ),
         ],
     });
 }
@@ -9192,7 +11191,10 @@ fn text_indent_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("text-indent", text_indent == Dimension::Em(2.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("text-indent", text_indent == Dimension::Em(2.0)),
+        )],
     });
 }
 
@@ -9207,7 +11209,10 @@ fn letter_spacing_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("letter-spacing", letter_spacing == Dimension::Px(2.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("letter-spacing", letter_spacing == Dimension::Px(2.0)),
+        )],
     });
 }
 
@@ -9222,7 +11227,10 @@ fn word_spacing_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("word-spacing", word_spacing == Dimension::Px(4.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("word-spacing", word_spacing == Dimension::Px(4.0)),
+        )],
     });
 }
 
@@ -9237,13 +11245,19 @@ fn tab_size_4() {
             doc.append_child(root, pre);
             vec![pre]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "tab-size",
-            check: Box::new(|style| {
-                if style.tab_size == 4.0 { Ok(()) }
-                else { Err(format!("expected 4, got {}", style.tab_size)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "tab-size",
+                check: Box::new(|style| {
+                    if style.tab_size == 4.0 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 4, got {}", style.tab_size))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -9258,13 +11272,22 @@ fn background_color_transparent() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "bg transparent",
-            check: Box::new(|style| {
-                if style.background_color.a == 0 { Ok(()) }
-                else { Err(format!("expected alpha 0, got {}", style.background_color.a)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "bg transparent",
+                check: Box::new(|style| {
+                    if style.background_color.a == 0 {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "expected alpha 0, got {}",
+                            style.background_color.a
+                        ))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -9369,13 +11392,19 @@ fn font_size_keyword_small() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-size small",
-            check: Box::new(|style| {
-                if (style.font_size - 13.0).abs() < 1.0 { Ok(()) }
-                else { Err(format!("expected ~13px, got {}", style.font_size)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-size small",
+                check: Box::new(|style| {
+                    if (style.font_size - 13.0).abs() < 1.0 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected ~13px, got {}", style.font_size))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -9390,13 +11419,19 @@ fn font_size_keyword_large() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-size large",
-            check: Box::new(|style| {
-                if (style.font_size - 18.0).abs() < 1.0 { Ok(()) }
-                else { Err(format!("expected ~18px, got {}", style.font_size)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-size large",
+                check: Box::new(|style| {
+                    if (style.font_size - 18.0).abs() < 1.0 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected ~18px, got {}", style.font_size))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -9411,7 +11446,13 @@ fn text_transform_capitalize() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-transform", text_transform == TextTransform::Capitalize))],
+        assertions: vec![(
+            0,
+            assert_style!(
+                "text-transform",
+                text_transform == TextTransform::Capitalize
+            ),
+        )],
     });
 }
 
@@ -9426,7 +11467,10 @@ fn text_transform_lowercase() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-transform", text_transform == TextTransform::Lowercase))],
+        assertions: vec![(
+            0,
+            assert_style!("text-transform", text_transform == TextTransform::Lowercase),
+        )],
     });
 }
 
@@ -9441,7 +11485,10 @@ fn text_align_center() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-align", text_align == TextAlign::Center))],
+        assertions: vec![(
+            0,
+            assert_style!("text-align", text_align == TextAlign::Center),
+        )],
     });
 }
 
@@ -9456,7 +11503,10 @@ fn text_align_justify() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("text-align", text_align == TextAlign::Justify))],
+        assertions: vec![(
+            0,
+            assert_style!("text-align", text_align == TextAlign::Justify),
+        )],
     });
 }
 
@@ -9471,7 +11521,10 @@ fn vertical_align_top() {
             doc.append_child(root, span);
             vec![span]
         }),
-        assertions: vec![(0, assert_style!("vertical-align", vertical_align == VerticalAlign::Top))],
+        assertions: vec![(
+            0,
+            assert_style!("vertical-align", vertical_align == VerticalAlign::Top),
+        )],
     });
 }
 
@@ -9486,7 +11539,10 @@ fn vertical_align_bottom() {
             doc.append_child(root, span);
             vec![span]
         }),
-        assertions: vec![(0, assert_style!("vertical-align", vertical_align == VerticalAlign::Bottom))],
+        assertions: vec![(
+            0,
+            assert_style!("vertical-align", vertical_align == VerticalAlign::Bottom),
+        )],
     });
 }
 
@@ -9531,13 +11587,19 @@ fn outline_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "outline none",
-            check: Box::new(|style| {
-                if style.outline.style == BorderLineStyle::None { Ok(()) }
-                else { Err(format!("expected none, got {:?}", style.outline.style)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "outline none",
+                check: Box::new(|style| {
+                    if style.outline.style == BorderLineStyle::None {
+                        Ok(())
+                    } else {
+                        Err(format!("expected none, got {:?}", style.outline.style))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -9552,7 +11614,10 @@ fn touch_action_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("touch-action", touch_action == TouchAction::None))],
+        assertions: vec![(
+            0,
+            assert_style!("touch-action", touch_action == TouchAction::None),
+        )],
     });
 }
 
@@ -9567,7 +11632,10 @@ fn touch_action_manipulation() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("touch-action", touch_action == TouchAction::Manipulation))],
+        assertions: vec![(
+            0,
+            assert_style!("touch-action", touch_action == TouchAction::Manipulation),
+        )],
     });
 }
 
@@ -9582,7 +11650,10 @@ fn appearance_none() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("appearance", appearance == Appearance::None))],
+        assertions: vec![(
+            0,
+            assert_style!("appearance", appearance == Appearance::None),
+        )],
     });
 }
 
@@ -9597,7 +11668,10 @@ fn isolation_isolate() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("isolation", isolation == Isolation::Isolate))],
+        assertions: vec![(
+            0,
+            assert_style!("isolation", isolation == Isolation::Isolate),
+        )],
     });
 }
 
@@ -9627,7 +11701,10 @@ fn object_fit_contain() {
             doc.append_child(root, img);
             vec![img]
         }),
-        assertions: vec![(0, assert_style!("object-fit", object_fit == ObjectFit::Contain))],
+        assertions: vec![(
+            0,
+            assert_style!("object-fit", object_fit == ObjectFit::Contain),
+        )],
     });
 }
 
@@ -9642,7 +11719,10 @@ fn object_fit_cover() {
             doc.append_child(root, img);
             vec![img]
         }),
-        assertions: vec![(0, assert_style!("object-fit", object_fit == ObjectFit::Cover))],
+        assertions: vec![(
+            0,
+            assert_style!("object-fit", object_fit == ObjectFit::Cover),
+        )],
     });
 }
 
@@ -9657,13 +11737,19 @@ fn font_weight_bold() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-weight bold",
-            check: Box::new(|style| {
-                if style.font_weight == 700 { Ok(()) }
-                else { Err(format!("expected 700, got {}", style.font_weight)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-weight bold",
+                check: Box::new(|style| {
+                    if style.font_weight == 700 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 700, got {}", style.font_weight))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -9678,13 +11764,19 @@ fn font_weight_100() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, StyleAssertion {
-            description: "font-weight 100",
-            check: Box::new(|style| {
-                if style.font_weight == 100 { Ok(()) }
-                else { Err(format!("expected 100, got {}", style.font_weight)) }
-            }),
-        })],
+        assertions: vec![(
+            0,
+            StyleAssertion {
+                description: "font-weight 100",
+                check: Box::new(|style| {
+                    if style.font_weight == 100 {
+                        Ok(())
+                    } else {
+                        Err(format!("expected 100, got {}", style.font_weight))
+                    }
+                }),
+            },
+        )],
     });
 }
 
@@ -9700,8 +11792,17 @@ fn border_shorthand_parsing() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_side_f32!("border-top-width", border_width.top == 2.0)),
-            (0, assert_side!("border-top-style", border_style.top == BorderLineStyle::Solid)),
+            (
+                0,
+                assert_side_f32!("border-top-width", border_width.top == 2.0),
+            ),
+            (
+                0,
+                assert_side!(
+                    "border-top-style",
+                    border_style.top == BorderLineStyle::Solid
+                ),
+            ),
         ],
     });
 }
@@ -9717,9 +11818,13 @@ fn border_style_dashed() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Dashed)),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!(
+                "border-style-top",
+                border_style.top == BorderLineStyle::Dashed
+            ),
+        )],
     });
 }
 
@@ -9734,9 +11839,13 @@ fn border_style_dotted() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![
-            (0, assert_side!("border-style-top", border_style.top == BorderLineStyle::Dotted)),
-        ],
+        assertions: vec![(
+            0,
+            assert_side!(
+                "border-style-top",
+                border_style.top == BorderLineStyle::Dotted
+            ),
+        )],
     });
 }
 
@@ -9766,7 +11875,10 @@ fn box_sizing_content_box() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("box-sizing", box_sizing == BoxSizing::ContentBox))],
+        assertions: vec![(
+            0,
+            assert_style!("box-sizing", box_sizing == BoxSizing::ContentBox),
+        )],
     });
 }
 
@@ -9781,7 +11893,10 @@ fn height_vh() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_dimension!("height", height == Dimension::Vh(100.0)))],
+        assertions: vec![(
+            0,
+            assert_dimension!("height", height == Dimension::Vh(100.0)),
+        )],
     });
 }
 
@@ -9815,7 +11930,10 @@ fn flex_combined_shorthand_auto() {
         assertions: vec![
             (0, assert_style_f32!("flex-grow", flex_grow == 1.0)),
             (0, assert_style_f32!("flex-shrink", flex_shrink == 1.0)),
-            (0, assert_dimension!("flex-basis", flex_basis == Dimension::Auto)),
+            (
+                0,
+                assert_dimension!("flex-basis", flex_basis == Dimension::Auto),
+            ),
         ],
     });
 }
@@ -9835,7 +11953,10 @@ fn flex_combined_shorthand_none() {
         assertions: vec![
             (0, assert_style_f32!("flex-grow", flex_grow == 0.0)),
             (0, assert_style_f32!("flex-shrink", flex_shrink == 0.0)),
-            (0, assert_dimension!("flex-basis", flex_basis == Dimension::Auto)),
+            (
+                0,
+                assert_dimension!("flex-basis", flex_basis == Dimension::Auto),
+            ),
         ],
     });
 }
@@ -9851,7 +11972,10 @@ fn line_height_number() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("line-height", line_height == LineHeight::Number(1.5)))],
+        assertions: vec![(
+            0,
+            assert_style!("line-height", line_height == LineHeight::Number(1.5)),
+        )],
     });
 }
 
@@ -9866,7 +11990,10 @@ fn line_height_px() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("line-height", line_height == LineHeight::Length(24.0)))],
+        assertions: vec![(
+            0,
+            assert_style!("line-height", line_height == LineHeight::Length(24.0)),
+        )],
     });
 }
 
@@ -9881,7 +12008,10 @@ fn grid_auto_flow_column() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Column))],
+        assertions: vec![(
+            0,
+            assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Column),
+        )],
     });
 }
 
@@ -9896,7 +12026,10 @@ fn grid_auto_flow_row() {
             doc.append_child(root, div);
             vec![div]
         }),
-        assertions: vec![(0, assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Row))],
+        assertions: vec![(
+            0,
+            assert_style!("grid-auto-flow", grid_auto_flow == GridAutoFlow::Row),
+        )],
     });
 }
 
@@ -9912,10 +12045,22 @@ fn border_radius_three_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_corner_f32!("top-left", border_radius.top_left == 4.0)),
-            (0, assert_corner_f32!("top-right", border_radius.top_right == 8.0)),
-            (0, assert_corner_f32!("bottom-right", border_radius.bottom_right == 12.0)),
-            (0, assert_corner_f32!("bottom-left", border_radius.bottom_left == 8.0)),
+            (
+                0,
+                assert_corner_f32!("top-left", border_radius.top_left == 4.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("top-right", border_radius.top_right == 8.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("bottom-right", border_radius.bottom_right == 12.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("bottom-left", border_radius.bottom_left == 8.0),
+            ),
         ],
     });
 }
@@ -9932,10 +12077,22 @@ fn border_radius_four_values() {
             vec![div]
         }),
         assertions: vec![
-            (0, assert_corner_f32!("top-left", border_radius.top_left == 1.0)),
-            (0, assert_corner_f32!("top-right", border_radius.top_right == 2.0)),
-            (0, assert_corner_f32!("bottom-right", border_radius.bottom_right == 3.0)),
-            (0, assert_corner_f32!("bottom-left", border_radius.bottom_left == 4.0)),
+            (
+                0,
+                assert_corner_f32!("top-left", border_radius.top_left == 1.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("top-right", border_radius.top_right == 2.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("bottom-right", border_radius.bottom_right == 3.0),
+            ),
+            (
+                0,
+                assert_corner_f32!("bottom-left", border_radius.bottom_left == 4.0),
+            ),
         ],
     });
 }

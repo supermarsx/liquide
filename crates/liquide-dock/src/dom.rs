@@ -19,11 +19,7 @@ use crate::dock::{Dock, DockItem, DockThemeColors};
 ///   …
 /// </dock>
 /// ```
-pub fn build_dock_dom(
-    doc: &mut Document,
-    parent: NodeId,
-    dock: &Dock,
-) -> NodeId {
+pub fn build_dock_dom(doc: &mut Document, parent: NodeId, dock: &Dock) -> NodeId {
     let dock_el = doc.create_element("dock");
     doc.set_id(dock_el, "css-dock");
     doc.append_child(parent, dock_el);
@@ -68,11 +64,7 @@ fn add_dock_item_node(
 /// Sync the DOM subtree to match the current dock state.
 ///
 /// Removes stale children and rebuilds from the current item list.
-pub fn sync_dock_dom(
-    doc: &mut Document,
-    dock_node: NodeId,
-    dock: &Dock,
-) {
+pub fn sync_dock_dom(doc: &mut Document, dock_node: NodeId, dock: &Dock) {
     // Remove old children
     let old: Vec<NodeId> = doc.children(dock_node).to_vec();
     for child in old {
@@ -123,6 +115,8 @@ pub fn dock_theme_from_css(
         item_active: Color::new(255, 255, 255, 255),
         item_inactive: Color::new(255, 255, 255, 179),
         hover_highlight: Color::new(255, 255, 255, 31),
+        needs_attention: DockThemeColors::default_needs_attention(),
+        focus_outline: DockThemeColors::default_focus_outline(),
     }
 }
 

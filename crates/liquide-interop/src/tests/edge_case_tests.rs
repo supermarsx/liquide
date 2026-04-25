@@ -27,7 +27,8 @@ fn test_empty_tray() {
 fn test_notification_overflow() {
     let mut svc = MemoryNotificationService::new();
     for i in 0..100 {
-        svc.notify(Notification::new("App", &format!("msg {i}"))).unwrap();
+        svc.notify(Notification::new("App", &format!("msg {i}")))
+            .unwrap();
     }
     assert_eq!(svc.list().len(), 100);
 }

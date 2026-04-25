@@ -1,5 +1,5 @@
 use crate::buffer::GbmBuffer;
-use crate::device::{GbmDevice, BufferUsage};
+use crate::device::{BufferUsage, GbmDevice};
 use crate::error::{GbmError, Result};
 use crate::format::DrmFourcc;
 
@@ -29,7 +29,12 @@ impl GbmSurface {
         {
             // TODO: call gbm_surface_create via FFI
             let _ = (device, flags);
-            tracing::debug!(width, height, format = format.name(), "creating GBM surface");
+            tracing::debug!(
+                width,
+                height,
+                format = format.name(),
+                "creating GBM surface"
+            );
             Ok(Self {
                 handle: 0,
                 width,
@@ -49,9 +54,7 @@ impl GbmSurface {
         #[cfg(target_os = "linux")]
         {
             // TODO: call gbm_surface_lock_front_buffer via FFI
-            Err(GbmError::SurfaceLock(
-                "FFI not yet implemented".into(),
-            ))
+            Err(GbmError::SurfaceLock("FFI not yet implemented".into()))
         }
         #[cfg(not(target_os = "linux"))]
         {

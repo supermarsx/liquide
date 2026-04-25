@@ -4,7 +4,6 @@
 /// etc.) behind a common trait so the greeter can enumerate available providers
 /// and present the appropriate input fields.  Modelled after GDM/SDDM
 /// credential provider patterns.
-
 use crate::auth::AuthResult;
 use std::collections::HashMap;
 
@@ -160,7 +159,10 @@ impl ProviderRegistry {
 
     /// Look up a provider by id.
     pub fn get(&self, id: &str) -> Option<&dyn CredentialProvider> {
-        self.providers.iter().find(|p| p.id() == id).map(|p| p.as_ref())
+        self.providers
+            .iter()
+            .find(|p| p.id() == id)
+            .map(|p| p.as_ref())
     }
 
     /// Number of registered providers.
@@ -175,14 +177,15 @@ impl ProviderRegistry {
 }
 
 // ---------------------------------------------------------------------------
-// PasswordProvider — built-in username + password
+// PasswordProvider — built-in selected-user password
 // ---------------------------------------------------------------------------
 
 /// Built-in password credential provider.
 ///
 /// Stores username/password pairs (FNV-1a hashed, **not** cryptographically
-/// secure — for testing and development only).  Real deployments should
-/// delegate to `PamBackend`.
+/// secure — for testing and development only). Real deployments should
+/// delegate to `PamBackend`. The session controller owns the selected user
+/// identity and injects the canonical `username` field at submit time.
 pub struct PasswordProvider {
     entries: HashMap<String, u64>,
 }
@@ -196,7 +199,8 @@ impl PasswordProvider {
 
     /// Register a user with a plaintext password (hashed on storage).
     pub fn add_user(&mut self, username: &str, password: &str) {
-        self.entries.insert(username.to_string(), Self::hash(password));
+        self.entries
+            .insert(username.to_string(), Self::hash(password));
     }
 
     fn hash(password: &str) -> u64 {
@@ -209,7 +213,10 @@ impl PasswordProvider {
     }
 
     fn find_field<'a>(fields: &'a [CredentialField], id: &str) -> Option<&'a str> {
-        fields.iter().find(|f| f.descriptor_id == id).map(|f| f.value.as_str())
+        fields
+            .iter()
+            .find(|f| f.descriptor_id == id)
+            .map(|f| f.value.as_str())
     }
 }
 
@@ -227,10 +234,11 @@ impl CredentialProvider for PasswordProvider {
     }
 
     fn field_descriptors(&self) -> Vec<FieldDescriptor> {
-        vec![
-            FieldDescriptor::required("username", "Username", FieldType::Text),
-            FieldDescriptor::required("password", "Password", FieldType::Password),
-        ]
+        vec![FieldDescriptor::required(
+            "password",
+            "Password",
+            FieldType::Password,
+        )]
     }
 
     fn authenticate(&self, fields: &[CredentialField]) -> AuthResult {
@@ -251,13 +259,14 @@ impl CredentialProvider for PasswordProvider {
 }
 
 // ---------------------------------------------------------------------------
-// PinProvider — built-in username + 4-8 digit PIN
+// PinProvider — built-in selected-user 4-8 digit PIN
 // ---------------------------------------------------------------------------
 
 /// Built-in numeric PIN credential provider.
 ///
-/// Accepts a 4-8 digit PIN.  Like `PasswordProvider`, this is intended for
-/// testing — production systems should delegate to PAM.
+/// Accepts a 4-8 digit PIN. Like `PasswordProvider`, this is intended for
+/// testing — production systems should delegate to PAM. The session
+/// controller injects the canonical `username` field at submit time.
 pub struct PinProvider {
     entries: HashMap<String, String>,
 }
@@ -286,7 +295,10 @@ impl PinProvider {
     }
 
     fn find_field<'a>(fields: &'a [CredentialField], id: &str) -> Option<&'a str> {
-        fields.iter().find(|f| f.descriptor_id == id).map(|f| f.value.as_str())
+        fields
+            .iter()
+            .find(|f| f.descriptor_id == id)
+            .map(|f| f.value.as_str())
     }
 }
 
@@ -304,10 +316,7 @@ impl CredentialProvider for PinProvider {
     }
 
     fn field_descriptors(&self) -> Vec<FieldDescriptor> {
-        vec![
-            FieldDescriptor::required("username", "Username", FieldType::Text),
-            FieldDescriptor::required("pin", "PIN", FieldType::Pin),
-        ]
+        vec![FieldDescriptor::required("pin", "PIN", FieldType::Pin)]
     }
 
     fn authenticate(&self, fields: &[CredentialField]) -> AuthResult {
@@ -434,11 +443,9 @@ mod tests {
     fn password_provider_fields() {
         let prov = PasswordProvider::new();
         let fields = prov.field_descriptors();
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].id, "username");
-        assert_eq!(fields[1].id, "password");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].id, "password");
         assert!(fields[0].is_required);
-        assert!(fields[1].is_required);
     }
 
     #[test]
@@ -470,14 +477,18 @@ mod tests {
             CredentialField::new("username", "nobody"),
             CredentialField::new("password", "pass"),
         ];
-        assert!(matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("not found")));
+        assert!(
+            matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("not found"))
+        );
     }
 
     #[test]
     fn password_provider_missing_username() {
         let prov = PasswordProvider::new();
         let fields = vec![CredentialField::new("password", "pass")];
-        assert!(matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("Username")));
+        assert!(
+            matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("Username"))
+        );
     }
 
     #[test]
@@ -485,7 +496,9 @@ mod tests {
         let mut prov = PasswordProvider::new();
         prov.add_user("alice", "secret");
         let fields = vec![CredentialField::new("username", "alice")];
-        assert!(matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("Password")));
+        assert!(
+            matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("Password"))
+        );
     }
 
     // -- PinProvider tests --
@@ -502,10 +515,9 @@ mod tests {
     fn pin_provider_fields() {
         let prov = PinProvider::new();
         let fields = prov.field_descriptors();
-        assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0].id, "username");
-        assert_eq!(fields[1].id, "pin");
-        assert_eq!(fields[1].field_type, FieldType::Pin);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].id, "pin");
+        assert_eq!(fields[0].field_type, FieldType::Pin);
     }
 
     #[test]
@@ -538,17 +550,19 @@ mod tests {
             CredentialField::new("username", "bob"),
             CredentialField::new("pin", "abc"),
         ];
-        assert!(matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("4-8 digits")));
+        assert!(
+            matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("4-8 digits"))
+        );
     }
 
     #[test]
     fn pin_validate_lengths() {
-        assert!(!PinProvider::validate_pin("123"));       // too short
-        assert!(PinProvider::validate_pin("1234"));       // 4 ok
-        assert!(PinProvider::validate_pin("12345678"));   // 8 ok
+        assert!(!PinProvider::validate_pin("123")); // too short
+        assert!(PinProvider::validate_pin("1234")); // 4 ok
+        assert!(PinProvider::validate_pin("12345678")); // 8 ok
         assert!(!PinProvider::validate_pin("123456789")); // 9 too long
-        assert!(!PinProvider::validate_pin("12ab"));      // non-digit
-        assert!(!PinProvider::validate_pin(""));          // empty
+        assert!(!PinProvider::validate_pin("12ab")); // non-digit
+        assert!(!PinProvider::validate_pin("")); // empty
     }
 
     #[test]
@@ -567,7 +581,9 @@ mod tests {
     fn pin_provider_missing_username() {
         let prov = PinProvider::new();
         let fields = vec![CredentialField::new("pin", "1234")];
-        assert!(matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("Username")));
+        assert!(
+            matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("Username"))
+        );
     }
 
     #[test]
@@ -575,7 +591,9 @@ mod tests {
         let mut prov = PinProvider::new();
         prov.add_user("bob", "1234");
         let fields = vec![CredentialField::new("username", "bob")];
-        assert!(matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("PIN")));
+        assert!(
+            matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("PIN"))
+        );
     }
 
     #[test]
@@ -585,7 +603,9 @@ mod tests {
             CredentialField::new("username", "nobody"),
             CredentialField::new("pin", "1234"),
         ];
-        assert!(matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("not found")));
+        assert!(
+            matches!(prov.authenticate(&fields), AuthResult::Failed(msg) if msg.contains("not found"))
+        );
     }
 
     #[test]

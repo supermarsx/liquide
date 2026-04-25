@@ -43,7 +43,9 @@ impl DesktopCompositor {
         }
         // Feed render metrics into the telemetry viewer registry.
         use liquide_telemetry_viewer::metrics;
-        self.viewer_metrics.set(metrics::FRAME_COUNT, self.frame_count);
-        self.viewer_metrics.set(metrics::DROPPED_FRAMES, rm.tasks_failed);
+        self.viewer_metrics
+            .set(metrics::FRAME_COUNT, self.frame_count);
+        self.viewer_metrics
+            .set(metrics::DROPPED_FRAMES, rm.tasks_failed);
     }
 }

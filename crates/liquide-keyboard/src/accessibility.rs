@@ -332,15 +332,15 @@ pub enum MouseKeyAction {
 }
 
 /// Numpad keycodes used for mouse control.
-const MK_UP: u32 = 72;         // KP_8
-const MK_DOWN: u32 = 80;       // KP_2
-const MK_LEFT: u32 = 75;       // KP_4
-const MK_RIGHT: u32 = 77;      // KP_6
-const MK_UP_LEFT: u32 = 71;    // KP_7
-const MK_UP_RIGHT: u32 = 73;   // KP_9
-const MK_DOWN_LEFT: u32 = 79;  // KP_1
+const MK_UP: u32 = 72; // KP_8
+const MK_DOWN: u32 = 80; // KP_2
+const MK_LEFT: u32 = 75; // KP_4
+const MK_RIGHT: u32 = 77; // KP_6
+const MK_UP_LEFT: u32 = 71; // KP_7
+const MK_UP_RIGHT: u32 = 73; // KP_9
+const MK_DOWN_LEFT: u32 = 79; // KP_1
 const MK_DOWN_RIGHT: u32 = 81; // KP_3
-const MK_CLICK: u32 = 76;      // KP_5
+const MK_CLICK: u32 = 76; // KP_5
 const MK_BUTTON_SELECT: u32 = 82; // KP_0 (toggle button)
 
 /// MouseKeys: use the numeric keypad to control the pointer.
@@ -382,8 +382,8 @@ impl MouseKeys {
     /// mouse key.
     pub fn key_down(&mut self, keycode: u32) -> MouseKeyAction {
         match keycode {
-            MK_UP | MK_DOWN | MK_LEFT | MK_RIGHT |
-            MK_UP_LEFT | MK_UP_RIGHT | MK_DOWN_LEFT | MK_DOWN_RIGHT => {
+            MK_UP | MK_DOWN | MK_LEFT | MK_RIGHT | MK_UP_LEFT | MK_UP_RIGHT | MK_DOWN_LEFT
+            | MK_DOWN_RIGHT => {
                 self.held_directions.insert(keycode, 0);
                 let step = self.step as i32;
                 self.direction_delta(keycode, step)
@@ -457,9 +457,16 @@ impl MouseKeys {
     pub fn is_mouse_key(keycode: u32) -> bool {
         matches!(
             keycode,
-            MK_UP | MK_DOWN | MK_LEFT | MK_RIGHT |
-            MK_UP_LEFT | MK_UP_RIGHT | MK_DOWN_LEFT | MK_DOWN_RIGHT |
-            MK_CLICK | MK_BUTTON_SELECT
+            MK_UP
+                | MK_DOWN
+                | MK_LEFT
+                | MK_RIGHT
+                | MK_UP_LEFT
+                | MK_UP_RIGHT
+                | MK_DOWN_LEFT
+                | MK_DOWN_RIGHT
+                | MK_CLICK
+                | MK_BUTTON_SELECT
         )
     }
 
@@ -468,7 +475,6 @@ impl MouseKeys {
         self.held_directions.clear();
         self.selected_button = MouseButton::Left;
     }
-
 
     fn direction_delta(&self, keycode: u32, step: i32) -> MouseKeyAction {
         let (dx, dy) = match keycode {

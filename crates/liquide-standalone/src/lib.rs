@@ -9,10 +9,10 @@
 //! existing remote path (Path A).
 
 pub mod config;
-pub mod event_loop;
-pub mod launcher;
 pub mod display;
+pub mod event_loop;
 pub mod input;
+pub mod launcher;
 pub mod wayland;
 pub mod xwayland_bridge;
 

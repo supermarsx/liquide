@@ -1,6 +1,6 @@
-use crate::scene::*;
 use crate::geometry::Rect;
 use crate::pixel::Color;
+use crate::scene::*;
 
 /// Helper: build a simple root → [bg, workspace → [surf_a, surf_b]] tree.
 fn build_test_tree() -> SceneNode {
@@ -12,7 +12,9 @@ fn build_test_tree() -> SceneNode {
 
     let bg = SceneNode::new(
         1,
-        SceneNodeKind::Background { color: Color::BLACK },
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        },
         NodeProperties::new(Rect::new(0.0, 0.0, 1920.0, 1080.0)),
     );
 
@@ -24,13 +26,19 @@ fn build_test_tree() -> SceneNode {
 
     let surf_a = SceneNode::new(
         3,
-        SceneNodeKind::Surface { surface_id: 100, buffer: None },
+        SceneNodeKind::Surface {
+            surface_id: 100,
+            buffer: None,
+        },
         NodeProperties::new(Rect::new(100.0, 100.0, 800.0, 600.0)),
     );
 
     let surf_b = SceneNode::new(
         4,
-        SceneNodeKind::Surface { surface_id: 200, buffer: None },
+        SceneNodeKind::Surface {
+            surface_id: 200,
+            buffer: None,
+        },
         NodeProperties::new(Rect::new(200.0, 150.0, 640.0, 480.0)),
     );
 
@@ -260,7 +268,9 @@ fn descendants_depth_first_order() {
 fn descendants_empty_for_leaf() {
     let leaf = SceneNode::new(
         10,
-        SceneNodeKind::Cursor { shape: CursorShape::Arrow },
+        SceneNodeKind::Cursor {
+            shape: CursorShape::Arrow,
+        },
         NodeProperties::new(Rect::new(0.0, 0.0, 24.0, 24.0)),
     );
     assert!(leaf.descendants().is_empty());
@@ -270,7 +280,9 @@ fn descendants_empty_for_leaf() {
 fn depth_leaf_is_zero() {
     let leaf = SceneNode::new(
         10,
-        SceneNodeKind::Cursor { shape: CursorShape::Arrow },
+        SceneNodeKind::Cursor {
+            shape: CursorShape::Arrow,
+        },
         NodeProperties::new(Rect::new(0.0, 0.0, 24.0, 24.0)),
     );
     assert_eq!(leaf.depth(), 0);
@@ -319,12 +331,16 @@ fn flatten_z_order_sorting() {
     // Add children with different z-orders
     root.add_child(SceneNode::new(
         101,
-        SceneNodeKind::Background { color: Color::BLACK },
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        },
         NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)).with_z_order(2),
     ));
     root.add_child(SceneNode::new(
         102,
-        SceneNodeKind::Background { color: Color::WHITE },
+        SceneNodeKind::Background {
+            color: Color::WHITE,
+        },
         NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)).with_z_order(1),
     ));
     let flat = root.flatten();
@@ -358,7 +374,9 @@ fn scene_node_depth_with_hidden_children() {
     );
     root.add_child(SceneNode::new(
         2,
-        SceneNodeKind::Background { color: Color::BLACK },
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        },
         NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)).with_visible(false),
     ));
     // Depth still counts invisible children (depth is structural)

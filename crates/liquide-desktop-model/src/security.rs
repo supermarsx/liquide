@@ -4,8 +4,8 @@
 //! thread is permitted to perform operations on a desktop it may or may not
 //! own. By default, threads can only access the desktop they are assigned to.
 
-use bitflags::bitflags;
 use crate::types::DesktopId;
+use bitflags::bitflags;
 use std::collections::HashMap;
 
 bitflags! {
@@ -114,25 +114,18 @@ impl DesktopSecurity {
     }
 
     /// Grants a thread additional access rights to a specific desktop.
-    pub fn grant_access(
-        &mut self,
-        thread_id: u64,
-        desktop: DesktopId,
-        access: DesktopAccess,
-    ) {
+    pub fn grant_access(&mut self, thread_id: u64, desktop: DesktopId, access: DesktopAccess) {
         if let Some(grant) = self.grants.get_mut(&thread_id) {
-            let entry = grant.extra_grants.entry(desktop).or_insert(DesktopAccess::empty());
+            let entry = grant
+                .extra_grants
+                .entry(desktop)
+                .or_insert(DesktopAccess::empty());
             *entry |= access;
         }
     }
 
     /// Revokes specific access rights from a thread for a desktop.
-    pub fn revoke_access(
-        &mut self,
-        thread_id: u64,
-        desktop: DesktopId,
-        access: DesktopAccess,
-    ) {
+    pub fn revoke_access(&mut self, thread_id: u64, desktop: DesktopId, access: DesktopAccess) {
         if let Some(grant) = self.grants.get_mut(&thread_id) {
             if let Some(entry) = grant.extra_grants.get_mut(&desktop) {
                 entry.remove(access);

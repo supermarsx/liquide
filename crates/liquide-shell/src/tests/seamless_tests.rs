@@ -91,7 +91,10 @@ fn create_window_does_not_duplicate_in_z_order() {
     mgr.create_window(make_window(1, "a", "A v2"));
     // z_order should still contain just one entry for WindowId(1)
     assert_eq!(
-        mgr.z_order().iter().filter(|&&id| id == WindowId(1)).count(),
+        mgr.z_order()
+            .iter()
+            .filter(|&&id| id == WindowId(1))
+            .count(),
         1
     );
 }
@@ -131,7 +134,10 @@ fn update_state_changes_window_state() {
     let mut mgr = default_manager();
     mgr.create_window(make_window(1, "a", "A"));
     mgr.update_state(WindowId(1), WindowState::Maximized);
-    assert_eq!(mgr.window(WindowId(1)).unwrap().state, WindowState::Maximized);
+    assert_eq!(
+        mgr.window(WindowId(1)).unwrap().state,
+        WindowState::Maximized
+    );
 }
 
 #[test]

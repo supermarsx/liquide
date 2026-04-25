@@ -31,10 +31,10 @@ pub mod sync;
 pub use entry::{ClipboardContent, ClipboardEntry, ContentCategory, ImageFormat};
 pub use history::ClipboardHistory;
 pub use manager::ClipboardManager;
-pub use persistence::{load_entries, save_entries, should_persist, PersistError, PersistResult};
+pub use persistence::{PersistError, PersistResult, load_entries, save_entries, should_persist};
 pub use platform::{
-    create_platform_clipboard, NullClipboard, PlatformClipboard, PlatformClipboardError,
-    PlatformResult,
+    NullClipboard, PlatformClipboard, PlatformClipboardError, PlatformResult,
+    create_platform_clipboard,
 };
 pub use sensitive::SensitiveClipboardPolicy;
 pub use sync::{ClipboardSync, ClipboardSyncBackend, LocalSyncStub};

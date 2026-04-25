@@ -38,8 +38,7 @@ impl EvdevEnumerator {
             .filter(|d| {
                 matches!(
                     d.device_class,
-                    crate::classify::DeviceClass::Mouse
-                        | crate::classify::DeviceClass::Touchpad
+                    crate::classify::DeviceClass::Mouse | crate::classify::DeviceClass::Touchpad
                 )
             })
             .collect())
@@ -111,14 +110,13 @@ fn query_device_info(path: &str) -> crate::error::Result<crate::classify::Device
     use std::ffi::CString;
     use std::os::unix::io::AsRawFd;
 
-    use crate::classify::{classify_device, DeviceCapability, DeviceInfo};
+    use crate::classify::{DeviceCapability, DeviceInfo, classify_device};
     use crate::error::LibinputError;
 
-    let c_path =
-        CString::new(path).map_err(|e| LibinputError::DeviceOpen {
-            path: path.to_string(),
-            reason: e.to_string(),
-        })?;
+    let c_path = CString::new(path).map_err(|e| LibinputError::DeviceOpen {
+        path: path.to_string(),
+        reason: e.to_string(),
+    })?;
 
     // Open read-only, non-blocking.
     // SAFETY: c_path is a valid null-terminated C string. We check the return value
@@ -152,7 +150,10 @@ fn query_device_info(path: &str) -> crate::error::Result<crate::classify::Device
         )
     };
     let name = if ret > 0 {
-        let len = name_buf.iter().position(|&b| b == 0).unwrap_or(ret as usize);
+        let len = name_buf
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(ret as usize);
         String::from_utf8_lossy(&name_buf[..len]).to_string()
     } else {
         String::from("unknown")

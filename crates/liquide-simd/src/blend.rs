@@ -14,14 +14,14 @@ pub fn blend_scanline_src_over(dst: &mut [u8], src: &[u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         if crate::detect::has_avx512() {
-            unsafe { return blend_scanline_src_over_avx512(dst, src) }
+            unsafe { blend_scanline_src_over_avx512(dst, src) }
         }
         if crate::detect::has_avx2() {
             // SAFETY: AVX2 detected at runtime
-            unsafe { return blend_scanline_src_over_avx2(dst, src) }
+            unsafe { blend_scanline_src_over_avx2(dst, src) }
         }
         // SSE2 is always available on x86-64
-        unsafe { return blend_scanline_src_over_sse2(dst, src) }
+        unsafe { blend_scanline_src_over_sse2(dst, src) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     blend_scanline_src_over_scalar(dst, src);
@@ -99,8 +99,10 @@ unsafe fn blend_scanline_src_over_sse2(dst: &mut [u8], src: &[u8]) {
         let biased_hi = _mm_add_epi16(prod_hi, half);
 
         // Precise /255: add (biased >> 8) then >> 8
-        let approx_lo = _mm_srli_epi16::<8>(_mm_add_epi16(biased_lo, _mm_srli_epi16::<8>(biased_lo)));
-        let approx_hi = _mm_srli_epi16::<8>(_mm_add_epi16(biased_hi, _mm_srli_epi16::<8>(biased_hi)));
+        let approx_lo =
+            _mm_srli_epi16::<8>(_mm_add_epi16(biased_lo, _mm_srli_epi16::<8>(biased_lo)));
+        let approx_hi =
+            _mm_srli_epi16::<8>(_mm_add_epi16(biased_hi, _mm_srli_epi16::<8>(biased_hi)));
 
         // out = src + dst * inv_a / 255
         let out_lo = _mm_add_epi16(s_lo, approx_lo);
@@ -161,8 +163,14 @@ unsafe fn blend_scanline_src_over_avx512(dst: &mut [u8], src: &[u8]) {
         let biased_lo = _mm512_add_epi16(prod_lo, half);
         let biased_hi = _mm512_add_epi16(prod_hi, half);
 
-        let approx_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(biased_lo, _mm512_srli_epi16::<8>(biased_lo)));
-        let approx_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(biased_hi, _mm512_srli_epi16::<8>(biased_hi)));
+        let approx_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_lo,
+            _mm512_srli_epi16::<8>(biased_lo),
+        ));
+        let approx_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_hi,
+            _mm512_srli_epi16::<8>(biased_hi),
+        ));
 
         let out_lo = _mm512_add_epi16(s_lo, approx_lo);
         let out_hi = _mm512_add_epi16(s_hi, approx_hi);
@@ -221,8 +229,14 @@ unsafe fn blend_scanline_src_over_avx2(dst: &mut [u8], src: &[u8]) {
         let biased_lo = _mm256_add_epi16(prod_lo, half);
         let biased_hi = _mm256_add_epi16(prod_hi, half);
 
-        let approx_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(biased_lo, _mm256_srli_epi16::<8>(biased_lo)));
-        let approx_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(biased_hi, _mm256_srli_epi16::<8>(biased_hi)));
+        let approx_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_lo,
+            _mm256_srli_epi16::<8>(biased_lo),
+        ));
+        let approx_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_hi,
+            _mm256_srli_epi16::<8>(biased_hi),
+        ));
 
         let out_lo = _mm256_add_epi16(s_lo, approx_lo);
         let out_hi = _mm256_add_epi16(s_hi, approx_hi);
@@ -255,9 +269,9 @@ pub fn blend_scanline_multiply(dst: &mut [u8], src: &[u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         if crate::detect::has_avx2() {
-            unsafe { return blend_scanline_multiply_avx2(dst, src) }
+            unsafe { blend_scanline_multiply_avx2(dst, src) }
         }
-        unsafe { return blend_scanline_multiply_sse2(dst, src) }
+        unsafe { blend_scanline_multiply_sse2(dst, src) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     blend_scanline_multiply_scalar(dst, src);
@@ -274,7 +288,9 @@ pub fn blend_scanline_multiply_scalar(dst: &mut [u8], src: &[u8]) {
     for i in 0..pixels {
         let off = i * 4;
         let sa = src[off + 3] as u32;
-        if sa == 0 { continue; } // Fully transparent source — dst unchanged
+        if sa == 0 {
+            continue;
+        } // Fully transparent source — dst unchanged
         let da = dst[off + 3] as u32;
         let inv_sa = 255 - sa;
         let inv_da = 255 - da;
@@ -374,8 +390,10 @@ unsafe fn blend_scanline_multiply_sse2(dst: &mut [u8], src: &[u8]) {
         let sa_da_hi = _mm_mullo_epi16(sa_hi, da_hi);
         let a_biased_lo = _mm_add_epi16(sa_da_lo, half);
         let a_biased_hi = _mm_add_epi16(sa_da_hi, half);
-        let a_div_lo = _mm_srli_epi16::<8>(_mm_add_epi16(a_biased_lo, _mm_srli_epi16::<8>(a_biased_lo)));
-        let a_div_hi = _mm_srli_epi16::<8>(_mm_add_epi16(a_biased_hi, _mm_srli_epi16::<8>(a_biased_hi)));
+        let a_div_lo =
+            _mm_srli_epi16::<8>(_mm_add_epi16(a_biased_lo, _mm_srli_epi16::<8>(a_biased_lo)));
+        let a_div_hi =
+            _mm_srli_epi16::<8>(_mm_add_epi16(a_biased_hi, _mm_srli_epi16::<8>(a_biased_hi)));
         let alpha_lo = _mm_sub_epi16(_mm_add_epi16(sa_lo, da_lo), a_div_lo);
         let alpha_hi = _mm_sub_epi16(_mm_add_epi16(sa_hi, da_hi), a_div_hi);
 
@@ -477,8 +495,14 @@ unsafe fn blend_scanline_multiply_avx2(dst: &mut [u8], src: &[u8]) {
         let sa_da_hi = _mm256_mullo_epi16(sa_hi, da_hi);
         let a_biased_lo = _mm256_add_epi16(sa_da_lo, half);
         let a_biased_hi = _mm256_add_epi16(sa_da_hi, half);
-        let a_div_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(a_biased_lo, _mm256_srli_epi16::<8>(a_biased_lo)));
-        let a_div_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(a_biased_hi, _mm256_srli_epi16::<8>(a_biased_hi)));
+        let a_div_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            a_biased_lo,
+            _mm256_srli_epi16::<8>(a_biased_lo),
+        ));
+        let a_div_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            a_biased_hi,
+            _mm256_srli_epi16::<8>(a_biased_hi),
+        ));
         let alpha_lo = _mm256_sub_epi16(_mm256_add_epi16(sa_lo, da_lo), a_div_lo);
         let alpha_hi = _mm256_sub_epi16(_mm256_add_epi16(sa_hi, da_hi), a_div_hi);
 
@@ -514,9 +538,9 @@ pub fn blend_scanline_darken(dst: &mut [u8], src: &[u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         if crate::detect::has_avx512() {
-            unsafe { return blend_scanline_darken_avx512(dst, src) }
+            unsafe { blend_scanline_darken_avx512(dst, src) }
         }
-        unsafe { return blend_scanline_darken_sse2(dst, src) }
+        unsafe { blend_scanline_darken_sse2(dst, src) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -546,9 +570,9 @@ unsafe fn blend_scanline_darken_avx512(dst: &mut [u8], src: &[u8]) {
         let s_ptr = src.as_ptr().add(offset) as *const __m512i;
         let d = _mm512_loadu_si512(d_ptr);
         let s = _mm512_loadu_si512(s_ptr);
-        let rgb_blend = _mm512_min_epu8(d, s);   // min for BGR
-        let alpha_blend = _mm512_max_epu8(d, s);  // max for alpha
-        // Select: alpha bytes from alpha_blend, RGB bytes from rgb_blend
+        let rgb_blend = _mm512_min_epu8(d, s); // min for BGR
+        let alpha_blend = _mm512_max_epu8(d, s); // max for alpha
+                                                 // Select: alpha bytes from alpha_blend, RGB bytes from rgb_blend
         let result = _mm512_or_si512(
             _mm512_and_si512(alpha_mask, alpha_blend),
             _mm512_andnot_si512(alpha_mask, rgb_blend),
@@ -560,7 +584,7 @@ unsafe fn blend_scanline_darken_avx512(dst: &mut [u8], src: &[u8]) {
     // Scalar tail: process remaining pixels in 4-byte BGRA chunks
     for chunk in (offset..len).step_by(4) {
         if chunk + 3 < len {
-            dst[chunk]     = dst[chunk].min(src[chunk]);       // B
+            dst[chunk] = dst[chunk].min(src[chunk]); // B
             dst[chunk + 1] = dst[chunk + 1].min(src[chunk + 1]); // G
             dst[chunk + 2] = dst[chunk + 2].min(src[chunk + 2]); // R
             dst[chunk + 3] = dst[chunk + 3].max(src[chunk + 3]); // A
@@ -585,8 +609,8 @@ unsafe fn blend_scanline_darken_sse2(dst: &mut [u8], src: &[u8]) {
         let s_ptr = src.as_ptr().add(offset) as *const __m128i;
         let d = _mm_loadu_si128(d_ptr);
         let s = _mm_loadu_si128(s_ptr);
-        let rgb_blend = _mm_min_epu8(d, s);   // min for BGR
-        let alpha_blend = _mm_max_epu8(d, s);  // max for alpha
+        let rgb_blend = _mm_min_epu8(d, s); // min for BGR
+        let alpha_blend = _mm_max_epu8(d, s); // max for alpha
         let result = _mm_or_si128(
             _mm_and_si128(alpha_mask, alpha_blend),
             _mm_andnot_si128(alpha_mask, rgb_blend),
@@ -598,7 +622,7 @@ unsafe fn blend_scanline_darken_sse2(dst: &mut [u8], src: &[u8]) {
     // Scalar tail: process remaining pixels in 4-byte BGRA chunks
     for chunk in (offset..len).step_by(4) {
         if chunk + 3 < len {
-            dst[chunk]     = dst[chunk].min(src[chunk]);       // B
+            dst[chunk] = dst[chunk].min(src[chunk]); // B
             dst[chunk + 1] = dst[chunk + 1].min(src[chunk + 1]); // G
             dst[chunk + 2] = dst[chunk + 2].min(src[chunk + 2]); // R
             dst[chunk + 3] = dst[chunk + 3].max(src[chunk + 3]); // A
@@ -721,7 +745,7 @@ unsafe fn blend_scanline_difference_sse2(dst: &mut [u8], src: &[u8]) {
     // Scalar tail: process remaining pixels in 4-byte BGRA chunks
     for chunk in (offset..len).step_by(4) {
         if chunk + 3 < len {
-            dst[chunk]     = (dst[chunk] as i16 - src[chunk] as i16).unsigned_abs() as u8;     // B
+            dst[chunk] = (dst[chunk] as i16 - src[chunk] as i16).unsigned_abs() as u8; // B
             dst[chunk + 1] = (dst[chunk + 1] as i16 - src[chunk + 1] as i16).unsigned_abs() as u8; // G
             dst[chunk + 2] = (dst[chunk + 2] as i16 - src[chunk + 2] as i16).unsigned_abs() as u8; // R
             dst[chunk + 3] = dst[chunk + 3].max(src[chunk + 3]); // A
@@ -836,8 +860,14 @@ unsafe fn blend_scanline_screen_avx2(dst: &mut [u8], src: &[u8]) {
         let prod_hi = _mm256_mullo_epi16(s_hi, d_hi);
         let biased_lo = _mm256_add_epi16(prod_lo, half);
         let biased_hi = _mm256_add_epi16(prod_hi, half);
-        let div_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(biased_lo, _mm256_srli_epi16::<8>(biased_lo)));
-        let div_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(biased_hi, _mm256_srli_epi16::<8>(biased_hi)));
+        let div_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_lo,
+            _mm256_srli_epi16::<8>(biased_lo),
+        ));
+        let div_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_hi,
+            _mm256_srli_epi16::<8>(biased_hi),
+        ));
 
         // s + d - (s * d / 255)
         let sum_lo = _mm256_add_epi16(s_lo, d_lo);
@@ -877,7 +907,7 @@ pub fn invert_scanline(buf: &mut [u8]) {
             buf[off] = 255 - buf[off]; // B
             buf[off + 1] = 255 - buf[off + 1]; // G
             buf[off + 2] = 255 - buf[off + 2]; // R
-            // alpha unchanged
+                                               // alpha unchanged
         }
     }
 }
@@ -1030,12 +1060,18 @@ unsafe fn blend_scanline_overlay_sse2(dst: &mut [u8], src: &[u8]) {
 
         let scr_prod_lo = _mm_mullo_epi16(inv_s_lo, inv_d_lo);
         let scr_biased_lo = _mm_add_epi16(scr_prod_lo, half);
-        let scr_div_lo = _mm_srli_epi16::<8>(_mm_add_epi16(scr_biased_lo, _mm_srli_epi16::<8>(scr_biased_lo)));
+        let scr_div_lo = _mm_srli_epi16::<8>(_mm_add_epi16(
+            scr_biased_lo,
+            _mm_srli_epi16::<8>(scr_biased_lo),
+        ));
         let scr_result_lo = _mm_sub_epi16(all_ff, _mm_add_epi16(scr_div_lo, scr_div_lo));
 
         let scr_prod_hi = _mm_mullo_epi16(inv_s_hi, inv_d_hi);
         let scr_biased_hi = _mm_add_epi16(scr_prod_hi, half);
-        let scr_div_hi = _mm_srli_epi16::<8>(_mm_add_epi16(scr_biased_hi, _mm_srli_epi16::<8>(scr_biased_hi)));
+        let scr_div_hi = _mm_srli_epi16::<8>(_mm_add_epi16(
+            scr_biased_hi,
+            _mm_srli_epi16::<8>(scr_biased_hi),
+        ));
         let scr_result_hi = _mm_sub_epi16(all_ff, _mm_add_epi16(scr_div_hi, scr_div_hi));
 
         // mask: 0xFFFF where d < 128 (multiply path), 0 where d >= 128 (screen path)
@@ -1059,7 +1095,7 @@ unsafe fn blend_scanline_overlay_sse2(dst: &mut [u8], src: &[u8]) {
         let max_alpha = _mm_max_epu8(d, s);
         let result = _mm_or_si128(
             _mm_andnot_si128(alpha_mask, result), // color channels from blend
-            _mm_and_si128(alpha_mask, max_alpha),  // alpha from max
+            _mm_and_si128(alpha_mask, max_alpha), // alpha from max
         );
 
         _mm_storeu_si128(d_ptr, result);
@@ -1154,12 +1190,18 @@ unsafe fn blend_scanline_hard_light_sse2(dst: &mut [u8], src: &[u8]) {
 
         let scr_prod_lo = _mm_mullo_epi16(inv_s_lo, inv_d_lo);
         let scr_biased_lo = _mm_add_epi16(scr_prod_lo, half);
-        let scr_div_lo = _mm_srli_epi16::<8>(_mm_add_epi16(scr_biased_lo, _mm_srli_epi16::<8>(scr_biased_lo)));
+        let scr_div_lo = _mm_srli_epi16::<8>(_mm_add_epi16(
+            scr_biased_lo,
+            _mm_srli_epi16::<8>(scr_biased_lo),
+        ));
         let scr_result_lo = _mm_sub_epi16(all_ff, _mm_add_epi16(scr_div_lo, scr_div_lo));
 
         let scr_prod_hi = _mm_mullo_epi16(inv_s_hi, inv_d_hi);
         let scr_biased_hi = _mm_add_epi16(scr_prod_hi, half);
-        let scr_div_hi = _mm_srli_epi16::<8>(_mm_add_epi16(scr_biased_hi, _mm_srli_epi16::<8>(scr_biased_hi)));
+        let scr_div_hi = _mm_srli_epi16::<8>(_mm_add_epi16(
+            scr_biased_hi,
+            _mm_srli_epi16::<8>(scr_biased_hi),
+        ));
         let scr_result_hi = _mm_sub_epi16(all_ff, _mm_add_epi16(scr_div_hi, scr_div_hi));
 
         // mask: 0xFFFF where s < 128 (multiply path)
@@ -1398,7 +1440,12 @@ mod tests {
         // Allow ±1 difference from /255 approximation
         for i in 0..64 {
             let diff = (dst_scalar[i] as i16 - dst_auto[i] as i16).abs();
-            assert!(diff <= 1, "mismatch at {i}: scalar={} auto={}", dst_scalar[i], dst_auto[i]);
+            assert!(
+                diff <= 1,
+                "mismatch at {i}: scalar={} auto={}",
+                dst_scalar[i],
+                dst_auto[i]
+            );
         }
     }
 
@@ -1588,9 +1635,21 @@ mod tests {
         for i in 0..pixel_count {
             let off = i * 4;
             assert_eq!(buf[off], 255 - original[off], "B mismatch at pixel {i}");
-            assert_eq!(buf[off + 1], 255 - original[off + 1], "G mismatch at pixel {i}");
-            assert_eq!(buf[off + 2], 255 - original[off + 2], "R mismatch at pixel {i}");
-            assert_eq!(buf[off + 3], original[off + 3], "alpha should be preserved at pixel {i}");
+            assert_eq!(
+                buf[off + 1],
+                255 - original[off + 1],
+                "G mismatch at pixel {i}"
+            );
+            assert_eq!(
+                buf[off + 2],
+                255 - original[off + 2],
+                "R mismatch at pixel {i}"
+            );
+            assert_eq!(
+                buf[off + 3],
+                original[off + 3],
+                "alpha should be preserved at pixel {i}"
+            );
         }
     }
 
@@ -1641,7 +1700,12 @@ mod tests {
 
         for i in 0..len {
             let diff = (dst[i] as i16 - dst_scalar[i] as i16).abs();
-            assert!(diff <= 1, "pixel byte {i}: simd={} scalar={}", dst[i], dst_scalar[i]);
+            assert!(
+                diff <= 1,
+                "pixel byte {i}: simd={} scalar={}",
+                dst[i],
+                dst_scalar[i]
+            );
         }
     }
 
@@ -1716,7 +1780,12 @@ mod tests {
 
         for i in 0..len {
             let diff = (dst_scalar[i] as i16 - dst_simd[i] as i16).abs();
-            assert!(diff <= 1, "overlay mismatch at {i}: scalar={} simd={}", dst_scalar[i], dst_simd[i]);
+            assert!(
+                diff <= 1,
+                "overlay mismatch at {i}: scalar={} simd={}",
+                dst_scalar[i],
+                dst_simd[i]
+            );
         }
     }
 
@@ -1749,7 +1818,12 @@ mod tests {
 
         for i in 0..len {
             let diff = (dst_scalar[i] as i16 - dst_simd[i] as i16).abs();
-            assert!(diff <= 1, "hard_light mismatch at {i}: scalar={} simd={}", dst_scalar[i], dst_simd[i]);
+            assert!(
+                diff <= 1,
+                "hard_light mismatch at {i}: scalar={} simd={}",
+                dst_scalar[i],
+                dst_simd[i]
+            );
         }
     }
 
@@ -1800,7 +1874,12 @@ mod tests {
 
         for i in 0..len {
             let diff = (dst_scalar[i] as i16 - dst_simd[i] as i16).abs();
-            assert!(diff <= 1, "exclusion mismatch at {i}: scalar={} simd={}", dst_scalar[i], dst_simd[i]);
+            assert!(
+                diff <= 1,
+                "exclusion mismatch at {i}: scalar={} simd={}",
+                dst_scalar[i],
+                dst_simd[i]
+            );
         }
     }
 

@@ -190,7 +190,12 @@ mod tests {
         fn keymap_set_entry() {
             let mut km = compile_keymap(KeymapConfig::default());
             let count_before = km.key_count();
-            km.set_entry(200, KeySymEntry { levels: [0x41, 0x42, 0x43, 0x44] });
+            km.set_entry(
+                200,
+                KeySymEntry {
+                    levels: [0x41, 0x42, 0x43, 0x44],
+                },
+            );
             assert_eq!(km.key_count(), count_before + 1);
             assert_eq!(lookup_keysym(&km, 200, ModifierMask::empty()), Some(0x41));
         }
@@ -200,8 +205,8 @@ mod tests {
 
     mod repeat_fsm_tests {
         use crate::repeat_fsm::*;
-        use crate::xkb::compile_keymap;
         use crate::xkb::KeymapConfig;
+        use crate::xkb::compile_keymap;
 
         #[test]
         fn default_config() {
@@ -348,16 +353,46 @@ mod tests {
 
         #[test]
         fn numlock_off_produces_nav() {
-            assert_eq!(numpad_translate(KP_0, false), NumpadOutput::NavigationKey(NavKey::Insert));
-            assert_eq!(numpad_translate(KP_1, false), NumpadOutput::NavigationKey(NavKey::End));
-            assert_eq!(numpad_translate(KP_2, false), NumpadOutput::NavigationKey(NavKey::Down));
-            assert_eq!(numpad_translate(KP_3, false), NumpadOutput::NavigationKey(NavKey::PageDown));
-            assert_eq!(numpad_translate(KP_4, false), NumpadOutput::NavigationKey(NavKey::Left));
-            assert_eq!(numpad_translate(KP_6, false), NumpadOutput::NavigationKey(NavKey::Right));
-            assert_eq!(numpad_translate(KP_7, false), NumpadOutput::NavigationKey(NavKey::Home));
-            assert_eq!(numpad_translate(KP_8, false), NumpadOutput::NavigationKey(NavKey::Up));
-            assert_eq!(numpad_translate(KP_9, false), NumpadOutput::NavigationKey(NavKey::PageUp));
-            assert_eq!(numpad_translate(KP_DECIMAL, false), NumpadOutput::NavigationKey(NavKey::Delete));
+            assert_eq!(
+                numpad_translate(KP_0, false),
+                NumpadOutput::NavigationKey(NavKey::Insert)
+            );
+            assert_eq!(
+                numpad_translate(KP_1, false),
+                NumpadOutput::NavigationKey(NavKey::End)
+            );
+            assert_eq!(
+                numpad_translate(KP_2, false),
+                NumpadOutput::NavigationKey(NavKey::Down)
+            );
+            assert_eq!(
+                numpad_translate(KP_3, false),
+                NumpadOutput::NavigationKey(NavKey::PageDown)
+            );
+            assert_eq!(
+                numpad_translate(KP_4, false),
+                NumpadOutput::NavigationKey(NavKey::Left)
+            );
+            assert_eq!(
+                numpad_translate(KP_6, false),
+                NumpadOutput::NavigationKey(NavKey::Right)
+            );
+            assert_eq!(
+                numpad_translate(KP_7, false),
+                NumpadOutput::NavigationKey(NavKey::Home)
+            );
+            assert_eq!(
+                numpad_translate(KP_8, false),
+                NumpadOutput::NavigationKey(NavKey::Up)
+            );
+            assert_eq!(
+                numpad_translate(KP_9, false),
+                NumpadOutput::NavigationKey(NavKey::PageUp)
+            );
+            assert_eq!(
+                numpad_translate(KP_DECIMAL, false),
+                NumpadOutput::NavigationKey(NavKey::Delete)
+            );
         }
 
         #[test]
@@ -371,7 +406,10 @@ mod tests {
             assert_eq!(numpad_translate(KP_ADD, true), NumpadOutput::Char('+'));
             assert_eq!(numpad_translate(KP_ADD, false), NumpadOutput::Char('+'));
             assert_eq!(numpad_translate(KP_SUBTRACT, true), NumpadOutput::Char('-'));
-            assert_eq!(numpad_translate(KP_SUBTRACT, false), NumpadOutput::Char('-'));
+            assert_eq!(
+                numpad_translate(KP_SUBTRACT, false),
+                NumpadOutput::Char('-')
+            );
             assert_eq!(numpad_translate(KP_MULTIPLY, true), NumpadOutput::Char('*'));
             assert_eq!(numpad_translate(KP_DIVIDE, false), NumpadOutput::Char('/'));
             assert_eq!(numpad_translate(KP_ENTER, true), NumpadOutput::Char('\n'));
@@ -395,7 +433,10 @@ mod tests {
             let mut state = NumpadState::new();
             state.toggle_num_lock();
             assert!(!state.num_lock);
-            assert_eq!(state.translate(KP_7), NumpadOutput::NavigationKey(NavKey::Home));
+            assert_eq!(
+                state.translate(KP_7),
+                NumpadOutput::NavigationKey(NavKey::Home)
+            );
             state.toggle_num_lock();
             assert!(state.num_lock);
             assert_eq!(state.translate(KP_7), NumpadOutput::Char('7'));
@@ -422,7 +463,11 @@ mod tests {
         #[test]
         fn default_table_has_sequences() {
             let table = ComposeTable::with_defaults();
-            assert!(table.sequence_count() >= 50, "should have 50+ sequences, got {}", table.sequence_count());
+            assert!(
+                table.sequence_count() >= 50,
+                "should have 50+ sequences, got {}",
+                table.sequence_count()
+            );
         }
 
         #[test]
@@ -706,7 +751,7 @@ mod tests {
             let mut bk = BounceKeys::new(100);
             bk.key_down(30);
             bk.key_up(30); // release at time 0
-            bk.tick(50);   // 50ms later
+            bk.tick(50); // 50ms later
             assert_eq!(bk.key_down(30), KeyDecision::Reject); // too soon
         }
 
@@ -839,7 +884,16 @@ mod tests {
             let mut slow = SlowKeys::new(config.slow_keys_threshold_ms);
             let mut bounce = BounceKeys::new(config.bounce_keys_interval_ms);
 
-            let d = process_key(30, true, false, None, &config, &mut sticky, &mut slow, &mut bounce);
+            let d = process_key(
+                30,
+                true,
+                false,
+                None,
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             assert_eq!(d, KeyDecision::Accept);
         }
 
@@ -853,13 +907,40 @@ mod tests {
             let mut bounce = BounceKeys::new(config.bounce_keys_interval_ms);
 
             // First press accepted.
-            let d = process_key(30, true, false, None, &config, &mut sticky, &mut slow, &mut bounce);
+            let d = process_key(
+                30,
+                true,
+                false,
+                None,
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             assert_eq!(d, KeyDecision::Accept);
             // Release.
-            process_key(30, false, false, None, &config, &mut sticky, &mut slow, &mut bounce);
+            process_key(
+                30,
+                false,
+                false,
+                None,
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             bounce.tick(10);
             // Rapid repress rejected.
-            let d = process_key(30, true, false, None, &config, &mut sticky, &mut slow, &mut bounce);
+            let d = process_key(
+                30,
+                true,
+                false,
+                None,
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             assert_eq!(d, KeyDecision::Reject);
         }
 
@@ -872,7 +953,16 @@ mod tests {
             let mut slow = SlowKeys::new(config.slow_keys_threshold_ms);
             let mut bounce = BounceKeys::new(config.bounce_keys_interval_ms);
 
-            let d = process_key(30, true, false, None, &config, &mut sticky, &mut slow, &mut bounce);
+            let d = process_key(
+                30,
+                true,
+                false,
+                None,
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             assert_eq!(d, KeyDecision::Delay(200));
         }
 
@@ -885,12 +975,39 @@ mod tests {
             let mut bounce = BounceKeys::new(config.bounce_keys_interval_ms);
 
             // Modifier down.
-            process_key(42, true, true, Some(ModifierMask::SHIFT), &config, &mut sticky, &mut slow, &mut bounce);
+            process_key(
+                42,
+                true,
+                true,
+                Some(ModifierMask::SHIFT),
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             // Modifier up (standalone).
-            let d = process_key(42, false, true, Some(ModifierMask::SHIFT), &config, &mut sticky, &mut slow, &mut bounce);
+            let d = process_key(
+                42,
+                false,
+                true,
+                Some(ModifierMask::SHIFT),
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             assert_eq!(d, KeyDecision::ModifierSticky(ModifierMask::SHIFT));
             // Non-modifier key consumes.
-            let d = process_key(30, true, false, None, &config, &mut sticky, &mut slow, &mut bounce);
+            let d = process_key(
+                30,
+                true,
+                false,
+                None,
+                &config,
+                &mut sticky,
+                &mut slow,
+                &mut bounce,
+            );
             assert_eq!(d, KeyDecision::ModifierSticky(ModifierMask::SHIFT));
         }
 

@@ -273,7 +273,10 @@ impl SwitcherState {
                 .collect()
         } else if let Some(ref app_id) = self.expanded_app_id {
             // Show only windows from the expanded group.
-            self.entries.iter().filter(|w| w.app_id == *app_id).collect()
+            self.entries
+                .iter()
+                .filter(|w| w.app_id == *app_id)
+                .collect()
         } else {
             self.entries.iter().collect()
         }
@@ -306,10 +309,7 @@ pub fn group_by_app(entries: &[WindowEntry]) -> Vec<AppGroup> {
     groups
         .into_iter()
         .map(|(app_id, windows)| {
-            let representative_title = windows
-                .first()
-                .map(|w| w.title.clone())
-                .unwrap_or_default();
+            let representative_title = windows.first().map(|w| w.title.clone()).unwrap_or_default();
             AppGroup {
                 app_id,
                 windows,
@@ -436,10 +436,7 @@ mod tests {
 
     #[test]
     fn sort_mru_equal_timestamps() {
-        let mut entries = vec![
-            make_entry(1, "a", "A", 100),
-            make_entry(2, "b", "B", 100),
-        ];
+        let mut entries = vec![make_entry(1, "a", "A", 100), make_entry(2, "b", "B", 100)];
         sort_mru(&mut entries);
         // Stable sort: order preserved for equal timestamps.
         assert_eq!(entries.len(), 2);
@@ -814,10 +811,7 @@ mod tests {
 
     #[test]
     fn layout_marks_selected() {
-        let entries = vec![
-            make_entry(1, "a", "W1", 200),
-            make_entry(2, "b", "W2", 100),
-        ];
+        let entries = vec![make_entry(1, "a", "W1", 200), make_entry(2, "b", "W2", 100)];
         let slots = SwitcherLayout::compute(&entries, 1, 1920.0, 1080.0);
         assert!(!slots[0].is_selected);
         assert!(slots[1].is_selected);
@@ -867,7 +861,10 @@ mod tests {
         let slots = SwitcherLayout::compute(&entries, 0, 1920.0, 1080.0);
         let y = slots[0].y;
         for s in &slots {
-            assert!((s.y - y).abs() < 0.01, "All items should be on the same row");
+            assert!(
+                (s.y - y).abs() < 0.01,
+                "All items should be on the same row"
+            );
         }
     }
 

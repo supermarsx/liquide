@@ -113,12 +113,14 @@ impl SystemTray {
     where
         F: FnOnce(&mut TrayItem),
     {
-        let item = self.items.iter_mut().find(|i| i.id == id).ok_or_else(|| {
-            InteropError::NotFound {
-                kind: "TrayItem".to_string(),
-                name: id.to_string(),
-            }
-        })?;
+        let item =
+            self.items
+                .iter_mut()
+                .find(|i| i.id == id)
+                .ok_or_else(|| InteropError::NotFound {
+                    kind: "TrayItem".to_string(),
+                    name: id.to_string(),
+                })?;
         f(item);
         Ok(())
     }

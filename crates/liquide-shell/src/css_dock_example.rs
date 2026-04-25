@@ -7,8 +7,12 @@ use liquide_compositor::geometry::Rect;
 use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_renderer_css::StyleResolver;
 
-use crate::css_integration::{color_or_default, glass_params_from_style, resolve_dock_item_style, resolve_dock_style};
-use crate::scene_builder::{icon_id_for_name, icon_node, solid_rect, NODE_DOCK, NODE_DOCK_ITEM_BASE};
+use crate::css_integration::{
+    color_or_default, glass_params_from_style, resolve_dock_item_style, resolve_dock_style,
+};
+use crate::scene_builder::{
+    NODE_DOCK, NODE_DOCK_ITEM_BASE, icon_id_for_name, icon_node, solid_rect,
+};
 
 /// Build dock scene graph using CSS styling instead of hardcoded theme values.
 ///
@@ -152,13 +156,8 @@ mod tests {
             Rect::new(70.0, 1010.0, 48.0, 48.0),
         ];
 
-        let dock_node = build_dock_scene_with_css(
-            dock_bounds,
-            &items,
-            &item_rects,
-            true,
-            &resolver,
-        );
+        let dock_node =
+            build_dock_scene_with_css(dock_bounds, &items, &item_rects, true, &resolver);
 
         assert_eq!(dock_node.id, NODE_DOCK);
         assert_eq!(dock_node.children.len(), 4); // border + 2 icons + 1 running indicator dot

@@ -56,7 +56,13 @@ fn test_filter_name_pattern_contains() {
         name_pattern: "*config*".into(),
         ..Default::default()
     };
-    assert!(f.matches(&make_file("my_config_file.toml", "toml", 100, 1000, "text/x-config")));
+    assert!(f.matches(&make_file(
+        "my_config_file.toml",
+        "toml",
+        100,
+        1000,
+        "text/x-config"
+    )));
     assert!(!f.matches(&make_file("readme.md", "md", 100, 1000, "text/plain")));
 }
 
@@ -68,7 +74,13 @@ fn test_filter_name_pattern_exact() {
     };
     assert!(f.matches(&make_file("Cargo.toml", "toml", 100, 1000, "text/x-config")));
     assert!(f.matches(&make_file("cargo.toml", "toml", 100, 1000, "text/x-config"))); // case-insensitive
-    assert!(!f.matches(&make_file("Cargo.lock", "lock", 100, 1000, "application/octet-stream")));
+    assert!(!f.matches(&make_file(
+        "Cargo.lock",
+        "lock",
+        100,
+        1000,
+        "application/octet-stream"
+    )));
 }
 
 #[test]
@@ -209,10 +221,15 @@ fn test_store_new_is_empty() {
 #[test]
 fn test_store_save_and_load() {
     let mut store = SearchFolderStore::new();
-    store.save(SearchFolder::new("Images", "", "", SearchFilter {
-        mime_type: "image/".into(),
-        ..Default::default()
-    }));
+    store.save(SearchFolder::new(
+        "Images",
+        "",
+        "",
+        SearchFilter {
+            mime_type: "image/".into(),
+            ..Default::default()
+        },
+    ));
     assert_eq!(store.len(), 1);
     let loaded = store.load("Images").unwrap();
     assert_eq!(loaded.filters.mime_type, "image/");
@@ -221,8 +238,18 @@ fn test_store_save_and_load() {
 #[test]
 fn test_store_save_update() {
     let mut store = SearchFolderStore::new();
-    store.save(SearchFolder::new("Test", "old query", "", SearchFilter::new()));
-    store.save(SearchFolder::new("Test", "new query", "", SearchFilter::new()));
+    store.save(SearchFolder::new(
+        "Test",
+        "old query",
+        "",
+        SearchFilter::new(),
+    ));
+    store.save(SearchFolder::new(
+        "Test",
+        "new query",
+        "",
+        SearchFilter::new(),
+    ));
     assert_eq!(store.len(), 1);
     assert_eq!(store.load("Test").unwrap().query, "new query");
 }
@@ -263,7 +290,13 @@ fn test_smart_folders_count() {
 fn test_smart_folder_large_files() {
     let folders = smart_folders();
     let large = folders.iter().find(|f| f.name == "Large Files").unwrap();
-    let big = make_file("huge.bin", "bin", 200 * 1024 * 1024, 1000, "application/octet-stream");
+    let big = make_file(
+        "huge.bin",
+        "bin",
+        200 * 1024 * 1024,
+        1000,
+        "application/octet-stream",
+    );
     let small = make_file("tiny.txt", "txt", 100, 1000, "text/plain");
     assert!(large.matches(&big));
     assert!(!large.matches(&small));
@@ -288,7 +321,10 @@ fn test_smart_folder_videos() {
 #[test]
 fn test_set_recent_window() {
     let mut folders = smart_folders();
-    let recent = folders.iter_mut().find(|f| f.name == "Recent Documents").unwrap();
+    let recent = folders
+        .iter_mut()
+        .find(|f| f.name == "Recent Documents")
+        .unwrap();
     let now = 1_000_000u64;
     set_recent_window(recent, now);
     assert_eq!(recent.filters.modified_after, now - 7 * 86_400);

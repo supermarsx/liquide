@@ -43,13 +43,9 @@ pub enum A11yEvent {
         value: bool,
     },
     /// The children of a container were added / removed / reordered.
-    ChildrenChanged {
-        parent_id: NodeId,
-    },
+    ChildrenChanged { parent_id: NodeId },
     /// A node's bounding rectangle changed.
-    BoundsChanged {
-        node_id: NodeId,
-    },
+    BoundsChanged { node_id: NodeId },
     /// The active descendant of a composite widget changed.
     ActiveDescendantChanged {
         container_id: NodeId,
@@ -160,7 +156,13 @@ mod tests {
     #[test]
     fn push_and_drain() {
         let mut q = A11yEventQueue::new(16);
-        q.push_event(1, A11yEvent::FocusChanged { old: None, new: Some(1) });
+        q.push_event(
+            1,
+            A11yEvent::FocusChanged {
+                old: None,
+                new: Some(1),
+            },
+        );
         q.push_event(2, A11yEvent::DocumentLoadComplete);
         assert_eq!(q.len(), 2);
 
@@ -201,7 +203,10 @@ mod tests {
 
     #[test]
     fn focus_changed_event() {
-        let evt = A11yEvent::FocusChanged { old: Some(1), new: Some(2) };
+        let evt = A11yEvent::FocusChanged {
+            old: Some(1),
+            new: Some(2),
+        };
         let target = A11yEventTarget::new(2, evt.clone());
         assert_eq!(target.node_id, 2);
         assert_eq!(target.event, evt);
@@ -213,7 +218,11 @@ mod tests {
             container_id: 10,
             selected_ids: vec![11, 12],
         };
-        if let A11yEvent::SelectionChanged { container_id, selected_ids } = &evt {
+        if let A11yEvent::SelectionChanged {
+            container_id,
+            selected_ids,
+        } = &evt
+        {
             assert_eq!(*container_id, 10);
             assert_eq!(selected_ids.len(), 2);
         } else {
@@ -228,7 +237,12 @@ mod tests {
             old_value: "10".into(),
             new_value: "20".into(),
         };
-        if let A11yEvent::ValueChanged { node_id, old_value, new_value } = &evt {
+        if let A11yEvent::ValueChanged {
+            node_id,
+            old_value,
+            new_value,
+        } = &evt
+        {
             assert_eq!(*node_id, 5);
             assert_eq!(old_value, "10");
             assert_eq!(new_value, "20");
@@ -245,7 +259,10 @@ mod tests {
             inserted: "abc".into(),
             deleted: String::new(),
         };
-        if let A11yEvent::TextChanged { offset, inserted, .. } = &evt {
+        if let A11yEvent::TextChanged {
+            offset, inserted, ..
+        } = &evt
+        {
             assert_eq!(*offset, 5);
             assert_eq!(inserted, "abc");
         } else {
@@ -260,7 +277,10 @@ mod tests {
             state_name: "checked".into(),
             value: true,
         };
-        if let A11yEvent::StateChanged { state_name, value, .. } = &evt {
+        if let A11yEvent::StateChanged {
+            state_name, value, ..
+        } = &evt
+        {
             assert_eq!(state_name, "checked");
             assert!(*value);
         } else {
@@ -280,7 +300,11 @@ mod tests {
             container_id: 10,
             descendant_id: 15,
         };
-        if let A11yEvent::ActiveDescendantChanged { container_id, descendant_id } = &evt {
+        if let A11yEvent::ActiveDescendantChanged {
+            container_id,
+            descendant_id,
+        } = &evt
+        {
             assert_eq!(*container_id, 10);
             assert_eq!(*descendant_id, 15);
         } else {

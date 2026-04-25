@@ -5,8 +5,8 @@
 
 use liquide_compositor::geometry::Rect;
 
-use crate::theme::MenuTheme;
 use crate::MenuItem;
+use crate::theme::MenuTheme;
 
 // ---------------------------------------------------------------------------
 // Per-item geometry
@@ -87,10 +87,34 @@ pub struct MenuLayout;
 
 impl MenuLayout {
     /// Estimate the width in logical pixels for a text string.
-    /// Uses a heuristic character-width model (proportional approximation).
+    ///
+    /// Iterates Unicode scalar values (not bytes) and classifies each into a
+    /// rough display-width bucket so CJK, emoji, and combining marks are
+    /// handled without a full unicode-width table dependency. Characters are
+    /// approximated as follows (relative to `font_size`):
+    /// - Combining marks (U+0300..=U+036F, U+20D0..=U+20FF, variation sel.): 0.0
+    /// - Fullwidth CJK / Hangul / Hiragana / Katakana:                         1.0
+    /// - Emoji BMP surrogates & dingbats (approx ranges):                      1.0
+    /// - Narrow ASCII:                                                         0.55
+    /// - Other (Latin extended, Greek, etc.):                                  0.60
+    ///
+    /// This is a best-effort estimator — callers that have a real font metric
+    /// should prefer [`estimate_text_width_with`] with a custom advance fn.
     fn estimate_text_width(text: &str, font_size: f32) -> f32 {
-        let avg_char_width = font_size * 0.55;
-        text.len() as f32 * avg_char_width
+        let mut width = 0.0_f32;
+        for ch in text.chars() {
+            width += char_advance_ratio(ch) * font_size;
+        }
+        width
+    }
+
+    /// Measure using a caller-provided per-character advance function.
+    ///
+    /// `advance(ch)` returns advance **in pixels** for `ch` at the current
+    /// font/size. Returns the sum. Used by callers that have real font
+    /// metrics from a shaper.
+    pub fn estimate_text_width_with<F: FnMut(char) -> f32>(text: &str, mut advance: F) -> f32 {
+        text.chars().map(|c| advance(c)).sum()
     }
 
     /// Compute the auto-width for a menu based on its content.
@@ -374,6 +398,59 @@ impl MenuLayout {
 }
 
 // ---------------------------------------------------------------------------
+// Unicode-aware advance ratios
+// ---------------------------------------------------------------------------
+
+/// Return an approximate advance ratio for `ch` relative to the font's em size.
+///
+/// This is a coarse grapheme/metric approximation used when a real shaper is
+/// not available. Zero-width characters (combining marks, variation selectors,
+/// ZWJ/ZWNJ) return 0.0; CJK / emoji / fullwidth return ~1.0; narrow ASCII
+/// returns 0.55.
+#[inline]
+fn char_advance_ratio(ch: char) -> f32 {
+    let c = ch as u32;
+    // Zero-width ranges.
+    if matches!(c,
+        0x0300..=0x036F        // Combining diacriticals
+        | 0x1AB0..=0x1AFF      // Extended
+        | 0x1DC0..=0x1DFF
+        | 0x20D0..=0x20FF      // Symbols
+        | 0xFE20..=0xFE2F      // Half marks
+        | 0x200B..=0x200F      // ZWSP..RLM
+        | 0x2060..=0x206F      // Word joiner / invisible operators
+        | 0xFE00..=0xFE0F      // Variation selectors
+        | 0xE0100..=0xE01EF    // VS17..256
+    ) {
+        return 0.0;
+    }
+    // Wide ranges (CJK, Hangul, Hiragana, Katakana, fullwidth, emoji).
+    if matches!(c,
+        0x1100..=0x115F        // Hangul Jamo
+        | 0x2E80..=0x303E      // CJK radicals / symbols
+        | 0x3041..=0x33FF      // Hiragana..CJK compat
+        | 0x3400..=0x4DBF      // CJK ext A
+        | 0x4E00..=0x9FFF      // CJK unified
+        | 0xA000..=0xA4CF      // Yi
+        | 0xAC00..=0xD7A3      // Hangul syllables
+        | 0xF900..=0xFAFF      // CJK compat ideographs
+        | 0xFE30..=0xFE4F      // CJK compat forms
+        | 0xFF00..=0xFF60      // Fullwidth forms
+        | 0xFFE0..=0xFFE6
+        | 0x1F300..=0x1F64F    // Emoji symbols/pictographs
+        | 0x1F680..=0x1F9FF
+        | 0x20000..=0x3FFFD    // CJK ext B..
+    ) {
+        return 1.0;
+    }
+    // Narrow ASCII.
+    if c < 0x80 {
+        return 0.55;
+    }
+    0.60
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -404,10 +481,7 @@ mod tests {
                 .with_shortcut("Ctrl+C"),
             MenuItem::separator(),
             MenuItem::action("Paste", MenuAction(3)).with_shortcut("Ctrl+V"),
-            MenuItem::submenu(
-                "More",
-                vec![MenuItem::action("Select All", MenuAction(4))],
-            ),
+            MenuItem::submenu("More", vec![MenuItem::action("Select All", MenuAction(4))]),
         ]
     }
 
@@ -501,7 +575,10 @@ mod tests {
     fn layout_icon_items_have_icon_rect() {
         let items = sample_items();
         let geo = MenuLayout::compute(&items, (100.0, 100.0), screen(), &theme(), 1.0);
-        assert!(geo.items[0].icon_rect.is_some(), "Item with icon should have icon_rect");
+        assert!(
+            geo.items[0].icon_rect.is_some(),
+            "Item with icon should have icon_rect"
+        );
         assert!(geo.items[1].icon_rect.is_some());
         // Separator has no icon rect.
         assert!(geo.items[2].icon_rect.is_none());
@@ -523,10 +600,7 @@ mod tests {
         let geo = MenuLayout::compute(&items, (100.0, 200.0), screen(), &theme(), 1.0);
         // Hit the first item.
         let first = &geo.items[0];
-        let hit = geo.hit_test(
-            geo.x + first.rect.x + 5.0,
-            geo.y + first.rect.y + 5.0,
-        );
+        let hit = geo.hit_test(geo.x + first.rect.x + 5.0, geo.y + first.rect.y + 5.0);
         assert_eq!(hit, Some(0));
     }
 
@@ -545,15 +619,13 @@ mod tests {
             MenuItem::action("Sub B", MenuAction(11)),
         ];
         let parent_rect = Rect::new(300.0, 250.0, 200.0, 32.0);
-        let geo = MenuLayout::compute_submenu(
-            &children,
-            parent_rect,
-            502.0,
-            screen(),
-            &theme(),
-        );
+        let geo = MenuLayout::compute_submenu(&children, parent_rect, 502.0, screen(), &theme());
         // Submenu should open to the right of the parent.
-        assert!(geo.x >= 502.0, "Submenu x={} should be >= parent right 502", geo.x);
+        assert!(
+            geo.x >= 502.0,
+            "Submenu x={} should be >= parent right 502",
+            geo.x
+        );
         assert_eq!(geo.items.len(), 2);
     }
 
@@ -565,13 +637,7 @@ mod tests {
         ];
         // Parent is close to right edge.
         let parent_rect = Rect::new(1700.0, 250.0, 200.0, 32.0);
-        let geo = MenuLayout::compute_submenu(
-            &children,
-            parent_rect,
-            1900.0,
-            screen(),
-            &theme(),
-        );
+        let geo = MenuLayout::compute_submenu(&children, parent_rect, 1900.0, screen(), &theme());
         // Should flip to the left of the parent.
         assert!(
             geo.x + geo.width <= 1920.0,

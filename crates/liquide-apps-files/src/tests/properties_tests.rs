@@ -94,8 +94,10 @@ fn test_detect_mime_audio_video() {
 #[test]
 fn test_detect_mime_documents() {
     assert_eq!(detect_mime_type("report.pdf"), "application/pdf");
-    assert_eq!(detect_mime_type("sheet.xlsx"),
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    assert_eq!(
+        detect_mime_type("sheet.xlsx"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
 }
 
 #[test]
@@ -123,7 +125,12 @@ fn test_detect_mime_no_extension() {
 
 #[test]
 fn test_file_properties_from_entry() {
-    let entry = FileEntry::file("readme.md".into(), "/home/user/readme.md".into(), 2048, 1000);
+    let entry = FileEntry::file(
+        "readme.md".into(),
+        "/home/user/readme.md".into(),
+        2048,
+        1000,
+    );
     let props = FileProperties::from_entry(&entry);
     assert_eq!(props.name, "readme.md");
     assert_eq!(props.extension, "md");

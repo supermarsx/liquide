@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 #[repr(u16)]
 pub enum MessageType {
     // ── Control Channel (0x0000–0x00FF) ─────────────────────
-
     /// Initial handshake from client.
     ClientHello = 0x0001,
     /// Handshake response from server.
@@ -76,7 +75,6 @@ pub enum MessageType {
     SecureAttentionAck = 0x0031,
 
     // ── Emergency Channel (0x0100–0x01FF) ────────────────────
-
     /// Session crash notification.
     CrashInfo = 0x0101,
     /// Chunk of crash log text.
@@ -107,7 +105,6 @@ pub enum MessageType {
     DiagnosticResponse = 0x010E,
 
     // ── Video Channel (0x1000–0x10FF) ────────────────────────
-
     /// Frame metadata (codec, size, damage rects).
     VideoFrameHeader = 0x1001,
     /// Encoded frame data (possibly fragmented).
@@ -122,7 +119,6 @@ pub enum MessageType {
     KeyFrameRequest = 0x1006,
 
     // ── Cursor Channel (0x1100–0x11FF) ───────────────────────
-
     /// Cursor position update.
     CursorPosition = 0x1101,
     /// Cursor image/shape change.
@@ -131,7 +127,6 @@ pub enum MessageType {
     CursorVisibility = 0x1103,
 
     // ── Tile Channel (0x1200–0x12FF) ─────────────────────────
-
     /// Tile grid configuration.
     TileConfig = 0x1201,
     /// Batch of tile updates for a single frame.
@@ -148,7 +143,6 @@ pub enum MessageType {
     TileModeSwitch = 0x1207,
 
     // ── Audio Channel (0x2000–0x21FF) ────────────────────────
-
     /// Audio format negotiation.
     AudioConfig = 0x2001,
     /// Encoded audio frame.
@@ -159,7 +153,6 @@ pub enum MessageType {
     AudioVolume = 0x2004,
 
     // ── Clipboard Channel (0x3000–0x30FF) ────────────────────
-
     /// Announce available clipboard formats.
     ClipboardOffer = 0x3001,
     /// Request clipboard data in specific format.
@@ -176,7 +169,6 @@ pub enum MessageType {
     ClipboardCancel = 0x3007,
 
     // ── Input Channel (0x5000–0x50FF) ────────────────────────
-
     /// Key press.
     KeyDown = 0x5001,
     /// Key release.
@@ -412,4 +404,3 @@ pub fn is_valid_range(code: u16) -> bool {
     ) || MessageType::is_vendor(code)
         || MessageType::is_experimental(code)
 }
-

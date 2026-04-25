@@ -38,8 +38,35 @@ pub use font_face::{FontDisplay, FontFaceLoader, FontFaceRule, FontLoadState};
 pub use glyph_cache::{CacheStats, GlyphCache, GlyphCacheKey};
 pub use metrics::FontMetricsProvider;
 pub use rasterize::{GlyphBitmap, GlyphRasterizer, HintingMode, RasterConfig, SubpixelMode};
-pub use shaper::{FontFeature, ShapedGlyph, TextShaper, parse_font_feature_settings, parse_font_variation_settings};
-pub use synthesis::{SynthesisConfig, apply_synthesis, apply_synthetic_bold, apply_synthetic_oblique};
+pub use shaper::{
+    FontFeature, ShapedGlyph, TextShaper, parse_font_feature_settings,
+    parse_font_variation_settings,
+};
+pub use synthesis::{
+    SynthesisConfig, apply_synthesis, apply_synthetic_bold, apply_synthetic_oblique,
+};
+
+// -------------------------------------------------------------------------
+// FontId ↔ FontFaceId interop
+// -------------------------------------------------------------------------
+//
+// `liquide_text_engine::FontId` is the canonical font identity across the
+// text pipeline. `FontFaceId` is kept as a distinct wrapper inside this
+// crate (so the database's inherent methods like `FALLBACK` / `from_raw`
+// stay stable), but the two types are freely convertible in either
+// direction via `From`.
+
+impl From<database::FontFaceId> for liquide_text_engine::FontId {
+    fn from(f: database::FontFaceId) -> Self {
+        liquide_text_engine::FontId(f.0)
+    }
+}
+
+impl From<liquide_text_engine::FontId> for database::FontFaceId {
+    fn from(f: liquide_text_engine::FontId) -> Self {
+        database::FontFaceId(f.0)
+    }
+}
 
 use thiserror::Error;
 
@@ -88,13 +115,20 @@ mod tests {
 
     #[test]
     fn test_error_glyph_not_found() {
-        let e = FontRasterizerError::GlyphNotFound { font_id: 1, codepoint: 0x1F600 };
+        let e = FontRasterizerError::GlyphNotFound {
+            font_id: 1,
+            codepoint: 0x1F600,
+        };
         assert!(e.to_string().contains("U+1F600"));
     }
 
     #[test]
     fn test_error_size_out_of_range() {
-        let e = FontRasterizerError::SizeOutOfRange { size: 0.5, min: 1.0, max: 500.0 };
+        let e = FontRasterizerError::SizeOutOfRange {
+            size: 0.5,
+            min: 1.0,
+            max: 500.0,
+        };
         assert!(e.to_string().contains("0.5"));
     }
 }

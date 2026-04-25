@@ -1,8 +1,8 @@
 use std::process::Command;
 
 use crate::{
-    Direction, FirewallBackend, FirewallError, FirewallProfile, FirewallRule, PortSpec,
-    Protocol, RuleAction,
+    Direction, FirewallBackend, FirewallError, FirewallProfile, FirewallRule, PortSpec, Protocol,
+    RuleAction,
 };
 
 /// Windows firewall backend using PowerShell `NetFirewallRule` cmdlets.
@@ -27,9 +27,7 @@ impl PlatformFirewall {
         let output = Command::new("powershell")
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .output()
-            .map_err(|e| {
-                FirewallError::PlatformError(format!("failed to run powershell: {e}"))
-            })?;
+            .map_err(|e| FirewallError::PlatformError(format!("failed to run powershell: {e}")))?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
@@ -95,16 +93,14 @@ impl PlatformFirewall {
 
         // Port (only valid for TCP/UDP).
         match rule.protocol {
-            Protocol::TCP | Protocol::UDP => {
-                match rule.direction {
-                    Direction::Inbound => {
-                        script.push_str(&format!(" -LocalPort {port}"));
-                    }
-                    Direction::Outbound => {
-                        script.push_str(&format!(" -RemotePort {port}"));
-                    }
+            Protocol::TCP | Protocol::UDP => match rule.direction {
+                Direction::Inbound => {
+                    script.push_str(&format!(" -LocalPort {port}"));
                 }
-            }
+                Direction::Outbound => {
+                    script.push_str(&format!(" -RemotePort {port}"));
+                }
+            },
             _ => {}
         }
 
@@ -155,9 +151,8 @@ impl FirewallBackend for PlatformFirewall {
 
     fn remove_rule(&mut self, rule_name: &str) -> Result<(), FirewallError> {
         let display_name = self.prefixed_name(rule_name);
-        let script = format!(
-            "Remove-NetFirewallRule -DisplayName '{display_name}' -ErrorAction Stop",
-        );
+        let script =
+            format!("Remove-NetFirewallRule -DisplayName '{display_name}' -ErrorAction Stop",);
         Self::run_powershell(&script)?;
         Ok(())
     }
@@ -178,8 +173,7 @@ impl FirewallBackend for PlatformFirewall {
     }
 
     fn is_enabled(&self) -> Result<bool, FirewallError> {
-        let script =
-            "(Get-NetFirewallProfile -Profile Domain,Public,Private | \
+        let script = "(Get-NetFirewallProfile -Profile Domain,Public,Private | \
              Where-Object { $_.Enabled -eq 'True' }).Count";
         let output = Self::run_powershell(&script)?;
         let count: u32 = output.trim().parse().unwrap_or(0);
@@ -188,9 +182,8 @@ impl FirewallBackend for PlatformFirewall {
 
     fn set_enabled(&mut self, enabled: bool) -> Result<(), FirewallError> {
         let state = if enabled { "True" } else { "False" };
-        let script = format!(
-            "Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled {state}",
-        );
+        let script =
+            format!("Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled {state}",);
         Self::run_powershell(&script)?;
         Ok(())
     }

@@ -4,10 +4,10 @@
 //! streaming, and local clipboard storage with size limits.
 
 pub mod format;
-pub mod offer;
-pub mod transfer;
-pub mod store;
 pub mod manager;
+pub mod offer;
+pub mod store;
+pub mod transfer;
 
 use thiserror::Error;
 
@@ -44,10 +44,10 @@ pub type Result<T> = std::result::Result<T, ClipboardError>;
 
 // Re-exports
 pub use format::ClipboardFormat;
-pub use offer::{ClipboardOffer, ClipboardRequest};
-pub use transfer::{ClipboardTransfer, TransferState};
-pub use store::{ClipboardEntry, ClipboardStore};
 pub use manager::{ClipboardManager, ClipboardPolicy};
+pub use offer::{ClipboardOffer, ClipboardRequest};
+pub use store::{ClipboardEntry, ClipboardStore};
+pub use transfer::{ClipboardTransfer, TransferState};
 
 #[cfg(test)]
 mod tests;

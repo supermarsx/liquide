@@ -127,9 +127,7 @@ impl DowngradeManager {
 
         if cpu_pct < recovery_threshold {
             match self.recovery_start {
-                Some(start)
-                    if start.elapsed().as_secs() >= self.thresholds.recovery_hold_sec =>
-                {
+                Some(start) if start.elapsed().as_secs() >= self.thresholds.recovery_hold_sec => {
                     // Recovery hold period elapsed; step down one level.
                     let new_level = match self.current_level {
                         DowngradeLevel::SuspendLeastActive => DowngradeLevel::ReduceQuality,

@@ -1,4 +1,4 @@
-use crate::{PluginId, PluginCapability, PluginError};
+use crate::{PluginCapability, PluginError, PluginId};
 
 /// Extension point describing where a plugin integrates into the desktop
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,7 +140,8 @@ pub fn parse_manifest(toml_str: &str) -> Result<PluginManifest, ManifestError> {
                 "script" => script = Some(value.to_string()),
                 "icon" => icon = Some(value.to_string()),
                 "capabilities" => {
-                    capabilities = value.split(',')
+                    capabilities = value
+                        .split(',')
                         .filter_map(|c| parse_capability(c.trim()))
                         .collect();
                 }
@@ -148,7 +149,8 @@ pub fn parse_manifest(toml_str: &str) -> Result<PluginManifest, ManifestError> {
                     extension_point = Some(parse_extension_point(value));
                 }
                 "permissions" => {
-                    permissions = value.split(',')
+                    permissions = value
+                        .split(',')
                         .map(|p| parse_permission(p.trim()))
                         .collect();
                 }
@@ -235,7 +237,9 @@ fn parse_capability(s: &str) -> Option<PluginCapability> {
         "statusbar_widget" | "statusbarwidget" => Some(PluginCapability::StatusBarWidget),
         "file_preview" | "filepreview" => Some(PluginCapability::FilePreview),
         "theme_extension" | "themeextension" => Some(PluginCapability::ThemeExtension),
-        "notification_provider" | "notificationprovider" => Some(PluginCapability::NotificationProvider),
+        "notification_provider" | "notificationprovider" => {
+            Some(PluginCapability::NotificationProvider)
+        }
         "search_provider" | "searchprovider" => Some(PluginCapability::SearchProvider),
         "window_decorator" | "windowdecorator" => Some(PluginCapability::WindowDecorator),
         "keyboard_shortcuts" | "keyboardshortcuts" => Some(PluginCapability::KeyboardShortcuts),
@@ -275,8 +279,16 @@ capabilities = "context_menu, statusbar_widget"
         assert!(manifest.permissions.contains(&Permission::Network));
         assert!(manifest.permissions.contains(&Permission::Clipboard));
         assert_eq!(manifest.capabilities.len(), 2);
-        assert!(manifest.capabilities.contains(&PluginCapability::ContextMenu));
-        assert!(manifest.capabilities.contains(&PluginCapability::StatusBarWidget));
+        assert!(
+            manifest
+                .capabilities
+                .contains(&PluginCapability::ContextMenu)
+        );
+        assert!(
+            manifest
+                .capabilities
+                .contains(&PluginCapability::StatusBarWidget)
+        );
     }
 
     #[test]
@@ -294,7 +306,10 @@ capabilities = "context_menu, statusbar_widget"
         let content = "name = \"Test\"\nversion = \"1.0\"";
         let result = parse_manifest(content);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ManifestError::MissingField("id".into()));
+        assert_eq!(
+            result.unwrap_err(),
+            ManifestError::MissingField("id".into())
+        );
     }
 
     #[test]
@@ -302,7 +317,10 @@ capabilities = "context_menu, statusbar_widget"
         let content = "id = \"test\"\nversion = \"1.0\"";
         let result = parse_manifest(content);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ManifestError::MissingField("name".into()));
+        assert_eq!(
+            result.unwrap_err(),
+            ManifestError::MissingField("name".into())
+        );
     }
 
     #[test]
@@ -310,7 +328,10 @@ capabilities = "context_menu, statusbar_widget"
         let content = "id = \"test\"\nname = \"Test\"";
         let result = parse_manifest(content);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ManifestError::MissingField("version".into()));
+        assert_eq!(
+            result.unwrap_err(),
+            ManifestError::MissingField("version".into())
+        );
     }
 
     #[test]
@@ -396,8 +417,11 @@ icon = "icon.png"
                 input
             );
             let manifest = parse_manifest(&content).unwrap();
-            assert_eq!(manifest.extension_point, *expected,
-                "failed for input: {}", input);
+            assert_eq!(
+                manifest.extension_point, *expected,
+                "failed for input: {}",
+                input
+            );
         }
     }
 
@@ -410,14 +434,20 @@ version = "1.0"
 extension_point = "my_special_thing"
 "#;
         let manifest = parse_manifest(content).unwrap();
-        assert_eq!(manifest.extension_point, ExtensionPoint::Custom("myspecialthing".into()));
+        assert_eq!(
+            manifest.extension_point,
+            ExtensionPoint::Custom("myspecialthing".into())
+        );
     }
 
     #[test]
     fn default_extension_point_when_missing() {
         let content = "id = \"no-ep\"\nname = \"No EP\"\nversion = \"1.0\"";
         let manifest = parse_manifest(content).unwrap();
-        assert_eq!(manifest.extension_point, ExtensionPoint::Custom("unknown".into()));
+        assert_eq!(
+            manifest.extension_point,
+            ExtensionPoint::Custom("unknown".into())
+        );
     }
 
     // ---- Permission tests ----
@@ -450,12 +480,16 @@ permissions = "filesystem(/home/user/docs)"
 "#;
         let manifest = parse_manifest(content).unwrap();
         assert_eq!(manifest.permissions.len(), 1);
-        assert_eq!(manifest.permissions[0], Permission::FileSystem("/home/user/docs".into()));
+        assert_eq!(
+            manifest.permissions[0],
+            Permission::FileSystem("/home/user/docs".into())
+        );
     }
 
     #[test]
     fn parse_filesystem_permission_bare() {
-        let content = "id = \"fs2\"\nname = \"FS2\"\nversion = \"1.0\"\npermissions = \"filesystem\"";
+        let content =
+            "id = \"fs2\"\nname = \"FS2\"\nversion = \"1.0\"\npermissions = \"filesystem\"";
         let manifest = parse_manifest(content).unwrap();
         assert_eq!(manifest.permissions[0], Permission::FileSystem("/".into()));
     }
@@ -464,7 +498,10 @@ permissions = "filesystem(/home/user/docs)"
     fn parse_custom_permission() {
         let content = "id = \"cp\"\nname = \"CP\"\nversion = \"1.0\"\npermissions = \"gpu_access\"";
         let manifest = parse_manifest(content).unwrap();
-        assert_eq!(manifest.permissions[0], Permission::Custom("gpu_access".into()));
+        assert_eq!(
+            manifest.permissions[0],
+            Permission::Custom("gpu_access".into())
+        );
     }
 
     // ---- ManifestError tests ----

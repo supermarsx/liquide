@@ -322,10 +322,8 @@ unsafe fn crc32c_tile_pclmul(
         while offset + 24 <= row_data.len() {
             let p = row_data.as_ptr().add(offset);
             crc = _mm_crc32_u64(crc as u64, (p as *const u64).read_unaligned()) as u32;
-            crc =
-                _mm_crc32_u64(crc as u64, (p.add(8) as *const u64).read_unaligned()) as u32;
-            crc =
-                _mm_crc32_u64(crc as u64, (p.add(16) as *const u64).read_unaligned()) as u32;
+            crc = _mm_crc32_u64(crc as u64, (p.add(8) as *const u64).read_unaligned()) as u32;
+            crc = _mm_crc32_u64(crc as u64, (p.add(16) as *const u64).read_unaligned()) as u32;
             offset += 24;
         }
 

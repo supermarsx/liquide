@@ -115,11 +115,7 @@ mod tests {
 
     #[test]
     fn font_stack_defaults() {
-        let stack = FontStack::new(
-            FontRole::PrimaryUi,
-            vec!["Manrope".into()],
-            14.0,
-        );
+        let stack = FontStack::new(FontRole::PrimaryUi, vec!["Manrope".into()], 14.0);
         assert_eq!(stack.weight, 400);
         assert!((stack.letter_spacing - 0.0).abs() < f32::EPSILON);
         assert!((stack.line_height - 1.4).abs() < f32::EPSILON);

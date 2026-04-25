@@ -24,10 +24,7 @@ pub enum InfoBarItem {
     /// Visual separator between items.
     Separator,
     /// Clickable text with an action identifier.
-    Clickable {
-        label: String,
-        action_id: String,
-    },
+    Clickable { label: String, action_id: String },
 }
 
 impl InfoBar {

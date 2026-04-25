@@ -31,14 +31,20 @@ impl EasingFunction {
             Self::EaseIn => t * t,
             Self::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
             Self::EaseInOut => {
-                if t < 0.5 { 2.0 * t * t }
-                else { 1.0 - (-2.0 * t + 2.0).powi(2) / 2.0 }
+                if t < 0.5 {
+                    2.0 * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+                }
             }
             Self::EaseInCubic => t * t * t,
             Self::EaseOutCubic => 1.0 - (1.0 - t).powi(3),
             Self::EaseInOutCubic => {
-                if t < 0.5 { 4.0 * t * t * t }
-                else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+                }
             }
             Self::EaseInBack => {
                 let c1 = 1.70158;

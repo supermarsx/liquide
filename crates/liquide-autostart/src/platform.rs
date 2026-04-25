@@ -308,7 +308,9 @@ fn discover_impl() -> Vec<StartupEntry> {
 
     // ~/Library/LaunchAgents/
     if let Some(home) = std::env::var("HOME").ok() {
-        let agents_dir = std::path::PathBuf::from(home).join("Library").join("LaunchAgents");
+        let agents_dir = std::path::PathBuf::from(home)
+            .join("Library")
+            .join("LaunchAgents");
         if agents_dir.is_dir() {
             entries.extend(read_launch_agents(&agents_dir));
         }
@@ -380,10 +382,7 @@ fn parse_simple_plist(content: &str, path: &std::path::Path) -> Option<StartupEn
             .map(|s| s.trim_start().starts_with("<true/>"))
             .unwrap_or(false);
 
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(&label);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&label);
 
     Some(StartupEntry {
         id: stem.to_string(),

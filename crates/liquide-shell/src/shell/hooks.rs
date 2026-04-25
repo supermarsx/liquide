@@ -45,7 +45,11 @@ pub enum ShellHookEvent {
     /// A window was moved.
     WindowMoved { window_id: u64, x: i32, y: i32 },
     /// A window was resized.
-    WindowResized { window_id: u64, width: u32, height: u32 },
+    WindowResized {
+        window_id: u64,
+        width: u32,
+        height: u32,
+    },
     /// A window was minimized.
     WindowMinimized { window_id: u64 },
     /// A window was maximized.
@@ -63,7 +67,12 @@ pub enum ShellHookEvent {
     /// The mouse moved.
     MouseMove { x: f32, y: f32 },
     /// A mouse button was pressed or released.
-    MouseButton { button: u8, pressed: bool, x: f32, y: f32 },
+    MouseButton {
+        button: u8,
+        pressed: bool,
+        x: f32,
+        y: f32,
+    },
 
     // ── Workspace events ────────────────────────────────────────────
     /// The active workspace changed.

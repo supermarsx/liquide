@@ -96,9 +96,7 @@ pub fn trash_file(dirs: &XdgDirs, path: &Path) -> Result<TrashInfo, TrashError> 
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
-            .unwrap_or_default()
-            .join(path)
+        std::env::current_dir().unwrap_or_default().join(path)
     };
 
     if !abs_path.exists() {
@@ -246,7 +244,9 @@ pub fn parse_trash_info(id: &str, content: &str) -> Result<TrashInfo, TrashError
     }
 
     if !found_header {
-        return Err(TrashError::InfoParseFailed("missing [Trash Info] header".into()));
+        return Err(TrashError::InfoParseFailed(
+            "missing [Trash Info] header".into(),
+        ));
     }
 
     Ok(TrashInfo {
@@ -405,7 +405,10 @@ mod tests {
     #[test]
     fn trash_dir_path() {
         let dirs = XdgDirs::with_home(Path::new("/home/user"));
-        assert_eq!(trash_dir(&dirs), PathBuf::from("/home/user/.local/share/Trash"));
+        assert_eq!(
+            trash_dir(&dirs),
+            PathBuf::from("/home/user/.local/share/Trash")
+        );
     }
 
     #[test]
@@ -444,7 +447,10 @@ DeletionDate=2025-06-15T10:30:00
 ";
         let info = parse_trash_info("test.txt", content).unwrap();
         assert_eq!(info.id, "test.txt");
-        assert_eq!(info.original_path, PathBuf::from("/home/user/Documents/test.txt"));
+        assert_eq!(
+            info.original_path,
+            PathBuf::from("/home/user/Documents/test.txt")
+        );
         assert_eq!(info.deletion_date, "2025-06-15T10:30:00");
     }
 
@@ -622,9 +628,18 @@ DeletionDate=2025-01-01T00:00:00
 
     #[test]
     fn trash_error_display_variants() {
-        assert_eq!(TrashError::FileNotFound("x".into()).to_string(), "file not found: x");
-        assert_eq!(TrashError::EntryNotFound("y".into()).to_string(), "trash entry not found: y");
-        assert_eq!(TrashError::RestoreFailed("z".into()).to_string(), "restore failed: z");
+        assert_eq!(
+            TrashError::FileNotFound("x".into()).to_string(),
+            "file not found: x"
+        );
+        assert_eq!(
+            TrashError::EntryNotFound("y".into()).to_string(),
+            "trash entry not found: y"
+        );
+        assert_eq!(
+            TrashError::RestoreFailed("z".into()).to_string(),
+            "restore failed: z"
+        );
         assert_eq!(
             TrashError::InfoParseFailed("bad".into()).to_string(),
             "info parse failed: bad"

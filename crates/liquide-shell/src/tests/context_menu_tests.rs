@@ -56,8 +56,8 @@ fn key_press(key: KeyCode) -> PlatformEvent {
 
 // ── Context menu dimensions (must match shell/mod.rs constants) ──────
 const MENU_W: f32 = 200.0;
-const ITEM_H: f32 = 28.0;          // CSS: menu-item { height: 28; }
-const MENU_PAD: f32 = 4.0;         // CSS: context-menu { padding: 4; }
+const ITEM_H: f32 = 28.0; // CSS: menu-item { height: 28; }
+const MENU_PAD: f32 = 4.0; // CSS: context-menu { padding: 4; }
 const PADDING_TOTAL: f32 = MENU_PAD * 2.0; // top + bottom
 
 // ══════════════════════════════════════════════════════════════════
@@ -161,7 +161,7 @@ fn context_menu_position_clamped_bottom_right() {
     assert!(clamped_y < 1060.0, "y should be clamped from 1060");
     // Exact expected values
     assert_eq!(clamped_x, 1920.0 - MENU_W - 4.0); // 1656
-    assert_eq!(clamped_y, 1080.0 - menu_h - 4.0);  // 880
+    assert_eq!(clamped_y, 1080.0 - menu_h - 4.0); // 880
 }
 
 #[test]
@@ -228,7 +228,10 @@ fn left_click_above_menu_closes_it() {
 
     // Click above the menu area
     shell.handle_platform_event(&mouse_click(500.0, 490.0, MouseButton::Left));
-    assert!(!shell.context_menu_visible, "left-click above menu should close it");
+    assert!(
+        !shell.context_menu_visible,
+        "left-click above menu should close it"
+    );
 }
 
 #[test]
@@ -239,7 +242,10 @@ fn left_click_left_of_menu_closes_it() {
 
     // Click to the left of the menu
     shell.handle_platform_event(&mouse_click(490.0, 550.0, MouseButton::Left));
-    assert!(!shell.context_menu_visible, "left-click left of menu should close it");
+    assert!(
+        !shell.context_menu_visible,
+        "left-click left of menu should close it"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -372,7 +378,10 @@ fn click_first_item_returns_open_terminal() {
 
     // Click first item (Open Terminal): y = 100 + 4 + 14 = 118
     let action = shell.handle_platform_event(&mouse_click(200.0, 118.0, MouseButton::Left));
-    assert!(!shell.context_menu_visible, "menu should close after item click");
+    assert!(
+        !shell.context_menu_visible,
+        "menu should close after item click"
+    );
     assert_eq!(action, Some(ShellAction::OpenTerminal));
 }
 
@@ -428,7 +437,10 @@ fn click_menu_item_closes_menu() {
 
     // Click any item
     shell.handle_platform_event(&mouse_click(200.0, 118.0, MouseButton::Left));
-    assert!(!shell.context_menu_visible, "clicking a menu item must close the menu");
+    assert!(
+        !shell.context_menu_visible,
+        "clicking a menu item must close the menu"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -482,14 +494,20 @@ fn right_click_on_window_does_not_open_context_menu() {
 fn left_click_does_not_open_context_menu() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.handle_platform_event(&mouse_click(500.0, 500.0, MouseButton::Left));
-    assert!(!shell.context_menu_visible, "left-click should not open context menu");
+    assert!(
+        !shell.context_menu_visible,
+        "left-click should not open context menu"
+    );
 }
 
 #[test]
 fn middle_click_does_not_open_context_menu() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.handle_platform_event(&mouse_click(500.0, 500.0, MouseButton::Middle));
-    assert!(!shell.context_menu_visible, "middle-click should not open context menu");
+    assert!(
+        !shell.context_menu_visible,
+        "middle-click should not open context menu"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -515,13 +533,23 @@ fn context_menu_removed_from_dom_when_hidden() {
     // Open and sync
     shell.handle_platform_event(&mouse_click(500.0, 500.0, MouseButton::Right));
     shell.sync_dom();
-    assert!(shell.desktop_dom.doc.get_element_by_id("ctx-shell").is_some());
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("ctx-shell")
+            .is_some()
+    );
 
     // Close and sync
     shell.handle_platform_event(&key_press(KeyCode::Escape));
     shell.sync_dom();
     assert!(
-        shell.desktop_dom.doc.get_element_by_id("ctx-shell").is_none(),
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("ctx-shell")
+            .is_none(),
         "context menu should be removed from DOM when hidden"
     );
 }
@@ -531,7 +559,11 @@ fn context_menu_dom_not_present_initially() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.sync_dom();
     assert!(
-        shell.desktop_dom.doc.get_element_by_id("ctx-shell").is_none(),
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("ctx-shell")
+            .is_none(),
         "context menu should not be in DOM initially"
     );
 }
@@ -557,15 +589,8 @@ fn context_menu_at_screen_edge() {
     shell.handle_platform_event(&mouse_click(1919.0, 500.0, MouseButton::Right));
     assert!(shell.context_menu_visible);
 
-    let clamped_x = shell
-        .context_menu_pos
-        .x
-        .min(1920.0 - MENU_W - 4.0)
-        .max(0.0);
-    assert!(
-        clamped_x < 1919.0,
-        "x near right edge should be clamped"
-    );
+    let clamped_x = shell.context_menu_pos.x.min(1920.0 - MENU_W - 4.0).max(0.0);
+    assert!(clamped_x < 1919.0, "x near right edge should be clamped");
 }
 
 #[test]
@@ -663,7 +688,10 @@ fn mouse_release_does_not_affect_context_menu() {
 
     // Release should not close it
     shell.handle_platform_event(&mouse_release(500.0, 500.0, MouseButton::Right));
-    assert!(shell.context_menu_visible, "mouse release should not close context menu");
+    assert!(
+        shell.context_menu_visible,
+        "mouse release should not close context menu"
+    );
 }
 
 #[test]
@@ -706,4 +734,74 @@ fn context_menu_reopen_at_different_position() {
     shell.handle_platform_event(&mouse_click(800.0, 800.0, MouseButton::Right));
     assert_eq!(shell.context_menu_pos.x, 800.0);
     assert_eq!(shell.context_menu_pos.y, 800.0);
+}
+
+#[test]
+fn session_menu_keyboard_navigation_activates_selected_item() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.session_menu_visible = true;
+    shell.session_menu_hover_index = None;
+
+    let action = shell.handle_platform_event(&key_press(KeyCode::ArrowDown));
+    assert_eq!(action, Some(ShellAction::Redraw));
+    assert_eq!(shell.session_menu_hover_index, Some(0));
+
+    let action = shell.handle_platform_event(&key_press(KeyCode::ArrowDown));
+    assert_eq!(action, Some(ShellAction::Redraw));
+    assert_eq!(shell.session_menu_hover_index, Some(1));
+
+    let expected = shell.session_menu_items[1].action.clone();
+    let action = shell.handle_platform_event(&key_press(KeyCode::Enter));
+    assert_eq!(action, Some(expected));
+    assert!(!shell.session_menu_visible);
+    assert!(shell.session_menu_hover_index.is_none());
+}
+
+#[test]
+fn app_menu_keyboard_activation_targets_the_open_window() {
+    use liquide_compositor::geometry::Rect;
+
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let first = shell.open_window("First", Rect::new(80.0, 120.0, 320.0, 220.0));
+    let second = shell.open_window("Second", Rect::new(460.0, 180.0, 320.0, 220.0));
+    shell.set_focus(first).unwrap();
+    shell.app_menu_open = Some(format!("window-{}", second.0));
+    shell.app_menu_hover_index = Some(0);
+
+    let action = shell.handle_platform_event(&key_press(KeyCode::Enter));
+    assert_eq!(action, Some(ShellAction::MinimizeWindow));
+    assert_eq!(shell.focus_manager().focused(), Some(second));
+    assert!(shell.app_menu_open.is_none());
+}
+
+#[test]
+fn titlebar_app_menu_click_closes_the_clicked_window() {
+    use liquide_compositor::geometry::Rect;
+
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let first = shell.open_window("First", Rect::new(80.0, 120.0, 320.0, 220.0));
+    let second = shell.open_window("Second", Rect::new(460.0, 180.0, 320.0, 220.0));
+    shell.set_focus(first).unwrap();
+
+    let second_window = shell.window(second).unwrap().bounds;
+    let titlebar_x = second_window.x + 40.0;
+    let titlebar_y = second_window.y + shell.decoration_style.title_bar_height * 0.5;
+    let target = format!("window-{}", second.0);
+
+    shell.handle_platform_event(&mouse_click(titlebar_x, titlebar_y, MouseButton::Right));
+    assert_eq!(shell.app_menu_open.as_deref(), Some(target.as_str()));
+
+    let close_item_y = second_window.y
+        + shell.decoration_style.title_bar_height
+        + MENU_PAD
+        + ITEM_H * 2.0
+        + ITEM_H * 0.5;
+    let action = shell
+        .handle_platform_event(&mouse_click(second_window.x + 24.0, close_item_y, MouseButton::Left))
+        .expect("app menu action");
+    assert_eq!(action, ShellAction::CloseWindow);
+
+    shell.execute_action(&action);
+    assert!(shell.window(second).is_err());
+    assert!(shell.window(first).is_ok());
 }

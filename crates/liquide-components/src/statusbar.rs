@@ -5,8 +5,8 @@
 //! and `status-tray` tag names.  This component creates the correct tag
 //! for each item kind so CSS selectors actually match.
 
-use crate::types::{element_ids, StatusBarItemData, StatusBarSlot};
 use crate::template::{Component, TemplateNode};
+use crate::types::{element_ids, StatusBarItemData, StatusBarSlot};
 
 /// StatusBar component.
 ///
@@ -72,7 +72,10 @@ impl StatusBarComponent<'_> {
                 }
                 classes
             }
-            StatusBarItemData::ConnectionQuality { connected, degraded } => {
+            StatusBarItemData::ConnectionQuality {
+                connected,
+                degraded,
+            } => {
                 if *degraded {
                     vec!["degraded"]
                 } else if *connected {
@@ -99,7 +102,10 @@ impl StatusBarComponent<'_> {
                     String::new()
                 }
             }
-            StatusBarItemData::ConnectionQuality { connected, degraded } => {
+            StatusBarItemData::ConnectionQuality {
+                connected,
+                degraded,
+            } => {
                 if *connected && !degraded {
                     "Connected".into()
                 } else if *connected && *degraded {
@@ -120,9 +126,7 @@ impl StatusBarComponent<'_> {
         let classes = Self::classes_for_item(item);
         let text = Self::text_for_item(item);
 
-        let mut node = TemplateNode::el(tag)
-            .id(&id)
-            .key(&id);
+        let mut node = TemplateNode::el(tag).id(&id).key(&id);
 
         for cls in classes {
             node = node.class(cls);
@@ -136,12 +140,7 @@ impl StatusBarComponent<'_> {
     }
 
     /// Render items for a specific slot.
-    fn render_slot(
-        &self,
-        slot_id: &str,
-        slot_class: &str,
-        slot_index: usize,
-    ) -> TemplateNode {
+    fn render_slot(&self, slot_id: &str, slot_class: &str, slot_index: usize) -> TemplateNode {
         TemplateNode::el("statusbar-slot")
             .id(slot_id)
             .class(slot_class)
@@ -159,21 +158,9 @@ impl Component for StatusBarComponent<'_> {
     fn render(&self) -> TemplateNode {
         TemplateNode::el("statusbar")
             .id(element_ids::STATUSBAR)
-            .child(self.render_slot(
-                element_ids::STATUSBAR_SLOT_LEFT,
-                "left",
-                0,
-            ))
-            .child(self.render_slot(
-                element_ids::STATUSBAR_SLOT_CENTER,
-                "center",
-                1,
-            ))
-            .child(self.render_slot(
-                element_ids::STATUSBAR_SLOT_RIGHT,
-                "right",
-                2,
-            ))
+            .child(self.render_slot(element_ids::STATUSBAR_SLOT_LEFT, "left", 0))
+            .child(self.render_slot(element_ids::STATUSBAR_SLOT_CENTER, "center", 1))
+            .child(self.render_slot(element_ids::STATUSBAR_SLOT_RIGHT, "right", 2))
     }
 
     fn mount_point(&self) -> &str {

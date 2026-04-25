@@ -75,7 +75,8 @@ impl UserManager {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
         {
             return Err(AccountError::InvalidUsername(
-                "username contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, .)".to_string(),
+                "username contains invalid characters (allowed: a-z, A-Z, 0-9, _, -, .)"
+                    .to_string(),
             ));
         }
         let first = username.chars().next().unwrap();
@@ -146,7 +147,8 @@ impl UserManager {
             return Err(AccountError::WeakPassword(violations.join("; ")));
         }
 
-        self.backend.change_password(uid, old_password, new_password)
+        self.backend
+            .change_password(uid, old_password, new_password)
     }
 
     /// Enable or disable auto-login for a user.

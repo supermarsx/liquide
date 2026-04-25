@@ -177,7 +177,12 @@ impl MachineManager {
     }
 
     /// Update the status of a machine.
-    pub fn update_status(&mut self, id: &str, online: Option<bool>, session_available: bool) -> bool {
+    pub fn update_status(
+        &mut self,
+        id: &str,
+        online: Option<bool>,
+        session_available: bool,
+    ) -> bool {
         if let Some(entry) = self.machines.get_mut(id) {
             entry.set_status(online, session_available);
             true

@@ -97,10 +97,7 @@ impl FontCatalog {
         let family = entry.family.clone();
         let idx = self.entries.len();
         self.entries.push(entry);
-        self.family_index
-            .entry(family)
-            .or_default()
-            .push(idx);
+        self.family_index.entry(family).or_default().push(idx);
     }
 
     /// Check if a family exists in the catalog.
@@ -114,7 +111,12 @@ impl FontCatalog {
     pub fn family_entries(&self, family: &str) -> Vec<&FontEntry> {
         self.family_index
             .get(family)
-            .map(|indices| indices.iter().filter_map(|&i| self.entries.get(i)).collect())
+            .map(|indices| {
+                indices
+                    .iter()
+                    .filter_map(|&i| self.entries.get(i))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -361,7 +363,10 @@ mod tests {
         assert_eq!(FontSource::System.to_string(), "System");
         assert_eq!(FontSource::GoogleFonts.to_string(), "Google Fonts");
         assert_eq!(
-            FontSource::Url { url: "https://example.com/font.ttf".into() }.to_string(),
+            FontSource::Url {
+                url: "https://example.com/font.ttf".into()
+            }
+            .to_string(),
             "URL: https://example.com/font.ttf"
         );
     }

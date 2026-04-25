@@ -28,18 +28,12 @@ pub enum StatusNotifierWatcherSignal {
 impl StatusNotifierWatcherSignal {
     /// Returns `true` if this signal concerns a host.
     pub fn is_host_signal(&self) -> bool {
-        matches!(
-            self,
-            Self::HostRegistered(_) | Self::HostUnregistered(_)
-        )
+        matches!(self, Self::HostRegistered(_) | Self::HostUnregistered(_))
     }
 
     /// Returns `true` if this signal concerns an item.
     pub fn is_item_signal(&self) -> bool {
-        matches!(
-            self,
-            Self::ItemRegistered(_) | Self::ItemUnregistered(_)
-        )
+        matches!(self, Self::ItemRegistered(_) | Self::ItemUnregistered(_))
     }
 
     /// Returns the identifier (host or item) associated with this signal.

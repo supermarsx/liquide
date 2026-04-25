@@ -217,16 +217,16 @@ mod tests {
     fn add_duplicate_fails() {
         let mut mgr = AutostartManager::new();
         mgr.add(make_entry("app", "App", "/bin/app")).unwrap();
-        let err = mgr.add(make_entry("app", "App 2", "/bin/app2")).unwrap_err();
+        let err = mgr
+            .add(make_entry("app", "App 2", "/bin/app2"))
+            .unwrap_err();
         assert_eq!(err, AutostartError::DuplicateEntry("app".into()));
     }
 
     #[test]
     fn add_empty_id_fails() {
         let mut mgr = AutostartManager::new();
-        let err = mgr
-            .add(make_entry("", "No ID", "/bin/test"))
-            .unwrap_err();
+        let err = mgr.add(make_entry("", "No ID", "/bin/test")).unwrap_err();
         assert_eq!(err, AutostartError::InvalidId);
     }
 
@@ -251,10 +251,8 @@ mod tests {
     #[test]
     fn remove_system_entry_fails() {
         let mut mgr = AutostartManager::new();
-        mgr.add(
-            make_entry("sys", "System App", "/bin/sys").with_source(EntrySource::System),
-        )
-        .unwrap();
+        mgr.add(make_entry("sys", "System App", "/bin/sys").with_source(EntrySource::System))
+            .unwrap();
         let err = mgr.remove("sys").unwrap_err();
         assert_eq!(
             err,
@@ -409,14 +407,11 @@ mod tests {
     fn entries_for_desktop_filtering() {
         let mut mgr = AutostartManager::new();
         mgr.add(
-            make_entry("gnome-only", "GNOME App", "/bin/g")
-                .with_only_show_in(vec!["GNOME".into()]),
+            make_entry("gnome-only", "GNOME App", "/bin/g").with_only_show_in(vec!["GNOME".into()]),
         )
         .unwrap();
-        mgr.add(
-            make_entry("no-kde", "No KDE", "/bin/nk").with_not_show_in(vec!["KDE".into()]),
-        )
-        .unwrap();
+        mgr.add(make_entry("no-kde", "No KDE", "/bin/nk").with_not_show_in(vec!["KDE".into()]))
+            .unwrap();
         mgr.add(make_entry("universal", "Universal", "/bin/u"))
             .unwrap();
 
@@ -439,10 +434,8 @@ mod tests {
     #[test]
     fn remove_session_entry() {
         let mut mgr = AutostartManager::new();
-        mgr.add(
-            make_entry("sess", "Session App", "/bin/sess").with_source(EntrySource::Session),
-        )
-        .unwrap();
+        mgr.add(make_entry("sess", "Session App", "/bin/sess").with_source(EntrySource::Session))
+            .unwrap();
         mgr.remove("sess").unwrap();
         assert_eq!(mgr.count(), 0);
     }

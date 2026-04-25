@@ -40,7 +40,8 @@ impl PolicyKey {
 
     /// Check whether this key is a prefix of another key.
     pub fn is_prefix_of(&self, other: &PolicyKey) -> bool {
-        other.0.starts_with(&self.0) && other.0.len() > self.0.len()
+        other.0.starts_with(&self.0)
+            && other.0.len() > self.0.len()
             && other.0.as_bytes()[self.0.len()] == b'.'
     }
 }
@@ -131,12 +132,7 @@ impl PolicyDatabase {
     }
 
     /// Add a policy entry using a builder-style shorthand.
-    pub fn set_policy(
-        &mut self,
-        key: &str,
-        value: PolicyValue,
-        source: PolicySource,
-    ) {
+    pub fn set_policy(&mut self, key: &str, value: PolicyValue, source: PolicySource) {
         if let Some(pk) = PolicyKey::new(key) {
             self.add(PolicyEntry {
                 key: pk,
@@ -305,7 +301,9 @@ pub enum PolicyError {
 impl fmt::Display for PolicyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ParseError(line, msg) => write!(f, "policy parse error at line {}: {}", line, msg),
+            Self::ParseError(line, msg) => {
+                write!(f, "policy parse error at line {}: {}", line, msg)
+            }
         }
     }
 }
@@ -371,7 +369,11 @@ mod tests {
     #[test]
     fn evaluate_single_source() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("desktop.wallpaper", PolicyValue::Deny, PolicySource::Organization);
+        db.set_policy(
+            "desktop.wallpaper",
+            PolicyValue::Deny,
+            PolicySource::Organization,
+        );
         assert_eq!(db.evaluate("desktop.wallpaper"), PolicyValue::Deny);
     }
 
@@ -379,30 +381,53 @@ mod tests {
     fn evaluate_highest_priority_wins() {
         let mut db = PolicyDatabase::new();
         db.set_policy("desktop.theme", PolicyValue::Allow, PolicySource::User);
-        db.set_policy("desktop.theme", PolicyValue::Force("night".into()), PolicySource::System);
-        db.set_policy("desktop.theme", PolicyValue::Default("midday".into()), PolicySource::Organization);
+        db.set_policy(
+            "desktop.theme",
+            PolicyValue::Force("night".into()),
+            PolicySource::System,
+        );
+        db.set_policy(
+            "desktop.theme",
+            PolicyValue::Default("midday".into()),
+            PolicySource::Organization,
+        );
 
-        assert_eq!(db.evaluate("desktop.theme"), PolicyValue::Force("night".into()));
+        assert_eq!(
+            db.evaluate("desktop.theme"),
+            PolicyValue::Force("night".into())
+        );
     }
 
     #[test]
     fn is_locked_by_org() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("desktop.wallpaper", PolicyValue::Force("/usr/share/bg.png".into()), PolicySource::Organization);
+        db.set_policy(
+            "desktop.wallpaper",
+            PolicyValue::Force("/usr/share/bg.png".into()),
+            PolicySource::Organization,
+        );
         assert!(db.is_locked("desktop.wallpaper"));
     }
 
     #[test]
     fn is_not_locked_by_user() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("desktop.wallpaper", PolicyValue::Force("/home/user/bg.png".into()), PolicySource::User);
+        db.set_policy(
+            "desktop.wallpaper",
+            PolicyValue::Force("/home/user/bg.png".into()),
+            PolicySource::User,
+        );
         assert!(!db.is_locked("desktop.wallpaper"));
     }
 
     #[test]
     fn is_locked_deny() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("privacy.screen-share", PolicyValue::Deny, PolicySource::System);
+        db.set_policy(
+            "privacy.screen-share",
+            PolicyValue::Deny,
+            PolicySource::System,
+        );
         assert!(db.is_locked("privacy.screen-share"));
     }
 
@@ -415,7 +440,11 @@ mod tests {
     #[test]
     fn effective_value_force() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("desktop.theme", PolicyValue::Force("corporate".into()), PolicySource::Organization);
+        db.set_policy(
+            "desktop.theme",
+            PolicyValue::Force("corporate".into()),
+            PolicySource::Organization,
+        );
         assert_eq!(db.effective_value("desktop.theme", "night"), "corporate");
     }
 
@@ -423,20 +452,31 @@ mod tests {
     fn effective_value_deny() {
         let mut db = PolicyDatabase::new();
         db.set_policy("desktop.wallpaper", PolicyValue::Deny, PolicySource::System);
-        assert_eq!(db.effective_value("desktop.wallpaper", "/home/user/bg.png"), "");
+        assert_eq!(
+            db.effective_value("desktop.wallpaper", "/home/user/bg.png"),
+            ""
+        );
     }
 
     #[test]
     fn effective_value_default_with_user_pref() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("desktop.theme", PolicyValue::Default("corporate".into()), PolicySource::Organization);
+        db.set_policy(
+            "desktop.theme",
+            PolicyValue::Default("corporate".into()),
+            PolicySource::Organization,
+        );
         assert_eq!(db.effective_value("desktop.theme", "night"), "night");
     }
 
     #[test]
     fn effective_value_default_without_user_pref() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("desktop.theme", PolicyValue::Default("corporate".into()), PolicySource::Organization);
+        db.set_policy(
+            "desktop.theme",
+            PolicyValue::Default("corporate".into()),
+            PolicySource::Organization,
+        );
         assert_eq!(db.effective_value("desktop.theme", ""), "corporate");
     }
 
@@ -452,9 +492,17 @@ mod tests {
     #[test]
     fn remove_source() {
         let mut db = PolicyDatabase::new();
-        db.set_policy("desktop.theme", PolicyValue::Deny, PolicySource::Organization);
+        db.set_policy(
+            "desktop.theme",
+            PolicyValue::Deny,
+            PolicySource::Organization,
+        );
         db.set_policy("desktop.theme", PolicyValue::Allow, PolicySource::User);
-        db.set_policy("input.speed", PolicyValue::Force("1.5".into()), PolicySource::Organization);
+        db.set_policy(
+            "input.speed",
+            PolicyValue::Force("1.5".into()),
+            PolicySource::Organization,
+        );
 
         db.remove_source(PolicySource::Organization);
 
@@ -474,8 +522,14 @@ user:input.speed=default:1.0
         let count = db.load_from_text(text).unwrap();
         assert_eq!(count, 3);
         assert_eq!(db.evaluate("desktop.wallpaper"), PolicyValue::Deny);
-        assert_eq!(db.evaluate("desktop.theme"), PolicyValue::Force("corporate-theme".into()));
-        assert_eq!(db.evaluate("input.speed"), PolicyValue::Default("1.0".into()));
+        assert_eq!(
+            db.evaluate("desktop.theme"),
+            PolicyValue::Force("corporate-theme".into())
+        );
+        assert_eq!(
+            db.evaluate("input.speed"),
+            PolicyValue::Default("1.0".into())
+        );
     }
 
     #[test]
@@ -513,7 +567,11 @@ user:input.speed=default:1.0
         let mut db = PolicyDatabase::new();
         db.set_policy("desktop.theme", PolicyValue::Allow, PolicySource::System);
         db.set_policy("desktop.theme", PolicyValue::Deny, PolicySource::User);
-        db.set_policy("desktop.theme", PolicyValue::Force("x".into()), PolicySource::Organization);
+        db.set_policy(
+            "desktop.theme",
+            PolicyValue::Force("x".into()),
+            PolicySource::Organization,
+        );
 
         let entries = db.entries_for("desktop.theme");
         assert_eq!(entries.len(), 3);

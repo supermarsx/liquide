@@ -143,23 +143,21 @@ impl Color {
             format!("rgb({}, {}, {})", self.r, self.g, self.b)
         } else {
             let alpha = self.a as f32 / 255.0;
-            format!(
-                "rgba({}, {}, {}, {:.2})",
-                self.r, self.g, self.b, alpha
-            )
+            format!("rgba({}, {}, {}, {:.2})", self.r, self.g, self.b, alpha)
         }
     }
 
     /// Parse a CSS `rgb(r,g,b)` or `rgba(r,g,b,a)` string.
     pub fn from_css_rgba(s: &str) -> Option<Self> {
         let s = s.trim();
-        let (inner, has_alpha) = if let Some(inner) = s.strip_prefix("rgba(").and_then(|s| s.strip_suffix(')')) {
-            (inner, true)
-        } else if let Some(inner) = s.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
-            (inner, false)
-        } else {
-            return None;
-        };
+        let (inner, has_alpha) =
+            if let Some(inner) = s.strip_prefix("rgba(").and_then(|s| s.strip_suffix(')')) {
+                (inner, true)
+            } else if let Some(inner) = s.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
+                (inner, false)
+            } else {
+                return None;
+            };
 
         let parts: Vec<&str> = inner.split(',').collect();
         if has_alpha && parts.len() != 4 {

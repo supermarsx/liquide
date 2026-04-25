@@ -112,10 +112,8 @@ pub fn query_color_scheme() -> ColorScheme {
 fn platform_query_color_scheme() -> ColorScheme {
     // Read HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize
     // AppsUseLightTheme: DWORD (0 = dark, 1 = light)
-    use std::ffi::c_void;
-
     #[link(name = "advapi32")]
-    extern "system" {
+    unsafe extern "system" {
         fn RegOpenKeyExW(
             key: isize,
             sub_key: *const u16,
@@ -165,7 +163,11 @@ fn platform_query_color_scheme() -> ColorScheme {
         if result != 0 {
             return ColorScheme::Light;
         }
-        if data == 0 { ColorScheme::Dark } else { ColorScheme::Light }
+        if data == 0 {
+            ColorScheme::Dark
+        } else {
+            ColorScheme::Light
+        }
     }
 }
 
@@ -192,7 +194,9 @@ fn platform_query_color_scheme() -> ColorScheme {
 fn platform_query_color_scheme() -> ColorScheme {
     // 1. Check GTK_THEME env for a "-dark" suffix (e.g. "Adwaita-dark").
     if let Ok(theme) = std::env::var("GTK_THEME") {
-        if theme.to_ascii_lowercase().contains("-dark") || theme.to_ascii_lowercase().contains(":dark") {
+        if theme.to_ascii_lowercase().contains("-dark")
+            || theme.to_ascii_lowercase().contains(":dark")
+        {
             return ColorScheme::Dark;
         }
     }
@@ -272,6 +276,19 @@ pub enum PlatformError {
 /// Convenience result type for platform operations.
 pub type PlatformResult<T> = std::result::Result<T, PlatformError>;
 
+/// Backend-present acknowledgement metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresentFeedback {
+    /// Monotonic count of presents acknowledged by the backend.
+    pub acknowledged_present_count: u64,
+    /// Backend-provided sequence number, when available.
+    pub sequence: Option<u32>,
+    /// Backend-provided acknowledgement timestamp in nanoseconds, when available.
+    pub timestamp_ns: Option<u64>,
+    /// Backend-provided CRTC identifier, when available.
+    pub crtc_id: Option<u32>,
+}
+
 /// Unified access to all platform backends.
 ///
 /// Each method returns the corresponding sub-backend.  Implementations
@@ -325,6 +342,21 @@ pub trait PlatformBackend: Send {
         PlatformEvent::Quit
     }
 
+    /// Returns whether the backend can accept another present right now.
+    ///
+    /// Backends may opportunistically refresh lightweight presenter state
+    /// before answering. The default keeps existing immediate-mode behavior.
+    fn can_accept_present(&mut self) -> bool {
+        true
+    }
+
+    /// Returns the oldest queued present acknowledgement, if any.
+    ///
+    /// The default surfaces no feedback so existing backends remain unchanged.
+    fn take_present_feedback(&mut self) -> Option<PresentFeedback> {
+        None
+    }
+
     // ── frame presentation ──────────────────────────────────────────
 
     /// Present a rendered BGRA8 frame to the specified window.
@@ -358,11 +390,7 @@ pub trait PlatformBackend: Send {
     /// the need for software cursor rendering and allowing zero-cost
     /// mouse movement.  Returns `true` if the hardware cursor was set
     /// successfully, `false` if software cursor should be used instead.
-    fn set_cursor_shape(
-        &mut self,
-        _handle: NativeWindowHandle,
-        _shape: &str,
-    ) -> bool {
+    fn set_cursor_shape(&mut self, _handle: NativeWindowHandle, _shape: &str) -> bool {
         false
     }
 

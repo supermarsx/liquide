@@ -48,7 +48,10 @@ impl NightLight {
         }
         match &self.schedule {
             NightLightSchedule::Manual => true,
-            NightLightSchedule::SunsetSunrise { latitude, longitude } => {
+            NightLightSchedule::SunsetSunrise {
+                latitude,
+                longitude,
+            } => {
                 // Simple sunrise/sunset approximation.
                 let (sunrise_h, sunrise_m, sunset_h, sunset_m) =
                     approximate_sun_times(*latitude, *longitude);

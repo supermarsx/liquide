@@ -1,4 +1,6 @@
-use crate::decoder::{DecodedFrame, DecoderBackend, DecoderStats, FrameInfo, FrameQueue, PixelFormat};
+use crate::decoder::{
+    DecodedFrame, DecoderBackend, DecoderStats, FrameInfo, FrameQueue, PixelFormat,
+};
 
 fn make_frame(timestamp: u64) -> DecodedFrame {
     DecodedFrame {

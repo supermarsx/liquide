@@ -1,7 +1,7 @@
 //! Theme / dark-light mode toggle widget for the status bar.
 
-use liquide_ui_core::{Painter, UiColor, UiTheme};
 use liquide_ui_core::theme::ThemeMode;
+use liquide_ui_core::{Painter, UiColor, UiTheme};
 use serde::{Deserialize, Serialize};
 
 /// Theme toggle state.
@@ -14,7 +14,11 @@ pub struct ThemeToggle {
 
 impl ThemeToggle {
     pub fn new(mode: ThemeMode) -> Self {
-        Self { current_mode: mode, open: false, hover_index: None }
+        Self {
+            current_mode: mode,
+            open: false,
+            hover_index: None,
+        }
     }
 
     pub fn toggle_dropdown(&mut self) {
@@ -60,8 +64,13 @@ impl ThemeToggle {
         let icon = self.icon();
         let btn_w = 28.0;
         painter.draw_text(
-            icon, x + 4.0, text_y, font_size,
-            colors.text_primary, &theme.font_family, false,
+            icon,
+            x + 4.0,
+            text_y,
+            font_size,
+            colors.text_primary,
+            &theme.font_family,
+            false,
         );
 
         // Dropdown
@@ -76,11 +85,22 @@ impl ThemeToggle {
 
             // Shadow
             painter.fill_rounded_rect(
-                menu_x + 1.0, menu_y + 2.0, menu_w, menu_h, radius,
+                menu_x + 1.0,
+                menu_y + 2.0,
+                menu_w,
+                menu_h,
+                radius,
                 UiColor::new(0, 0, 0, 50),
             );
             // Background
-            painter.fill_rounded_rect(menu_x, menu_y, menu_w, menu_h, radius, colors.surface_elevated);
+            painter.fill_rounded_rect(
+                menu_x,
+                menu_y,
+                menu_w,
+                menu_h,
+                radius,
+                colors.surface_elevated,
+            );
             painter.stroke_rounded_rect(menu_x, menu_y, menu_w, menu_h, radius, colors.border, 1.0);
 
             for (i, mode) in modes.iter().enumerate() {
@@ -90,23 +110,41 @@ impl ThemeToggle {
 
                 if is_hover {
                     painter.fill_rounded_rect(
-                        menu_x + 4.0, iy, menu_w - 8.0, item_h,
-                        radius * 0.5, colors.accent,
+                        menu_x + 4.0,
+                        iy,
+                        menu_w - 8.0,
+                        item_h,
+                        radius * 0.5,
+                        colors.accent,
                     );
                 }
 
                 // Checkmark for current mode
                 if is_current {
                     painter.draw_text(
-                        "✓", menu_x + 8.0, iy + (item_h - font_size) / 2.0,
-                        font_size, colors.accent, &theme.font_family, false,
+                        "✓",
+                        menu_x + 8.0,
+                        iy + (item_h - font_size) / 2.0,
+                        font_size,
+                        colors.accent,
+                        &theme.font_family,
+                        false,
                     );
                 }
 
-                let tc = if is_hover { colors.text_on_accent } else { colors.text_primary };
+                let tc = if is_hover {
+                    colors.text_on_accent
+                } else {
+                    colors.text_primary
+                };
                 painter.draw_text(
-                    Self::mode_label(*mode), menu_x + 28.0, iy + (item_h - font_size) / 2.0,
-                    font_size, tc, &theme.font_family, false,
+                    Self::mode_label(*mode),
+                    menu_x + 28.0,
+                    iy + (item_h - font_size) / 2.0,
+                    font_size,
+                    tc,
+                    &theme.font_family,
+                    false,
                 );
             }
         }

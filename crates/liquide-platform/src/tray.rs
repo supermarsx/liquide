@@ -37,11 +37,7 @@ pub trait NativeTray: Send {
     fn add_icon(&mut self, params: NativeTrayParams) -> PlatformResult<NativeTrayHandle>;
 
     /// Update an existing tray icon.
-    fn update_icon(
-        &mut self,
-        handle: NativeTrayHandle,
-        update: TrayUpdate,
-    ) -> PlatformResult<()>;
+    fn update_icon(&mut self, handle: NativeTrayHandle, update: TrayUpdate) -> PlatformResult<()>;
 
     /// Remove an icon from the system tray.
     fn remove_icon(&mut self, handle: NativeTrayHandle) -> PlatformResult<()>;

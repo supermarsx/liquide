@@ -5,8 +5,8 @@ use crate::groups::Group;
 use crate::login_history::{LoginEntry, LoginHistory, LoginMethod};
 use crate::manager::UserManager;
 use crate::password::{PasswordPolicy, PasswordStrength};
-use crate::platform::stub::StubBackend;
 use crate::platform::PlatformBackend;
+use crate::platform::stub::StubBackend;
 use crate::types::{AccountType, UserAccount};
 
 // ── AccountType tests ──────────────────────────────────────────────
@@ -93,8 +93,14 @@ fn user_account_display() {
 #[test]
 fn account_error_display() {
     assert_eq!(AccountError::NotFound.to_string(), "account not found");
-    assert_eq!(AccountError::PermissionDenied.to_string(), "permission denied");
-    assert_eq!(AccountError::AlreadyExists.to_string(), "account already exists");
+    assert_eq!(
+        AccountError::PermissionDenied.to_string(),
+        "permission denied"
+    );
+    assert_eq!(
+        AccountError::AlreadyExists.to_string(),
+        "account already exists"
+    );
     assert_eq!(
         AccountError::WeakPassword("too short".into()).to_string(),
         "weak password: too short"
@@ -375,7 +381,6 @@ fn stub_list_users() {
 
 #[test]
 fn stub_create_and_delete_user() {
-
     let mut backend = StubBackend::new();
     let user = backend
         .create_user("alice", "Alice Smith", AccountType::Standard, "P@ssw0rd")
@@ -396,7 +401,6 @@ fn stub_create_and_delete_user() {
 
 #[test]
 fn stub_create_duplicate_fails() {
-
     let mut backend = StubBackend::new();
     let _ = backend
         .create_user("alice", "Alice", AccountType::Standard, "Pass1234")
@@ -407,7 +411,6 @@ fn stub_create_duplicate_fails() {
 
 #[test]
 fn stub_invalid_username() {
-
     let mut backend = StubBackend::new();
     let result = backend.create_user("", "Empty", AccountType::Standard, "Pass1234");
     assert!(matches!(result, Err(AccountError::InvalidUsername(_))));
@@ -418,7 +421,6 @@ fn stub_invalid_username() {
 
 #[test]
 fn stub_lock_unlock() {
-
     let mut backend = StubBackend::new();
     backend.lock_account(1000).unwrap();
     let user = backend.current_user().unwrap();
@@ -431,7 +433,6 @@ fn stub_lock_unlock() {
 
 #[test]
 fn stub_set_display_name() {
-
     let mut backend = StubBackend::new();
     backend.set_display_name(1000, "New Name").unwrap();
     let user = backend.current_user().unwrap();
@@ -440,7 +441,6 @@ fn stub_set_display_name() {
 
 #[test]
 fn stub_set_avatar() {
-
     let mut backend = StubBackend::new();
     backend.set_avatar(1000, "/tmp/avatar.png").unwrap();
     let user = backend.current_user().unwrap();
@@ -449,7 +449,6 @@ fn stub_set_avatar() {
 
 #[test]
 fn stub_set_account_type() {
-
     let mut backend = StubBackend::new();
     backend
         .set_account_type(1000, AccountType::Standard)
@@ -466,7 +465,6 @@ fn stub_set_account_type() {
 
 #[test]
 fn stub_auto_login() {
-
     let mut backend = StubBackend::new();
     backend.set_auto_login(1000, true).unwrap();
     let user = backend.current_user().unwrap();
@@ -479,7 +477,6 @@ fn stub_auto_login() {
 
 #[test]
 fn stub_groups() {
-
     let backend = StubBackend::new();
     let groups = backend.list_groups().unwrap();
     assert!(groups.len() >= 2); // users + sudo
@@ -491,7 +488,6 @@ fn stub_groups() {
 
 #[test]
 fn stub_add_remove_group() {
-
     let mut backend = StubBackend::new();
     // Create a second user.
     let alice = backend
@@ -515,7 +511,6 @@ fn stub_add_remove_group() {
 
 #[test]
 fn stub_not_found() {
-
     let mut backend = StubBackend::new();
     assert!(matches!(
         backend.delete_user(9999, false),

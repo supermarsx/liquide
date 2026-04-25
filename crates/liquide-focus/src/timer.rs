@@ -98,8 +98,9 @@ impl TimerManager {
                 if timer.repeat {
                     // Account for overshoot so timers don't drift.
                     let overshoot = elapsed_ms - timer.remaining_ms;
-                    timer.remaining_ms =
-                        timer.interval_ms.saturating_sub(overshoot % timer.interval_ms);
+                    timer.remaining_ms = timer
+                        .interval_ms
+                        .saturating_sub(overshoot % timer.interval_ms);
                     // If interval is 0 (degenerate), prevent infinite re-fire
                     // within a single tick.
                     if timer.interval_ms == 0 {

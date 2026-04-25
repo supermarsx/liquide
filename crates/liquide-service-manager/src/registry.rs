@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::service::{
-    RestartPolicy, ServiceConfig, ServiceId, ServiceInfo, ServiceState,
-};
+use crate::service::{RestartPolicy, ServiceConfig, ServiceId, ServiceInfo, ServiceState};
 
 /// Events emitted by the registry on state changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,11 +84,16 @@ impl ServiceRegistry {
 
     /// Unregister a service. Must be stopped first.
     pub fn unregister(&mut self, id: &ServiceId) -> Result<ServiceConfig, RegistryError> {
-        let info = self.services.get(id).ok_or_else(|| RegistryError::NotFound(id.clone()))?;
+        let info = self
+            .services
+            .get(id)
+            .ok_or_else(|| RegistryError::NotFound(id.clone()))?;
         if info.state.is_running() || info.state.is_transitioning() {
             return Err(RegistryError::StillRunning(id.clone()));
         }
-        let info = self.services.remove(id)
+        let info = self
+            .services
+            .remove(id)
             .ok_or_else(|| RegistryError::NotFound(id.clone()))?;
         self.emit(ServiceEvent::Unregistered(id.clone()));
         Ok(info.config)
@@ -276,10 +279,7 @@ impl ServiceRegistry {
 
     /// Return all services that have auto-start enabled.
     pub fn auto_start_services(&self) -> Vec<&ServiceInfo> {
-        self.services
-            .values()
-            .filter(|info| info.enabled)
-            .collect()
+        self.services.values().filter(|info| info.enabled).collect()
     }
 
     /// Access the full event log.

@@ -23,7 +23,11 @@ impl Specificity {
     };
 
     pub fn new(id: u32, class: u32, type_sel: u32) -> Self {
-        Self { id, class, type_sel }
+        Self {
+            id,
+            class,
+            type_sel,
+        }
     }
 
     /// Combine specificities (for nested selectors).

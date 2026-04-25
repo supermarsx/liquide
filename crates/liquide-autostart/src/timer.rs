@@ -187,8 +187,16 @@ impl StartupTimer {
             a_time.cmp(&b_time).then_with(|| a.id.cmp(&b.id))
         });
 
-        let started_count = self.timings.values().filter(|t| t.started_at.is_some()).count();
-        let ready_count = self.timings.values().filter(|t| t.ready_at.is_some()).count();
+        let started_count = self
+            .timings
+            .values()
+            .filter(|t| t.started_at.is_some())
+            .count();
+        let ready_count = self
+            .timings
+            .values()
+            .filter(|t| t.ready_at.is_some())
+            .count();
 
         StartupReport {
             total_time_ms: self.total_time_ms(),

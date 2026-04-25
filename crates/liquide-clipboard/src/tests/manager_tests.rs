@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::format::ClipboardFormat;
-use crate::offer::ClipboardOffer;
 use crate::manager::*;
+use crate::offer::ClipboardOffer;
 
 fn permissive_policy() -> ClipboardPolicy {
     ClipboardPolicy {
@@ -17,7 +17,9 @@ fn manager_local_offer() {
     let mut mgr = ClipboardManager::new(permissive_policy());
     let mut data = HashMap::new();
     data.insert(ClipboardFormat::PlainText, b"hello".to_vec());
-    let offer = mgr.handle_local_offer(vec![ClipboardFormat::PlainText], data).unwrap();
+    let offer = mgr
+        .handle_local_offer(vec![ClipboardFormat::PlainText], data)
+        .unwrap();
     assert_eq!(offer.formats, vec![ClipboardFormat::PlainText]);
     assert!(offer.serial > 0);
 }
@@ -63,7 +65,10 @@ fn manager_request_remote() {
 #[test]
 fn manager_receive_remote() {
     let mut mgr = ClipboardManager::new(permissive_policy());
-    assert!(mgr.receive_remote_data(ClipboardFormat::PlainText, b"data".to_vec()).is_ok());
+    assert!(
+        mgr.receive_remote_data(ClipboardFormat::PlainText, b"data".to_vec())
+            .is_ok()
+    );
 }
 
 #[test]
@@ -83,6 +88,10 @@ fn manager_get_local() {
     let mut mgr = ClipboardManager::new(permissive_policy());
     let mut data = HashMap::new();
     data.insert(ClipboardFormat::PlainText, b"stored".to_vec());
-    mgr.handle_local_offer(vec![ClipboardFormat::PlainText], data).unwrap();
-    assert_eq!(mgr.get_local(&ClipboardFormat::PlainText), Some(b"stored".as_ref()));
+    mgr.handle_local_offer(vec![ClipboardFormat::PlainText], data)
+        .unwrap();
+    assert_eq!(
+        mgr.get_local(&ClipboardFormat::PlainText),
+        Some(b"stored".as_ref())
+    );
 }

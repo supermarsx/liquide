@@ -129,10 +129,7 @@ fn test_reconnect_increments_attempt() {
 
     let attempt = mgr.reconnect_attempt().unwrap();
     assert_eq!(attempt, 1);
-    assert_eq!(
-        *mgr.state(),
-        ConnectionState::Reconnecting { attempt: 1 }
-    );
+    assert_eq!(*mgr.state(), ConnectionState::Reconnecting { attempt: 1 });
 
     let attempt = mgr.reconnect_attempt().unwrap();
     assert_eq!(attempt, 2);
@@ -172,7 +169,10 @@ fn test_fail_sets_failed_state() {
 fn test_connection_state_display() {
     assert_eq!(ConnectionState::Disconnected.to_string(), "disconnected");
     assert_eq!(ConnectionState::Connecting.to_string(), "connecting");
-    assert_eq!(ConnectionState::Authenticating.to_string(), "authenticating");
+    assert_eq!(
+        ConnectionState::Authenticating.to_string(),
+        "authenticating"
+    );
     assert_eq!(ConnectionState::Connected.to_string(), "connected");
     assert_eq!(
         ConnectionState::Reconnecting { attempt: 3 }.to_string(),

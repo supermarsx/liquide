@@ -47,7 +47,13 @@ impl WindowManager {
 
     /// Register a window with the manager.
     pub fn add_window(&mut self, id: WidgetId, layer: WindowLayer) {
-        self.windows.insert(id, ManagedWindow { layer, state: WindowState::Normal });
+        self.windows.insert(
+            id,
+            ManagedWindow {
+                layer,
+                state: WindowState::Normal,
+            },
+        );
         self.stack.push(id);
         self.sort_stack();
     }
@@ -108,15 +114,23 @@ impl WindowManager {
     fn sort_stack(&mut self) {
         let windows = &self.windows;
         self.stack.sort_by(|a, b| {
-            let la = windows.get(a).map(|mw| mw.layer).unwrap_or(WindowLayer::Normal);
-            let lb = windows.get(b).map(|mw| mw.layer).unwrap_or(WindowLayer::Normal);
+            let la = windows
+                .get(a)
+                .map(|mw| mw.layer)
+                .unwrap_or(WindowLayer::Normal);
+            let lb = windows
+                .get(b)
+                .map(|mw| mw.layer)
+                .unwrap_or(WindowLayer::Normal);
             la.cmp(&lb)
         });
     }
 }
 
 impl Default for WindowManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

@@ -106,10 +106,7 @@ impl FontFallback {
     /// in chain priority order. Families that are not available are
     /// skipped.
     #[must_use]
-    pub fn resolve<'a>(
-        chain: &FallbackChain,
-        available: &'a [FontInfo],
-    ) -> Vec<&'a FontInfo> {
+    pub fn resolve<'a>(chain: &FallbackChain, available: &'a [FontInfo]) -> Vec<&'a FontInfo> {
         let mut result = Vec::new();
         for family_name in &chain.families {
             let lower = family_name.to_lowercase();
@@ -122,8 +119,10 @@ impl FontFallback {
                         None => best = Some(font),
                         Some(prev) => {
                             // Prefer Regular weight.
-                            let prev_dist = prev.weight.distance(crate::weight::FontWeight::Regular);
-                            let this_dist = font.weight.distance(crate::weight::FontWeight::Regular);
+                            let prev_dist =
+                                prev.weight.distance(crate::weight::FontWeight::Regular);
+                            let this_dist =
+                                font.weight.distance(crate::weight::FontWeight::Regular);
                             if this_dist < prev_dist {
                                 best = Some(font);
                             }

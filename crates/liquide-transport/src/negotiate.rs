@@ -50,12 +50,22 @@ impl TransportKind {
     /// Whether this transport provides reliable delivery.
     #[must_use]
     pub fn is_reliable(self) -> bool {
-        matches!(self, Self::Quic | Self::TlsTcp | Self::Tcp | Self::WebSocket)
+        matches!(
+            self,
+            Self::Quic | Self::TlsTcp | Self::Tcp | Self::WebSocket
+        )
     }
 
     /// Iterator over all transport kinds.
     pub fn all() -> impl Iterator<Item = Self> {
-        [Self::Quic, Self::TlsTcp, Self::Udp, Self::Tcp, Self::WebSocket].into_iter()
+        [
+            Self::Quic,
+            Self::TlsTcp,
+            Self::Udp,
+            Self::Tcp,
+            Self::WebSocket,
+        ]
+        .into_iter()
     }
 }
 

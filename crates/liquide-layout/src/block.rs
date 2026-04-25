@@ -2,7 +2,10 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{AspectRatio, BoxSizing, Display, Float, LineClamp, ListStylePosition, ListStyleType, Overflow, Position};
+use liquide_style_engine::computed::{
+    AspectRatio, BoxSizing, Display, Float, LineClamp, ListStylePosition, ListStyleType, Overflow,
+    Position,
+};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::style_map::PseudoKind;
 
@@ -56,7 +59,8 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     }
     // For list-item display, implicitly increment the "list-item" counter
     if style.is_list_item() && style.counter_increment.is_none() {
-        crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow_mut().apply_increment("list-item 1"));
+        crate::counter::COUNTER_REGISTRY
+            .with(|reg| reg.borrow_mut().apply_increment("list-item 1"));
     }
 
     // Resolve own dimensions.
@@ -76,13 +80,16 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     // contain:size — use contain-intrinsic-width when no explicit width is set
     // (mirrors the contain-intrinsic-height logic used for content_height below)
     let explicit_width = if explicit_width.is_none() && style.contain.size {
-        style.contain_intrinsic_width.resolve_px(
-            container_width,
-            base_font_size,
-            font_size,
-            viewport_w,
-            viewport_h,
-        ).or(explicit_width)
+        style
+            .contain_intrinsic_width
+            .resolve_px(
+                container_width,
+                base_font_size,
+                font_size,
+                viewport_w,
+                viewport_h,
+            )
+            .or(explicit_width)
     } else {
         explicit_width
     };
@@ -99,7 +106,9 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
 
     // Aspect-ratio: if width is auto but height is explicit, derive width from height * ratio
     let explicit_width = if explicit_width.is_none() {
-        if let (Some(h), &AspectRatio::Ratio(rw, rh)) = (resolved_explicit_height, &style.aspect_ratio) {
+        if let (Some(h), &AspectRatio::Ratio(rw, rh)) =
+            (resolved_explicit_height, &style.aspect_ratio)
+        {
             if rh > 0.0 {
                 Some(h * (rw / rh))
             } else {
@@ -114,17 +123,23 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
 
     // Resolve intrinsic sizing keywords: width: min-content | max-content | fit-content(...)
     let explicit_width = match &style.width {
-        Dimension::MinContent if explicit_width.is_none() => {
-            Some(crate::intrinsic::min_content_width(doc, node_id, styles, text_measurer))
-        }
-        Dimension::MaxContent if explicit_width.is_none() => {
-            Some(crate::intrinsic::max_content_width(doc, node_id, styles, text_measurer))
-        }
+        Dimension::MinContent if explicit_width.is_none() => Some(
+            crate::intrinsic::min_content_width(doc, node_id, styles, text_measurer),
+        ),
+        Dimension::MaxContent if explicit_width.is_none() => Some(
+            crate::intrinsic::max_content_width(doc, node_id, styles, text_measurer),
+        ),
         Dimension::FitContent(limit) if explicit_width.is_none() => {
             let min_cw = crate::intrinsic::min_content_width(doc, node_id, styles, text_measurer);
             let max_cw = crate::intrinsic::max_content_width(doc, node_id, styles, text_measurer);
             let limit_px = limit
-                .resolve_px(container_width, base_font_size, font_size, viewport_w, viewport_h)
+                .resolve_px(
+                    container_width,
+                    base_font_size,
+                    font_size,
+                    viewport_w,
+                    viewport_h,
+                )
                 .unwrap_or(container_width);
             // fit-content(limit) = clamp(min-content, limit, max-content)
             Some(min_cw.max(limit_px.min(max_cw)))
@@ -301,16 +316,14 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     // Parent's top margin can collapse with first child's top margin if:
     // - No top border/padding separating them
     // - Parent doesn't establish a BFC
-    let can_collapse_top = !parent_establishes_bfc 
-        && border_top == 0.0 
-        && pad_top == 0.0;
+    let can_collapse_top = !parent_establishes_bfc && border_top == 0.0 && pad_top == 0.0;
 
     // Parent's bottom margin can collapse with last child's bottom margin if:
     // - No bottom border/padding separating them
     // - No explicit height on parent
     // - Parent doesn't establish a BFC
-    let can_collapse_bottom = !parent_establishes_bfc 
-        && border_bottom == 0.0 
+    let can_collapse_bottom = !parent_establishes_bfc
+        && border_bottom == 0.0
         && pad_bottom == 0.0
         && !has_explicit_height;
 
@@ -341,12 +354,20 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     Some(content_width),
                     &text_props,
                 );
-                let pe_box = tree.alloc(node_id, BoxType::PseudoElement {
-                    kind: PseudoElementKind::Before,
-                    content: resolved,
-                });
+                let pe_box = tree.alloc(
+                    node_id,
+                    BoxType::PseudoElement {
+                        kind: PseudoElementKind::Before,
+                        content: resolved,
+                    },
+                );
                 if let Some(pb) = tree.get_mut(pe_box) {
-                    pb.content_rect = Rect::new(0.0, child_y, metrics.width.min(content_width), metrics.height);
+                    pb.content_rect = Rect::new(
+                        0.0,
+                        child_y,
+                        metrics.width.min(content_width),
+                        metrics.height,
+                    );
                     pb.border_rect = pb.content_rect;
                     pb.padding_rect = pb.content_rect;
                     pb.margin_rect = pb.content_rect;
@@ -454,13 +475,23 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     inner_y += ib.margin_rect.height;
                 }
             } else if matches!(cs.display, Display::InlineBlock) {
-                let ib_width = if cs.width.resolve_px(
-                    content_width, base_font_size, cs.font_size, viewport_w, viewport_h,
-                ).is_some() {
+                let ib_width = if cs
+                    .width
+                    .resolve_px(
+                        content_width,
+                        base_font_size,
+                        cs.font_size,
+                        viewport_w,
+                        viewport_h,
+                    )
+                    .is_some()
+                {
                     content_width
                 } else {
-                    let min_cw = crate::intrinsic::min_content_width(doc, cid, styles, text_measurer);
-                    let max_cw = crate::intrinsic::max_content_width(doc, cid, styles, text_measurer);
+                    let min_cw =
+                        crate::intrinsic::min_content_width(doc, cid, styles, text_measurer);
+                    let max_cw =
+                        crate::intrinsic::max_content_width(doc, cid, styles, text_measurer);
                     min_cw.max(content_width.min(max_cw))
                 };
                 let ib_box = layout_block(
@@ -558,10 +589,20 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             if mixed {
                 flush_inline_run(
                     &mut pending_inline_run,
-                    doc, styles, tree, text_measurer, image_measurer,
-                    content_width, container_height,
-                    viewport_w, viewport_h, base_font_size,
-                    box_id, &mut child_y, &mut prev_margin_bottom, node_id,
+                    doc,
+                    styles,
+                    tree,
+                    text_measurer,
+                    image_measurer,
+                    content_width,
+                    container_height,
+                    viewport_w,
+                    viewport_h,
+                    base_font_size,
+                    box_id,
+                    &mut child_y,
+                    &mut prev_margin_bottom,
+                    node_id,
                 );
             }
 
@@ -638,10 +679,20 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             // Block-level child in mixed context — flush the pending inline run
             flush_inline_run(
                 &mut pending_inline_run,
-                doc, styles, tree, text_measurer, image_measurer,
-                content_width, container_height,
-                viewport_w, viewport_h, base_font_size,
-                box_id, &mut child_y, &mut prev_margin_bottom, node_id,
+                doc,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                viewport_w,
+                viewport_h,
+                base_font_size,
+                box_id,
+                &mut child_y,
+                &mut prev_margin_bottom,
+                node_id,
             );
             // Fall through to normal block-level child processing below
         }
@@ -678,13 +729,17 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     );
                     // Clamp text width to available width so it doesn't overflow
                     let clamped_text_w = metrics.width.min(child_avail_w);
-                    let child_is_rtl = matches!(child_style.direction, liquide_style_engine::computed::Direction::Rtl);
-                    let text_x = child_float_offset_x + crate::inline::align_offset_directional(
-                        child_style.text_align,
-                        child_avail_w,
-                        clamped_text_w,
-                        child_is_rtl,
+                    let child_is_rtl = matches!(
+                        child_style.direction,
+                        liquide_style_engine::computed::Direction::Rtl
                     );
+                    let text_x = child_float_offset_x
+                        + crate::inline::align_offset_directional(
+                            child_style.text_align,
+                            child_avail_w,
+                            clamped_text_w,
+                            child_is_rtl,
+                        );
                     let text_box = tree.alloc(
                         child_id,
                         BoxType::Text {
@@ -831,13 +886,23 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             // Inline-block: lay out as block internally with shrink-to-fit width.
             // Per CSS 2.1 §10.3.9, if width is auto, use:
             //   min(max(min-content, available), max-content)
-            let ib_width = if child_style.width.resolve_px(
-                content_width, base_font_size, child_style.font_size, viewport_w, viewport_h,
-            ).is_some() {
+            let ib_width = if child_style
+                .width
+                .resolve_px(
+                    content_width,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .is_some()
+            {
                 content_width // explicit width — let layout_block handle it
             } else {
-                let min_cw = crate::intrinsic::min_content_width(doc, child_id, styles, text_measurer);
-                let max_cw = crate::intrinsic::max_content_width(doc, child_id, styles, text_measurer);
+                let min_cw =
+                    crate::intrinsic::min_content_width(doc, child_id, styles, text_measurer);
+                let max_cw =
+                    crate::intrinsic::max_content_width(doc, child_id, styles, text_measurer);
                 min_cw.max(content_width.min(max_cw))
             };
             layout_block(
@@ -883,9 +948,15 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                             &text_props,
                         );
                         let clamped_w = metrics.width.min(child_avail_w);
-                        let text_box = tree.alloc(gc_id, BoxType::Text { line_boxes: Vec::new() });
+                        let text_box = tree.alloc(
+                            gc_id,
+                            BoxType::Text {
+                                line_boxes: Vec::new(),
+                            },
+                        );
                         if let Some(tb) = tree.get_mut(text_box) {
-                            tb.content_rect = Rect::new(child_float_offset_x, child_y, clamped_w, metrics.height);
+                            tb.content_rect =
+                                Rect::new(child_float_offset_x, child_y, clamped_w, metrics.height);
                             tb.padding_rect = tb.content_rect;
                             tb.border_rect = tb.content_rect;
                             tb.margin_rect = tb.content_rect;
@@ -900,26 +971,62 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 // Dispatch by grandchild's display type
                 let gc_box = if gc_style.is_flex_container() {
                     crate::flex::layout_flex(
-                        doc, gc_id, styles, tree, text_measurer, image_measurer,
-                        child_avail_w, container_height, child_float_offset_x, child_y,
-                        viewport_w, viewport_h, base_font_size,
+                        doc,
+                        gc_id,
+                        styles,
+                        tree,
+                        text_measurer,
+                        image_measurer,
+                        child_avail_w,
+                        container_height,
+                        child_float_offset_x,
+                        child_y,
+                        viewport_w,
+                        viewport_h,
+                        base_font_size,
                     )
                 } else if gc_style.is_grid_container() {
                     crate::grid::layout_grid(
-                        doc, gc_id, styles, tree, text_measurer, image_measurer,
-                        child_avail_w, container_height, child_float_offset_x, child_y,
-                        viewport_w, viewport_h, base_font_size,
+                        doc,
+                        gc_id,
+                        styles,
+                        tree,
+                        text_measurer,
+                        image_measurer,
+                        child_avail_w,
+                        container_height,
+                        child_float_offset_x,
+                        child_y,
+                        viewport_w,
+                        viewport_h,
+                        base_font_size,
                     )
                 } else if matches!(gc_style.display, Display::Inline) {
                     crate::inline::layout_inline(
-                        doc, gc_id, styles, tree, text_measurer,
-                        child_avail_w, child_float_offset_x, child_y,
+                        doc,
+                        gc_id,
+                        styles,
+                        tree,
+                        text_measurer,
+                        child_avail_w,
+                        child_float_offset_x,
+                        child_y,
                     )
                 } else {
                     layout_block(
-                        doc, gc_id, styles, tree, text_measurer, image_measurer,
-                        child_avail_w, container_height, child_float_offset_x, child_y,
-                        viewport_w, viewport_h, base_font_size,
+                        doc,
+                        gc_id,
+                        styles,
+                        tree,
+                        text_measurer,
+                        image_measurer,
+                        child_avail_w,
+                        container_height,
+                        child_float_offset_x,
+                        child_y,
+                        viewport_w,
+                        viewport_h,
+                        base_font_size,
                     )
                 };
                 tree.add_child(box_id, gc_box);
@@ -941,7 +1048,8 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             // instead of computing from the sibling index.
             let counter_val = crate::counter::COUNTER_REGISTRY
                 .with(|reg| reg.borrow().counter_value("list-item"));
-            let marker_text = list_marker_text(&child_style.list_style_type, counter_val.max(1) as usize);
+            let marker_text =
+                list_marker_text(&child_style.list_style_type, counter_val.max(1) as usize);
             let marker_width = marker_text.len() as f32 * child_style.font_size * 0.6 + 4.0;
 
             // Create the block for the list item content
@@ -968,14 +1076,20 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 match child_style.list_style_position {
                     ListStylePosition::Inside => {
                         // Inside: marker is first child, shifts content
-                        mb.content_rect = Rect::new(child_float_offset_x, child_y, marker_width, marker_h);
+                        mb.content_rect =
+                            Rect::new(child_float_offset_x, child_y, marker_width, marker_h);
                         mb.border_rect = mb.content_rect;
                         mb.padding_rect = mb.content_rect;
                         mb.margin_rect = mb.content_rect;
                     }
                     ListStylePosition::Outside => {
                         // Outside: marker is positioned to the left
-                        mb.content_rect = Rect::new(child_float_offset_x - marker_width, child_y, marker_width, marker_h);
+                        mb.content_rect = Rect::new(
+                            child_float_offset_x - marker_width,
+                            child_y,
+                            marker_width,
+                            marker_h,
+                        );
                         mb.border_rect = mb.content_rect;
                         mb.padding_rect = mb.content_rect;
                         mb.margin_rect = mb.content_rect;
@@ -1011,16 +1125,40 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         let child_is_empty = {
             let ch_border_t = child_style.border_width.top;
             let ch_border_b = child_style.border_width.bottom;
-            let ch_pad_t = child_style.padding.top.resolve_px(
-                container_width, base_font_size, child_style.font_size, viewport_w, viewport_h,
-            ).unwrap_or(0.0);
-            let ch_pad_b = child_style.padding.bottom.resolve_px(
-                container_width, base_font_size, child_style.font_size, viewport_w, viewport_h,
-            ).unwrap_or(0.0);
-            let ch_min_h = child_style.min_height.resolve_px(
-                container_height, base_font_size, child_style.font_size, viewport_w, viewport_h,
-            ).unwrap_or(0.0);
-            let ch_content_h = tree.get(child_box)
+            let ch_pad_t = child_style
+                .padding
+                .top
+                .resolve_px(
+                    container_width,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(0.0);
+            let ch_pad_b = child_style
+                .padding
+                .bottom
+                .resolve_px(
+                    container_width,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(0.0);
+            let ch_min_h = child_style
+                .min_height
+                .resolve_px(
+                    container_height,
+                    base_font_size,
+                    child_style.font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(0.0);
+            let ch_content_h = tree
+                .get(child_box)
                 .map(|cb| cb.content_rect.height)
                 .unwrap_or(0.0);
             ch_content_h == 0.0
@@ -1051,10 +1189,20 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     if mixed {
         flush_inline_run(
             &mut pending_inline_run,
-            doc, styles, tree, text_measurer, image_measurer,
-            content_width, container_height,
-            viewport_w, viewport_h, base_font_size,
-            box_id, &mut child_y, &mut prev_margin_bottom, node_id,
+            doc,
+            styles,
+            tree,
+            text_measurer,
+            image_measurer,
+            content_width,
+            container_height,
+            viewport_w,
+            viewport_h,
+            base_font_size,
+            box_id,
+            &mut child_y,
+            &mut prev_margin_bottom,
+            node_id,
         );
     }
 
@@ -1082,12 +1230,20 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     Some(content_width),
                     &text_props,
                 );
-                let pe_box = tree.alloc(node_id, BoxType::PseudoElement {
-                    kind: PseudoElementKind::After,
-                    content: resolved,
-                });
+                let pe_box = tree.alloc(
+                    node_id,
+                    BoxType::PseudoElement {
+                        kind: PseudoElementKind::After,
+                        content: resolved,
+                    },
+                );
                 if let Some(pb) = tree.get_mut(pe_box) {
-                    pb.content_rect = Rect::new(0.0, child_y, metrics.width.min(content_width), metrics.height);
+                    pb.content_rect = Rect::new(
+                        0.0,
+                        child_y,
+                        metrics.width.min(content_width),
+                        metrics.height,
+                    );
                     pb.border_rect = pb.content_rect;
                     pb.padding_rect = pb.content_rect;
                     pb.margin_rect = pb.content_rect;
@@ -1118,19 +1274,20 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             // contain:size takes priority — don't use children or aspect-ratio
             // for sizing; use contain-intrinsic-height if set, otherwise 0.
             if style.contain.size {
-                style.contain_intrinsic_height.resolve_px(
-                    container_height,
-                    base_font_size,
-                    font_size,
-                    viewport_w,
-                    viewport_h,
-                ).unwrap_or(0.0)
+                style
+                    .contain_intrinsic_height
+                    .resolve_px(
+                        container_height,
+                        base_font_size,
+                        font_size,
+                        viewport_w,
+                        viewport_h,
+                    )
+                    .unwrap_or(0.0)
             } else {
                 // Check aspect-ratio before falling back to child_y
                 match style.aspect_ratio {
-                    AspectRatio::Ratio(w, h) if w > 0.0 => {
-                        content_width * (h / w)
-                    }
+                    AspectRatio::Ratio(w, h) if w > 0.0 => content_width * (h / w),
                     _ => child_y,
                 }
             }
@@ -1190,13 +1347,11 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
 
     // scrollbar-gutter: stable — reserve space for scrollbar even when not needed
     let gutter_width = match style.scrollbar_gutter {
-        liquide_style_engine::computed::ScrollbarGutter::Stable => {
-            match style.scrollbar_width {
-                liquide_style_engine::computed::ScrollbarWidth::Auto => 6.0,
-                liquide_style_engine::computed::ScrollbarWidth::Thin => 4.0,
-                liquide_style_engine::computed::ScrollbarWidth::None => 0.0,
-            }
-        }
+        liquide_style_engine::computed::ScrollbarGutter::Stable => match style.scrollbar_width {
+            liquide_style_engine::computed::ScrollbarWidth::Auto => 6.0,
+            liquide_style_engine::computed::ScrollbarWidth::Thin => 4.0,
+            liquide_style_engine::computed::ScrollbarWidth::None => 0.0,
+        },
         _ => 0.0,
     };
     let content_width = content_width - gutter_width;
@@ -1221,16 +1376,14 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     }
 
     // Compute scroll_size for scroll containers before the mutable borrow.
-    let is_scroll_container = matches!(
-        style.overflow_x,
-        Overflow::Auto | Overflow::Scroll
-    ) || matches!(
-        style.overflow_y,
-        Overflow::Auto | Overflow::Scroll
-    );
+    let is_scroll_container = matches!(style.overflow_x, Overflow::Auto | Overflow::Scroll)
+        || matches!(style.overflow_y, Overflow::Auto | Overflow::Scroll);
     let scroll_size = if is_scroll_container {
         // Find max child width for horizontal scroll
-        let children = tree.get(box_id).map(|b| b.children.clone()).unwrap_or_default();
+        let children = tree
+            .get(box_id)
+            .map(|b| b.children.clone())
+            .unwrap_or_default();
         let mut max_child_w = 0.0f32;
         for &child_box_id in &children {
             if let Some(cb) = tree.get(child_box_id) {
@@ -1335,11 +1488,7 @@ fn is_inline_level(display: Display) -> bool {
 /// least one is block-level.  When this is the case, CSS 2.1 §9.2.1.1
 /// requires that consecutive runs of inline content be wrapped in anonymous
 /// block boxes.
-fn has_mixed_inline_block_children(
-    doc: &Document,
-    parent: NodeId,
-    styles: &StyleMap,
-) -> bool {
+fn has_mixed_inline_block_children(doc: &Document, parent: NodeId, styles: &StyleMap) -> bool {
     let children = doc.children(parent);
     let mut has_inline = false;
     let mut has_block = false;
@@ -1396,9 +1545,9 @@ fn collapse_margins(a: f32, b: f32) -> f32 {
 fn list_marker_text(style_type: &ListStyleType, index: usize) -> String {
     match style_type {
         ListStyleType::None => String::new(),
-        ListStyleType::Disc => "\u{2022} ".to_string(),    // •
-        ListStyleType::Circle => "\u{25E6} ".to_string(),  // ◦
-        ListStyleType::Square => "\u{25AA} ".to_string(),  // ▪
+        ListStyleType::Disc => "\u{2022} ".to_string(), // •
+        ListStyleType::Circle => "\u{25E6} ".to_string(), // ◦
+        ListStyleType::Square => "\u{25AA} ".to_string(), // ▪
         ListStyleType::Decimal => format!("{}. ", index),
         ListStyleType::DecimalLeadingZero => format!("{:02}. ", index),
         ListStyleType::LowerRoman => {
@@ -1429,9 +1578,19 @@ fn list_marker_text(style_type: &ListStyleType, index: usize) -> String {
 /// Convert a number to lowercase Roman numerals.
 fn to_lower_roman(mut n: usize) -> String {
     let values = [
-        (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
-        (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
-        (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
     ];
     let mut result = String::new();
     for &(val, sym) in &values {
@@ -1502,8 +1661,8 @@ fn resolve_counter_placeholders(content: &str) -> String {
             let after_prefix = &tag[9..]; // skip "[counter:"
             if let Some(end) = after_prefix.find(']') {
                 let name = &after_prefix[..end];
-                let val = crate::counter::COUNTER_REGISTRY
-                    .with(|reg| reg.borrow().counter_value(name));
+                let val =
+                    crate::counter::COUNTER_REGISTRY.with(|reg| reg.borrow().counter_value(name));
                 result.push_str(&val.to_string());
                 rest = &after_prefix[end + 1..];
             } else {

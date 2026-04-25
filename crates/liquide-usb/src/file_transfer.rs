@@ -1,6 +1,6 @@
 //! File transfer types for USB mass storage redirection.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// A mounted filesystem from a USB device.
 #[derive(Debug, Clone)]

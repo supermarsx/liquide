@@ -214,11 +214,7 @@ fn resolve_runtime_dir() -> Option<PathBuf> {
     }
     // Fallback: use the system temporary directory.
     let tmp = env::temp_dir();
-    if tmp.exists() {
-        Some(tmp)
-    } else {
-        None
-    }
+    if tmp.exists() { Some(tmp) } else { None }
 }
 
 fn split_dirs_env(var: &str, defaults: &[&str]) -> Vec<PathBuf> {
@@ -284,25 +280,37 @@ mod tests {
     #[test]
     fn data_home_for_app() {
         let dirs = XdgDirs::with_home(Path::new("/h"));
-        assert_eq!(dirs.data_home_for("myapp"), PathBuf::from("/h/.local/share/myapp"));
+        assert_eq!(
+            dirs.data_home_for("myapp"),
+            PathBuf::from("/h/.local/share/myapp")
+        );
     }
 
     #[test]
     fn config_home_for_app() {
         let dirs = XdgDirs::with_home(Path::new("/h"));
-        assert_eq!(dirs.config_home_for("myapp"), PathBuf::from("/h/.config/myapp"));
+        assert_eq!(
+            dirs.config_home_for("myapp"),
+            PathBuf::from("/h/.config/myapp")
+        );
     }
 
     #[test]
     fn cache_home_for_app() {
         let dirs = XdgDirs::with_home(Path::new("/h"));
-        assert_eq!(dirs.cache_home_for("myapp"), PathBuf::from("/h/.cache/myapp"));
+        assert_eq!(
+            dirs.cache_home_for("myapp"),
+            PathBuf::from("/h/.cache/myapp")
+        );
     }
 
     #[test]
     fn state_home_for_app() {
         let dirs = XdgDirs::with_home(Path::new("/h"));
-        assert_eq!(dirs.state_home_for("myapp"), PathBuf::from("/h/.local/state/myapp"));
+        assert_eq!(
+            dirs.state_home_for("myapp"),
+            PathBuf::from("/h/.local/state/myapp")
+        );
     }
 
     #[test]
@@ -354,11 +362,14 @@ mod tests {
         // SAFETY: This test is single-threaded and uses a unique env var name.
         unsafe { env::set_var("_LIQUIDE_XDG_SPLIT_TEST", "/a;/b;/c") };
         let dirs = split_dirs_env("_LIQUIDE_XDG_SPLIT_TEST", &["/default"]);
-        assert_eq!(dirs, vec![
-            PathBuf::from("/a"),
-            PathBuf::from("/b"),
-            PathBuf::from("/c"),
-        ]);
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/a"),
+                PathBuf::from("/b"),
+                PathBuf::from("/c"),
+            ]
+        );
         unsafe { env::remove_var("_LIQUIDE_XDG_SPLIT_TEST") };
     }
 }

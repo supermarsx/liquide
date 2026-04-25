@@ -119,7 +119,8 @@ impl TemplateNode {
     /// Add an inline CSS style property.
     /// These are applied with the highest specificity, overriding selectors.
     pub fn style(mut self, property: &str, value: &str) -> Self {
-        self.inline_styles.push((property.to_string(), value.to_string()));
+        self.inline_styles
+            .push((property.to_string(), value.to_string()));
         self
     }
 
@@ -315,7 +316,11 @@ impl TemplateRenderer {
             }
         } else {
             // Clear stale element id if the template no longer specifies one
-            if doc.get(node_id).and_then(|n| n.element_id.as_deref()).is_some() {
+            if doc
+                .get(node_id)
+                .and_then(|n| n.element_id.as_deref())
+                .is_some()
+            {
                 doc.set_id(node_id, "");
             }
         }
@@ -460,11 +465,7 @@ impl TemplateRenderer {
     /// Reconcile children of a parent node against a list of template children.
     ///
     /// Uses keyed reconciliation for children with `key`, positional for the rest.
-    fn reconcile_children(
-        doc: &mut Document,
-        parent: NodeId,
-        desired_children: &[TemplateNode],
-    ) {
+    fn reconcile_children(doc: &mut Document, parent: NodeId, desired_children: &[TemplateNode]) {
         let old_children: Vec<NodeId> = doc.children(parent).to_vec();
 
         // Build key→NodeId map from existing children
@@ -493,8 +494,7 @@ impl TemplateRenderer {
                     if desired.is_text() {
                         doc.get(nid).map_or(false, |n| n.is_text())
                     } else {
-                        doc.get(nid)
-                            .map_or(false, |n| n.tag_name() == desired.tag)
+                        doc.get(nid).map_or(false, |n| n.tag_name() == desired.tag)
                     }
                 });
                 if m.is_some() {
@@ -553,11 +553,7 @@ impl TemplateRenderer {
     }
 
     /// Create a new subtree from a template and attach it to a parent.
-    fn create_subtree(
-        doc: &mut Document,
-        parent: NodeId,
-        template: &TemplateNode,
-    ) -> NodeId {
+    fn create_subtree(doc: &mut Document, parent: NodeId, template: &TemplateNode) -> NodeId {
         // Text node
         if let Some(ref text) = template.text {
             let id = doc.create_text(text);
@@ -659,7 +655,9 @@ mod tests {
         assert_eq!(node.children.len(), 1);
         assert_eq!(node.children[0].tag, "dock-item");
         assert_eq!(node.children[0].key.as_deref(), Some("files"));
-        assert!(node.children[0].pseudo_states.contains(PseudoStateFlags::HOVER));
+        assert!(node.children[0]
+            .pseudo_states
+            .contains(PseudoStateFlags::HOVER));
         assert_eq!(node.children[0].children[0].text.as_deref(), Some("Files"));
     }
 
@@ -705,13 +703,22 @@ mod tests {
         let dock_id = TemplateRenderer::create_subtree(&mut doc, root, &template);
 
         // Verify structure
-        assert_eq!(doc.get(dock_id).unwrap().element_id.as_deref(), Some("test-dock"));
+        assert_eq!(
+            doc.get(dock_id).unwrap().element_id.as_deref(),
+            Some("test-dock")
+        );
         assert!(doc.get(dock_id).unwrap().has_class("visible"));
         assert_eq!(doc.children(dock_id).len(), 2);
 
         let first_item = doc.children(dock_id)[0];
-        assert_eq!(doc.get_attribute(first_item, "data-app-id").as_deref(), Some("files"));
-        assert_eq!(doc.get_attribute(first_item, "data-key").as_deref(), Some("files"));
+        assert_eq!(
+            doc.get_attribute(first_item, "data-app-id").as_deref(),
+            Some("files")
+        );
+        assert_eq!(
+            doc.get_attribute(first_item, "data-key").as_deref(),
+            Some("files")
+        );
     }
 
     #[test]
@@ -726,8 +733,12 @@ mod tests {
 
         // Apply template with 2 children
         let children = vec![
-            TemplateNode::el("dock-item").key("a").child(TemplateNode::text("A")),
-            TemplateNode::el("dock-item").key("b").child(TemplateNode::text("B")),
+            TemplateNode::el("dock-item")
+                .key("a")
+                .child(TemplateNode::text("A")),
+            TemplateNode::el("dock-item")
+                .key("b")
+                .child(TemplateNode::text("B")),
         ];
         TemplateRenderer::reconcile_children(&mut doc, parent, &children);
 
@@ -751,9 +762,7 @@ mod tests {
         assert_eq!(doc.children(parent).len(), 3);
 
         // Reconcile to 1 child
-        let children = vec![
-            TemplateNode::el("dock-item").child(TemplateNode::text("A")),
-        ];
+        let children = vec![TemplateNode::el("dock-item").child(TemplateNode::text("A"))];
         TemplateRenderer::reconcile_children(&mut doc, parent, &children);
 
         assert_eq!(doc.children(parent).len(), 1);
@@ -800,9 +809,7 @@ mod tests {
         doc.add_class(node, "keep");
         doc.append_child(root, node);
 
-        let template = TemplateNode::el("item")
-            .class("keep")
-            .class("new-class");
+        let template = TemplateNode::el("item").class("keep").class("new-class");
 
         TemplateRenderer::patch_node(&mut doc, node, &template);
 
@@ -872,9 +879,7 @@ mod tests {
             .class("visible")
             .child(TemplateNode::text("content"));
 
-        let node_id = TemplateRenderer::apply_or_create(
-            &mut doc, root, "my-overlay", &template,
-        );
+        let node_id = TemplateRenderer::apply_or_create(&mut doc, root, "my-overlay", &template);
 
         assert!(doc.get_element_by_id("my-overlay").is_some());
         assert_eq!(doc.children(node_id).len(), 1);
@@ -892,13 +897,9 @@ mod tests {
         doc.append_child(root, node);
 
         // Apply template — should patch, not recreate
-        let template = TemplateNode::el("overlay")
-            .id("my-overlay")
-            .class("new");
+        let template = TemplateNode::el("overlay").id("my-overlay").class("new");
 
-        let node_id = TemplateRenderer::apply_or_create(
-            &mut doc, root, "my-overlay", &template,
-        );
+        let node_id = TemplateRenderer::apply_or_create(&mut doc, root, "my-overlay", &template);
 
         assert_eq!(node_id, node); // Same node reused
         assert!(!doc.get(node).unwrap().has_class("old"));
@@ -935,19 +936,25 @@ mod tests {
             ("terminal", "Terminal", false, true),
             ("browser", "Browser", true, false),
         ];
-        let template = TemplateNode::el("dock")
-            .id("shell-dock")
-            .children(items.iter().enumerate().map(|(i, (id, label, running, pinned))| {
-                TemplateNode::el("dock-item")
-                    .key(id)
-                    .class_if("active", *running)
-                    .class_if("pinned", *pinned)
-                    .attr("data-app-id", id)
-                    .attr("data-icon", id)
-                    .attr("data-index", &i.to_string())
-                    .pseudo_if(PseudoStateFlags::HOVER, false)
-                    .child(TemplateNode::text(label))
-            }));
+        let template =
+            TemplateNode::el("dock")
+                .id("shell-dock")
+                .children(
+                    items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (id, label, running, pinned))| {
+                            TemplateNode::el("dock-item")
+                                .key(id)
+                                .class_if("active", *running)
+                                .class_if("pinned", *pinned)
+                                .attr("data-app-id", id)
+                                .attr("data-icon", id)
+                                .attr("data-index", &i.to_string())
+                                .pseudo_if(PseudoStateFlags::HOVER, false)
+                                .child(TemplateNode::text(label))
+                        }),
+                );
 
         TemplateRenderer::apply_to_node(&mut doc, dock, &template);
         assert_eq!(doc.children(dock).len(), 3);
@@ -961,24 +968,33 @@ mod tests {
             ("files", "Files", true, true),
             ("terminal", "Terminal", false, true),
         ];
-        let template2 = TemplateNode::el("dock")
-            .id("shell-dock")
-            .children(items2.iter().enumerate().map(|(i, (id, label, running, pinned))| {
-                TemplateNode::el("dock-item")
-                    .key(id)
-                    .class_if("active", *running)
-                    .class_if("pinned", *pinned)
-                    .attr("data-app-id", id)
-                    .attr("data-icon", id)
-                    .attr("data-index", &i.to_string())
-                    .pseudo_if(PseudoStateFlags::HOVER, i == 1)
-                    .child(TemplateNode::text(label))
-            }));
+        let template2 =
+            TemplateNode::el("dock")
+                .id("shell-dock")
+                .children(
+                    items2
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (id, label, running, pinned))| {
+                            TemplateNode::el("dock-item")
+                                .key(id)
+                                .class_if("active", *running)
+                                .class_if("pinned", *pinned)
+                                .attr("data-app-id", id)
+                                .attr("data-icon", id)
+                                .attr("data-index", &i.to_string())
+                                .pseudo_if(PseudoStateFlags::HOVER, i == 1)
+                                .child(TemplateNode::text(label))
+                        }),
+                );
 
         TemplateRenderer::apply_to_node(&mut doc, dock, &template2);
         assert_eq!(doc.children(dock).len(), 2); // browser removed
 
         let terminal = doc.children(dock)[1];
-        assert!(doc.get(terminal).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+        assert!(doc
+            .get(terminal)
+            .unwrap()
+            .has_pseudo_state(PseudoStateFlags::HOVER));
     }
 }

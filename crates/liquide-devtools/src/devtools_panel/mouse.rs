@@ -39,7 +39,8 @@ impl DevToolsPanel {
             let tab_bar_h = 30.0;
             let content_y = bounds.y + 1.0 + tab_bar_h + 1.0 + 8.0;
 
-            if x >= bounds.x && x <= bounds.x + bounds.width
+            if x >= bounds.x
+                && x <= bounds.x + bounds.width
                 && y >= content_y
                 && y <= bounds.y + bounds.height - 22.0
                 && self.active_tab == DevToolsTab::Elements
@@ -67,7 +68,10 @@ impl DevToolsPanel {
         }
 
         // Element picker: forward to hit-test-based hover.
-        if self.element_picker.on_mouse_move(x, y, hit_test, doc, layout) {
+        if self
+            .element_picker
+            .on_mouse_move(x, y, hit_test, doc, layout)
+        {
             changed = true;
         }
         changed
@@ -118,8 +122,10 @@ impl DevToolsPanel {
         let bounds = self.panel_bounds();
 
         // Check bounds.
-        if x < bounds.x || x > bounds.x + bounds.width
-            || y < bounds.y || y > bounds.y + bounds.height
+        if x < bounds.x
+            || x > bounds.x + bounds.width
+            || y < bounds.y
+            || y > bounds.y + bounds.height
         {
             return false;
         }
@@ -127,10 +133,16 @@ impl DevToolsPanel {
         // ── Hit-test and attribute-based dispatch ──
         let point = liquide_layout::geometry::Point::new(x, y);
         #[cfg(debug_assertions)]
-        eprintln!("[devtools] on_panel_click({}, {}) inside bounds {:?}", x, y, bounds);
+        eprintln!(
+            "[devtools] on_panel_click({}, {}) inside bounds {:?}",
+            x, y, bounds
+        );
         if let Some(result) = hit_test.hit_test(point) {
             #[cfg(debug_assertions)]
-            eprintln!("[devtools]   -> hit node {:?}, bounds {:?}, ancestors: {:?}", result.node, result.bounds, result.ancestors);
+            eprintln!(
+                "[devtools]   -> hit node {:?}, bounds {:?}, ancestors: {:?}",
+                result.node, result.bounds, result.ancestors
+            );
             // Walk up from the hit node through all ancestors, checking for
             // actionable data attributes. This works regardless of whether
             // we hit a text node, icon, or the element itself.
@@ -140,7 +152,10 @@ impl DevToolsPanel {
                     let tag = doc.tag_name(node_id).unwrap_or_default();
                     let has_tab = doc.get_attribute(node_id, "data-tab").is_some();
                     let has_action = doc.get_attribute(node_id, "data-action").is_some();
-                    eprintln!("[devtools]     checking {:?} tag={:?} has_tab={} has_action={}", node_id, tag, has_tab, has_action);
+                    eprintln!(
+                        "[devtools]     checking {:?} tag={:?} has_tab={} has_action={}",
+                        node_id, tag, has_tab, has_action
+                    );
                 }
                 // Check for main tab (data-tab attribute)
                 if let Some(tab_id) = doc.get_attribute(node_id, "data-tab") {
@@ -213,7 +228,10 @@ impl DevToolsPanel {
             }
         } else {
             #[cfg(debug_assertions)]
-            eprintln!("[devtools]   -> hit_test returned None for point ({}, {})", x, y);
+            eprintln!(
+                "[devtools]   -> hit_test returned None for point ({}, {})",
+                x, y
+            );
         }
 
         // Click inside panel always consumed.
@@ -286,8 +304,10 @@ impl DevToolsPanel {
         let bounds = self.panel_bounds();
 
         // Only handle scroll inside the panel content area.
-        if x < bounds.x || x > bounds.x + bounds.width
-            || y < bounds.y || y > bounds.y + bounds.height
+        if x < bounds.x
+            || x > bounds.x + bounds.width
+            || y < bounds.y
+            || y > bounds.y + bounds.height
         {
             return false;
         }
@@ -369,8 +389,10 @@ impl DevToolsPanel {
 
         // Don't handle clicks inside the panel.
         let bounds = self.panel_bounds();
-        if x >= bounds.x && x <= bounds.x + bounds.width
-            && y >= bounds.y && y <= bounds.y + bounds.height
+        if x >= bounds.x
+            && x <= bounds.x + bounds.width
+            && y >= bounds.y
+            && y <= bounds.y + bounds.height
         {
             return false;
         }
@@ -429,8 +451,10 @@ impl DevToolsPanel {
         }
 
         let bounds = self.panel_bounds();
-        if x < bounds.x || x > bounds.x + bounds.width
-            || y < bounds.y || y > bounds.y + bounds.height
+        if x < bounds.x
+            || x > bounds.x + bounds.width
+            || y < bounds.y
+            || y > bounds.y + bounds.height
         {
             return false;
         }
@@ -473,7 +497,8 @@ impl DevToolsPanel {
                 self.set_tab(DevToolsTab::Scene);
             }
             ContextAction::LogToConsole => {
-                self.console.push_output(format!("Logged node #{}", node_id));
+                self.console
+                    .push_output(format!("Logged node #{}", node_id));
                 self.set_tab(DevToolsTab::Console);
             }
             ContextAction::ExpandAll => {

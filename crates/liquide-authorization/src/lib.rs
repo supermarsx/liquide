@@ -19,7 +19,7 @@ pub mod store;
 pub mod subject;
 
 pub use action::AuthorizationAction;
-pub use agent::{AuthorizationAgent, AuthResult};
+pub use agent::{AuthResult, AuthorizationAgent};
 pub use audit::{AuditEntry, AuditLog, AuditPolicy};
 pub use auth_agent::{AuthAgent, AuthAgentError, AuthIdentity, AuthPrompt, AuthSession};
 pub use builtin::builtin_actions;

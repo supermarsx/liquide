@@ -36,7 +36,10 @@ impl DependencyGraph {
 
     /// Declare that `service` depends on `dependency` (dependency must start first).
     pub fn add_dependency(&mut self, service: ServiceId, dependency: ServiceId) {
-        self.deps.entry(service).or_default().insert(dependency.clone());
+        self.deps
+            .entry(service)
+            .or_default()
+            .insert(dependency.clone());
         // Ensure the dependency node exists too
         self.deps.entry(dependency).or_default();
     }
@@ -132,9 +135,7 @@ impl DependencyGraph {
 
         for start in self.deps.keys() {
             if !visited.contains(start) {
-                if let Some(cycle) =
-                    self.dfs_cycle(start, &mut visited, &mut on_stack, &mut path)
-                {
+                if let Some(cycle) = self.dfs_cycle(start, &mut visited, &mut on_stack, &mut path) {
                     return Some(cycle);
                 }
             }
@@ -469,10 +470,7 @@ mod tests {
     fn has_missing_dependencies() {
         let mut g = DependencyGraph::new();
         // a depends on "external" which isn't in the graph
-        g.deps
-            .entry(id("a"))
-            .or_default()
-            .insert(id("external"));
+        g.deps.entry(id("a")).or_default().insert(id("external"));
         let missing = g.has_missing_dependencies(&id("a"));
         assert_eq!(missing, vec![id("external")]);
     }

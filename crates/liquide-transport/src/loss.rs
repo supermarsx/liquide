@@ -156,7 +156,10 @@ impl LossRecoveryManager {
         strategies.insert(ChannelId::CURSOR, RecoveryStrategy::CursorLatest);
         strategies.insert(ChannelId::CLIPBOARD, RecoveryStrategy::ReliableRetransmit);
         strategies.insert(ChannelId::USB, RecoveryStrategy::ReliableRetransmit);
-        strategies.insert(ChannelId::FILE_TRANSFER, RecoveryStrategy::ReliableRetransmit);
+        strategies.insert(
+            ChannelId::FILE_TRANSFER,
+            RecoveryStrategy::ReliableRetransmit,
+        );
         strategies.insert(ChannelId::CAMERA, RecoveryStrategy::VideoKeyframe);
 
         Self {

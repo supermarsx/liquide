@@ -23,6 +23,36 @@ pub struct DockThemeColors {
     pub item_active: Color,
     pub item_inactive: Color,
     pub hover_highlight: Color,
+    /// Outline / glow used to mark an item that is requesting user attention
+    /// (`DockItem::needs_attention = true`). Typically a warm accent such as
+    /// orange or red. If the shell omits a value here the dock falls back to
+    /// [`DockThemeColors::default_needs_attention()`].
+    pub needs_attention: Color,
+    /// Outline used for the currently focused app. Typically the accent color.
+    pub focus_outline: Color,
+}
+
+impl DockThemeColors {
+    /// A reasonable default attention color (warm orange) for shells that do
+    /// not provide a theme override.
+    pub const fn default_needs_attention() -> Color {
+        Color {
+            r: 0xFF,
+            g: 0x8A,
+            b: 0x00,
+            a: 0xFF,
+        }
+    }
+
+    /// A reasonable default focus outline (neutral accent blue).
+    pub const fn default_focus_outline() -> Color {
+        Color {
+            r: 0x3B,
+            g: 0x82,
+            b: 0xF6,
+            a: 0xFF,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +235,10 @@ pub struct DockItem {
     pub running_window_count: u32,
     /// Position among pinned items (0-indexed, `None` if not pinned).
     pub pinned_position: Option<usize>,
+    /// The app is requesting user attention (e.g. a window flashed its
+    /// taskbar icon on Windows or set `_NET_WM_STATE_DEMANDS_ATTENTION` on X).
+    #[serde(default)]
+    pub needs_attention: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +277,8 @@ pub struct Dock {
     hover_index: Option<usize>,
     auto_hide_state: AutoHideState,
     next_id: u32,
+    /// `app_id` of the currently focused application (if any).
+    focused_app: Option<String>,
 }
 
 impl Dock {
@@ -261,6 +297,7 @@ impl Dock {
                 AutoHideState::Hidden
             },
             next_id: 1,
+            focused_app: None,
         }
     }
 
@@ -287,6 +324,7 @@ impl Dock {
             badge_count: 0,
             running_window_count: 0,
             pinned_position: Some(pinned_pos),
+            needs_attention: false,
         });
         id
     }
@@ -324,6 +362,7 @@ impl Dock {
             badge_count: 0,
             running_window_count: 1,
             pinned_position: None,
+            needs_attention: false,
         });
         id
     }
@@ -458,8 +497,7 @@ impl Dock {
         let base = self.config.icon_size as f32;
         // Gaussian-ish falloff over 3 icon widths.
         let sigma = 2.0;
-        let scale =
-            1.0 + (factor - 1.0) * (-hover_distance.powi(2) / (2.0 * sigma * sigma)).exp();
+        let scale = 1.0 + (factor - 1.0) * (-hover_distance.powi(2) / (2.0 * sigma * sigma)).exp();
         (base * scale) as u32
     }
 
@@ -503,6 +541,42 @@ impl Dock {
     #[must_use]
     pub fn config(&self) -> &DockConfig {
         &self.config
+    }
+
+    /// `app_id` of the currently focused application, if any.
+    #[must_use]
+    pub fn focused_app(&self) -> Option<&str> {
+        self.focused_app.as_deref()
+    }
+
+    /// Mark an app as focused (receives keyboard input).
+    ///
+    /// Called from the window-manager event stream (e.g. `WindowFocused` on
+    /// Win32 / `xdg_toplevel.activated` on Wayland). The previously focused
+    /// app is automatically un-focused.
+    pub fn set_focused_app(&mut self, app_id: Option<&str>) {
+        self.focused_app = app_id.map(str::to_string);
+    }
+
+    /// Set the `needs_attention` flag on an app's dock item.
+    ///
+    /// Called from the window-manager event stream when a window requests
+    /// user attention (flashing taskbar icon on Win32, urgency hint on X).
+    pub fn set_needs_attention(&mut self, app_id: &str, needs_attention: bool) {
+        if let Some(item) = self.items.iter_mut().find(|i| i.app_id == app_id) {
+            item.needs_attention = needs_attention;
+        }
+    }
+
+    /// Notify the dock that an app's title or metadata changed.
+    ///
+    /// Currently this only clears attention on the focused app so the
+    /// indicator dismisses when the user selects the attention-requesting
+    /// window. Future versions may update the dock label.
+    pub fn on_window_changed(&mut self, app_id: &str) {
+        if self.focused_app.as_deref() == Some(app_id) {
+            self.set_needs_attention(app_id, false);
+        }
     }
 
     /// Build the scene graph for the dock.
@@ -830,21 +904,30 @@ mod tests {
 
     #[test]
     fn test_dock_auto_hide_disabled_is_visible() {
-        let dock = Dock::new(DockConfig { auto_hide: false, ..Default::default() });
+        let dock = Dock::new(DockConfig {
+            auto_hide: false,
+            ..Default::default()
+        });
         assert!(dock.is_visible());
         assert_eq!(dock.auto_hide_state(), AutoHideState::Visible);
     }
 
     #[test]
     fn test_dock_auto_hide_enabled_starts_hidden() {
-        let dock = Dock::new(DockConfig { auto_hide: true, ..Default::default() });
+        let dock = Dock::new(DockConfig {
+            auto_hide: true,
+            ..Default::default()
+        });
         assert!(!dock.is_visible());
         assert_eq!(dock.auto_hide_state(), AutoHideState::Hidden);
     }
 
     #[test]
     fn test_dock_auto_hide_state_transitions() {
-        let mut dock = Dock::new(DockConfig { auto_hide: true, ..Default::default() });
+        let mut dock = Dock::new(DockConfig {
+            auto_hide: true,
+            ..Default::default()
+        });
         assert!(!dock.is_visible());
 
         dock.set_auto_hide_state(AutoHideState::Showing);
@@ -872,7 +955,11 @@ mod tests {
 
     #[test]
     fn test_dock_compute_bounds_bottom() {
-        let config = DockConfig { position: DockPosition::Bottom, icon_size: 48, ..Default::default() };
+        let config = DockConfig {
+            position: DockPosition::Bottom,
+            icon_size: 48,
+            ..Default::default()
+        };
         let mut dock = Dock::new(config);
         dock.add_running("a");
         dock.add_running("b");
@@ -889,7 +976,11 @@ mod tests {
 
     #[test]
     fn test_dock_compute_bounds_left() {
-        let config = DockConfig { position: DockPosition::Left, icon_size: 48, ..Default::default() };
+        let config = DockConfig {
+            position: DockPosition::Left,
+            icon_size: 48,
+            ..Default::default()
+        };
         let mut dock = Dock::new(config);
         dock.add_running("a");
 
@@ -901,7 +992,11 @@ mod tests {
 
     #[test]
     fn test_dock_compute_bounds_right() {
-        let config = DockConfig { position: DockPosition::Right, icon_size: 48, ..Default::default() };
+        let config = DockConfig {
+            position: DockPosition::Right,
+            icon_size: 48,
+            ..Default::default()
+        };
         let mut dock = Dock::new(config);
         dock.add_running("a");
 
@@ -927,14 +1022,23 @@ mod tests {
 
     #[test]
     fn test_magnified_size_disabled() {
-        let config = DockConfig { magnification_enabled: false, icon_size: 48, ..Default::default() };
+        let config = DockConfig {
+            magnification_enabled: false,
+            icon_size: 48,
+            ..Default::default()
+        };
         let dock = Dock::new(config);
         assert_eq!(dock.magnified_size(0, 0.0), 48);
     }
 
     #[test]
     fn test_magnified_size_hovered_item() {
-        let config = DockConfig { magnification_enabled: true, magnification_factor: 1.5, icon_size: 48, ..Default::default() };
+        let config = DockConfig {
+            magnification_enabled: true,
+            magnification_factor: 1.5,
+            icon_size: 48,
+            ..Default::default()
+        };
         let dock = Dock::new(config);
         let size = dock.magnified_size(0, 0.0);
         // At distance 0, scale = 1 + (1.5 - 1) * 1.0 = 1.5, size = 72
@@ -943,7 +1047,12 @@ mod tests {
 
     #[test]
     fn test_magnified_size_decreases_with_distance() {
-        let config = DockConfig { magnification_enabled: true, magnification_factor: 1.5, icon_size: 48, ..Default::default() };
+        let config = DockConfig {
+            magnification_enabled: true,
+            magnification_factor: 1.5,
+            icon_size: 48,
+            ..Default::default()
+        };
         let dock = Dock::new(config);
         let at_0 = dock.magnified_size(0, 0.0);
         let at_1 = dock.magnified_size(0, 1.0);
@@ -963,7 +1072,10 @@ mod tests {
         assert!(config.magnification_enabled);
         assert!(config.show_running_indicators);
         assert_eq!(config.monitor_mode, DockMonitorMode::PrimaryOnly);
-        assert_eq!(config.click_running_behavior, DockClickBehavior::SmartToggle);
+        assert_eq!(
+            config.click_running_behavior,
+            DockClickBehavior::SmartToggle
+        );
     }
 
     // ── Display traits ─────────────────────────────────────────────

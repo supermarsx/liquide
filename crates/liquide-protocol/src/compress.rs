@@ -83,12 +83,12 @@ pub fn decompress(data: &[u8], algorithm: CompressionAlgorithm) -> crate::Result
             if data.len() < 4 {
                 return Err(ProtocolError::Compression("LZ4 data too short".to_string()));
             }
-            let decompressed_size = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+            let decompressed_size =
+                u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
             if decompressed_size > MAX_DECOMPRESSED_SIZE {
                 return Err(ProtocolError::Compression(format!(
                     "LZ4 decompressed size too large: {} bytes (max {})",
-                    decompressed_size,
-                    MAX_DECOMPRESSED_SIZE
+                    decompressed_size, MAX_DECOMPRESSED_SIZE
                 )));
             }
             lz4_flex::decompress_size_prepended(data)
@@ -125,16 +125,15 @@ pub const MIN_COMPRESS_SIZE: usize = 64;
 /// Determine the recommended compression algorithm for a channel.
 pub fn channel_compression(channel: crate::channel::ChannelId) -> CompressionAlgorithm {
     match channel.as_u16() {
-        0x00 => CompressionAlgorithm::Lz4,  // Control
-        0x01 => CompressionAlgorithm::Lz4,  // Emergency
-        0x10 => CompressionAlgorithm::None,  // Video (already compressed)
-        0x11 => CompressionAlgorithm::None,  // Cursor (small)
-        0x12 => CompressionAlgorithm::Zstd,  // Tile
+        0x00 => CompressionAlgorithm::Lz4,         // Control
+        0x01 => CompressionAlgorithm::Lz4,         // Emergency
+        0x10 => CompressionAlgorithm::None,        // Video (already compressed)
+        0x11 => CompressionAlgorithm::None,        // Cursor (small)
+        0x12 => CompressionAlgorithm::Zstd,        // Tile
         0x20 | 0x21 => CompressionAlgorithm::None, // Audio
-        0x30 => CompressionAlgorithm::Lz4,  // Clipboard
-        0x31 => CompressionAlgorithm::Zstd,  // File transfer
-        0x50 => CompressionAlgorithm::None,  // Input (tiny, latency-critical)
+        0x30 => CompressionAlgorithm::Lz4,         // Clipboard
+        0x31 => CompressionAlgorithm::Zstd,        // File transfer
+        0x50 => CompressionAlgorithm::None,        // Input (tiny, latency-critical)
         _ => CompressionAlgorithm::None,
     }
 }
-

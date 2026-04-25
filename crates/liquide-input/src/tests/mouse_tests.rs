@@ -44,7 +44,12 @@ fn mouse_button_event() {
 
 #[test]
 fn mouse_scroll_vertical() {
-    let evt = MouseEvent::Scroll { axis: ScrollAxis::Vertical, delta: -3.0, x: 0.0, y: 0.0 };
+    let evt = MouseEvent::Scroll {
+        axis: ScrollAxis::Vertical,
+        delta: -3.0,
+        x: 0.0,
+        y: 0.0,
+    };
     if let MouseEvent::Scroll { axis, delta, .. } = evt {
         assert_eq!(axis, ScrollAxis::Vertical);
         assert_eq!(delta, -3.0);
@@ -55,7 +60,12 @@ fn mouse_scroll_vertical() {
 
 #[test]
 fn mouse_scroll_horizontal() {
-    let evt = MouseEvent::Scroll { axis: ScrollAxis::Horizontal, delta: 1.5, x: 10.0, y: 20.0 };
+    let evt = MouseEvent::Scroll {
+        axis: ScrollAxis::Horizontal,
+        delta: 1.5,
+        x: 10.0,
+        y: 20.0,
+    };
     if let MouseEvent::Scroll { axis, delta, .. } = evt {
         assert_eq!(axis, ScrollAxis::Horizontal);
         assert_eq!(delta, 1.5);

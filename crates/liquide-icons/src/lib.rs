@@ -248,18 +248,10 @@ impl Default for IconDatabase {
 ///
 /// This uses a simple scanline rasterizer for filled paths and stroked
 /// lines for non-closed paths.
-pub fn render_icon(
-    fb: &mut FrameBuffer,
-    icon: &IconData,
-    bounds: Rect,
-    color: Color,
-) {
+pub fn render_icon(fb: &mut FrameBuffer, icon: &IconData, bounds: Rect, color: Color) {
     // Transform normalized 0..1 coords to pixel coords
     let transform = |x: f32, y: f32| -> (f32, f32) {
-        (
-            bounds.x + x * bounds.width,
-            bounds.y + y * bounds.height,
-        )
+        (bounds.x + x * bounds.width, bounds.y + y * bounds.height)
     };
 
     let pm = color.premultiply();
@@ -285,7 +277,14 @@ pub fn render_icon(
                 last_x = px;
                 last_y = py;
             }
-            IconPath::CurveTo { cx1, cy1, cx2, cy2, x, y } => {
+            IconPath::CurveTo {
+                cx1,
+                cy1,
+                cx2,
+                cy2,
+                x,
+                y,
+            } => {
                 let (px, py) = transform(x, y);
                 let (c1x, c1y) = transform(cx1, cy1);
                 let (c2x, c2y) = transform(cx2, cy2);
@@ -301,14 +300,7 @@ pub fn render_icon(
 }
 
 /// Draw a line using Bresenham's algorithm.
-fn draw_line(
-    fb: &mut FrameBuffer,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-    color: Color,
-) {
+fn draw_line(fb: &mut FrameBuffer, x0: f32, y0: f32, x1: f32, y1: f32, color: Color) {
     let mut x0 = x0.round() as i32;
     let mut y0 = y0.round() as i32;
     let x1 = x1.round() as i32;
@@ -392,7 +384,12 @@ fn blend_over(dst: Color, src: Color) -> Color {
 
     let out_a = sa + (da * inv_sa) / 255;
     if out_a == 0 {
-        return Color { r: 0, g: 0, b: 0, a: 0 };
+        return Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
     }
 
     let out_r = ((src.r as u32 * sa) + (dst.r as u32 * da * inv_sa) / 255) / out_a;

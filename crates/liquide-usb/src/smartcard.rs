@@ -1,7 +1,7 @@
 //! Smart card reader emulation and APDU exchange.
 
-use serde::{Serialize, Deserialize};
-use crate::{UsbError, Result};
+use crate::{Result, UsbError};
+use serde::{Deserialize, Serialize};
 
 /// An APDU command sent to the smart card.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,12 +110,10 @@ impl SmartCardReader {
                 self.state = SmartCardReaderState::CardInserted;
                 Ok(response)
             }
-            SmartCardReaderState::Processing => Err(UsbError::Internal(
-                "reader is busy processing".to_string(),
-            )),
-            _ => Err(UsbError::Internal(
-                "no card inserted".to_string(),
-            )),
+            SmartCardReaderState::Processing => {
+                Err(UsbError::Internal("reader is busy processing".to_string()))
+            }
+            _ => Err(UsbError::Internal("no card inserted".to_string())),
         }
     }
 

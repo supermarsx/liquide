@@ -1,6 +1,7 @@
 //! Installation, removal, and progress tracking.
 
 use std::fmt;
+use std::process::{Command, ExitStatus};
 
 /// Installation operation type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +18,124 @@ impl fmt::Display for InstallAction {
             Self::Remove => f.write_str("remove"),
             Self::Update => f.write_str("update"),
         }
+    }
+}
+
+/// External package-management backend selected for a package action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageSource {
+    Winget,
+    Apt,
+    Flatpak,
+}
+
+impl fmt::Display for PackageSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Winget => f.write_str("winget"),
+            Self::Apt => f.write_str("apt"),
+            Self::Flatpak => f.write_str("flatpak"),
+        }
+    }
+}
+
+/// Concrete shell command used to dispatch an install/remove/update action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandSpec {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl CommandSpec {
+    #[must_use]
+    pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            program: program.into(),
+            args,
+        }
+    }
+
+    #[must_use]
+    pub fn display_string(&self) -> String {
+        if self.args.is_empty() {
+            self.program.clone()
+        } else {
+            format!("{} {}", self.program, self.args.join(" "))
+        }
+    }
+
+    pub fn execute(&self) -> crate::Result<ExitStatus> {
+        let status = Command::new(&self.program)
+            .args(&self.args)
+            .status()
+            .map_err(|e| crate::SoftwareCenterError::Io(e.to_string()))?;
+
+        if status.success() {
+            Ok(status)
+        } else {
+            Err(crate::SoftwareCenterError::BackendCommand(format!(
+                "{} exited with status {status}",
+                self.display_string()
+            )))
+        }
+    }
+}
+
+/// Build the package-manager command for a specific action.
+#[must_use]
+pub fn build_command(
+    action: InstallAction,
+    source: PackageSource,
+    package_id: &str,
+) -> CommandSpec {
+    match (source, action) {
+        (PackageSource::Winget, InstallAction::Install) => CommandSpec::new(
+            "winget",
+            vec![
+                "install".into(),
+                "--id".into(),
+                package_id.into(),
+                "--accept-package-agreements".into(),
+                "--accept-source-agreements".into(),
+            ],
+        ),
+        (PackageSource::Winget, InstallAction::Remove) => CommandSpec::new(
+            "winget",
+            vec!["uninstall".into(), "--id".into(), package_id.into()],
+        ),
+        (PackageSource::Winget, InstallAction::Update) => CommandSpec::new(
+            "winget",
+            vec!["upgrade".into(), "--id".into(), package_id.into()],
+        ),
+        (PackageSource::Apt, InstallAction::Install) => CommandSpec::new(
+            "apt-get",
+            vec!["install".into(), "-y".into(), package_id.into()],
+        ),
+        (PackageSource::Apt, InstallAction::Remove) => CommandSpec::new(
+            "apt-get",
+            vec!["remove".into(), "-y".into(), package_id.into()],
+        ),
+        (PackageSource::Apt, InstallAction::Update) => CommandSpec::new(
+            "apt-get",
+            vec![
+                "install".into(),
+                "--only-upgrade".into(),
+                "-y".into(),
+                package_id.into(),
+            ],
+        ),
+        (PackageSource::Flatpak, InstallAction::Install) => CommandSpec::new(
+            "flatpak",
+            vec!["install".into(), "-y".into(), package_id.into()],
+        ),
+        (PackageSource::Flatpak, InstallAction::Remove) => CommandSpec::new(
+            "flatpak",
+            vec!["uninstall".into(), "-y".into(), package_id.into()],
+        ),
+        (PackageSource::Flatpak, InstallAction::Update) => CommandSpec::new(
+            "flatpak",
+            vec!["update".into(), "-y".into(), package_id.into()],
+        ),
     }
 }
 
@@ -114,7 +233,11 @@ pub struct InstallQueue {
 
 impl InstallQueue {
     #[must_use]
-    pub fn new() -> Self { Self { operations: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            operations: Vec::new(),
+        }
+    }
 
     /// Add an operation to the queue.
     pub fn enqueue(&mut self, op: InstallOperation) {
@@ -123,7 +246,9 @@ impl InstallQueue {
 
     /// Get all operations.
     #[must_use]
-    pub fn operations(&self) -> &[InstallOperation] { &self.operations }
+    pub fn operations(&self) -> &[InstallOperation] {
+        &self.operations
+    }
 
     /// Get active (non-terminal) operations.
     #[must_use]
@@ -134,18 +259,26 @@ impl InstallQueue {
     /// Get completed operations.
     #[must_use]
     pub fn completed(&self) -> Vec<&InstallOperation> {
-        self.operations.iter().filter(|o| o.state == InstallState::Completed).collect()
+        self.operations
+            .iter()
+            .filter(|o| o.state == InstallState::Completed)
+            .collect()
     }
 
     /// Get failed operations.
     #[must_use]
     pub fn failed(&self) -> Vec<&InstallOperation> {
-        self.operations.iter().filter(|o| o.state == InstallState::Failed).collect()
+        self.operations
+            .iter()
+            .filter(|o| o.state == InstallState::Failed)
+            .collect()
     }
 
     /// Find an operation by package ID.
     pub fn find_mut(&mut self, package_id: &str) -> Option<&mut InstallOperation> {
-        self.operations.iter_mut().find(|o| o.package_id == package_id)
+        self.operations
+            .iter_mut()
+            .find(|o| o.package_id == package_id)
     }
 
     /// Remove completed operations from the queue.
@@ -155,7 +288,9 @@ impl InstallQueue {
 
     /// Number of queued operations.
     #[must_use]
-    pub fn count(&self) -> usize { self.operations.len() }
+    pub fn count(&self) -> usize {
+        self.operations.len()
+    }
 
     /// Number of active operations.
     #[must_use]
@@ -165,5 +300,7 @@ impl InstallQueue {
 }
 
 impl Default for InstallQueue {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

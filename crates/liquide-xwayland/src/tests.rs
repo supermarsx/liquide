@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::process::{XWaylandProcess, XWaylandConfig, XWaylandState};
-    use crate::window::{X11Window, X11WindowId, X11WindowType, X11WindowState};
     use crate::atoms::AtomCache;
     use crate::clipboard::X11ClipboardBridge;
     use crate::dnd::X11DndBridge;
+    use crate::process::{XWaylandConfig, XWaylandProcess, XWaylandState};
+    use crate::window::{X11Window, X11WindowId, X11WindowState, X11WindowType};
 
     #[test]
     fn test_xwayland_config_default() {

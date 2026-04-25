@@ -61,16 +61,16 @@ fn entity_unknown_with_semicolon_preserved() {
     // Unknown entity like &foo; should be preserved as-is: "&foo;"
     let template = HtmlParser::parse("<div>&foo;</div>").unwrap();
     let text = template.children[0].text.as_deref().unwrap();
-    assert_eq!(text, "&foo;", "unknown terminated entity should preserve semicolon");
+    assert_eq!(
+        text, "&foo;",
+        "unknown terminated entity should preserve semicolon"
+    );
 }
 
 #[test]
 fn entity_multiple_in_text() {
     let template = HtmlParser::parse("<div>&lt;b&gt;bold&lt;/b&gt;</div>").unwrap();
-    assert_eq!(
-        template.children[0].text.as_deref(),
-        Some("<b>bold</b>")
-    );
+    assert_eq!(template.children[0].text.as_deref(), Some("<b>bold</b>"));
 }
 
 // ── Basic parsing ────────────────────────────────────────────────────────
@@ -96,7 +96,10 @@ fn parse_nested_elements() {
     assert_eq!(template.tag, "div");
     assert_eq!(template.children.len(), 1);
     assert_eq!(template.children[0].tag, "span");
-    assert_eq!(template.children[0].children[0].text.as_deref(), Some("inner"));
+    assert_eq!(
+        template.children[0].children[0].text.as_deref(),
+        Some("inner")
+    );
 }
 
 #[test]
@@ -106,7 +109,10 @@ fn parse_element_with_attributes() {
     // Class and id should be parsed
     assert!(
         template.classes.contains(&"main".to_string())
-            || template.attrs.iter().any(|(k, v)| k == "class" && v == "main"),
+            || template
+                .attrs
+                .iter()
+                .any(|(k, v)| k == "class" && v == "main"),
         "should parse class attribute"
     );
 }
@@ -137,8 +143,7 @@ fn parse_mixed_text_and_elements() {
 
 #[test]
 fn parse_inline_style() {
-    let template =
-        HtmlParser::parse(r#"<div style="color: red; font-size: 16px"></div>"#).unwrap();
+    let template = HtmlParser::parse(r#"<div style="color: red; font-size: 16px"></div>"#).unwrap();
     assert!(
         !template.inline_styles.is_empty(),
         "should parse style attribute into inline_styles"
@@ -184,13 +189,15 @@ fn parse_whitespace_preserved_in_text() {
     let template = HtmlParser::parse("<pre>  hello  world  </pre>").unwrap();
     let text = template.children[0].text.as_deref().unwrap_or("");
     // Text should be trimmed and runs collapsed to single spaces
-    assert_eq!(text, "hello world", "whitespace should be collapsed in text");
+    assert_eq!(
+        text, "hello world",
+        "whitespace should be collapsed in text"
+    );
 }
 
 #[test]
 fn parse_data_attributes() {
-    let template =
-        HtmlParser::parse(r#"<div data-key="abc" data-value="123"></div>"#).unwrap();
+    let template = HtmlParser::parse(r#"<div data-key="abc" data-value="123"></div>"#).unwrap();
     // data-key is consumed into TemplateNode::key (not stored in attrs)
     assert_eq!(
         template.key.as_deref(),
@@ -199,15 +206,17 @@ fn parse_data_attributes() {
     );
     // other data-* attributes remain in attrs
     assert!(
-        template.attrs.iter().any(|(k, v)| k == "data-value" && v == "123"),
+        template
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-value" && v == "123"),
         "should parse data-value attribute"
     );
 }
 
 #[test]
 fn parse_key_from_data_key_attr() {
-    let template =
-        HtmlParser::parse(r#"<div data-key="my-key"></div>"#).unwrap();
+    let template = HtmlParser::parse(r#"<div data-key="my-key"></div>"#).unwrap();
     // data-key should map to the template's key field
     assert_eq!(
         template.key.as_deref(),

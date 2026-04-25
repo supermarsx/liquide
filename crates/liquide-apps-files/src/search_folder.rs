@@ -182,7 +182,9 @@ impl SearchFolderStore {
     /// Create an empty store.
     #[must_use]
     pub fn new() -> Self {
-        Self { folders: Vec::new() }
+        Self {
+            folders: Vec::new(),
+        }
     }
 
     /// Save (add or update) a search folder.

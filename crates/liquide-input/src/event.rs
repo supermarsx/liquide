@@ -50,8 +50,12 @@ impl std::fmt::Display for InputEvent {
             Self::Keyboard(ke) => write!(f, "Key({} {})", ke.key, ke.state),
             Self::Mouse(me) => match me {
                 crate::mouse::MouseEvent::Move { x, y } => write!(f, "MouseMove({x}, {y})"),
-                crate::mouse::MouseEvent::Button { button, state, .. } => write!(f, "MouseButton({button} {state})"),
-                crate::mouse::MouseEvent::Scroll { axis, delta, .. } => write!(f, "Scroll({axis:?} {delta})"),
+                crate::mouse::MouseEvent::Button { button, state, .. } => {
+                    write!(f, "MouseButton({button} {state})")
+                }
+                crate::mouse::MouseEvent::Scroll { axis, delta, .. } => {
+                    write!(f, "Scroll({axis:?} {delta})")
+                }
                 crate::mouse::MouseEvent::Enter { x, y } => write!(f, "MouseEnter({x}, {y})"),
                 crate::mouse::MouseEvent::Leave => write!(f, "MouseLeave"),
             },
@@ -71,7 +75,10 @@ impl EventSource {
     /// Create a new event source.
     #[must_use]
     pub fn new(surface_id: u64, device_id: u32) -> Self {
-        Self { surface_id, device_id }
+        Self {
+            surface_id,
+            device_id,
+        }
     }
 }
 
@@ -87,6 +94,10 @@ impl InputPacket {
     /// Create a new input packet.
     #[must_use]
     pub fn new(event: InputEvent, source: EventSource, sequence: u64) -> Self {
-        Self { event, source, sequence }
+        Self {
+            event,
+            source,
+            sequence,
+        }
     }
 }

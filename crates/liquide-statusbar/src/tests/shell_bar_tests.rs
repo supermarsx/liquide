@@ -241,6 +241,20 @@ fn status_bar_compute_bounds_top_position() {
     assert_eq!(bounds.height, 34.0);
 }
 
+#[test]
+fn status_bar_compute_bounds_respects_screen_origin() {
+    let bar = ShellStatusBar::new(ShellBarConfig {
+        height: 34.0,
+        ..ShellBarConfig::default()
+    });
+    let screen = Rect::new(120.0, 48.0, 1920.0, 1080.0);
+    let bounds = bar.compute_bounds(screen);
+    assert_eq!(bounds.x, 120.0);
+    assert_eq!(bounds.y, 48.0);
+    assert_eq!(bounds.width, 1920.0);
+    assert_eq!(bounds.height, 34.0);
+}
+
 // ========== is_enabled ==========
 
 #[test]
@@ -287,4 +301,29 @@ fn status_bar_display() {
     bar2.mark_clean();
     let s2 = format!("{bar2}");
     assert!(s2.contains("clean"));
+}
+
+// ========== Clock local offset ==========
+
+#[test]
+fn status_bar_new_seeds_clock_offset_from_platform() {
+    // `ShellStatusBar::new` should query the platform for the local UTC
+    // offset so the clock item renders in local time by default instead of
+    // UTC. We can't assert a specific non-zero value because CI can run in
+    // UTC, but we can assert the value matches what the datetime platform
+    // bridge reports (i.e. no longer hard-coded to 0 independent of the
+    // platform).
+    let expected = liquide_datetime::PlatformTimeBridge::get_utc_offset_minutes().unwrap_or(0);
+    let bar = ShellStatusBar::new(ShellBarConfig::default());
+    assert_eq!(bar.clock_offset_minutes(), expected);
+}
+
+#[test]
+fn status_bar_format_clock_timestamp_applies_offset_and_seconds() {
+    let mut bar = ShellStatusBar::new(ShellBarConfig::default());
+    bar.set_clock_offset_minutes(60);
+    bar.set_clock_show_seconds(true);
+
+    let timestamp_us = (13_u64 * 3600 + 5 * 60 + 9) * 1_000_000;
+    assert_eq!(bar.format_clock_timestamp(timestamp_us, "%H:%M"), "14:05:09");
 }

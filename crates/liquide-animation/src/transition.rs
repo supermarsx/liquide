@@ -153,7 +153,8 @@ impl TransitionEngine {
     /// Iterate over all active transitions, yielding `(node_id, property, current_value)`.
     pub fn active_overrides(&self) -> impl Iterator<Item = (NodeId, &str, f32)> {
         self.transitions.iter().flat_map(|(node_id, props)| {
-            props.values()
+            props
+                .values()
                 .filter(|t| t.state == TransitionState::Running)
                 .map(move |t| (*node_id, t.property.as_str(), t.current()))
         })
@@ -185,7 +186,15 @@ mod tests {
     #[test]
     fn delay_works() {
         let mut engine = TransitionEngine::new();
-        engine.start(3, "height", 0.0, 100.0, 1000.0, 500.0, EasingFunction::Linear);
+        engine.start(
+            3,
+            "height",
+            0.0,
+            100.0,
+            1000.0,
+            500.0,
+            EasingFunction::Linear,
+        );
         engine.tick_all(250.0);
         let val = engine.get(3, "height").unwrap();
         // Still in delay — should be at 0.0

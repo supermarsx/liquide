@@ -18,7 +18,9 @@ pub mod surface;
 
 // Re-export primary types at crate root.
 pub use compositor::WlCompositor;
-pub use output::{Output, OutputGeometry, OutputMode, OutputModeFlags, OutputTransform, SubpixelOrder};
+pub use output::{
+    Output, OutputGeometry, OutputMode, OutputModeFlags, OutputTransform, SubpixelOrder,
+};
 pub use protocol::{Arg, ArgType, Interface, MessageDesc, MessageHeader, ObjectId, WlMessage};
 pub use seat::{
     Axis, AxisSource, ButtonState, KeyState, KeyboardEvent, KeymapFormat, Modifiers, Pointer,
@@ -28,4 +30,4 @@ pub use shell::{
     Anchor, ConfigureEvent, ConstraintAdjustment, Gravity, PopupPositioner, ResizeEdge,
     ToplevelState, XdgPopup, XdgSurface, XdgToplevel,
 };
-pub use surface::{DamageRect, Region, Surface, SurfaceState, SubsurfaceMode, Transform};
+pub use surface::{DamageRect, Region, SubsurfaceMode, Surface, SurfaceState, Transform};

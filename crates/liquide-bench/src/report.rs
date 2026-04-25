@@ -98,9 +98,7 @@ impl BenchReport {
     #[must_use]
     pub fn summary_text(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(format!(
-            "=== LiquiDE Benchmark Report ===",
-        ));
+        lines.push(format!("=== LiquiDE Benchmark Report ===",));
         lines.push(format!("Timestamp: {}", self.metadata.timestamp));
         lines.push(format!("Host:      {}", self.metadata.hostname));
         lines.push(format!("Suite:     {}", self.metadata.suite));

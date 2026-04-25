@@ -30,10 +30,26 @@ pub enum ScrollAxis {
 /// A mouse/pointer event.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum MouseEvent {
-    Move { x: f32, y: f32 },
-    Button { button: MouseButton, state: ButtonState, x: f32, y: f32 },
-    Scroll { axis: ScrollAxis, delta: f32, x: f32, y: f32 },
-    Enter { x: f32, y: f32 },
+    Move {
+        x: f32,
+        y: f32,
+    },
+    Button {
+        button: MouseButton,
+        state: ButtonState,
+        x: f32,
+        y: f32,
+    },
+    Scroll {
+        axis: ScrollAxis,
+        delta: f32,
+        x: f32,
+        y: f32,
+    },
+    Enter {
+        x: f32,
+        y: f32,
+    },
     Leave,
 }
 

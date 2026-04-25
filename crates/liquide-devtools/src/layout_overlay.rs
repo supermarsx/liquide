@@ -24,10 +24,10 @@ pub struct BoxModelColors {
 impl Default for BoxModelColors {
     fn default() -> Self {
         Self {
-            content: Color::new(111, 168, 220, 100),  // blue
-            padding: Color::new(147, 196, 125, 80),   // green
-            border: Color::new(255, 229, 153, 80),    // yellow
-            margin: Color::new(246, 178, 107, 60),    // orange
+            content: Color::new(111, 168, 220, 100), // blue
+            padding: Color::new(147, 196, 125, 80),  // green
+            border: Color::new(255, 229, 153, 80),   // yellow
+            margin: Color::new(246, 178, 107, 60),   // orange
         }
     }
 }
@@ -165,10 +165,7 @@ impl LayoutOverlay {
 
         // ── Dimension label ──
         if self.show_labels {
-            let label = format!(
-                "{:.0} × {:.0}",
-                content_rect.width, content_rect.height
-            );
+            let label = format!("{:.0} × {:.0}", content_rect.width, content_rect.height);
             let label_w = label.len() as f32 * 7.0 + 12.0;
             let label_h = 18.0;
             let label_x = (content_rect.x + content_rect.width / 2.0 - label_w / 2.0)
@@ -231,9 +228,7 @@ impl LayoutOverlay {
             // Horizontal guides at top and bottom of margin box.
             nodes.push(SceneNode::new(
                 next_id,
-                SceneNodeKind::Background {
-                    color: guide_color,
-                },
+                SceneNodeKind::Background { color: guide_color },
                 NodeProperties::new(Rect::new(0.0, margin_rect.y, screen_width, 1.0))
                     .with_z_order(9985),
             ));
@@ -241,9 +236,7 @@ impl LayoutOverlay {
 
             nodes.push(SceneNode::new(
                 next_id,
-                SceneNodeKind::Background {
-                    color: guide_color,
-                },
+                SceneNodeKind::Background { color: guide_color },
                 NodeProperties::new(Rect::new(
                     0.0,
                     margin_rect.y + margin_rect.height,
@@ -257,9 +250,7 @@ impl LayoutOverlay {
             // Vertical guides at left and right.
             nodes.push(SceneNode::new(
                 next_id,
-                SceneNodeKind::Background {
-                    color: guide_color,
-                },
+                SceneNodeKind::Background { color: guide_color },
                 NodeProperties::new(Rect::new(margin_rect.x, 0.0, 1.0, screen_height))
                     .with_z_order(9985),
             ));
@@ -267,9 +258,7 @@ impl LayoutOverlay {
 
             nodes.push(SceneNode::new(
                 next_id,
-                SceneNodeKind::Background {
-                    color: guide_color,
-                },
+                SceneNodeKind::Background { color: guide_color },
                 NodeProperties::new(Rect::new(
                     margin_rect.x + margin_rect.width,
                     0.0,
@@ -297,13 +286,8 @@ impl LayoutOverlay {
             nodes.push(SceneNode::new(
                 *next_id,
                 SceneNodeKind::Background { color },
-                NodeProperties::new(Rect::new(
-                    outer.x,
-                    outer.y,
-                    outer.width,
-                    inner.y - outer.y,
-                ))
-                .with_z_order(9988),
+                NodeProperties::new(Rect::new(outer.x, outer.y, outer.width, inner.y - outer.y))
+                    .with_z_order(9988),
             ));
             *next_id += 1;
         }
@@ -329,13 +313,8 @@ impl LayoutOverlay {
             nodes.push(SceneNode::new(
                 *next_id,
                 SceneNodeKind::Background { color },
-                NodeProperties::new(Rect::new(
-                    outer.x,
-                    inner.y,
-                    inner.x - outer.x,
-                    inner.height,
-                ))
-                .with_z_order(9988),
+                NodeProperties::new(Rect::new(outer.x, inner.y, inner.x - outer.x, inner.height))
+                    .with_z_order(9988),
             ));
             *next_id += 1;
         }
@@ -374,7 +353,11 @@ mod tests {
         let overlay = LayoutOverlay::new();
         let layout = LayoutTree::new();
         let styles = StyleMap::new();
-        assert!(overlay.build_overlay(&layout, &styles, 1920.0, 1080.0).is_empty());
+        assert!(
+            overlay
+                .build_overlay(&layout, &styles, 1920.0, 1080.0)
+                .is_empty()
+        );
     }
 
     #[test]

@@ -32,11 +32,7 @@ impl IntrinsicSizes {
         }
     }
 
-    pub fn with_height(
-        mut self,
-        min_content_height: f32,
-        max_content_height: f32,
-    ) -> Self {
+    pub fn with_height(mut self, min_content_height: f32, max_content_height: f32) -> Self {
         self.min_content_height = Some(min_content_height);
         self.max_content_height = Some(max_content_height);
         self

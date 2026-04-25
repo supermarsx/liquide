@@ -2,24 +2,24 @@
 //! MIME type handling, icon themes, notifications, and system tray abstractions.
 
 pub mod desktop_entry;
-pub mod xdg;
-pub mod mime;
 pub mod icon;
+pub mod mime;
 pub mod notification;
 pub mod tray;
+pub mod xdg;
 
 #[cfg(test)]
 mod tests;
 
-pub use desktop_entry::{DesktopEntry, DesktopEntryType, DesktopAction};
-pub use xdg::XdgDirs;
-pub use mime::{MimeType, MimeAssociation, MimeSource, MimeDatabase};
-pub use icon::{IconTheme, IconDirectory, IconContext, IconType, IconLookup, IconMatch};
+pub use desktop_entry::{DesktopAction, DesktopEntry, DesktopEntryType};
+pub use icon::{IconContext, IconDirectory, IconLookup, IconMatch, IconTheme, IconType};
+pub use mime::{MimeAssociation, MimeDatabase, MimeSource, MimeType};
 pub use notification::{
-    Notification, Urgency, NotificationAction, NotificationService,
-    NullNotificationService, MemoryNotificationService,
+    MemoryNotificationService, Notification, NotificationAction, NotificationService,
+    NullNotificationService, Urgency,
 };
-pub use tray::{TrayItem, TrayItemStatus, TrayMenuItem, SystemTray};
+pub use tray::{SystemTray, TrayItem, TrayItemStatus, TrayMenuItem};
+pub use xdg::XdgDirs;
 
 use thiserror::Error;
 

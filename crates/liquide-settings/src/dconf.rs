@@ -26,9 +26,9 @@ impl DconfPath {
         if s.contains("//") {
             return None;
         }
-        let valid = s.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '/' || c == '-' || c == '_' || c == '.'
-        });
+        let valid = s
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '/' || c == '-' || c == '_' || c == '.');
         if !valid {
             return None;
         }
@@ -263,10 +263,13 @@ impl DconfStore {
 
     /// Add an admin lock for a key. Optionally force a specific value.
     pub fn add_lock(&mut self, path: &str, forced_value: Option<SettingValue>) {
-        self.locks.insert(path.to_string(), DconfLock {
-            path: path.to_string(),
-            forced_value,
-        });
+        self.locks.insert(
+            path.to_string(),
+            DconfLock {
+                path: path.to_string(),
+                forced_value,
+            },
+        );
     }
 
     /// Remove an admin lock.
@@ -376,7 +379,10 @@ impl DconfStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
 
     #[test]
     fn dconf_path_valid() {
@@ -438,7 +444,9 @@ mod tests {
         let mut store = DconfStore::new();
         assert!(store.get("/org/liquide/theme").is_none());
 
-        store.set("/org/liquide/theme", SettingValue::String("night".into())).unwrap();
+        store
+            .set("/org/liquide/theme", SettingValue::String("night".into()))
+            .unwrap();
         assert_eq!(
             store.get("/org/liquide/theme"),
             Some(&SettingValue::String("night".into()))
@@ -448,14 +456,19 @@ mod tests {
     #[test]
     fn store_defaults() {
         let mut store = DconfStore::new();
-        store.set_default("/org/liquide/theme", SettingValue::String("liquid-glass".into()));
+        store.set_default(
+            "/org/liquide/theme",
+            SettingValue::String("liquid-glass".into()),
+        );
         assert_eq!(
             store.get("/org/liquide/theme"),
             Some(&SettingValue::String("liquid-glass".into()))
         );
 
         // User override wins
-        store.set("/org/liquide/theme", SettingValue::String("night".into())).unwrap();
+        store
+            .set("/org/liquide/theme", SettingValue::String("night".into()))
+            .unwrap();
         assert_eq!(
             store.get("/org/liquide/theme"),
             Some(&SettingValue::String("night".into()))
@@ -465,8 +478,13 @@ mod tests {
     #[test]
     fn store_reset() {
         let mut store = DconfStore::new();
-        store.set_default("/org/liquide/theme", SettingValue::String("liquid-glass".into()));
-        store.set("/org/liquide/theme", SettingValue::String("night".into())).unwrap();
+        store.set_default(
+            "/org/liquide/theme",
+            SettingValue::String("liquid-glass".into()),
+        );
+        store
+            .set("/org/liquide/theme", SettingValue::String("night".into()))
+            .unwrap();
 
         store.reset("/org/liquide/theme").unwrap();
         assert_eq!(
@@ -478,9 +496,21 @@ mod tests {
     #[test]
     fn store_list() {
         let mut store = DconfStore::new();
-        store.set("/org/liquide/desktop/theme", SettingValue::String("night".into())).unwrap();
-        store.set("/org/liquide/desktop/wallpaper", SettingValue::String("/bg.png".into())).unwrap();
-        store.set("/org/liquide/input/speed", SettingValue::Float(1.5)).unwrap();
+        store
+            .set(
+                "/org/liquide/desktop/theme",
+                SettingValue::String("night".into()),
+            )
+            .unwrap();
+        store
+            .set(
+                "/org/liquide/desktop/wallpaper",
+                SettingValue::String("/bg.png".into()),
+            )
+            .unwrap();
+        store
+            .set("/org/liquide/input/speed", SettingValue::Float(1.5))
+            .unwrap();
 
         let keys = store.list("/org/liquide/desktop/");
         assert_eq!(keys.len(), 2);
@@ -491,9 +521,21 @@ mod tests {
     #[test]
     fn store_list_children() {
         let mut store = DconfStore::new();
-        store.set("/org/liquide/desktop/theme", SettingValue::String("night".into())).unwrap();
-        store.set("/org/liquide/desktop/wallpaper", SettingValue::String("/bg.png".into())).unwrap();
-        store.set("/org/liquide/input/speed", SettingValue::Float(1.5)).unwrap();
+        store
+            .set(
+                "/org/liquide/desktop/theme",
+                SettingValue::String("night".into()),
+            )
+            .unwrap();
+        store
+            .set(
+                "/org/liquide/desktop/wallpaper",
+                SettingValue::String("/bg.png".into()),
+            )
+            .unwrap();
+        store
+            .set("/org/liquide/input/speed", SettingValue::Float(1.5))
+            .unwrap();
 
         let children = store.list_children("/org/liquide/");
         assert_eq!(children.len(), 2);
@@ -516,7 +558,9 @@ mod tests {
     #[test]
     fn store_lock_prevents_reset() {
         let mut store = DconfStore::new();
-        store.set("/org/liquide/theme", SettingValue::String("night".into())).unwrap();
+        store
+            .set("/org/liquide/theme", SettingValue::String("night".into()))
+            .unwrap();
         store.add_lock("/org/liquide/theme", None);
         assert!(store.reset("/org/liquide/theme").is_err());
     }
@@ -524,7 +568,9 @@ mod tests {
     #[test]
     fn store_lock_forced_value() {
         let mut store = DconfStore::new();
-        store.set("/org/liquide/theme", SettingValue::String("night".into())).unwrap();
+        store
+            .set("/org/liquide/theme", SettingValue::String("night".into()))
+            .unwrap();
         store.add_lock(
             "/org/liquide/theme",
             Some(SettingValue::String("corporate".into())),
@@ -544,7 +590,11 @@ mod tests {
         store.remove_lock("/org/liquide/theme");
         assert!(!store.is_locked("/org/liquide/theme"));
         // Should now be settable
-        assert!(store.set("/org/liquide/theme", SettingValue::String("night".into())).is_ok());
+        assert!(
+            store
+                .set("/org/liquide/theme", SettingValue::String("night".into()))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -557,10 +607,19 @@ mod tests {
             counter_clone.fetch_add(1, Ordering::SeqCst);
         });
 
-        store.set("/org/liquide/theme", SettingValue::String("night".into())).unwrap();
-        store.set("/org/liquide/wallpaper", SettingValue::String("/bg.png".into())).unwrap();
+        store
+            .set("/org/liquide/theme", SettingValue::String("night".into()))
+            .unwrap();
+        store
+            .set(
+                "/org/liquide/wallpaper",
+                SettingValue::String("/bg.png".into()),
+            )
+            .unwrap();
         // This should NOT trigger the subscription (different prefix)
-        store.set("/org/other/key", SettingValue::Bool(true)).unwrap();
+        store
+            .set("/org/other/key", SettingValue::Bool(true))
+            .unwrap();
 
         assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
@@ -608,10 +667,18 @@ mod tests {
     #[test]
     fn store_save_load_roundtrip() {
         let mut store = DconfStore::new();
-        store.set("/org/liquide/theme", SettingValue::String("night".into())).unwrap();
-        store.set("/org/liquide/font-size", SettingValue::Int(16)).unwrap();
-        store.set("/org/liquide/dpi", SettingValue::Float(1.5)).unwrap();
-        store.set("/org/liquide/dark-mode", SettingValue::Bool(true)).unwrap();
+        store
+            .set("/org/liquide/theme", SettingValue::String("night".into()))
+            .unwrap();
+        store
+            .set("/org/liquide/font-size", SettingValue::Int(16))
+            .unwrap();
+        store
+            .set("/org/liquide/dpi", SettingValue::Float(1.5))
+            .unwrap();
+        store
+            .set("/org/liquide/dark-mode", SettingValue::Bool(true))
+            .unwrap();
 
         let text = store.save_to_text();
 
@@ -688,7 +755,9 @@ mod tests {
     fn store_list_includes_defaults() {
         let mut store = DconfStore::new();
         store.set_default("/org/liquide/default-key", SettingValue::Bool(true));
-        store.set("/org/liquide/user-key", SettingValue::Bool(false)).unwrap();
+        store
+            .set("/org/liquide/user-key", SettingValue::Bool(false))
+            .unwrap();
 
         let keys = store.list("/org/liquide/");
         assert_eq!(keys.len(), 2);
@@ -708,7 +777,9 @@ mod tests {
         let counter_clone = counter.clone();
 
         store.set_default("/org/theme", SettingValue::String("default".into()));
-        store.set("/org/theme", SettingValue::String("custom".into())).unwrap();
+        store
+            .set("/org/theme", SettingValue::String("custom".into()))
+            .unwrap();
 
         store.subscribe("/org/", move |_path, _value| {
             counter_clone.fetch_add(1, Ordering::SeqCst);

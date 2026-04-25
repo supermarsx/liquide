@@ -23,8 +23,8 @@ fn make_runtime() -> SupervisorRuntime {
         AdmissionConfig::default(),
         DowngradeThresholds::default(),
         RestartPolicy::default(),
-        16.0,   // 16-core host
-        32768,  // 32 GB
+        16.0,  // 16-core host
+        32768, // 32 GB
     )
 }
 
@@ -120,9 +120,24 @@ fn test_registry_active_count_excludes_terminated() {
 #[test]
 fn test_registry_sessions_for_user() {
     let mut reg = SessionRegistry::new();
-    reg.register_session(SessionRecord::new("s1".into(), "alice".into(), 1, make_budget()));
-    reg.register_session(SessionRecord::new("s2".into(), "bob".into(), 2, make_budget()));
-    reg.register_session(SessionRecord::new("s3".into(), "alice".into(), 3, make_budget()));
+    reg.register_session(SessionRecord::new(
+        "s1".into(),
+        "alice".into(),
+        1,
+        make_budget(),
+    ));
+    reg.register_session(SessionRecord::new(
+        "s2".into(),
+        "bob".into(),
+        2,
+        make_budget(),
+    ));
+    reg.register_session(SessionRecord::new(
+        "s3".into(),
+        "alice".into(),
+        3,
+        make_budget(),
+    ));
 
     let alice = reg.sessions_for_user("alice");
     assert_eq!(alice.len(), 2);
@@ -139,7 +154,12 @@ fn test_registry_sessions_for_user() {
 #[test]
 fn test_registry_get_session_mut() {
     let mut reg = SessionRegistry::new();
-    reg.register_session(SessionRecord::new("s1".into(), "alice".into(), 1, make_budget()));
+    reg.register_session(SessionRecord::new(
+        "s1".into(),
+        "alice".into(),
+        1,
+        make_budget(),
+    ));
 
     {
         let s = reg.get_session_mut("s1").unwrap();
@@ -152,8 +172,18 @@ fn test_registry_get_session_mut() {
 #[test]
 fn test_registry_all_sessions() {
     let mut reg = SessionRegistry::new();
-    reg.register_session(SessionRecord::new("s1".into(), "a".into(), 1, make_budget()));
-    reg.register_session(SessionRecord::new("s2".into(), "b".into(), 2, make_budget()));
+    reg.register_session(SessionRecord::new(
+        "s1".into(),
+        "a".into(),
+        1,
+        make_budget(),
+    ));
+    reg.register_session(SessionRecord::new(
+        "s2".into(),
+        "b".into(),
+        2,
+        make_budget(),
+    ));
 
     let all = reg.all_sessions();
     assert_eq!(all.len(), 2);
@@ -180,7 +210,7 @@ fn test_admission_rejects_insufficient_cpu() {
     let host = HostResources {
         total_cpu_cores: 3.0,
         total_memory_mb: 32768,
-        available_cpu: 0.5,  // Only 0.5 available after other sessions.
+        available_cpu: 0.5, // Only 0.5 available after other sessions.
         available_memory: 32768,
     };
     let ctrl = AdmissionController::new(AdmissionConfig::default(), host);
@@ -758,10 +788,7 @@ fn test_resource_monitor_cpu_warning() {
 
     let warnings = monitor.check_warnings("s1", &snap, 2.0, 512, 256);
     assert_eq!(warnings.len(), 1);
-    assert_eq!(
-        warnings[0].severity,
-        ResourceSeverity::Warning
-    );
+    assert_eq!(warnings[0].severity, ResourceSeverity::Warning);
 }
 
 #[test]
@@ -778,10 +805,7 @@ fn test_resource_monitor_cpu_critical() {
 
     let warnings = monitor.check_warnings("s1", &snap, 2.0, 512, 256);
     assert_eq!(warnings.len(), 1);
-    assert_eq!(
-        warnings[0].severity,
-        ResourceSeverity::Critical
-    );
+    assert_eq!(warnings[0].severity, ResourceSeverity::Critical);
 }
 
 #[test]
@@ -798,10 +822,7 @@ fn test_resource_monitor_memory_warning() {
 
     let warnings = monitor.check_warnings("s1", &snap, 2.0, 512, 256);
     assert_eq!(warnings.len(), 1);
-    assert_eq!(
-        warnings[0].severity,
-        ResourceSeverity::Warning
-    );
+    assert_eq!(warnings[0].severity, ResourceSeverity::Warning);
 }
 
 // ===========================================================================
@@ -983,14 +1004,21 @@ fn test_runtime_handle_crash_escalation_to_failed() {
         if i < 4 {
             // First 4 crashes should result in restart (now or delayed).
             assert!(
-                matches!(decision, RestartDecision::RestartNow | RestartDecision::RestartAfterDelay { .. }),
-                "crash {} should restart, got {:?}", i, decision
+                matches!(
+                    decision,
+                    RestartDecision::RestartNow | RestartDecision::RestartAfterDelay { .. }
+                ),
+                "crash {} should restart, got {:?}",
+                i,
+                decision
             );
         } else {
             // 5th crash (restart_count reaches 5 = max_restarts) -> EnterFailed
             assert!(
                 matches!(decision, RestartDecision::EnterFailed { .. }),
-                "crash {} should enter failed, got {:?}", i, decision
+                "crash {} should enter failed, got {:?}",
+                i,
+                decision
             );
         }
     }

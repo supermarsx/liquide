@@ -134,7 +134,12 @@ pub struct RestartTracker {
 impl RestartTracker {
     /// Create a new restart tracker.
     #[must_use]
-    pub fn new(max_restarts: u32, window_sec: u64, backoff_base_ms: u64, safe_mode_threshold: u32) -> Self {
+    pub fn new(
+        max_restarts: u32,
+        window_sec: u64,
+        backoff_base_ms: u64,
+        safe_mode_threshold: u32,
+    ) -> Self {
         Self {
             restart_count: 0,
             max_restarts,

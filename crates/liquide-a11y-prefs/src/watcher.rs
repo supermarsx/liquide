@@ -160,27 +160,18 @@ pub fn check_for_changes(
 
 /// Convenience: returns `true` if any preference changed.
 #[must_use]
-pub fn has_changes(
-    old: &AccessibilityPreferences,
-    new: &AccessibilityPreferences,
-) -> bool {
+pub fn has_changes(old: &AccessibilityPreferences, new: &AccessibilityPreferences) -> bool {
     old != new
 }
 
 /// Convenience: returns `true` if any visual preference changed.
 #[must_use]
-pub fn has_visual_changes(
-    old: &AccessibilityPreferences,
-    new: &AccessibilityPreferences,
-) -> bool {
+pub fn has_visual_changes(old: &AccessibilityPreferences, new: &AccessibilityPreferences) -> bool {
     check_for_changes(old, new).iter().any(|c| c.is_visual())
 }
 
 /// Convenience: returns `true` if any motion preference changed.
 #[must_use]
-pub fn has_motion_changes(
-    old: &AccessibilityPreferences,
-    new: &AccessibilityPreferences,
-) -> bool {
+pub fn has_motion_changes(old: &AccessibilityPreferences, new: &AccessibilityPreferences) -> bool {
     check_for_changes(old, new).iter().any(|c| c.is_motion())
 }

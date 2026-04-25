@@ -4,15 +4,17 @@
 //! connections using `epoll` on Linux. On non-Linux platforms the loop is a
 //! no-op stub that returns immediately.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use tracing::{debug, error, info, trace, warn};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
-use crate::display::DisplayOutput;
-use crate::input::InputDeviceSummary;
-use crate::wayland::WaylandServerState;
+use tracing::{debug, info};
+
+#[cfg(target_os = "linux")]
+use tracing::{error, trace, warn};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -25,7 +27,7 @@ enum FdToken {
     Drm = 1,
     Input = 2,
     Wayland = 3,
-    Timer = 4,
+    #[cfg(target_os = "linux")]
     Signal = 5,
 }
 
@@ -88,6 +90,7 @@ pub struct EventLoop {
 
     // Subsystem state (non-owning references are impractical across the
     // unsafe epoll boundary, so we track lightweight state here).
+    #[cfg(target_os = "linux")]
     pending_pageflip: bool,
     damage_pending: bool,
 
@@ -114,6 +117,7 @@ impl EventLoop {
                 running,
                 config,
                 stats: FrameStats::default(),
+                #[cfg(target_os = "linux")]
                 pending_pageflip: false,
                 damage_pending: true, // render the first frame unconditionally
                 #[cfg(target_os = "linux")]
@@ -154,9 +158,7 @@ impl EventLoop {
         };
         // SAFETY: epoll_fd is a valid epoll instance, fd is a valid open descriptor,
         // and ev is a correctly initialised epoll_event on the stack.
-        let ret = unsafe {
-            libc::epoll_ctl(self.epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut ev)
-        };
+        let ret = unsafe { libc::epoll_ctl(self.epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut ev) };
         if ret < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -208,9 +210,9 @@ impl EventLoop {
         mut on_render: FR,
     ) -> std::io::Result<()>
     where
-        FI: FnMut() -> bool,   // returns true if damage was produced
-        FW: FnMut() -> bool,   // returns true if damage was produced
-        FR: FnMut() -> bool,   // returns true if frame was submitted
+        FI: FnMut() -> bool, // returns true if damage was produced
+        FW: FnMut() -> bool, // returns true if damage was produced
+        FR: FnMut() -> bool, // returns true if frame was submitted
     {
         self.running.store(true, Ordering::Release);
         info!(
@@ -269,9 +271,6 @@ impl EventLoop {
                     t if t == FdToken::Signal as u64 => {
                         self.handle_signal();
                     }
-                    t if t == FdToken::Timer as u64 => {
-                        trace!("timer expired");
-                    }
                     other => {
                         warn!(token = other, "unknown epoll token");
                     }
@@ -284,9 +283,7 @@ impl EventLoop {
                     self.pending_pageflip = true;
                     self.damage_pending = false;
                     self.stats.frames_presented += 1;
-                    self.stats.last_present_ns = frame_start
-                        .elapsed()
-                        .as_nanos() as u64;
+                    self.stats.last_present_ns = frame_start.elapsed().as_nanos() as u64;
                 } else {
                     // Render callback returned false — no frame submitted.
                     debug!("render callback did not submit a frame");
@@ -346,9 +343,8 @@ impl EventLoop {
             loop {
                 // SAFETY: drm_fd is a valid DRM device fd set to non-blocking
                 // via epoll edge-trigger. buf is correctly sized.
-                let len = unsafe {
-                    libc::read(drm_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-                };
+                let len =
+                    unsafe { libc::read(drm_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
                 if len <= 0 {
                     break;
                 }
@@ -358,11 +354,6 @@ impl EventLoop {
                 trace!(bytes = len, "DRM event data consumed");
             }
         }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn handle_drm_event(&mut self) {
-        self.pending_pageflip = false;
     }
 
     /// Handle a signal (SIGTERM/SIGINT) arriving on the signalfd.
@@ -380,11 +371,6 @@ impl EventLoop {
             )
         };
         info!("received termination signal — shutting down");
-        self.running.store(false, Ordering::Release);
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn handle_signal(&mut self) {
         self.running.store(false, Ordering::Release);
     }
 }

@@ -1,4 +1,5 @@
 use crate::{Dialog, DialogId, DialogResult};
+use liquide_popups::DialogInfo;
 
 /// A font family with its available styles
 #[derive(Debug, Clone)]
@@ -135,8 +136,8 @@ pub const MAX_FONT_SIZE: f32 = 144.0;
 
 /// Common font sizes for the quick-pick list
 pub const COMMON_SIZES: &[f32] = &[
-    8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 48.0, 64.0,
-    72.0, 96.0, 144.0,
+    8.0, 9.0, 10.0, 11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 48.0, 64.0, 72.0,
+    96.0, 144.0,
 ];
 
 impl FontPickerState {
@@ -249,6 +250,16 @@ impl Dialog for FontPickerState {
     }
 }
 
+impl DialogInfo for FontPickerState {
+    fn preferred_size(&self) -> (f32, f32) {
+        (640.0, 520.0)
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,7 +337,10 @@ mod tests {
 
         picker.filter_fonts("arial");
         assert_eq!(picker.filtered_indices.len(), 1);
-        assert_eq!(picker.available_fonts[picker.filtered_indices[0]].name, "Arial");
+        assert_eq!(
+            picker.available_fonts[picker.filtered_indices[0]].name,
+            "Arial"
+        );
 
         picker.filter_fonts("new");
         assert_eq!(picker.filtered_indices.len(), 2); // Courier New, Times New Roman

@@ -1,4 +1,13 @@
 use crate::{Dialog, DialogId, DialogResult};
+use liquide_popups::{DialogInfo, PopupConfig, WindowId};
+
+/// Default dimensions for message-box popups in logical pixels.
+///
+/// Width accommodates ~60 chars at 14 px font; height fits icon + message +
+/// two-row button bar. Callers can override by constructing the popup
+/// config manually.
+const DEFAULT_MSG_BOX_WIDTH: f32 = 440.0;
+const DEFAULT_MSG_BOX_HEIGHT: f32 = 180.0;
 
 #[derive(Debug, Clone)]
 pub struct MessageBox {
@@ -167,6 +176,11 @@ impl MessageBox {
             DialogResult::Cancelled
         }
     }
+
+    /// Build an owner-aware popup configuration for this message box.
+    pub fn popup_config_for_owner(&self, owner: WindowId) -> PopupConfig {
+        DialogInfo::popup_config_with_owner(self, Some(owner))
+    }
 }
 
 impl Dialog for MessageBox {
@@ -176,6 +190,46 @@ impl Dialog for MessageBox {
     }
     fn title(&self) -> &str {
         &self.title
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Popup integration
+// ---------------------------------------------------------------------------
+
+impl DialogInfo for MessageBox {
+    fn preferred_size(&self) -> (f32, f32) {
+        // Give extra vertical room when detail text is present.
+        let mut height = DEFAULT_MSG_BOX_HEIGHT;
+        if self.detail.is_some() {
+            height += 60.0;
+        }
+        // Add a little extra height when there are more than two buttons so
+        // the button row doesn't get cramped.
+        if self.buttons.len() > 2 {
+            height += 20.0;
+        }
+        (DEFAULT_MSG_BOX_WIDTH, height)
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn is_modal(&self) -> bool {
+        true
+    }
+}
+
+impl From<&MessageBox> for PopupConfig {
+    fn from(mb: &MessageBox) -> Self {
+        DialogInfo::popup_config(mb)
+    }
+}
+
+impl From<MessageBox> for PopupConfig {
+    fn from(mb: MessageBox) -> Self {
+        PopupConfig::from(&mb)
     }
 }
 
@@ -262,7 +316,34 @@ mod tests {
     #[test]
     fn test_dialog_trait() {
         let mb = MessageBox::info("Title", "Msg");
-        assert_eq!(mb.title(), "Title");
-        assert!(mb.is_modal());
+        assert_eq!(Dialog::title(&mb), "Title");
+        assert!(Dialog::is_modal(&mb));
+    }
+
+    #[test]
+    fn test_message_box_to_popup_config_is_modal() {
+        let mb = MessageBox::confirm("Confirm", "Are you sure?");
+        let cfg: PopupConfig = (&mb).into();
+        assert!(cfg.modal, "MessageBox popup must be modal");
+        assert_eq!(cfg.popup_type, liquide_popups::PopupType::Dialog);
+        assert!(!cfg.dismiss_on_click_outside);
+        assert_eq!(cfg.owner, None);
+    }
+
+    #[test]
+    fn test_message_box_popup_config_for_owner_preserves_owner() {
+        let mb = MessageBox::info("Title", "Message");
+        let cfg = mb.popup_config_for_owner(WindowId(42));
+        assert_eq!(cfg.owner, Some(WindowId(42)));
+        assert!(cfg.modal);
+    }
+
+    #[test]
+    fn test_dialog_info_detail_increases_height() {
+        let plain = MessageBox::info("T", "M");
+        let with_detail = MessageBox::info("T", "M").with_detail("extra");
+        let (_, h_plain) = plain.preferred_size();
+        let (_, h_detail) = with_detail.preferred_size();
+        assert!(h_detail > h_plain);
     }
 }

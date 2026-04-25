@@ -2,9 +2,9 @@ use crate::compositor::*;
 use crate::geometry::Rect;
 use crate::scene::{NodeProperties, SceneNodeKind};
 
+use crate::cursor::CursorUpdate;
 use crate::effects::QualityProfile;
 use crate::scene::{GlassParams, SceneNode};
-use crate::cursor::CursorUpdate;
 
 #[test]
 fn compositor_create() {
@@ -38,8 +38,14 @@ fn compositor_first_frame_damages_all() {
 fn compositor_register_glass() {
     let mut comp = Compositor::new(800, 600, 64, QualityProfile::Balanced);
     comp.register_glass(42, GlassParams::default()).unwrap();
-    comp.register_glass(42, GlassParams { blur_radius: 30, ..GlassParams::default() })
-        .unwrap();
+    comp.register_glass(
+        42,
+        GlassParams {
+            blur_radius: 30,
+            ..GlassParams::default()
+        },
+    )
+    .unwrap();
     // Should have replaced, not duplicated
     assert_eq!(comp.glass_surfaces.len(), 1);
 }

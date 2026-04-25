@@ -233,15 +233,9 @@ impl Default for TextStyle {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintCommand {
     /// Fill a rectangle with a brush.
-    FillRect {
-        rect: Rect,
-        brush: Brush,
-    },
+    FillRect { rect: Rect, brush: Brush },
     /// Stroke a rectangle outline.
-    StrokeRect {
-        rect: Rect,
-        stroke: StrokeStyle,
-    },
+    StrokeRect { rect: Rect, stroke: StrokeStyle },
     /// Fill a rounded rectangle.
     FillRoundedRect {
         rect: Rect,
@@ -270,9 +264,7 @@ pub enum PaintCommand {
         stroke: StrokeStyle,
     },
     /// Push a clipping rectangle.
-    PushClip {
-        rect: Rect,
-    },
+    PushClip { rect: Rect },
     /// Pop the current clipping rectangle.
     PopClip,
     /// Fill a circle.
@@ -335,19 +327,26 @@ impl PaintContext {
 
     /// Stroke a rectangle outline.
     pub fn stroke_rect(&mut self, rect: Rect, stroke: StrokeStyle) {
-        self.commands.push(PaintCommand::StrokeRect { rect, stroke });
+        self.commands
+            .push(PaintCommand::StrokeRect { rect, stroke });
     }
 
     /// Fill a rounded rectangle.
     pub fn fill_rounded_rect(&mut self, rect: Rect, corner: Corner, brush: Brush) {
-        self.commands
-            .push(PaintCommand::FillRoundedRect { rect, corner, brush });
+        self.commands.push(PaintCommand::FillRoundedRect {
+            rect,
+            corner,
+            brush,
+        });
     }
 
     /// Stroke a rounded rectangle outline.
     pub fn stroke_rounded_rect(&mut self, rect: Rect, corner: Corner, stroke: StrokeStyle) {
-        self.commands
-            .push(PaintCommand::StrokeRoundedRect { rect, corner, stroke });
+        self.commands.push(PaintCommand::StrokeRoundedRect {
+            rect,
+            corner,
+            stroke,
+        });
     }
 
     /// Draw text at a position.
@@ -362,8 +361,13 @@ impl PaintContext {
 
     /// Draw a line segment.
     pub fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, stroke: StrokeStyle) {
-        self.commands
-            .push(PaintCommand::DrawLine { x1, y1, x2, y2, stroke });
+        self.commands.push(PaintCommand::DrawLine {
+            x1,
+            y1,
+            x2,
+            y2,
+            stroke,
+        });
     }
 
     /// Push a clipping rectangle onto the clip stack.

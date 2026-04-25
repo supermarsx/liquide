@@ -53,20 +53,12 @@ async fn list(client: &Client, output: &Output) -> Result<()> {
     Ok(())
 }
 
-async fn show(
-    _client: &Client,
-    output: &Output,
-    args: &crate::cli::UsersShowArgs,
-) -> Result<()> {
+async fn show(_client: &Client, output: &Output, args: &crate::cli::UsersShowArgs) -> Result<()> {
     output.message(&format!("User '{}' not found.", args.username));
     Ok(())
 }
 
-async fn kick(
-    _client: &Client,
-    output: &Output,
-    args: &crate::cli::UsersKickArgs,
-) -> Result<()> {
+async fn kick(_client: &Client, output: &Output, args: &crate::cli::UsersKickArgs) -> Result<()> {
     output.message(&format!("User '{}' kicked.", args.username));
     Ok(())
 }
@@ -78,16 +70,10 @@ async fn avatar(
 ) -> Result<()> {
     match cmd {
         crate::cli::UsersAvatarCommand::Set(args) => {
-            output.message(&format!(
-                "Avatar updated for user '{}'.",
-                args.username
-            ));
+            output.message(&format!("Avatar updated for user '{}'.", args.username));
         }
         crate::cli::UsersAvatarCommand::Remove(args) => {
-            output.message(&format!(
-                "Avatar removed for user '{}'.",
-                args.username
-            ));
+            output.message(&format!("Avatar removed for user '{}'.", args.username));
         }
         crate::cli::UsersAvatarCommand::Show(args) => {
             output.message(&format!("Avatar metadata for '{}'.", args.username));

@@ -75,12 +75,8 @@ pub fn workspace_position(
     screen_height: u32,
 ) -> (i32, i32) {
     match layout {
-        WorkspaceLayout::HorizontalStrip => {
-            (index as i32 * screen_width as i32, 0)
-        }
-        WorkspaceLayout::VerticalStrip => {
-            (0, index as i32 * screen_height as i32)
-        }
+        WorkspaceLayout::HorizontalStrip => (index as i32 * screen_width as i32, 0),
+        WorkspaceLayout::VerticalStrip => (0, index as i32 * screen_height as i32),
         WorkspaceLayout::Grid { cols, .. } => {
             let col = index % cols;
             let row = index / cols;
@@ -100,11 +96,7 @@ pub fn workspace_position(
 /// Returns one [`Rect`] per workspace, positioned within `screen_width` x
 /// `screen_height` with margins and gaps. The grid dimensions are chosen
 /// automatically to approximate the screen aspect ratio.
-pub fn overview_grid(
-    workspace_count: usize,
-    screen_width: u32,
-    screen_height: u32,
-) -> Vec<Rect> {
+pub fn overview_grid(workspace_count: usize, screen_width: u32, screen_height: u32) -> Vec<Rect> {
     if workspace_count == 0 {
         return Vec::new();
     }
@@ -263,8 +255,14 @@ mod tests {
 
     #[test]
     fn single_layout_all_zero() {
-        assert_eq!(workspace_position(0, WorkspaceLayout::Single, 1920, 1080), (0, 0));
-        assert_eq!(workspace_position(5, WorkspaceLayout::Single, 1920, 1080), (0, 0));
+        assert_eq!(
+            workspace_position(0, WorkspaceLayout::Single, 1920, 1080),
+            (0, 0)
+        );
+        assert_eq!(
+            workspace_position(5, WorkspaceLayout::Single, 1920, 1080),
+            (0, 0)
+        );
     }
 
     // ── overview_grid ───────────────────────────────────────────────
@@ -318,11 +316,7 @@ mod tests {
 
     #[test]
     fn transition_start_shows_from() {
-        let (ox, oy) = transition_offset(
-            0, 1, 0.0,
-            WorkspaceLayout::HorizontalStrip,
-            1920, 1080,
-        );
+        let (ox, oy) = transition_offset(0, 1, 0.0, WorkspaceLayout::HorizontalStrip, 1920, 1080);
         // At progress 0, offset should position viewport at workspace 0.
         assert!((ox - 0.0).abs() < 1.0);
         assert!((oy - 0.0).abs() < 1.0);
@@ -330,57 +324,33 @@ mod tests {
 
     #[test]
     fn transition_end_shows_to() {
-        let (ox, _oy) = transition_offset(
-            0, 1, 1.0,
-            WorkspaceLayout::HorizontalStrip,
-            1920, 1080,
-        );
+        let (ox, _oy) = transition_offset(0, 1, 1.0, WorkspaceLayout::HorizontalStrip, 1920, 1080);
         // At progress 1, offset should position viewport at workspace 1.
         assert!((ox - (-1920.0)).abs() < 1.0);
     }
 
     #[test]
     fn transition_midpoint() {
-        let (ox, _oy) = transition_offset(
-            0, 1, 0.5,
-            WorkspaceLayout::HorizontalStrip,
-            1920, 1080,
-        );
+        let (ox, _oy) = transition_offset(0, 1, 0.5, WorkspaceLayout::HorizontalStrip, 1920, 1080);
         assert!((ox - (-960.0)).abs() < 1.0);
     }
 
     #[test]
     fn transition_vertical() {
-        let (_ox, oy) = transition_offset(
-            0, 1, 1.0,
-            WorkspaceLayout::VerticalStrip,
-            1920, 1080,
-        );
+        let (_ox, oy) = transition_offset(0, 1, 1.0, WorkspaceLayout::VerticalStrip, 1920, 1080);
         assert!((oy - (-1080.0)).abs() < 1.0);
     }
 
     #[test]
     fn transition_clamps_progress() {
-        let (ox1, _) = transition_offset(
-            0, 1, -0.5,
-            WorkspaceLayout::HorizontalStrip,
-            1920, 1080,
-        );
-        let (ox2, _) = transition_offset(
-            0, 1, 0.0,
-            WorkspaceLayout::HorizontalStrip,
-            1920, 1080,
-        );
+        let (ox1, _) = transition_offset(0, 1, -0.5, WorkspaceLayout::HorizontalStrip, 1920, 1080);
+        let (ox2, _) = transition_offset(0, 1, 0.0, WorkspaceLayout::HorizontalStrip, 1920, 1080);
         assert!((ox1 - ox2).abs() < 1.0);
     }
 
     #[test]
     fn transition_same_workspace() {
-        let (ox, oy) = transition_offset(
-            2, 2, 0.5,
-            WorkspaceLayout::HorizontalStrip,
-            1920, 1080,
-        );
+        let (ox, oy) = transition_offset(2, 2, 0.5, WorkspaceLayout::HorizontalStrip, 1920, 1080);
         // from == to, so offset should be at workspace 2's position.
         let expected_x = -(2.0 * 1920.0);
         assert!((ox - expected_x).abs() < 1.0);

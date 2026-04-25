@@ -129,7 +129,8 @@ impl GroupManager {
         }
         // Clean up app_group_index entries pointing to this group.
         self.app_group_index.retain(|_, &mut gid| gid != group_id);
-        self.workspace_group_index.retain(|_, &mut gid| gid != group_id);
+        self.workspace_group_index
+            .retain(|_, &mut gid| gid != group_id);
         self.events.push(GroupEvent::Dissolved { group_id });
         true
     }

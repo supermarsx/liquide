@@ -12,7 +12,7 @@ use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{BlendMode, Color};
 
 use crate::color::SrgbLut;
-use crate::path::{fill_path, stroke_path, Path, PathBuilder};
+use crate::path::{Path, PathBuilder, fill_path, stroke_path};
 use crate::rasterizer::Fill;
 
 // ---------------------------------------------------------------------------
@@ -225,13 +225,7 @@ fn detail_color(c: Color) -> Color {
 /// The icon is scaled to fill `bounds` and drawn with the given `color`.
 /// Body shapes use `color`; detail shapes use a contrasting colour to
 /// create visual depth.  All shapes are rendered with antialiased paths.
-pub fn draw_icon(
-    fb: &mut FrameBuffer,
-    icon_id: u32,
-    bounds: Rect,
-    color: Color,
-    lut: &SrgbLut,
-) {
+pub fn draw_icon(fb: &mut FrameBuffer, icon_id: u32, bounds: Rect, color: Color, lut: &SrgbLut) {
     let Some(id) = icon_id_from_u32(icon_id) else {
         // Unknown icon: draw a simple filled rect as fallback.
         let p = rounded_rect(bounds.x, bounds.y, bounds.width, bounds.height, 0.0);
@@ -270,22 +264,48 @@ pub fn draw_icon(
 
 /// Folder with tab protruding from top-left.
 fn draw_file_manager(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Tab (primary) — drawn first; body partially overlaps.
-    fill_path(fb, &nrect(b, 0.05, 0.15, 0.35, 0.15, 0.04), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.05, 0.15, 0.35, 0.15, 0.04),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Body (detail).
-    fill_path(fb, &nrect(b, 0.05, 0.25, 0.90, 0.60, 0.05), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.05, 0.25, 0.90, 0.60, 0.05),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
 }
 
 /// Rounded rectangle body with a ">_" prompt inside.
 fn draw_terminal(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Body.
-    fill_path(fb, &nrect(b, 0.05, 0.10, 0.90, 0.80, 0.08), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.05, 0.10, 0.90, 0.80, 0.08),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // ">" chevron.
     let sw = pr(b, 0.04);
     let (x1, y1) = px(b, 0.20, 0.38);
@@ -300,11 +320,21 @@ fn draw_terminal(
 
 /// Globe with latitude / longitude grid lines.
 fn draw_browser(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Globe body.
-    fill_path(fb, &circle_path(b, 0.50, 0.50, 0.42), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.50, 0.42),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Grid lines.
     let sw = pr(b, 0.025);
     stroke_path(fb, &line2(b, 0.08, 0.50, 0.92, 0.50), sw, detail, m); // equator
@@ -316,11 +346,21 @@ fn draw_browser(
 
 /// Gear: circle body with 4 rotated bars creating 8 teeth, and a hub.
 fn draw_settings(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Main body circle.
-    fill_path(fb, &circle_path(b, 0.50, 0.50, 0.34), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.50, 0.34),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
 
     // 4 rotated bars through the centre, extending beyond the circle to form teeth.
     let (cx, cy) = px(b, 0.50, 0.50);
@@ -344,32 +384,69 @@ fn draw_settings(
     }
 
     // Centre hub (detail).
-    fill_path(fb, &circle_path(b, 0.50, 0.50, 0.16), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.50, 0.16),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
 }
 
 /// Document rectangle with four horizontal text lines.
 fn draw_text_editor(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Page body.
-    fill_path(fb, &nrect(b, 0.10, 0.05, 0.80, 0.90, 0.05), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.10, 0.05, 0.80, 0.90, 0.05),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Text lines.
     let sw = pr(b, 0.025);
-    for &(nx1, ny, nx2) in &[(0.22, 0.26, 0.78), (0.22, 0.42, 0.78), (0.22, 0.58, 0.62), (0.22, 0.74, 0.70)] {
+    for &(nx1, ny, nx2) in &[
+        (0.22, 0.26, 0.78),
+        (0.22, 0.42, 0.78),
+        (0.22, 0.58, 0.62),
+        (0.22, 0.74, 0.70),
+    ] {
         stroke_path(fb, &line2(b, nx1, ny, nx2, ny), sw, detail, m);
     }
 }
 
 /// Calendar with header, rings, and grid.
 fn draw_calendar(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Body.
-    fill_path(fb, &nrect(b, 0.08, 0.12, 0.84, 0.82, 0.06), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.08, 0.12, 0.84, 0.82, 0.06),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Header bar.
-    fill_path(fb, &nrect_flat(b, 0.08, 0.12, 0.84, 0.20), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.08, 0.12, 0.84, 0.20),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Hanging rings.
     let sw_ring = pr(b, 0.035);
     stroke_path(fb, &line2(b, 0.30, 0.04, 0.30, 0.20), sw_ring, detail, m);
@@ -382,11 +459,21 @@ fn draw_calendar(
 
 /// Single quaver: note head, stem, and flag.
 fn draw_music(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Note head (filled circle).
-    fill_path(fb, &circle_path(b, 0.38, 0.72, 0.14), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.38, 0.72, 0.14),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Stem.
     let sw = pr(b, 0.035);
     stroke_path(fb, &line2(b, 0.51, 0.72, 0.51, 0.12), sw, detail, m);
@@ -401,24 +488,56 @@ fn draw_music(
 
 /// Camera body with circle lens and viewfinder bump.
 fn draw_camera(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Body.
-    fill_path(fb, &nrect(b, 0.05, 0.28, 0.90, 0.55, 0.06), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.05, 0.28, 0.90, 0.55, 0.06),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Lens (stroked ring).
-    stroke_path(fb, &circle_path(b, 0.50, 0.55, 0.16), pr(b, 0.04), detail, m);
+    stroke_path(
+        fb,
+        &circle_path(b, 0.50, 0.55, 0.16),
+        pr(b, 0.04),
+        detail,
+        m,
+    );
     // Viewfinder bump (on top).
-    fill_path(fb, &nrect(b, 0.35, 0.15, 0.30, 0.15, 0.03), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.35, 0.15, 0.30, 0.15, 0.03),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
 }
 
 /// Envelope with V-shaped flap.
 fn draw_mail(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Envelope body.
-    fill_path(fb, &nrect(b, 0.05, 0.20, 0.90, 0.60, 0.04), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.05, 0.20, 0.90, 0.60, 0.04),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // V-flap.
     let sw = pr(b, 0.035);
     let (lx, ly) = px(b, 0.05, 0.20);
@@ -431,13 +550,29 @@ fn draw_mail(
 
 /// Calculator: tall body, display screen, and grid dividers.
 fn draw_calculator(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Body.
-    fill_path(fb, &nrect(b, 0.15, 0.05, 0.70, 0.90, 0.06), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.15, 0.05, 0.70, 0.90, 0.06),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Display screen.
-    fill_path(fb, &nrect_flat(b, 0.22, 0.14, 0.56, 0.16), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.22, 0.14, 0.56, 0.16),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Grid dividers.
     let sw = pr(b, 0.02);
     stroke_path(fb, &line2(b, 0.15, 0.56, 0.85, 0.56), sw, detail, m);
@@ -446,13 +581,29 @@ fn draw_calculator(
 
 /// Clock face with centre dot, minute hand, and hour hand.
 fn draw_clock(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Face.
-    fill_path(fb, &circle_path(b, 0.50, 0.50, 0.44), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.50, 0.44),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Centre pivot.
-    fill_path(fb, &circle_path(b, 0.50, 0.50, 0.05), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.50, 0.05),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Minute hand → 12 o'clock.
     let sw = pr(b, 0.03);
     stroke_path(fb, &line2(b, 0.50, 0.50, 0.50, 0.16), sw, detail, m);
@@ -462,11 +613,21 @@ fn draw_clock(
 
 /// Wi-Fi: base dot with two concentric arcs curving upward.
 fn draw_wifi(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Base dot.
-    fill_path(fb, &circle_path(b, 0.50, 0.80, 0.07), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.80, 0.07),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Arcs (using real arc_to for smooth curves).
     let (cx, cy) = px(b, 0.50, 0.80);
     let sw = pr(b, 0.04);
@@ -484,21 +645,47 @@ fn draw_wifi(
 
 /// Horizontal battery body with terminal nub and charge fill.
 fn draw_battery(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Body.
-    fill_path(fb, &nrect(b, 0.06, 0.28, 0.76, 0.44, 0.06), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.06, 0.28, 0.76, 0.44, 0.06),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Positive terminal nub.
-    fill_path(fb, &nrect_flat(b, 0.82, 0.38, 0.12, 0.24), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.82, 0.38, 0.12, 0.24),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Charge level indicator.
-    fill_path(fb, &nrect_flat(b, 0.14, 0.36, 0.40, 0.28), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.14, 0.36, 0.40, 0.28),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
 }
 
 /// Speaker cone with sound-wave arcs.
 fn draw_volume(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Speaker cone (trapezoid).
     let (x1, y1t) = px(b, 0.08, 0.36);
@@ -506,7 +693,10 @@ fn draw_volume(
     let (x2, y2t) = px(b, 0.40, 0.22);
     let (_, y2b) = px(b, 0.40, 0.78);
     let mut pb = PathBuilder::new();
-    pb.move_to(x1, y1t).line_to(x2, y2t).line_to(x2, y2b).line_to(x1, y1b);
+    pb.move_to(x1, y1t)
+        .line_to(x2, y2t)
+        .line_to(x2, y2b)
+        .line_to(x1, y1b);
     pb.close();
     fill_path(fb, &pb.build(), &Fill::Solid(color), m, lut);
     // Sound-wave arcs.
@@ -524,19 +714,39 @@ fn draw_volume(
 
 /// Magnifying glass: filled lens circle with a diagonal handle.
 fn draw_search(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Lens (filled circle).
-    fill_path(fb, &circle_path(b, 0.40, 0.38, 0.26), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.40, 0.38, 0.26),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Handle (thick diagonal stroke).
-    stroke_path(fb, &line2(b, 0.58, 0.56, 0.88, 0.88), pr(b, 0.07), detail, m);
+    stroke_path(
+        fb,
+        &line2(b, 0.58, 0.56, 0.88, 0.88),
+        pr(b, 0.07),
+        detail,
+        m,
+    );
 }
 
 /// Power symbol: stroked circle ring with vertical bar through the top.
 fn draw_power(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, _detail: Color,
-    m: BlendMode, _lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    _detail: Color,
+    m: BlendMode,
+    _lut: &SrgbLut,
 ) {
     let sw = pr(b, 0.06);
     // Circle ring.
@@ -548,30 +758,80 @@ fn draw_power(
 
 /// Bell shape: dome, body, rim, and clapper.
 fn draw_notification(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Dome (top half-circle — we draw a full circle; body covers bottom half).
-    fill_path(fb, &circle_path(b, 0.50, 0.30, 0.22), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.30, 0.22),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Body (rect connecting dome to rim).
-    fill_path(fb, &nrect_flat(b, 0.22, 0.30, 0.56, 0.38), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.22, 0.30, 0.56, 0.38),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Rim (wider rect at bottom).
-    fill_path(fb, &nrect_flat(b, 0.15, 0.64, 0.70, 0.10), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.15, 0.64, 0.70, 0.10),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Clapper (small circle).
-    fill_path(fb, &circle_path(b, 0.50, 0.82, 0.07), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &circle_path(b, 0.50, 0.82, 0.07),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
 }
 
 /// Trash can: lid, handle, can body, and ribs.
 fn draw_trash(
-    fb: &mut FrameBuffer, b: &Rect, color: Color, detail: Color,
-    m: BlendMode, lut: &SrgbLut,
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
 ) {
     // Lid (primary).
-    fill_path(fb, &nrect_flat(b, 0.15, 0.15, 0.70, 0.08), &Fill::Solid(color), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.15, 0.15, 0.70, 0.08),
+        &Fill::Solid(color),
+        m,
+        lut,
+    );
     // Lid handle (detail).
-    fill_path(fb, &nrect_flat(b, 0.38, 0.05, 0.24, 0.12), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect_flat(b, 0.38, 0.05, 0.24, 0.12),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Can body (detail).
-    fill_path(fb, &nrect(b, 0.22, 0.25, 0.56, 0.65, 0.04), &Fill::Solid(detail), m, lut);
+    fill_path(
+        fb,
+        &nrect(b, 0.22, 0.25, 0.56, 0.65, 0.04),
+        &Fill::Solid(detail),
+        m,
+        lut,
+    );
     // Ribs (primary — visible against detail-coloured body).
     let sw = pr(b, 0.02);
     stroke_path(fb, &line2(b, 0.38, 0.32, 0.38, 0.82), sw, color, m);

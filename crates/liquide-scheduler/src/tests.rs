@@ -108,7 +108,14 @@ fn parse_wrong_field_count() {
 #[test]
 fn parse_out_of_range() {
     let err = CronExpr::parse("60 * * * *").unwrap_err();
-    assert!(matches!(err, ParseError::OutOfRange { field: "minute", value: 60, .. }));
+    assert!(matches!(
+        err,
+        ParseError::OutOfRange {
+            field: "minute",
+            value: 60,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -120,13 +127,26 @@ fn parse_zero_step() {
 #[test]
 fn parse_invalid_range() {
     let err = CronExpr::parse("* 20-10 * * *").unwrap_err();
-    assert!(matches!(err, ParseError::InvalidRange { field: "hour", start: 20, end: 10 }));
+    assert!(matches!(
+        err,
+        ParseError::InvalidRange {
+            field: "hour",
+            start: 20,
+            end: 10
+        }
+    ));
 }
 
 #[test]
 fn parse_invalid_token() {
     let err = CronExpr::parse("abc * * * *").unwrap_err();
-    assert!(matches!(err, ParseError::InvalidToken { field: "minute", .. }));
+    assert!(matches!(
+        err,
+        ParseError::InvalidToken {
+            field: "minute",
+            ..
+        }
+    ));
 }
 
 // -----------------------------------------------------------------------
@@ -372,7 +392,13 @@ fn scheduler_pending_tasks() {
 #[test]
 fn scheduler_run_task_echo() {
     let mut sched = Scheduler::new();
-    let t = ScheduledTask::new(0, "echo".into(), "echo hello_world".into(), Schedule::Once(0), 0);
+    let t = ScheduledTask::new(
+        0,
+        "echo".into(),
+        "echo hello_world".into(),
+        Schedule::Once(0),
+        0,
+    );
     let id = sched.add_task(t);
 
     let result = sched.run_task(id).unwrap();
@@ -422,13 +448,25 @@ fn scheduler_run_nonexistent_task() {
 fn scheduler_multiple_ids_sequential() {
     let mut sched = Scheduler::new();
     let id1 = sched.add_task(ScheduledTask::new(
-        0, "a".into(), "echo".into(), Schedule::Once(0), 0,
+        0,
+        "a".into(),
+        "echo".into(),
+        Schedule::Once(0),
+        0,
     ));
     let id2 = sched.add_task(ScheduledTask::new(
-        0, "b".into(), "echo".into(), Schedule::Once(0), 0,
+        0,
+        "b".into(),
+        "echo".into(),
+        Schedule::Once(0),
+        0,
     ));
     let id3 = sched.add_task(ScheduledTask::new(
-        0, "c".into(), "echo".into(), Schedule::Once(0), 0,
+        0,
+        "c".into(),
+        "echo".into(),
+        Schedule::Once(0),
+        0,
     ));
     assert_eq!(id1, 1);
     assert_eq!(id2, 2);
@@ -439,13 +477,25 @@ fn scheduler_multiple_ids_sequential() {
 fn scheduler_task_ids_sorted() {
     let mut sched = Scheduler::new();
     sched.add_task(ScheduledTask::new(
-        0, "c".into(), "echo".into(), Schedule::Once(0), 0,
+        0,
+        "c".into(),
+        "echo".into(),
+        Schedule::Once(0),
+        0,
     ));
     sched.add_task(ScheduledTask::new(
-        0, "a".into(), "echo".into(), Schedule::Once(0), 0,
+        0,
+        "a".into(),
+        "echo".into(),
+        Schedule::Once(0),
+        0,
     ));
     sched.add_task(ScheduledTask::new(
-        0, "b".into(), "echo".into(), Schedule::Once(0), 0,
+        0,
+        "b".into(),
+        "echo".into(),
+        Schedule::Once(0),
+        0,
     ));
     assert_eq!(sched.task_ids(), vec![1, 2, 3]);
 }
@@ -515,17 +565,39 @@ fn task_recompute_next_run() {
 #[test]
 fn describe_schedule_variants() {
     assert!(PlatformBridge::describe_schedule(&Schedule::Once(12345)).contains("once"));
-    assert!(PlatformBridge::describe_schedule(&Schedule::Interval { seconds: 30 }).contains("30 seconds"));
-    assert!(PlatformBridge::describe_schedule(&Schedule::Interval { seconds: 120 }).contains("2 minutes"));
-    assert!(PlatformBridge::describe_schedule(&Schedule::Interval { seconds: 7200 }).contains("2 hours"));
-    assert!(PlatformBridge::describe_schedule(&Schedule::Daily { hour: 9, minute: 30 }).contains("09:30"));
+    assert!(
+        PlatformBridge::describe_schedule(&Schedule::Interval { seconds: 30 })
+            .contains("30 seconds")
+    );
+    assert!(
+        PlatformBridge::describe_schedule(&Schedule::Interval { seconds: 120 })
+            .contains("2 minutes")
+    );
+    assert!(
+        PlatformBridge::describe_schedule(&Schedule::Interval { seconds: 7200 })
+            .contains("2 hours")
+    );
+    assert!(
+        PlatformBridge::describe_schedule(&Schedule::Daily {
+            hour: 9,
+            minute: 30
+        })
+        .contains("09:30")
+    );
     let weekly_desc = PlatformBridge::describe_schedule(&Schedule::Weekly {
         day: Weekday::Friday,
         hour: 17,
         minute: 0,
     });
     assert!(weekly_desc.contains("Friday"));
-    assert!(PlatformBridge::describe_schedule(&Schedule::Monthly { day: 1, hour: 0, minute: 0 }).contains("day 1"));
+    assert!(
+        PlatformBridge::describe_schedule(&Schedule::Monthly {
+            day: 1,
+            hour: 0,
+            minute: 0
+        })
+        .contains("day 1")
+    );
 }
 
 // -----------------------------------------------------------------------

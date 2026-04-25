@@ -6,9 +6,8 @@
 
 use liquide_compositor::pixel::{BlendMode, Color};
 use liquide_compositor::scene::{
-    BackdropFilterSpec, BackgroundSpec,
-    BorderImageSpec, BorderSides, BoxShadowSpec, MaskSpec, OutlineSpec, Overflow,
-    TextDecoration, TextShadow,
+    BackdropFilterSpec, BackgroundSpec, BorderImageSpec, BorderSides, BoxShadowSpec, MaskSpec,
+    OutlineSpec, Overflow, TextDecoration, TextShadow,
 };
 use serde::{Deserialize, Serialize};
 
@@ -386,79 +385,117 @@ pub enum BackdropFilterOld {
 // ============================================================================
 
 impl Default for FontStyle {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 impl Default for TextAlign {
-    fn default() -> Self { Self::Start }
+    fn default() -> Self {
+        Self::Start
+    }
 }
 
 impl Default for TextOverflow {
-    fn default() -> Self { Self::Clip }
+    fn default() -> Self {
+        Self::Clip
+    }
 }
 
 impl Default for TextTransform {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 impl Default for WhiteSpace {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 impl Default for WordBreak {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 impl Default for Display {
-    fn default() -> Self { Self::Block }
+    fn default() -> Self {
+        Self::Block
+    }
 }
 
 impl Default for Position {
-    fn default() -> Self { Self::Static }
+    fn default() -> Self {
+        Self::Static
+    }
 }
 
 impl Default for FlexDirection {
-    fn default() -> Self { Self::Row }
+    fn default() -> Self {
+        Self::Row
+    }
 }
 
 impl Default for FlexWrap {
-    fn default() -> Self { Self::NoWrap }
+    fn default() -> Self {
+        Self::NoWrap
+    }
 }
 
 impl Default for JustifyContent {
-    fn default() -> Self { Self::FlexStart }
+    fn default() -> Self {
+        Self::FlexStart
+    }
 }
 
 impl Default for AlignItems {
-    fn default() -> Self { Self::Stretch }
+    fn default() -> Self {
+        Self::Stretch
+    }
 }
 
 impl Default for AlignSelf {
-    fn default() -> Self { Self::Auto }
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 impl Default for PointerEvents {
-    fn default() -> Self { Self::Auto }
+    fn default() -> Self {
+        Self::Auto
+    }
 }
 
 impl Default for TimingFunction {
-    fn default() -> Self { Self::Ease }
+    fn default() -> Self {
+        Self::Ease
+    }
 }
 
 impl Default for AnimationDirection {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 impl Default for AnimationFillMode {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 impl Default for AnimationPlayState {
-    fn default() -> Self { Self::Running }
+    fn default() -> Self {
+        Self::Running
+    }
 }
 
 impl Default for StepPosition {
-    fn default() -> Self { Self::JumpEnd }
+    fn default() -> Self {
+        Self::JumpEnd
+    }
 }
 
 impl Default for RenderStyle {

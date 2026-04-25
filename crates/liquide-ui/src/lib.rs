@@ -3,6 +3,17 @@
 //! Provides widgets, layout, event handling, painting, focus management,
 //! animation, panel containers, and theming primitives for the LiquiDE
 //! desktop shell and built-in applications.
+//!
+//! # Deprecated
+//!
+//! This crate is superseded by the `liquide-ui-core` + `liquide-ui-widgets`
+//! + `liquide-ui-window` trio for retained-mode widgets, and by
+//! `liquide-components` for DOM/template content. New code MUST use those
+//! crates. See `docs/ui-toolkit-stance.md` for the canonical stance and
+//! migration guidance. Consumer migration is tracked under task t10.
+#![deprecated(
+    note = "Use liquide-ui-core + liquide-ui-widgets + liquide-ui-window. See docs/ui-toolkit-stance.md."
+)]
 
 pub mod animation;
 pub mod event;

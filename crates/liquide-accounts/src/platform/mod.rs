@@ -80,7 +80,7 @@ pub trait PlatformBackend: Send {
 
     /// Change a user's account type (standard / administrator).
     fn set_account_type(&mut self, uid: u32, account_type: AccountType)
-        -> Result<(), AccountError>;
+    -> Result<(), AccountError>;
 
     /// List all groups on the system.
     fn list_groups(&self) -> Result<Vec<Group>, AccountError>;

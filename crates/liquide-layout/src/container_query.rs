@@ -38,7 +38,9 @@ pub struct ContainerSizeMap {
 
 impl ContainerSizeMap {
     pub fn new() -> Self {
-        Self { sizes: HashMap::new() }
+        Self {
+            sizes: HashMap::new(),
+        }
     }
 
     /// Record the computed size of a container.
@@ -96,11 +98,7 @@ impl ContainerSizeMap {
     /// - `min-height: <px>`, `max-height: <px>`
     /// - `width > <px>`, `width < <px>`, `width = <px>`
     /// - `orientation: portrait | landscape`
-    pub fn evaluate_condition(
-        &self,
-        container: &ContainerSize,
-        condition: &str,
-    ) -> bool {
+    pub fn evaluate_condition(&self, container: &ContainerSize, condition: &str) -> bool {
         let condition = condition.trim();
 
         // orientation: portrait | landscape
@@ -139,15 +137,25 @@ impl ContainerSizeMap {
         if let Some(rest) = condition.strip_prefix("width") {
             let rest = rest.trim();
             if let Some(val) = rest.strip_prefix(">=") {
-                if let Some(px) = parse_px(val) { return container.inline_size >= px; }
+                if let Some(px) = parse_px(val) {
+                    return container.inline_size >= px;
+                }
             } else if let Some(val) = rest.strip_prefix("<=") {
-                if let Some(px) = parse_px(val) { return container.inline_size <= px; }
+                if let Some(px) = parse_px(val) {
+                    return container.inline_size <= px;
+                }
             } else if let Some(val) = rest.strip_prefix('>') {
-                if let Some(px) = parse_px(val) { return container.inline_size > px; }
+                if let Some(px) = parse_px(val) {
+                    return container.inline_size > px;
+                }
             } else if let Some(val) = rest.strip_prefix('<') {
-                if let Some(px) = parse_px(val) { return container.inline_size < px; }
+                if let Some(px) = parse_px(val) {
+                    return container.inline_size < px;
+                }
             } else if let Some(val) = rest.strip_prefix('=') {
-                if let Some(px) = parse_px(val) { return (container.inline_size - px).abs() < 0.5; }
+                if let Some(px) = parse_px(val) {
+                    return (container.inline_size - px).abs() < 0.5;
+                }
             }
         }
 
@@ -155,15 +163,25 @@ impl ContainerSizeMap {
         if let Some(rest) = condition.strip_prefix("height") {
             let rest = rest.trim();
             if let Some(val) = rest.strip_prefix(">=") {
-                if let Some(px) = parse_px(val) { return container.block_size >= px; }
+                if let Some(px) = parse_px(val) {
+                    return container.block_size >= px;
+                }
             } else if let Some(val) = rest.strip_prefix("<=") {
-                if let Some(px) = parse_px(val) { return container.block_size <= px; }
+                if let Some(px) = parse_px(val) {
+                    return container.block_size <= px;
+                }
             } else if let Some(val) = rest.strip_prefix('>') {
-                if let Some(px) = parse_px(val) { return container.block_size > px; }
+                if let Some(px) = parse_px(val) {
+                    return container.block_size > px;
+                }
             } else if let Some(val) = rest.strip_prefix('<') {
-                if let Some(px) = parse_px(val) { return container.block_size < px; }
+                if let Some(px) = parse_px(val) {
+                    return container.block_size < px;
+                }
             } else if let Some(val) = rest.strip_prefix('=') {
-                if let Some(px) = parse_px(val) { return (container.block_size - px).abs() < 0.5; }
+                if let Some(px) = parse_px(val) {
+                    return (container.block_size - px).abs() < 0.5;
+                }
             }
         }
 
@@ -199,11 +217,14 @@ mod tests {
     #[test]
     fn test_record_and_get() {
         let mut map = ContainerSizeMap::new();
-        let changed = map.record(42, ContainerSize {
-            inline_size: 300.0,
-            block_size: 200.0,
-            container_type: ContainerType::InlineSize,
-        });
+        let changed = map.record(
+            42,
+            ContainerSize {
+                inline_size: 300.0,
+                block_size: 200.0,
+                container_type: ContainerType::InlineSize,
+            },
+        );
         assert!(changed);
         assert_eq!(map.get(42).unwrap().inline_size, 300.0);
     }
@@ -211,16 +232,22 @@ mod tests {
     #[test]
     fn test_no_change() {
         let mut map = ContainerSizeMap::new();
-        map.record(42, ContainerSize {
-            inline_size: 300.0,
-            block_size: 200.0,
-            container_type: ContainerType::Size,
-        });
-        let changed = map.record(42, ContainerSize {
-            inline_size: 300.0,
-            block_size: 200.0,
-            container_type: ContainerType::Size,
-        });
+        map.record(
+            42,
+            ContainerSize {
+                inline_size: 300.0,
+                block_size: 200.0,
+                container_type: ContainerType::Size,
+            },
+        );
+        let changed = map.record(
+            42,
+            ContainerSize {
+                inline_size: 300.0,
+                block_size: 200.0,
+                container_type: ContainerType::Size,
+            },
+        );
         assert!(!changed);
     }
 

@@ -13,11 +13,7 @@ use super::{SoftwareRenderer, WordSplitter};
 impl SoftwareRenderer {
     /// Render a Text scene node.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn render_text_node(
-        &mut self,
-        node: &FlatNode,
-        fb: &mut FrameBuffer,
-    ) {
+    pub(crate) fn render_text_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
@@ -165,7 +161,11 @@ impl SoftwareRenderer {
                     if !allows_wrap || max_line_width <= 0.0 {
                         wrapped_lines.push(hard_line.to_string());
                     } else {
-                        let indent = if wrapped_lines.is_empty() { *text_indent } else { 0.0 };
+                        let indent = if wrapped_lines.is_empty() {
+                            *text_indent
+                        } else {
+                            0.0
+                        };
                         let mut current_line = String::with_capacity(hard_line.len());
                         let mut current_width = indent;
 
@@ -213,11 +213,18 @@ impl SoftwareRenderer {
                         for s_line in &wrapped_lines {
                             // Measure line for alignment
                             let mut lw = 0.0f32;
-                            if s_first { lw += text_indent; }
+                            if s_first {
+                                lw += text_indent;
+                            }
                             for ch in s_line.chars() {
-                                if ch == '\r' { continue; }
+                                if ch == '\r' {
+                                    continue;
+                                }
                                 let key = GlyphKey {
-                                    font_id, glyph_id: ch as u32, size_px, subpixel: false,
+                                    font_id,
+                                    glyph_id: ch as u32,
+                                    size_px,
+                                    subpixel: false,
                                 };
                                 let base = if let Some(cached) = self.glyph_atlas.get(&key) {
                                     cached.advance
@@ -233,11 +240,18 @@ impl SoftwareRenderer {
                                 _ => 0.0,
                             };
                             let mut s_pen_x = bounds.x + ax + sx;
-                            if s_first { s_pen_x += text_indent; }
+                            if s_first {
+                                s_pen_x += text_indent;
+                            }
                             for ch in s_line.chars() {
-                                if ch == '\r' { continue; }
+                                if ch == '\r' {
+                                    continue;
+                                }
                                 let key = GlyphKey {
-                                    font_id, glyph_id: ch as u32, size_px, subpixel: false,
+                                    font_id,
+                                    glyph_id: ch as u32,
+                                    size_px,
+                                    subpixel: false,
                                 };
                                 if let Some(cached) = self.glyph_atlas.get(&key) {
                                     let pos = liquide_compositor::geometry::Point::new(
@@ -424,8 +438,7 @@ impl SoftwareRenderer {
                                     let step = dot_size * 3.0;
                                     let mut dx = bounds.x;
                                     while dx < bounds.x + bounds.width {
-                                        let dot_rect =
-                                            Rect::new(dx, line_y, dot_size, thickness);
+                                        let dot_rect = Rect::new(dx, line_y, dot_size, thickness);
                                         rasterizer::fill_rect(
                                             fb,
                                             dot_rect,
@@ -441,10 +454,8 @@ impl SoftwareRenderer {
                                     let step = dash_len + gap_len;
                                     let mut dx = bounds.x;
                                     while dx < bounds.x + bounds.width {
-                                        let seg_w =
-                                            dash_len.min(bounds.x + bounds.width - dx);
-                                        let dash_rect =
-                                            Rect::new(dx, line_y, seg_w, thickness);
+                                        let seg_w = dash_len.min(bounds.x + bounds.width - dx);
+                                        let dash_rect = Rect::new(dx, line_y, seg_w, thickness);
                                         rasterizer::fill_rect(
                                             fb,
                                             dash_rect,
@@ -461,10 +472,8 @@ impl SoftwareRenderer {
                                     let mut dx = bounds.x;
                                     let mut up = true;
                                     while dx < bounds.x + bounds.width {
-                                        let seg_w =
-                                            half.min(bounds.x + bounds.width - dx);
-                                        let y_off =
-                                            if up { -amplitude } else { amplitude };
+                                        let seg_w = half.min(bounds.x + bounds.width - dx);
+                                        let y_off = if up { -amplitude } else { amplitude };
                                         let wave_rect =
                                             Rect::new(dx, line_y + y_off, seg_w, thickness);
                                         rasterizer::fill_rect(

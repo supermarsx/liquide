@@ -219,7 +219,8 @@ fn blur_fast_small_radius_fallback() {
     let before = fb.pixels().to_vec();
     blur_fast(&mut fb, Rect::new(0.0, 0.0, 16.0, 16.0), 2);
     assert_ne!(
-        fb.pixels(), &before[..],
+        fb.pixels(),
+        &before[..],
         "blur_fast with small radius should still modify pixels"
     );
 }

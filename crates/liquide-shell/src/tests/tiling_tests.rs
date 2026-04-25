@@ -401,10 +401,7 @@ fn workspace_mode_falls_back_to_default() {
 fn set_and_get_workspace_mode() {
     let mut engine = default_engine();
     engine.set_workspace_mode(WorkspaceId(1), TilingMode::Tiling);
-    assert_eq!(
-        engine.workspace_mode(WorkspaceId(1)),
-        TilingMode::Tiling
-    );
+    assert_eq!(engine.workspace_mode(WorkspaceId(1)), TilingMode::Tiling);
 }
 
 // ========== Window rules ==========

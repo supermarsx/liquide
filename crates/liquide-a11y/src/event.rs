@@ -5,15 +5,45 @@ use crate::node::{NodeId, State};
 /// An accessibility event — notifications about tree changes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AccessibilityEvent {
-    NodeAdded { id: NodeId, parent: NodeId },
-    NodeRemoved { id: NodeId },
-    StateChanged { id: NodeId, state: State, value: bool },
-    NameChanged { id: NodeId, old: String, new_name: String },
-    ValueChanged { id: NodeId, old: Option<String>, new_value: Option<String> },
-    FocusChanged { old: Option<NodeId>, new_focus: Option<NodeId> },
-    TextChanged { id: NodeId, offset: usize, inserted: String, deleted: String },
-    CaretMoved { id: NodeId, offset: usize },
-    SelectionChanged { id: NodeId },
+    NodeAdded {
+        id: NodeId,
+        parent: NodeId,
+    },
+    NodeRemoved {
+        id: NodeId,
+    },
+    StateChanged {
+        id: NodeId,
+        state: State,
+        value: bool,
+    },
+    NameChanged {
+        id: NodeId,
+        old: String,
+        new_name: String,
+    },
+    ValueChanged {
+        id: NodeId,
+        old: Option<String>,
+        new_value: Option<String>,
+    },
+    FocusChanged {
+        old: Option<NodeId>,
+        new_focus: Option<NodeId>,
+    },
+    TextChanged {
+        id: NodeId,
+        offset: usize,
+        inserted: String,
+        deleted: String,
+    },
+    CaretMoved {
+        id: NodeId,
+        offset: usize,
+    },
+    SelectionChanged {
+        id: NodeId,
+    },
     TreeUpdated,
 }
 

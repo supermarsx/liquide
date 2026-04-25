@@ -16,9 +16,9 @@
 
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
+use liquide_compositor::pixel::BlendMode;
 #[cfg(test)]
 use liquide_compositor::pixel::Color;
-use liquide_compositor::pixel::BlendMode;
 
 use crate::blend;
 use crate::image_decode::DecodedImage;
@@ -49,7 +49,12 @@ impl NinePatchInsets {
 
     #[must_use]
     pub fn new(left: u32, right: u32, top: u32, bottom: u32) -> Self {
-        Self { left, right, top, bottom }
+        Self {
+            left,
+            right,
+            top,
+            bottom,
+        }
     }
 }
 
@@ -93,23 +98,119 @@ impl NinePatch {
         // Top-left corner (no stretch)
         blit_patch(fb, img, 0, 0, sl, st, dx, dy, sl, st, mode);
         // Top-right corner
-        blit_patch(fb, img, img.width as i32 - sr, 0, sr, st, dx + dw - sr, dy, sr, st, mode);
+        blit_patch(
+            fb,
+            img,
+            img.width as i32 - sr,
+            0,
+            sr,
+            st,
+            dx + dw - sr,
+            dy,
+            sr,
+            st,
+            mode,
+        );
         // Bottom-left corner
-        blit_patch(fb, img, 0, img.height as i32 - sb, sl, sb, dx, dy + dh - sb, sl, sb, mode);
+        blit_patch(
+            fb,
+            img,
+            0,
+            img.height as i32 - sb,
+            sl,
+            sb,
+            dx,
+            dy + dh - sb,
+            sl,
+            sb,
+            mode,
+        );
         // Bottom-right corner
-        blit_patch(fb, img, img.width as i32 - sr, img.height as i32 - sb, sr, sb, dx + dw - sr, dy + dh - sb, sr, sb, mode);
+        blit_patch(
+            fb,
+            img,
+            img.width as i32 - sr,
+            img.height as i32 - sb,
+            sr,
+            sb,
+            dx + dw - sr,
+            dy + dh - sb,
+            sr,
+            sb,
+            mode,
+        );
 
         // Top edge (stretch horizontal)
-        blit_patch(fb, img, sl, 0, src_center_w, st, dx + sl, dy, dst_center_w, st, mode);
+        blit_patch(
+            fb,
+            img,
+            sl,
+            0,
+            src_center_w,
+            st,
+            dx + sl,
+            dy,
+            dst_center_w,
+            st,
+            mode,
+        );
         // Bottom edge
-        blit_patch(fb, img, sl, img.height as i32 - sb, src_center_w, sb, dx + sl, dy + dh - sb, dst_center_w, sb, mode);
+        blit_patch(
+            fb,
+            img,
+            sl,
+            img.height as i32 - sb,
+            src_center_w,
+            sb,
+            dx + sl,
+            dy + dh - sb,
+            dst_center_w,
+            sb,
+            mode,
+        );
         // Left edge (stretch vertical)
-        blit_patch(fb, img, 0, st, sl, src_center_h, dx, dy + st, sl, dst_center_h, mode);
+        blit_patch(
+            fb,
+            img,
+            0,
+            st,
+            sl,
+            src_center_h,
+            dx,
+            dy + st,
+            sl,
+            dst_center_h,
+            mode,
+        );
         // Right edge
-        blit_patch(fb, img, img.width as i32 - sr, st, sr, src_center_h, dx + dw - sr, dy + st, sr, dst_center_h, mode);
+        blit_patch(
+            fb,
+            img,
+            img.width as i32 - sr,
+            st,
+            sr,
+            src_center_h,
+            dx + dw - sr,
+            dy + st,
+            sr,
+            dst_center_h,
+            mode,
+        );
 
         // Center (stretch both)
-        blit_patch(fb, img, sl, st, src_center_w, src_center_h, dx + sl, dy + st, dst_center_w, dst_center_h, mode);
+        blit_patch(
+            fb,
+            img,
+            sl,
+            st,
+            src_center_w,
+            src_center_h,
+            dx + sl,
+            dy + st,
+            dst_center_w,
+            dst_center_h,
+            mode,
+        );
     }
 }
 
@@ -118,8 +219,14 @@ impl NinePatch {
 fn blit_patch(
     fb: &mut FrameBuffer,
     img: &DecodedImage,
-    sx: i32, sy: i32, sw: i32, sh: i32,
-    dx: i32, dy: i32, dw: i32, dh: i32,
+    sx: i32,
+    sy: i32,
+    sw: i32,
+    sh: i32,
+    dx: i32,
+    dy: i32,
+    dw: i32,
+    dh: i32,
     mode: BlendMode,
 ) {
     if sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0 {

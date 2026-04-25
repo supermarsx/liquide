@@ -1,6 +1,8 @@
 //! Tests for config types and admin role permissions.
 
-use crate::config::{AdminRole, AuthConfig, AuthMode, ManagerConfig, MetricsConfig, TlsConfig, UiConfig};
+use crate::config::{
+    AdminRole, AuthConfig, AuthMode, ManagerConfig, MetricsConfig, TlsConfig, UiConfig,
+};
 
 // ===========================================================================
 // AdminRole

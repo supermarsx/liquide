@@ -69,10 +69,7 @@ impl TabletTool {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TabletEvent {
     /// Tool entered proximity of the tablet surface.
-    ProximityIn {
-        x: f64,
-        y: f64,
-    },
+    ProximityIn { x: f64, y: f64 },
     /// Tool left proximity.
     ProximityOut,
     /// Tool motion with full axis data.
@@ -87,10 +84,7 @@ pub enum TabletEvent {
         tilt_y: f64,
     },
     /// Tool button press/release.
-    Button {
-        button: u32,
-        pressed: bool,
-    },
+    Button { button: u32, pressed: bool },
 }
 
 /// Pressure curve type for mapping raw sensor pressure to output.
@@ -106,12 +100,7 @@ pub enum PressureCurve {
     Firm,
     /// Custom cubic Bezier control points `(x1, y1, x2, y2)` in [0,1].
     /// Evaluated via simplified De Casteljau.
-    Custom {
-        x1: f64,
-        y1: f64,
-        x2: f64,
-        y2: f64,
-    },
+    Custom { x1: f64, y1: f64, x2: f64, y2: f64 },
 }
 
 impl Default for PressureCurve {
@@ -205,7 +194,13 @@ impl TabletState {
                 self.buttons = 0;
                 None
             }
-            TabletEvent::Motion { x, y, pressure, tilt_x, tilt_y } => {
+            TabletEvent::Motion {
+                x,
+                y,
+                pressure,
+                tilt_x,
+                tilt_y,
+            } => {
                 self.x = x;
                 self.y = y;
                 self.tilt_x = tilt_x;
@@ -265,14 +260,28 @@ mod tests {
     #[test]
     fn custom_curve_linear_equivalent() {
         // Control points (0.33, 0.33) and (0.66, 0.66) approximate a linear curve
-        let curve = PressureCurve::Custom { x1: 0.33, y1: 0.33, x2: 0.66, y2: 0.66 };
+        let curve = PressureCurve::Custom {
+            x1: 0.33,
+            y1: 0.33,
+            x2: 0.66,
+            y2: 0.66,
+        };
         let out = apply_pressure_curve(0.5, &curve);
-        assert!((out - 0.5).abs() < 0.05, "Should be near-linear, got {}", out);
+        assert!(
+            (out - 0.5).abs() < 0.05,
+            "Should be near-linear, got {}",
+            out
+        );
     }
 
     #[test]
     fn custom_curve_endpoints() {
-        let curve = PressureCurve::Custom { x1: 0.25, y1: 0.1, x2: 0.75, y2: 0.9 };
+        let curve = PressureCurve::Custom {
+            x1: 0.25,
+            y1: 0.1,
+            x2: 0.75,
+            y2: 0.9,
+        };
         let out0 = apply_pressure_curve(0.0, &curve);
         let out1 = apply_pressure_curve(1.0, &curve);
         assert!(out0 < 0.05, "Start should be near 0, got {}", out0);
@@ -289,7 +298,14 @@ mod tests {
 
     #[test]
     fn tool_capabilities() {
-        let caps = ToolCapabilities { pressure: true, tilt: false, rotation: true, distance: false, slider: false, wheel: true };
+        let caps = ToolCapabilities {
+            pressure: true,
+            tilt: false,
+            rotation: true,
+            distance: false,
+            slider: false,
+            wheel: true,
+        };
         let tool = TabletTool::new(ToolType::Brush, 0).with_capabilities(caps);
         assert!(!tool.capabilities.tilt);
         assert!(tool.capabilities.rotation);
@@ -312,7 +328,11 @@ mod tests {
         let mut state = TabletState::new(PressureCurve::Soft);
         state.process(TabletEvent::ProximityIn { x: 0.0, y: 0.0 });
         let mapped = state.process(TabletEvent::Motion {
-            x: 50.0, y: 60.0, pressure: 0.5, tilt_x: 10.0, tilt_y: -5.0,
+            x: 50.0,
+            y: 60.0,
+            pressure: 0.5,
+            tilt_x: 10.0,
+            tilt_y: -5.0,
         });
         assert!(mapped.is_some());
         let p = mapped.unwrap();
@@ -324,18 +344,30 @@ mod tests {
     #[test]
     fn tablet_state_buttons() {
         let mut state = TabletState::new(PressureCurve::Linear);
-        state.process(TabletEvent::Button { button: 0, pressed: true });
+        state.process(TabletEvent::Button {
+            button: 0,
+            pressed: true,
+        });
         assert!(state.is_button_pressed(0));
         assert!(!state.is_button_pressed(1));
-        state.process(TabletEvent::Button { button: 0, pressed: false });
+        state.process(TabletEvent::Button {
+            button: 0,
+            pressed: false,
+        });
         assert!(!state.is_button_pressed(0));
     }
 
     #[test]
     fn tablet_state_multiple_buttons() {
         let mut state = TabletState::new(PressureCurve::Linear);
-        state.process(TabletEvent::Button { button: 0, pressed: true });
-        state.process(TabletEvent::Button { button: 2, pressed: true });
+        state.process(TabletEvent::Button {
+            button: 0,
+            pressed: true,
+        });
+        state.process(TabletEvent::Button {
+            button: 2,
+            pressed: true,
+        });
         assert!(state.is_button_pressed(0));
         assert!(state.is_button_pressed(2));
         assert!(!state.is_button_pressed(1));
@@ -344,7 +376,10 @@ mod tests {
     #[test]
     fn proximity_out_clears_buttons() {
         let mut state = TabletState::new(PressureCurve::Linear);
-        state.process(TabletEvent::Button { button: 1, pressed: true });
+        state.process(TabletEvent::Button {
+            button: 1,
+            pressed: true,
+        });
         state.process(TabletEvent::ProximityOut);
         assert!(!state.is_button_pressed(1));
     }

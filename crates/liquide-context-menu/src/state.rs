@@ -68,6 +68,18 @@ pub struct MenuState {
     submenu_hover_start_us: Option<u64>,
     /// Item ID that is pending submenu open (waiting for delay).
     submenu_pending_id: Option<u32>,
+    /// Whether focus should be trapped within this menu while it is open.
+    ///
+    /// When `true`, the host event dispatcher must not route keyboard input to
+    /// anything outside the menu's DOM subtree (the FocusTrap contract).
+    /// Hosts should read this flag when installing their focus manager.
+    pub trap_focus: bool,
+    /// Rolling type-ahead buffer (resets after 500ms of inactivity).
+    type_ahead_buffer: String,
+    /// Last type-ahead timestamp (microseconds).
+    type_ahead_last_us: Option<u64>,
+    /// Maximum idle interval between characters before buffer is reset (μs).
+    type_ahead_reset_us: u64,
 }
 
 impl MenuState {
@@ -81,6 +93,10 @@ impl MenuState {
             submenu_delay_ms: 200,
             submenu_hover_start_us: None,
             submenu_pending_id: None,
+            trap_focus: true,
+            type_ahead_buffer: String::new(),
+            type_ahead_last_us: None,
+            type_ahead_reset_us: 500_000, // 500 ms
         }
     }
 
@@ -99,16 +115,12 @@ impl MenuState {
     /// Reference to the open submenu state, if any.
     #[must_use]
     pub fn open_submenu(&self) -> Option<(u32, &MenuState)> {
-        self.open_submenu
-            .as_ref()
-            .map(|(id, s)| (*id, s.as_ref()))
+        self.open_submenu.as_ref().map(|(id, s)| (*id, s.as_ref()))
     }
 
     /// Mutable reference to the open submenu state, if any.
     pub fn open_submenu_mut(&mut self) -> Option<(u32, &mut MenuState)> {
-        self.open_submenu
-            .as_mut()
-            .map(|(id, s)| (*id, s.as_mut()))
+        self.open_submenu.as_mut().map(|(id, s)| (*id, s.as_mut()))
     }
 
     /// Close any open submenu.
@@ -169,8 +181,7 @@ impl MenuState {
                         let elapsed_ms = (now_us.saturating_sub(start)) / 1000;
                         if elapsed_ms >= self.submenu_delay_ms as u64 {
                             // Open the submenu.
-                            self.open_submenu =
-                                Some((item.id, Box::new(MenuState::new())));
+                            self.open_submenu = Some((item.id, Box::new(MenuState::new())));
                             self.submenu_pending_id = None;
                             self.submenu_hover_start_us = None;
                             return MenuResponse::OpenSubmenu(item.id);
@@ -271,8 +282,7 @@ impl MenuState {
                 if let Some(idx) = self.hovered_index {
                     if let Some(item) = items.get(idx) {
                         if item.has_submenu() {
-                            self.open_submenu =
-                                Some((item.id, Box::new(MenuState::new())));
+                            self.open_submenu = Some((item.id, Box::new(MenuState::new())));
                             return MenuResponse::OpenSubmenu(item.id);
                         }
                     }
@@ -286,8 +296,7 @@ impl MenuState {
                             return MenuResponse::None;
                         }
                         if item.has_submenu() {
-                            self.open_submenu =
-                                Some((item.id, Box::new(MenuState::new())));
+                            self.open_submenu = Some((item.id, Box::new(MenuState::new())));
                             return MenuResponse::OpenSubmenu(item.id);
                         }
                         return MenuResponse::Activate(item.id);
@@ -344,6 +353,9 @@ impl MenuState {
     }
 
     /// Type-ahead: jump to the first item whose label starts with `ch`.
+    ///
+    /// Uses a single-character match. For multi-character prefix matching with
+    /// 500 ms reset, use [`on_type_ahead`](Self::on_type_ahead).
     fn type_ahead(&mut self, ch: char, items: &[MenuItem]) -> MenuResponse {
         let ch_lower = ch.to_lowercase().next().unwrap_or(ch);
         let start = self.hovered_index.map_or(0, |i| i + 1);
@@ -365,6 +377,58 @@ impl MenuState {
             }
         }
         MenuResponse::None
+    }
+
+    /// Rolling type-ahead with a 500 ms idle-reset window.
+    ///
+    /// Appends `ch` to an internal buffer if `now_us` is within
+    /// `type_ahead_reset_us` of the previous character; otherwise the buffer
+    /// is cleared and starts fresh. The buffer is then matched as a
+    /// case-insensitive prefix against item labels. Returns `Hover(id)` on
+    /// match, `None` otherwise.
+    pub fn on_type_ahead(&mut self, ch: char, now_us: u64, items: &[MenuItem]) -> MenuResponse {
+        // Reset buffer if idle too long.
+        let reset = match self.type_ahead_last_us {
+            Some(prev) => now_us.saturating_sub(prev) > self.type_ahead_reset_us,
+            None => true,
+        };
+        if reset {
+            self.type_ahead_buffer.clear();
+        }
+        // Append lowercase.
+        for lc in ch.to_lowercase() {
+            self.type_ahead_buffer.push(lc);
+        }
+        self.type_ahead_last_us = Some(now_us);
+
+        // Prefix-match from current index (so repeated 'r' cycles through
+        // items starting with "r" when the buffer was reset between keys).
+        let buf = self.type_ahead_buffer.clone();
+        let start = if buf.chars().count() == 1 {
+            self.hovered_index.map_or(0, |i| i + 1)
+        } else {
+            0
+        };
+        let indices = (start..items.len()).chain(0..start);
+        for idx in indices {
+            let item = &items[idx];
+            if item.separator || item.disabled {
+                continue;
+            }
+            let label_lower: String = item.label.chars().flat_map(|c| c.to_lowercase()).collect();
+            if label_lower.starts_with(&buf) {
+                self.hovered_index = Some(idx);
+                self.hovered_id = Some(item.id);
+                return MenuResponse::Hover(item.id);
+            }
+        }
+        MenuResponse::None
+    }
+
+    /// Clear the rolling type-ahead buffer manually (e.g. on Escape).
+    pub fn clear_type_ahead(&mut self) {
+        self.type_ahead_buffer.clear();
+        self.type_ahead_last_us = None;
     }
 
     /// Find the submenu children items for a given parent item ID.
@@ -393,7 +457,7 @@ impl Default for MenuState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{MenuLayout, MenuGeometry};
+    use crate::layout::{MenuGeometry, MenuLayout};
     use crate::theme::MenuTheme;
     use crate::{MenuAction, MenuItem};
     use liquide_compositor::geometry::Rect;
@@ -479,10 +543,7 @@ mod tests {
 
     #[test]
     fn key_enter_on_separator_is_noop() {
-        let items = vec![
-            MenuItem::separator(),
-            MenuItem::action("A", MenuAction(1)),
-        ];
+        let items = vec![MenuItem::separator(), MenuItem::action("A", MenuAction(1))];
         let mut state = MenuState::new();
         // Force hover on separator.
         state.hovered_index = Some(0);
@@ -503,10 +564,7 @@ mod tests {
     fn key_right_opens_submenu() {
         let items = vec![
             MenuItem::action("A", MenuAction(1)),
-            MenuItem::submenu(
-                "More",
-                vec![MenuItem::action("Sub", MenuAction(10))],
-            ),
+            MenuItem::submenu("More", vec![MenuItem::action("Sub", MenuAction(10))]),
         ];
         let mut state = MenuState::new();
         state.on_key(MenuKey::Down, &items);
@@ -519,12 +577,10 @@ mod tests {
 
     #[test]
     fn key_left_closes_submenu() {
-        let items = vec![
-            MenuItem::submenu(
-                "Sub",
-                vec![MenuItem::action("Child", MenuAction(10))],
-            ),
-        ];
+        let items = vec![MenuItem::submenu(
+            "Sub",
+            vec![MenuItem::action("Child", MenuAction(10))],
+        )];
         let mut state = MenuState::new();
         state.on_key(MenuKey::Down, &items);
         state.on_key(MenuKey::Right, &items); // open submenu
@@ -602,9 +658,7 @@ mod tests {
 
     #[test]
     fn click_disabled_is_noop() {
-        let items = vec![
-            MenuItem::action("Disabled", MenuAction(1)).with_disabled(true),
-        ];
+        let items = vec![MenuItem::action("Disabled", MenuAction(1)).with_disabled(true)];
         let geo = basic_geo(&items);
         let mut state = MenuState::new();
         let first = &geo.items[0];
@@ -619,10 +673,7 @@ mod tests {
 
     #[test]
     fn click_separator_is_noop() {
-        let items = vec![
-            MenuItem::separator(),
-            MenuItem::action("A", MenuAction(1)),
-        ];
+        let items = vec![MenuItem::separator(), MenuItem::action("A", MenuAction(1))];
         let geo = basic_geo(&items);
         let mut state = MenuState::new();
         let sep = &geo.items[0];
@@ -654,12 +705,10 @@ mod tests {
 
     #[test]
     fn submenu_delay_opens_after_threshold() {
-        let items = vec![
-            MenuItem::submenu(
-                "Sub",
-                vec![MenuItem::action("Child", MenuAction(10))],
-            ),
-        ];
+        let items = vec![MenuItem::submenu(
+            "Sub",
+            vec![MenuItem::action("Child", MenuAction(10))],
+        )];
         let geo = basic_geo(&items);
         let mut state = MenuState::new();
         state.submenu_delay_ms = 100;
@@ -711,12 +760,10 @@ mod tests {
 
     #[test]
     fn click_submenu_opens_immediately() {
-        let items = vec![
-            MenuItem::submenu(
-                "More",
-                vec![MenuItem::action("Child", MenuAction(10))],
-            ),
-        ];
+        let items = vec![MenuItem::submenu(
+            "More",
+            vec![MenuItem::action("Child", MenuAction(10))],
+        )];
         let geo = basic_geo(&items);
         let mut state = MenuState::new();
         let row = &geo.items[0];

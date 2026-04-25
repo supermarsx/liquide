@@ -61,7 +61,12 @@ impl CompositeRegion {
     /// Create a new composite region.
     #[must_use]
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Area of the region in pixels.
@@ -87,11 +92,7 @@ pub struct CompositeTask {
 impl CompositeTask {
     /// Create a new compositing task with default SrcOver operation.
     #[must_use]
-    pub fn new(
-        src_region: CompositeRegion,
-        dst_region: CompositeRegion,
-        alpha: f32,
-    ) -> Self {
+    pub fn new(src_region: CompositeRegion, dst_region: CompositeRegion, alpha: f32) -> Self {
         Self {
             op: CompositeOp::SrcOver,
             src_region,

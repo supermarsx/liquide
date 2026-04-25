@@ -2,10 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::event::InputEvent;
 use crate::keyboard::{KeyCode, KeyState, Modifiers};
 use crate::mouse::{ButtonState, MouseButton, MouseEvent};
 use crate::touch::{TouchPhase, TouchPoint};
-use crate::event::InputEvent;
 
 /// Tracks current input state across frames.
 pub struct InputState {
@@ -50,12 +50,21 @@ impl InputState {
                     self.cursor_x = *x;
                     self.cursor_y = *y;
                 }
-                MouseEvent::Button { button, state, x, y } => {
+                MouseEvent::Button {
+                    button,
+                    state,
+                    x,
+                    y,
+                } => {
                     self.cursor_x = *x;
                     self.cursor_y = *y;
                     match state {
-                        ButtonState::Pressed => { self.buttons_down.insert(*button); }
-                        ButtonState::Released => { self.buttons_down.remove(button); }
+                        ButtonState::Pressed => {
+                            self.buttons_down.insert(*button);
+                        }
+                        ButtonState::Released => {
+                            self.buttons_down.remove(button);
+                        }
                     }
                 }
                 MouseEvent::Scroll { x, y, .. } => {
@@ -64,31 +73,37 @@ impl InputState {
                 }
                 MouseEvent::Leave => {}
             },
-            InputEvent::Touch(te) => {
-                match te.phase {
-                    TouchPhase::Begin | TouchPhase::Move => {
-                        self.active_touches.insert(te.point.id, te.point);
-                    }
-                    TouchPhase::End | TouchPhase::Cancel => {
-                        self.active_touches.remove(&te.point.id);
-                    }
+            InputEvent::Touch(te) => match te.phase {
+                TouchPhase::Begin | TouchPhase::Move => {
+                    self.active_touches.insert(te.point.id, te.point);
                 }
-            }
+                TouchPhase::End | TouchPhase::Cancel => {
+                    self.active_touches.remove(&te.point.id);
+                }
+            },
         }
     }
 
     fn update_modifiers_from_keys(&mut self) {
         let mut bits = 0u8;
-        if self.pressed_keys.contains(&KeyCode::LeftShift) || self.pressed_keys.contains(&KeyCode::RightShift) {
+        if self.pressed_keys.contains(&KeyCode::LeftShift)
+            || self.pressed_keys.contains(&KeyCode::RightShift)
+        {
             bits |= Modifiers::SHIFT;
         }
-        if self.pressed_keys.contains(&KeyCode::LeftCtrl) || self.pressed_keys.contains(&KeyCode::RightCtrl) {
+        if self.pressed_keys.contains(&KeyCode::LeftCtrl)
+            || self.pressed_keys.contains(&KeyCode::RightCtrl)
+        {
             bits |= Modifiers::CTRL;
         }
-        if self.pressed_keys.contains(&KeyCode::LeftAlt) || self.pressed_keys.contains(&KeyCode::RightAlt) {
+        if self.pressed_keys.contains(&KeyCode::LeftAlt)
+            || self.pressed_keys.contains(&KeyCode::RightAlt)
+        {
             bits |= Modifiers::ALT;
         }
-        if self.pressed_keys.contains(&KeyCode::LeftSuper) || self.pressed_keys.contains(&KeyCode::RightSuper) {
+        if self.pressed_keys.contains(&KeyCode::LeftSuper)
+            || self.pressed_keys.contains(&KeyCode::RightSuper)
+        {
             bits |= Modifiers::SUPER;
         }
         self.modifiers = Modifiers::from_bits(bits);

@@ -720,13 +720,16 @@ mod tests {
     fn stub_backend_unregister_all() {
         let mut mgr = StubManager::new();
         for i in 0..5 {
-            let kb = KeyBinding::new(Modifiers::CTRL, match i {
-                0 => Key::A,
-                1 => Key::B,
-                2 => Key::C,
-                3 => Key::D,
-                _ => Key::E,
-            });
+            let kb = KeyBinding::new(
+                Modifiers::CTRL,
+                match i {
+                    0 => Key::A,
+                    1 => Key::B,
+                    2 => Key::C,
+                    3 => Key::D,
+                    _ => Key::E,
+                },
+            );
             mgr.register(kb, HotkeyAction::Custom(format!("test{}", i)))
                 .unwrap();
         }
@@ -791,7 +794,8 @@ mod tests {
         // Drain and resolve — mirrors the logic in platform poll() impls.
         let ids: Vec<u32> = pending.lock().unwrap().drain(..).collect();
         let bindings = mgr.list_bindings();
-        let map: std::collections::HashMap<_, _> = bindings.iter().map(|(id, _, a)| (*id, a.clone())).collect();
+        let map: std::collections::HashMap<_, _> =
+            bindings.iter().map(|(id, _, a)| (*id, a.clone())).collect();
         let resolved: Vec<_> = ids
             .into_iter()
             .filter_map(|raw| {

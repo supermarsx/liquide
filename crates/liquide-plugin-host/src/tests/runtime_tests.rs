@@ -88,7 +88,9 @@ fn runtime_unload() {
 #[test]
 fn runtime_unload_already_unloaded() {
     let mut rt = PluginRuntime::new(PluginHostConfig::default());
-    let id = rt.load_plugin(sample_manifest("com.rt.dbl-unload")).unwrap();
+    let id = rt
+        .load_plugin(sample_manifest("com.rt.dbl-unload"))
+        .unwrap();
     rt.unload_plugin(id).unwrap();
     let result = rt.unload_plugin(id);
     assert!(result.is_err());

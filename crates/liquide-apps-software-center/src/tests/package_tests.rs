@@ -1,10 +1,10 @@
 //! Tests for package, repository, review, screenshot, and install types.
 
+use crate::install::{InstallAction, InstallOperation, InstallQueue, InstallState};
 use crate::package::{AppCategory, License, PackageInfo, Version};
 use crate::repository::{RepoManager, RepoType, Repository};
 use crate::review::{Review, ReviewStats, ReviewStore};
 use crate::screenshot::{Gallery, Screenshot};
-use crate::install::{InstallAction, InstallOperation, InstallQueue, InstallState};
 use crate::update::{PendingUpdate, UpdateManager};
 
 fn make_package(id: &str, name: &str, installed: bool) -> PackageInfo {
@@ -23,7 +23,11 @@ fn make_package(id: &str, name: &str, installed: bool) -> PackageInfo {
         screenshots: Vec::new(),
         icon: "app-icon".into(),
         installed,
-        installed_version: if installed { Some(Version::new(1, 0, 0)) } else { None },
+        installed_version: if installed {
+            Some(Version::new(1, 0, 0))
+        } else {
+            None
+        },
         repository_id: "official".into(),
     }
 }
@@ -114,7 +118,12 @@ fn test_repo_manager_defaults() {
 fn test_repo_add() {
     let mut rm = RepoManager::new();
     let before = rm.count();
-    rm.add(Repository::new("custom", "Custom", "https://custom.com", RepoType::ThirdParty));
+    rm.add(Repository::new(
+        "custom",
+        "Custom",
+        "https://custom.com",
+        RepoType::ThirdParty,
+    ));
     assert_eq!(rm.count(), before + 1);
 }
 
@@ -122,14 +131,24 @@ fn test_repo_add() {
 fn test_repo_no_duplicate() {
     let mut rm = RepoManager::new();
     let before = rm.count();
-    rm.add(Repository::new("official", "Dupe", "url", RepoType::Official));
+    rm.add(Repository::new(
+        "official",
+        "Dupe",
+        "url",
+        RepoType::Official,
+    ));
     assert_eq!(rm.count(), before);
 }
 
 #[test]
 fn test_repo_remove() {
     let mut rm = RepoManager::new();
-    rm.add(Repository::new("custom", "Custom", "url", RepoType::ThirdParty));
+    rm.add(Repository::new(
+        "custom",
+        "Custom",
+        "url",
+        RepoType::ThirdParty,
+    ));
     rm.remove("custom").unwrap();
     assert!(rm.find("custom").is_none());
 }
@@ -298,16 +317,14 @@ fn test_update_manager() {
     assert!(um.auto_check());
     assert_eq!(um.count(), 0);
 
-    um.set_pending(vec![
-        PendingUpdate {
-            package_id: "a".into(),
-            package_name: "A".into(),
-            current_version: Version::new(1, 0, 0),
-            new_version: Version::new(2, 0, 0),
-            download_size: 1024,
-            changelog: "New stuff".into(),
-        },
-    ]);
+    um.set_pending(vec![PendingUpdate {
+        package_id: "a".into(),
+        package_name: "A".into(),
+        current_version: Version::new(1, 0, 0),
+        new_version: Version::new(2, 0, 0),
+        download_size: 1024,
+        changelog: "New stuff".into(),
+    }]);
     assert_eq!(um.count(), 1);
     assert_eq!(um.total_download_size(), 1024);
 

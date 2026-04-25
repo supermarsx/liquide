@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use liquide_plugin_abi::{ABI_VERSION, ExtensionPoint, PluginManifest};
 use liquide_plugin_host::config::PluginHostConfig;

@@ -51,11 +51,7 @@ impl PageRange {
             PageRange::Range(start, end) => {
                 let s = (*start).max(1);
                 let e = (*end).min(total_pages);
-                if s > e {
-                    Vec::new()
-                } else {
-                    (s..=e).collect()
-                }
+                if s > e { Vec::new() } else { (s..=e).collect() }
             }
             PageRange::Pages(pages) => {
                 let mut out: Vec<u32> = pages

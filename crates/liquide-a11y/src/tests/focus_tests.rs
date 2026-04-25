@@ -5,9 +5,12 @@ use crate::tree::AccessibilityTree;
 fn make_tree_with_buttons() -> AccessibilityTree {
     let mut tree = AccessibilityTree::new();
     tree.set_root(AccessibleNode::new(1, Role::Window, "Main"));
-    tree.add_node(1, AccessibleNode::new(2, Role::Button, "A")).unwrap();
-    tree.add_node(1, AccessibleNode::new(3, Role::Button, "B")).unwrap();
-    tree.add_node(1, AccessibleNode::new(4, Role::Button, "C")).unwrap();
+    tree.add_node(1, AccessibleNode::new(2, Role::Button, "A"))
+        .unwrap();
+    tree.add_node(1, AccessibleNode::new(3, Role::Button, "B"))
+        .unwrap();
+    tree.add_node(1, AccessibleNode::new(4, Role::Button, "C"))
+        .unwrap();
     tree
 }
 

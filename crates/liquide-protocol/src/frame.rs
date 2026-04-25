@@ -228,7 +228,7 @@ impl FrameHeader {
                 version, FRAME_VERSION
             )));
         }
-        
+
         let flags = buf.get_u8();
         let channel = ChannelId::from_u16(buf.get_u16());
         let sequence = buf.get_u32();

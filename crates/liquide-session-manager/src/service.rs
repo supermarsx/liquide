@@ -29,14 +29,23 @@ pub enum RestartPolicy {
     /// Never restart
     Never,
     /// Always restart (with backoff)
-    Always { max_retries: u32, backoff_base_ms: u64 },
+    Always {
+        max_retries: u32,
+        backoff_base_ms: u64,
+    },
     /// Restart only on crash (non-zero exit), not on clean exit
-    OnFailure { max_retries: u32, backoff_base_ms: u64 },
+    OnFailure {
+        max_retries: u32,
+        backoff_base_ms: u64,
+    },
 }
 
 impl Default for RestartPolicy {
     fn default() -> Self {
-        Self::OnFailure { max_retries: 3, backoff_base_ms: 1000 }
+        Self::OnFailure {
+            max_retries: 3,
+            backoff_base_ms: 1000,
+        }
     }
 }
 
@@ -114,7 +123,10 @@ pub fn builtin_services() -> Vec<ServiceDescriptor> {
             service_type: ServiceType::Daemon,
             priority: 10,
             auto_start: true,
-            restart_policy: RestartPolicy::Always { max_retries: 5, backoff_base_ms: 500 },
+            restart_policy: RestartPolicy::Always {
+                max_retries: 5,
+                backoff_base_ms: 500,
+            },
             ..Default::default()
         },
         ServiceDescriptor {
@@ -177,7 +189,10 @@ pub fn builtin_services() -> Vec<ServiceDescriptor> {
             name: "File Indexer".into(),
             description: "Background file indexing for search".into(),
             priority: 90, // low priority, starts last
-            restart_policy: RestartPolicy::OnFailure { max_retries: 1, backoff_base_ms: 5000 },
+            restart_policy: RestartPolicy::OnFailure {
+                max_retries: 1,
+                backoff_base_ms: 5000,
+            },
             ..Default::default()
         },
         ServiceDescriptor {

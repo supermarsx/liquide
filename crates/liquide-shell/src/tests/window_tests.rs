@@ -1,5 +1,5 @@
-use liquide_compositor::geometry::Rect;
 use crate::window::*;
+use liquide_compositor::geometry::Rect;
 
 #[test]
 fn window_create() {

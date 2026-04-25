@@ -42,7 +42,9 @@ impl GrabMode {
     pub fn surface_id(&self) -> Option<u64> {
         match self {
             Self::None => None,
-            Self::Keyboard { surface_id } | Self::Pointer { surface_id } | Self::Full { surface_id } => Some(*surface_id),
+            Self::Keyboard { surface_id }
+            | Self::Pointer { surface_id }
+            | Self::Full { surface_id } => Some(*surface_id),
         }
     }
 }
@@ -111,7 +113,11 @@ impl InputRouter {
     /// Returns the target surface ID and the (possibly transformed) event,
     /// or `None` if no target is found.
     #[must_use]
-    pub fn route(&self, event: &InputEvent, surfaces: &[&dyn InputTarget]) -> Option<(u64, InputEvent)> {
+    pub fn route(
+        &self,
+        event: &InputEvent,
+        surfaces: &[&dyn InputTarget],
+    ) -> Option<(u64, InputEvent)> {
         if surfaces.is_empty() {
             return None;
         }

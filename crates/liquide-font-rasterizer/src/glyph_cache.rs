@@ -25,7 +25,13 @@ pub struct GlyphCacheKey {
 impl GlyphCacheKey {
     /// Build a cache key from floating-point size and subpixel offset.
     #[must_use]
-    pub fn new(face_id: FontFaceId, glyph_id: u32, size_px: f32, subpixel_x: f32, subpixel_y: f32) -> Self {
+    pub fn new(
+        face_id: FontFaceId,
+        glyph_id: u32,
+        size_px: f32,
+        subpixel_x: f32,
+        subpixel_y: f32,
+    ) -> Self {
         Self {
             face_id,
             glyph_id,
@@ -105,7 +111,8 @@ impl GlyphCache {
         let pixel_bytes = bitmap.pixels.len();
 
         // Evict if we're at capacity
-        while (inner.entries.len() >= inner.max_entries || inner.total_bytes + pixel_bytes > inner.max_bytes)
+        while (inner.entries.len() >= inner.max_entries
+            || inner.total_bytes + pixel_bytes > inner.max_bytes)
             && !inner.entries.is_empty()
         {
             // Find the least recently used entry
@@ -116,7 +123,9 @@ impl GlyphCache {
                 .map(|(k, _)| *k);
             if let Some(lru_key) = lru_key {
                 if let Some(removed) = inner.entries.remove(&lru_key) {
-                    inner.total_bytes = inner.total_bytes.saturating_sub(removed.bitmap.pixels.len());
+                    inner.total_bytes = inner
+                        .total_bytes
+                        .saturating_sub(removed.bitmap.pixels.len());
                 }
             } else {
                 break;
@@ -126,10 +135,13 @@ impl GlyphCache {
         inner.access_counter += 1;
         let counter = inner.access_counter;
         inner.total_bytes += pixel_bytes;
-        inner.entries.insert(key, CacheEntry {
-            bitmap,
-            last_access: counter,
-        });
+        inner.entries.insert(
+            key,
+            CacheEntry {
+                bitmap,
+                last_access: counter,
+            },
+        );
     }
 
     /// Invalidate all cached glyphs for a specific font face (e.g., on font reload).
@@ -143,7 +155,9 @@ impl GlyphCache {
             .collect();
         for key in keys_to_remove {
             if let Some(removed) = inner.entries.remove(&key) {
-                inner.total_bytes = inner.total_bytes.saturating_sub(removed.bitmap.pixels.len());
+                inner.total_bytes = inner
+                    .total_bytes
+                    .saturating_sub(removed.bitmap.pixels.len());
             }
         }
     }

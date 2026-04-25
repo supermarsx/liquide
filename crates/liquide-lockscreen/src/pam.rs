@@ -64,11 +64,7 @@ pub trait PamBackend: Send {
     ///
     /// The default implementation falls back to `authenticate()` by
     /// using `conv.prompt_echo_off()` to obtain the password.
-    fn authenticate_conv(
-        &self,
-        username: &str,
-        conv: &mut dyn PamConversation,
-    ) -> PamResult {
+    fn authenticate_conv(&self, username: &str, conv: &mut dyn PamConversation) -> PamResult {
         match conv.prompt_echo_off("Password: ") {
             Some(password) => self.authenticate(username, &password),
             None => PamResult::AuthError("No password provided.".into()),

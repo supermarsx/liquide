@@ -31,9 +31,7 @@ pub use types::{PropertyRequirement, Severity, StructureRequirement, Violation};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::computed::{
-        AlignItems, ComputedStyle, Display, JustifyContent, Position,
-    };
+    use crate::computed::{AlignItems, ComputedStyle, Display, JustifyContent, Position};
     use crate::dimension::Dimension;
     use liquide_dom::Document;
 
@@ -94,7 +92,7 @@ mod tests {
                         style.display = Display::Flex;
                         style.width = Dimension::Px(44.0);
                         style.height = Dimension::Px(44.0);
-                        style.border_radius.top_left = 12.0;
+                        style.border_radius.top_left = 12.0.into();
                         style.align_items = AlignItems::Center;
                         style.justify_content = JustifyContent::Center;
                     }
@@ -142,7 +140,10 @@ mod tests {
             .iter()
             .filter(|v| v.severity == Severity::Critical)
             .collect();
-        assert!(dock_critical.is_empty(), "Dock should have no critical violations");
+        assert!(
+            dock_critical.is_empty(),
+            "Dock should have no critical violations"
+        );
     }
 
     #[test]
@@ -188,7 +189,11 @@ mod tests {
             .filter(|v| v.element == "dock-item" && v.rule_name.contains("attr-data-app-id"))
             .collect();
 
-        assert_eq!(attr_violations.len(), 1, "Should detect one missing data-app-id");
+        assert_eq!(
+            attr_violations.len(),
+            1,
+            "Should detect one missing data-app-id"
+        );
     }
 
     #[test]

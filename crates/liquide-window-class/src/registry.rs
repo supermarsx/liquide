@@ -61,8 +61,11 @@ impl ClassRegistry {
         }
 
         // Duplicate detection — same name in same scope.
-        if self.name_conflicts(&class.name, class.module_id, class.is_global() || class.is_system)
-        {
+        if self.name_conflicts(
+            &class.name,
+            class.module_id,
+            class.is_global() || class.is_system,
+        ) {
             return Err(ClassError::AlreadyRegistered {
                 name: class.name.clone(),
             });
@@ -110,9 +113,10 @@ impl ClassRegistry {
     /// 3. System class
     pub fn find_by_name(&self, name: &str, module_id: u64) -> Option<&WindowClass> {
         // 1. Private (same module, not global, not system)
-        let private = self.classes.values().find(|c| {
-            c.name == name && c.module_id == module_id && !c.is_global() && !c.is_system
-        });
+        let private = self
+            .classes
+            .values()
+            .find(|c| c.name == name && c.module_id == module_id && !c.is_global() && !c.is_system);
         if private.is_some() {
             return private;
         }
@@ -188,9 +192,7 @@ impl ClassRegistry {
                 class.extra_class_bytes = value as usize;
                 Ok(old)
             }
-            _ => Err(ClassError::InvalidField {
-                field: field_index,
-            }),
+            _ => Err(ClassError::InvalidField { field: field_index }),
         }
     }
 
@@ -393,9 +395,7 @@ mod tests {
     fn scoping_private_before_global() {
         let mut reg = ClassRegistry::new();
         let _global = reg
-            .register_class(
-                WindowClass::new("Btn", 10, 99).with_style(ClassStyle::GLOBALCLASS),
-            )
+            .register_class(WindowClass::new("Btn", 10, 99).with_style(ClassStyle::GLOBALCLASS))
             .unwrap();
         let private = reg.register_class(make_class("Btn", 1)).unwrap();
 
@@ -412,9 +412,8 @@ mod tests {
             .register_class(WindowClass::new("Ctrl", 1, 0).as_system())
             .unwrap();
         // global cannot conflict with system name
-        let global_result = reg.register_class(
-            WindowClass::new("Ctrl", 2, 50).with_style(ClassStyle::GLOBALCLASS),
-        );
+        let global_result =
+            reg.register_class(WindowClass::new("Ctrl", 2, 50).with_style(ClassStyle::GLOBALCLASS));
         // System class already exists with that name, so global registration
         // should fail because system class name conflicts.
         assert!(global_result.is_err());
@@ -427,9 +426,7 @@ mod tests {
     fn set_class_long_handler() {
         let mut reg = ClassRegistry::new();
         let atom = reg.register_class(make_class("Mod", 1)).unwrap();
-        let old = reg
-            .set_class_long(atom, field::HANDLER_ID, 42)
-            .unwrap();
+        let old = reg.set_class_long(atom, field::HANDLER_ID, 42).unwrap();
         assert_eq!(old, 1); // original handler_id
         assert_eq!(reg.find_by_atom(atom).unwrap().handler_id, 42);
     }
@@ -529,8 +526,9 @@ mod tests {
     #[test]
     fn superclass_unknown_base() {
         let mut reg = ClassRegistry::new();
-        assert!(reg
-            .superclass(ClassAtom::from_raw(9999), "X", 1, 1)
-            .is_err());
+        assert!(
+            reg.superclass(ClassAtom::from_raw(9999), "X", 1, 1)
+                .is_err()
+        );
     }
 }

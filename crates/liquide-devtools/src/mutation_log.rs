@@ -6,10 +6,10 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
+use liquide_dom::NodeId;
 use liquide_dom::class_list::ClassList;
 use liquide_dom::pseudo::PseudoStateFlags;
 use liquide_dom::visitor::MutationObserver;
-use liquide_dom::NodeId;
 use serde::{Deserialize, Serialize};
 
 /// Maximum number of records kept in the log before eviction.
@@ -28,15 +28,9 @@ pub struct MutationRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MutationKind {
     /// A child was appended to a parent.
-    ChildAdded {
-        parent: NodeId,
-        child: NodeId,
-    },
+    ChildAdded { parent: NodeId, child: NodeId },
     /// A child was removed from a parent.
-    ChildRemoved {
-        parent: NodeId,
-        child: NodeId,
-    },
+    ChildRemoved { parent: NodeId, child: NodeId },
     /// An attribute was changed on a node.
     AttributeChanged {
         node: NodeId,
@@ -45,15 +39,9 @@ pub enum MutationKind {
         new_value: Option<String>,
     },
     /// The class list was changed on a node.
-    ClassChanged {
-        node: NodeId,
-        classes: Vec<String>,
-    },
+    ClassChanged { node: NodeId, classes: Vec<String> },
     /// Text content was changed on a node.
-    TextChanged {
-        node: NodeId,
-        text: String,
-    },
+    TextChanged { node: NodeId, text: String },
     /// A pseudo-state was changed on a node.
     PseudoStateChanged {
         node: NodeId,
@@ -162,8 +150,7 @@ impl MutationLog {
     /// Export all records to JSON.
     pub fn to_json(&self) -> String {
         let records: Vec<&MutationRecord> = self.records.iter().collect();
-        serde_json::to_string_pretty(&records)
-            .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
+        serde_json::to_string_pretty(&records).unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}"))
     }
 
     /// Push a new record into the log.
@@ -180,10 +167,8 @@ impl MutationLog {
             self.records.pop_front();
         }
 
-        self.records.push_back(MutationRecord {
-            timestamp_ms,
-            kind,
-        });
+        self.records
+            .push_back(MutationRecord { timestamp_ms, kind });
     }
 }
 
@@ -353,13 +338,40 @@ mod tests {
 
         // Verify each kind was recorded correctly.
         let records: Vec<_> = log.iter().collect();
-        assert!(matches!(&records[0].kind, MutationKind::ChildAdded { parent: 1, child: 2 }));
-        assert!(matches!(&records[1].kind, MutationKind::ChildRemoved { parent: 1, child: 2 }));
-        assert!(matches!(&records[2].kind, MutationKind::AttributeChanged { node: 3, .. }));
-        assert!(matches!(&records[3].kind, MutationKind::ClassChanged { node: 3, .. }));
-        assert!(matches!(&records[4].kind, MutationKind::TextChanged { node: 4, .. }));
-        assert!(matches!(&records[5].kind, MutationKind::PseudoStateChanged { node: 5, .. }));
-        assert!(matches!(&records[6].kind, MutationKind::IdChanged { node: 6, .. }));
+        assert!(matches!(
+            &records[0].kind,
+            MutationKind::ChildAdded {
+                parent: 1,
+                child: 2
+            }
+        ));
+        assert!(matches!(
+            &records[1].kind,
+            MutationKind::ChildRemoved {
+                parent: 1,
+                child: 2
+            }
+        ));
+        assert!(matches!(
+            &records[2].kind,
+            MutationKind::AttributeChanged { node: 3, .. }
+        ));
+        assert!(matches!(
+            &records[3].kind,
+            MutationKind::ClassChanged { node: 3, .. }
+        ));
+        assert!(matches!(
+            &records[4].kind,
+            MutationKind::TextChanged { node: 4, .. }
+        ));
+        assert!(matches!(
+            &records[5].kind,
+            MutationKind::PseudoStateChanged { node: 5, .. }
+        ));
+        assert!(matches!(
+            &records[6].kind,
+            MutationKind::IdChanged { node: 6, .. }
+        ));
     }
 
     #[test]

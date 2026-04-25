@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::client::{ClientId, ClientConnection, ClientState};
+    use crate::buffer::{BufferRef, BufferSource};
+    use crate::client::{ClientConnection, ClientId, ClientState};
     use crate::display::WaylandDisplay;
     use crate::global::{Global, GlobalId};
     use crate::registry::GlobalRegistry;
-    use crate::surface_manager::SurfaceManager;
     use crate::seat_manager::SeatManager;
     use crate::shell_manager::ShellManager;
-    use crate::buffer::{BufferRef, BufferSource};
     use crate::shm::ShmFormat;
+    use crate::surface_manager::SurfaceManager;
 
     #[test]
     fn test_client_id() {
@@ -101,8 +101,14 @@ mod tests {
     #[test]
     fn test_buffer_source_shm() {
         let buf = BufferRef::new(
-            BufferSource::Shm { pool_id: 1, offset: 0 },
-            640, 480, 2560, 0,
+            BufferSource::Shm {
+                pool_id: 1,
+                offset: 0,
+            },
+            640,
+            480,
+            2560,
+            0,
         );
         assert!(!buf.is_null());
         assert_eq!(buf.dimensions(), (640, 480));

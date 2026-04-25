@@ -2,7 +2,7 @@
 //! maximize, restore, raise, lower, move, resize.
 
 use liquide_compositor::geometry::Rect;
-use liquide_shell::{Shell, Window, WindowFlags, WindowId, WindowState};
+use liquide_shell::{Shell, WindowFlags, WindowId, WindowState};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -89,8 +89,14 @@ fn maximize_fills_screen() {
 
     let screen = shell.screen_rect();
     // Maximized window should fill the screen (or close to it)
-    assert!(win.bounds.width >= screen.width * 0.9, "width should fill screen");
-    assert!(win.bounds.height >= screen.height * 0.9, "height should fill screen");
+    assert!(
+        win.bounds.width >= screen.width * 0.9,
+        "width should fill screen"
+    );
+    assert!(
+        win.bounds.height >= screen.height * 0.9,
+        "height should fill screen"
+    );
 }
 
 #[test]
@@ -99,10 +105,7 @@ fn restore_after_minimize() {
     let wid = open_test_window(&mut shell, "Restore Me");
 
     shell.minimize(wid).unwrap();
-    assert_eq!(
-        shell.window(wid).unwrap().state,
-        WindowState::Minimized
-    );
+    assert_eq!(shell.window(wid).unwrap().state, WindowState::Minimized);
 
     shell.restore(wid).unwrap();
     let win = shell.window(wid).unwrap();
@@ -124,7 +127,10 @@ fn restore_after_maximize() {
     assert_eq!(win.state, WindowState::Normal);
     // Bounds should be restored to approximately the original
     let delta = (win.bounds.width - original_bounds.width).abs();
-    assert!(delta < 2.0, "width should be restored to original: delta={delta}");
+    assert!(
+        delta < 2.0,
+        "width should be restored to original: delta={delta}"
+    );
 }
 
 // ── Focus ───────────────────────────────────────────────────────────────────
@@ -203,14 +209,17 @@ fn new_window_has_default_flags() {
 fn raise_window_increases_z_order() {
     let mut shell = new_shell();
     let w1 = open_test_window(&mut shell, "Back");
-    let w2 = open_test_window(&mut shell, "Front");
+    let _w2 = open_test_window(&mut shell, "Front");
 
     let z1_before = shell.window(w1).unwrap().z_order;
 
     shell.raise_window(w1).unwrap();
 
     let z1_after = shell.window(w1).unwrap().z_order;
-    assert!(z1_after >= z1_before, "z_order should not decrease after raise");
+    assert!(
+        z1_after >= z1_before,
+        "z_order should not decrease after raise"
+    );
 }
 
 // ── App Windows ─────────────────────────────────────────────────────────────

@@ -12,8 +12,9 @@ use crate::launcher::SearchResultKind;
 use liquide_dom::html_parser::parse_html_into;
 use liquide_dom::template_registry::TemplateContext;
 use liquide_interop::notification::Urgency;
+use liquide_statusbar::{StatusBarItem, StatusBarItemKind, StatusBarSlot};
 
-use super::{Shell, CONTEXT_MENU_WIDTH, MENU_ITEM_HEIGHT, MENU_PADDING};
+use super::{CONTEXT_MENU_WIDTH, MENU_ITEM_HEIGHT, MENU_PADDING, Shell};
 
 impl Shell {
     /// Push current shell state into the desktop DOM tree.
@@ -39,51 +40,169 @@ impl Shell {
         self.dom_dirty = false;
     }
 
+    fn status_bar_item_text(&self, item: &StatusBarItem) -> String {
+        match &item.kind {
+            StatusBarItemKind::Clock { format } => self
+                .status_bar
+                .format_clock_timestamp(item.last_update_us, format),
+            StatusBarItemKind::NotificationIndicator { unread_count, .. } => {
+                if *unread_count > 0 {
+                    unread_count.to_string()
+                } else {
+                    String::new()
+                }
+            }
+            StatusBarItemKind::ConnectionQuality {
+                quality_percent, ..
+            } => format!("{quality_percent}%"),
+            StatusBarItemKind::TrayArea => String::new(),
+            StatusBarItemKind::SessionButton => "User".to_string(),
+            StatusBarItemKind::Custom { content, .. } => content.clone(),
+        }
+    }
+
+    fn focused_dock_app_id(&self) -> Option<String> {
+        self.dock.focused_app().map(str::to_string).or_else(|| {
+            self.focus.focused().and_then(|window_id| {
+                self.windows.get(&window_id).and_then(|window| {
+                    if window.app_id.is_empty() {
+                        None
+                    } else {
+                        Some(window.app_id.clone())
+                    }
+                })
+            })
+        })
+    }
+
+    fn live_tray_items(&self) -> Vec<TemplateContext> {
+        let mut tray_items = Vec::new();
+
+        let mut notification_items = self.notifications.visible_tray_icons();
+        notification_items.sort_by(|left, right| {
+            left.app_name
+                .cmp(&right.app_name)
+                .then_with(|| left.id.0.cmp(&right.id.0))
+        });
+        for icon in notification_items {
+            let mut ctx = TemplateContext::new();
+            ctx.set("id", &format!("tray-icon-{}", icon.id.0));
+            ctx.set("source", "notification");
+            ctx.set("label", &icon.app_name);
+            ctx.set(
+                "tooltip",
+                if icon.tooltip.is_empty() {
+                    icon.app_name.as_str()
+                } else {
+                    icon.tooltip.as_str()
+                },
+            );
+            ctx.set("icon", &icon.icon);
+            ctx.set("has_icon", !icon.icon.is_empty());
+            ctx.set("has_badge", icon.badge.is_some());
+            ctx.set("badge", icon.badge.as_deref().unwrap_or(""));
+            ctx.set("has_menu", !icon.menu_items.is_empty());
+            ctx.set("has_icon_data", false);
+            ctx.set("classes", if icon.badge.is_some() { "has-badge" } else { "" });
+            tray_items.push(ctx);
+        }
+
+        let mut seamless_items: Vec<_> = self.seamless.tray_icons().values().collect();
+        seamless_items.sort_by(|left, right| {
+            left.app_id
+                .cmp(&right.app_id)
+                .then_with(|| left.item_id.cmp(&right.item_id))
+        });
+        for icon in seamless_items {
+            let mut ctx = TemplateContext::new();
+            let label = if icon.app_id.is_empty() {
+                icon.item_id.as_str()
+            } else {
+                icon.app_id.as_str()
+            };
+            ctx.set("id", &format!("tray-item-{}", icon.item_id));
+            ctx.set("source", "seamless");
+            ctx.set("label", label);
+            ctx.set(
+                "tooltip",
+                if icon.tooltip.is_empty() {
+                    label
+                } else {
+                    icon.tooltip.as_str()
+                },
+            );
+            ctx.set("icon", "");
+            ctx.set("has_icon", false);
+            ctx.set("has_badge", false);
+            ctx.set("badge", "");
+            ctx.set("has_menu", !icon.menu_items.is_empty());
+            ctx.set("has_icon_data", !icon.icon_data.is_empty());
+            ctx.set(
+                "classes",
+                if icon.icon_data.is_empty() {
+                    "seamless"
+                } else {
+                    "seamless has-icon-data"
+                },
+            );
+            tray_items.push(ctx);
+        }
+
+        tray_items
+    }
+
     // ══════════════════════════════════════════════════════════
     // Status bar
     // ══════════════════════════════════════════════════════════
 
     fn sync_statusbar_template(&mut self) {
         let mut ctx = TemplateContext::new();
+        ctx.set("show_branding", self.status_bar.config().show_app_menu);
+        ctx.set("branding_text", "LiquiDE");
 
-        // Left items: logo is hardcoded in the template,
-        // only add additional custom items here.
-        let left_items: Vec<TemplateContext> = Vec::new();
+        let left_items: Vec<TemplateContext> = self
+            .status_bar
+            .items_in_slot(StatusBarSlot::Left)
+            .into_iter()
+            .filter(|item| item.visible)
+            .map(|item| {
+                let mut item_ctx = TemplateContext::new();
+                item_ctx.set("id", &item.id);
+                item_ctx.set("classes", "");
+                item_ctx.set("text", &self.status_bar_item_text(item));
+                item_ctx
+            })
+            .collect();
         ctx.set("left_items", left_items);
 
-        // Center items: clock
         let mut center_items = Vec::new();
-        for item in self.status_bar.items() {
-            use liquide_statusbar::StatusBarItemKind;
-            if let StatusBarItemKind::Clock { .. } = &item.kind {
-                let now = std::time::SystemTime::now();
-                let secs = now
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let hours = (secs / 3600) % 24;
-                let minutes = (secs / 60) % 60;
-
+        for item in self.status_bar.items_in_slot(StatusBarSlot::Center) {
+            if !item.visible {
+                continue;
+            }
+            if matches!(&item.kind, StatusBarItemKind::Clock { .. } | StatusBarItemKind::Custom { .. }) {
                 let mut item_ctx = TemplateContext::new();
-                item_ctx.set("id", "clock");
-                item_ctx.set("text", &format!("{hours:02}:{minutes:02}"));
+                item_ctx.set("id", &item.id);
+                item_ctx.set("classes", "");
+                item_ctx.set("text", &self.status_bar_item_text(item));
                 center_items.push(item_ctx);
             }
         }
         ctx.set("center_items", center_items);
 
-        // Right items: notifications, connection, tray, session
         let mut right_items = Vec::new();
-        for item in self.status_bar.items() {
-            use liquide_statusbar::StatusBarItemKind;
+        let tray_items = self.live_tray_items();
+        for item in self.status_bar.items_in_slot(StatusBarSlot::Right) {
+            if !item.visible {
+                continue;
+            }
             match &item.kind {
-                StatusBarItemKind::Clock { .. } => {} // already in center
                 StatusBarItemKind::NotificationIndicator {
                     unread_count,
                     dnd_active,
                 } => {
                     let mut ic = TemplateContext::new();
-                    ic.set("id", "notif-indicator");
+                    ic.set("id", &item.id);
                     ic.set("type_notification", true);
                     let cls = if *dnd_active {
                         "dnd"
@@ -100,7 +219,7 @@ impl Shell {
                     quality_percent, ..
                 } => {
                     let mut ic = TemplateContext::new();
-                    ic.set("id", "conn-indicator");
+                    ic.set("id", &item.id);
                     ic.set("type_status", true);
                     let cls = if *quality_percent == 0 {
                         "disconnected"
@@ -114,18 +233,27 @@ impl Shell {
                 }
                 StatusBarItemKind::TrayArea => {
                     let mut ic = TemplateContext::new();
-                    ic.set("id", "sys-tray");
+                    ic.set("id", &item.id);
                     ic.set("type_tray", true);
+                    ic.set("tray_items", self.live_tray_items());
+                    ic.set("tray_item_count", tray_items.len().to_string());
                     right_items.push(ic);
                 }
                 StatusBarItemKind::SessionButton => {
                     let mut ic = TemplateContext::new();
-                    ic.set("id", "session-btn");
+                    ic.set("id", &item.id);
                     ic.set("type_session", true);
-                    ic.set("text", "User");
+                    ic.set("text", &self.status_bar_item_text(item));
                     right_items.push(ic);
                 }
-                StatusBarItemKind::Custom { .. } => {}
+                StatusBarItemKind::Custom { .. } => {
+                    let mut ic = TemplateContext::new();
+                    ic.set("id", &item.id);
+                    ic.set("classes", "");
+                    ic.set("text", &self.status_bar_item_text(item));
+                    right_items.push(ic);
+                }
+                StatusBarItemKind::Clock { .. } => {}
             }
         }
         ctx.set("right_items", right_items);
@@ -140,6 +268,7 @@ impl Shell {
     fn sync_dock_template(&mut self) {
         let mut ctx = TemplateContext::new();
         let hover_idx = self.dock.hover_index();
+        let focused_app_id = self.focused_dock_app_id();
 
         let dock_items: Vec<TemplateContext> = self
             .dock
@@ -153,9 +282,32 @@ impl Shell {
                 ic.set("label", &item.label);
                 ic.set("icon", &item.icon);
                 let is_active = item.running_window_count > 0;
+                let is_focused = focused_app_id.as_deref() == Some(item.app_id.as_str());
+                let has_badge = item.badge_count > 0;
+                let mut classes = Vec::new();
+                if is_active {
+                    classes.push("active");
+                }
+                if item.pinned_position.is_some() {
+                    classes.push("pinned");
+                }
+                if hover_idx == Some(i) {
+                    classes.push("hovered");
+                }
+                if is_focused {
+                    classes.push("focused");
+                }
+                if item.needs_attention {
+                    classes.push("needs-attention");
+                }
                 ic.set("is_running", is_active);
                 ic.set("is_pinned", item.pinned_position.is_some());
                 ic.set("is_hovered", hover_idx == Some(i));
+                ic.set("is_focused", is_focused);
+                ic.set("needs_attention", item.needs_attention);
+                ic.set("has_badge", has_badge);
+                ic.set("badge_count", item.badge_count.to_string());
+                ic.set("classes", classes.join(" "));
                 ic
             })
             .collect();
@@ -245,8 +397,7 @@ impl Shell {
             self.desktop_dom.doc.destroy_node(child);
         }
         parse_html_into(&mut self.desktop_dom.doc, area, &html);
-        self.template_cache
-            .insert("notifications".into(), html);
+        self.template_cache.insert("notifications".into(), html);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -286,9 +437,7 @@ impl Shell {
                 }
                 let root = self.desktop_dom.doc.root();
                 // Remove existing launcher overlay
-                if let Some(existing) =
-                    self.desktop_dom.doc.get_element_by_id("launcher-overlay")
-                {
+                if let Some(existing) = self.desktop_dom.doc.get_element_by_id("launcher-overlay") {
                     if let Some(parent) = self.desktop_dom.doc.parent(existing) {
                         self.desktop_dom.doc.remove_child(parent, existing);
                     }
@@ -299,9 +448,7 @@ impl Shell {
             }
         } else {
             // Remove launcher overlay if present
-            if let Some(existing) =
-                self.desktop_dom.doc.get_element_by_id("launcher-overlay")
-            {
+            if let Some(existing) = self.desktop_dom.doc.get_element_by_id("launcher-overlay") {
                 if let Some(parent) = self.desktop_dom.doc.parent(existing) {
                     self.desktop_dom.doc.remove_child(parent, existing);
                 }
@@ -337,12 +484,9 @@ impl Shell {
             ctx.set("id", "session-menu");
             ctx.set("items", items);
 
-            // Position the session menu below the status bar, right-aligned.
-            let bar_h = self.status_bar.config().height;
-            let menu_x = (self.screen_rect.width - 180.0 - 8.0).round() as i32;
-            let menu_y = (bar_h + 4.0).round() as i32;
-            ctx.set("pos_left", &format!("{menu_x}px"));
-            ctx.set("pos_top", &format!("{menu_y}px"));
+            let menu_bounds = self.session_menu_bounds();
+            ctx.set("pos_left", &format!("{}px", menu_bounds.x.round() as i32));
+            ctx.set("pos_top", &format!("{}px", menu_bounds.y.round() as i32));
 
             self.apply_overlay_template("session-menu", "session-menu", &ctx);
         } else {
@@ -382,7 +526,9 @@ impl Shell {
             let ctx_x = self.context_menu_pos.x;
             let ctx_y = self.context_menu_pos.y;
             let menu_h = MENU_PADDING * 2.0 + ctx_items.len() as f32 * MENU_ITEM_HEIGHT;
-            let clamped_x = ctx_x.min(self.screen_rect.width - CONTEXT_MENU_WIDTH - 4.0).max(0.0);
+            let clamped_x = ctx_x
+                .min(self.screen_rect.width - CONTEXT_MENU_WIDTH - 4.0)
+                .max(0.0);
             let clamped_y = ctx_y.min(self.screen_rect.height - menu_h - 4.0).max(0.0);
             ctx.set("pos_left", &format!("{}px", clamped_x.round() as i32));
             ctx.set("pos_top", &format!("{}px", clamped_y.round() as i32));
@@ -407,6 +553,10 @@ impl Shell {
                 ("System Settings", "settings"),
                 ("About Liquide", "about"),
             ];
+            let target_window = self
+                .app_menu_target_window_id()
+                .map(|window_id| window_id.0.to_string())
+                .unwrap_or_default();
             let items: Vec<TemplateContext> = menu_items
                 .iter()
                 .enumerate()
@@ -415,6 +565,30 @@ impl Shell {
                     ic.set("index", &i.to_string());
                     ic.set("label", *label);
                     ic.set("action", *action);
+                    ic.set(
+                        "selected_class",
+                        if self.app_menu_hover_index == Some(i) {
+                            "selected"
+                        } else {
+                            ""
+                        },
+                    );
+                    ic.set(
+                        "aria_selected",
+                        if self.app_menu_hover_index == Some(i) {
+                            "true"
+                        } else {
+                            "false"
+                        },
+                    );
+                    ic.set(
+                        "tab_index",
+                        if self.app_menu_hover_index == Some(i) {
+                            "0"
+                        } else {
+                            "-1"
+                        },
+                    );
                     ic
                 })
                 .collect();
@@ -422,15 +596,16 @@ impl Shell {
             let mut ctx = TemplateContext::new();
             ctx.set("id", "app-menu");
             ctx.set("items", items);
+            ctx.set("window_id", &target_window);
 
-            // Position below the statusbar, near the logo
-            let bar_h = self.status_bar.config().height;
-            let menu_h = MENU_PADDING * 2.0 + menu_items.len() as f32 * MENU_ITEM_HEIGHT;
-            let clamped_y = (bar_h + 2.0).min(self.screen_rect.height - menu_h - 4.0).max(0.0);
-            ctx.set("pos_left", &format!("{}px", 8));
-            ctx.set("pos_top", &format!("{}px", clamped_y.round() as i32));
-
-            self.apply_overlay_template("app-menu", "app-menu", &ctx);
+            if let Some(menu_bounds) = self.app_menu_bounds(menu_items.len()) {
+                ctx.set("pos_left", &format!("{}px", menu_bounds.x.round() as i32));
+                ctx.set("pos_top", &format!("{}px", menu_bounds.y.round() as i32));
+                self.apply_overlay_template("app-menu", "app-menu", &ctx);
+            } else {
+                self.remove_overlay("app-menu");
+                self.template_cache.remove("app-menu");
+            }
         } else {
             self.remove_overlay("app-menu");
             self.template_cache.remove("app-menu");
@@ -459,8 +634,14 @@ impl Shell {
             ctx.set("id", "shell-tooltip");
             ctx.set("text", text.as_str());
             ctx.set("position", "top"); // tooltip appears above the dock
-            ctx.set("pos_left", &format!("{}px", self.tooltip_pos.x.round() as i32));
-            ctx.set("pos_top", &format!("{}px", self.tooltip_pos.y.round() as i32));
+            ctx.set(
+                "pos_left",
+                &format!("{}px", self.tooltip_pos.x.round() as i32),
+            );
+            ctx.set(
+                "pos_top",
+                &format!("{}px", self.tooltip_pos.y.round() as i32),
+            );
 
             self.apply_overlay_template("tooltip", "shell-tooltip", &ctx);
         } else {
@@ -475,12 +656,7 @@ impl Shell {
 
     /// Render a template and replace the children of the element with the given
     /// DOM id.  Skips the DOM rebuild if the rendered HTML hasn't changed.
-    fn apply_template(
-        &mut self,
-        template_name: &str,
-        element_id: &str,
-        ctx: &TemplateContext,
-    ) {
+    fn apply_template(&mut self, template_name: &str, element_id: &str, ctx: &TemplateContext) {
         let html = match self.template_registry.render(template_name, ctx) {
             Some(h) => h,
             None => return,
@@ -503,8 +679,7 @@ impl Shell {
             parse_html_into(&mut self.desktop_dom.doc, node_id, &html);
         }
 
-        self.template_cache
-            .insert(template_name.to_string(), html);
+        self.template_cache.insert(template_name.to_string(), html);
     }
 
     /// Render a template as a top-level overlay (appended to root), creating
@@ -533,8 +708,7 @@ impl Shell {
         let root = self.desktop_dom.doc.root();
         parse_html_into(&mut self.desktop_dom.doc, root, &html);
 
-        self.template_cache
-            .insert(template_name.to_string(), html);
+        self.template_cache.insert(template_name.to_string(), html);
     }
 
     /// Remove an overlay element from the DOM.
@@ -575,26 +749,7 @@ impl Shell {
             .items()
             .iter()
             .map(|item| {
-                use liquide_statusbar::StatusBarItemKind;
-                let content = match &item.kind {
-                    StatusBarItemKind::Clock { .. } => {
-                        let now = std::time::SystemTime::now();
-                        let secs = now
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs();
-                        format!("{:02}:{:02}", (secs / 3600) % 24, (secs / 60) % 60)
-                    }
-                    StatusBarItemKind::NotificationIndicator { unread_count, .. } => {
-                        unread_count.to_string()
-                    }
-                    StatusBarItemKind::ConnectionQuality { quality_percent, .. } => {
-                        format!("{quality_percent}%")
-                    }
-                    StatusBarItemKind::TrayArea => "tray".to_string(),
-                    StatusBarItemKind::SessionButton => "session".to_string(),
-                    StatusBarItemKind::Custom { content, .. } => content.clone(),
-                };
+                let content = self.status_bar_item_text(item);
                 let slot = match item.slot {
                     liquide_statusbar::StatusBarSlot::Left => {
                         crate::desktop_dom::StatusBarSlotKind::Left

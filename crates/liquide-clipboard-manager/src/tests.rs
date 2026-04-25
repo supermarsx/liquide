@@ -145,7 +145,10 @@ fn content_eq_dedup() {
 #[test]
 fn content_as_file_paths() {
     let fp = ClipboardContent::FilePaths(vec!["/a".into(), "/b".into()]);
-    assert_eq!(fp.as_file_paths(), Some(&["/a".to_string(), "/b".to_string()][..]));
+    assert_eq!(
+        fp.as_file_paths(),
+        Some(&["/a".to_string(), "/b".to_string()][..])
+    );
     let text = ClipboardContent::Text("not paths".into());
     assert!(text.as_file_paths().is_none());
 }
@@ -281,12 +284,7 @@ fn entry_content_type_labels() {
     );
     assert_eq!(img.content_type_label(), "Image");
 
-    let fp = ClipboardEntry::new(
-        4,
-        ClipboardContent::FilePaths(vec!["/a".into()]),
-        0,
-        None,
-    );
+    let fp = ClipboardEntry::new(4, ClipboardContent::FilePaths(vec!["/a".into()]), 0, None);
     assert_eq!(fp.content_type_label(), "Files");
 
     let col = ClipboardEntry::new(
@@ -337,14 +335,8 @@ fn history_push_and_recent() {
 
     let recent = h.recent(2);
     assert_eq!(recent.len(), 2);
-    assert_eq!(
-        recent[0].content.as_searchable_text(),
-        Some("third")
-    );
-    assert_eq!(
-        recent[1].content.as_searchable_text(),
-        Some("second")
-    );
+    assert_eq!(recent[0].content.as_searchable_text(), Some("third"));
+    assert_eq!(recent[1].content.as_searchable_text(), Some("second"));
 }
 
 #[test]
@@ -711,10 +703,7 @@ fn manager_category_filter() {
         },
         None,
     );
-    mgr.on_copy(
-        ClipboardContent::FilePaths(vec!["/tmp/f".into()]),
-        None,
-    );
+    mgr.on_copy(ClipboardContent::FilePaths(vec!["/tmp/f".into()]), None);
 
     assert_eq!(mgr.category_filter(ContentCategory::Text).len(), 1);
     assert_eq!(mgr.category_filter(ContentCategory::Colors).len(), 1);
@@ -777,7 +766,10 @@ fn manager_sensitive_policy_marks_app() {
     mgr.sensitive_policy_mut().add_excluded_app("KeePassXC");
 
     let id = mgr
-        .on_copy(ClipboardContent::Text("password123".into()), Some("KeePassXC".into()))
+        .on_copy(
+            ClipboardContent::Text("password123".into()),
+            Some("KeePassXC".into()),
+        )
         .unwrap();
     assert!(mgr.history().get(id).unwrap().sensitive);
 }
@@ -788,7 +780,10 @@ fn manager_sensitive_policy_ignores_other_apps() {
     mgr.sensitive_policy_mut().add_excluded_app("KeePassXC");
 
     let id = mgr
-        .on_copy(ClipboardContent::Text("normal text".into()), Some("Firefox".into()))
+        .on_copy(
+            ClipboardContent::Text("normal text".into()),
+            Some("Firefox".into()),
+        )
         .unwrap();
     assert!(!mgr.history().get(id).unwrap().sensitive);
 }
@@ -943,6 +938,18 @@ fn local_sync_stub_queue_while_enabled() {
 }
 
 #[test]
+fn local_sync_stub_skips_sensitive_entries() {
+    let mut stub = LocalSyncStub::new();
+    stub.set_sync_enabled(true);
+    let mut e = ClipboardEntry::new(1, ClipboardContent::Text("secret".into()), 0, None);
+    e.sensitive = true;
+
+    stub.queue_outgoing(&e);
+
+    assert!(stub.pending_outgoing().is_empty());
+}
+
+#[test]
 fn local_sync_stub_receive_while_disabled() {
     let mut stub = LocalSyncStub::new();
     stub.inject_incoming(ClipboardEntry::new(
@@ -985,10 +992,7 @@ fn local_sync_stub_loopback() {
 
     let incoming = stub.receive_incoming();
     assert_eq!(incoming.len(), 1);
-    assert_eq!(
-        incoming[0].content.as_searchable_text(),
-        Some("round-trip")
-    );
+    assert_eq!(incoming[0].content.as_searchable_text(), Some("round-trip"));
 }
 
 #[test]
@@ -1009,6 +1013,19 @@ fn clipboard_sync_coordinator() {
     assert_eq!(incoming.len(), 1);
 }
 
+#[test]
+fn clipboard_sync_coordinator_skips_sensitive_entries() {
+    let stub = LocalSyncStub::new();
+    let mut sync = ClipboardSync::new(stub);
+    sync.backend_mut().set_sync_enabled(true);
+
+    let mut e = ClipboardEntry::new(1, ClipboardContent::Text("secret".into()), 0, None);
+    e.sensitive = true;
+    sync.queue_outgoing(&e);
+
+    assert!(sync.backend().pending_outgoing().is_empty());
+}
+
 // -----------------------------------------------------------------------
 // Persistence tests
 // -----------------------------------------------------------------------
@@ -1016,7 +1033,12 @@ fn clipboard_sync_coordinator() {
 #[test]
 fn persistence_roundtrip_text() {
     let entries = vec![
-        ClipboardEntry::new(1, ClipboardContent::Text("hello".into()), 1000, Some("app".into())),
+        ClipboardEntry::new(
+            1,
+            ClipboardContent::Text("hello".into()),
+            1000,
+            Some("app".into()),
+        ),
         ClipboardEntry::new(2, ClipboardContent::Text("world".into()), 2000, None),
     ];
     let mut buf = Vec::new();
@@ -1050,7 +1072,10 @@ fn persistence_roundtrip_rich_text() {
     let loaded = persistence::load_entries(&mut cursor).unwrap();
     assert_eq!(loaded.len(), 1);
     match &loaded[0].content {
-        ClipboardContent::RichText { html, plain_fallback } => {
+        ClipboardContent::RichText {
+            html,
+            plain_fallback,
+        } => {
             assert_eq!(html, "<b>bold</b>");
             assert_eq!(plain_fallback, "bold");
         }
@@ -1165,8 +1190,7 @@ fn persistence_skips_sensitive_entries() {
     let mut sensitive_entry =
         ClipboardEntry::new(1, ClipboardContent::Text("secret".into()), 100, None);
     sensitive_entry.sensitive = true;
-    let normal_entry =
-        ClipboardEntry::new(2, ClipboardContent::Text("normal".into()), 200, None);
+    let normal_entry = ClipboardEntry::new(2, ClipboardContent::Text("normal".into()), 200, None);
 
     let entries = vec![sensitive_entry, normal_entry];
     let mut buf = Vec::new();
@@ -1318,12 +1342,7 @@ fn rich_text_preview() {
 
 #[test]
 fn entry_file_paths_preview_empty() {
-    let e = ClipboardEntry::new(
-        1,
-        ClipboardContent::FilePaths(vec![]),
-        0,
-        None,
-    );
+    let e = ClipboardEntry::new(1, ClipboardContent::FilePaths(vec![]), 0, None);
     assert_eq!(e.text_preview(100), "[no files]");
 }
 

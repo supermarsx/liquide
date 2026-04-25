@@ -7,6 +7,7 @@
 use std::fmt;
 
 use liquide_compositor::geometry::Rect;
+use liquide_datetime::{ClockFormat, ClockSettings, DateTime};
 use serde::{Deserialize, Serialize};
 
 use crate::items::{StatusBarItem, StatusBarItemKind};
@@ -70,6 +71,13 @@ pub struct ShellStatusBar {
     config: ShellBarConfig,
     items: Vec<StatusBarItem>,
     dirty: bool,
+    /// UTC offset in minutes applied to the clock item (e.g. -300 for UTC-5).
+    /// Defaults to 0 (UTC). The shell sets this from `liquide-datetime`.
+    clock_offset_minutes: i32,
+    /// Whether the clock uses 24-hour formatting (true) or 12-hour + AM/PM (false).
+    clock_24h: bool,
+    /// Whether the clock shows seconds.
+    clock_show_seconds: bool,
 }
 
 impl ShellStatusBar {
@@ -141,10 +149,20 @@ impl ShellStatusBar {
             last_update_us: 0,
         });
 
+        // Seed the clock with the system's current local UTC offset so the
+        // clock renders in local time without the shell having to call
+        // `set_clock_offset_minutes` immediately on construction. Falls back
+        // to UTC (0) when the platform query fails.
+        let clock_offset_minutes =
+            liquide_datetime::PlatformTimeBridge::get_utc_offset_minutes().unwrap_or(0);
+
         Self {
             config,
             items,
             dirty: true,
+            clock_offset_minutes,
+            clock_24h: true,
+            clock_show_seconds: false,
         }
     }
 
@@ -184,6 +202,69 @@ impl ShellStatusBar {
             item.cached = false;
             self.dirty = true;
         }
+    }
+
+    /// UTC offset in minutes used to render the clock item in local time.
+    #[must_use]
+    pub fn clock_offset_minutes(&self) -> i32 {
+        self.clock_offset_minutes
+    }
+
+    /// Set the UTC offset in minutes for the clock item (e.g. `-300` for EST).
+    pub fn set_clock_offset_minutes(&mut self, offset: i32) {
+        if self.clock_offset_minutes != offset {
+            self.clock_offset_minutes = offset;
+            self.dirty = true;
+        }
+    }
+
+    /// Whether the clock is rendered in 24-hour format.
+    #[must_use]
+    pub fn clock_24h(&self) -> bool {
+        self.clock_24h
+    }
+
+    /// Configure 24-hour vs 12-hour clock formatting.
+    pub fn set_clock_24h(&mut self, enabled: bool) {
+        if self.clock_24h != enabled {
+            self.clock_24h = enabled;
+            self.dirty = true;
+        }
+    }
+
+    /// Whether the clock shows seconds.
+    #[must_use]
+    pub fn clock_show_seconds(&self) -> bool {
+        self.clock_show_seconds
+    }
+
+    /// Toggle whether the clock shows seconds.
+    pub fn set_clock_show_seconds(&mut self, show: bool) {
+        if self.clock_show_seconds != show {
+            self.clock_show_seconds = show;
+            self.dirty = true;
+        }
+    }
+
+    /// Format a wall-clock timestamp using the status bar's active clock settings.
+    #[must_use]
+    pub fn format_clock_timestamp(&self, timestamp_us: u64, format: &str) -> String {
+        let total_secs = (timestamp_us / 1_000_000) as i64;
+        let dt_utc = DateTime::from_unix_timestamp(total_secs);
+        let dt_local = dt_utc.with_offset_minutes(self.clock_offset_minutes());
+        let settings = ClockSettings {
+            format: if self.clock_24h() {
+                ClockFormat::H24
+            } else if format.contains('%') {
+                ClockFormat::Custom(format.to_string())
+            } else {
+                ClockFormat::H12
+            },
+            show_seconds: self.clock_show_seconds(),
+            show_date: false,
+            timezone: String::new(),
+        };
+        settings.format_time(&dt_local)
     }
 
     /// Update the unread notification count.
@@ -271,11 +352,11 @@ impl ShellStatusBar {
 
     /// Compute the screen-space bounds for the status bar.
     ///
-    /// The bar spans the full width of `screen` and sits at the top edge
-    /// (`y = 0`) with a height taken from the configuration.
+    /// The bar spans the full width of `screen` and sits at the screen's
+    /// top edge with a height taken from the configuration.
     #[must_use]
     pub fn compute_bounds(&self, screen: Rect) -> Rect {
-        Rect::new(screen.x, 0.0, screen.width, self.config.height)
+        Rect::new(screen.x, screen.y, screen.width, self.config.height)
     }
 
     /// The active configuration.

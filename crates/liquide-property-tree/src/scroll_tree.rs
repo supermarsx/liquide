@@ -18,6 +18,9 @@ pub struct ScrollNode {
     /// Maximum scrollable extent (max_dx, max_dy). The offset is clamped to
     /// `0..=scroll_bounds.0` horizontally and `0..=scroll_bounds.1` vertically.
     pub scroll_bounds: (f32, f32),
+    /// Optional visible viewport size. When present, `scroll_into_view()` uses
+    /// this instead of the legacy `scroll_bounds` fallback.
+    pub viewport_size: Option<(f32, f32)>,
     /// Whether this container is user-scrollable.
     pub scrollable: bool,
 }
@@ -29,6 +32,7 @@ impl Default for ScrollNode {
             parent: None,
             scroll_offset: (0.0, 0.0),
             scroll_bounds: (0.0, 0.0),
+            viewport_size: None,
             scrollable: false,
         }
     }
@@ -65,12 +69,16 @@ impl ScrollTree {
         scrollable: bool,
     ) -> NodeId {
         let id = self.nodes.len() as NodeId;
-        let parent_id = parent.unwrap_or(ROOT_ID);
+        let parent_id = match parent.unwrap_or(ROOT_ID) {
+            pid if (pid as usize) < self.nodes.len() => pid,
+            _ => ROOT_ID,
+        };
         self.nodes.push(ScrollNode {
             id,
             parent: Some(parent_id),
             scroll_offset,
             scroll_bounds,
+            viewport_size: None,
             scrollable,
         });
         self.acc_offset.push((0.0, 0.0));
@@ -101,12 +109,21 @@ impl ScrollTree {
         }
     }
 
+    /// Set the visible viewport size used by `scroll_into_view()`.
+    pub fn set_viewport_size(&mut self, id: NodeId, width: f32, height: f32) {
+        if let Some(node) = self.nodes.get_mut(id as usize) {
+            node.viewport_size = Some((width.max(0.0), height.max(0.0)));
+        }
+    }
+
     /// Compute the scroll offset needed to make `target_rect` (in the scroll
     /// container's content space) fully visible within the viewport.
     ///
     /// Returns the new scroll offset `(dx, dy)` that should be passed to
     /// `set_scroll_offset`. If the target is already fully visible, returns
-    /// the current offset unchanged.
+    /// the current offset unchanged. When `viewport_size` is not configured,
+    /// the method falls back to the historical `scroll_bounds`-as-viewport
+    /// behavior for backwards compatibility.
     pub fn scroll_into_view(&self, id: NodeId, target_rect: (f32, f32, f32, f32)) -> (f32, f32) {
         let node = match self.nodes.get(id as usize) {
             Some(n) => n,
@@ -114,33 +131,43 @@ impl ScrollTree {
         };
 
         let (cur_dx, cur_dy) = node.scroll_offset;
-        let (bounds_w, bounds_h) = node.scroll_bounds;
+        let (max_dx, max_dy) = node.scroll_bounds;
+        let (viewport_w, viewport_h) = node.viewport_size.unwrap_or(node.scroll_bounds);
         let (tx, ty, tw, th) = target_rect;
-
-        // Viewport top-left = scroll offset, viewport size = total size - scroll bounds
-        // (Alternatively, if scroll_bounds is max offset, viewport is implicit)
-        // Here we assume the viewport height/width is derivable from the context,
-        // but since we only have scroll_bounds (max offset), we treat the visible
-        // area as the content area minus scroll_bounds. A simpler approach:
-        // Just ensure the target is within [cur_dx, ...] range.
 
         // Horizontal
         let mut new_dx = cur_dx;
         if tx < cur_dx {
             new_dx = tx;
-        } else if tx + tw > cur_dx + bounds_w && bounds_w > 0.0 {
-            new_dx = tx + tw - bounds_w;
+        } else if viewport_w > 0.0 {
+            let target_right = tx + tw;
+            let visible_right = cur_dx + viewport_w;
+            if target_right > visible_right {
+                new_dx = if tw > viewport_w {
+                    tx
+                } else {
+                    target_right - viewport_w
+                };
+            }
         }
-        new_dx = new_dx.clamp(0.0, bounds_w.max(0.0));
+        new_dx = new_dx.clamp(0.0, max_dx.max(0.0));
 
         // Vertical
         let mut new_dy = cur_dy;
         if ty < cur_dy {
             new_dy = ty;
-        } else if ty + th > cur_dy + bounds_h && bounds_h > 0.0 {
-            new_dy = ty + th - bounds_h;
+        } else if viewport_h > 0.0 {
+            let target_bottom = ty + th;
+            let visible_bottom = cur_dy + viewport_h;
+            if target_bottom > visible_bottom {
+                new_dy = if th > viewport_h {
+                    ty
+                } else {
+                    target_bottom - viewport_h
+                };
+            }
         }
-        new_dy = new_dy.clamp(0.0, bounds_h.max(0.0));
+        new_dy = new_dy.clamp(0.0, max_dy.max(0.0));
 
         (new_dx, new_dy)
     }
@@ -182,7 +209,10 @@ impl ScrollTree {
     ///
     /// Call `update()` first to ensure dirty nodes are recomputed.
     pub fn accumulated_scroll(&self, id: NodeId) -> (f32, f32) {
-        self.acc_offset.get(id as usize).copied().unwrap_or((0.0, 0.0))
+        self.acc_offset
+            .get(id as usize)
+            .copied()
+            .unwrap_or((0.0, 0.0))
     }
 
     /// Number of nodes (including root).

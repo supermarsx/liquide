@@ -122,9 +122,7 @@ impl CaptureSession {
     /// Resume recording. Transitions Paused -> Recording.
     pub fn resume(&mut self) -> Result<()> {
         if self.state != CaptureState::Paused {
-            return Err(RecordingError::Internal(
-                "cannot resume: not paused".into(),
-            ));
+            return Err(RecordingError::Internal("cannot resume: not paused".into()));
         }
         self.state = CaptureState::Recording;
         // Accumulate the paused duration so elapsed_ms() stays correct

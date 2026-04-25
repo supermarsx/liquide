@@ -22,7 +22,10 @@ pub struct Catalog {
 impl Catalog {
     #[must_use]
     pub fn new() -> Self {
-        Self { packages: Vec::new(), featured_ids: Vec::new() }
+        Self {
+            packages: Vec::new(),
+            featured_ids: Vec::new(),
+        }
     }
 
     /// Load packages into the catalog.
@@ -37,11 +40,15 @@ impl Catalog {
 
     /// Get all packages.
     #[must_use]
-    pub fn all_packages(&self) -> &[PackageInfo] { &self.packages }
+    pub fn all_packages(&self) -> &[PackageInfo] {
+        &self.packages
+    }
 
     /// Total number of packages.
     #[must_use]
-    pub fn total_count(&self) -> usize { self.packages.len() }
+    pub fn total_count(&self) -> usize {
+        self.packages.len()
+    }
 
     /// Get a package by ID.
     #[must_use]
@@ -57,13 +64,17 @@ impl Catalog {
     /// Get packages in a specific category.
     #[must_use]
     pub fn by_category(&self, category: AppCategory) -> Vec<&PackageInfo> {
-        self.packages.iter().filter(|p| p.category == category).collect()
+        self.packages
+            .iter()
+            .filter(|p| p.category == category)
+            .collect()
     }
 
     /// Get featured packages.
     #[must_use]
     pub fn featured(&self) -> Vec<&PackageInfo> {
-        self.featured_ids.iter()
+        self.featured_ids
+            .iter()
             .filter_map(|id| self.find(id))
             .collect()
     }
@@ -84,20 +95,32 @@ impl Catalog {
     #[must_use]
     pub fn search(&self, query: &str) -> Vec<CatalogResult> {
         let q = query.to_lowercase();
-        if q.is_empty() { return Vec::new(); }
+        if q.is_empty() {
+            return Vec::new();
+        }
 
-        let mut results: Vec<CatalogResult> = self.packages.iter()
+        let mut results: Vec<CatalogResult> = self
+            .packages
+            .iter()
             .filter_map(|p| {
                 let mut score = 0u32;
                 let name_lower = p.name.to_lowercase();
                 let summary_lower = p.summary.to_lowercase();
 
-                if name_lower == q { score += 100; }
-                else if name_lower.starts_with(&q) { score += 80; }
-                else if name_lower.contains(&q) { score += 50; }
+                if name_lower == q {
+                    score += 100;
+                } else if name_lower.starts_with(&q) {
+                    score += 80;
+                } else if name_lower.contains(&q) {
+                    score += 50;
+                }
 
-                if summary_lower.contains(&q) { score += 20; }
-                if p.id.to_lowercase().contains(&q) { score += 10; }
+                if summary_lower.contains(&q) {
+                    score += 20;
+                }
+                if p.id.to_lowercase().contains(&q) {
+                    score += 10;
+                }
 
                 if score > 0 {
                     Some(CatalogResult {
@@ -132,5 +155,7 @@ impl Catalog {
 }
 
 impl Default for Catalog {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

@@ -97,6 +97,7 @@ impl Document {
             dirty: crate::dirty::DirtyFlags::all_dirty(),
         };
         self.nodes.insert(id, node);
+        self.dirty.mark_style(id);
         id
     }
 
@@ -117,6 +118,7 @@ impl Document {
             dirty: crate::dirty::DirtyFlags::all_dirty(),
         };
         self.nodes.insert(id, node);
+        self.dirty.mark_style(id);
         id
     }
 
@@ -139,6 +141,7 @@ impl Document {
             dirty: crate::dirty::DirtyFlags::all_dirty(),
         };
         self.nodes.insert(id, node);
+        self.dirty.mark_style(id);
         id
     }
 
@@ -154,6 +157,7 @@ impl Document {
         let id = self.alloc_id();
         let node = Node::new_pseudo_element(id, pseudo_type, content);
         self.nodes.insert(id, node);
+        self.dirty.mark_style(id);
         id
     }
 
@@ -334,6 +338,9 @@ impl Document {
                     }
                 }
             }
+            // Clear from document-level dirty tracking so destroyed nodes
+            // do not leak into subsequent style/layout/paint passes.
+            self.dirty.remove(*id);
         }
     }
 
@@ -343,6 +350,20 @@ impl Document {
                 out.push(child);
                 self.collect_descendants(child, out);
             }
+        }
+    }
+
+    /// Mark every live node in the document as needing style recalculation.
+    ///
+    /// Used by theme hot-reload (`ThemeWatcher`) after the query cache is
+    /// cleared so the next frame re-queries every element's style.
+    pub fn mark_style_all(&mut self) {
+        let ids: Vec<NodeId> = self.nodes.keys().copied().collect();
+        for id in ids {
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.dirty.mark_style_dirty();
+            }
+            self.dirty.mark_style(id);
         }
     }
 
@@ -752,7 +773,8 @@ impl Document {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    /// Update `:first-child` and `:last-child` pseudo-states for a parent's children.
+    /// Update `:first-child`, `:last-child`, `:only-child`, and `:empty`
+    /// pseudo-states for a parent's children.
     fn update_child_pseudo_states(&mut self, parent: NodeId) {
         let children = self
             .nodes
@@ -760,10 +782,12 @@ impl Document {
             .map(|n| n.children.clone())
             .unwrap_or_default();
 
+        let total = children.len();
         for (i, &child_id) in children.iter().enumerate() {
             if let Some(child) = self.nodes.get_mut(&child_id) {
                 let is_first = i == 0;
-                let is_last = i == children.len() - 1;
+                let is_last = i == total - 1;
+                let is_only = total == 1;
 
                 if is_first {
                     child.pseudo_states |= PseudoStateFlags::FIRST_CHILD;
@@ -775,6 +799,12 @@ impl Document {
                     child.pseudo_states |= PseudoStateFlags::LAST_CHILD;
                 } else {
                     child.pseudo_states &= !PseudoStateFlags::LAST_CHILD;
+                }
+
+                if is_only {
+                    child.pseudo_states |= PseudoStateFlags::ONLY_CHILD;
+                } else {
+                    child.pseudo_states &= !PseudoStateFlags::ONLY_CHILD;
                 }
 
                 // :empty
@@ -906,6 +936,33 @@ mod tests {
             doc.get(c)
                 .unwrap()
                 .has_pseudo_state(PseudoStateFlags::LAST_CHILD)
+        );
+    }
+
+    #[test]
+    fn child_pseudo_state_only_child() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let solo = doc.create_element("solo");
+        doc.append_child(root, solo);
+        // A single child is simultaneously first, last, and only.
+        let node = doc.get(solo).unwrap();
+        assert!(node.has_pseudo_state(PseudoStateFlags::FIRST_CHILD));
+        assert!(node.has_pseudo_state(PseudoStateFlags::LAST_CHILD));
+        assert!(node.has_pseudo_state(PseudoStateFlags::ONLY_CHILD));
+
+        // Adding a sibling clears :only-child on both.
+        let sibling = doc.create_element("sibling");
+        doc.append_child(root, sibling);
+        assert!(
+            !doc.get(solo)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::ONLY_CHILD)
+        );
+        assert!(
+            !doc.get(sibling)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::ONLY_CHILD)
         );
     }
 

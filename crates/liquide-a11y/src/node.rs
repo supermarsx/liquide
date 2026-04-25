@@ -74,7 +74,12 @@ pub struct NodeBounds {
 impl NodeBounds {
     #[must_use]
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -156,6 +161,10 @@ impl AccessibleNode {
 
 impl fmt::Display for AccessibleNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AccessibleNode(id={}, role={}, name={})", self.id, self.role, self.name)
+        write!(
+            f,
+            "AccessibleNode(id={}, role={}, name={})",
+            self.id, self.role, self.name
+        )
     }
 }

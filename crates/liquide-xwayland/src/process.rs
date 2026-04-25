@@ -1,6 +1,6 @@
 //! XWayland process lifecycle management.
 
-use crate::error::{XWaylandError, Result};
+use crate::error::{Result, XWaylandError};
 
 /// XWayland process configuration.
 #[derive(Debug, Clone)]

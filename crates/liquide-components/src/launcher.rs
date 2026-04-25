@@ -2,8 +2,8 @@
 
 use liquide_dom::PseudoStateFlags;
 
-use crate::types::{element_ids, LauncherItemInfo};
 use crate::template::{Component, TemplateNode};
+use crate::types::{element_ids, LauncherItemInfo};
 
 /// Launcher component that renders the full launcher overlay.
 ///
@@ -38,8 +38,7 @@ impl Component for LauncherComponent<'_> {
     fn render(&self) -> TemplateNode {
         if !self.visible {
             // Return an empty overlay placeholder (will be unmounted)
-            return TemplateNode::el("launcher-overlay")
-                .id(element_ids::LAUNCHER_OVERLAY);
+            return TemplateNode::el("launcher-overlay").id(element_ids::LAUNCHER_OVERLAY);
         }
 
         TemplateNode::el("launcher-overlay")
@@ -52,40 +51,34 @@ impl Component for LauncherComponent<'_> {
                         TemplateNode::el("launcher-search")
                             .id(element_ids::LAUNCHER_SEARCH)
                             .attr("data-query", self.search_query)
-                            .child(TemplateNode::text(
-                                if self.search_query.is_empty() {
-                                    "Search…"
-                                } else {
-                                    self.search_query
-                                },
-                            )),
+                            .child(TemplateNode::text(if self.search_query.is_empty() {
+                                "Search…"
+                            } else {
+                                self.search_query
+                            })),
                     )
                     // Results list
-                    .child(
-                        TemplateNode::el("launcher-results")
-                            .children(self.items.iter().enumerate().map(|(i, item)| {
-                                TemplateNode::el("launcher-item")
-                                    .key(&item.app_id)
-                                    .class_if("selected", i == self.selected_index)
-                                    .attr("data-app-id", &item.app_id)
-                                    .attr("data-icon", &item.icon)
-                                    .attr("data-index", &i.to_string())
-                                    .pseudo_if(
-                                        PseudoStateFlags::HOVER,
-                                        i == self.selected_index,
-                                    )
-                                    // Icon sub-element
-                                    .child(
-                                        TemplateNode::el("launcher-item-icon")
-                                            .attr("data-icon", &item.icon),
-                                    )
-                                    // Label sub-element
-                                    .child(
-                                        TemplateNode::el("launcher-item-label")
-                                            .child(TemplateNode::text(&item.name)),
-                                    )
-                            })),
-                    ),
+                    .child(TemplateNode::el("launcher-results").children(
+                        self.items.iter().enumerate().map(|(i, item)| {
+                            TemplateNode::el("launcher-item")
+                                .key(&item.app_id)
+                                .class_if("selected", i == self.selected_index)
+                                .attr("data-app-id", &item.app_id)
+                                .attr("data-icon", &item.icon)
+                                .attr("data-index", &i.to_string())
+                                .pseudo_if(PseudoStateFlags::HOVER, i == self.selected_index)
+                                // Icon sub-element
+                                .child(
+                                    TemplateNode::el("launcher-item-icon")
+                                        .attr("data-icon", &item.icon),
+                                )
+                                // Label sub-element
+                                .child(
+                                    TemplateNode::el("launcher-item-label")
+                                        .child(TemplateNode::text(&item.name)),
+                                )
+                        }),
+                    )),
             )
     }
 
@@ -155,9 +148,15 @@ mod tests {
         let tree = comp.render();
 
         let results = &tree.children[0].children[1];
-        assert!(!results.children[0].classes.contains(&"selected".to_string()));
-        assert!(results.children[1].classes.contains(&"selected".to_string()));
-        assert!(!results.children[2].classes.contains(&"selected".to_string()));
+        assert!(!results.children[0]
+            .classes
+            .contains(&"selected".to_string()));
+        assert!(results.children[1]
+            .classes
+            .contains(&"selected".to_string()));
+        assert!(!results.children[2]
+            .classes
+            .contains(&"selected".to_string()));
     }
 
     #[test]
@@ -172,7 +171,10 @@ mod tests {
         let tree = comp.render();
 
         let search = &tree.children[0].children[0];
-        assert!(search.attrs.iter().any(|(k, v)| k == "data-query" && v == "firefox"));
+        assert!(search
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-query" && v == "firefox"));
         assert_eq!(search.children[0].text.as_deref(), Some("firefox"));
     }
 

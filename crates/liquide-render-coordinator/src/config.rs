@@ -8,34 +8,34 @@ use std::time::Duration;
 pub struct RenderConfig {
     /// Number of dedicated window render threads
     pub window_threads: usize,
-    
+
     /// Enable dedicated dock render thread
     pub enable_dock: bool,
-    
+
     /// Enable dedicated status bar render thread
     pub enable_statusbar: bool,
-    
+
     /// Enable dedicated background render thread
     pub enable_background: bool,
-    
+
     /// Enable dedicated wallpaper render thread
     pub enable_wallpaper: bool,
-    
+
     /// Maximum queue size per thread
     pub queue_size: usize,
-    
+
     /// Render timeout duration
     pub timeout: Duration,
-    
+
     /// Enable vsync
     pub vsync: bool,
-    
+
     /// Target frame rate (Hz)
     pub target_fps: u32,
-    
+
     /// Enable frame pacing
     pub frame_pacing: bool,
-    
+
     /// Priority boost for focused window
     pub focused_window_boost: bool,
 }
@@ -63,24 +63,24 @@ impl RenderConfig {
     pub fn builder() -> RenderConfigBuilder {
         RenderConfigBuilder::default()
     }
-    
+
     /// Validate configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.window_threads == 0 {
             return Err("window_threads must be > 0".to_string());
         }
-        
+
         if self.queue_size == 0 {
             return Err("queue_size must be > 0".to_string());
         }
-        
+
         if self.target_fps == 0 || self.target_fps > 1000 {
             return Err("target_fps must be between 1 and 1000".to_string());
         }
-        
+
         Ok(())
     }
-    
+
     /// Get frame duration based on target FPS
     pub fn frame_duration(&self) -> Duration {
         Duration::from_micros(1_000_000 / self.target_fps as u64)
@@ -109,71 +109,71 @@ impl RenderConfigBuilder {
         self.window_threads = Some(threads);
         self
     }
-    
+
     /// Enable/disable dock rendering
     pub fn enable_dock(mut self, enable: bool) -> Self {
         self.enable_dock = Some(enable);
         self
     }
-    
+
     /// Enable/disable status bar rendering
     pub fn enable_statusbar(mut self, enable: bool) -> Self {
         self.enable_statusbar = Some(enable);
         self
     }
-    
+
     /// Enable/disable background rendering
     pub fn enable_background(mut self, enable: bool) -> Self {
         self.enable_background = Some(enable);
         self
     }
-    
+
     /// Enable/disable wallpaper rendering
     pub fn enable_wallpaper(mut self, enable: bool) -> Self {
         self.enable_wallpaper = Some(enable);
         self
     }
-    
+
     /// Set queue size
     pub fn queue_size(mut self, size: usize) -> Self {
         self.queue_size = Some(size);
         self
     }
-    
+
     /// Set render timeout
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
     }
-    
+
     /// Enable/disable vsync
     pub fn vsync(mut self, enable: bool) -> Self {
         self.vsync = Some(enable);
         self
     }
-    
+
     /// Set target FPS
     pub fn target_fps(mut self, fps: u32) -> Self {
         self.target_fps = Some(fps);
         self
     }
-    
+
     /// Enable/disable frame pacing
     pub fn frame_pacing(mut self, enable: bool) -> Self {
         self.frame_pacing = Some(enable);
         self
     }
-    
+
     /// Enable/disable focused window priority boost
     pub fn focused_window_boost(mut self, enable: bool) -> Self {
         self.focused_window_boost = Some(enable);
         self
     }
-    
+
     /// Build the configuration
     pub fn build(self) -> RenderConfig {
         let default = RenderConfig::default();
-        
+
         RenderConfig {
             window_threads: self.window_threads.unwrap_or(default.window_threads),
             enable_dock: self.enable_dock.unwrap_or(default.enable_dock),
@@ -185,7 +185,9 @@ impl RenderConfigBuilder {
             vsync: self.vsync.unwrap_or(default.vsync),
             target_fps: self.target_fps.unwrap_or(default.target_fps),
             frame_pacing: self.frame_pacing.unwrap_or(default.frame_pacing),
-            focused_window_boost: self.focused_window_boost.unwrap_or(default.focused_window_boost),
+            focused_window_boost: self
+                .focused_window_boost
+                .unwrap_or(default.focused_window_boost),
         }
     }
 }

@@ -35,12 +35,12 @@ pub(super) struct PaintState {
 impl PaintState {
     pub(super) fn new() -> Self {
         let mut paint = LazyPaintManager::new();
-        paint.register_surface(DESKTOP_SURFACE, true);  // opaque desktop
-        paint.register_surface(CURSOR_SURFACE, false);   // transparent cursor overlay
+        paint.register_surface(DESKTOP_SURFACE, true); // opaque desktop
+        paint.register_surface(CURSOR_SURFACE, false); // transparent cursor overlay
 
         let mut timers = TimerManager::new();
         let now_us = Self::now_us();
-        timers.set_timer(0, TIMER_TICK, 1000, now_us);       // 1s tick
+        timers.set_timer(0, TIMER_TICK, 1000, now_us); // 1s tick
         timers.set_timer(0, TIMER_TELEMETRY, 10_000, now_us); // 10s telemetry
 
         Self { paint, timers }
@@ -49,21 +49,25 @@ impl PaintState {
     // ── Invalidation (replaces dirty flags) ─────────────────────────────
 
     /// Mark the entire desktop as needing repaint (replaces `self.dirty = true`).
+    #[allow(dead_code)]
     pub(super) fn invalidate_full(&mut self) {
         self.paint.invalidate_full(DESKTOP_SURFACE);
     }
 
     /// Mark the cursor region as needing repaint (replaces `self.cursor_dirty = true`).
+    #[allow(dead_code)]
     pub(super) fn invalidate_cursor(&mut self, x: f32, y: f32, size: f32) {
         self.paint.invalidate(CURSOR_SURFACE, [x, y, size, size]);
     }
 
     /// Whether the main desktop surface needs repainting.
+    #[allow(dead_code)]
     pub(super) fn needs_paint(&self) -> bool {
         self.paint.has_pending_paints()
     }
 
     /// Whether only the cursor needs repainting (cursor dirty, desktop clean).
+    #[allow(dead_code)]
     pub(super) fn needs_cursor_only(&self) -> bool {
         // Check if cursor surface is dirty but desktop surface is not.
         // Use synthesize_for to peek without consuming.
@@ -90,12 +94,14 @@ impl PaintState {
     }
 
     /// Clear all pending paint state after a frame is submitted.
+    #[allow(dead_code)]
     pub(super) fn validate(&mut self) {
         self.paint.validate(DESKTOP_SURFACE);
         self.paint.validate(CURSOR_SURFACE);
     }
 
     /// Clear just cursor paint state.
+    #[allow(dead_code)]
     pub(super) fn validate_cursor(&mut self) {
         self.paint.validate(CURSOR_SURFACE);
     }

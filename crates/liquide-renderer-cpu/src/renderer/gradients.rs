@@ -71,7 +71,9 @@ impl SoftwareRenderer {
                                 fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
                             );
                             let c = (-d + 0.5).clamp(0.0, 1.0);
-                            if c <= 0.0 { continue; }
+                            if c <= 0.0 {
+                                continue;
+                            }
                             c
                         } else {
                             1.0
@@ -118,7 +120,9 @@ impl SoftwareRenderer {
                                 fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
                             );
                             let c = (-sd + 0.5).clamp(0.0, 1.0);
-                            if c <= 0.0 { continue; }
+                            if c <= 0.0 {
+                                continue;
+                            }
                             c
                         } else {
                             1.0
@@ -162,7 +166,9 @@ impl SoftwareRenderer {
                                 fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
                             );
                             let c = (-sd + 0.5).clamp(0.0, 1.0);
-                            if c <= 0.0 { continue; }
+                            if c <= 0.0 {
+                                continue;
+                            }
                             c
                         } else {
                             1.0

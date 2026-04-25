@@ -9,7 +9,10 @@ mod contrast_tests {
     #[test]
     fn luminance_black() {
         let l = luminance(0, 0, 0);
-        assert!((l - 0.0).abs() < 1e-10, "black luminance should be 0, got {l}");
+        assert!(
+            (l - 0.0).abs() < 1e-10,
+            "black luminance should be 0, got {l}"
+        );
     }
 
     #[test]
@@ -77,10 +80,7 @@ mod contrast_tests {
     #[test]
     fn contrast_same_color() {
         let r = contrast_ratio((100, 100, 100), (100, 100, 100));
-        assert!(
-            (r - 1.0).abs() < 0.01,
-            "same color should be 1:1, got {r}"
-        );
+        assert!((r - 1.0).abs() < 0.01, "same color should be 1:1, got {r}");
     }
 
     #[test]
@@ -269,10 +269,7 @@ mod high_contrast_tests {
         };
         let boosted = increase_contrast(&base, 7.0);
         let ratio = contrast_ratio(boosted.fg_color, boosted.bg_color);
-        assert!(
-            ratio >= 7.0,
-            "boosted fg should meet 7:1, got {ratio}"
-        );
+        assert!(ratio >= 7.0, "boosted fg should meet 7:1, got {ratio}");
     }
 
     #[test]
@@ -512,7 +509,10 @@ mod watcher_tests {
         // Tiny change within epsilon — should NOT register.
         b.text_scale_factor = 1.0 + f32::EPSILON * 0.5;
         let changes = check_for_changes(&a, &b);
-        assert!(changes.is_empty(), "tiny scale change within epsilon should be ignored");
+        assert!(
+            changes.is_empty(),
+            "tiny scale change within epsilon should be ignored"
+        );
     }
 
     #[test]

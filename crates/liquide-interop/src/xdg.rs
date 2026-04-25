@@ -30,10 +30,7 @@ impl XdgDirs {
             cache_home: format!("{home}/.cache"),
             state_home: format!("{home}/.local/state"),
             runtime_dir: None,
-            data_dirs: vec![
-                "/usr/local/share".to_string(),
-                "/usr/share".to_string(),
-            ],
+            data_dirs: vec!["/usr/local/share".to_string(), "/usr/share".to_string()],
             config_dirs: vec!["/etc/xdg".to_string()],
         }
     }

@@ -251,7 +251,7 @@ impl TcpTransport {
         }
 
         let mut w = writer.lock().await;
-        
+
         // Track position: which buffer and offset within that buffer
         let mut buf_idx = 0;
         let mut byte_offset = 0;
@@ -259,7 +259,7 @@ impl TcpTransport {
         while buf_idx < buffers.len() {
             // Build IoSlice array from current position
             let mut slices: Vec<IoSlice<'_>> = Vec::with_capacity(buffers.len() - buf_idx);
-            
+
             // First slice starts at byte_offset
             if buf_idx < buffers.len() {
                 slices.push(IoSlice::new(&buffers[buf_idx][byte_offset..]));
@@ -268,7 +268,7 @@ impl TcpTransport {
             for buf in &buffers[buf_idx + 1..] {
                 slices.push(IoSlice::new(buf));
             }
-            
+
             if slices.is_empty() {
                 break;
             }

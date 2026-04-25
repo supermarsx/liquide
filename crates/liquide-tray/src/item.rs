@@ -117,7 +117,11 @@ impl Pixmap {
     pub fn new(width: u32, height: u32, data: Vec<u8>) -> Option<Self> {
         let expected = (width as usize) * (height as usize) * 4;
         if data.len() == expected {
-            Some(Self { width, height, data })
+            Some(Self {
+                width,
+                height,
+                data,
+            })
         } else {
             None
         }
@@ -208,6 +212,46 @@ impl StatusNotifierItem {
     /// Returns `true` if the item has a tooltip.
     pub fn has_tooltip(&self) -> bool {
         self.tooltip.as_ref().is_some_and(|t| !t.is_empty())
+    }
+
+    /// Returns the best icon name for the item given the desktop theme
+    /// variant (light or dark).
+    ///
+    /// Follows the freedesktop.org icon-theme convention of swapping the
+    /// `-symbolic` suffix for variant-qualified variants. Falls back to
+    /// [`effective_icon_name`](Self::effective_icon_name) when no variant is
+    /// found.
+    pub fn effective_icon_name_for_theme(&self, variant: UiThemeVariant) -> String {
+        let base = self.effective_icon_name();
+        variant_icon_name(base, variant)
+    }
+}
+
+/// Desktop theme variant used to pick an appropriate tray icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum UiThemeVariant {
+    /// Light background — prefer dark-foreground icons.
+    Light,
+    /// Dark background — prefer light-foreground icons.
+    Dark,
+}
+
+/// Compute an icon-theme name qualified with the light/dark variant.
+///
+/// Given `chrome-symbolic`, with [`UiThemeVariant::Dark`] returns
+/// `chrome-symbolic-dark`. If the base name is empty, returns an empty
+/// string. Icons whose base already carries a `-dark` / `-light` suffix
+/// are returned unchanged.
+pub fn variant_icon_name(base: &str, variant: UiThemeVariant) -> String {
+    if base.is_empty() {
+        return String::new();
+    }
+    if base.ends_with("-dark") || base.ends_with("-light") {
+        return base.to_string();
+    }
+    match variant {
+        UiThemeVariant::Light => format!("{base}-light"),
+        UiThemeVariant::Dark => format!("{base}-dark"),
     }
 }
 

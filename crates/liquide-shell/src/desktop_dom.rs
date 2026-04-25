@@ -35,8 +35,8 @@
 
 use std::path::Path;
 
-use liquide_dom::{Document, NodeId, PseudoStateFlags};
 use liquide_dom::html_parser::parse_html_into;
+use liquide_dom::{Document, NodeId, PseudoStateFlags};
 use tracing::{debug, warn};
 
 // ── Embedded HTML templates ─────────────────────────────────────────
@@ -57,6 +57,7 @@ const DEFAULT_DESKTOP_HTML: &str = r#"
 "#;
 
 /// Default window template used by `add_window_from_html()`.
+#[allow(dead_code)]
 const DEFAULT_WINDOW_HTML: &str = r#"
 <window>
   <window-titlebar>
@@ -127,72 +128,110 @@ impl DesktopDocument {
         parse_html_into(&mut doc, root, html);
 
         // Look up well-known elements by ID, creating missing ones as fallbacks.
-        let desktop_bg = doc.get_element_by_id(element_ids::DESKTOP_BG).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::DESKTOP_BG);
-            let el = doc.create_element("desktop-background");
-            doc.set_id(el, element_ids::DESKTOP_BG);
-            doc.append_child(root, el);
-            el
-        });
+        let desktop_bg = doc
+            .get_element_by_id(element_ids::DESKTOP_BG)
+            .unwrap_or_else(|| {
+                warn!(
+                    "HTML template missing #{}; creating fallback",
+                    element_ids::DESKTOP_BG
+                );
+                let el = doc.create_element("desktop-background");
+                doc.set_id(el, element_ids::DESKTOP_BG);
+                doc.append_child(root, el);
+                el
+            });
 
-        let statusbar = doc.get_element_by_id(element_ids::STATUSBAR).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR);
-            let el = doc.create_element("statusbar");
-            doc.set_id(el, element_ids::STATUSBAR);
-            doc.append_child(root, el);
-            el
-        });
+        let statusbar = doc
+            .get_element_by_id(element_ids::STATUSBAR)
+            .unwrap_or_else(|| {
+                warn!(
+                    "HTML template missing #{}; creating fallback",
+                    element_ids::STATUSBAR
+                );
+                let el = doc.create_element("statusbar");
+                doc.set_id(el, element_ids::STATUSBAR);
+                doc.append_child(root, el);
+                el
+            });
 
-        let statusbar_slot_left = doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR_SLOT_LEFT);
-            let el = doc.create_element("statusbar-slot");
-            doc.set_id(el, element_ids::STATUSBAR_SLOT_LEFT);
-            doc.add_class(el, "left");
-            doc.append_child(statusbar, el);
-            el
-        });
+        let statusbar_slot_left = doc
+            .get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT)
+            .unwrap_or_else(|| {
+                warn!(
+                    "HTML template missing #{}; creating fallback",
+                    element_ids::STATUSBAR_SLOT_LEFT
+                );
+                let el = doc.create_element("statusbar-slot");
+                doc.set_id(el, element_ids::STATUSBAR_SLOT_LEFT);
+                doc.add_class(el, "left");
+                doc.append_child(statusbar, el);
+                el
+            });
 
-        let statusbar_slot_center = doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR_SLOT_CENTER);
-            let el = doc.create_element("statusbar-slot");
-            doc.set_id(el, element_ids::STATUSBAR_SLOT_CENTER);
-            doc.add_class(el, "center");
-            doc.append_child(statusbar, el);
-            el
-        });
+        let statusbar_slot_center = doc
+            .get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER)
+            .unwrap_or_else(|| {
+                warn!(
+                    "HTML template missing #{}; creating fallback",
+                    element_ids::STATUSBAR_SLOT_CENTER
+                );
+                let el = doc.create_element("statusbar-slot");
+                doc.set_id(el, element_ids::STATUSBAR_SLOT_CENTER);
+                doc.add_class(el, "center");
+                doc.append_child(statusbar, el);
+                el
+            });
 
-        let statusbar_slot_right = doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::STATUSBAR_SLOT_RIGHT);
-            let el = doc.create_element("statusbar-slot");
-            doc.set_id(el, element_ids::STATUSBAR_SLOT_RIGHT);
-            doc.add_class(el, "right");
-            doc.append_child(statusbar, el);
-            el
-        });
+        let statusbar_slot_right = doc
+            .get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT)
+            .unwrap_or_else(|| {
+                warn!(
+                    "HTML template missing #{}; creating fallback",
+                    element_ids::STATUSBAR_SLOT_RIGHT
+                );
+                let el = doc.create_element("statusbar-slot");
+                doc.set_id(el, element_ids::STATUSBAR_SLOT_RIGHT);
+                doc.add_class(el, "right");
+                doc.append_child(statusbar, el);
+                el
+            });
 
-        let workspace = doc.get_element_by_id(element_ids::WORKSPACE).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::WORKSPACE);
-            let el = doc.create_element("workspace-container");
-            doc.set_id(el, element_ids::WORKSPACE);
-            doc.append_child(root, el);
-            el
-        });
+        let workspace = doc
+            .get_element_by_id(element_ids::WORKSPACE)
+            .unwrap_or_else(|| {
+                warn!(
+                    "HTML template missing #{}; creating fallback",
+                    element_ids::WORKSPACE
+                );
+                let el = doc.create_element("workspace-container");
+                doc.set_id(el, element_ids::WORKSPACE);
+                doc.append_child(root, el);
+                el
+            });
 
         let dock = doc.get_element_by_id(element_ids::DOCK).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::DOCK);
+            warn!(
+                "HTML template missing #{}; creating fallback",
+                element_ids::DOCK
+            );
             let el = doc.create_element("dock");
             doc.set_id(el, element_ids::DOCK);
             doc.append_child(root, el);
             el
         });
 
-        let notification_area = doc.get_element_by_id(element_ids::NOTIFICATION_AREA).unwrap_or_else(|| {
-            warn!("HTML template missing #{}; creating fallback", element_ids::NOTIFICATION_AREA);
-            let el = doc.create_element("notification-area");
-            doc.set_id(el, element_ids::NOTIFICATION_AREA);
-            doc.append_child(root, el);
-            el
-        });
+        let notification_area = doc
+            .get_element_by_id(element_ids::NOTIFICATION_AREA)
+            .unwrap_or_else(|| {
+                warn!(
+                    "HTML template missing #{}; creating fallback",
+                    element_ids::NOTIFICATION_AREA
+                );
+                let el = doc.create_element("notification-area");
+                doc.set_id(el, element_ids::NOTIFICATION_AREA);
+                doc.append_child(root, el);
+                el
+            });
 
         debug!(
             nodes = doc.node_count(),
@@ -241,7 +280,10 @@ impl DesktopDocument {
             if let Some(exe_dir) = exe.parent() {
                 let candidate = exe_dir.join("assets").join("desktop.html");
                 if candidate.exists() {
-                    debug!(?candidate, "DesktopDocument: found desktop.html next to executable");
+                    debug!(
+                        ?candidate,
+                        "DesktopDocument: found desktop.html next to executable"
+                    );
                     return Self::from_file(&candidate);
                 }
             }
@@ -405,8 +447,7 @@ impl DesktopDocument {
         self.doc.set_id(el, window_id);
         if focused {
             self.doc.add_class(el, "focused");
-            self.doc
-                .set_pseudo_state(el, PseudoStateFlags::FOCUS, true);
+            self.doc.set_pseudo_state(el, PseudoStateFlags::FOCUS, true);
         }
 
         // <window-titlebar>
@@ -560,11 +601,8 @@ impl DesktopDocument {
             if let Some(&results) = launcher_kids.get(1) {
                 let items: Vec<NodeId> = self.doc.children(results).to_vec();
                 for (i, &item) in items.iter().enumerate() {
-                    self.doc.set_pseudo_state(
-                        item,
-                        PseudoStateFlags::HOVER,
-                        index == Some(i),
-                    );
+                    self.doc
+                        .set_pseudo_state(item, PseudoStateFlags::HOVER, index == Some(i));
                 }
             }
         }
@@ -634,11 +672,7 @@ impl DesktopDocument {
     ///
     /// `button_tag` should be one of: `"close-button"`, `"maximize-button"`,
     /// `"minimize-button"`.
-    pub fn set_window_button_hover(
-        &mut self,
-        window_id: &str,
-        button_tag: Option<&str>,
-    ) {
+    pub fn set_window_button_hover(&mut self, window_id: &str, button_tag: Option<&str>) {
         if let Some(win_node) = self.doc.get_element_by_id(window_id) {
             let win_kids: Vec<NodeId> = self.doc.children(win_node).to_vec();
             // First child is window-titlebar
@@ -649,11 +683,7 @@ impl DesktopDocument {
                     let buttons: Vec<NodeId> = self.doc.children(btn_group).to_vec();
                     for btn in buttons {
                         let is_hovered = button_tag
-                            .and_then(|tag| {
-                                self.doc
-                                    .get(btn)
-                                    .map(|n| n.tag_name() == tag)
-                            })
+                            .and_then(|tag| self.doc.get(btn).map(|n| n.tag_name() == tag))
                             .unwrap_or(false);
                         self.doc
                             .set_pseudo_state(btn, PseudoStateFlags::HOVER, is_hovered);
@@ -786,11 +816,24 @@ mod tests {
         ];
 
         let overlay = desktop.show_launcher(&items);
-        assert!(desktop.doc.get_element_by_id(element_ids::LAUNCHER_OVERLAY).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::LAUNCHER).is_some());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::LAUNCHER_OVERLAY)
+                .is_some()
+        );
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::LAUNCHER)
+                .is_some()
+        );
 
         // Launcher has search + results
-        let launcher = desktop.doc.get_element_by_id(element_ids::LAUNCHER).unwrap();
+        let launcher = desktop
+            .doc
+            .get_element_by_id(element_ids::LAUNCHER)
+            .unwrap();
         assert_eq!(desktop.doc.children(launcher).len(), 2);
 
         // Results has 2 items
@@ -801,7 +844,12 @@ mod tests {
         assert!(desktop.doc.children(desktop.doc.root()).contains(&overlay));
 
         desktop.hide_launcher();
-        assert!(desktop.doc.get_element_by_id(element_ids::LAUNCHER_OVERLAY).is_none());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::LAUNCHER_OVERLAY)
+                .is_none()
+        );
     }
 
     #[test]
@@ -814,11 +862,21 @@ mod tests {
         }];
 
         let menu = desktop.show_app_menu(&items);
-        assert!(desktop.doc.get_element_by_id(element_ids::APP_MENU).is_some());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::APP_MENU)
+                .is_some()
+        );
         assert_eq!(desktop.doc.children(menu).len(), 1);
 
         desktop.hide_app_menu();
-        assert!(desktop.doc.get_element_by_id(element_ids::APP_MENU).is_none());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::APP_MENU)
+                .is_none()
+        );
     }
 
     #[test]
@@ -849,14 +907,49 @@ mod tests {
         );
 
         // Both should resolve all well-known IDs
-        assert!(from_html.doc.get_element_by_id(element_ids::DESKTOP_BG).is_some());
-        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR).is_some());
-        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT).is_some());
-        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER).is_some());
-        assert!(from_html.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT).is_some());
-        assert!(from_html.doc.get_element_by_id(element_ids::WORKSPACE).is_some());
+        assert!(
+            from_html
+                .doc
+                .get_element_by_id(element_ids::DESKTOP_BG)
+                .is_some()
+        );
+        assert!(
+            from_html
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR)
+                .is_some()
+        );
+        assert!(
+            from_html
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT)
+                .is_some()
+        );
+        assert!(
+            from_html
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER)
+                .is_some()
+        );
+        assert!(
+            from_html
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT)
+                .is_some()
+        );
+        assert!(
+            from_html
+                .doc
+                .get_element_by_id(element_ids::WORKSPACE)
+                .is_some()
+        );
         assert!(from_html.doc.get_element_by_id(element_ids::DOCK).is_some());
-        assert!(from_html.doc.get_element_by_id(element_ids::NOTIFICATION_AREA).is_some());
+        assert!(
+            from_html
+                .doc
+                .get_element_by_id(element_ids::NOTIFICATION_AREA)
+                .is_some()
+        );
 
         // Statusbar should have 3 slots
         assert_eq!(from_html.doc.children(from_html.statusbar).len(), 3);
@@ -876,15 +969,21 @@ mod tests {
             Some(desktop.statusbar)
         );
         assert_eq!(
-            desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT),
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT),
             Some(desktop.statusbar_slot_left)
         );
         assert_eq!(
-            desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER),
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER),
             Some(desktop.statusbar_slot_center)
         );
         assert_eq!(
-            desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT),
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT),
             Some(desktop.statusbar_slot_right)
         );
         assert_eq!(
@@ -896,7 +995,9 @@ mod tests {
             Some(desktop.dock)
         );
         assert_eq!(
-            desktop.doc.get_element_by_id(element_ids::NOTIFICATION_AREA),
+            desktop
+                .doc
+                .get_element_by_id(element_ids::NOTIFICATION_AREA),
             Some(desktop.notification_area)
         );
     }
@@ -908,16 +1009,51 @@ mod tests {
         let desktop = DesktopDocument::from_html(r#"<desktop-background id="desktop-bg" />"#);
 
         // All well-known fields should still be valid
-        assert!(desktop.doc.get_element_by_id(element_ids::DESKTOP_BG).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::WORKSPACE).is_some());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::DESKTOP_BG)
+                .is_some()
+        );
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR)
+                .is_some()
+        );
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::WORKSPACE)
+                .is_some()
+        );
         assert!(desktop.doc.get_element_by_id(element_ids::DOCK).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::NOTIFICATION_AREA).is_some());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::NOTIFICATION_AREA)
+                .is_some()
+        );
 
         // Statusbar fallback should also create its child slots
-        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT).is_some());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_LEFT)
+                .is_some()
+        );
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_CENTER)
+                .is_some()
+        );
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR_SLOT_RIGHT)
+                .is_some()
+        );
     }
 
     #[test]
@@ -925,22 +1061,38 @@ mod tests {
         // When no files exist on disk, load_or_default() should produce the
         // same structure as new().
         let desktop = DesktopDocument::load_or_default();
-        assert!(desktop.doc.get_element_by_id(element_ids::DESKTOP_BG).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::STATUSBAR).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::WORKSPACE).is_some());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::DESKTOP_BG)
+                .is_some()
+        );
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::STATUSBAR)
+                .is_some()
+        );
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::WORKSPACE)
+                .is_some()
+        );
         assert!(desktop.doc.get_element_by_id(element_ids::DOCK).is_some());
-        assert!(desktop.doc.get_element_by_id(element_ids::NOTIFICATION_AREA).is_some());
+        assert!(
+            desktop
+                .doc
+                .get_element_by_id(element_ids::NOTIFICATION_AREA)
+                .is_some()
+        );
     }
 
     #[test]
     fn add_window_from_html_template() {
         let mut desktop = DesktopDocument::new();
-        let win = desktop.add_window_from_html(
-            DEFAULT_WINDOW_HTML,
-            "win-html-1",
-            "HTML Window",
-            true,
-        );
+        let win =
+            desktop.add_window_from_html(DEFAULT_WINDOW_HTML, "win-html-1", "HTML Window", true);
 
         // Window should be in workspace
         assert!(desktop.doc.children(desktop.workspace).contains(&win));
@@ -977,15 +1129,16 @@ mod tests {
   <notification-body></notification-body>
 </notification>
 "#;
-        let notif = desktop.add_notification_from_html(
-            html,
-            "notif-html-1",
-            "Test Title",
-            "Test Body",
-        );
+        let notif =
+            desktop.add_notification_from_html(html, "notif-html-1", "Test Title", "Test Body");
 
         // Notification should be in notification-area
-        assert!(desktop.doc.children(desktop.notification_area).contains(&notif));
+        assert!(
+            desktop
+                .doc
+                .children(desktop.notification_area)
+                .contains(&notif)
+        );
 
         // Should have the correct ID
         assert_eq!(
@@ -1012,12 +1165,36 @@ mod tests {
         let buttons: Vec<NodeId> = desktop.doc.children(btn_group).to_vec();
 
         // minimize=0, maximize=1, close=2
-        assert!(!desktop.doc.get(buttons[0]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
-        assert!(!desktop.doc.get(buttons[1]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
-        assert!(desktop.doc.get(buttons[2]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+        assert!(
+            !desktop
+                .doc
+                .get(buttons[0])
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::HOVER)
+        );
+        assert!(
+            !desktop
+                .doc
+                .get(buttons[1])
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::HOVER)
+        );
+        assert!(
+            desktop
+                .doc
+                .get(buttons[2])
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::HOVER)
+        );
 
         // Clear hover
         desktop.set_window_button_hover("win-btn", None);
-        assert!(!desktop.doc.get(buttons[2]).unwrap().has_pseudo_state(PseudoStateFlags::HOVER));
+        assert!(
+            !desktop
+                .doc
+                .get(buttons[2])
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::HOVER)
+        );
     }
 }

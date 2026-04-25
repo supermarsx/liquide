@@ -1,8 +1,6 @@
 //! Built-in element rules for standard shell UI components.
 
-use crate::computed::{
-    AlignItems, Display, FlexDirection, JustifyContent, Position,
-};
+use crate::computed::{AlignItems, Display, FlexDirection, JustifyContent, Position};
 
 use super::element_rule::ElementRule;
 use super::engine::RuleEngine;

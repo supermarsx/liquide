@@ -179,48 +179,31 @@ pub struct TrayMenuEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SeamlessMessage {
     // -- server -> client ------------------------------------------------
-
     /// A new remote window has been created.
-    WindowCreate {
-        window: SeamlessWindow,
-    },
+    WindowCreate { window: SeamlessWindow },
     /// A remote window has been destroyed.
-    WindowDestroy {
-        window_id: WindowId,
-    },
+    WindowDestroy { window_id: WindowId },
     /// The geometry of a remote window changed.
-    WindowGeometry {
-        window_id: WindowId,
-        geometry: Rect,
-    },
+    WindowGeometry { window_id: WindowId, geometry: Rect },
     /// The state of a remote window changed.
     WindowState {
         window_id: WindowId,
         state: crate::window::WindowState,
     },
     /// The title of a remote window changed.
-    WindowTitle {
-        window_id: WindowId,
-        title: String,
-    },
+    WindowTitle { window_id: WindowId, title: String },
     /// The icon of a remote window changed.
     WindowIcon {
         window_id: WindowId,
         icon_data: Vec<u8>,
     },
     /// The full z-order of all windows, front-to-back.
-    WindowZOrder {
-        window_ids: Vec<WindowId>,
-    },
+    WindowZOrder { window_ids: Vec<WindowId> },
     /// Input focus moved to the given window.
-    WindowFocus {
-        window_id: WindowId,
-    },
+    WindowFocus { window_id: WindowId },
 
     /// A new tray icon appeared.
-    TrayIconCreate {
-        info: TrayIconInfo,
-    },
+    TrayIconCreate { info: TrayIconInfo },
     /// An existing tray icon was updated.
     TrayIconUpdate {
         item_id: String,
@@ -228,9 +211,7 @@ pub enum SeamlessMessage {
         tooltip: Option<String>,
     },
     /// A tray icon was removed.
-    TrayIconDestroy {
-        item_id: String,
-    },
+    TrayIconDestroy { item_id: String },
 
     /// A drag-and-drop operation was initiated from a remote window.
     DndOffer {
@@ -238,25 +219,15 @@ pub enum SeamlessMessage {
         mime_types: Vec<String>,
     },
     /// The drag pointer moved.
-    DndMotion {
-        x: f32,
-        y: f32,
-    },
+    DndMotion { x: f32, y: f32 },
     /// The drag-and-drop operation finished.
-    DndFinished {
-        accepted: bool,
-    },
+    DndFinished { accepted: bool },
     /// The drag-and-drop operation was cancelled.
     DndCancel,
 
     // -- client -> server ------------------------------------------------
-
     /// The user moved a window on the host side.
-    ClientWindowMove {
-        window_id: WindowId,
-        x: f32,
-        y: f32,
-    },
+    ClientWindowMove { window_id: WindowId, x: f32, y: f32 },
     /// The user resized a window on the host side.
     ClientWindowResize {
         window_id: WindowId,
@@ -269,18 +240,11 @@ pub enum SeamlessMessage {
         state: crate::window::WindowState,
     },
     /// The user focused a window on the host side.
-    ClientWindowFocus {
-        window_id: WindowId,
-    },
+    ClientWindowFocus { window_id: WindowId },
     /// The user closed a window on the host side.
-    ClientWindowClose {
-        window_id: WindowId,
-    },
+    ClientWindowClose { window_id: WindowId },
     /// The user activated a tray-icon context-menu action.
-    ClientTrayAction {
-        item_id: String,
-        action_id: String,
-    },
+    ClientTrayAction { item_id: String, action_id: String },
     /// The user dropped data onto a remote window.
     ClientDndDrop {
         target_window_id: WindowId,
@@ -332,7 +296,6 @@ impl SeamlessManager {
     pub fn apply_message(&mut self, msg: SeamlessMessage) {
         match msg {
             // -- server -> client ----------------------------------------
-
             SeamlessMessage::WindowCreate { window } => {
                 self.create_window(window);
             }
@@ -393,7 +356,6 @@ impl SeamlessManager {
             | SeamlessMessage::DndCancel => {}
 
             // -- client -> server ----------------------------------------
-
             SeamlessMessage::ClientWindowMove { window_id, x, y } => {
                 if let Some(win) = self.windows.get_mut(&window_id) {
                     win.geometry.x = x;
@@ -422,8 +384,7 @@ impl SeamlessManager {
 
             // Tray action and DnD drop are fire-and-forget commands;
             // the manager does not track pending actions.
-            SeamlessMessage::ClientTrayAction { .. }
-            | SeamlessMessage::ClientDndDrop { .. } => {}
+            SeamlessMessage::ClientTrayAction { .. } | SeamlessMessage::ClientDndDrop { .. } => {}
         }
     }
 

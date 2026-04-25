@@ -33,7 +33,12 @@ fn first_fragment_has_total_count() {
     let result = fragment(&data, 100);
     // First 4 bytes of first fragment are the total count (big-endian u32)
     let first_payload = &result[0].1;
-    let total = u32::from_be_bytes([first_payload[0], first_payload[1], first_payload[2], first_payload[3]]);
+    let total = u32::from_be_bytes([
+        first_payload[0],
+        first_payload[1],
+        first_payload[2],
+        first_payload[3],
+    ]);
     assert_eq!(total as usize, result.len());
 }
 
@@ -66,7 +71,11 @@ fn reassembler_fragmented_roundtrip() {
 
         if i < fragments.len() - 1 {
             let result = reassembler.feed(&header, payload.clone());
-            assert!(result.is_none(), "fragment {} should not complete reassembly", i);
+            assert!(
+                result.is_none(),
+                "fragment {} should not complete reassembly",
+                i
+            );
         } else {
             let result = reassembler.feed(&header, payload.clone());
             assert!(result.is_some(), "last fragment should complete reassembly");
@@ -111,18 +120,39 @@ fn reassembler_multiple_channels() {
     let frags2 = fragment(&data2, 100);
 
     // Feed first fragment of channel 1
-    let h1 = FrameHeader::new(ChannelId::CONTROL, 0, 0, 0x0001, frags1[0].0, frags1[0].1.len() as u16);
+    let h1 = FrameHeader::new(
+        ChannelId::CONTROL,
+        0,
+        0,
+        0x0001,
+        frags1[0].0,
+        frags1[0].1.len() as u16,
+    );
     assert!(reassembler.feed(&h1, frags1[0].1.clone()).is_none());
 
     // Feed first fragment of channel 2
-    let h2 = FrameHeader::new(ChannelId::VIDEO, 0, 0, 0x1002, frags2[0].0, frags2[0].1.len() as u16);
+    let h2 = FrameHeader::new(
+        ChannelId::VIDEO,
+        0,
+        0,
+        0x1002,
+        frags2[0].0,
+        frags2[0].1.len() as u16,
+    );
     assert!(reassembler.feed(&h2, frags2[0].1.clone()).is_none());
 
     assert_eq!(reassembler.pending_count(), 2);
 
     // Complete channel 1
     for (i, (flags, payload)) in frags1[1..].iter().enumerate() {
-        let h = FrameHeader::new(ChannelId::CONTROL, (i + 1) as u32, 0, 0x0001, *flags, payload.len() as u16);
+        let h = FrameHeader::new(
+            ChannelId::CONTROL,
+            (i + 1) as u32,
+            0,
+            0x0001,
+            *flags,
+            payload.len() as u16,
+        );
         let result = reassembler.feed(&h, payload.clone());
         if i == frags1.len() - 2 {
             assert!(result.is_some());

@@ -58,7 +58,10 @@ impl DirtyPropagation {
     ///
     /// This only *adds* flags — it never clears existing ones.
     pub fn mark_dirty(&mut self, node_id: NodeId, flags: LayoutDirtyFlags) {
-        let entry = self.flags.entry(node_id).or_insert(LayoutDirtyFlags::empty());
+        let entry = self
+            .flags
+            .entry(node_id)
+            .or_insert(LayoutDirtyFlags::empty());
         *entry |= flags;
     }
 
@@ -72,7 +75,10 @@ impl DirtyPropagation {
     {
         let mut current = parent_fn(node_id);
         while let Some(ancestor_id) = current {
-            let entry = self.flags.entry(ancestor_id).or_insert(LayoutDirtyFlags::empty());
+            let entry = self
+                .flags
+                .entry(ancestor_id)
+                .or_insert(LayoutDirtyFlags::empty());
             if entry.contains(LayoutDirtyFlags::CHILD_NEEDS_LAYOUT) {
                 // Already propagated — ancestors above are already marked.
                 break;
@@ -98,24 +104,20 @@ impl DirtyPropagation {
     /// Whether the node needs layout (has `NEEDS_LAYOUT` or `STYLE_CHANGED`
     /// or `CONTENT_CHANGED` set).
     pub fn needs_layout(&self, node_id: NodeId) -> bool {
-        self.flags
-            .get(&node_id)
-            .is_some_and(|f| {
-                f.intersects(
-                    LayoutDirtyFlags::NEEDS_LAYOUT
-                        | LayoutDirtyFlags::STYLE_CHANGED
-                        | LayoutDirtyFlags::CONTENT_CHANGED,
-                )
-            })
+        self.flags.get(&node_id).is_some_and(|f| {
+            f.intersects(
+                LayoutDirtyFlags::NEEDS_LAYOUT
+                    | LayoutDirtyFlags::STYLE_CHANGED
+                    | LayoutDirtyFlags::CONTENT_CHANGED,
+            )
+        })
     }
 
     /// Whether the node's intrinsic sizes need recomputation.
     pub fn needs_measure(&self, node_id: NodeId) -> bool {
-        self.flags
-            .get(&node_id)
-            .is_some_and(|f| {
-                f.intersects(LayoutDirtyFlags::NEEDS_MEASURE | LayoutDirtyFlags::CONTENT_CHANGED)
-            })
+        self.flags.get(&node_id).is_some_and(|f| {
+            f.intersects(LayoutDirtyFlags::NEEDS_MEASURE | LayoutDirtyFlags::CONTENT_CHANGED)
+        })
     }
 
     /// Whether the node has *any* dirty flag set (including CHILD_NEEDS_LAYOUT).
@@ -125,7 +127,10 @@ impl DirtyPropagation {
 
     /// Get the raw flags for a node.
     pub fn get_flags(&self, node_id: NodeId) -> LayoutDirtyFlags {
-        self.flags.get(&node_id).copied().unwrap_or(LayoutDirtyFlags::empty())
+        self.flags
+            .get(&node_id)
+            .copied()
+            .unwrap_or(LayoutDirtyFlags::empty())
     }
 
     /// Clear all dirty flags for a single node.

@@ -68,7 +68,11 @@ impl ReviewStats {
             0.0
         };
 
-        Self { total_reviews, average_rating, distribution }
+        Self {
+            total_reviews,
+            average_rating,
+            distribution,
+        }
     }
 }
 
@@ -79,7 +83,11 @@ pub struct ReviewStore {
 
 impl ReviewStore {
     #[must_use]
-    pub fn new() -> Self { Self { reviews: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            reviews: Vec::new(),
+        }
+    }
 
     /// Add a review.
     pub fn add(&mut self, review: Review) {
@@ -88,11 +96,15 @@ impl ReviewStore {
 
     /// Get all reviews.
     #[must_use]
-    pub fn reviews(&self) -> &[Review] { &self.reviews }
+    pub fn reviews(&self) -> &[Review] {
+        &self.reviews
+    }
 
     /// Get review count.
     #[must_use]
-    pub fn count(&self) -> usize { self.reviews.len() }
+    pub fn count(&self) -> usize {
+        self.reviews.len()
+    }
 
     /// Get computed statistics.
     #[must_use]
@@ -111,5 +123,7 @@ impl ReviewStore {
 }
 
 impl Default for ReviewStore {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

@@ -69,7 +69,14 @@ impl DashboardBuilder {
     }
 
     /// Add server stats.
-    pub fn add_server(&mut self, healthy: bool, sessions: u32, users: u32, bw_in: u64, bw_out: u64) {
+    pub fn add_server(
+        &mut self,
+        healthy: bool,
+        sessions: u32,
+        users: u32,
+        bw_in: u64,
+        bw_out: u64,
+    ) {
         if healthy {
             self.data.servers_healthy += 1;
         } else {
@@ -96,7 +103,13 @@ impl DashboardBuilder {
     }
 
     /// Push an alert.
-    pub fn add_alert(&mut self, severity: AlertSeverity, message: String, timestamp: u64, server: Option<String>) {
+    pub fn add_alert(
+        &mut self,
+        severity: AlertSeverity,
+        message: String,
+        timestamp: u64,
+        server: Option<String>,
+    ) {
         self.data.alerts.push(DashboardAlert {
             severity,
             message,

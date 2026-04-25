@@ -1,4 +1,5 @@
 use crate::{Dialog, DialogId, DialogResult};
+use liquide_popups::DialogInfo;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -186,28 +187,24 @@ impl FilePickerState {
 
     fn sort_entries(&mut self) {
         // Directories first, then sort by field
-        self.entries.sort_by(|a, b| {
-            match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    let ord = match self.sort_by {
-                        SortField::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                        SortField::Size => a.size.cmp(&b.size),
-                        SortField::Modified => a.modified.cmp(&b.modified),
-                        SortField::Type => {
-                            let ea =
-                                a.path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                            let eb =
-                                b.path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                            ea.cmp(eb)
-                        }
-                    };
-                    if self.sort_ascending {
-                        ord
-                    } else {
-                        ord.reverse()
+        self.entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => {
+                let ord = match self.sort_by {
+                    SortField::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    SortField::Size => a.size.cmp(&b.size),
+                    SortField::Modified => a.modified.cmp(&b.modified),
+                    SortField::Type => {
+                        let ea = a.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        let eb = b.path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        ea.cmp(eb)
                     }
+                };
+                if self.sort_ascending {
+                    ord
+                } else {
+                    ord.reverse()
                 }
             }
         });
@@ -216,8 +213,7 @@ impl FilePickerState {
     /// Navigate into directory
     pub fn navigate_to(&mut self, path: PathBuf) -> std::io::Result<()> {
         // Truncate forward history
-        self.navigation_history
-            .truncate(self.history_index + 1);
+        self.navigation_history.truncate(self.history_index + 1);
         self.navigation_history.push(self.current_dir.clone());
         self.history_index = self.navigation_history.len();
         self.current_dir = path;
@@ -302,11 +298,10 @@ fn classify_file_icon(name: &str) -> FileIcon {
         "mp3" | "wav" | "flac" | "ogg" | "aac" | "m4a" | "wma" => FileIcon::Audio,
         "pdf" | "doc" | "docx" | "odt" | "txt" | "rtf" | "md" => FileIcon::Document,
         "zip" | "tar" | "gz" | "bz2" | "xz" | "7z" | "rar" => FileIcon::Archive,
-        "rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "java" | "go" | "rb" | "css"
-        | "html" => FileIcon::Code,
-        "exe" | "msi" | "appimage" | "deb" | "rpm" | "sh" | "bat" | "cmd" => {
-            FileIcon::Executable
+        "rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "java" | "go" | "rb" | "css" | "html" => {
+            FileIcon::Code
         }
+        "exe" | "msi" | "appimage" | "deb" | "rpm" | "sh" | "bat" | "cmd" => FileIcon::Executable,
         _ => FileIcon::File,
     }
 }
@@ -324,12 +319,9 @@ fn dirs_home() -> Option<PathBuf> {
 
 impl Default for FilePickerConfig {
     fn default() -> Self {
-        static NEXT_ID: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(1);
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
-            id: crate::DialogId(
-                NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            ),
+            id: crate::DialogId(NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
             title: "Open File".into(),
             mode: FilePickerMode::Open,
             initial_dir: None,
@@ -379,6 +371,16 @@ impl Dialog for FilePickerState {
     fn id(&self) -> crate::DialogId {
         self.config.id
     }
+    fn title(&self) -> &str {
+        &self.config.title
+    }
+}
+
+impl DialogInfo for FilePickerState {
+    fn preferred_size(&self) -> (f32, f32) {
+        (760.0, 520.0)
+    }
+
     fn title(&self) -> &str {
         &self.config.title
     }

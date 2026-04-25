@@ -37,16 +37,21 @@ impl ThemeParser {
     }
 
     /// Serialize a `TokenList` to string by iterating its public token vector.
+    #[allow(dead_code)]
     pub(crate) fn to_css_string_from_token_list(
         &self,
         tokens: &lightningcss::properties::custom::TokenList,
     ) -> String {
         use lightningcss::properties::custom::TokenOrValue;
+
         let mut result = String::new();
         for token_or_value in &tokens.0 {
             match token_or_value {
                 TokenOrValue::Color(color) => {
                     result.push_str(&self.to_css_string(color));
+                }
+                TokenOrValue::UnresolvedColor(color) => {
+                    result.push_str(&self.to_css_string_from_unresolved_color(color));
                 }
                 TokenOrValue::Length(length) => {
                     result.push_str(&self.to_css_string(length));
@@ -60,13 +65,15 @@ impl ThemeParser {
                 TokenOrValue::Resolution(res) => {
                     result.push_str(&self.to_css_string(res));
                 }
+                TokenOrValue::Url(url) => {
+                    result.push_str(&self.to_css_string(url));
+                }
                 TokenOrValue::Token(token) => {
                     result.push_str(&self.to_css_string(token));
                 }
                 TokenOrValue::Var(var) => {
-                    // Serialize var() properly: var(--name) or var(--name, fallback)
                     result.push_str("var(");
-                    result.push_str(&var.name.ident.0);
+                    result.push_str(&self.to_css_string(&var.name));
                     if let Some(fallback) = &var.fallback {
                         result.push_str(", ");
                         result.push_str(&self.to_css_string_from_token_list(fallback));
@@ -76,6 +83,10 @@ impl ThemeParser {
                 TokenOrValue::Env(env) => {
                     result.push_str("env(");
                     result.push_str(&self.to_css_string(&env.name));
+                    for index in &env.indices {
+                        result.push(' ');
+                        result.push_str(&index.to_string());
+                    }
                     if let Some(fallback) = &env.fallback {
                         result.push_str(", ");
                         result.push_str(&self.to_css_string_from_token_list(fallback));
@@ -83,20 +94,49 @@ impl ThemeParser {
                     result.push(')');
                 }
                 TokenOrValue::Function(func) => {
-                    result.push_str(&func.name);
+                    result.push_str(&self.to_css_string(&func.name));
                     result.push('(');
                     result.push_str(&self.to_css_string_from_token_list(&func.arguments));
                     result.push(')');
                 }
                 TokenOrValue::DashedIdent(ident) => {
-                    result.push_str(&ident.0);
+                    result.push_str(&self.to_css_string(ident));
                 }
-                _ => {
-                    // UnresolvedColor, Url, AnimationName, etc.
-                    result.push_str(&format!("{:?}", token_or_value));
+                TokenOrValue::AnimationName(name) => {
+                    result.push_str(&self.to_css_string(name));
                 }
             }
         }
-        result.trim().to_string()
+        result
+    }
+
+    #[allow(dead_code)]
+    fn to_css_string_from_unresolved_color(
+        &self,
+        color: &lightningcss::properties::custom::UnresolvedColor,
+    ) -> String {
+        use lightningcss::properties::custom::UnresolvedColor;
+
+        match color {
+            UnresolvedColor::RGB { r, g, b, alpha } => format!(
+                "rgb({} {} {} / {})",
+                r,
+                g,
+                b,
+                self.to_css_string_from_token_list(alpha)
+            ),
+            UnresolvedColor::HSL { h, s, l, alpha } => format!(
+                "hsl({} {}% {}% / {})",
+                h,
+                s,
+                l,
+                self.to_css_string_from_token_list(alpha)
+            ),
+            UnresolvedColor::LightDark { light, dark } => format!(
+                "light-dark({}, {})",
+                self.to_css_string_from_token_list(light),
+                self.to_css_string_from_token_list(dark)
+            ),
+        }
     }
 }

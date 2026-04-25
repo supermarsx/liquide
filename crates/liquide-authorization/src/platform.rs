@@ -1,5 +1,5 @@
-use crate::level::AuthLevel;
 use crate::AuthorizationError;
+use crate::level::AuthLevel;
 
 /// Result of a platform credential verification attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,12 +38,10 @@ pub fn verify_credentials(level: AuthLevel, _username: &str) -> VerifyResult {
         AuthLevel::Fingerprint => VerifyResult::Error(
             "Fingerprint verification requires hardware integration".to_string(),
         ),
-        AuthLevel::SmartCard => VerifyResult::Error(
-            "Smart card verification requires PKCS#11 integration".to_string(),
-        ),
-        AuthLevel::UserPassword | AuthLevel::AdminPassword => {
-            platform_verify_password(level)
+        AuthLevel::SmartCard => {
+            VerifyResult::Error("Smart card verification requires PKCS#11 integration".to_string())
         }
+        AuthLevel::UserPassword | AuthLevel::AdminPassword => platform_verify_password(level),
     }
 }
 
@@ -185,10 +183,7 @@ fn platform_verify_password(level: AuthLevel) -> VerifyResult {
         " with administrator privileges" // macOS doesn't distinguish user vs admin in osascript
     };
 
-    let script = format!(
-        "do shell script \"exit 0\"{}",
-        privilege_clause
-    );
+    let script = format!("do shell script \"exit 0\"{}", privilege_clause);
 
     match std::process::Command::new("osascript")
         .arg("-e")
@@ -199,12 +194,10 @@ fn platform_verify_password(level: AuthLevel) -> VerifyResult {
         .status()
     {
         Ok(status) if status.success() => VerifyResult::Success,
-        Ok(status) => {
-            match status.code() {
-                Some(-128) | Some(1) => VerifyResult::Cancelled,
-                _ => VerifyResult::Failed("Authentication failed".to_string()),
-            }
-        }
+        Ok(status) => match status.code() {
+            Some(-128) | Some(1) => VerifyResult::Cancelled,
+            _ => VerifyResult::Failed("Authentication failed".to_string()),
+        },
         Err(e) => VerifyResult::Error(format!("Failed to spawn osascript: {e}")),
     }
 }

@@ -28,8 +28,7 @@ fn test_session_write_segments() {
         .unwrap();
     s.write_audio(&AudioSegment::new(2000, vec![0; 480], 240))
         .unwrap();
-    s.write_event(&EventSegment::new(3000, vec![1, 2]))
-        .unwrap();
+    s.write_event(&EventSegment::new(3000, vec![1, 2])).unwrap();
     assert_eq!(s.stats().segments_written, 3);
     assert_eq!(s.stats().video_segments, 1);
     assert_eq!(s.stats().audio_segments, 1);

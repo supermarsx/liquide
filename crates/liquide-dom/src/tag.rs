@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 /// A global string interner for tag names.
-static INTERNER: LazyLock<Mutex<TagInterner>> =
-    LazyLock::new(|| Mutex::new(TagInterner::new()));
+static INTERNER: LazyLock<Mutex<TagInterner>> = LazyLock::new(|| Mutex::new(TagInterner::new()));
 
 /// An interned tag name. Comparison is O(1) via integer index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

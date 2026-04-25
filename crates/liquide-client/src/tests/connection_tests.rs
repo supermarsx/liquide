@@ -115,7 +115,10 @@ fn test_should_reconnect_within_limit() {
 fn test_connection_state_display() {
     assert_eq!(ConnectionState::Disconnected.to_string(), "Disconnected");
     assert_eq!(ConnectionState::Connecting.to_string(), "Connecting");
-    assert_eq!(ConnectionState::Authenticating.to_string(), "Authenticating");
+    assert_eq!(
+        ConnectionState::Authenticating.to_string(),
+        "Authenticating"
+    );
     assert_eq!(ConnectionState::Negotiating.to_string(), "Negotiating");
     assert_eq!(ConnectionState::Connected.to_string(), "Connected");
     assert_eq!(ConnectionState::Reconnecting.to_string(), "Reconnecting");

@@ -2,8 +2,8 @@
 
 use std::fmt;
 
-use crate::config::{JailConfig, JailNetwork};
 use crate::Result;
+use crate::config::{JailConfig, JailNetwork};
 
 /// Type of jail to apply to the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

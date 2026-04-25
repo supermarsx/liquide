@@ -53,8 +53,7 @@ fn sample_session() -> SessionState {
             sample_window(1, "terminal", "Terminal", 100.0, 100.0, 800.0, 600.0, 0),
             sample_window(2, "browser", "Browser", 200.0, 150.0, 1024.0, 768.0, 0),
             {
-                let mut w =
-                    sample_window(3, "editor", "Editor", 50.0, 50.0, 640.0, 480.0, 1);
+                let mut w = sample_window(3, "editor", "Editor", 50.0, 50.0, 640.0, 480.0, 1);
                 w.state = WindowVisualState::Maximized;
                 w.is_sticky = true;
                 w
@@ -321,15 +320,22 @@ fn restore_plan_preserves_state() {
     let available = vec!["editor".to_string()];
     let plan = SessionRestorer::plan_restore(&state, &available);
     assert_eq!(plan.windows_to_restore.len(), 1);
-    assert_eq!(plan.windows_to_restore[0].state, WindowVisualState::Maximized);
+    assert_eq!(
+        plan.windows_to_restore[0].state,
+        WindowVisualState::Maximized
+    );
 }
 
 #[test]
 fn restore_plan_duplicate_app_missing_once() {
     // Two windows from the same missing app should only list it once.
     let mut state = SessionState::empty();
-    state.windows.push(sample_window(1, "gone_app", "W1", 0.0, 0.0, 100.0, 100.0, 0));
-    state.windows.push(sample_window(2, "gone_app", "W2", 0.0, 0.0, 100.0, 100.0, 0));
+    state.windows.push(sample_window(
+        1, "gone_app", "W1", 0.0, 0.0, 100.0, 100.0, 0,
+    ));
+    state.windows.push(sample_window(
+        2, "gone_app", "W2", 0.0, 0.0, 100.0, 100.0, 0,
+    ));
     let plan = SessionRestorer::plan_restore(&state, &[]);
     assert_eq!(plan.missing_apps.len(), 1);
     assert_eq!(plan.missing_apps[0], "gone_app");
@@ -378,7 +384,9 @@ fn display_change_removed_moves_to_primary() {
 
     let state = SessionState {
         // Window was on HDMI-1.
-        windows: vec![sample_window(1, "term", "T", 2000.0, 200.0, 800.0, 600.0, 0)],
+        windows: vec![sample_window(
+            1, "term", "T", 2000.0, 200.0, 800.0, 600.0, 0,
+        )],
         display_config: saved.clone(),
         ..SessionState::empty()
     };
@@ -393,9 +401,10 @@ fn display_change_removed_moves_to_primary() {
     assert!(b.1 >= 0.0 && b.1 + b.3 <= 1080.0);
 
     // Display changes should report the removal.
-    assert!(plan
-        .display_changes
-        .contains(&DisplayChange::Removed("HDMI-1".to_string())));
+    assert!(
+        plan.display_changes
+            .contains(&DisplayChange::Removed("HDMI-1".to_string()))
+    );
 }
 
 #[test]
@@ -415,9 +424,10 @@ fn display_change_added() {
     let mut plan = SessionRestorer::plan_restore(&state, &[]);
     SessionRestorer::adjust_for_display_changes(&mut plan, &saved, &current);
 
-    assert!(plan
-        .display_changes
-        .contains(&DisplayChange::Added("DP-3".to_string())));
+    assert!(
+        plan.display_changes
+            .contains(&DisplayChange::Added("DP-3".to_string()))
+    );
 }
 
 #[test]

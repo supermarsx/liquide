@@ -36,7 +36,7 @@ pub enum StatusBarItemData {
 /// A status bar slot containing multiple items.
 #[derive(Debug, Clone)]
 pub struct StatusBarSlot {
- pub items: Vec<StatusBarItemData>,
+    pub items: Vec<StatusBarItemData>,
 }
 
 /// A context menu item.

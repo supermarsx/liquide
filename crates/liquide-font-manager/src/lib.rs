@@ -1,5 +1,13 @@
 //! System font management, discovery, and preview for the LiquiDE desktop.
 //!
+//! # Deprecation notice
+//!
+//! New code should depend on [`liquide-fonts`](../liquide_fonts/index.html)
+//! and reach these types through the `liquide_fonts::system_scan` façade
+//! (e.g. `liquide_fonts::system_scan::SystemScanner`). This crate is kept
+//! as a thin implementation module so existing consumers keep compiling,
+//! but its API surface is no longer intended to be used directly.
+//!
 //! This crate provides:
 //! - [`FontInfo`] — rich metadata about installed font faces
 //! - [`FontManager`] — central hub for scanning, querying, installing, and

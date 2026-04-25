@@ -40,7 +40,9 @@ pub use theme_toggle::ThemeToggle;
 
 // Scene-graph-based shell status bar
 pub use items::{StatusBarItem, StatusBarItemKind};
-pub use scene::{StatusBarColors, StatusBarLayout, NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE};
+pub use scene::{
+    NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE, StatusBarColors, StatusBarFonts, StatusBarLayout,
+};
 pub use shell_bar::{ShellBarConfig, ShellStatusBar};
 pub use slot::StatusBarSlot;
 

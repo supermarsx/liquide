@@ -234,11 +234,7 @@ impl AuthSession {
 
     /// Create a new session.
     #[must_use]
-    pub fn new(
-        action_id: impl Into<String>,
-        prompt: AuthPrompt,
-        identity: AuthIdentity,
-    ) -> Self {
+    pub fn new(action_id: impl Into<String>, prompt: AuthPrompt, identity: AuthIdentity) -> Self {
         Self {
             action_id: action_id.into(),
             prompt,
@@ -268,9 +264,7 @@ impl AuthSession {
     /// Return the current session state.
     #[must_use]
     pub fn state(&self) -> SessionState {
-        if self.state == SessionState::AwaitingCredentials
-            || self.state == SessionState::Pending
-        {
+        if self.state == SessionState::AwaitingCredentials || self.state == SessionState::Pending {
             if self.is_timed_out() {
                 return SessionState::Cancelled;
             }
@@ -282,10 +276,7 @@ impl AuthSession {
     ///
     /// Transitions from `Pending` to `AwaitingCredentials`, invokes
     /// `agent.show_prompt()`, and updates the state based on the result.
-    pub fn begin_auth(
-        &mut self,
-        agent: &mut dyn AuthAgent,
-    ) -> Result<Credentials, AuthAgentError> {
+    pub fn begin_auth(&mut self, agent: &mut dyn AuthAgent) -> Result<Credentials, AuthAgentError> {
         if self.is_timed_out() {
             self.state = SessionState::Cancelled;
             return Err(AuthAgentError::Timeout);
@@ -314,10 +305,7 @@ impl AuthSession {
     ///
     /// Returns `Err(AuthAgentError::VerificationFailed)` if max attempts
     /// have been exceeded.
-    pub fn retry(
-        &mut self,
-        agent: &mut dyn AuthAgent,
-    ) -> Result<Credentials, AuthAgentError> {
+    pub fn retry(&mut self, agent: &mut dyn AuthAgent) -> Result<Credentials, AuthAgentError> {
         if self.attempts >= self.max_attempts {
             self.state = SessionState::Failed;
             return Err(AuthAgentError::VerificationFailed(
@@ -407,8 +395,7 @@ impl StubAgent {
 
     /// Queue a successful credential response.
     pub fn queue_success(&mut self, method: AuthLevel, payload: &str) {
-        self.responses
-            .push(Ok(Credentials::new(method, payload)));
+        self.responses.push(Ok(Credentials::new(method, payload)));
     }
 
     /// Queue a cancellation response.
@@ -533,12 +520,16 @@ mod tests {
             AuthAgentError::Timeout.to_string(),
             "authentication prompt timed out"
         );
-        assert!(AuthAgentError::DisplayError("x".into())
-            .to_string()
-            .contains("x"));
-        assert!(AuthAgentError::VerificationFailed("y".into())
-            .to_string()
-            .contains("y"));
+        assert!(
+            AuthAgentError::DisplayError("x".into())
+                .to_string()
+                .contains("x")
+        );
+        assert!(
+            AuthAgentError::VerificationFailed("y".into())
+                .to_string()
+                .contains("y")
+        );
     }
 
     // ── StubAgent tests ─────────────────────────────────────────────
@@ -612,8 +603,7 @@ mod tests {
         let mut agent = StubAgent::new("test");
         agent.queue_success(AuthLevel::UserPassword, "pass");
 
-        let mut session =
-            AuthSession::new("org.liquide.test", test_prompt(), test_identity());
+        let mut session = AuthSession::new("org.liquide.test", test_prompt(), test_identity());
         let result = session.begin_auth(&mut agent);
 
         assert!(result.is_ok());
@@ -626,8 +616,7 @@ mod tests {
         let mut agent = StubAgent::new("test");
         agent.queue_cancel();
 
-        let mut session =
-            AuthSession::new("org.liquide.test", test_prompt(), test_identity());
+        let mut session = AuthSession::new("org.liquide.test", test_prompt(), test_identity());
         let result = session.begin_auth(&mut agent);
 
         assert_eq!(result, Err(AuthAgentError::Cancelled));
@@ -639,8 +628,7 @@ mod tests {
         let mut agent = StubAgent::new("test");
         agent.queue_fail("bad password");
 
-        let mut session =
-            AuthSession::new("org.liquide.test", test_prompt(), test_identity());
+        let mut session = AuthSession::new("org.liquide.test", test_prompt(), test_identity());
         let result = session.begin_auth(&mut agent);
 
         assert!(result.is_err());
@@ -694,8 +682,7 @@ mod tests {
     fn session_cancel() {
         let mut agent = StubAgent::new("test");
 
-        let mut session =
-            AuthSession::new("org.liquide.test", test_prompt(), test_identity());
+        let mut session = AuthSession::new("org.liquide.test", test_prompt(), test_identity());
         session.cancel(&mut agent);
 
         assert_eq!(session.state(), SessionState::Cancelled);
@@ -707,9 +694,8 @@ mod tests {
         let mut agent = StubAgent::new("test");
         agent.queue_success(AuthLevel::UserPassword, "pass");
 
-        let mut session =
-            AuthSession::new("org.liquide.test", test_prompt(), test_identity())
-                .with_timeout(Duration::from_secs(0));
+        let mut session = AuthSession::new("org.liquide.test", test_prompt(), test_identity())
+            .with_timeout(Duration::from_secs(0));
 
         // With a zero timeout, the session should be timed out immediately
         // (or very nearly so).
@@ -725,8 +711,7 @@ mod tests {
 
     #[test]
     fn session_debug() {
-        let session =
-            AuthSession::new("org.liquide.test", test_prompt(), test_identity());
+        let session = AuthSession::new("org.liquide.test", test_prompt(), test_identity());
         let dbg = format!("{:?}", session);
         assert!(dbg.contains("AuthSession"));
         assert!(dbg.contains("org.liquide.test"));
@@ -734,8 +719,7 @@ mod tests {
 
     #[test]
     fn session_elapsed_is_small() {
-        let session =
-            AuthSession::new("org.liquide.test", test_prompt(), test_identity());
+        let session = AuthSession::new("org.liquide.test", test_prompt(), test_identity());
         // Just created, should be very recent
         assert!(session.elapsed() < Duration::from_secs(5));
     }

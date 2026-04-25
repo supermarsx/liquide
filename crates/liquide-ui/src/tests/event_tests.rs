@@ -135,10 +135,7 @@ fn test_ui_event_resize_variant() {
 
 #[test]
 fn test_ui_event_scroll_variant() {
-    let event = UiEvent::Scroll {
-        dx: 0.0,
-        dy: -3.0,
-    };
+    let event = UiEvent::Scroll { dx: 0.0, dy: -3.0 };
     if let UiEvent::Scroll { dx, dy } = event {
         assert_eq!(dx, 0.0);
         assert_eq!(dy, -3.0);

@@ -1,8 +1,7 @@
 //! Property tree construction from a pipeline output.
 
 use liquide_compositor::property_tree::{
-    ClipNode, EffectNode, PropertyTrees, RenderSurfaceReason,
-    TransformNode, ROOT_NODE_ID,
+    ClipNode, EffectNode, PropertyTrees, ROOT_NODE_ID, RenderSurfaceReason, TransformNode,
 };
 use liquide_paint::DisplayItem;
 
@@ -162,11 +161,15 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushStackingContext { z_index: _, isolation } => {
+                DisplayItem::PushStackingContext {
+                    z_index: _,
+                    isolation,
+                } => {
                     let parent = *effect_stack.last().unwrap_or(&ROOT_NODE_ID);
                     let node = EffectNode {
                         parent,
-                        is_isolated: *isolation == liquide_style_engine::computed::Isolation::Isolate,
+                        is_isolated: *isolation
+                            == liquide_style_engine::computed::Isolation::Isolate,
                         transform_id: *transform_stack.last().unwrap_or(&ROOT_NODE_ID),
                         clip_id: *clip_stack.last().unwrap_or(&ROOT_NODE_ID),
                         ..Default::default()

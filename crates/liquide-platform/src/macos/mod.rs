@@ -159,10 +159,7 @@ impl MacOSWindowHost {
 }
 
 impl NativeWindowHost for MacOSWindowHost {
-    fn create_window(
-        &mut self,
-        params: NativeWindowParams,
-    ) -> PlatformResult<NativeWindowHandle> {
+    fn create_window(&mut self, params: NativeWindowParams) -> PlatformResult<NativeWindowHandle> {
         let handle = NativeWindowHandle(self.next_handle);
         self.next_handle += 1;
 
@@ -225,11 +222,7 @@ impl NativeWindowHost for MacOSWindowHost {
             ffi::msg_send_void_id(nswindow, ffi::sel(b"setTitle:\0"), title);
 
             // Make the window visible and key.
-            ffi::msg_send_void_bool(
-                nswindow,
-                ffi::sel(b"setReleasedWhenClosed:\0"),
-                ffi::NO,
-            );
+            ffi::msg_send_void_bool(nswindow, ffi::sel(b"setReleasedWhenClosed:\0"), ffi::NO);
             ffi::msg_send_void(nswindow, ffi::sel(b"makeKeyAndOrderFront:\0"));
 
             ffi::msg_send_void(pool, ffi::sel(b"drain\0"));
@@ -253,11 +246,7 @@ impl NativeWindowHost for MacOSWindowHost {
         Ok(())
     }
 
-    fn set_geometry(
-        &mut self,
-        handle: NativeWindowHandle,
-        geometry: Rect,
-    ) -> PlatformResult<()> {
+    fn set_geometry(&mut self, handle: NativeWindowHandle, geometry: Rect) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
             let frame = ffi::NSRect::new(
                 geometry.x as ffi::CGFloat,
@@ -269,7 +258,7 @@ impl NativeWindowHost for MacOSWindowHost {
             // for setFrame:display: (NSRect, BOOL). The nswindow pointer
             // is valid as it comes from our tracked window map.
             unsafe {
-                    std::mem::transmute(ffi::objc_msgSend as *const c_void);
+                std::mem::transmute(ffi::objc_msgSend as *const c_void);
                 f(
                     info.nswindow,
                     ffi::sel(b"setFrame:display:\0"),
@@ -294,41 +283,27 @@ impl NativeWindowHost for MacOSWindowHost {
         Ok(())
     }
 
-    fn set_icon(
-        &mut self,
-        _handle: NativeWindowHandle,
-        _icon_data: &[u8],
-    ) -> PlatformResult<()> {
+    fn set_icon(&mut self, _handle: NativeWindowHandle, _icon_data: &[u8]) -> PlatformResult<()> {
         // macOS does not support per-window icons in the title bar.
         // The application icon is set via the bundle. Accept and ignore.
         Ok(())
     }
 
-    fn set_state(
-        &mut self,
-        handle: NativeWindowHandle,
-        state: &str,
-    ) -> PlatformResult<()> {
+    fn set_state(&mut self, handle: NativeWindowHandle, state: &str) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
             // SAFETY: All ObjC message sends use valid NSWindow object and
             // selector pairs for standard state changes (zoom, miniaturize,
             // deminiaturize, orderOut, makeKeyAndOrderFront).
             unsafe {
+                match state {
+                    "maximized" => {
                         let is_zoomed = ffi::msg_send_bool(info.nswindow, ffi::sel(b"isZoomed\0"));
                         if is_zoomed == ffi::NO {
-                            ffi::msg_send_void_id(
-                                info.nswindow,
-                                ffi::sel(b"zoom:\0"),
-                                ffi::NIL,
-                            );
+                            ffi::msg_send_void_id(info.nswindow, ffi::sel(b"zoom:\0"), ffi::NIL);
                         }
                     }
                     "minimized" => {
-                        ffi::msg_send_void_id(
-                            info.nswindow,
-                            ffi::sel(b"miniaturize:\0"),
-                            ffi::NIL,
-                        );
+                        ffi::msg_send_void_id(info.nswindow, ffi::sel(b"miniaturize:\0"), ffi::NIL);
                     }
                     "restored" | "normal" => {
                         let is_miniaturized =
@@ -340,28 +315,16 @@ impl NativeWindowHost for MacOSWindowHost {
                                 ffi::NIL,
                             );
                         }
-                        let is_zoomed =
-                            ffi::msg_send_bool(info.nswindow, ffi::sel(b"isZoomed\0"));
+                        let is_zoomed = ffi::msg_send_bool(info.nswindow, ffi::sel(b"isZoomed\0"));
                         if is_zoomed != ffi::NO {
-                            ffi::msg_send_void_id(
-                                info.nswindow,
-                                ffi::sel(b"zoom:\0"),
-                                ffi::NIL,
-                            );
+                            ffi::msg_send_void_id(info.nswindow, ffi::sel(b"zoom:\0"), ffi::NIL);
                         }
                     }
                     "hidden" => {
-                        ffi::msg_send_void_id(
-                            info.nswindow,
-                            ffi::sel(b"orderOut:\0"),
-                            ffi::NIL,
-                        );
+                        ffi::msg_send_void_id(info.nswindow, ffi::sel(b"orderOut:\0"), ffi::NIL);
                     }
                     _ => {
-                        ffi::msg_send_void(
-                            info.nswindow,
-                            ffi::sel(b"makeKeyAndOrderFront:\0"),
-                        );
+                        ffi::msg_send_void(info.nswindow, ffi::sel(b"makeKeyAndOrderFront:\0"));
                     }
                 }
             }
@@ -369,15 +332,12 @@ impl NativeWindowHost for MacOSWindowHost {
         Ok(())
     }
 
-    fn set_z_order(
-        &mut self,
-        handle: NativeWindowHandle,
-        z_order: i32,
-    ) -> PlatformResult<()> {
+    fn set_z_order(&mut self, handle: NativeWindowHandle, z_order: i32) -> PlatformResult<()> {
         if let Some(info) = self.windows.get(&handle.0) {
             // SAFETY: transmute of objc_msgSend to the setLevel: signature
             // (NSInteger). Using standard AppKit window level constants.
             unsafe {
+                if z_order > 0 {
                     // NSFloatingWindowLevel = 3
                     let f: unsafe extern "C" fn(ffi::id, ffi::SEL, ffi::NSInteger) =
                         std::mem::transmute(ffi::objc_msgSend as *const c_void);
@@ -397,6 +357,8 @@ impl NativeWindowHost for MacOSWindowHost {
         if let Some(info) = self.windows.get(&handle.0) {
             // SAFETY: makeKeyAndOrderFront is a standard NSWindow message.
             unsafe {
+                ffi::msg_send_void(info.nswindow, ffi::sel(b"makeKeyAndOrderFront:\0"));
+            }
         }
         Ok(())
     }
@@ -462,10 +424,7 @@ impl MacOSTray {
 }
 
 impl NativeTray for MacOSTray {
-    fn add_icon(
-        &mut self,
-        _params: NativeTrayParams,
-    ) -> PlatformResult<NativeTrayHandle> {
+    fn add_icon(&mut self, _params: NativeTrayParams) -> PlatformResult<NativeTrayHandle> {
         let handle_id = self.next_id;
         self.next_id += 1;
         self.icons.insert(handle_id, ());
@@ -764,12 +723,10 @@ unsafe fn translate_nsevent(
                 None => return,
             };
             let loc = unsafe { ffi::msg_send_nspoint(ns_event, ffi::sel(b"locationInWindow\0")) };
-            let delta_y = unsafe {
-                ffi::msg_send_cgfloat(ns_event, ffi::sel(b"scrollingDeltaY\0"))
-            };
-            let delta_x = unsafe {
-                ffi::msg_send_cgfloat(ns_event, ffi::sel(b"scrollingDeltaX\0"))
-            };
+            let delta_y =
+                unsafe { ffi::msg_send_cgfloat(ns_event, ffi::sel(b"scrollingDeltaY\0")) };
+            let delta_x =
+                unsafe { ffi::msg_send_cgfloat(ns_event, ffi::sel(b"scrollingDeltaX\0")) };
 
             if delta_y.abs() > 0.0001 {
                 events.push(PlatformEvent::MouseInput {
@@ -883,11 +840,7 @@ impl MacOSPlatform {
             );
 
             // Activate the application (bring to front).
-            ffi::msg_send_void_bool(
-                nsapp,
-                ffi::sel(b"activateIgnoringOtherApps:\0"),
-                ffi::YES,
-            );
+            ffi::msg_send_void_bool(nsapp, ffi::sel(b"activateIgnoringOtherApps:\0"), ffi::YES);
 
             // Cache NSDefaultRunLoopMode string for event polling.
             let run_loop_mode = ffi::nsstring("kCFRunLoopDefaultMode");
@@ -1048,10 +1001,7 @@ impl PlatformBackend for MacOSPlatform {
 
             ffi::msg_send_void(pool, ffi::sel(b"drain\0"));
 
-            translated
-                .into_iter()
-                .next()
-                .unwrap_or(PlatformEvent::Quit)
+            translated.into_iter().next().unwrap_or(PlatformEvent::Quit)
         }
     }
 
@@ -1133,17 +1083,13 @@ impl PlatformBackend for MacOSPlatform {
             }
 
             // Get the window's content view and lock focus.
-            let content_view =
-                ffi::msg_send_id(nswindow, ffi::sel(b"contentView\0"));
+            let content_view = ffi::msg_send_id(nswindow, ffi::sel(b"contentView\0"));
             if !content_view.is_null() {
                 ffi::msg_send_void(content_view, ffi::sel(b"lockFocus\0"));
 
                 // Get the current graphics context (NSGraphicsContext).
                 let ns_gctx_class = ffi::class(b"NSGraphicsContext\0");
-                let ns_gctx = ffi::msg_send_id(
-                    ns_gctx_class,
-                    ffi::sel(b"currentContext\0"),
-                );
+                let ns_gctx = ffi::msg_send_id(ns_gctx_class, ffi::sel(b"currentContext\0"));
 
                 if !ns_gctx.is_null() {
                     // Get the CGContext from the graphics context.
@@ -1183,8 +1129,7 @@ impl PlatformBackend for MacOSPlatform {
             // message sends. The content_view nil check prevents sending
             // to a null pointer.
             unsafe {
-                let content_view =
-                    ffi::msg_send_id(info.nswindow, ffi::sel(b"contentView\0"));
+                let content_view = ffi::msg_send_id(info.nswindow, ffi::sel(b"contentView\0"));
                 if !content_view.is_null() {
                     ffi::msg_send_void_bool(
                         content_view,

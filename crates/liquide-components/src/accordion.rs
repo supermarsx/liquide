@@ -173,10 +173,7 @@ impl Component for AccordionComponent<'_> {
 
                 // Content area
                 let mut content = TemplateNode::el("accordion-content")
-                    .style(
-                        "display",
-                        if section.expanded { "block" } else { "none" },
-                    );
+                    .style("display", if section.expanded { "block" } else { "none" });
 
                 if section.expanded {
                     content = content.children(section.children.clone());
@@ -198,11 +195,7 @@ impl Component for AccordionComponent<'_> {
 /// Toggle a section in an accordion, respecting the mode.
 ///
 /// Returns the updated expanded state for each section.
-pub fn toggle_section(
-    sections: &mut [AccordionSection],
-    index: usize,
-    mode: AccordionMode,
-) {
+pub fn toggle_section(sections: &mut [AccordionSection], index: usize, mode: AccordionMode) {
     if index >= sections.len() || !sections[index].enabled {
         return;
     }
@@ -283,12 +276,10 @@ mod tests {
 
     #[test]
     fn accordion_render_expanded_has_content() {
-        let sections = vec![
-            AccordionSection::new("s1", "Section 1")
-                .expanded(true)
-                .child(TemplateNode::text("Content A"))
-                .child(TemplateNode::text("Content B")),
-        ];
+        let sections = vec![AccordionSection::new("s1", "Section 1")
+            .expanded(true)
+            .child(TemplateNode::text("Content A"))
+            .child(TemplateNode::text("Content B"))];
 
         let component = AccordionComponent::new("test", &sections);
         let tree = component.render();
@@ -308,11 +299,9 @@ mod tests {
 
     #[test]
     fn accordion_render_collapsed_hides_content() {
-        let sections = vec![
-            AccordionSection::new("s1", "Section 1")
-                .expanded(false)
-                .child(TemplateNode::text("Hidden")),
-        ];
+        let sections = vec![AccordionSection::new("s1", "Section 1")
+            .expanded(false)
+            .child(TemplateNode::text("Hidden"))];
 
         let component = AccordionComponent::new("test", &sections);
         let tree = component.render();
@@ -340,10 +329,7 @@ mod tests {
 
         let title = &header.children[1];
         assert_eq!(title.tag, "accordion-title");
-        assert_eq!(
-            title.children[0].text.as_deref(),
-            Some("My Title")
-        );
+        assert_eq!(title.children[0].text.as_deref(), Some("My Title"));
     }
 
     #[test]
@@ -406,9 +392,9 @@ mod tests {
 
     #[test]
     fn toggle_disabled_section_is_noop() {
-        let mut sections = vec![
-            AccordionSection::new("s1", "A").expanded(false).enabled(false),
-        ];
+        let mut sections = vec![AccordionSection::new("s1", "A")
+            .expanded(false)
+            .enabled(false)];
 
         toggle_section(&mut sections, 0, AccordionMode::Multiple);
         assert!(!sections[0].expanded, "disabled section should not toggle");

@@ -1,7 +1,7 @@
 //! CSS query caching for theme engine
 
 use crate::property::PropertySet;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 
 /// Cache key for style queries
@@ -14,12 +14,7 @@ struct CacheKey {
 }
 
 impl CacheKey {
-    fn new(
-        element: &str,
-        classes: &[String],
-        id: Option<&str>,
-        pseudo_classes: &[String],
-    ) -> Self {
+    fn new(element: &str, classes: &[String], id: Option<&str>, pseudo_classes: &[String]) -> Self {
         Self {
             element: element.to_string(),
             classes: classes.to_vec(),
@@ -34,10 +29,17 @@ impl CacheKey {
 pub struct QueryCache {
     /// Cached query results
     cache: Arc<RwLock<HashMap<CacheKey, PropertySet>>>,
-    
+
+    /// Insertion order for real FIFO eviction. `HashMap::keys()` has no
+    /// ordering guarantee, so a `HashMap`-only implementation ends up
+    /// evicting an arbitrary entry on each overflow. We pair the map with a
+    /// `VecDeque<CacheKey>` that tracks the exact order in which keys were
+    /// inserted, so `insert` evicts the oldest entry deterministically.
+    order: Arc<RwLock<VecDeque<CacheKey>>>,
+
     /// Maximum cache size
     max_size: usize,
-    
+
     /// Cache statistics
     stats: Arc<RwLock<CacheStats>>,
 }
@@ -47,13 +49,13 @@ pub struct QueryCache {
 pub struct CacheStats {
     /// Total queries
     pub total_queries: u64,
-    
+
     /// Cache hits
     pub cache_hits: u64,
-    
+
     /// Cache misses
     pub cache_misses: u64,
-    
+
     /// Cache evictions
     pub evictions: u64,
 }
@@ -77,11 +79,12 @@ impl QueryCache {
     pub fn new(max_size: usize) -> Self {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
+            order: Arc::new(RwLock::new(VecDeque::new())),
             max_size,
             stats: Arc::new(RwLock::new(CacheStats::default())),
         }
     }
-    
+
     /// Get a cached query result
     pub fn get(
         &self,
@@ -91,7 +94,7 @@ impl QueryCache {
         pseudo_classes: &[String],
     ) -> Option<PropertySet> {
         let key = CacheKey::new(element, classes, id, pseudo_classes);
-        
+
         // Update stats
         {
             let mut stats = liquide_common::sync::write_or_recover(&self.stats);
@@ -110,7 +113,7 @@ impl QueryCache {
             None
         }
     }
-    
+
     /// Insert a query result into the cache
     pub fn insert(
         &self,
@@ -121,26 +124,39 @@ impl QueryCache {
         properties: PropertySet,
     ) {
         let key = CacheKey::new(element, classes, id, pseudo_classes);
-        
-        let mut cache = liquide_common::sync::write_or_recover(&self.cache);
 
-        // Evict if at capacity (simple FIFO eviction)
+        let mut cache = liquide_common::sync::write_or_recover(&self.cache);
+        let mut order = liquide_common::sync::write_or_recover(&self.order);
+
+        // If the key is already present, refresh its value but keep its original
+        // insertion slot — we don't reset FIFO position on re-insert, which
+        // keeps eviction deterministic and predictable under churn.
+        if cache.contains_key(&key) {
+            cache.insert(key, properties);
+            return;
+        }
+
+        // Evict the actual oldest entry when at capacity (true FIFO via
+        // `VecDeque<CacheKey>`; the previous `HashMap::keys().next()`
+        // approach produced implementation-defined order).
         if self.max_size > 0 && cache.len() >= self.max_size {
-            // Remove first entry (FIFO)
-            if let Some(first_key) = cache.keys().next().cloned() {
-                cache.remove(&first_key);
+            if let Some(oldest) = order.pop_front() {
+                cache.remove(&oldest);
                 let mut stats = liquide_common::sync::write_or_recover(&self.stats);
                 stats.evictions += 1;
             }
         }
-        
+
+        order.push_back(key.clone());
         cache.insert(key, properties);
     }
-    
+
     /// Clear the cache
     pub fn clear(&self) {
         let mut cache = liquide_common::sync::write_or_recover(&self.cache);
+        let mut order = liquide_common::sync::write_or_recover(&self.order);
         cache.clear();
+        order.clear();
 
         // Reset stats except total queries
         let mut stats = liquide_common::sync::write_or_recover(&self.stats);
@@ -148,7 +164,7 @@ impl QueryCache {
         stats.cache_misses = 0;
         stats.evictions = 0;
     }
-    
+
     /// Get cache size
     pub fn size(&self) -> usize {
         let cache = liquide_common::sync::read_or_recover(&self.cache);
@@ -160,19 +176,17 @@ impl QueryCache {
         let stats = liquide_common::sync::read_or_recover(&self.stats);
         stats.clone()
     }
-    
+
     /// Pre-warm cache with common queries
-    pub fn prewarm<F>(&self, queries: &[(String, Vec<String>, Option<String>, Vec<String>)], compute_fn: F)
-    where
+    pub fn prewarm<F>(
+        &self,
+        queries: &[(String, Vec<String>, Option<String>, Vec<String>)],
+        compute_fn: F,
+    ) where
         F: Fn(&str, &[String], Option<&str>, &[String]) -> PropertySet,
     {
         for (element, classes, id, pseudo_classes) in queries {
-            let properties = compute_fn(
-                element,
-                classes,
-                id.as_deref(),
-                pseudo_classes,
-            );
+            let properties = compute_fn(element, classes, id.as_deref(), pseudo_classes);
             self.insert(element, classes, id.as_deref(), pseudo_classes, properties);
         }
     }
@@ -181,51 +195,73 @@ impl QueryCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_cache_basic() {
         let cache = QueryCache::new(100);
-        
+
         let props = PropertySet::new();
         cache.insert("button", &[], None, &[], props.clone());
-        
+
         let result = cache.get("button", &[], None, &[]);
         assert!(result.is_some());
-        
+
         let stats = cache.stats();
         assert_eq!(stats.total_queries, 1);
         assert_eq!(stats.cache_hits, 1);
     }
-    
+
     #[test]
     fn test_cache_eviction() {
         let cache = QueryCache::new(2);
-        
+
         let props = PropertySet::new();
         cache.insert("button", &[], None, &[], props.clone());
         cache.insert("input", &[], None, &[], props.clone());
         cache.insert("div", &[], None, &[], props.clone()); // Should evict button
-        
+
         assert_eq!(cache.size(), 2);
-        
+
         let stats = cache.stats();
         assert_eq!(stats.evictions, 1);
     }
-    
+
+    /// FIFO eviction must drop the **oldest** key first, not an arbitrary one.
+    /// Regression: previous implementation used `HashMap::keys().next()`
+    /// which has no ordering guarantee.
+    #[test]
+    fn fifo_eviction_is_order_preserving() {
+        let cache = QueryCache::new(3);
+        let props = PropertySet::new();
+        cache.insert("a", &[], None, &[], props.clone());
+        cache.insert("b", &[], None, &[], props.clone());
+        cache.insert("c", &[], None, &[], props.clone());
+        // Fourth insert must evict "a" (the oldest), not "b" or "c".
+        cache.insert("d", &[], None, &[], props.clone());
+
+        assert!(
+            cache.get("a", &[], None, &[]).is_none(),
+            "oldest entry should have been evicted"
+        );
+        assert!(cache.get("b", &[], None, &[]).is_some());
+        assert!(cache.get("c", &[], None, &[]).is_some());
+        assert!(cache.get("d", &[], None, &[]).is_some());
+    }
+
     #[test]
     fn test_cache_hit_rate() {
         let cache = QueryCache::new(100);
-        
+
         let props = PropertySet::new();
         cache.insert("button", &[], None, &[], props.clone());
-        
+
         // 1 hit
         cache.get("button", &[], None, &[]);
-        
+
         // 2 misses
         cache.get("input", &[], None, &[]);
         cache.get("div", &[], None, &[]);
-        
+
         let stats = cache.stats();
         assert_eq!(stats.total_queries, 3);
         assert_eq!(stats.cache_hits, 1);

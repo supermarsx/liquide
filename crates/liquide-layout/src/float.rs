@@ -151,8 +151,16 @@ impl FloatContext {
 
     /// Get the bottom edge of all placed floats.
     fn bottom_edge(&self) -> f32 {
-        let l = self.left_floats.iter().map(|f| f.rect.y + f.rect.height).fold(0.0f32, f32::max);
-        let r = self.right_floats.iter().map(|f| f.rect.y + f.rect.height).fold(0.0f32, f32::max);
+        let l = self
+            .left_floats
+            .iter()
+            .map(|f| f.rect.y + f.rect.height)
+            .fold(0.0f32, f32::max);
+        let r = self
+            .right_floats
+            .iter()
+            .map(|f| f.rect.y + f.rect.height)
+            .fold(0.0f32, f32::max);
         l.max(r)
     }
 

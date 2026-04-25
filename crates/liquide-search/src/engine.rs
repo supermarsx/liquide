@@ -262,7 +262,7 @@ impl Default for SearchSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{SearchResultAction, SearchCategory};
+    use crate::provider::{SearchCategory, SearchResultAction};
 
     // -- helpers --------------------------------------------------------------
 
@@ -286,16 +286,25 @@ mod tests {
     }
 
     impl SearchProvider for StubProvider {
-        fn id(&self) -> &str { self.pid }
-        fn name(&self) -> &str { self.pname }
-        fn icon(&self) -> &str { "stub-icon" }
-        fn priority(&self) -> u32 { self.priority }
+        fn id(&self) -> &str {
+            self.pid
+        }
+        fn name(&self) -> &str {
+            self.pname
+        }
+        fn icon(&self) -> &str {
+            "stub-icon"
+        }
+        fn priority(&self) -> u32 {
+            self.priority
+        }
 
         fn search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
             if query.is_empty() {
                 return Vec::new();
             }
-            self.results.iter()
+            self.results
+                .iter()
                 .filter(|r| r.title.to_lowercase().contains(&query.to_lowercase()))
                 .take(max_results)
                 .cloned()

@@ -1,14 +1,14 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use liquide_compositor::geometry::Rect;
-use liquide_shell::shell::Shell;
-use liquide_shell::layout::TilingLayout;
-use liquide_shell::focus::*;
-use liquide_shell::window::WindowId;
-use liquide_shell::history::{WindowEventKind, WindowHistory};
 use liquide_shell::app_history::AppHistory;
-use liquide_shell::stats::StatsCollector;
+use liquide_shell::focus::*;
+use liquide_shell::history::{WindowEventKind, WindowHistory};
+use liquide_shell::layout::TilingLayout;
 use liquide_shell::screen_time::ScreenTimeTracker;
+use liquide_shell::shell::Shell;
+use liquide_shell::stats::StatsCollector;
+use liquide_shell::window::WindowId;
 
 fn bench_open_close_1000_windows(c: &mut Criterion) {
     c.bench_function("open_close_1000_windows", |b| {
@@ -16,10 +16,7 @@ fn bench_open_close_1000_windows(c: &mut Criterion) {
             let mut shell = Shell::new(1920.0, 1080.0);
             let mut ids = Vec::with_capacity(1000);
             for i in 0..1000u64 {
-                let id = shell.open_window(
-                    format!("Win{i}"),
-                    Rect::new(0.0, 0.0, 200.0, 150.0),
-                );
+                let id = shell.open_window(format!("Win{i}"), Rect::new(0.0, 0.0, 200.0, 150.0));
                 ids.push(id);
             }
             for id in ids {
@@ -33,10 +30,7 @@ fn bench_visible_windows_sort_500(c: &mut Criterion) {
     c.bench_function("visible_windows_sort_500", |b| {
         let mut shell = Shell::new(1920.0, 1080.0);
         for i in 0..500u64 {
-            let id = shell.open_window(
-                format!("Win{i}"),
-                Rect::new(0.0, 0.0, 100.0, 100.0),
-            );
+            let id = shell.open_window(format!("Win{i}"), Rect::new(0.0, 0.0, 100.0, 100.0));
             shell.window_mut(id).unwrap().z_order = (500 - i as i32) % 100;
         }
         b.iter(|| {

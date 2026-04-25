@@ -1,15 +1,15 @@
-use crate::{Plugin, PluginId, PluginCapability, PluginError as LibPluginError, PluginManifest};
 use crate::manifest::{ExtensionPoint, Permission};
+use crate::{Plugin, PluginCapability, PluginError as LibPluginError, PluginId, PluginManifest};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Plugin state in the registry
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginState {
-    Discovered,   // found on disk
-    Loaded,       // manifest parsed, ready to enable
-    Enabled,      // active and running
-    Disabled,     // explicitly disabled by user
+    Discovered, // found on disk
+    Loaded,     // manifest parsed, ready to enable
+    Enabled,    // active and running
+    Disabled,   // explicitly disabled by user
     Error(String),
 }
 
@@ -106,13 +106,16 @@ impl PluginRegistry {
                         let id = manifest.id.0.clone();
                         if !self.plugins.contains_key(&id) {
                             self.load_counter += 1;
-                            self.plugins.insert(id, PluginInfo {
-                                manifest,
-                                state: PluginState::Discovered,
-                                path: path.to_string_lossy().to_string(),
-                                load_order: self.load_counter,
-                                enabled_by_default: false,
-                            });
+                            self.plugins.insert(
+                                id,
+                                PluginInfo {
+                                    manifest,
+                                    state: PluginState::Discovered,
+                                    path: path.to_string_lossy().to_string(),
+                                    load_order: self.load_counter,
+                                    enabled_by_default: false,
+                                },
+                            );
                         }
                     }
                     Err(_) => continue,
@@ -157,13 +160,16 @@ impl PluginRegistry {
                         let id = manifest.id.clone();
                         if !self.plugins.contains_key(&id_str) {
                             self.load_counter += 1;
-                            self.plugins.insert(id_str, PluginInfo {
-                                manifest,
-                                state: PluginState::Discovered,
-                                path: path.to_string_lossy().to_string(),
-                                load_order: self.load_counter,
-                                enabled_by_default: false,
-                            });
+                            self.plugins.insert(
+                                id_str,
+                                PluginInfo {
+                                    manifest,
+                                    state: PluginState::Discovered,
+                                    path: path.to_string_lossy().to_string(),
+                                    load_order: self.load_counter,
+                                    enabled_by_default: false,
+                                },
+                            );
                             discovered.push(id);
                         }
                     }
@@ -213,13 +219,16 @@ impl PluginRegistry {
         };
 
         self.load_counter += 1;
-        self.plugins.insert(id_str.clone(), PluginInfo {
-            manifest,
-            state: PluginState::Enabled,
-            path: String::new(),
-            load_order: self.load_counter,
-            enabled_by_default: true,
-        });
+        self.plugins.insert(
+            id_str.clone(),
+            PluginInfo {
+                manifest,
+                state: PluginState::Enabled,
+                path: String::new(),
+                load_order: self.load_counter,
+                enabled_by_default: true,
+            },
+        );
         self.instances.insert(id_str, plugin);
 
         Ok(())
@@ -227,7 +236,9 @@ impl PluginRegistry {
 
     /// Enable a plugin by ID
     pub fn enable(&mut self, id: &str) -> Result<(), PluginError> {
-        let info = self.plugins.get_mut(id)
+        let info = self
+            .plugins
+            .get_mut(id)
             .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
 
         match &info.state {
@@ -242,7 +253,9 @@ impl PluginRegistry {
 
     /// Disable a plugin by ID
     pub fn disable(&mut self, id: &str) -> Result<(), PluginError> {
-        let info = self.plugins.get_mut(id)
+        let info = self
+            .plugins
+            .get_mut(id)
             .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
 
         match &info.state {
@@ -271,14 +284,16 @@ impl PluginRegistry {
 
     /// Get all enabled plugins
     pub fn enabled_plugins(&self) -> Vec<&PluginInfo> {
-        self.plugins.values()
+        self.plugins
+            .values()
             .filter(|info| info.state == PluginState::Enabled)
             .collect()
     }
 
     /// Get plugins matching a given extension point
     pub fn by_extension_point(&self, ep: &ExtensionPoint) -> Vec<&PluginInfo> {
-        self.plugins.values()
+        self.plugins
+            .values()
             .filter(|info| &info.manifest.extension_point == ep)
             .collect()
     }
@@ -298,28 +313,34 @@ impl PluginRegistry {
 
     /// Get plugins with a specific capability (only enabled ones)
     pub fn plugins_with_capability(&self, cap: PluginCapability) -> Vec<&PluginInfo> {
-        self.plugins.values()
-            .filter(|info| info.state == PluginState::Enabled
-                && info.manifest.capabilities.contains(&cap))
+        self.plugins
+            .values()
+            .filter(|info| {
+                info.state == PluginState::Enabled && info.manifest.capabilities.contains(&cap)
+            })
             .map(|info| info)
             .collect()
     }
 
     /// Get a plugin instance (downcast to specific type)
     pub fn get_plugin<T: Plugin + 'static>(&self, id: &PluginId) -> Option<&T> {
-        self.instances.get(&id.0)
+        self.instances
+            .get(&id.0)
             .and_then(|p| p.as_any().downcast_ref::<T>())
     }
 
     pub fn get_plugin_mut<T: Plugin + 'static>(&mut self, id: &PluginId) -> Option<&mut T> {
-        self.instances.get_mut(&id.0)
+        self.instances
+            .get_mut(&id.0)
             .and_then(|p| p.as_any_mut().downcast_mut::<T>())
     }
 
     /// Activate a discovered plugin
     pub fn activate(&mut self, id: &PluginId) -> Result<(), LibPluginError> {
         let id_str = &id.0;
-        let info = self.plugins.get_mut(id_str)
+        let info = self
+            .plugins
+            .get_mut(id_str)
             .ok_or_else(|| LibPluginError::NotFound(id.clone()))?;
 
         if info.state == PluginState::Disabled {
@@ -336,14 +357,18 @@ impl PluginRegistry {
                 Ok(()) => {
                     self.load_counter += 1;
                     // Re-borrow after instance borrow ends
-                    let info = self.plugins.get_mut(id_str)
+                    let info = self
+                        .plugins
+                        .get_mut(id_str)
                         .ok_or_else(|| LibPluginError::NotFound(id.clone()))?;
                     info.load_order = self.load_counter;
                     info.state = PluginState::Enabled;
                     Ok(())
                 }
                 Err(e) => {
-                    let info = self.plugins.get_mut(id_str)
+                    let info = self
+                        .plugins
+                        .get_mut(id_str)
                         .ok_or_else(|| LibPluginError::NotFound(id.clone()))?;
                     info.state = PluginState::Error(e.to_string());
                     Err(e)
@@ -351,7 +376,9 @@ impl PluginRegistry {
             }
         } else {
             info.state = PluginState::Error("dynamic loading not yet implemented".into());
-            Err(LibPluginError::LoadFailed("dynamic loading not yet implemented".into()))
+            Err(LibPluginError::LoadFailed(
+                "dynamic loading not yet implemented".into(),
+            ))
         }
     }
 
@@ -374,7 +401,9 @@ impl PluginRegistry {
 
     /// Shutdown all plugins (reverse load order)
     pub fn shutdown_all(&mut self) {
-        let mut ids: Vec<(String, u32)> = self.plugins.iter()
+        let mut ids: Vec<(String, u32)> = self
+            .plugins
+            .iter()
             .filter(|(_, info)| info.state == PluginState::Enabled)
             .map(|(id, info)| (id.clone(), info.load_order))
             .collect();
@@ -406,8 +435,8 @@ impl Default for PluginRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Plugin, PluginId, PluginCapability, PluginError as LibPluginError};
     use crate::manifest::{ExtensionPoint, Permission};
+    use crate::{Plugin, PluginCapability, PluginError as LibPluginError, PluginId};
     use std::any::Any;
 
     /// A dummy plugin for testing
@@ -428,9 +457,15 @@ mod tests {
     }
 
     impl Plugin for DummyPlugin {
-        fn id(&self) -> &PluginId { &self.id }
-        fn name(&self) -> &str { "Dummy" }
-        fn version(&self) -> &str { "1.0" }
+        fn id(&self) -> &PluginId {
+            &self.id
+        }
+        fn name(&self) -> &str {
+            "Dummy"
+        }
+        fn version(&self) -> &str {
+            "1.0"
+        }
         fn capabilities(&self) -> Vec<PluginCapability> {
             vec![PluginCapability::ContextMenu]
         }
@@ -442,8 +477,12 @@ mod tests {
             self.shutdown_called = true;
             Ok(())
         }
-        fn as_any(&self) -> &dyn Any { self }
-        fn as_any_mut(&mut self) -> &mut dyn Any { self }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
     }
 
     /// A plugin that fails on init
@@ -452,16 +491,30 @@ mod tests {
     }
 
     impl Plugin for FailPlugin {
-        fn id(&self) -> &PluginId { &self.id }
-        fn name(&self) -> &str { "Fail" }
-        fn version(&self) -> &str { "0.1" }
-        fn capabilities(&self) -> Vec<PluginCapability> { vec![] }
+        fn id(&self) -> &PluginId {
+            &self.id
+        }
+        fn name(&self) -> &str {
+            "Fail"
+        }
+        fn version(&self) -> &str {
+            "0.1"
+        }
+        fn capabilities(&self) -> Vec<PluginCapability> {
+            vec![]
+        }
         fn init(&mut self) -> Result<(), LibPluginError> {
             Err(LibPluginError::InitFailed("intentional failure".into()))
         }
-        fn shutdown(&mut self) -> Result<(), LibPluginError> { Ok(()) }
-        fn as_any(&self) -> &dyn Any { self }
-        fn as_any_mut(&mut self) -> &mut dyn Any { self }
+        fn shutdown(&mut self) -> Result<(), LibPluginError> {
+            Ok(())
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
     }
 
     fn make_info(id: &str, ep: ExtensionPoint, perms: Vec<Permission>) -> PluginInfo {
@@ -499,7 +552,10 @@ mod tests {
         let info = make_info("com.test.a", ExtensionPoint::PanelWidget, vec![]);
         reg.register(info).unwrap();
         assert!(reg.get("com.test.a").is_some());
-        assert_eq!(reg.get("com.test.a").unwrap().state, PluginState::Discovered);
+        assert_eq!(
+            reg.get("com.test.a").unwrap().state,
+            PluginState::Discovered
+        );
     }
 
     #[test]
@@ -514,7 +570,8 @@ mod tests {
     #[test]
     fn enable_discovered_plugin() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("en", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("en", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         reg.enable("en").unwrap();
         assert_eq!(reg.get("en").unwrap().state, PluginState::Enabled);
     }
@@ -522,13 +579,17 @@ mod tests {
     #[test]
     fn enable_nonexistent_fails() {
         let mut reg = PluginRegistry::new();
-        assert_eq!(reg.enable("ghost").unwrap_err(), PluginError::NotFound("ghost".into()));
+        assert_eq!(
+            reg.enable("ghost").unwrap_err(),
+            PluginError::NotFound("ghost".into())
+        );
     }
 
     #[test]
     fn disable_enabled_plugin() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("dis", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("dis", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         reg.enable("dis").unwrap();
         reg.disable("dis").unwrap();
         assert_eq!(reg.get("dis").unwrap().state, PluginState::Disabled);
@@ -537,13 +598,17 @@ mod tests {
     #[test]
     fn disable_nonexistent_fails() {
         let mut reg = PluginRegistry::new();
-        assert_eq!(reg.disable("ghost").unwrap_err(), PluginError::NotFound("ghost".into()));
+        assert_eq!(
+            reg.disable("ghost").unwrap_err(),
+            PluginError::NotFound("ghost".into())
+        );
     }
 
     #[test]
     fn enable_disabled_plugin() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("toggle", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("toggle", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         reg.enable("toggle").unwrap();
         reg.disable("toggle").unwrap();
         assert_eq!(reg.get("toggle").unwrap().state, PluginState::Disabled);
@@ -554,7 +619,8 @@ mod tests {
     #[test]
     fn enable_already_enabled_is_noop() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("en2", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("en2", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         reg.enable("en2").unwrap();
         reg.enable("en2").unwrap(); // should not error
         assert_eq!(reg.get("en2").unwrap().state, PluginState::Enabled);
@@ -563,7 +629,8 @@ mod tests {
     #[test]
     fn disable_already_disabled_is_noop() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("dis2", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("dis2", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         reg.disable("dis2").unwrap();
         reg.disable("dis2").unwrap(); // should not error
     }
@@ -591,7 +658,8 @@ mod tests {
     #[test]
     fn uninstall_removes_plugin() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("rem", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("rem", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         assert!(reg.get("rem").is_some());
         reg.uninstall("rem").unwrap();
         assert!(reg.get("rem").is_none());
@@ -601,7 +669,10 @@ mod tests {
     #[test]
     fn uninstall_nonexistent_fails() {
         let mut reg = PluginRegistry::new();
-        assert_eq!(reg.uninstall("ghost").unwrap_err(), PluginError::NotFound("ghost".into()));
+        assert_eq!(
+            reg.uninstall("ghost").unwrap_err(),
+            PluginError::NotFound("ghost".into())
+        );
     }
 
     // ---- enabled_plugins ----
@@ -609,9 +680,12 @@ mod tests {
     #[test]
     fn enabled_plugins_filters_correctly() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("a", ExtensionPoint::PanelWidget, vec![])).unwrap();
-        reg.register(make_info("b", ExtensionPoint::PanelWidget, vec![])).unwrap();
-        reg.register(make_info("c", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("a", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
+        reg.register(make_info("b", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
+        reg.register(make_info("c", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         reg.enable("a").unwrap();
         reg.enable("c").unwrap();
         let enabled = reg.enabled_plugins();
@@ -629,10 +703,14 @@ mod tests {
     #[test]
     fn by_extension_point_filters() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("pw1", ExtensionPoint::PanelWidget, vec![])).unwrap();
-        reg.register(make_info("pw2", ExtensionPoint::PanelWidget, vec![])).unwrap();
-        reg.register(make_info("dw1", ExtensionPoint::DesktopWidget, vec![])).unwrap();
-        reg.register(make_info("te1", ExtensionPoint::ThemeExtension, vec![])).unwrap();
+        reg.register(make_info("pw1", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
+        reg.register(make_info("pw2", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
+        reg.register(make_info("dw1", ExtensionPoint::DesktopWidget, vec![]))
+            .unwrap();
+        reg.register(make_info("te1", ExtensionPoint::ThemeExtension, vec![]))
+            .unwrap();
 
         let panels = reg.by_extension_point(&ExtensionPoint::PanelWidget);
         assert_eq!(panels.len(), 2);
@@ -652,8 +730,12 @@ mod tests {
     #[test]
     fn check_permissions_granted() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("perm1", ExtensionPoint::PanelWidget,
-            vec![Permission::Network, Permission::Clipboard])).unwrap();
+        reg.register(make_info(
+            "perm1",
+            ExtensionPoint::PanelWidget,
+            vec![Permission::Network, Permission::Clipboard],
+        ))
+        .unwrap();
         assert!(reg.check_permissions("perm1", &Permission::Network));
         assert!(reg.check_permissions("perm1", &Permission::Clipboard));
         assert!(!reg.check_permissions("perm1", &Permission::Screenshot));
@@ -668,8 +750,12 @@ mod tests {
     #[test]
     fn check_permissions_filesystem_path() {
         let mut reg = PluginRegistry::new();
-        reg.register(make_info("fs", ExtensionPoint::PanelWidget,
-            vec![Permission::FileSystem("/home".into())])).unwrap();
+        reg.register(make_info(
+            "fs",
+            ExtensionPoint::PanelWidget,
+            vec![Permission::FileSystem("/home".into())],
+        ))
+        .unwrap();
         assert!(reg.check_permissions("fs", &Permission::FileSystem("/home".into())));
         assert!(!reg.check_permissions("fs", &Permission::FileSystem("/root".into())));
     }
@@ -691,7 +777,8 @@ mod tests {
     #[test]
     fn register_builtin_duplicate_fails() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("dup"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("dup")))
+            .unwrap();
         let result = reg.register_builtin(Box::new(DummyPlugin::new("dup")));
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -703,7 +790,8 @@ mod tests {
     #[test]
     fn deactivate_plugin() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("deact"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("deact")))
+            .unwrap();
         let id = PluginId("deact".into());
 
         assert!(reg.deactivate(&id).is_ok());
@@ -721,7 +809,8 @@ mod tests {
     #[test]
     fn activate_disabled_fails() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("dis"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("dis")))
+            .unwrap();
         let id = PluginId("dis".into());
         reg.disable("dis").unwrap();
 
@@ -736,8 +825,10 @@ mod tests {
     #[test]
     fn plugins_with_capability() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("ctx1"))).unwrap();
-        reg.register_builtin(Box::new(DummyPlugin::new("ctx2"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("ctx1")))
+            .unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("ctx2")))
+            .unwrap();
 
         let ctx_plugins = reg.plugins_with_capability(PluginCapability::ContextMenu);
         assert_eq!(ctx_plugins.len(), 2);
@@ -749,7 +840,8 @@ mod tests {
     #[test]
     fn get_plugin_downcast() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("down"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("down")))
+            .unwrap();
         let id = PluginId("down".into());
         let plugin = reg.get_plugin::<DummyPlugin>(&id);
         assert!(plugin.is_some());
@@ -758,7 +850,8 @@ mod tests {
     #[test]
     fn get_plugin_mut_downcast() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("downmut"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("downmut")))
+            .unwrap();
         let id = PluginId("downmut".into());
         let plugin = reg.get_plugin_mut::<DummyPlugin>(&id);
         assert!(plugin.is_some());
@@ -767,9 +860,12 @@ mod tests {
     #[test]
     fn shutdown_all_reverse_order() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("first"))).unwrap();
-        reg.register_builtin(Box::new(DummyPlugin::new("second"))).unwrap();
-        reg.register_builtin(Box::new(DummyPlugin::new("third"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("first")))
+            .unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("second")))
+            .unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("third")))
+            .unwrap();
 
         reg.shutdown_all();
 
@@ -847,7 +943,8 @@ extension_point = "panel_widget"
     #[test]
     fn activate_already_active_is_ok() {
         let mut reg = PluginRegistry::new();
-        reg.register_builtin(Box::new(DummyPlugin::new("already"))).unwrap();
+        reg.register_builtin(Box::new(DummyPlugin::new("already")))
+            .unwrap();
         let id = PluginId("already".into());
         assert!(reg.activate(&id).is_ok());
     }
@@ -865,7 +962,9 @@ extension_point = "panel_widget"
     #[test]
     fn activate_fail_plugin_sets_error_state() {
         let mut reg = PluginRegistry::new();
-        let fail = FailPlugin { id: PluginId("fail.init".into()) };
+        let fail = FailPlugin {
+            id: PluginId("fail.init".into()),
+        };
         reg.register_builtin(Box::new(fail)).unwrap();
         let id = PluginId("fail.init".into());
         reg.deactivate(&id).unwrap();
@@ -884,7 +983,8 @@ extension_point = "panel_widget"
         let mut reg = PluginRegistry::new();
         assert!(reg.is_empty());
         assert_eq!(reg.len(), 0);
-        reg.register(make_info("x", ExtensionPoint::PanelWidget, vec![])).unwrap();
+        reg.register(make_info("x", ExtensionPoint::PanelWidget, vec![]))
+            .unwrap();
         assert!(!reg.is_empty());
         assert_eq!(reg.len(), 1);
     }
@@ -894,7 +994,15 @@ extension_point = "panel_widget"
         assert!(PluginError::NotFound("x".into()).to_string().contains("x"));
         assert!(PluginError::AlreadyExists.to_string().contains("already"));
         assert!(PluginError::InvalidState.to_string().contains("invalid"));
-        assert!(PluginError::PermissionDenied.to_string().contains("permission"));
-        assert!(PluginError::DependencyMissing("dep".into()).to_string().contains("dep"));
+        assert!(
+            PluginError::PermissionDenied
+                .to_string()
+                .contains("permission")
+        );
+        assert!(
+            PluginError::DependencyMissing("dep".into())
+                .to_string()
+                .contains("dep")
+        );
     }
 }

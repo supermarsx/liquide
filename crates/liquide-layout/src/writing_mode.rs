@@ -30,7 +30,10 @@ impl LogicalSize {
     }
 
     pub fn zero() -> Self {
-        Self { inline: 0.0, block: 0.0 }
+        Self {
+            inline: 0.0,
+            block: 0.0,
+        }
     }
 }
 
@@ -48,7 +51,12 @@ pub struct LogicalRect {
 
 impl LogicalRect {
     pub fn new(inline_start: f32, block_start: f32, inline_size: f32, block_size: f32) -> Self {
-        Self { inline_start, block_start, inline_size, block_size }
+        Self {
+            inline_start,
+            block_start,
+            inline_size,
+            block_size,
+        }
     }
 
     pub fn zero() -> Self {
@@ -142,18 +150,12 @@ pub fn to_physical_rect(logical: LogicalRect, mode: WritingMode, container: Size
 #[must_use]
 pub fn from_physical_rect(physical: Rect, mode: WritingMode, container: Size) -> LogicalRect {
     match mode {
-        WritingMode::HorizontalTb => LogicalRect::new(
-            physical.x,
-            physical.y,
-            physical.width,
-            physical.height,
-        ),
-        WritingMode::VerticalLr | WritingMode::SidewaysLr => LogicalRect::new(
-            physical.y,
-            physical.x,
-            physical.height,
-            physical.width,
-        ),
+        WritingMode::HorizontalTb => {
+            LogicalRect::new(physical.x, physical.y, physical.width, physical.height)
+        }
+        WritingMode::VerticalLr | WritingMode::SidewaysLr => {
+            LogicalRect::new(physical.y, physical.x, physical.height, physical.width)
+        }
         WritingMode::VerticalRl | WritingMode::SidewaysRl => LogicalRect::new(
             physical.y,
             container.width - physical.x - physical.width,
@@ -172,7 +174,10 @@ pub struct WritingModeContext {
 
 impl WritingModeContext {
     pub fn new(mode: WritingMode) -> Self {
-        Self { mode, direction: Direction::Ltr }
+        Self {
+            mode,
+            direction: Direction::Ltr,
+        }
     }
 
     pub fn with_direction(mode: WritingMode, direction: Direction) -> Self {
@@ -205,9 +210,13 @@ impl WritingModeContext {
     pub fn block_start_end_physical(&self) -> BlockAxis {
         if self.is_vertical() {
             if self.block_flow_is_rtl() {
-                BlockAxis::Horizontal { start_is_right: true }
+                BlockAxis::Horizontal {
+                    start_is_right: true,
+                }
             } else {
-                BlockAxis::Horizontal { start_is_right: false }
+                BlockAxis::Horizontal {
+                    start_is_right: false,
+                }
             }
         } else {
             BlockAxis::Vertical
@@ -311,7 +320,10 @@ pub enum BlockAxis {
 
 impl Default for WritingModeContext {
     fn default() -> Self {
-        Self { mode: WritingMode::HorizontalTb, direction: Direction::Ltr }
+        Self {
+            mode: WritingMode::HorizontalTb,
+            direction: Direction::Ltr,
+        }
     }
 }
 
@@ -491,9 +503,19 @@ mod tests {
         assert_eq!(h.block_start_end_physical(), BlockAxis::Vertical);
 
         let vrl = WritingModeContext::new(WritingMode::VerticalRl);
-        assert_eq!(vrl.block_start_end_physical(), BlockAxis::Horizontal { start_is_right: true });
+        assert_eq!(
+            vrl.block_start_end_physical(),
+            BlockAxis::Horizontal {
+                start_is_right: true
+            }
+        );
 
         let vlr = WritingModeContext::new(WritingMode::VerticalLr);
-        assert_eq!(vlr.block_start_end_physical(), BlockAxis::Horizontal { start_is_right: false });
+        assert_eq!(
+            vlr.block_start_end_physical(),
+            BlockAxis::Horizontal {
+                start_is_right: false
+            }
+        );
     }
 }

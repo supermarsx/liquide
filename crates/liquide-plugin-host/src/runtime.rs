@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use liquide_plugin_abi::types::ResourceHandle;
-use liquide_plugin_abi::{PluginManifest, ABI_VERSION};
 use liquide_plugin_abi::plugin_manifest;
+use liquide_plugin_abi::types::ResourceHandle;
+use liquide_plugin_abi::{ABI_VERSION, PluginManifest};
 
 use crate::config::PluginHostConfig;
 use crate::plugin::{LoadedPlugin, PluginId};
@@ -62,11 +62,7 @@ impl PluginRuntime {
         }
 
         // Plugin limit.
-        let active_count = self
-            .plugins
-            .values()
-            .filter(|p| !p.is_unloaded())
-            .count();
+        let active_count = self.plugins.values().filter(|p| !p.is_unloaded()).count();
         if active_count >= self.config.max_plugins {
             return Err(PluginHostError::PluginLimitReached {
                 max: self.config.max_plugins,

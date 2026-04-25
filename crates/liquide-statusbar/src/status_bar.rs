@@ -5,8 +5,8 @@ use crate::config::StatusBarConfig;
 use crate::indicator::SystemIndicator;
 use crate::menu_bar::MenuBar;
 use crate::theme_toggle::ThemeToggle;
-use liquide_ui_core::{Painter, UiTheme};
 use liquide_ui_core::theme::ThemeMode;
+use liquide_ui_core::{Painter, UiTheme};
 
 /// The full status bar widget.
 pub struct StatusBar {
@@ -48,7 +48,11 @@ impl StatusBar {
     /// Update the clock.
     pub fn update_clock(&mut self, new_timestamp_us: u64) {
         for ind in &mut self.indicators {
-            if let crate::indicator::IndicatorKind::Clock { ref mut timestamp_us, .. } = ind.kind {
+            if let crate::indicator::IndicatorKind::Clock {
+                ref mut timestamp_us,
+                ..
+            } = ind.kind
+            {
                 *timestamp_us = new_timestamp_us;
                 self.dirty = true;
             }
@@ -58,7 +62,11 @@ impl StatusBar {
     /// Update notification count.
     pub fn update_notifications(&mut self, count: u32) {
         for ind in &mut self.indicators {
-            if let crate::indicator::IndicatorKind::Notification { ref mut unread_count, .. } = ind.kind {
+            if let crate::indicator::IndicatorKind::Notification {
+                ref mut unread_count,
+                ..
+            } = ind.kind
+            {
                 *unread_count = count;
                 self.dirty = true;
             }
@@ -68,7 +76,11 @@ impl StatusBar {
     /// Update WiFi quality.
     pub fn update_wifi(&mut self, quality: u8) {
         for ind in &mut self.indicators {
-            if let crate::indicator::IndicatorKind::Wifi { ref mut quality_percent, .. } = ind.kind {
+            if let crate::indicator::IndicatorKind::Wifi {
+                ref mut quality_percent,
+                ..
+            } = ind.kind
+            {
                 *quality_percent = quality;
                 self.dirty = true;
             }
@@ -95,12 +107,7 @@ impl StatusBar {
     ///
     /// Layout: `[ AppName | File Edit View Window Help | ........ | 🌙 🔔 ▂▄▆█ 🔋 14:30 ]`
     #[allow(unused_assignments)]
-    pub fn paint(
-        &self,
-        painter: &mut Painter,
-        theme: &UiTheme,
-        screen_width: f32,
-    ) {
+    pub fn paint(&self, painter: &mut Painter, theme: &UiTheme, screen_width: f32) {
         if !self.config.enabled {
             return;
         }
@@ -116,9 +123,12 @@ impl StatusBar {
 
         // Bottom border
         painter.draw_line(
-            0.0, bar_y + bar_h - 0.5,
-            screen_width, bar_y + bar_h - 0.5,
-            colors.border_subtle, 1.0,
+            0.0,
+            bar_y + bar_h - 0.5,
+            screen_width,
+            bar_y + bar_h - 0.5,
+            colors.border_subtle,
+            1.0,
         );
 
         // === LEFT SIDE: App name + menu bar ===
@@ -160,7 +170,8 @@ impl StatusBar {
         // Theme toggle (before indicators)
         if self.config.show_theme_toggle {
             right_x -= 28.0;
-            self.theme_toggle.paint(painter, theme, right_x, bar_y, bar_h);
+            self.theme_toggle
+                .paint(painter, theme, right_x, bar_y, bar_h);
         }
     }
 }

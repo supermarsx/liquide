@@ -374,7 +374,8 @@ impl PropertyTrees {
             } else if let Some(parent) = self.clip_tree.nodes.get(parent_id as usize) {
                 let parent_acc = parent.accumulated_clip.unwrap_or(parent.clip_rect);
                 let my_clip = self.clip_tree.nodes[i].clip_rect;
-                self.clip_tree.nodes[i].accumulated_clip = Some(intersect_rects(parent_acc, my_clip));
+                self.clip_tree.nodes[i].accumulated_clip =
+                    Some(intersect_rects(parent_acc, my_clip));
             }
         }
     }
@@ -430,9 +431,7 @@ pub enum CompositorContent {
         inner_glow: bool,
     },
     /// Client window surface.
-    Surface {
-        surface_id: u64,
-    },
+    Surface { surface_id: u64 },
     /// Text content.
     Text {
         text: String,
@@ -442,14 +441,9 @@ pub enum CompositorContent {
         font_weight: u16,
     },
     /// Icon.
-    Icon {
-        icon_id: u32,
-        color: Color,
-    },
+    Icon { icon_id: u32, color: Color },
     /// Image.
-    Image {
-        image_id: String,
-    },
+    Image { image_id: String },
     /// Shadow.
     Shadow {
         blur_radius: f32,
@@ -463,13 +457,9 @@ pub enum CompositorContent {
         radii: (f32, f32, f32, f32),
     },
     /// Window decoration (title bar).
-    Decoration {
-        title: String,
-    },
+    Decoration { title: String },
     /// Display list paint chunk (recorded paint ops for a subtree).
-    PaintChunk {
-        display_list_range: (usize, usize),
-    },
+    PaintChunk { display_list_range: (usize, usize) },
 }
 
 #[cfg(test)]
@@ -516,17 +506,32 @@ mod tests {
     fn clip_tree_intersection() {
         let mut trees = PropertyTrees::new();
         // Root clip at (0,0)-(100,100)
-        trees.clip_tree.nodes[0].clip_rect = Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 };
+        trees.clip_tree.nodes[0].clip_rect = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
         // Child clip at (50,50)-(150,150)
         let child = ClipNode {
             parent: ROOT_NODE_ID,
-            clip_rect: Rect { x: 50.0, y: 50.0, width: 100.0, height: 100.0 },
+            clip_rect: Rect {
+                x: 50.0,
+                y: 50.0,
+                width: 100.0,
+                height: 100.0,
+            },
             ..Default::default()
         };
         let child_id = trees.clip_tree.insert(child);
         trees.update_clip_cache();
 
-        let acc = trees.clip_tree.get(child_id).unwrap().accumulated_clip.unwrap();
+        let acc = trees
+            .clip_tree
+            .get(child_id)
+            .unwrap()
+            .accumulated_clip
+            .unwrap();
         assert!((acc.x - 50.0).abs() < 0.001);
         assert!((acc.y - 50.0).abs() < 0.001);
         assert!((acc.width - 50.0).abs() < 0.001);
@@ -549,7 +554,12 @@ mod tests {
                 offset_x: 2.0,
                 offset_y: 4.0,
                 blur_radius: 8.0,
-                color: Color { r: 0, g: 0, b: 0, a: 128 },
+                color: Color {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 128,
+                },
             },
         ];
         assert_eq!(filters.len(), 10);

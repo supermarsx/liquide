@@ -47,9 +47,7 @@ impl PlatformBridge {
     /// Read the current user's crontab and return its lines.
     #[cfg(target_os = "linux")]
     pub fn crontab_list() -> Result<Vec<String>, PlatformError> {
-        let output = std::process::Command::new("crontab")
-            .arg("-l")
-            .output()?;
+        let output = std::process::Command::new("crontab").arg("-l").output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             // "no crontab for ..." is not a real error
@@ -77,7 +75,10 @@ impl PlatformBridge {
             if parts.len() < 6 {
                 continue;
             }
-            let cron_str = format!("{} {} {} {} {}", parts[0], parts[1], parts[2], parts[3], parts[4]);
+            let cron_str = format!(
+                "{} {} {} {} {}",
+                parts[0], parts[1], parts[2], parts[3], parts[4]
+            );
             let command = parts[5].to_string();
             if let Ok(expr) = CronExpr::parse(&cron_str) {
                 let mut task = ScheduledTask::new(
@@ -244,9 +245,7 @@ impl PlatformBridge {
     pub fn windows_register_task(task: &ScheduledTask) -> Result<(), PlatformError> {
         let trigger = match &task.schedule {
             Schedule::Daily { hour, minute } => {
-                format!(
-                    "New-ScheduledTaskTrigger -Daily -At '{hour:02}:{minute:02}'",
-                )
+                format!("New-ScheduledTaskTrigger -Daily -At '{hour:02}:{minute:02}'",)
             }
             Schedule::Weekly { day, hour, minute } => {
                 let day_name = match day {
@@ -353,7 +352,9 @@ impl PlatformBridge {
         match &task.schedule {
             Schedule::Daily { hour, minute } => {
                 plist.push_str("  <key>StartCalendarInterval</key>\n  <dict>\n");
-                plist.push_str(&format!("    <key>Hour</key>\n    <integer>{hour}</integer>\n"));
+                plist.push_str(&format!(
+                    "    <key>Hour</key>\n    <integer>{hour}</integer>\n"
+                ));
                 plist.push_str(&format!(
                     "    <key>Minute</key>\n    <integer>{minute}</integer>\n"
                 ));
@@ -365,7 +366,9 @@ impl PlatformBridge {
                     "    <key>Weekday</key>\n    <integer>{}</integer>\n",
                     *day as u8
                 ));
-                plist.push_str(&format!("    <key>Hour</key>\n    <integer>{hour}</integer>\n"));
+                plist.push_str(&format!(
+                    "    <key>Hour</key>\n    <integer>{hour}</integer>\n"
+                ));
                 plist.push_str(&format!(
                     "    <key>Minute</key>\n    <integer>{minute}</integer>\n"
                 ));
@@ -373,8 +376,12 @@ impl PlatformBridge {
             }
             Schedule::Monthly { day, hour, minute } => {
                 plist.push_str("  <key>StartCalendarInterval</key>\n  <dict>\n");
-                plist.push_str(&format!("    <key>Day</key>\n    <integer>{day}</integer>\n"));
-                plist.push_str(&format!("    <key>Hour</key>\n    <integer>{hour}</integer>\n"));
+                plist.push_str(&format!(
+                    "    <key>Day</key>\n    <integer>{day}</integer>\n"
+                ));
+                plist.push_str(&format!(
+                    "    <key>Hour</key>\n    <integer>{hour}</integer>\n"
+                ));
                 plist.push_str(&format!(
                     "    <key>Minute</key>\n    <integer>{minute}</integer>\n"
                 ));
@@ -398,9 +405,8 @@ impl PlatformBridge {
         let label = format!("com.liquide.task-{}", task.id);
         let plist_content = Self::generate_plist(task);
 
-        let home = std::env::var("HOME").map_err(|_| {
-            PlatformError::ParseFailed("HOME not set".to_string())
-        })?;
+        let home = std::env::var("HOME")
+            .map_err(|_| PlatformError::ParseFailed("HOME not set".to_string()))?;
         let plist_path = format!("{home}/Library/LaunchAgents/{label}.plist");
 
         std::fs::write(&plist_path, &plist_content)?;
@@ -420,9 +426,8 @@ impl PlatformBridge {
     #[cfg(target_os = "macos")]
     pub fn launchctl_uninstall(task_id: u32) -> Result<(), PlatformError> {
         let label = format!("com.liquide.task-{task_id}");
-        let home = std::env::var("HOME").map_err(|_| {
-            PlatformError::ParseFailed("HOME not set".to_string())
-        })?;
+        let home = std::env::var("HOME")
+            .map_err(|_| PlatformError::ParseFailed("HOME not set".to_string()))?;
         let plist_path = format!("{home}/Library/LaunchAgents/{label}.plist");
 
         // Unload (ignore errors — might not be loaded)
@@ -483,12 +488,11 @@ fn format_cron_field(field: &crate::cron::CronField) -> String {
         CronField::Value(v) => v.to_string(),
         CronField::Range(lo, hi) => format!("{lo}-{hi}"),
         CronField::Step(s) => format!("*/{s}"),
-        CronField::List(vals) => {
-            vals.iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        }
+        CronField::List(vals) => vals
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
     }
 }
 

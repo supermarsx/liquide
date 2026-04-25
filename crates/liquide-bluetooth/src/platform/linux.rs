@@ -283,8 +283,7 @@ impl BluetoothBackend for BluetoothManager {
                 } else {
                     // Fallback: if the device directory exists and has a valid address,
                     // it's at least enumerated. Check operstate if available.
-                    let operstate =
-                        read_sysfs(&base.join("operstate")).unwrap_or_default();
+                    let operstate = read_sysfs(&base.join("operstate")).unwrap_or_default();
                     if !operstate.is_empty() {
                         operstate == "up"
                     } else {
@@ -486,7 +485,11 @@ impl BluetoothBackend for BluetoothManager {
         }
 
         // Check cached discovered devices
-        if let Some(dev) = self.cached_discovered.iter().find(|d| d.address == canonical) {
+        if let Some(dev) = self
+            .cached_discovered
+            .iter()
+            .find(|d| d.address == canonical)
+        {
             return Some(dev.clone());
         }
 
@@ -703,10 +706,7 @@ mod tests {
     #[test]
     fn parse_ini_value_section_headers_ignored() {
         let content = "[General]\nName=Foo\n[DeviceID]\nVendor=0x1234\n";
-        assert_eq!(
-            parse_ini_value(content, "Name"),
-            Some("Foo".to_string())
-        );
+        assert_eq!(parse_ini_value(content, "Name"), Some("Foo".to_string()));
         assert_eq!(
             parse_ini_value(content, "Vendor"),
             Some("0x1234".to_string())

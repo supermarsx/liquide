@@ -18,7 +18,11 @@ fn render_background() {
     let mut renderer = SoftwareRenderer::new();
     let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
     let mut damage = DamageSet::new(64);
-    damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
 
     let node = FlatNode {
         id: 1,
@@ -46,7 +50,11 @@ fn render_surface_node() {
     let mut renderer = SoftwareRenderer::new();
     let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
     let mut damage = DamageSet::new(64);
-    damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
 
     let node = FlatNode {
         id: 10,
@@ -65,7 +73,10 @@ fn render_surface_node() {
 
     // Should not error even with no buffer
     let result = renderer.render(&[node], &mut fb, &damage);
-    assert!(result.is_ok(), "render Surface with no buffer should succeed");
+    assert!(
+        result.is_ok(),
+        "render Surface with no buffer should succeed"
+    );
 }
 
 #[test]
@@ -76,7 +87,11 @@ fn render_glass_node() {
     let before = fb.pixels().to_vec();
 
     let mut damage = DamageSet::new(64);
-    damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
 
     let node = FlatNode {
         id: 20,
@@ -101,7 +116,11 @@ fn render_decoration_node() {
     let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
 
     let mut damage = DamageSet::new(64);
-    damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
 
     let node = FlatNode {
         id: 30,
@@ -129,8 +148,11 @@ fn render_decoration_node() {
     assert!(result.is_ok(), "render Decoration node should succeed");
     // The background fill should have modified some pixels
     let center = fb.get_pixel(32, 16);
-    assert!(center.r > 0 || center.g > 0 || center.b > 0,
-        "decoration should fill pixels: got {:?}", center);
+    assert!(
+        center.r > 0 || center.g > 0 || center.b > 0,
+        "decoration should fill pixels: got {:?}",
+        center
+    );
 }
 
 #[test]
@@ -146,10 +168,26 @@ fn render_lock_screen_node() {
     let before = fb.pixels().to_vec();
 
     let mut damage = DamageSet::new(64);
-    damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
-    damage.add(DamageTile { x: 1, y: 0, class: DamageClass::UiPrimitive });
-    damage.add(DamageTile { x: 0, y: 1, class: DamageClass::UiPrimitive });
-    damage.add(DamageTile { x: 1, y: 1, class: DamageClass::UiPrimitive });
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
+    damage.add(DamageTile {
+        x: 1,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
+    damage.add(DamageTile {
+        x: 0,
+        y: 1,
+        class: DamageClass::UiPrimitive,
+    });
+    damage.add(DamageTile {
+        x: 1,
+        y: 1,
+        class: DamageClass::UiPrimitive,
+    });
 
     let node = FlatNode {
         id: 40,
@@ -165,5 +203,108 @@ fn render_lock_screen_node() {
 
     let result = renderer.render(&[node], &mut fb, &damage);
     assert!(result.is_ok(), "render LockScreen node should succeed");
-    assert_ne!(fb.pixels(), &before[..], "LockScreen should modify pixels (backdrop blur + dark tint)");
+    assert_ne!(
+        fb.pixels(),
+        &before[..],
+        "LockScreen should modify pixels (backdrop blur + dark tint)"
+    );
+}
+
+#[test]
+fn render_classifies_cursor_and_surface_damage() {
+    let mut renderer = SoftwareRenderer::new();
+    let mut fb = FrameBuffer::new(128, 64, PixelFormat::Bgra8);
+    let mut damage = DamageSet::new(64);
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
+    damage.add(DamageTile {
+        x: 1,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
+
+    let cursor = FlatNode {
+        id: 100,
+        kind: SceneNodeKind::Cursor {
+            shape: liquide_compositor::scene::CursorShape::Arrow,
+        },
+        absolute_bounds: Rect::new(0.0, 0.0, 24.0, 24.0),
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+    let surface = FlatNode {
+        id: 101,
+        kind: SceneNodeKind::Surface {
+            surface_id: 1,
+            buffer: None,
+        },
+        absolute_bounds: Rect::new(64.0, 0.0, 64.0, 64.0),
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 1,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+
+    let classified = renderer.render(&[cursor, surface], &mut fb, &damage).unwrap();
+    let classes: std::collections::HashMap<(u32, u32), DamageClass> = classified
+        .into_iter()
+        .map(|tile| ((tile.x, tile.y), tile.class))
+        .collect();
+
+    assert_eq!(classes.get(&(0, 0)), Some(&DamageClass::CursorOnly));
+    assert_eq!(classes.get(&(1, 0)), Some(&DamageClass::BitmapRegion));
+}
+
+#[test]
+fn render_text_damage_overrides_bitmap_damage_on_same_tile() {
+    let mut renderer = SoftwareRenderer::new();
+    let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+    let mut damage = DamageSet::new(64);
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
+
+    let surface = FlatNode {
+        id: 200,
+        kind: SceneNodeKind::Surface {
+            surface_id: 2,
+            buffer: None,
+        },
+        absolute_bounds: Rect::new(0.0, 0.0, 64.0, 64.0),
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+    let caret = FlatNode {
+        id: 201,
+        kind: SceneNodeKind::TextCaret {
+            color: Color::WHITE,
+            width: 2.0,
+        },
+        absolute_bounds: Rect::new(8.0, 8.0, 2.0, 24.0),
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 1,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+
+    let classified = renderer.render(&[surface, caret], &mut fb, &damage).unwrap();
+    assert_eq!(classified.len(), 1);
+    assert_eq!(classified[0].class, DamageClass::TextGlyph);
 }

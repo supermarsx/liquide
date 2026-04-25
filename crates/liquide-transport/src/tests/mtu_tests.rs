@@ -1,5 +1,5 @@
 use crate::mtu::{
-    MtuConfig, MtuDiscoverer, ProbeState, MAX_MTU_DEFAULT, MIN_MTU_IPV4, MIN_MTU_IPV6, SAFE_MTU,
+    MAX_MTU_DEFAULT, MIN_MTU_IPV4, MIN_MTU_IPV6, MtuConfig, MtuDiscoverer, ProbeState, SAFE_MTU,
 };
 
 // ---------------------------------------------------------------------------

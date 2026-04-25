@@ -19,7 +19,12 @@ impl Bookmark {
     /// Create a new user bookmark.
     #[must_use]
     pub fn new(name: String, path: String) -> Self {
-        Self { name, path, icon: None, is_system: false }
+        Self {
+            name,
+            path,
+            icon: None,
+            is_system: false,
+        }
     }
 
     /// Create a system bookmark with a specific icon.
@@ -51,8 +56,16 @@ pub fn default_bookmarks() -> Vec<Bookmark> {
     vec![
         Bookmark::system("Home", &home, "folder-home"),
         Bookmark::system("Desktop", &format!("{}/Desktop", home), "folder-desktop"),
-        Bookmark::system("Documents", &format!("{}/Documents", home), "folder-documents"),
-        Bookmark::system("Downloads", &format!("{}/Downloads", home), "folder-downloads"),
+        Bookmark::system(
+            "Documents",
+            &format!("{}/Documents", home),
+            "folder-documents",
+        ),
+        Bookmark::system(
+            "Downloads",
+            &format!("{}/Downloads", home),
+            "folder-downloads",
+        ),
         Bookmark::system("Music", &format!("{}/Music", home), "folder-music"),
         Bookmark::system("Pictures", &format!("{}/Pictures", home), "folder-pictures"),
         Bookmark::system("Videos", &format!("{}/Videos", home), "folder-videos"),
@@ -93,7 +106,9 @@ impl BookmarkManager {
     /// Create an empty bookmark manager (no defaults).
     #[must_use]
     pub fn empty() -> Self {
-        Self { bookmarks: Vec::new() }
+        Self {
+            bookmarks: Vec::new(),
+        }
     }
 
     /// Get all bookmarks.
@@ -107,7 +122,12 @@ impl BookmarkManager {
         if self.bookmarks.iter().any(|b| b.path == path) {
             return false;
         }
-        self.bookmarks.push(Bookmark { name, path, icon, is_system: false });
+        self.bookmarks.push(Bookmark {
+            name,
+            path,
+            icon,
+            is_system: false,
+        });
         true
     }
 
@@ -116,7 +136,9 @@ impl BookmarkManager {
         let before = self.bookmarks.len();
         self.bookmarks.retain(|b| b.is_system || b.path != path);
         if self.bookmarks.len() == before {
-            return Err(crate::FilesError::BookmarkNotFound { name: path.to_string() });
+            return Err(crate::FilesError::BookmarkNotFound {
+                name: path.to_string(),
+            });
         }
         Ok(())
     }
@@ -185,7 +207,9 @@ impl Sidebar {
 
     /// Get all bookmarks.
     #[must_use]
-    pub fn bookmarks(&self) -> &[Bookmark] { self.manager.bookmarks() }
+    pub fn bookmarks(&self) -> &[Bookmark] {
+        self.manager.bookmarks()
+    }
 
     /// Add a user bookmark.
     pub fn add_bookmark(&mut self, name: String, path: String) {
@@ -215,12 +239,18 @@ impl Sidebar {
 
     /// Get the underlying bookmark manager.
     #[must_use]
-    pub fn manager(&self) -> &BookmarkManager { &self.manager }
+    pub fn manager(&self) -> &BookmarkManager {
+        &self.manager
+    }
 
     /// Get mutable access to the bookmark manager.
-    pub fn manager_mut(&mut self) -> &mut BookmarkManager { &mut self.manager }
+    pub fn manager_mut(&mut self) -> &mut BookmarkManager {
+        &mut self.manager
+    }
 }
 
 impl Default for Sidebar {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

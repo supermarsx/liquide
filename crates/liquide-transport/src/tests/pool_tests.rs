@@ -1,9 +1,9 @@
 use bytes::Bytes;
 
+use crate::Transport;
 use crate::listener::TcpListener;
 use crate::pool::Pool;
 use crate::tcp::TcpTransport;
-use crate::Transport;
 
 #[test]
 fn pool_starts_empty() {
@@ -55,8 +55,12 @@ async fn pool_round_robin() {
     assert_eq!(pool.len(), 2);
 
     // First send goes to t1 (index 0), second to t2 (index 1).
-    pool.send(Bytes::from_static(b"for-server-1")).await.unwrap();
-    pool.send(Bytes::from_static(b"for-server-2")).await.unwrap();
+    pool.send(Bytes::from_static(b"for-server-1"))
+        .await
+        .unwrap();
+    pool.send(Bytes::from_static(b"for-server-2"))
+        .await
+        .unwrap();
 
     let msg1 = s1.await.unwrap();
     let msg2 = s2.await.unwrap();

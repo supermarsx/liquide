@@ -1,7 +1,7 @@
 //! Client runtime coordinator — wires together every subsystem.
 
-use crate::audit::ClientAuditEvent;
 use crate::audio::AudioManager;
+use crate::audit::ClientAuditEvent;
 use crate::clipboard::ClipboardSync;
 use crate::color::ColorPipeline;
 use crate::config::ClientConfig;
@@ -41,16 +41,14 @@ impl ClientRuntime {
     /// Build a new runtime from the given configuration.
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
-        let connection_manager =
-            ConnectionManager::new(config.reconnection.max_attempts);
-        let display_manager =
-            DisplayManager::new(config.display.default_mode);
-        let input_manager =
-            InputManager::new(config.input.capture_scope, config.input.ime_mode);
-        let cursor_predictor =
-            CursorPredictor::new(config.cursor.correction_frames, config.cursor.smoothing_strategy);
-        let frame_queue =
-            FrameQueue::new(config.performance.frame_queue_depth as usize);
+        let connection_manager = ConnectionManager::new(config.reconnection.max_attempts);
+        let display_manager = DisplayManager::new(config.display.default_mode);
+        let input_manager = InputManager::new(config.input.capture_scope, config.input.ime_mode);
+        let cursor_predictor = CursorPredictor::new(
+            config.cursor.correction_frames,
+            config.cursor.smoothing_strategy,
+        );
+        let frame_queue = FrameQueue::new(config.performance.frame_queue_depth as usize);
         let overlay = StreamOverlay::new();
         let machine_manager = MachineManager::new();
         let clipboard_sync =
@@ -163,17 +161,17 @@ impl ClientRuntime {
 
     /// Toggle between windowed and fullscreen mode.
     pub fn toggle_fullscreen(&mut self) {
-        let new_mode = if self.display_manager.current_mode()
-            == crate::display::DisplayMode::Fullscreen
-        {
-            crate::display::DisplayMode::SingleWindow
-        } else {
-            crate::display::DisplayMode::Fullscreen
-        };
+        let new_mode =
+            if self.display_manager.current_mode() == crate::display::DisplayMode::Fullscreen {
+                crate::display::DisplayMode::SingleWindow
+            } else {
+                crate::display::DisplayMode::Fullscreen
+            };
         self.display_manager.set_mode(new_mode);
-        self.audit_events.push(ClientAuditEvent::DisplayModeChanged {
-            mode: new_mode.to_string(),
-        });
+        self.audit_events
+            .push(ClientAuditEvent::DisplayModeChanged {
+                mode: new_mode.to_string(),
+            });
     }
 
     /// Cycle through display modes.
@@ -186,15 +184,21 @@ impl ClientRuntime {
             crate::display::DisplayMode::Seamless => crate::display::DisplayMode::SingleWindow,
         };
         self.display_manager.set_mode(next);
-        self.audit_events.push(ClientAuditEvent::DisplayModeChanged {
-            mode: next.to_string(),
-        });
+        self.audit_events
+            .push(ClientAuditEvent::DisplayModeChanged {
+                mode: next.to_string(),
+            });
     }
 
     // -- Crash ---------------------------------------------------------------
 
     /// Show the crash screen with the given crash type and code.
-    pub fn show_crash_screen(&mut self, crash_type: CrashScreenType, error_code: u32, description: &str) {
+    pub fn show_crash_screen(
+        &mut self,
+        crash_type: CrashScreenType,
+        error_code: u32,
+        description: &str,
+    ) {
         let data = CrashData {
             crash_type,
             error_code,

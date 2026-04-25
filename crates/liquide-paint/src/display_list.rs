@@ -14,11 +14,9 @@ use liquide_layout::Rect;
 use liquide_style_engine::computed::{
     BorderLineStyle, Cursor, FontStyle, ImageOrientation, ImageRendering, Isolation, LineHeight,
     OverflowAnchor, OverscrollBehavior, ScrollBehavior, ScrollSnapAlign, ScrollSnapStop,
-    ScrollSnapType, TextAlign, TextOverflow, TextTransform,
-    TouchAction, WhiteSpace, WordBreak,
+    ScrollSnapType, TextAlign, TextOverflow, TextTransform, TouchAction, WhiteSpace, WordBreak,
 };
 use liquide_style_engine::dimension::{Corners, EllipticalRadius};
-
 
 /// A single paint command — draw ops produce pixels, state ops push/pop compositor state.
 #[derive(Debug, Clone)]
@@ -364,11 +362,29 @@ pub enum BorderImageRepeat {
 /// Clip path shapes.
 #[derive(Debug, Clone)]
 pub enum ClipPath {
-    Circle { cx: f32, cy: f32, r: f32 },
-    Ellipse { cx: f32, cy: f32, rx: f32, ry: f32 },
-    RoundedRect { rect: Rect, radii: Corners<EllipticalRadius> },
+    Circle {
+        cx: f32,
+        cy: f32,
+        r: f32,
+    },
+    Ellipse {
+        cx: f32,
+        cy: f32,
+        rx: f32,
+        ry: f32,
+    },
+    RoundedRect {
+        rect: Rect,
+        radii: Corners<EllipticalRadius>,
+    },
     Polygon(Vec<(f32, f32)>),
-    Inset { top: f32, right: f32, bottom: f32, left: f32, radius: Corners<EllipticalRadius> },
+    Inset {
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+        radius: Corners<EllipticalRadius>,
+    },
 }
 
 /// A border edge for painting.
@@ -437,7 +453,12 @@ impl TextEmphasis {
             return None;
         }
 
-        let color = color.unwrap_or(Color { r: 0, g: 0, b: 0, a: 255 });
+        let color = color.unwrap_or(Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255,
+        });
         let position = Self::parse_position(position);
 
         // Single custom character / string (quoted or single char)
@@ -477,7 +498,12 @@ impl TextEmphasis {
         let fill = fill.unwrap_or(EmphasisFill::Filled);
         let shape = shape.unwrap_or(EmphasisShape::Dot);
 
-        Some(TextEmphasis { fill, shape, color, position })
+        Some(TextEmphasis {
+            fill,
+            shape,
+            color,
+            position,
+        })
     }
 
     fn parse_position(pos: Option<&str>) -> EmphasisPosition {
@@ -495,7 +521,12 @@ impl Default for BorderEdge {
         Self {
             width: 0.0,
             style: BorderLineStyle::None,
-            color: Color { r: 0, g: 0, b: 0, a: 0 },
+            color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            },
         }
     }
 }
@@ -635,7 +666,15 @@ fn item_bounds(item: &DisplayItem) -> Option<Rect> {
         | DisplayItem::SaveLayer { rect, .. }
         | DisplayItem::Annotate { rect, .. } => Some(*rect),
 
-        DisplayItem::BoxShadow { rect, offset_x, offset_y, blur_radius, spread_radius, inset, .. } => {
+        DisplayItem::BoxShadow {
+            rect,
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            inset,
+            ..
+        } => {
             if *inset {
                 // Inset shadows are clipped to the element's border box
                 Some(*rect)
@@ -651,11 +690,21 @@ fn item_bounds(item: &DisplayItem) -> Option<Rect> {
                 let min_y = rect.y.min(shadow_y);
                 let max_x = (rect.x + rect.width).max(shadow_r);
                 let max_y = (rect.y + rect.height).max(shadow_b);
-                Some(Rect { x: min_x, y: min_y, width: max_x - min_x, height: max_y - min_y })
+                Some(Rect {
+                    x: min_x,
+                    y: min_y,
+                    width: max_x - min_x,
+                    height: max_y - min_y,
+                })
             }
         }
 
-        DisplayItem::Outline { rect, width, offset, .. } => {
+        DisplayItem::Outline {
+            rect,
+            width,
+            offset,
+            ..
+        } => {
             // Outline is drawn outside the border box, offset further by `offset`
             let expand = *width + offset.max(0.0);
             Some(Rect {
@@ -666,7 +715,14 @@ fn item_bounds(item: &DisplayItem) -> Option<Rect> {
             })
         }
 
-        DisplayItem::Line { x1, y1, x2, y2, width, .. } => {
+        DisplayItem::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            width,
+            ..
+        } => {
             let half_w = width / 2.0;
             let min_x = x1.min(*x2) - half_w;
             let min_y = y1.min(*y2) - half_w;
@@ -707,10 +763,7 @@ fn is_draw_op(item: &DisplayItem) -> bool {
 
 /// AABB intersection test.
 fn rects_intersect(a: &Rect, b: &Rect) -> bool {
-    a.x < b.x + b.width
-        && a.x + a.width > b.x
-        && a.y < b.y + b.height
-        && a.y + a.height > b.y
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 }
 
 #[cfg(test)]
@@ -723,8 +776,18 @@ mod tests {
         assert!(dl.is_empty());
 
         dl.push(DisplayItem::FillRect {
-            rect: Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
-            color: Color { r: 255, g: 0, b: 0, a: 255 },
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            color: Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         });
         assert_eq!(dl.len(), 1);
         assert_eq!(dl.draw_op_count(), 1);
@@ -735,26 +798,61 @@ mod tests {
     fn spatial_query() {
         let mut dl = DisplayList::new();
         dl.push(DisplayItem::FillRect {
-            rect: Rect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
-            color: Color { r: 255, g: 0, b: 0, a: 255 },
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 50.0,
+                height: 50.0,
+            },
+            color: Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         });
         dl.push(DisplayItem::FillRect {
-            rect: Rect { x: 100.0, y: 100.0, width: 50.0, height: 50.0 },
-            color: Color { r: 0, g: 255, b: 0, a: 255 },
+            rect: Rect {
+                x: 100.0,
+                y: 100.0,
+                width: 50.0,
+                height: 50.0,
+            },
+            color: Color {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
         });
 
         // Query top-left region
-        let hits = dl.query_region(&Rect { x: 0.0, y: 0.0, width: 60.0, height: 60.0 });
+        let hits = dl.query_region(&Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 60.0,
+            height: 60.0,
+        });
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0], 0);
 
         // Query bottom-right region
-        let hits = dl.query_region(&Rect { x: 90.0, y: 90.0, width: 70.0, height: 70.0 });
+        let hits = dl.query_region(&Rect {
+            x: 90.0,
+            y: 90.0,
+            width: 70.0,
+            height: 70.0,
+        });
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0], 1);
 
         // Query everything
-        let hits = dl.query_region(&Rect { x: 0.0, y: 0.0, width: 200.0, height: 200.0 });
+        let hits = dl.query_region(&Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 200.0,
+        });
         assert_eq!(hits.len(), 2);
     }
 
@@ -763,15 +861,30 @@ mod tests {
         let mut dl = DisplayList::new();
         dl.push(DisplayItem::PushOpacity { opacity: 0.5 });
         dl.push(DisplayItem::FillRect {
-            rect: Rect { x: 10.0, y: 10.0, width: 20.0, height: 20.0 },
-            color: Color { r: 0, g: 0, b: 0, a: 255 },
+            rect: Rect {
+                x: 10.0,
+                y: 10.0,
+                width: 20.0,
+                height: 20.0,
+            },
+            color: Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
         });
         dl.push(DisplayItem::PopOpacity);
 
         assert_eq!(dl.draw_op_count(), 1);
         assert_eq!(dl.state_op_count(), 2);
 
-        let hits = dl.query_region(&Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 });
+        let hits = dl.query_region(&Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        });
         assert_eq!(hits.len(), 1);
     }
 
@@ -780,24 +893,63 @@ mod tests {
         // Verify all new variants compile
         let items: Vec<DisplayItem> = vec![
             DisplayItem::LinearGradient {
-                rect: Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                },
                 angle_deg: 180.0,
                 stops: vec![
-                    GradientStop { offset: 0.0, color: Color { r: 255, g: 0, b: 0, a: 255 } },
-                    GradientStop { offset: 1.0, color: Color { r: 0, g: 0, b: 255, a: 255 } },
+                    GradientStop {
+                        offset: 0.0,
+                        color: Color {
+                            r: 255,
+                            g: 0,
+                            b: 0,
+                            a: 255,
+                        },
+                    },
+                    GradientStop {
+                        offset: 1.0,
+                        color: Color {
+                            r: 0,
+                            g: 0,
+                            b: 255,
+                            a: 255,
+                        },
+                    },
                 ],
                 radius: Corners::all(EllipticalRadius::from(0.0)),
             },
             DisplayItem::Outline {
-                rect: Rect { x: 0.0, y: 0.0, width: 50.0, height: 50.0 },
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 50.0,
+                    height: 50.0,
+                },
                 width: 2.0,
                 style: BorderLineStyle::Solid,
-                color: Color { r: 0, g: 0, b: 0, a: 255 },
+                color: Color {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
                 offset: 0.0,
             },
             DisplayItem::Line {
-                x1: 0.0, y1: 0.0, x2: 100.0, y2: 100.0,
-                color: Color { r: 0, g: 0, b: 0, a: 255 },
+                x1: 0.0,
+                y1: 0.0,
+                x2: 100.0,
+                y2: 100.0,
+                color: Color {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
                 width: 1.0,
             },
             DisplayItem::PushFilter {
@@ -806,7 +958,12 @@ mod tests {
             DisplayItem::PopFilter,
             DisplayItem::PushBackdropFilter {
                 filters: vec![FilterOp::Blur(20.0)],
-                bounds: Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 },
+                bounds: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                },
             },
             DisplayItem::PopBackdropFilter,
             DisplayItem::Noop,
@@ -866,7 +1023,12 @@ mod tests {
 
     #[test]
     fn parse_with_color_and_position() {
-        let red = Color { r: 255, g: 0, b: 0, a: 255 };
+        let red = Color {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        };
         let em = TextEmphasis::parse("filled dot", Some(red), Some("under")).unwrap();
         assert_eq!(em.color, red);
         assert_eq!(em.position, EmphasisPosition::Under);

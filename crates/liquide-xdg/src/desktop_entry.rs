@@ -195,7 +195,11 @@ impl DesktopEntry {
             push_kv(&mut out, "Icon", v);
         }
         if !self.categories.is_empty() {
-            push_kv(&mut out, "Categories", &join_semicolon_list(&self.categories));
+            push_kv(
+                &mut out,
+                "Categories",
+                &join_semicolon_list(&self.categories),
+            );
         }
         if !self.mime_types.is_empty() {
             push_kv(&mut out, "MimeType", &join_semicolon_list(&self.mime_types));
@@ -348,10 +352,7 @@ StartupWMClass=firefox
     #[test]
     fn parse_missing_name() {
         let content = "[Desktop Entry]\nExec=something\n";
-        assert_eq!(
-            DesktopEntry::parse(content),
-            Err(ParseError::MissingName)
-        );
+        assert_eq!(DesktopEntry::parse(content), Err(ParseError::MissingName));
     }
 
     #[test]

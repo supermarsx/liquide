@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::format::{DrmFourcc, DrmModifier};
     use crate::error::GbmError;
+    use crate::format::{DrmFourcc, DrmModifier};
 
     #[test]
     fn test_drm_fourcc_constants() {

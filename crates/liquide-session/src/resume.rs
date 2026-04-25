@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::config::ResumeConfig;
-use crate::{SessionError, Result};
+use crate::{Result, SessionError};
 
 /// Generate a cryptographically random token ID.
 fn generate_token_id() -> String {
@@ -208,8 +208,7 @@ impl ResumeManager {
         // Use cryptographically random token ID
         let token_id = generate_token_id();
 
-        let lifetime =
-            std::time::Duration::from_secs(self.config.token_lifetime_hours * 3600);
+        let lifetime = std::time::Duration::from_secs(self.config.token_lifetime_hours * 3600);
 
         let token = ResumeToken::new(
             token_id.clone(),

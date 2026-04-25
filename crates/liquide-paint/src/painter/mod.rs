@@ -13,8 +13,8 @@ use liquide_compositor::property_tree::FilterOp;
 use liquide_compositor::scene::{MaskSpec, OutlineStyle};
 use liquide_dom::{Document, NodeData};
 use liquide_layout::tree::{BoxType, LayoutBoxId, LayoutTree};
-use liquide_style_engine::computed::*;
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::*;
 
 use crate::display_list::{BorderEdge, DisplayItem, DisplayList};
 use crate::icons::icon_id_for_name;
@@ -24,7 +24,7 @@ use border_image::{parse_border_image_quad, parse_border_image_repeat};
 use clip::parse_clip_path;
 use filters::{backdrop_spec_to_op, filter_spec_to_op};
 use gradients::emit_gradient;
-use transforms::{compose_transform_matrix, compose_transform_matrix_ext, resolve_origin_dimension};
+use transforms::{compose_transform_matrix_ext, resolve_origin_dimension};
 
 /// The painter walks the layout tree and emits paint commands.
 pub struct Painter;
@@ -35,12 +35,7 @@ impl Painter {
     }
 
     /// Paint the entire layout tree into a display list.
-    pub fn paint(
-        &self,
-        doc: &Document,
-        layout: &LayoutTree,
-        styles: &StyleMap,
-    ) -> DisplayList {
+    pub fn paint(&self, doc: &Document, layout: &LayoutTree, styles: &StyleMap) -> DisplayList {
         self.paint_cached(doc, layout, styles, None)
     }
 
@@ -54,7 +49,15 @@ impl Painter {
         image_cache: Option<&ImageCache>,
     ) -> DisplayList {
         let mut list = DisplayList::with_capacity(512);
-        self.paint_box(doc, layout, styles, layout.root, (0.0, 0.0), &mut list, image_cache);
+        self.paint_box(
+            doc,
+            layout,
+            styles,
+            layout.root,
+            (0.0, 0.0),
+            &mut list,
+            image_cache,
+        );
         list
     }
 
@@ -191,14 +194,10 @@ impl Painter {
         // Push transform
         if !style.transform.is_empty() {
             // Compute transform origin in absolute coordinates
-            let origin_x = abs_border.x + resolve_origin_dimension(
-                &style.transform_origin.x,
-                abs_border.width,
-            );
-            let origin_y = abs_border.y + resolve_origin_dimension(
-                &style.transform_origin.y,
-                abs_border.height,
-            );
+            let origin_x = abs_border.x
+                + resolve_origin_dimension(&style.transform_origin.x, abs_border.width);
+            let origin_y = abs_border.y
+                + resolve_origin_dimension(&style.transform_origin.y, abs_border.height);
             let transform = compose_transform_matrix_ext(
                 &style.transform,
                 origin_x,
@@ -297,13 +296,19 @@ impl Painter {
         };
 
         // Push clipping for overflow (or contain:paint forces clip)
-        let needs_clip = style.contain.paint || matches!(
-            style.overflow_x,
-            liquide_compositor::scene::Overflow::Hidden | liquide_compositor::scene::Overflow::Scroll | liquide_compositor::scene::Overflow::Auto
-        ) || matches!(
-            style.overflow_y,
-            liquide_compositor::scene::Overflow::Hidden | liquide_compositor::scene::Overflow::Scroll | liquide_compositor::scene::Overflow::Auto
-        );
+        let needs_clip = style.contain.paint
+            || matches!(
+                style.overflow_x,
+                liquide_compositor::scene::Overflow::Hidden
+                    | liquide_compositor::scene::Overflow::Scroll
+                    | liquide_compositor::scene::Overflow::Auto
+            )
+            || matches!(
+                style.overflow_y,
+                liquide_compositor::scene::Overflow::Hidden
+                    | liquide_compositor::scene::Overflow::Scroll
+                    | liquide_compositor::scene::Overflow::Auto
+            );
 
         if needs_clip {
             // Apply overflow-clip-margin if set
@@ -326,7 +331,14 @@ impl Painter {
             let sp = &style.scroll_padding;
             let sm = &style.scroll_margin;
             let resolve = |d: &liquide_style_engine::dimension::Dimension| -> f32 {
-                d.resolve_px(abs_padding.width, 16.0, style.font_size, abs_padding.width, abs_padding.height).unwrap_or(0.0)
+                d.resolve_px(
+                    abs_padding.width,
+                    16.0,
+                    style.font_size,
+                    abs_padding.width,
+                    abs_padding.height,
+                )
+                .unwrap_or(0.0)
             };
             list.push(DisplayItem::ScrollContainerHints {
                 rect: abs_padding,
@@ -335,8 +347,18 @@ impl Painter {
                 overscroll_y: style.overscroll_behavior_y,
                 overflow_anchor: style.overflow_anchor,
                 touch_action: style.touch_action.clone(),
-                scroll_padding: (resolve(&sp.top), resolve(&sp.right), resolve(&sp.bottom), resolve(&sp.left)),
-                scroll_margin: (resolve(&sm.top), resolve(&sm.right), resolve(&sm.bottom), resolve(&sm.left)),
+                scroll_padding: (
+                    resolve(&sp.top),
+                    resolve(&sp.right),
+                    resolve(&sp.bottom),
+                    resolve(&sp.left),
+                ),
+                scroll_margin: (
+                    resolve(&sm.top),
+                    resolve(&sm.right),
+                    resolve(&sm.bottom),
+                    resolve(&sm.left),
+                ),
                 scroll_snap_type: style.scroll_snap_type,
                 scroll_snap_align: style.scroll_snap_align,
                 scroll_snap_stop: style.scroll_snap_stop,
@@ -471,13 +493,29 @@ impl Painter {
                     };
                     match bg_image {
                         BackgroundImage::Gradient(gradient) => {
-                            emit_gradient(list, &bg_tile, &style.border_radius, gradient);
+                            // TODO(t9 Phase 2): propagate repeating flag from BackgroundImage
+                            emit_gradient(list, &bg_tile, &style.border_radius, gradient, false);
                         }
                         BackgroundImage::Url(url) => {
-                            emit_background_image_tiled(list, url, &bg_clip_rect, &bg_tile, repeat_str, &style.border_radius, image_cache);
+                            emit_background_image_tiled(
+                                list,
+                                url,
+                                &bg_clip_rect,
+                                &bg_tile,
+                                repeat_str,
+                                &style.border_radius,
+                                image_cache,
+                            );
                         }
                         BackgroundImage::ImageId(img_id) => {
-                            emit_background_image_id_tiled(list, *img_id, &bg_clip_rect, &bg_tile, repeat_str, &style.border_radius);
+                            emit_background_image_id_tiled(
+                                list,
+                                *img_id,
+                                &bg_clip_rect,
+                                &bg_tile,
+                                repeat_str,
+                                &style.border_radius,
+                            );
                         }
                     }
                 }
@@ -639,9 +677,11 @@ impl Painter {
                     text_indent: pe_style.text_indent,
                     text_decoration: pe_style.text_decoration.clone(),
                     text_shadows: pe_style.text_shadow.clone(),
-                    text_emphasis_style: pe_style.text_emphasis_style.clone(),
-                    text_emphasis_color: pe_style.text_emphasis_color,
-                    text_emphasis_position: pe_style.text_emphasis_position.clone(),
+                    text_emphasis: crate::display_list::TextEmphasis::parse(
+                        pe_style.text_emphasis_style.as_deref().unwrap_or(""),
+                        pe_style.text_emphasis_color,
+                        pe_style.text_emphasis_position.as_deref(),
+                    ),
                     caret_color: pe_style.caret_color,
                 });
             }
@@ -671,9 +711,7 @@ impl Painter {
                         text_indent: 0.0,
                         text_decoration: None,
                         text_shadows: Vec::new(),
-                        text_emphasis_style: None,
-                        text_emphasis_color: None,
-                        text_emphasis_position: None,
+                        text_emphasis: None,
                         caret_color: None,
                     });
                 }
@@ -704,9 +742,11 @@ impl Painter {
                         text_indent: style.text_indent,
                         text_decoration: style.text_decoration.clone(),
                         text_shadows: style.text_shadow.clone(),
-                        text_emphasis_style: style.text_emphasis_style.clone(),
-                        text_emphasis_color: style.text_emphasis_color,
-                        text_emphasis_position: style.text_emphasis_position.clone(),
+                        text_emphasis: crate::display_list::TextEmphasis::parse(
+                            style.text_emphasis_style.as_deref().unwrap_or(""),
+                            style.text_emphasis_color,
+                            style.text_emphasis_position.as_deref(),
+                        ),
                         caret_color: style.caret_color,
                     });
                 }
@@ -799,29 +839,44 @@ impl Painter {
         // Fast path: check if any child needs stacking-order sorting.
         // Most nodes only have simple in-flow block children, so we can
         // skip 6 Vec allocations and just paint in DOM order.
-        let needs_stacking_sort = !skip_children && children.iter().any(|&child_id| {
-            layout
-                .get(child_id)
-                .and_then(|cb| styles.get(cb.node))
-                .map(|s| {
-                    s.z_index.is_some()
-                        || s.float != Float::None
-                        || matches!(
-                            s.position,
-                            Position::Relative | Position::Absolute | Position::Fixed | Position::Sticky
-                        )
-                        || matches!(
-                            s.display,
-                            Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
-                        )
-                })
-                .unwrap_or(false)
-        });
+        let needs_stacking_sort = !skip_children
+            && children.iter().any(|&child_id| {
+                layout
+                    .get(child_id)
+                    .and_then(|cb| styles.get(cb.node))
+                    .map(|s| {
+                        s.z_index.is_some()
+                            || s.float != Float::None
+                            || matches!(
+                                s.position,
+                                Position::Relative
+                                    | Position::Absolute
+                                    | Position::Fixed
+                                    | Position::Sticky
+                            )
+                            || matches!(
+                                s.display,
+                                Display::Inline
+                                    | Display::InlineBlock
+                                    | Display::InlineFlex
+                                    | Display::InlineGrid
+                            )
+                    })
+                    .unwrap_or(false)
+            });
 
         if !skip_children && !needs_stacking_sort {
             // Simple path: all children are in-flow block, paint in DOM order.
             for &child_id in children {
-                self.paint_box(doc, layout, styles, child_id, child_offset, list, image_cache);
+                self.paint_box(
+                    doc,
+                    layout,
+                    styles,
+                    child_id,
+                    child_offset,
+                    list,
+                    image_cache,
+                );
             }
         } else if !skip_children {
             // Full CSS 2.1 stacking order — single Vec instead of 6 separate Vecs.
@@ -829,9 +884,7 @@ impl Painter {
             //             3=in-flow inline, 4=z auto/0, 5=positive-z
             let mut classified: Vec<(LayoutBoxId, u8, i32)> = Vec::with_capacity(children.len());
             for &child_id in children {
-                let child_style = layout
-                    .get(child_id)
-                    .and_then(|cb| styles.get(cb.node));
+                let child_style = layout.get(child_id).and_then(|cb| styles.get(cb.node));
                 let child_display = child_style.map(|s| s.display).unwrap_or(Display::Block);
                 let child_position = child_style.map(|s| s.position).unwrap_or(Position::Static);
                 let child_z = child_style.and_then(|s| s.z_index);
@@ -849,7 +902,13 @@ impl Painter {
                     }
                 } else if is_float {
                     (2u8, 0)
-                } else if matches!(child_display, Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+                } else if matches!(
+                    child_display,
+                    Display::Inline
+                        | Display::InlineBlock
+                        | Display::InlineFlex
+                        | Display::InlineGrid
+                ) {
                     (3u8, 0)
                 } else {
                     (1u8, 0)
@@ -861,7 +920,15 @@ impl Painter {
             classified.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
 
             for &(child_id, _, _) in &classified {
-                self.paint_box(doc, layout, styles, child_id, child_offset, list, image_cache);
+                self.paint_box(
+                    doc,
+                    layout,
+                    styles,
+                    child_id,
+                    child_offset,
+                    list,
+                    image_cache,
+                );
             }
         }
 
@@ -881,84 +948,79 @@ impl Painter {
             };
             // Skip scrollbar rendering entirely if width is 0
             if scrollbar_width > 0.0 {
-            let scrollbar_margin = 2.0f32;
+                let scrollbar_margin = 2.0f32;
 
-            // Read scrollbar-color from computed style (thumb, track)
-            let (thumb_color, track_color) = if let Some((thumb, track)) = style.scrollbar_color {
-                (thumb, track)
-            } else {
-                (
-                    liquide_compositor::Color::new(128, 128, 128, 140),
-                    liquide_compositor::Color::new(128, 128, 128, 40),
-                )
-            };
-            let corner_radius = liquide_style_engine::dimension::Corners::all(scrollbar_width / 2.0);
+                // Read scrollbar-color from computed style (thumb, track)
+                let (thumb_color, track_color) = if let Some((thumb, track)) = style.scrollbar_color
+                {
+                    (thumb, track)
+                } else {
+                    (
+                        liquide_compositor::Color::new(128, 128, 128, 140),
+                        liquide_compositor::Color::new(128, 128, 128, 40),
+                    )
+                };
+                let corner_radius = liquide_style_engine::dimension::Corners::all(
+                    liquide_style_engine::dimension::EllipticalRadius::from(scrollbar_width / 2.0),
+                );
 
-            // Content origin (absolute)
-            let cx = ox + layout_box.content_rect.x;
-            let cy = oy + layout_box.content_rect.y;
+                // Content origin (absolute)
+                let cx = ox + layout_box.content_rect.x;
+                let cy = oy + layout_box.content_rect.y;
 
-            // Vertical scrollbar (right edge)
-            if ss.height > viewport_h + 0.5 {
-                let track_x = cx + viewport_w - scrollbar_width - scrollbar_margin;
-                let track_y = cy + scrollbar_margin;
-                let track_h = viewport_h - scrollbar_margin * 2.0;
+                // Vertical scrollbar (right edge)
+                if ss.height > viewport_h + 0.5 {
+                    let track_x = cx + viewport_w - scrollbar_width - scrollbar_margin;
+                    let track_y = cy + scrollbar_margin;
+                    let track_h = viewport_h - scrollbar_margin * 2.0;
 
-                // Track background
-                list.push(DisplayItem::SolidColor {
-                    rect: liquide_layout::Rect::new(
-                        track_x, track_y, scrollbar_width, track_h,
-                    ),
-                    color: track_color,
-                    radius: corner_radius.clone(),
-                });
+                    // Track background
+                    list.push(DisplayItem::SolidColor {
+                        rect: liquide_layout::Rect::new(track_x, track_y, scrollbar_width, track_h),
+                        color: track_color,
+                        radius: corner_radius.clone(),
+                    });
 
-                // Thumb
-                let ratio = viewport_h / ss.height;
-                let thumb_h = (track_h * ratio).max(20.0).min(track_h);
-                let max_scroll_y = (ss.height - viewport_h).max(1.0);
-                let scroll_fraction = sy / max_scroll_y;
-                let thumb_y = track_y + scroll_fraction * (track_h - thumb_h);
+                    // Thumb
+                    let ratio = viewport_h / ss.height;
+                    let thumb_h = (track_h * ratio).max(20.0).min(track_h);
+                    let max_scroll_y = (ss.height - viewport_h).max(1.0);
+                    let scroll_fraction = sy / max_scroll_y;
+                    let thumb_y = track_y + scroll_fraction * (track_h - thumb_h);
 
-                list.push(DisplayItem::SolidColor {
-                    rect: liquide_layout::Rect::new(
-                        track_x, thumb_y, scrollbar_width, thumb_h,
-                    ),
-                    color: thumb_color,
-                    radius: corner_radius.clone(),
-                });
-            }
+                    list.push(DisplayItem::SolidColor {
+                        rect: liquide_layout::Rect::new(track_x, thumb_y, scrollbar_width, thumb_h),
+                        color: thumb_color,
+                        radius: corner_radius.clone(),
+                    });
+                }
 
-            // Horizontal scrollbar (bottom edge)
-            if ss.width > viewport_w + 0.5 {
-                let track_x = cx + scrollbar_margin;
-                let track_y = cy + viewport_h - scrollbar_width - scrollbar_margin;
-                let track_w = viewport_w - scrollbar_margin * 2.0;
+                // Horizontal scrollbar (bottom edge)
+                if ss.width > viewport_w + 0.5 {
+                    let track_x = cx + scrollbar_margin;
+                    let track_y = cy + viewport_h - scrollbar_width - scrollbar_margin;
+                    let track_w = viewport_w - scrollbar_margin * 2.0;
 
-                // Track background
-                list.push(DisplayItem::SolidColor {
-                    rect: liquide_layout::Rect::new(
-                        track_x, track_y, track_w, scrollbar_width,
-                    ),
-                    color: track_color,
-                    radius: corner_radius.clone(),
-                });
+                    // Track background
+                    list.push(DisplayItem::SolidColor {
+                        rect: liquide_layout::Rect::new(track_x, track_y, track_w, scrollbar_width),
+                        color: track_color,
+                        radius: corner_radius.clone(),
+                    });
 
-                // Thumb
-                let ratio = viewport_w / ss.width;
-                let thumb_w = (track_w * ratio).max(20.0).min(track_w);
-                let max_scroll_x = (ss.width - viewport_w).max(1.0);
-                let scroll_fraction = sx / max_scroll_x;
-                let thumb_x = track_x + scroll_fraction * (track_w - thumb_w);
+                    // Thumb
+                    let ratio = viewport_w / ss.width;
+                    let thumb_w = (track_w * ratio).max(20.0).min(track_w);
+                    let max_scroll_x = (ss.width - viewport_w).max(1.0);
+                    let scroll_fraction = sx / max_scroll_x;
+                    let thumb_x = track_x + scroll_fraction * (track_w - thumb_w);
 
-                list.push(DisplayItem::SolidColor {
-                    rect: liquide_layout::Rect::new(
-                        thumb_x, track_y, thumb_w, scrollbar_width,
-                    ),
-                    color: thumb_color,
-                    radius: corner_radius,
-                });
-            }
+                    list.push(DisplayItem::SolidColor {
+                        rect: liquide_layout::Rect::new(thumb_x, track_y, thumb_w, scrollbar_width),
+                        color: thumb_color,
+                        radius: corner_radius,
+                    });
+                }
             } // end if scrollbar_width > 0.0
         }
 
@@ -999,9 +1061,9 @@ impl Default for Painter {
     }
 }
 
-
 /// Compute the background tile rectangle, given the painting area,
 /// background-size, and background-position.
+#[allow(dead_code)]
 fn compute_background_tile(
     paint_rect: &liquide_layout::Rect,
     bg_size_str: Option<&str>,
@@ -1058,11 +1120,15 @@ fn compute_background_tile(
     }
 }
 
+#[allow(dead_code)]
 fn parse_bg_dimension(s: &str, container: f32) -> Option<f32> {
     if s == "auto" {
         None
     } else if let Some(pct) = s.strip_suffix('%') {
-        pct.trim().parse::<f32>().ok().map(|p| container * p / 100.0)
+        pct.trim()
+            .parse::<f32>()
+            .ok()
+            .map(|p| container * p / 100.0)
     } else if let Some(px) = s.strip_suffix("px") {
         px.trim().parse::<f32>().ok()
     } else {
@@ -1070,6 +1136,7 @@ fn parse_bg_dimension(s: &str, container: f32) -> Option<f32> {
     }
 }
 
+#[allow(dead_code)]
 fn resolve_bg_position(
     dim: &liquide_style_engine::dimension::Dimension,
     container_size: f32,
@@ -1097,7 +1164,9 @@ fn emit_background_image_tiled(
     clip_rect: &liquide_layout::Rect,
     tile: &liquide_layout::Rect,
     repeat: &str,
-    radius: &liquide_style_engine::dimension::Corners<f32>,
+    radius: &liquide_style_engine::dimension::Corners<
+        liquide_style_engine::dimension::EllipticalRadius,
+    >,
     image_cache: Option<&ImageCache>,
 ) {
     use crate::image_cache::ImageCacheEntry;
@@ -1137,21 +1206,33 @@ fn emit_background_image_tiled(
     let start_x = if repeat_x {
         // Find leftmost tile position
         let mut x = tile.x;
-        while x > clip_rect.x { x -= tile.width; }
+        while x > clip_rect.x {
+            x -= tile.width;
+        }
         x
     } else {
         tile.x
     };
     let start_y = if repeat_y {
         let mut y = tile.y;
-        while y > clip_rect.y { y -= tile.height; }
+        while y > clip_rect.y {
+            y -= tile.height;
+        }
         y
     } else {
         tile.y
     };
 
-    let end_x = if repeat_x { clip_rect.x + clip_rect.width } else { tile.x + tile.width };
-    let end_y = if repeat_y { clip_rect.y + clip_rect.height } else { tile.y + tile.height };
+    let end_x = if repeat_x {
+        clip_rect.x + clip_rect.width
+    } else {
+        tile.x + tile.width
+    };
+    let end_y = if repeat_y {
+        clip_rect.y + clip_rect.height
+    } else {
+        tile.y + tile.height
+    };
 
     let mut tile_count = 0u32;
     const MAX_TILES: u32 = 10_000;
@@ -1165,20 +1246,29 @@ fn emit_background_image_tiled(
             }
             list.push(DisplayItem::Image {
                 rect: liquide_layout::Rect {
-                    x, y, width: tile.width, height: tile.height,
+                    x,
+                    y,
+                    width: tile.width,
+                    height: tile.height,
                 },
                 src: src_string.clone(),
-                radius: liquide_style_engine::dimension::Corners::all(0.0),
+                radius: liquide_style_engine::dimension::Corners::all(
+                    liquide_style_engine::dimension::EllipticalRadius::default(),
+                ),
             });
             tile_count += 1;
             x += tile.width;
-            if !repeat_x { break; }
+            if !repeat_x {
+                break;
+            }
         }
         if tile_count >= MAX_TILES {
             break;
         }
         y += tile.height;
-        if !repeat_y { break; }
+        if !repeat_y {
+            break;
+        }
     }
 
     list.push(DisplayItem::PopClip);
@@ -1191,12 +1281,19 @@ fn emit_background_image_id_tiled(
     _clip_rect: &liquide_layout::Rect,
     tile: &liquide_layout::Rect,
     _repeat: &str,
-    radius: &liquide_style_engine::dimension::Corners<f32>,
+    radius: &liquide_style_engine::dimension::Corners<
+        liquide_style_engine::dimension::EllipticalRadius,
+    >,
 ) {
     // Image ID rendering: emit a single rect for now until image registry is wired
     list.push(DisplayItem::FillRect {
         rect: *tile,
-        color: liquide_compositor::pixel::Color { r: 200, g: 200, b: 200, a: 255 },
+        color: liquide_compositor::pixel::Color {
+            r: 200,
+            g: 200,
+            b: 200,
+            a: 255,
+        },
     });
     let _ = radius;
 }
@@ -1205,7 +1302,7 @@ fn emit_background_image_id_tiled(
 mod tests {
     use super::*;
     use liquide_dom::Document;
-    use liquide_layout::{DefaultTextMeasurer, DefaultImageMeasurer, LayoutEngine, Size};
+    use liquide_layout::{DefaultImageMeasurer, DefaultTextMeasurer, LayoutEngine, Size};
     use liquide_style_engine::engine::StyleEngine;
 
     #[test]
@@ -1220,20 +1317,28 @@ mod tests {
 
         let style_map = se.restyle_all(&doc);
         let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
-        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let layout_tree = le.layout(
+            &doc,
+            &style_map,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+        );
 
         let painter = Painter::new();
         let display_list = painter.paint(&doc, &layout_tree, &style_map);
 
-        assert!(!display_list.is_empty(), "Display list should have paint commands");
+        assert!(
+            !display_list.is_empty(),
+            "Display list should have paint commands"
+        );
     }
 
     #[test]
     fn two_layer_background_stacking() {
+        use liquide_compositor::pixel::Color;
         use liquide_compositor::scene::{
             BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec, GradientSpec,
         };
-        use liquide_compositor::pixel::Color;
 
         let mut doc = Document::new();
         let root = doc.root();
@@ -1253,11 +1358,29 @@ mod tests {
                 BackgroundSpec {
                     color: None,
                     image: Some(BackgroundImage::Gradient(GradientSpec::Linear {
-                        start_x: 0.0, start_y: 0.0,
-                        end_x: 1.0, end_y: 1.0,
+                        start_x: 0.0,
+                        start_y: 0.0,
+                        end_x: 1.0,
+                        end_y: 1.0,
                         stops: vec![
-                            (0.0, Color { r: 255, g: 0, b: 0, a: 128 }),
-                            (1.0, Color { r: 0, g: 0, b: 255, a: 128 }),
+                            (
+                                0.0,
+                                Color {
+                                    r: 255,
+                                    g: 0,
+                                    b: 0,
+                                    a: 128,
+                                },
+                            ),
+                            (
+                                1.0,
+                                Color {
+                                    r: 0,
+                                    g: 0,
+                                    b: 255,
+                                    a: 128,
+                                },
+                            ),
                         ],
                     })),
                     size: BackgroundSize::Auto,
@@ -1276,7 +1399,12 @@ mod tests {
         }
 
         let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
-        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let layout_tree = le.layout(
+            &doc,
+            &style_map,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+        );
 
         let painter = Painter::new();
         let display_list = painter.paint(&doc, &layout_tree, &style_map);
@@ -1286,22 +1414,28 @@ mod tests {
         let mut found_gradient = false;
         let mut image_pos = 0usize;
         let mut gradient_pos = 0usize;
-        for (i, item) in display_list.iter().enumerate() {
+        for (i, item) in display_list.items.iter().enumerate() {
             match item {
                 DisplayItem::Image { src, .. } if src == "bg-pattern.png" => {
                     found_image = true;
                     image_pos = i;
                 }
-                DisplayItem::Gradient { .. } | DisplayItem::LinearGradient { .. } => {
+                DisplayItem::LinearGradient { .. } => {
                     found_gradient = true;
                     gradient_pos = i;
                 }
                 _ => {}
             }
         }
-        assert!(found_image, "Bottom background image layer should be painted");
+        assert!(
+            found_image,
+            "Bottom background image layer should be painted"
+        );
         assert!(found_gradient, "Top gradient layer should be painted");
-        assert!(image_pos < gradient_pos, "Bottom layer (image) must be painted before top layer (gradient)");
+        assert!(
+            image_pos < gradient_pos,
+            "Bottom layer (image) must be painted before top layer (gradient)"
+        );
     }
 
     #[test]
@@ -1334,7 +1468,10 @@ mod tests {
                 BackgroundSpec {
                     color: None,
                     image: Some(BackgroundImage::Url("img_b.png".to_string())),
-                    size: BackgroundSize::Explicit { width: 50.0, height: 50.0 },
+                    size: BackgroundSize::Explicit {
+                        width: 50.0,
+                        height: 50.0,
+                    },
                     position: (0.0, 0.0),
                     repeat: BackgroundRepeat::Repeat,
                 },
@@ -1350,14 +1487,19 @@ mod tests {
         }
 
         let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
-        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let layout_tree = le.layout(
+            &doc,
+            &style_map,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+        );
 
         let painter = Painter::new();
         let display_list = painter.paint(&doc, &layout_tree, &style_map);
 
         // Collect positions of the three image items in paint order
         let mut positions: Vec<(String, usize)> = Vec::new();
-        for (i, item) in display_list.iter().enumerate() {
+        for (i, item) in display_list.items.iter().enumerate() {
             if let DisplayItem::Image { src, .. } = item {
                 match src.as_str() {
                     "img_a.png" | "img_b.png" | "img_c.png" => {
@@ -1368,20 +1510,39 @@ mod tests {
             }
         }
         // All three layers should be emitted, bottom-to-top order in the display list
-        assert!(positions.len() >= 3, "All three background layers should be painted, found {}", positions.len());
-        let pos_c = positions.iter().find(|(s, _)| s == "img_c.png").map(|(_, i)| *i);
-        let pos_b = positions.iter().find(|(s, _)| s == "img_b.png").map(|(_, i)| *i);
-        let pos_a = positions.iter().find(|(s, _)| s == "img_a.png").map(|(_, i)| *i);
-        assert!(pos_c < pos_b, "Bottom layer (img_c) must paint before middle (img_b)");
-        assert!(pos_b < pos_a, "Middle layer (img_b) must paint before top (img_a)");
+        assert!(
+            positions.len() >= 3,
+            "All three background layers should be painted, found {}",
+            positions.len()
+        );
+        let pos_c = positions
+            .iter()
+            .find(|(s, _)| s == "img_c.png")
+            .map(|(_, i)| *i);
+        let pos_b = positions
+            .iter()
+            .find(|(s, _)| s == "img_b.png")
+            .map(|(_, i)| *i);
+        let pos_a = positions
+            .iter()
+            .find(|(s, _)| s == "img_a.png")
+            .map(|(_, i)| *i);
+        assert!(
+            pos_c < pos_b,
+            "Bottom layer (img_c) must paint before middle (img_b)"
+        );
+        assert!(
+            pos_b < pos_a,
+            "Middle layer (img_b) must paint before top (img_a)"
+        );
     }
 
     #[test]
     fn image_cache_loaded_emits_image() {
+        use crate::image_cache::ImageCache;
         use liquide_compositor::scene::{
             BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
         };
-        use crate::image_cache::ImageCache;
 
         let mut doc = Document::new();
         let root = doc.root();
@@ -1409,23 +1570,29 @@ mod tests {
         cache.mark_loaded("loaded.png", 64, 64, 1001);
 
         let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
-        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let layout_tree = le.layout(
+            &doc,
+            &style_map,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+        );
 
         let painter = Painter::new();
         let display_list = painter.paint_cached(&doc, &layout_tree, &style_map, Some(&cache));
 
-        let has_image = display_list.iter().any(|item| {
-            matches!(item, DisplayItem::Image { src, .. } if src == "loaded.png")
-        });
+        let has_image = display_list
+            .items
+            .iter()
+            .any(|item| matches!(item, DisplayItem::Image { src, .. } if src == "loaded.png"));
         assert!(has_image, "Loaded cache entry should emit an Image item");
     }
 
     #[test]
     fn image_cache_failed_skips_image() {
+        use crate::image_cache::ImageCache;
         use liquide_compositor::scene::{
             BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
         };
-        use crate::image_cache::ImageCache;
 
         let mut doc = Document::new();
         let root = doc.root();
@@ -1453,23 +1620,32 @@ mod tests {
         cache.mark_failed("broken.png");
 
         let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
-        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let layout_tree = le.layout(
+            &doc,
+            &style_map,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+        );
 
         let painter = Painter::new();
         let display_list = painter.paint_cached(&doc, &layout_tree, &style_map, Some(&cache));
 
-        let has_broken = display_list.iter().any(|item| {
-            matches!(item, DisplayItem::Image { src, .. } if src == "broken.png")
-        });
-        assert!(!has_broken, "Failed cache entry should NOT emit an Image item");
+        let has_broken = display_list
+            .items
+            .iter()
+            .any(|item| matches!(item, DisplayItem::Image { src, .. } if src == "broken.png"));
+        assert!(
+            !has_broken,
+            "Failed cache entry should NOT emit an Image item"
+        );
     }
 
     #[test]
     fn image_cache_pending_still_emits_placeholder() {
+        use crate::image_cache::ImageCache;
         use liquide_compositor::scene::{
             BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
         };
-        use crate::image_cache::ImageCache;
 
         let mut doc = Document::new();
         let root = doc.root();
@@ -1496,14 +1672,23 @@ mod tests {
         cache.request_load("pending.png");
 
         let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
-        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let layout_tree = le.layout(
+            &doc,
+            &style_map,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+        );
 
         let painter = Painter::new();
         let display_list = painter.paint_cached(&doc, &layout_tree, &style_map, Some(&cache));
 
-        let has_pending = display_list.iter().any(|item| {
-            matches!(item, DisplayItem::Image { src, .. } if src == "pending.png")
-        });
-        assert!(has_pending, "Pending cache entry should still emit an Image item as placeholder");
+        let has_pending = display_list
+            .items
+            .iter()
+            .any(|item| matches!(item, DisplayItem::Image { src, .. } if src == "pending.png"));
+        assert!(
+            has_pending,
+            "Pending cache entry should still emit an Image item as placeholder"
+        );
     }
 }

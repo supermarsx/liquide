@@ -200,13 +200,8 @@ impl ElementPicker {
         nodes.push(SceneNode::new(
             base_id + 2,
             SceneNodeKind::Background { color },
-            NodeProperties::new(Rect::new(
-                rect.x,
-                rect.y + rect.height - w,
-                rect.width,
-                w,
-            ))
-            .with_z_order(9981),
+            NodeProperties::new(Rect::new(rect.x, rect.y + rect.height - w, rect.width, w))
+                .with_z_order(9981),
         ));
         // Left border.
         nodes.push(SceneNode::new(
@@ -218,13 +213,8 @@ impl ElementPicker {
         nodes.push(SceneNode::new(
             base_id + 4,
             SceneNodeKind::Background { color },
-            NodeProperties::new(Rect::new(
-                rect.x + rect.width - w,
-                rect.y,
-                w,
-                rect.height,
-            ))
-            .with_z_order(9981),
+            NodeProperties::new(Rect::new(rect.x + rect.width - w, rect.y, w, rect.height))
+                .with_z_order(9981),
         ));
 
         // Tooltip with element info.

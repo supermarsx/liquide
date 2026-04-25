@@ -69,16 +69,11 @@ impl Shell {
     pub(crate) fn preferred_color_scheme_for_theme(theme: &ShellTheme) -> &'static str {
         let bg = theme.desktop_background;
         let luminance = 0.2126 * bg.r as f32 + 0.7152 * bg.g as f32 + 0.0722 * bg.b as f32;
-        if luminance < 128.0 {
-            "dark"
-        } else {
-            "light"
-        }
+        if luminance < 128.0 { "dark" } else { "light" }
     }
 
     pub(crate) fn sync_pipeline_color_scheme(&mut self) {
-        self.css_pipeline.set_preferred_color_scheme(
-            Self::preferred_color_scheme_for_theme(&self.theme),
-        );
+        self.css_pipeline
+            .set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&self.theme));
     }
 }

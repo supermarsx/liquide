@@ -422,7 +422,9 @@ mod tests {
             start_maximized: false,
             start_minimized: false,
         });
-        let result = engine.evaluate("org.gnome.Calculator", "Calculator").unwrap();
+        let result = engine
+            .evaluate("org.gnome.Calculator", "Calculator")
+            .unwrap();
         assert_eq!(result.position, Some((100, 200)));
         assert_eq!(result.size, Some((300, 400)));
         assert!(result.target_workspace_index.is_none());

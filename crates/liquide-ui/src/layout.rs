@@ -254,12 +254,22 @@ impl BoxLayout {
         };
 
         match self.direction {
-            LayoutDirection::Horizontal => {
-                self.layout_horizontal(children_constraints, content_x, content_y, content_width, content_height, total_gap)
-            }
-            LayoutDirection::Vertical => {
-                self.layout_vertical(children_constraints, content_x, content_y, content_width, content_height, total_gap)
-            }
+            LayoutDirection::Horizontal => self.layout_horizontal(
+                children_constraints,
+                content_x,
+                content_y,
+                content_width,
+                content_height,
+                total_gap,
+            ),
+            LayoutDirection::Vertical => self.layout_vertical(
+                children_constraints,
+                content_x,
+                content_y,
+                content_width,
+                content_height,
+                total_gap,
+            ),
         }
     }
 
@@ -280,9 +290,7 @@ impl BoxLayout {
         let (start_offset, between_extra) = match self.align {
             LayoutAlign::Center => ((remaining / 2.0), 0.0),
             LayoutAlign::End => (remaining, 0.0),
-            LayoutAlign::SpaceBetween if count > 1 => {
-                (0.0, remaining / (count as f32 - 1.0))
-            }
+            LayoutAlign::SpaceBetween if count > 1 => (0.0, remaining / (count as f32 - 1.0)),
             LayoutAlign::SpaceAround if count > 0 => {
                 let space = remaining / count as f32;
                 (space / 2.0, space)
@@ -297,14 +305,13 @@ impl BoxLayout {
         let mut result = Vec::with_capacity(count);
         let mut x = content_x + start_offset;
         for constraint in constraints {
-            let w = constraint
-                .preferred_width
-                .max(constraint.min_width)
-                .min(if constraint.max_width > 0.0 {
+            let w = constraint.preferred_width.max(constraint.min_width).min(
+                if constraint.max_width > 0.0 {
                     constraint.max_width
                 } else {
                     f32::MAX
-                });
+                },
+            );
             let h = if self.align == LayoutAlign::Stretch {
                 content_height
             } else {
@@ -335,9 +342,7 @@ impl BoxLayout {
         let (start_offset, between_extra) = match self.align {
             LayoutAlign::Center => ((remaining / 2.0), 0.0),
             LayoutAlign::End => (remaining, 0.0),
-            LayoutAlign::SpaceBetween if count > 1 => {
-                (0.0, remaining / (count as f32 - 1.0))
-            }
+            LayoutAlign::SpaceBetween if count > 1 => (0.0, remaining / (count as f32 - 1.0)),
             LayoutAlign::SpaceAround if count > 0 => {
                 let space = remaining / count as f32;
                 (space / 2.0, space)
@@ -352,14 +357,13 @@ impl BoxLayout {
         let mut result = Vec::with_capacity(count);
         let mut y = content_y + start_offset;
         for constraint in constraints {
-            let h = constraint
-                .preferred_height
-                .max(constraint.min_height)
-                .min(if constraint.max_height > 0.0 {
+            let h = constraint.preferred_height.max(constraint.min_height).min(
+                if constraint.max_height > 0.0 {
                     constraint.max_height
                 } else {
                     f32::MAX
-                });
+                },
+            );
             let w = if self.align == LayoutAlign::Stretch {
                 content_width
             } else {

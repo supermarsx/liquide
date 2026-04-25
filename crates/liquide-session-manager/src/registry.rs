@@ -1,4 +1,4 @@
-use crate::service::{ServiceId, ServiceDescriptor, ServiceState};
+use crate::service::{ServiceDescriptor, ServiceId, ServiceState};
 use std::collections::{HashMap, VecDeque};
 
 /// Per-service runtime state
@@ -20,20 +20,25 @@ pub struct ServiceRegistry {
 
 impl ServiceRegistry {
     pub fn new() -> Self {
-        Self { services: HashMap::new() }
+        Self {
+            services: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, desc: ServiceDescriptor) {
         let id = desc.id.clone();
-        self.services.insert(id, ServiceEntry {
-            descriptor: desc,
-            state: ServiceState::Stopped,
-            pid: None,
-            restart_count: 0,
-            last_start: None,
-            last_exit_code: None,
-            error: None,
-        });
+        self.services.insert(
+            id,
+            ServiceEntry {
+                descriptor: desc,
+                state: ServiceState::Stopped,
+                pid: None,
+                restart_count: 0,
+                last_start: None,
+                last_exit_code: None,
+                error: None,
+            },
+        );
     }
 
     pub fn get(&self, id: &ServiceId) -> Option<&ServiceEntry> {
@@ -70,7 +75,8 @@ impl ServiceRegistry {
         }
 
         // Kahn's algorithm
-        let mut queue: VecDeque<&ServiceId> = in_degree.iter()
+        let mut queue: VecDeque<&ServiceId> = in_degree
+            .iter()
             .filter(|&(_, &deg)| deg == 0)
             .map(|(&id, _)| id)
             .collect();
@@ -78,7 +84,10 @@ impl ServiceRegistry {
         // Sort queue by priority for deterministic ordering
         let mut queue_vec: Vec<&ServiceId> = queue.drain(..).collect();
         queue_vec.sort_by_key(|id| {
-            self.services.get(*id).map(|e| e.descriptor.priority).unwrap_or(i32::MAX)
+            self.services
+                .get(*id)
+                .map(|e| e.descriptor.priority)
+                .unwrap_or(i32::MAX)
         });
         queue = queue_vec.into_iter().collect();
 
@@ -101,7 +110,9 @@ impl ServiceRegistry {
 
         if result.len() != self.services.len() {
             // Find cycle
-            let missing: Vec<ServiceId> = self.services.keys()
+            let missing: Vec<ServiceId> = self
+                .services
+                .keys()
                 .filter(|id| !result.contains(id))
                 .cloned()
                 .collect();
@@ -120,7 +131,8 @@ impl ServiceRegistry {
 
     /// Get all services that depend on the given service
     pub fn dependents(&self, id: &ServiceId) -> Vec<ServiceId> {
-        self.services.iter()
+        self.services
+            .iter()
             .filter(|(_, entry)| entry.descriptor.depends_on.contains(id))
             .map(|(sid, _)| sid.clone())
             .collect()
@@ -128,8 +140,11 @@ impl ServiceRegistry {
 
     /// Get auto-start services
     pub fn auto_start_services(&self) -> Vec<ServiceId> {
-        self.services.iter()
-            .filter(|(_, entry)| entry.descriptor.auto_start && entry.state == ServiceState::Stopped)
+        self.services
+            .iter()
+            .filter(|(_, entry)| {
+                entry.descriptor.auto_start && entry.state == ServiceState::Stopped
+            })
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -146,7 +161,9 @@ impl ServiceRegistry {
 }
 
 impl Default for ServiceRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug)]
@@ -156,7 +173,11 @@ pub struct CycleError {
 
 impl std::fmt::Display for CycleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "dependency cycle among: {:?}", self.services.iter().map(|s| &s.0).collect::<Vec<_>>())
+        write!(
+            f,
+            "dependency cycle among: {:?}",
+            self.services.iter().map(|s| &s.0).collect::<Vec<_>>()
+        )
     }
 }
 impl std::error::Error for CycleError {}

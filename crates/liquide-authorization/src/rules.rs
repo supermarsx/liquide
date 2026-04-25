@@ -289,12 +289,8 @@ fn builtin_rules() -> Vec<Rule> {
         )
         .with_description("Non-admins need admin auth for service management"),
         // ── Catch-all — deny unknown actions ────────────────────────
-        Rule::new(
-            "*",
-            SubjectMatch::Any,
-            AuthDecision::Deny,
-        )
-        .with_description("Deny all unrecognized actions by default"),
+        Rule::new("*", SubjectMatch::Any, AuthDecision::Deny)
+            .with_description("Deny all unrecognized actions by default"),
     ]
 }
 
@@ -365,10 +361,7 @@ mod tests {
 
     #[test]
     fn subject_match_one_of() {
-        let matcher = SubjectMatch::OneOf(vec![
-            SubjectMatch::IsAdmin,
-            SubjectMatch::IsLocal,
-        ]);
+        let matcher = SubjectMatch::OneOf(vec![SubjectMatch::IsAdmin, SubjectMatch::IsLocal]);
         assert!(matcher.matches(&admin_user()));
         assert!(matcher.matches(&local_user()));
         assert!(!matcher.matches(&regular_user()));
@@ -460,9 +453,10 @@ mod tests {
         let rs = RuleSet::new();
         assert!(rs.is_empty());
         assert_eq!(rs.len(), 0);
-        assert!(rs
-            .evaluate("org.liquide.anything", &regular_user())
-            .is_none());
+        assert!(
+            rs.evaluate("org.liquide.anything", &regular_user())
+                .is_none()
+        );
     }
 
     #[test]
@@ -497,11 +491,7 @@ mod tests {
         // Insert deny at front
         rs.insert_rule(
             0,
-            Rule::new(
-                "org.liquide.test",
-                SubjectMatch::Any,
-                AuthDecision::Deny,
-            ),
+            Rule::new("org.liquide.test", SubjectMatch::Any, AuthDecision::Deny),
         );
         assert_eq!(
             rs.evaluate("org.liquide.test", &regular_user()),
@@ -557,10 +547,7 @@ mod tests {
         assert!(!rs.is_empty());
         // Wallpaper should be allowed for anyone
         assert_eq!(
-            rs.evaluate(
-                "org.liquide.desktop.change-wallpaper",
-                &regular_user()
-            ),
+            rs.evaluate("org.liquide.desktop.change-wallpaper", &regular_user()),
             Some(AuthDecision::Allow)
         );
     }

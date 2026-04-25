@@ -441,8 +441,11 @@ impl Launcher {
         }
 
         // ----- sort by relevance descending --------------------------------
-        self.results
-            .sort_by(|a, b| b.relevance.partial_cmp(&a.relevance).unwrap_or(std::cmp::Ordering::Equal));
+        self.results.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // ----- web search fallback -----------------------------------------
         if self.results.is_empty() && self.config.search_web {
@@ -845,12 +848,7 @@ impl Launcher {
             NODE_LAUNCHER + 3,
             query_text,
             theme.status_bar_text,
-            GRect::new(
-                panel_x + 28.0,
-                panel_y + 23.0,
-                panel_w - 56.0,
-                20.0,
-            ),
+            GRect::new(panel_x + 28.0, panel_y + 23.0, panel_w - 56.0, 20.0),
             983,
             1,
         ));
@@ -898,10 +896,7 @@ impl Launcher {
             // Resolve label and icon for this item.
             let (label, icon_name) = if showing_results {
                 let r = &self.results[i];
-                (
-                    r.title.clone(),
-                    r.icon.clone(),
-                )
+                (r.title.clone(), r.icon.clone())
             } else if !self.favorites.is_empty() {
                 if let Some(fav_id) = self.favorites.get(i) {
                     if let Some(app) = self.apps.iter().find(|a| &a.app_id == fav_id) {

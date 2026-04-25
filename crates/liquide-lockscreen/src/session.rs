@@ -3,7 +3,6 @@
 /// Tracks the authentication flow for a single login session:
 /// user selection, provider selection, credential entry, and
 /// lockout enforcement.  Designed after GDM/SDDM session patterns.
-
 use crate::auth::AuthResult;
 use crate::provider::{CredentialField, ProviderRegistry};
 
@@ -50,6 +49,8 @@ pub struct LoginSession {
     /// Timestamp (ms) when the current lockout started, or `None`.
     lockout_start_ms: Option<u64>,
 }
+
+const USERNAME_FIELD_ID: &str = "username";
 
 impl LoginSession {
     /// Create a new session with default lockout policy.
@@ -111,11 +112,7 @@ impl LoginSession {
     pub fn remaining_lockout_ms(&self, now_ms: u64) -> u64 {
         if let Some(start) = self.lockout_start_ms {
             let end = start + self.lockout_duration_ms;
-            if now_ms < end {
-                end - now_ms
-            } else {
-                0
-            }
+            if now_ms < end { end - now_ms } else { 0 }
         } else {
             0
         }
@@ -134,6 +131,9 @@ impl LoginSession {
     ///
     /// Returns `false` if the provider id is not found in the registry.
     pub fn select_provider(&mut self, provider_id: &str, registry: &ProviderRegistry) -> bool {
+        if self.selected_user.is_none() {
+            return false;
+        }
         if registry.get(provider_id).is_none() {
             return false;
         }
@@ -174,6 +174,14 @@ impl LoginSession {
             }
         };
 
+        let selected_user = match &self.selected_user {
+            Some(username) => username.clone(),
+            None => {
+                self.state = SessionState::Failed("No user selected.".into());
+                return AuthResult::Failed("No user selected.".into());
+            }
+        };
+
         let provider = match registry.get(&provider_id) {
             Some(p) => p,
             None => {
@@ -182,8 +190,17 @@ impl LoginSession {
             }
         };
 
+        let mut bound_fields = Vec::with_capacity(fields.len() + 1);
+        bound_fields.push(CredentialField::new(USERNAME_FIELD_ID, &selected_user));
+        bound_fields.extend(
+            fields
+                .iter()
+                .filter(|field| field.descriptor_id != USERNAME_FIELD_ID)
+                .cloned(),
+        );
+
         self.state = SessionState::Authenticating;
-        let result = provider.authenticate(fields);
+        let result = provider.authenticate(&bound_fields);
 
         match &result {
             AuthResult::Success => {
@@ -205,10 +222,8 @@ impl LoginSession {
             }
             AuthResult::Locked(ms) => {
                 self.lockout_start_ms = Some(now_ms);
-                self.state = SessionState::Failed(format!(
-                    "Account locked for {} seconds.",
-                    ms / 1000
-                ));
+                self.state =
+                    SessionState::Failed(format!("Account locked for {} seconds.", ms / 1000));
             }
             AuthResult::RequiresMfa => {
                 self.state = SessionState::Failed("Multi-factor authentication required.".into());
@@ -304,19 +319,50 @@ mod tests {
     }
 
     #[test]
+    fn select_provider_requires_selected_user() {
+        let reg = make_registry();
+        let mut s = LoginSession::new();
+        assert!(!s.select_provider("password", &reg));
+        assert_eq!(*s.state(), SessionState::SelectingUser);
+        assert!(s.selected_provider_id().is_none());
+    }
+
+    #[test]
     fn submit_success() {
         let reg = make_registry();
         let mut s = LoginSession::new();
         s.select_user("alice");
         s.select_provider("password", &reg);
+        let fields = vec![CredentialField::new("password", "secret")];
+        let result = s.submit(&fields, &reg, 1000);
+        assert_eq!(result, AuthResult::Success);
+        assert_eq!(*s.state(), SessionState::Authenticated);
+        assert_eq!(s.attempt_count(), 0);
+    }
+
+    #[test]
+    fn submit_overwrites_conflicting_username_with_selected_user() {
+        let reg = make_registry();
+        let mut s = LoginSession::new();
+        s.select_user("alice");
+        s.select_provider("password", &reg);
         let fields = vec![
-            CredentialField::new("username", "alice"),
+            CredentialField::new("username", "bob"),
             CredentialField::new("password", "secret"),
         ];
         let result = s.submit(&fields, &reg, 1000);
         assert_eq!(result, AuthResult::Success);
         assert_eq!(*s.state(), SessionState::Authenticated);
-        assert_eq!(s.attempt_count(), 0);
+    }
+
+    #[test]
+    fn submit_requires_selected_user() {
+        let reg = make_registry();
+        let mut s = LoginSession::new();
+        assert!(s.select_provider("password", &reg) == false);
+        let fields = vec![CredentialField::new("password", "secret")];
+        let result = s.submit(&fields, &reg, 0);
+        assert!(matches!(result, AuthResult::Failed(msg) if msg.contains("No provider")));
     }
 
     #[test]
@@ -325,10 +371,7 @@ mod tests {
         let mut s = LoginSession::new();
         s.select_user("alice");
         s.select_provider("password", &reg);
-        let fields = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "wrong"),
-        ];
+        let fields = vec![CredentialField::new("password", "wrong")];
         let result = s.submit(&fields, &reg, 1000);
         assert!(matches!(result, AuthResult::Failed(_)));
         assert_eq!(s.attempt_count(), 1);
@@ -341,10 +384,7 @@ mod tests {
         let mut s = LoginSession::with_lockout(3, 10_000);
         s.select_user("alice");
         s.select_provider("password", &reg);
-        let bad = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "wrong"),
-        ];
+        let bad = vec![CredentialField::new("password", "wrong")];
         s.submit(&bad, &reg, 1000);
         s.submit(&bad, &reg, 2000);
         s.submit(&bad, &reg, 3000); // 3rd failure -> lockout
@@ -358,17 +398,11 @@ mod tests {
         let mut s = LoginSession::with_lockout(2, 5_000);
         s.select_user("alice");
         s.select_provider("password", &reg);
-        let bad = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "wrong"),
-        ];
+        let bad = vec![CredentialField::new("password", "wrong")];
         s.submit(&bad, &reg, 100);
         s.submit(&bad, &reg, 200); // locked at 200
 
-        let good = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "secret"),
-        ];
+        let good = vec![CredentialField::new("password", "secret")];
         let result = s.submit(&good, &reg, 1000); // still locked
         assert!(matches!(result, AuthResult::Locked(_)));
     }
@@ -379,20 +413,14 @@ mod tests {
         let mut s = LoginSession::with_lockout(2, 5_000);
         s.select_user("alice");
         s.select_provider("password", &reg);
-        let bad = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "wrong"),
-        ];
+        let bad = vec![CredentialField::new("password", "wrong")];
         s.submit(&bad, &reg, 100);
         s.submit(&bad, &reg, 200); // locked at 200
 
         assert!(s.is_locked_out(5199));
         assert!(!s.is_locked_out(5200)); // expired
 
-        let good = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "secret"),
-        ];
+        let good = vec![CredentialField::new("password", "secret")];
         let result = s.submit(&good, &reg, 5200);
         assert_eq!(result, AuthResult::Success);
     }
@@ -403,10 +431,7 @@ mod tests {
         let mut s = LoginSession::with_lockout(1, 10_000);
         s.select_user("alice");
         s.select_provider("password", &reg);
-        let bad = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "wrong"),
-        ];
+        let bad = vec![CredentialField::new("password", "wrong")];
         s.submit(&bad, &reg, 1000); // locked at 1000
 
         assert_eq!(s.remaining_lockout_ms(1000), 10_000);
@@ -427,10 +452,7 @@ mod tests {
         let mut s = LoginSession::new();
         s.select_user("alice");
         s.select_provider("pin", &reg);
-        let fields = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("pin", "1234"),
-        ];
+        let fields = vec![CredentialField::new("pin", "1234")];
         let result = s.submit(&fields, &reg, 0);
         assert_eq!(result, AuthResult::Success);
     }
@@ -441,7 +463,7 @@ mod tests {
         let mut s = LoginSession::new();
         s.select_user("alice");
         // Don't select a provider
-        let fields = vec![CredentialField::new("username", "alice")];
+        let fields = vec![CredentialField::new("password", "secret")];
         let result = s.submit(&fields, &reg, 0);
         assert!(matches!(result, AuthResult::Failed(msg) if msg.contains("No provider")));
     }
@@ -452,10 +474,7 @@ mod tests {
         let mut s = LoginSession::with_lockout(2, 5000);
         s.select_user("alice");
         s.select_provider("password", &reg);
-        let bad = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "wrong"),
-        ];
+        let bad = vec![CredentialField::new("password", "wrong")];
         s.submit(&bad, &reg, 100);
         s.submit(&bad, &reg, 200);
 
@@ -497,10 +516,7 @@ mod tests {
         let mut s = LoginSession::new();
         s.select_user("alice");
         s.select_provider("password", &reg);
-        let bad = vec![
-            CredentialField::new("username", "alice"),
-            CredentialField::new("password", "wrong"),
-        ];
+        let bad = vec![CredentialField::new("password", "wrong")];
         s.submit(&bad, &reg, 0);
         assert!(matches!(s.state(), SessionState::Failed(_)));
 

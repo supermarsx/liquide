@@ -1,7 +1,7 @@
 //! USB subsystem configuration types.
 
-use serde::{Serialize, Deserialize};
 use crate::device::DeviceClass;
+use serde::{Deserialize, Serialize};
 
 /// Tier negotiation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

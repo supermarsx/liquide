@@ -368,9 +368,11 @@ impl NotificationManager {
         // Group replacement: if a group_key is set, replace existing notification
         // with the same key.
         if let Some(ref key) = shell_notif.group_key {
-            if let Some(pos) = self.active.iter().position(|n| {
-                n.group_key.as_ref() == Some(key)
-            }) {
+            if let Some(pos) = self
+                .active
+                .iter()
+                .position(|n| n.group_key.as_ref() == Some(key))
+            {
                 let replaced = self.active.remove(pos);
                 self.push_history(replaced);
             }

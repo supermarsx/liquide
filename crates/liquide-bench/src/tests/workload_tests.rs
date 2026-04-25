@@ -38,11 +38,7 @@ fn workload_profile_fps_ranges_valid() {
 fn workload_profile_bandwidth_ranges_valid() {
     for profile in crate::workload::ALL {
         let (min, max) = profile.expected_bandwidth_range();
-        assert!(
-            min <= max,
-            "{}: min ({min}) > max ({max})",
-            profile.label()
-        );
+        assert!(min <= max, "{}: min ({min}) > max ({max})", profile.label());
     }
 }
 
@@ -172,10 +168,7 @@ fn network_emulator_reset() {
     // be the same as a fresh emulator.
     let mut fresh = NetworkEmulator::from_preset(NetworkPreset::HotelWifi);
     for _ in 0..10 {
-        assert_eq!(
-            emulator.should_drop_packet(),
-            fresh.should_drop_packet()
-        );
+        assert_eq!(emulator.should_drop_packet(), fresh.should_drop_packet());
     }
 }
 

@@ -13,7 +13,9 @@
 -->
 
 <statusbar-slot class="left" id="statusbar-slot-left">
-  <statusbar-logo id="logo">LiquiDE</statusbar-logo>
+  {{#if show_branding}}
+  <statusbar-logo id="logo">{{branding_text}}</statusbar-logo>
+  {{/if}}
   {{#each left_items}}
   <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
   {{/each}}
@@ -34,7 +36,15 @@
   <status-indicator id="{{id}}" class="{{classes}}">{{text}}</status-indicator>
   {{else}}
   {{#if type_tray}}
-  <status-tray id="{{id}}" />
+  <status-tray id="{{id}}" data-count="{{tray_item_count}}">
+    {{#each tray_items}}
+    <status-tray-item id="{{id}}" data-source="{{source}}" data-label="{{label}}" data-tooltip="{{tooltip}}" {{#if has_icon}}data-icon="{{icon}}"{{/if}} {{#if has_menu}}data-has-menu="true"{{/if}} {{#if has_icon_data}}data-has-icon-data="true"{{/if}} {{#if classes}}class="{{classes}}"{{/if}}>
+      {{#if has_badge}}
+      <status-tray-badge>{{badge}}</status-tray-badge>
+      {{/if}}
+    </status-tray-item>
+    {{/each}}
+  </status-tray>
   {{else}}
   {{#if type_session}}
   <session-button id="{{id}}">{{text}}</session-button>

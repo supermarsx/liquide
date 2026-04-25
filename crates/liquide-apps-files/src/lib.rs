@@ -27,7 +27,12 @@ pub mod trash;
 #[cfg(test)]
 mod tests;
 
+use anyhow::Result as AnyhowResult;
+use liquide_app_harness::{AppBootstrap, Size};
+use liquide_ui_core::widget::Widget;
+use liquide_ui_widgets::Label;
 use thiserror::Error;
+use tracing::info;
 
 /// Errors produced by the file manager.
 #[derive(Debug, Error)]
@@ -72,6 +77,69 @@ pub enum FilesError {
 /// Convenience result alias for this crate.
 pub type Result<T> = std::result::Result<T, FilesError>;
 
+pub const FILES_APP_ID: &str = "com.liquide.apps.files";
+pub const FILES_DISPLAY_NAME: &str = "Files";
+pub const FILES_INITIAL_SIZE: Size = Size::new(1100, 720);
+
+/// Minimal runtime state that downstream smoke tests can assert after launch setup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FilesLaunchContract {
+    pub listing_path: String,
+    pub entry_count: usize,
+}
+
+#[must_use]
+pub fn app_bootstrap() -> AppBootstrap {
+    AppBootstrap::new(FILES_APP_ID, FILES_DISPLAY_NAME).with_initial_size(FILES_INITIAL_SIZE)
+}
+
+#[must_use]
+pub fn prepare_launch(config: FilesConfig) -> FilesLaunchContract {
+    let runtime = FilesRuntime::new(config);
+    let listing = runtime.current_listing();
+
+    FilesLaunchContract {
+        listing_path: listing.path.clone(),
+        entry_count: listing.entries.len(),
+    }
+}
+
+#[must_use]
+pub fn build_root(contract: &FilesLaunchContract) -> Box<dyn Widget> {
+    Box::new(Label::new(format!(
+        "liquid-files — {}",
+        contract.listing_path
+    )))
+}
+
+pub fn launch(config: FilesConfig) -> AnyhowResult<()> {
+    let contract = prepare_launch(config);
+
+    app_bootstrap().run(move |_cx| {
+        info!(
+            path = %contract.listing_path,
+            entries = contract.entry_count,
+            "File manager ready"
+        );
+        build_root(&contract)
+    })
+}
+
+pub fn run_binary() -> AnyhowResult<()> {
+    init_tracing();
+    info!("Starting liquid-files");
+    launch(FilesConfig::default())
+}
+
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+}
+
 // Re-exports for convenience.
 pub use column_view::{ColumnConfig, ColumnViewConfig, SortOrder, ViewMode as ColumnViewMode};
 pub use config::FilesConfig;
@@ -86,3 +154,27 @@ pub use runtime::FilesRuntime;
 pub use search_folder::{SearchFilter, SearchFolder, SearchFolderStore, smart_folders};
 pub use sidebar::{Bookmark, BookmarkManager, default_bookmarks};
 pub use trash::{TrashEntry, TrashManager};
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+    use liquide_ui_core::{Constraints, UiTheme};
+
+    #[test]
+    fn files_launch_contract_tracks_default_listing() {
+        let contract = prepare_launch(FilesConfig::default());
+
+        assert_eq!(contract.listing_path, FilesConfig::default().initial_directory);
+        assert_eq!(contract.entry_count, 0);
+    }
+
+    #[test]
+    fn files_root_measures_non_zero() {
+        let contract = prepare_launch(FilesConfig::default());
+        let root = build_root(&contract);
+        let result = root.measure(&Constraints::new(0.0, 0.0, 800.0, 600.0), &UiTheme::default());
+
+        assert!(result.width > 0.0);
+        assert!(result.height > 0.0);
+    }
+}

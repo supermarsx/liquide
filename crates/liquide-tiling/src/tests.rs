@@ -92,7 +92,11 @@ mod tests {
 
     #[test]
     fn gaps_usable_area() {
-        let g = TilingGaps { inner: 8.0, outer: 10.0, smart_gaps: false };
+        let g = TilingGaps {
+            inner: 8.0,
+            outer: 10.0,
+            smart_gaps: false,
+        };
         let usable = g.usable_area(screen());
         assert_eq!(usable.x, 10.0);
         assert_eq!(usable.y, 10.0);
@@ -107,9 +111,7 @@ mod tests {
     #[test]
     fn columns_single_window() {
         let gaps = TilingGaps::default();
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Columns, 1, screen(), 0.55, 1, &gaps,
-        );
+        let rects = algorithms::compute_layout(&TilingLayout::Columns, 1, screen(), 0.55, 1, &gaps);
         assert_eq!(rects.len(), 1);
         // Smart gaps: single window gets full screen.
         assert_eq!(rects[0], screen());
@@ -117,10 +119,13 @@ mod tests {
 
     #[test]
     fn columns_two_windows() {
-        let gaps = TilingGaps { inner: 10.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Columns, 2, small_screen(), 0.5, 1, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 10.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Columns, 2, small_screen(), 0.5, 1, &gaps);
         assert_eq!(rects.len(), 2);
         // Master takes 50% minus half gap, stack takes the rest.
         let master_w = 1000.0 * 0.5 - 10.0 / 2.0;
@@ -130,10 +135,13 @@ mod tests {
 
     #[test]
     fn columns_multi_master() {
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Columns, 4, small_screen(), 0.5, 2, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Columns, 4, small_screen(), 0.5, 2, &gaps);
         assert_eq!(rects.len(), 4);
         // First 2 are masters (same x), last 2 are stack (same x).
         assert_eq!(rects[0].x, rects[1].x);
@@ -147,20 +155,26 @@ mod tests {
 
     #[test]
     fn rows_two_windows() {
-        let gaps = TilingGaps { inner: 10.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Rows, 2, small_screen(), 0.5, 1, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 10.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Rows, 2, small_screen(), 0.5, 1, &gaps);
         assert_eq!(rects.len(), 2);
         assert!(rects[1].y > rects[0].y);
     }
 
     #[test]
     fn rows_multi_master() {
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Rows, 3, small_screen(), 0.6, 2, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Rows, 3, small_screen(), 0.6, 2, &gaps);
         assert_eq!(rects.len(), 3);
         // First 2 masters share the top row.
         assert_eq!(rects[0].y, rects[1].y);
@@ -174,10 +188,13 @@ mod tests {
 
     #[test]
     fn grid_four_windows() {
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Grid, 4, small_screen(), 0.55, 1, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Grid, 4, small_screen(), 0.55, 1, &gaps);
         assert_eq!(rects.len(), 4);
         // 2x2 grid: each cell is 500x400.
         for r in &rects {
@@ -188,10 +205,13 @@ mod tests {
 
     #[test]
     fn grid_three_windows() {
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Grid, 3, small_screen(), 0.55, 1, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Grid, 3, small_screen(), 0.55, 1, &gaps);
         assert_eq!(rects.len(), 3);
         // ceil(sqrt(3)) = 2 cols, 2 rows. First row: 2 windows, second: 1 window (full width).
         assert!((rects[0].width - 500.0).abs() < 0.01);
@@ -201,9 +221,8 @@ mod tests {
     #[test]
     fn grid_single_window() {
         let gaps = TilingGaps::default();
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Grid, 1, small_screen(), 0.55, 1, &gaps,
-        );
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Grid, 1, small_screen(), 0.55, 1, &gaps);
         assert_eq!(rects.len(), 1);
     }
 
@@ -215,16 +234,30 @@ mod tests {
     fn three_column_single() {
         let gaps = TilingGaps::default();
         let rects = algorithms::compute_layout(
-            &TilingLayout::ThreeColumn, 1, small_screen(), 0.5, 1, &gaps,
+            &TilingLayout::ThreeColumn,
+            1,
+            small_screen(),
+            0.5,
+            1,
+            &gaps,
         );
         assert_eq!(rects.len(), 1);
     }
 
     #[test]
     fn three_column_five_windows() {
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
         let rects = algorithms::compute_layout(
-            &TilingLayout::ThreeColumn, 5, small_screen(), 0.5, 1, &gaps,
+            &TilingLayout::ThreeColumn,
+            5,
+            small_screen(),
+            0.5,
+            1,
+            &gaps,
         );
         assert_eq!(rects.len(), 5);
         // Master (index 0) is in center.
@@ -243,10 +276,13 @@ mod tests {
 
     #[test]
     fn spiral_four_windows() {
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Spiral, 4, small_screen(), 0.5, 1, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Spiral, 4, small_screen(), 0.5, 1, &gaps);
         assert_eq!(rects.len(), 4);
         // Each subsequent window should be smaller.
         assert!(rects[0].area() >= rects[1].area());
@@ -255,10 +291,13 @@ mod tests {
 
     #[test]
     fn spiral_alternates_direction() {
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Spiral, 3, small_screen(), 0.5, 1, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Spiral, 3, small_screen(), 0.5, 1, &gaps);
         // First split is horizontal: rect[0] is on the left.
         assert!(rects[0].x < rects[1].x);
         // Second split is vertical: rect[1] is above rect[2].
@@ -271,10 +310,13 @@ mod tests {
 
     #[test]
     fn monocle_all_same_size() {
-        let gaps = TilingGaps { inner: 10.0, outer: 20.0, smart_gaps: false };
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Monocle, 3, small_screen(), 0.55, 1, &gaps,
-        );
+        let gaps = TilingGaps {
+            inner: 10.0,
+            outer: 20.0,
+            smart_gaps: false,
+        };
+        let rects =
+            algorithms::compute_layout(&TilingLayout::Monocle, 3, small_screen(), 0.55, 1, &gaps);
         assert_eq!(rects.len(), 3);
         for r in &rects {
             assert_eq!(r.x, 20.0);
@@ -294,12 +336,20 @@ mod tests {
             TileZone::new(NormalizedRect::new(0.0, 0.0, 0.5, 1.0))
                 .with_name("left")
                 .with_max_windows(1),
-            TileZone::new(NormalizedRect::new(0.5, 0.0, 0.5, 1.0))
-                .with_name("right"),
+            TileZone::new(NormalizedRect::new(0.5, 0.0, 0.5, 1.0)).with_name("right"),
         ];
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
         let rects = algorithms::compute_layout(
-            &TilingLayout::Custom(zones), 3, small_screen(), 0.55, 1, &gaps,
+            &TilingLayout::Custom(zones),
+            3,
+            small_screen(),
+            0.55,
+            1,
+            &gaps,
         );
         assert_eq!(rects.len(), 3);
         // First window in left zone.
@@ -318,9 +368,7 @@ mod tests {
     #[test]
     fn float_returns_centered_rects() {
         let gaps = TilingGaps::default();
-        let rects = algorithms::compute_layout(
-            &TilingLayout::Float, 2, screen(), 0.55, 1, &gaps,
-        );
+        let rects = algorithms::compute_layout(&TilingLayout::Float, 2, screen(), 0.55, 1, &gaps);
         assert_eq!(rects.len(), 2);
         // Each rect should be smaller than the screen.
         for r in &rects {
@@ -337,8 +385,12 @@ mod tests {
     fn zero_windows_returns_empty() {
         let gaps = TilingGaps::default();
         for layout in &[
-            TilingLayout::Columns, TilingLayout::Rows, TilingLayout::Grid,
-            TilingLayout::ThreeColumn, TilingLayout::Spiral, TilingLayout::Monocle,
+            TilingLayout::Columns,
+            TilingLayout::Rows,
+            TilingLayout::Grid,
+            TilingLayout::ThreeColumn,
+            TilingLayout::Spiral,
+            TilingLayout::Monocle,
             TilingLayout::Float,
         ] {
             let rects = algorithms::compute_layout(layout, 0, screen(), 0.55, 1, &gaps);
@@ -493,7 +545,11 @@ mod tests {
         engine.add_window(1);
         engine.add_window(2);
         // Compute layout so cached_positions exist.
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
         engine.set_gaps(gaps);
         let _ = engine.compute_layout(small_screen());
         engine.set_focused(1);
@@ -508,7 +564,11 @@ mod tests {
         let mut engine = TilingEngine::new();
         engine.add_window(1);
         engine.add_window(2);
-        let gaps = TilingGaps { inner: 0.0, outer: 0.0, smart_gaps: false };
+        let gaps = TilingGaps {
+            inner: 0.0,
+            outer: 0.0,
+            smart_gaps: false,
+        };
         engine.set_gaps(gaps);
         let _ = engine.compute_layout(small_screen());
 
@@ -706,11 +766,7 @@ mod tests {
 
     #[test]
     fn engine_with_config() {
-        let engine = TilingEngine::with_config(
-            TilingLayout::Grid,
-            TilingGaps::uniform(4.0),
-            0.7,
-        );
+        let engine = TilingEngine::with_config(TilingLayout::Grid, TilingGaps::uniform(4.0), 0.7);
         assert_eq!(*engine.layout(), TilingLayout::Grid);
         assert_eq!(engine.gaps().inner, 4.0);
         assert_eq!(engine.master_ratio(), 0.7);
@@ -718,11 +774,7 @@ mod tests {
 
     #[test]
     fn engine_with_config_clamps_ratio() {
-        let engine = TilingEngine::with_config(
-            TilingLayout::Columns,
-            TilingGaps::default(),
-            1.5,
-        );
+        let engine = TilingEngine::with_config(TilingLayout::Columns, TilingGaps::default(), 1.5);
         assert!(engine.master_ratio() <= 0.9);
     }
 

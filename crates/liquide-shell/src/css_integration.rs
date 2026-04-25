@@ -4,6 +4,8 @@
 //! to query CSS styles and apply them to scene nodes, replacing hardcoded
 //! theme values with dynamic CSS-driven styling.
 
+#![allow(dead_code)]
+
 use liquide_compositor::pixel::Color;
 use liquide_renderer_css::{RenderStyle, StyleResolver};
 use liquide_theme_css::ThemeEngine;
@@ -56,27 +58,26 @@ pub fn resolve_window_style(resolver: &StyleResolver, focused: bool) -> RenderSt
 }
 
 /// Convert RenderStyle glass parameters to compositor GlassParams
-pub fn glass_params_from_style(style: &RenderStyle) -> Option<liquide_compositor::scene::GlassParams> {
+pub fn glass_params_from_style(
+    style: &RenderStyle,
+) -> Option<liquide_compositor::scene::GlassParams> {
     if let Some(glass) = &style.glass {
         Some(glass.to_compositor_params())
     } else {
         // Fallback: create glass from background color
-        style.background_color.map(|bg| {
-            liquide_compositor::scene::GlassParams {
+        style
+            .background_color
+            .map(|bg| liquide_compositor::scene::GlassParams {
                 blur_radius: 20,
                 tint_color: bg,
                 inner_glow: true,
                 parallax: false,
-            }
-        })
+            })
     }
 }
 
 /// Extract color with fallback
-pub fn color_or_default(
-    style_color: Option<Color>,
-    fallback: Color,
-) -> Color {
+pub fn color_or_default(style_color: Option<Color>, fallback: Color) -> Color {
     style_color.unwrap_or(fallback)
 }
 
@@ -136,22 +137,32 @@ pub fn resolve_decoration_colors(
 
     DecorationColors {
         close_bg: close.background_color.unwrap_or(defaults.close_bg),
-        close_bg_hover: close_hover.background_color.unwrap_or(defaults.close_bg_hover),
+        close_bg_hover: close_hover
+            .background_color
+            .unwrap_or(defaults.close_bg_hover),
         close_icon: close.foreground_color.unwrap_or(defaults.close_icon),
         maximize_bg: max.background_color.unwrap_or(defaults.maximize_bg),
-        maximize_bg_hover: max_hover.background_color.unwrap_or(defaults.maximize_bg_hover),
+        maximize_bg_hover: max_hover
+            .background_color
+            .unwrap_or(defaults.maximize_bg_hover),
         maximize_icon: max.foreground_color.unwrap_or(defaults.maximize_icon),
         minimize_bg: min.background_color.unwrap_or(defaults.minimize_bg),
-        minimize_bg_hover: min_hover.background_color.unwrap_or(defaults.minimize_bg_hover),
+        minimize_bg_hover: min_hover
+            .background_color
+            .unwrap_or(defaults.minimize_bg_hover),
         minimize_icon: min.foreground_color.unwrap_or(defaults.minimize_icon),
         pin_bg: pin.background_color.unwrap_or(defaults.pin_bg),
         pin_bg_hover: pin_hover.background_color.unwrap_or(defaults.pin_bg_hover),
-        pin_bg_active: pin_active.background_color.unwrap_or(defaults.pin_bg_active),
+        pin_bg_active: pin_active
+            .background_color
+            .unwrap_or(defaults.pin_bg_active),
         pin_bg_active_hover: pin_active_hover
             .background_color
             .unwrap_or(defaults.pin_bg_active_hover),
         pin_icon: pin.foreground_color.unwrap_or(defaults.pin_icon),
-        pin_icon_active: pin_active.foreground_color.unwrap_or(defaults.pin_icon_active),
+        pin_icon_active: pin_active
+            .foreground_color
+            .unwrap_or(defaults.pin_icon_active),
     }
 }
 
@@ -178,8 +189,16 @@ pub fn resolve_decoration_layout(
         title_bar_height: titlebar.height.unwrap_or(defaults.title_bar_height),
         button_width: button.width.unwrap_or(defaults.button_width),
         button_height: button.height.unwrap_or(defaults.button_height),
-        button_right_margin: if button.margin.right > 0.0 { button.margin.right } else { defaults.button_right_margin },
-        button_corner_radius: if button.border_radius > 0.0 { button.border_radius } else { defaults.button_corner_radius },
+        button_right_margin: if button.margin.right > 0.0 {
+            button.margin.right
+        } else {
+            defaults.button_right_margin
+        },
+        button_corner_radius: if button.border_radius > 0.0 {
+            button.border_radius
+        } else {
+            defaults.button_corner_radius
+        },
     }
 }
 
@@ -188,9 +207,7 @@ pub fn resolve_decoration_layout(
 /// The button dimensions (`button_width`, `button_height`,
 /// `button_right_margin`) are kept in sync with `resolve_decoration_layout`
 /// so that hit-test regions match the visually rendered buttons exactly.
-pub fn resolve_decoration_style(
-    resolver: &StyleResolver,
-) -> crate::decoration::DecorationStyle {
+pub fn resolve_decoration_style(resolver: &StyleResolver) -> crate::decoration::DecorationStyle {
     let defaults = crate::decoration::DecorationStyle::default();
 
     let window = resolver
@@ -211,7 +228,11 @@ pub fn resolve_decoration_style(
         } else {
             defaults.border_width
         },
-        corner_radius: if window.border_radius > 0.0 { window.border_radius } else { defaults.corner_radius },
+        corner_radius: if window.border_radius > 0.0 {
+            window.border_radius
+        } else {
+            defaults.corner_radius
+        },
         button_size: defaults.button_size,
         resize_tolerance: defaults.resize_tolerance,
         button_width: btn_layout.button_width,
@@ -272,14 +293,22 @@ pub fn resolve_dock_layout(resolver: &StyleResolver) -> DockLayout {
         .unwrap_or_else(|_| RenderStyle::new());
 
     DockLayout {
-        padding: if style.padding.top > 0.0 { style.padding.top } else { defaults.padding },
+        padding: if style.padding.top > 0.0 {
+            style.padding.top
+        } else {
+            defaults.padding
+        },
         border_height: if style.border.width > 0.0 {
             style.border.width
         } else {
             defaults.border_height
         },
         icon_size: style.height.unwrap_or(defaults.icon_size),
-        item_gap: if style.margin.right > 0.0 { style.margin.right } else { defaults.item_gap },
+        item_gap: if style.margin.right > 0.0 {
+            style.margin.right
+        } else {
+            defaults.item_gap
+        },
         blur_radius: style.blur_radius.unwrap_or(defaults.blur_radius),
     }
 }
@@ -297,7 +326,11 @@ pub fn resolve_status_bar_layout(resolver: &StyleResolver) -> StatusBarLayout {
 
     StatusBarLayout {
         height: style.height.unwrap_or(defaults.height),
-        padding: if style.padding.left > 0.0 { style.padding.left } else { defaults.padding },
+        padding: if style.padding.left > 0.0 {
+            style.padding.left
+        } else {
+            defaults.padding
+        },
         border_height: if style.border.width > 0.0 {
             style.border.width
         } else {
@@ -347,12 +380,26 @@ pub fn resolve_launcher_layout(resolver: &StyleResolver) -> LauncherLayout {
         .unwrap_or_else(|_| RenderStyle::new());
 
     LauncherLayout {
-        width_ratio: style.width.map(|w| w / 100.0).unwrap_or(defaults.width_ratio),
-        height_ratio: style.height.map(|h| h / 100.0).unwrap_or(defaults.height_ratio),
+        width_ratio: style
+            .width
+            .map(|w| w / 100.0)
+            .unwrap_or(defaults.width_ratio),
+        height_ratio: style
+            .height
+            .map(|h| h / 100.0)
+            .unwrap_or(defaults.height_ratio),
         search_height: search.height.unwrap_or(defaults.search_height),
         item_height: item.height.unwrap_or(defaults.item_height),
-        item_gap: if item.margin.bottom > 0.0 { item.margin.bottom } else { defaults.item_gap },
-        padding: if style.padding.top > 0.0 { style.padding.top } else { defaults.padding },
+        item_gap: if item.margin.bottom > 0.0 {
+            item.margin.bottom
+        } else {
+            defaults.item_gap
+        },
+        padding: if style.padding.top > 0.0 {
+            style.padding.top
+        } else {
+            defaults.padding
+        },
         blur_radius: style.blur_radius.unwrap_or(defaults.blur_radius),
     }
 }
@@ -391,9 +438,21 @@ pub fn resolve_notification_layout(resolver: &StyleResolver) -> NotificationLayo
     NotificationLayout {
         width: style.width.unwrap_or(defaults.width),
         height: style.height.unwrap_or(defaults.height),
-        gap: if style.margin.bottom > 0.0 { style.margin.bottom } else { defaults.gap },
-        margin: if style.margin.right > 0.0 { style.margin.right } else { defaults.margin },
-        top_offset: if style.margin.top > 0.0 { style.margin.top } else { defaults.top_offset },
+        gap: if style.margin.bottom > 0.0 {
+            style.margin.bottom
+        } else {
+            defaults.gap
+        },
+        margin: if style.margin.right > 0.0 {
+            style.margin.right
+        } else {
+            defaults.margin
+        },
+        top_offset: if style.margin.top > 0.0 {
+            style.margin.top
+        } else {
+            defaults.top_offset
+        },
         blur_radius: style.blur_radius.unwrap_or(defaults.blur_radius),
     }
 }
@@ -427,8 +486,16 @@ pub fn resolve_menu_layout(resolver: &StyleResolver) -> MenuLayout {
 
     MenuLayout {
         blur_radius: style.blur_radius.unwrap_or(defaults.blur_radius),
-        corner_radius: if style.border_radius > 0.0 { style.border_radius } else { defaults.corner_radius },
-        padding: if style.padding.top > 0.0 { style.padding.top } else { defaults.padding },
+        corner_radius: if style.border_radius > 0.0 {
+            style.border_radius
+        } else {
+            defaults.corner_radius
+        },
+        padding: if style.padding.top > 0.0 {
+            style.padding.top
+        } else {
+            defaults.padding
+        },
         item_height: style.height.unwrap_or(defaults.item_height),
     }
 }
@@ -487,7 +554,12 @@ mod tests {
     #[test]
     fn test_border_extraction() {
         let mut style = RenderStyle::new();
-        style.border.color = Color { r: 100, g: 100, b: 100, a: 255 };
+        style.border.color = Color {
+            r: 100,
+            g: 100,
+            b: 100,
+            a: 255,
+        };
         style.border.width = 2.0;
 
         let (color, width) = border_from_style(&style).unwrap();

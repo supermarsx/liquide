@@ -113,11 +113,7 @@ impl Scheduler {
 
     /// Return references to all enabled tasks whose `next_run <= now`.
     pub fn pending_tasks(&self, now: u64) -> Vec<&ScheduledTask> {
-        let mut out: Vec<&ScheduledTask> = self
-            .tasks
-            .values()
-            .filter(|t| t.is_due(now))
-            .collect();
+        let mut out: Vec<&ScheduledTask> = self.tasks.values().filter(|t| t.is_due(now)).collect();
         out.sort_by_key(|t| t.id);
         out
     }
@@ -176,7 +172,10 @@ impl Scheduler {
         task.last_result = Some(task_result.clone());
 
         // Append to history
-        self.history.entry(id).or_default().push(task_result.clone());
+        self.history
+            .entry(id)
+            .or_default()
+            .push(task_result.clone());
 
         Some(task_result)
     }

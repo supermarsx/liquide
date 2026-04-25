@@ -112,10 +112,7 @@ pub fn add_autostart_entry(
 ///
 /// If the entry exists in a system directory, a user-level override with
 /// `Hidden=true` is written instead of deleting the system file.
-pub fn remove_autostart_entry(
-    dirs: &XdgDirs,
-    filename: &str,
-) -> Result<(), AutostartError> {
+pub fn remove_autostart_entry(dirs: &XdgDirs, filename: &str) -> Result<(), AutostartError> {
     let user_path = user_autostart_dir(dirs).join(filename);
 
     if user_path.exists() {

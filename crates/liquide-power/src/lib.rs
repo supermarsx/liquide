@@ -4,10 +4,10 @@
 //! sleep/hibernate/shutdown actions, and inhibit guards to prevent
 //! the system from sleeping while work is in progress.
 
-mod platform;
 pub mod battery;
 pub mod idle;
 pub mod inhibitor;
+mod platform;
 pub mod policy;
 pub mod thermal;
 
@@ -405,15 +405,15 @@ mod tests {
 
     #[test]
     fn power_error_display() {
-        assert_eq!(PowerError::NotSupported.to_string(), "operation not supported");
+        assert_eq!(
+            PowerError::NotSupported.to_string(),
+            "operation not supported"
+        );
         assert_eq!(
             PowerError::PermissionDenied.to_string(),
             "permission denied"
         );
-        assert_eq!(
-            PowerError::PlatformError("oops".into()).to_string(),
-            "oops"
-        );
+        assert_eq!(PowerError::PlatformError("oops".into()).to_string(), "oops");
     }
 
     #[test]

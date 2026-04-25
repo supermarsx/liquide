@@ -11,8 +11,7 @@ fn test_shm_name(suffix: &str) -> String {
 #[test]
 fn create_write_read() {
     let name = test_shm_name("create-write-read");
-    let mut shm =
-        crate::SharedMemory::create(&name, 4096).expect("create failed");
+    let mut shm = crate::SharedMemory::create(&name, 4096).expect("create failed");
 
     let data = b"hello shared memory";
     shm.write(0, data).expect("write failed");
@@ -79,8 +78,8 @@ fn surface_name_format() {
 #[test]
 fn framebuffer_shm_size() {
     let name = test_shm_name("framebuf");
-    let shm = crate::create_framebuffer_shm(&name, 1920, 1080, 4)
-        .expect("create_framebuffer_shm failed");
+    let shm =
+        crate::create_framebuffer_shm(&name, 1920, 1080, 4).expect("create_framebuffer_shm failed");
     assert_eq!(shm.size(), 1920 * 1080 * 4);
 }
 
@@ -106,18 +105,18 @@ fn as_slice_roundtrip() {
 #[test]
 fn open_existing() {
     let name = test_shm_name("open-existing");
-    let mut creator =
-        crate::SharedMemory::create(&name, 512).expect("create failed");
+    let mut creator = crate::SharedMemory::create(&name, 512).expect("create failed");
 
     // Write pattern
     creator.write(0, b"DEADBEEF").expect("write failed");
 
     // Open the same region
-    let opener = crate::SharedMemory::open(&name, ShmAccess::ReadOnly)
-        .expect("open failed");
+    let opener = crate::SharedMemory::open(&name, ShmAccess::ReadOnly).expect("open failed");
 
     let mut buf = [0u8; 8];
-    opener.read(0, &mut buf).expect("read from opened shm failed");
+    opener
+        .read(0, &mut buf)
+        .expect("read from opened shm failed");
     assert_eq!(&buf, b"DEADBEEF");
 }
 

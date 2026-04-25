@@ -41,12 +41,7 @@ unsafe extern "C" {
         pointer_mode: i32,
         keyboard_mode: i32,
     ) -> i32;
-    fn XUngrabKey(
-        display: Display,
-        keycode: i32,
-        modifiers: u32,
-        grab_window: Window,
-    ) -> i32;
+    fn XUngrabKey(display: Display, keycode: i32, modifiers: u32, grab_window: Window) -> i32;
     fn XCheckTypedEvent(display: Display, event_type: i32, event: *mut XEvent) -> i32;
     fn XFlush(display: Display) -> i32;
 }

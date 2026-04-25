@@ -23,13 +23,22 @@ fn custom_mime() {
 
 #[test]
 fn from_mime_text() {
-    assert_eq!(ClipboardFormat::from_mime(MIME_PLAIN_TEXT), Some(ClipboardFormat::PlainText));
-    assert_eq!(ClipboardFormat::from_mime("text/plain"), Some(ClipboardFormat::PlainText));
+    assert_eq!(
+        ClipboardFormat::from_mime(MIME_PLAIN_TEXT),
+        Some(ClipboardFormat::PlainText)
+    );
+    assert_eq!(
+        ClipboardFormat::from_mime("text/plain"),
+        Some(ClipboardFormat::PlainText)
+    );
 }
 
 #[test]
 fn from_mime_html() {
-    assert_eq!(ClipboardFormat::from_mime(MIME_HTML), Some(ClipboardFormat::Html));
+    assert_eq!(
+        ClipboardFormat::from_mime(MIME_HTML),
+        Some(ClipboardFormat::Html)
+    );
 }
 
 #[test]

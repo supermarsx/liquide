@@ -1,4 +1,5 @@
 use super::*;
+use crate::PseudoKind;
 use liquide_dom::Document;
 
 #[test]
@@ -160,4 +161,215 @@ fn current_color_on_color_property_inherits_parent_value() {
     assert_eq!(child_style.color.r, 255);
     assert_eq!(child_style.color.g, 0);
     assert_eq!(child_style.color.b, 0);
+}
+
+#[test]
+fn invalidate_preserves_inherited_custom_property_scope() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .red-scope { --accent: #ff0000; }
+            .blue-scope { --accent: #0000ff; }
+            .target { color: var(--accent); }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let red_scope = doc.create_element("div");
+    doc.add_class(red_scope, "red-scope");
+    doc.append_child(root, red_scope);
+
+    let target = doc.create_element("span");
+    doc.add_class(target, "target");
+    doc.append_child(red_scope, target);
+
+    let blue_scope = doc.create_element("div");
+    doc.add_class(blue_scope, "blue-scope");
+    doc.append_child(root, blue_scope);
+
+    let mut styles = engine.restyle_all(&doc);
+    let initial = styles.get(target).unwrap();
+    assert_eq!((initial.color.r, initial.color.g, initial.color.b), (255, 0, 0));
+
+    engine.invalidate(&doc, &[target], &mut styles);
+
+    let updated = styles.get(target).unwrap();
+    assert_eq!((updated.color.r, updated.color.g, updated.color.b), (255, 0, 0));
+}
+
+#[test]
+fn restyle_dirty_rebuilds_ancestor_custom_property_scope() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .red-scope { --accent: #ff0000; }
+            .blue-scope { --accent: #0000ff; }
+            .target { color: var(--accent); }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let red_scope = doc.create_element("div");
+    doc.add_class(red_scope, "red-scope");
+    doc.append_child(root, red_scope);
+
+    let target = doc.create_element("span");
+    doc.add_class(target, "target");
+    doc.append_child(red_scope, target);
+
+    let blue_scope = doc.create_element("div");
+    doc.add_class(blue_scope, "blue-scope");
+    doc.append_child(root, blue_scope);
+
+    let mut styles = engine.restyle_all(&doc);
+    let mut dirty = liquide_dom::dirty::DirtySet::new();
+    dirty.mark_style(target);
+    engine.restyle_dirty(&doc, &dirty, &mut styles);
+
+    let updated = styles.get(target).unwrap();
+    assert_eq!((updated.color.r, updated.color.g, updated.color.b), (255, 0, 0));
+}
+
+#[test]
+fn shadow_root_custom_property_scope_stays_isolated() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .host { --accent: #ff0000; }
+            .other { --accent: #0000ff; }
+            .inner { color: var(--accent, #00ff00); }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let host = doc.create_element("div");
+    doc.add_class(host, "host");
+    doc.append_child(root, host);
+
+    let shadow_root = doc.create_shadow_root();
+    doc.append_child(host, shadow_root);
+
+    let inner = doc.create_element("span");
+    doc.add_class(inner, "inner");
+    doc.append_child(shadow_root, inner);
+
+    let other = doc.create_element("div");
+    doc.add_class(other, "other");
+    doc.append_child(root, other);
+
+    let mut styles = engine.restyle_all(&doc);
+    let full = styles.get(inner).unwrap();
+    assert_eq!((full.color.r, full.color.g, full.color.b), (0, 255, 0));
+
+    engine.invalidate(&doc, &[inner], &mut styles);
+    let incremental = styles.get(inner).unwrap();
+    assert_eq!((incremental.color.r, incremental.color.g, incremental.color.b), (0, 255, 0));
+}
+
+#[ignore = "public pseudo-rule ingestion still depends on selector/stylesheet routing outside this validation path"]
+#[test]
+fn pseudo_elements_use_local_custom_properties() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            div::first-line {
+                --accent: #ff0000;
+                color: var(--accent);
+            }
+            .other { --accent: #0000ff; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let host = doc.create_element("div");
+    doc.append_child(root, host);
+
+    let other = doc.create_element("div");
+    doc.add_class(other, "other");
+    doc.append_child(root, other);
+
+    let styles = engine.restyle_all(&doc);
+    let first_line = styles.get_pseudo(host, PseudoKind::FirstLine).unwrap();
+    assert_eq!(
+        (first_line.color.r, first_line.color.g, first_line.color.b),
+        (255, 0, 0)
+    );
+}
+
+#[test]
+fn all_initial_resets_inherited_properties_to_initial_values() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .parent { color: #ff0000; }
+            .reset { all: initial; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let parent = doc.create_element("div");
+    doc.add_class(parent, "parent");
+    doc.append_child(root, parent);
+
+    let child = doc.create_element("span");
+    doc.add_class(child, "reset");
+    doc.append_child(parent, child);
+
+    let styles = engine.restyle_all(&doc);
+    let child_style = styles.get(child).unwrap();
+    assert_eq!((child_style.color.r, child_style.color.g, child_style.color.b), (0, 0, 0));
+}
+
+#[test]
+fn all_revert_restores_parent_inherited_values() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .parent { color: #ff0000; }
+            .reset { color: #0000ff; }
+            .reset { all: revert; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let parent = doc.create_element("div");
+    doc.add_class(parent, "parent");
+    doc.append_child(root, parent);
+
+    let child = doc.create_element("span");
+    doc.add_class(child, "reset");
+    doc.append_child(parent, child);
+
+    let styles = engine.restyle_all(&doc);
+    let child_style = styles.get(child).unwrap();
+    assert_eq!((child_style.color.r, child_style.color.g, child_style.color.b), (255, 0, 0));
+}
+
+#[test]
+fn transition_duration_defaults_transition_definitions_to_all() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet("div { transition-duration: 120ms; }");
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let div = doc.create_element("div");
+    doc.append_child(root, div);
+
+    let styles = engine.restyle_all(&doc);
+    let style = styles.get(div).unwrap();
+    assert_eq!(style.transition.len(), 1);
+    assert_eq!(style.transition[0].property, "all");
+    assert!((style.transition[0].duration_ms - 120.0).abs() < 0.01);
 }

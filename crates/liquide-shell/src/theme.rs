@@ -114,6 +114,7 @@ impl ShellTheme {
     /// color slots. Dark themes produce darker, semi-transparent glass tints;
     /// light themes produce lighter variants.
     #[must_use]
+    #[allow(deprecated)]
     pub fn from_ui_theme(theme: &liquide_ui::Theme) -> Self {
         let is_dark = theme.colors.background.r < 128;
         if is_dark {
@@ -124,6 +125,7 @@ impl ShellTheme {
     }
 
     /// Map a dark UI theme to shell colors.
+    #[allow(deprecated)]
     fn from_ui_theme_dark(theme: &liquide_ui::Theme) -> Self {
         let c = &theme.colors;
         Self {
@@ -259,6 +261,7 @@ impl ShellTheme {
     }
 
     /// Map a light UI theme to shell colors.
+    #[allow(deprecated)]
     fn from_ui_theme_light(theme: &liquide_ui::Theme) -> Self {
         let c = &theme.colors;
         Self {

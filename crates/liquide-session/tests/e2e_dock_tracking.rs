@@ -2,7 +2,7 @@
 //! app launch through dock, icon presence for open windows.
 
 use liquide_compositor::geometry::Rect;
-use liquide_shell::{Dock, DockItem, DockItemKind, Shell, WindowId};
+use liquide_shell::{DockItem, DockItemKind, Shell};
 
 fn new_shell() -> Shell {
     Shell::new(1920.0, 1080.0)
@@ -208,11 +208,7 @@ fn opening_unknown_app_adds_running_item_to_dock() {
     let wid = shell.open_app_window(custom_app);
 
     // Dock should have a new running entry for this app
-    let has_item = shell
-        .dock()
-        .items()
-        .iter()
-        .any(|i| i.app_id == custom_app);
+    let has_item = shell.dock().items().iter().any(|i| i.app_id == custom_app);
 
     assert!(has_item, "dock should show an icon for the opened app");
 

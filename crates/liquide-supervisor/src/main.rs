@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
-use liquide_supervisor::{
-    AdmissionConfig, ControlCommand, ControlResponse, DowngradeThresholds,
-    ResourceDefaults, RestartPolicy, SupervisorConfig,
-};
 use liquide_supervisor::runtime::SupervisorRuntime;
+use liquide_supervisor::{
+    AdmissionConfig, ControlCommand, ControlResponse, DowngradeThresholds, ResourceDefaults,
+    RestartPolicy, SupervisorConfig,
+};
 
 /// Supervisor daemon for the Liquide desktop environment.
 ///

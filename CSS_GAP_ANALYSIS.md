@@ -1,6 +1,8 @@
 # CSS 2.1 & CSS 3 Specification Gap Analysis — LiquiDE Engine
 
-Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K LOC)
+Generated: 2026-03-07 | Updated: 2026-04-24 after t13 CSS conformance reset
+
+This document still carries March audit-era estimates for untouched sections. The selector, shorthand, supports/media, import, scope, custom-property, and transition claims below were corrected to match the post-t13 tested surface.
 
 ---
 
@@ -9,15 +11,15 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 | Specification Area | Coverage | Grade | Key Gaps |
 |---|---|---|---|
 | **CSS 2.1 Core** | ~92% | A | Counters not rendered, z-index stacking incomplete, paged media NYI |
-| **CSS Selectors Level 3/4** | ~85% | B+ | Missing :link, :dir(), :any-link, ::backdrop, column combinator |
-| **CSS Cascade Level 4/5** | ~80% | B | revert-layer NYI, media features sparse (5/15), @scope end NYI |
+| **CSS Selectors Level 3/4** | ~82% | B | :has() remains partial, :link/:any-link missing, ::backdrop and column combinator missing |
+| **CSS Cascade Level 4/5** | ~78% | B- | revert still partial, @supports selector() missing, advanced media features still sparse |
 | **CSS Flexbox Level 1** | ~95% | A | flex-flow shorthand missing, align-content missing space-evenly |
 | **CSS Grid Level 2** | ~80% | B | grid/grid-template shorthands, subgrid incomplete, intrinsic heuristics |
 | **CSS Multi-column Level 1** | ~85% | B | column-rule-* not parsed, balance algorithm simplified |
-| **CSS Backgrounds & Borders 3** | ~70% | C+ | Multiple backgrounds NYI, background-repeat/position/size not wired |
+| **CSS Backgrounds & Borders 3** | ~72% | C+ | Layered backgrounds preserved, but repeat/position/size wiring remains incomplete |
 | **CSS Colors Level 4** | ~90% | A- | lab()/lch() missing, currentcolor resolves to black |
 | **CSS Transforms Level 1/2** | ~75% | B- | All 3D transforms missing (translate3d, rotate3d, matrix3d, perspective) |
-| **CSS Transitions Level 1** | ~40% | D | Properties parsed; no animation scheduler wired into pipeline |
+| **CSS Transitions Level 1** | ~50% | C- | Limited runtime interpolation exists for the current numeric subset; broad property coverage is still missing |
 | **CSS Animations Level 1** | ~40% | D | @keyframes parsed; liquide-animation crate exists but not integrated |
 | **CSS Filters Level 1** | ~95% | A | All filters + backdrop-filter, SIMD-accelerated |
 | **CSS Masking Level 1** | ~50% | D+ | clip-path works; mask-* properties stored but no renderer |
@@ -47,7 +49,7 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 | Colors (hex, rgb, rgba, named, hsl, hwb) | ✅ Full | theme-css/parser/values.rs:158-175 |
 | calc(), min(), max(), clamp() | ✅ Full | theme-css/parser/math_expr.rs |
 | inherit, initial, unset keywords | ✅ Full | engine/apply.rs:24-43 |
-| Shorthand expansion | ✅ Full | theme-css/parser/properties.rs:87-1000 |
+| Shorthand expansion | ⚠️ Partial | Common canonical shorthands are preserved; transition/animation/mask/border-image/offset remain incomplete |
 
 ### Chapter 5: Selectors
 | Feature | Status | Location |
@@ -201,10 +203,10 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 | :valid, :invalid | ⚠️ Partial | Only checks aria-invalid attribute |
 | :in-range, :out-of-range | ⚠️ Partial | Basic min/max bounds check |
 | :is(), :where(), :not() | ✅ Full | Correct specificity |
-| :has() | ✅ Full | With >, +, ~ combinator support |
+| :has() | ⚠️ Partial | Relative combinators and nested parsing are covered, but selector-list and invalidation edge cases remain |
 | :lang() | ✅ Full | Prefix matching (en matches en-US) |
 | :link, :any-link | ❌ Missing | |
-| :dir() | ❌ Missing | |
+| :dir() | ⚠️ Partial | Inherited direction matching is covered; broader scoping/shadow semantics remain |
 | :user-valid, :user-invalid | ❌ Missing | |
 | :autofill, :blank, :modal | ❌ Missing | |
 | :current, :past, :future | ❌ Missing | Time-dimensional |
@@ -235,14 +237,14 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 | !important reversed order | ✅ Full | |
 | inherit, initial, unset | ✅ Full | |
 | revert | ⚠️ Partial | Simplified as unset |
-| revert-layer | ❌ Missing | |
-| @import | ⚠️ Partial | URL extracted, conditions not evaluated |
-| @media | ✅ Full | Width/height/prefers-color-scheme/reduced-motion |
-| @supports | ✅ Full | (property: value) syntax |
+| revert-layer | ⚠️ Partial | Lower-origin/layer fallback is covered; broader cascade-edge parity is still incomplete |
+| @import | ⚠️ Partial | Import qualifiers are evaluated during load/reload; watcher coverage outside watched roots remains limited |
+| @media | ⚠️ Partial | Viewport, color-scheme, reduced-motion, hover/pointer, and range/or syntax are covered |
+| @supports | ⚠️ Partial | Declaration checks and fail-closed unknown forms are covered; selector() remains unsupported |
 | @layer | ✅ Full | Layer ordering enforced |
-| @scope | ⚠️ Partial | scope-start applied, scope-end not enforced |
-| @container | ✅ Full | Size queries; style queries missing |
-| @property | ✅ Full | syntax, inherits, initial-value |
+| @scope | ⚠️ Partial | scope-start and scope-end bounds are enforced; full scoping semantics remain incomplete |
+| @container | ⚠️ Partial | Size queries and nested container contents are covered; style queries are still missing |
+| @property | ⚠️ Partial | syntax/inherits/initial-value are parsed and registered; typed runtime consumption remains limited |
 | @keyframes | ⚠️ Partial | Parsed; no runtime evaluation |
 | @font-face | ✅ Full | |
 | @counter-style | ⚠️ Partial | Parsed; not used in rendering |
@@ -258,7 +260,7 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 | prefers-reduced-motion | ✅ Full |
 | aspect-ratio, orientation | ❌ Missing |
 | resolution, color, color-gamut | ❌ Missing |
-| hover, pointer, any-hover, any-pointer | ❌ Missing |
+| hover, pointer, any-hover, any-pointer | ✅ Full |
 | prefers-contrast, forced-colors | ❌ Missing |
 
 ### CSS Flexible Box Layout Level 1
@@ -326,8 +328,8 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 | background-clip (border/padding/content) | ✅ Full | text falls back to padding |
 | background-origin | ⚠️ Partial | Resolved but positioning not wired |
 | background-attachment: fixed | ⚠️ Flag only | Tracked; not wired to compositor |
-| Multiple backgrounds | ❌ Missing | Single background only |
-| background shorthand (full) | ❌ Missing | |
+| Multiple backgrounds | ⚠️ Partial | Layered images are preserved through parsing/expansion; full per-layer rendering is incomplete |
+| background shorthand (full) | ⚠️ Partial | Raw shorthand text and layered image lists are preserved; full per-layer decomposition is incomplete |
 | border-radius (all 4 corners) | ✅ Full | Single f32 per corner (not elliptical) |
 | border-image (source, slice, width, outset, repeat) | ⚠️ Partial | Parsed; 9-slice rendering incomplete |
 | box-shadow (offset, blur, spread, inset, multiple) | ✅ Full | Anti-aliased rendering |
@@ -384,11 +386,11 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 
 | Feature | Status | Notes |
 |---|---|---|
-| transition-property | ⚠️ Parsed | Stored as string |
-| transition-duration | ⚠️ Parsed | Stored as string |
+| transition-property | ⚠️ Partial | Explicit lists are parsed; `all` expands over the current numeric runtime subset |
+| transition-duration | ⚠️ Partial | Parsed and consumed by the runtime transition manager |
 | transition-timing-function | ✅ Full | TimingFunction enum complete |
-| transition-delay | ⚠️ Parsed | Stored as string |
-| **Runtime scheduler** | ❌ Missing | No interpolation pipeline |
+| transition-delay | ⚠️ Partial | Parsed and consumed by the runtime transition manager |
+| **Runtime scheduler** | ⚠️ Partial | Interpolation exists for the current numeric subset only |
 
 ### CSS Animations Level 1
 
@@ -577,21 +579,21 @@ Generated: 2026-03-07 | Based on exhaustive source code audit of 75 crates (~52K
 
 ### Tier 2 — Medium Impact
 10. **Repeating gradients** — repeating-linear/radial/conic-gradient
-11. **Multiple backgrounds** — Array of background layers
+11. **Multiple backgrounds** — Finish per-layer repeat/position/size/origin rendering
 12. **Grid/grid-template shorthands** — Parse and expand
 13. **flex-flow shorthand** — Parse and expand
 14. **column-rule-* properties** — Parse and render
 15. **Stacking context ordering** — Full z-index paint sort
 16. **Subgrid track inheritance** — Wire parent track data
-17. **Media features** — orientation, hover, pointer, resolution, aspect-ratio
+17. **Media features** — orientation, resolution, aspect-ratio, contrast/color-gamut, and broader system prefs
 18. **currentcolor resolution** — Resolve to inherited color, not black
 19. **Elliptical border-radius** — Separate x/y per corner
 
 ### Tier 3 — Low Impact / Edge Cases
 20. **lab()/lch() colors** — Add parser
-21. **revert-layer keyword** — Proper cascade layer revert
-22. **@scope end enforcement** — Scope boundaries
-23. **:link, :any-link, :dir()** — Pseudo-classes
+21. **revert / revert-layer parity** — close remaining cascade edge cases beyond the validated fallback paths
+22. **Full @scope semantics** — extend beyond structural start/end boundary enforcement
+23. **:link, :any-link, richer selector-list pseudos** — remaining selector surface
 24. **::first-line/::first-letter application** — Complex partial styling
 25. **Counter rendering** — Wire counter values to content
 26. **Scroll snap enforcement** — Snap point logic

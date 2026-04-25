@@ -134,8 +134,7 @@ impl ElementTreeInspector {
         let child_count = child_ids.len();
 
         // Expand children if this node is expanded or within auto-expand depth.
-        let show_children =
-            self.expanded.contains(&node_id) || depth < self.auto_expand_depth;
+        let show_children = self.expanded.contains(&node_id) || depth < self.auto_expand_depth;
 
         let children = if show_children {
             child_ids

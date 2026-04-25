@@ -17,13 +17,13 @@ pub mod pixel;
 pub mod property_tree;
 pub mod scene;
 
-pub use compositor::{Compositor, CompositorContract};
+pub use compositor::{Compositor, CompositorContract, FrameLifecycle};
 pub use cursor::{CursorBitmap, CursorUpdate};
 pub use damage::{DamageClass, DamageSet, DamageTile, DamageTracker};
 pub use effects::{
     DegradationController, DegradationLevel, EffectBudget, EffectParams, QualityProfile,
 };
-pub use framebuffer::{DoubleBuffer, FrameBuffer, FrameMemory};
+pub use framebuffer::{DoubleBuffer, FrameBuffer, FrameMemory, FrameMemoryPool};
 pub use geometry::{Affine2D, Point, Rect, Size};
 pub use pixel::{BlendMode, Color, PixelFormat};
 pub use scene::{

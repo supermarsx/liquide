@@ -9,7 +9,12 @@ pub struct OverviewRect {
 
 impl OverviewRect {
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Returns true if the point `(px, py)` lies inside this rectangle.

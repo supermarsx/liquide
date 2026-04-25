@@ -81,11 +81,7 @@ impl MemoryReport {
     /// Build a report from the tracker's internal state.
     fn from_tracker(tracker: &MemoryTracker) -> Self {
         let get = |cat: MemoryCategory| -> u64 {
-            tracker
-                .categories
-                .get(&cat)
-                .map(|e| e.current)
-                .unwrap_or(0)
+            tracker.categories.get(&cat).map(|e| e.current).unwrap_or(0)
         };
         let total = tracker.categories.values().map(|e| e.current).sum();
         Self {
@@ -361,10 +357,7 @@ mod tests {
         tracker.reset_all();
         assert_eq!(tracker.current(MemoryCategory::TextureAtlas), 0);
         assert_eq!(tracker.high_water(MemoryCategory::TextureAtlas), 0);
-        assert_eq!(
-            tracker.lifetime_allocated(MemoryCategory::TextureAtlas),
-            0
-        );
+        assert_eq!(tracker.lifetime_allocated(MemoryCategory::TextureAtlas), 0);
     }
 
     #[test]

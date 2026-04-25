@@ -33,7 +33,11 @@ impl TimeZone {
 
     /// Format the UTC offset as "+HH:MM" or "-HH:MM".
     pub fn format_offset(&self) -> String {
-        let sign = if self.utc_offset_minutes >= 0 { '+' } else { '-' };
+        let sign = if self.utc_offset_minutes >= 0 {
+            '+'
+        } else {
+            '-'
+        };
         let abs = self.utc_offset_minutes.unsigned_abs();
         let h = abs / 60;
         let m = abs % 60;
@@ -43,6 +47,12 @@ impl TimeZone {
 
 impl std::fmt::Display for TimeZone {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({}, {})", self.display_name, self.abbreviation, self.format_offset())
+        write!(
+            f,
+            "{} ({}, {})",
+            self.display_name,
+            self.abbreviation,
+            self.format_offset()
+        )
     }
 }

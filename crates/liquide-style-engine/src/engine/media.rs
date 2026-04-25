@@ -1,9 +1,12 @@
 //! Media query, `@supports`, and `@container` condition evaluation.
 
 use liquide_dom::{Document, NodeId};
+use liquide_theme_css::StyleSheet as ThemeStyleSheet;
+use liquide_theme_css::stylesheet::StructuralContainerConstraint;
 
 use super::{ContainerCondition, StyleEngine};
 use crate::computed::*;
+use crate::selector::ComplexSelector;
 use crate::style_map::StyleMap;
 
 impl StyleEngine {
@@ -182,40 +185,29 @@ impl StyleEngine {
     /// Evaluate a `@supports` condition at runtime.
     pub fn evaluate_supports_condition(&self, condition: &str) -> bool {
         let condition = condition.trim();
+        if condition.is_empty() {
+            return true;
+        }
 
-        // Handle `not (…)`
         if let Some(inner) = condition.strip_prefix("not ") {
             return !self.evaluate_supports_condition(inner.trim());
         }
-
-        // Handle bare parenthesized condition `(property: value)`
-        if condition.starts_with('(') && condition.ends_with(')') {
-            let inner = &condition[1..condition.len() - 1];
-            if let Some((prop, _val)) = inner.split_once(':') {
-                return self.supported_properties.contains(prop.trim());
-            }
-            // Could be a nested condition
-            return self.evaluate_supports_condition(inner.trim());
+        if let Some(parts) = Self::split_top_level_keyword(condition, "or") {
+            return parts.iter().any(|part| self.evaluate_supports_condition(part));
+        }
+        if let Some(parts) = Self::split_top_level_keyword(condition, "and") {
+            return parts.iter().all(|part| self.evaluate_supports_condition(part));
         }
 
-        // Handle `(…) and (…)`
-        if condition.contains(") and (") {
-            return condition.split(") and (").all(|part| {
-                let p = part.trim().trim_start_matches('(').trim_end_matches(')');
-                self.evaluate_supports_condition(&format!("({})", p))
-            });
+        let inner = Self::strip_wrapping_parens(condition).unwrap_or(condition).trim();
+        if let Some(colon_index) = Self::find_top_level_delimiter(inner, ':') {
+            let property = inner[..colon_index].trim();
+            let value = inner[colon_index + 1..].trim();
+            return self.supported_properties.contains(property)
+                && ThemeStyleSheet::is_supported_css_value(property, value);
         }
 
-        // Handle `(…) or (…)`
-        if condition.contains(") or (") {
-            return condition.split(") or (").any(|part| {
-                let p = part.trim().trim_start_matches('(').trim_end_matches(')');
-                self.evaluate_supports_condition(&format!("({})", p))
-            });
-        }
-
-        // Default: assume supported
-        true
+        false
     }
 
     /// Evaluate a `@container` condition by walking up the tree to find
@@ -228,32 +220,30 @@ impl StyleEngine {
         doc: &Document,
         map: &StyleMap,
     ) -> bool {
-        // Walk ancestors to find a container
-        let mut current = doc.parent(node_id);
-        while let Some(ancestor_id) = current {
-            if let Some(ancestor_style) = map.get(ancestor_id) {
-                let ct = ancestor_style.container_type;
-                if ct != ContainerType::Normal {
-                    // Check container name if specified
-                    if let Some(ref required_name) = condition.name {
-                        if ancestor_style.container_name.as_deref() != Some(required_name.as_str())
-                        {
-                            current = doc.parent(ancestor_id);
-                            continue;
-                        }
-                    }
-                    // Evaluate the condition against this container's dimensions.
-                    // Use real container dimensions if available from previous
-                    // layout pass; fall back to viewport as a proxy.
-                    let (cw, ch) = map
-                        .container_size(ancestor_id)
-                        .unwrap_or((self.viewport.width, self.viewport.height));
-                    return self.evaluate_container_size_condition(&condition.condition, cw, ch);
-                }
+        if let Some(structural) = ThemeStyleSheet::decode_structural_condition(
+            condition.name.as_deref(),
+            &condition.condition,
+        ) {
+            if !self.evaluate_scope_constraint(
+                structural.scope_start.as_deref(),
+                structural.scope_end.as_deref(),
+                node_id,
+                doc,
+            ) {
+                return false;
             }
-            current = doc.parent(ancestor_id);
+
+            return self.evaluate_container_constraints(&structural.containers, node_id, doc, map);
         }
-        false // No matching container found
+
+        self.find_matching_container(
+            node_id,
+            doc,
+            map,
+            condition.name.as_deref(),
+            &condition.condition,
+        )
+        .is_some()
     }
 
     /// Parse and evaluate a container size condition like `(min-width: 600px)`.
@@ -289,10 +279,17 @@ impl StyleEngine {
             });
         }
 
+        if let Some(result) = Self::evaluate_container_comparison(inner, container_w, container_h) {
+            return result;
+        }
+
         if let Some((prop, value_str)) = inner.split_once(':') {
             let prop = prop.trim();
             let value_str = value_str.trim();
-            let px_value = Self::parse_px_value(value_str).unwrap_or(0.0);
+            let px_value = match Self::parse_px_value(value_str) {
+                Some(value) => value,
+                None => return false,
+            };
             match prop {
                 "min-width" => container_w >= px_value,
                 "max-width" => container_w <= px_value,
@@ -300,10 +297,16 @@ impl StyleEngine {
                 "max-height" => container_h <= px_value,
                 "width" => (container_w - px_value).abs() < 1.0,
                 "height" => (container_h - px_value).abs() < 1.0,
-                _ => true,
+                "min-inline-size" => container_w >= px_value,
+                "max-inline-size" => container_w <= px_value,
+                "inline-size" => (container_w - px_value).abs() < 1.0,
+                "min-block-size" => container_h >= px_value,
+                "max-block-size" => container_h <= px_value,
+                "block-size" => (container_h - px_value).abs() < 1.0,
+                _ => false,
             }
         } else {
-            true
+            false
         }
     }
 
@@ -331,17 +334,14 @@ impl StyleEngine {
             return !self.evaluate_media_condition(rest.trim());
         }
 
-        // Handle " and " compound
-        if condition.contains(" and ") {
-            return condition
-                .split(" and ")
-                .all(|part| self.evaluate_media_condition(part.trim()));
+        if let Some(parts) = Self::split_top_level_keyword(condition, "or") {
+            return parts.iter().any(|part| self.evaluate_media_condition(part));
         }
-        // Handle ", " (or-list in media)
-        if condition.contains(", ") {
-            return condition
-                .split(", ")
-                .any(|part| self.evaluate_media_condition(part.trim()));
+        if let Some(parts) = Self::split_top_level_keyword(condition, "and") {
+            return parts.iter().all(|part| self.evaluate_media_condition(part));
+        }
+        if let Some(parts) = Self::split_top_level_commas(condition) {
+            return parts.iter().any(|part| self.evaluate_media_condition(part));
         }
 
         // "screen" always matches
@@ -350,13 +350,19 @@ impl StyleEngine {
         }
 
         // Parenthesized feature query
-        if condition.starts_with('(') && condition.ends_with(')') {
-            let inner = &condition[1..condition.len() - 1];
-            return self.evaluate_media_feature(inner);
+        if let Some(inner) = Self::strip_wrapping_parens(condition) {
+            return self.evaluate_media_expression(inner.trim());
         }
 
-        // Unknown — default to include
-        true
+        false
+    }
+
+    fn evaluate_media_expression(&self, feature: &str) -> bool {
+        if let Some(result) = self.evaluate_media_comparison(feature) {
+            return result;
+        }
+
+        self.evaluate_media_feature(feature)
     }
 
     /// Evaluate a single media feature (the contents between parentheses).
@@ -447,12 +453,10 @@ impl StyleEngine {
                     });
                 }
                 "min-aspect-ratio" => {
-                    return self
-                        .evaluate_aspect_ratio(value_str, |actual, query| actual >= query);
+                    return self.evaluate_aspect_ratio(value_str, |actual, query| actual >= query);
                 }
                 "max-aspect-ratio" => {
-                    return self
-                        .evaluate_aspect_ratio(value_str, |actual, query| actual <= query);
+                    return self.evaluate_aspect_ratio(value_str, |actual, query| actual <= query);
                 }
 
                 // ── Orientation ──────────────────────────────────────────
@@ -484,7 +488,9 @@ impl StyleEngine {
 
                 // ── User preference features ─────────────────────────────
                 "prefers-color-scheme" => {
-                    return value_str.trim().eq_ignore_ascii_case(&self.preferred_color_scheme);
+                    return value_str
+                        .trim()
+                        .eq_ignore_ascii_case(&self.preferred_color_scheme);
                 }
                 "prefers-reduced-motion" => {
                     return (value_str.trim() == "reduce") == self.prefers_reduced_motion;
@@ -572,8 +578,8 @@ impl StyleEngine {
                     }
                 }
                 "max-color-index" => {
-                    if let Ok(n) = value_str.trim().parse::<u32>() {
-                        return 0_u32 <= n;
+                    if value_str.trim().parse::<u32>().is_ok() {
+                        return true;
                     }
                 }
                 "monochrome" => {
@@ -588,8 +594,8 @@ impl StyleEngine {
                     }
                 }
                 "max-monochrome" => {
-                    if let Ok(n) = value_str.trim().parse::<u32>() {
-                        return 0_u32 <= n;
+                    if value_str.trim().parse::<u32>().is_ok() {
+                        return true;
                     }
                 }
 
@@ -626,22 +632,21 @@ impl StyleEngine {
                 _ => {}
             }
         }
-        // Unknown feature — include by default
-        true
+        false
     }
 
     /// Evaluate a boolean media feature (no value, e.g. `(color)` or `(hover)`).
     fn evaluate_boolean_media_feature(&self, feature: &str) -> bool {
         match feature {
-            "color" => true,            // color device: yes
-            "color-index" => false,     // indexed-color: no
-            "monochrome" => false,      // monochrome: no
-            "grid" => false,            // grid device: no
-            "hover" => true,            // hover capable: yes
-            "any-hover" => true,        // any input hover: yes
-            "pointer" => true,          // pointing device: yes
-            "any-pointer" => true,      // any pointing device: yes
-            _ => true,                  // unknown → include by default
+            "color" => true,        // color device: yes
+            "color-index" => false, // indexed-color: no
+            "monochrome" => false,  // monochrome: no
+            "grid" => false,        // grid device: no
+            "hover" => true,        // hover capable: yes
+            "any-hover" => true,    // any input hover: yes
+            "pointer" => true,      // pointing device: yes
+            "any-pointer" => true,  // any pointing device: yes
+            _ => false,
         }
     }
 
@@ -649,10 +654,7 @@ impl StyleEngine {
     /// provided comparator.
     fn evaluate_aspect_ratio(&self, value_str: &str, cmp: impl Fn(f32, f32) -> bool) -> bool {
         if let Some((w_str, h_str)) = value_str.split_once('/') {
-            if let (Ok(w), Ok(h)) = (
-                w_str.trim().parse::<f32>(),
-                h_str.trim().parse::<f32>(),
-            ) {
+            if let (Ok(w), Ok(h)) = (w_str.trim().parse::<f32>(), h_str.trim().parse::<f32>()) {
                 if h > 0.0 && self.viewport.height > 0.0 {
                     let actual = self.viewport.width / self.viewport.height;
                     let query = w / h;
@@ -660,7 +662,310 @@ impl StyleEngine {
                 }
             }
         }
-        true // malformed → include by default
+        false
+    }
+
+    fn evaluate_media_comparison(&self, feature: &str) -> Option<bool> {
+        let tokens: Vec<&str> = feature.split_whitespace().collect();
+        match tokens.as_slice() {
+            [lhs, op, rhs] if Self::is_media_comparison_operator(op) => {
+                Self::evaluate_media_comparison_pair(lhs, op, rhs, self.viewport.width, self.viewport.height)
+            }
+            [lhs, op1, mid, op2, rhs]
+                if Self::is_media_comparison_operator(op1)
+                    && Self::is_media_comparison_operator(op2) =>
+            {
+                Some(
+                    Self::evaluate_media_comparison_pair(lhs, op1, mid, self.viewport.width, self.viewport.height)?
+                        && Self::evaluate_media_comparison_pair(mid, op2, rhs, self.viewport.width, self.viewport.height)?,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn evaluate_media_comparison_pair(
+        lhs: &str,
+        op: &str,
+        rhs: &str,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> Option<bool> {
+        let lhs_value = Self::media_dimension_value(lhs.trim(), viewport_width, viewport_height)?;
+        let rhs_value = Self::media_dimension_value(rhs.trim(), viewport_width, viewport_height)?;
+        Some(match op {
+            "<=" => lhs_value <= rhs_value,
+            ">=" => lhs_value >= rhs_value,
+            "<" => lhs_value < rhs_value,
+            ">" => lhs_value > rhs_value,
+            _ => return None,
+        })
+    }
+
+    fn evaluate_container_comparison(
+        feature: &str,
+        container_width: f32,
+        container_height: f32,
+    ) -> Option<bool> {
+        let tokens: Vec<&str> = feature.split_whitespace().collect();
+        match tokens.as_slice() {
+            [lhs, op, rhs] if Self::is_media_comparison_operator(op) => Self::evaluate_container_comparison_pair(
+                lhs,
+                op,
+                rhs,
+                container_width,
+                container_height,
+            ),
+            [lhs, op1, mid, op2, rhs]
+                if Self::is_media_comparison_operator(op1)
+                    && Self::is_media_comparison_operator(op2) =>
+            {
+                Some(
+                    Self::evaluate_container_comparison_pair(
+                        lhs,
+                        op1,
+                        mid,
+                        container_width,
+                        container_height,
+                    )? && Self::evaluate_container_comparison_pair(
+                        mid,
+                        op2,
+                        rhs,
+                        container_width,
+                        container_height,
+                    )?,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn evaluate_container_comparison_pair(
+        lhs: &str,
+        op: &str,
+        rhs: &str,
+        container_width: f32,
+        container_height: f32,
+    ) -> Option<bool> {
+        let lhs_value = Self::container_dimension_value(lhs.trim(), container_width, container_height)?;
+        let rhs_value = Self::container_dimension_value(rhs.trim(), container_width, container_height)?;
+        Some(match op {
+            "<=" => lhs_value <= rhs_value,
+            ">=" => lhs_value >= rhs_value,
+            "<" => lhs_value < rhs_value,
+            ">" => lhs_value > rhs_value,
+            _ => return None,
+        })
+    }
+
+    fn media_dimension_value(token: &str, viewport_width: f32, viewport_height: f32) -> Option<f32> {
+        match token {
+            "width" => Some(viewport_width),
+            "height" => Some(viewport_height),
+            _ => Self::parse_px_value(token),
+        }
+    }
+
+    fn container_dimension_value(
+        token: &str,
+        container_width: f32,
+        container_height: f32,
+    ) -> Option<f32> {
+        match token {
+            "width" | "inline-size" => Some(container_width),
+            "height" | "block-size" => Some(container_height),
+            _ => Self::parse_px_value(token),
+        }
+    }
+
+    fn evaluate_container_constraints(
+        &self,
+        constraints: &[StructuralContainerConstraint],
+        node_id: NodeId,
+        doc: &Document,
+        map: &StyleMap,
+    ) -> bool {
+        if constraints.is_empty() {
+            return true;
+        }
+
+        let mut anchor = node_id;
+        for constraint in constraints.iter().rev() {
+            let Some(container_id) = self.find_matching_container(
+                anchor,
+                doc,
+                map,
+                constraint.name.as_deref(),
+                &constraint.condition,
+            ) else {
+                return false;
+            };
+            anchor = container_id;
+        }
+
+        true
+    }
+
+    fn find_matching_container(
+        &self,
+        from_node: NodeId,
+        doc: &Document,
+        map: &StyleMap,
+        required_name: Option<&str>,
+        condition: &str,
+    ) -> Option<NodeId> {
+        let mut current = doc.parent(from_node);
+        while let Some(ancestor_id) = current {
+            if let Some(ancestor_style) = map.get(ancestor_id) {
+                if ancestor_style.container_type != ContainerType::Normal {
+                    if let Some(required_name) = required_name {
+                        if ancestor_style.container_name.as_deref() != Some(required_name) {
+                            current = doc.parent(ancestor_id);
+                            continue;
+                        }
+                    }
+                    let (cw, ch) = map
+                        .container_size(ancestor_id)
+                        .unwrap_or((self.viewport.width, self.viewport.height));
+                    if self.evaluate_container_size_condition(condition, cw, ch) {
+                        return Some(ancestor_id);
+                    }
+                }
+            }
+            current = doc.parent(ancestor_id);
+        }
+        None
+    }
+
+    fn evaluate_scope_constraint(
+        &self,
+        scope_start: Option<&str>,
+        scope_end: Option<&str>,
+        node_id: NodeId,
+        doc: &Document,
+    ) -> bool {
+        let start_selector = scope_start.and_then(ComplexSelector::parse);
+        let end_selector = scope_end.and_then(ComplexSelector::parse);
+
+        if start_selector.is_none() && end_selector.is_none() {
+            return true;
+        }
+
+        let mut current = Some(node_id);
+        while let Some(candidate) = current {
+            if let Some(end_selector) = &end_selector {
+                if end_selector.matches(doc, candidate) {
+                    return false;
+                }
+            }
+            if let Some(start_selector) = &start_selector {
+                if start_selector.matches(doc, candidate) {
+                    return true;
+                }
+            }
+            current = doc.parent(candidate);
+        }
+
+        start_selector.is_none()
+    }
+
+    fn split_top_level_keyword<'a>(input: &'a str, keyword: &str) -> Option<Vec<&'a str>> {
+        let pattern = format!(" {keyword} ");
+        let mut depth = 0i32;
+        let mut start = 0usize;
+        let mut skip_until = 0usize;
+        let mut parts = Vec::new();
+
+        for (idx, ch) in input.char_indices() {
+            if idx < skip_until {
+                continue;
+            }
+            match ch {
+                '(' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 && input[idx..].starts_with(&pattern) {
+                parts.push(input[start..idx].trim());
+                start = idx + pattern.len();
+                skip_until = start;
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            parts.push(input[start..].trim());
+            Some(parts)
+        }
+    }
+
+    fn split_top_level_commas(input: &str) -> Option<Vec<&str>> {
+        let mut depth = 0i32;
+        let mut start = 0usize;
+        let mut parts = Vec::new();
+
+        for (idx, ch) in input.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(input[start..idx].trim());
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            parts.push(input[start..].trim());
+            Some(parts)
+        }
+    }
+
+    fn strip_wrapping_parens(input: &str) -> Option<&str> {
+        if !(input.starts_with('(') && input.ends_with(')')) {
+            return None;
+        }
+
+        let mut depth = 0i32;
+        for (idx, ch) in input.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 && idx != input.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if depth == 0 {
+            Some(&input[1..input.len() - 1])
+        } else {
+            None
+        }
+    }
+
+    fn find_top_level_delimiter(input: &str, delimiter: char) -> Option<usize> {
+        let mut depth = 0i32;
+        for (idx, ch) in input.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                _ if ch == delimiter && depth == 0 => return Some(idx),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn is_media_comparison_operator(value: &str) -> bool {
+        matches!(value, "<" | ">" | "<=" | ">=")
     }
 
     /// Parse a resolution value like "96dpi", "2dppx", or "300dpi".
@@ -694,11 +999,23 @@ mod tests {
     use super::super::{StyleEngine, ViewportSize};
 
     fn engine() -> StyleEngine {
-        StyleEngine::new(ViewportSize { width: 1920.0, height: 1080.0 }, 16.0)
+        StyleEngine::new(
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            16.0,
+        )
     }
 
     fn engine_portrait() -> StyleEngine {
-        StyleEngine::new(ViewportSize { width: 720.0, height: 1280.0 }, 16.0)
+        StyleEngine::new(
+            ViewportSize {
+                width: 720.0,
+                height: 1280.0,
+            },
+            16.0,
+        )
     }
 
     // ── Dimension features ───────────────────────────────────────────────
@@ -1071,7 +1388,10 @@ mod tests {
     #[test]
     fn new_with_color_scheme_dark() {
         let e = StyleEngine::new_with_color_scheme(
-            ViewportSize { width: 1920.0, height: 1080.0 },
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
             16.0,
             "dark",
         );
@@ -1083,7 +1403,10 @@ mod tests {
     #[test]
     fn new_with_color_scheme_light() {
         let e = StyleEngine::new_with_color_scheme(
-            ViewportSize { width: 1920.0, height: 1080.0 },
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
             16.0,
             "light",
         );
@@ -1094,7 +1417,10 @@ mod tests {
     #[test]
     fn new_with_color_scheme_normalizes() {
         let e = StyleEngine::new_with_color_scheme(
-            ViewportSize { width: 1920.0, height: 1080.0 },
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
             16.0,
             "  DARK  ",
         );
@@ -1104,7 +1430,10 @@ mod tests {
     #[test]
     fn new_with_color_scheme_unknown_defaults_light() {
         let e = StyleEngine::new_with_color_scheme(
-            ViewportSize { width: 1920.0, height: 1080.0 },
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
             16.0,
             "sepia",
         );

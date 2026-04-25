@@ -59,7 +59,10 @@ impl FontProvider for LocalProvider {
             if let Ok(paths) = crate::install::scan_directory(dir) {
                 for path in paths {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        let family = stem.split(|c: char| c == '-' || c == '_').next().unwrap_or(stem);
+                        let family = stem
+                            .split(|c: char| c == '-' || c == '_')
+                            .next()
+                            .unwrap_or(stem);
                         let f = family.to_string();
                         if !families.contains(&f) {
                             families.push(f);

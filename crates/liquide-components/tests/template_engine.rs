@@ -161,8 +161,7 @@ fn unkeyed_tag_mismatch_creates_new_node() {
     doc.append_child(parent, old_child);
 
     // Reconcile with desired "span" — tag mismatch, should create new
-    let parent_template = TemplateNode::el("container")
-        .child(TemplateNode::el("span"));
+    let parent_template = TemplateNode::el("container").child(TemplateNode::el("span"));
     TemplateRenderer::apply_to_node(&mut doc, parent, &parent_template);
 
     let children = doc.children(parent).to_vec();
@@ -188,13 +187,14 @@ fn text_node_content_updated() {
     doc.append_child(parent, text_node);
 
     // Reconcile with updated text
-    let parent_template = TemplateNode::el("container")
-        .child(TemplateNode::text("World"));
+    let parent_template = TemplateNode::el("container").child(TemplateNode::text("World"));
     TemplateRenderer::apply_to_node(&mut doc, parent, &parent_template);
 
     let children = doc.children(parent).to_vec();
     assert_eq!(children.len(), 1);
-    let content = doc.get(children[0]).and_then(|n| n.text_content().map(String::from));
+    let content = doc
+        .get(children[0])
+        .and_then(|n| n.text_content().map(String::from));
     assert_eq!(content.as_deref(), Some("World"));
 }
 
@@ -210,8 +210,7 @@ fn text_node_to_element_replacement() {
     doc.append_child(parent, text_node);
 
     // Reconcile to element — should create new
-    let parent_template = TemplateNode::el("container")
-        .child(TemplateNode::el("div"));
+    let parent_template = TemplateNode::el("container").child(TemplateNode::el("div"));
     TemplateRenderer::apply_to_node(&mut doc, parent, &parent_template);
 
     let children = doc.children(parent).to_vec();
@@ -235,8 +234,7 @@ fn element_to_text_replacement() {
     doc.append_child(parent, elem);
 
     // Reconcile to text node — should create new
-    let parent_template = TemplateNode::el("container")
-        .child(TemplateNode::text("Hello"));
+    let parent_template = TemplateNode::el("container").child(TemplateNode::text("Hello"));
     TemplateRenderer::apply_to_node(&mut doc, parent, &parent_template);
 
     let children = doc.children(parent).to_vec();
@@ -467,7 +465,11 @@ fn reconcile_to_empty_removes_all() {
 
     let empty_parent = TemplateNode::el("container");
     TemplateRenderer::apply_to_node(&mut doc, parent, &empty_parent);
-    assert_eq!(doc.children(parent).len(), 0, "all children should be removed");
+    assert_eq!(
+        doc.children(parent).len(),
+        0,
+        "all children should be removed"
+    );
 }
 
 // ── Multiple attributes ──────────────────────────────────────────────────
@@ -483,7 +485,12 @@ fn create_subtree_sets_multiple_attributes() {
         .attr("maxlength", "100")
         .attr("data-validation", "required");
 
-    let node = TemplateRenderer::apply_or_create(&mut doc, root, "multi-attr-input", &template.id("multi-attr-input"));
+    let node = TemplateRenderer::apply_or_create(
+        &mut doc,
+        root,
+        "multi-attr-input",
+        &template.id("multi-attr-input"),
+    );
 
     assert_eq!(doc.get_attribute(node, "type").as_deref(), Some("text"));
     assert_eq!(
@@ -504,30 +511,26 @@ fn deeply_nested_template_creation() {
     let mut doc = Document::new();
     let root = doc.root();
 
-    let template = TemplateNode::el("nav")
-        .class("main-nav")
-        .child(
-            TemplateNode::el("ul")
-                .child(
-                    TemplateNode::el("li")
-                        .class("active")
-                        .child(
-                            TemplateNode::el("a")
-                                .attr("href", "/home")
-                                .child(TemplateNode::text("Home")),
-                        ),
-                )
-                .child(
-                    TemplateNode::el("li")
-                        .child(
-                            TemplateNode::el("a")
-                                .attr("href", "/about")
-                                .child(TemplateNode::text("About")),
-                        ),
+    let template = TemplateNode::el("nav").class("main-nav").child(
+        TemplateNode::el("ul")
+            .child(
+                TemplateNode::el("li").class("active").child(
+                    TemplateNode::el("a")
+                        .attr("href", "/home")
+                        .child(TemplateNode::text("Home")),
                 ),
-        );
+            )
+            .child(
+                TemplateNode::el("li").child(
+                    TemplateNode::el("a")
+                        .attr("href", "/about")
+                        .child(TemplateNode::text("About")),
+                ),
+            ),
+    );
 
-    let nav = TemplateRenderer::apply_or_create(&mut doc, root, "deep-nav", &template.id("deep-nav"));
+    let nav =
+        TemplateRenderer::apply_or_create(&mut doc, root, "deep-nav", &template.id("deep-nav"));
 
     // Verify structure: nav > ul > [li > a > text, li > a > text]
     assert!(doc.get(nav).unwrap().has_class("main-nav"));
@@ -539,7 +542,8 @@ fn deeply_nested_template_creation() {
     assert_eq!(doc.get_attribute(first_a, "href").as_deref(), Some("/home"));
     let first_text = doc.children(first_a)[0];
     assert_eq!(
-        doc.get(first_text).and_then(|n| n.text_content().map(String::from)),
+        doc.get(first_text)
+            .and_then(|n| n.text_content().map(String::from)),
         Some("Home".to_string())
     );
 }
@@ -558,9 +562,21 @@ fn full_lifecycle_scenario() {
 
     let v1 = TemplateNode::el("app")
         .id("app-root")
-        .child(TemplateNode::el("header").key("header").child(TemplateNode::text("Title")))
-        .child(TemplateNode::el("main").key("main").child(TemplateNode::text("Content")))
-        .child(TemplateNode::el("footer").key("footer").child(TemplateNode::text("Footer")));
+        .child(
+            TemplateNode::el("header")
+                .key("header")
+                .child(TemplateNode::text("Title")),
+        )
+        .child(
+            TemplateNode::el("main")
+                .key("main")
+                .child(TemplateNode::text("Content")),
+        )
+        .child(
+            TemplateNode::el("footer")
+                .key("footer")
+                .child(TemplateNode::text("Footer")),
+        );
 
     TemplateRenderer::apply_to_node(&mut doc, mount, &v1);
     assert_eq!(doc.children(mount).len(), 3);
@@ -568,9 +584,21 @@ fn full_lifecycle_scenario() {
     // Phase 2: Update content
     let v2 = TemplateNode::el("app")
         .id("app-root")
-        .child(TemplateNode::el("header").key("header").child(TemplateNode::text("New Title")))
-        .child(TemplateNode::el("main").key("main").child(TemplateNode::text("New Content")))
-        .child(TemplateNode::el("footer").key("footer").child(TemplateNode::text("New Footer")));
+        .child(
+            TemplateNode::el("header")
+                .key("header")
+                .child(TemplateNode::text("New Title")),
+        )
+        .child(
+            TemplateNode::el("main")
+                .key("main")
+                .child(TemplateNode::text("New Content")),
+        )
+        .child(
+            TemplateNode::el("footer")
+                .key("footer")
+                .child(TemplateNode::text("New Footer")),
+        );
 
     TemplateRenderer::apply_to_node(&mut doc, mount, &v2);
     assert_eq!(doc.children(mount).len(), 3);
@@ -578,8 +606,16 @@ fn full_lifecycle_scenario() {
     // Phase 3: Remove footer
     let v3 = TemplateNode::el("app")
         .id("app-root")
-        .child(TemplateNode::el("header").key("header").child(TemplateNode::text("Title")))
-        .child(TemplateNode::el("main").key("main").child(TemplateNode::text("Content")));
+        .child(
+            TemplateNode::el("header")
+                .key("header")
+                .child(TemplateNode::text("Title")),
+        )
+        .child(
+            TemplateNode::el("main")
+                .key("main")
+                .child(TemplateNode::text("Content")),
+        );
 
     TemplateRenderer::apply_to_node(&mut doc, mount, &v3);
     assert_eq!(doc.children(mount).len(), 2);
@@ -587,8 +623,16 @@ fn full_lifecycle_scenario() {
     // Phase 4: Reorder — main before header
     let v4 = TemplateNode::el("app")
         .id("app-root")
-        .child(TemplateNode::el("main").key("main").child(TemplateNode::text("Content")))
-        .child(TemplateNode::el("header").key("header").child(TemplateNode::text("Title")));
+        .child(
+            TemplateNode::el("main")
+                .key("main")
+                .child(TemplateNode::text("Content")),
+        )
+        .child(
+            TemplateNode::el("header")
+                .key("header")
+                .child(TemplateNode::text("Title")),
+        );
 
     TemplateRenderer::apply_to_node(&mut doc, mount, &v4);
     assert_eq!(doc.children(mount).len(), 2);
@@ -634,6 +678,8 @@ fn component_multiple_renders() {
     TemplateRenderer::apply(&mut doc, &Counter { count: 10 });
 
     let text_node = doc.children(mount)[0];
-    let text = doc.get(text_node).and_then(|n| n.text_content().map(String::from));
+    let text = doc
+        .get(text_node)
+        .and_then(|n| n.text_content().map(String::from));
     assert_eq!(text.as_deref(), Some("Count: 10"));
 }

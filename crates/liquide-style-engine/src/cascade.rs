@@ -71,7 +71,11 @@ impl CascadePriority {
             important: false,
             origin: CascadeOrigin::AuthorInline,
             layer_order: 0,
-            specificity: Specificity { id: 1, class: 0, type_sel: 0 },
+            specificity: Specificity {
+                id: 1,
+                class: 0,
+                type_sel: 0,
+            },
             source_order,
             is_inline: true,
         }
@@ -262,9 +266,7 @@ impl CascadeMap {
     /// within the cascade. `revert` falls back to the winning value from a
     /// lower origin class (Author → User → UA). `revert-layer` falls back
     /// within the same origin to a previous `@layer`.
-    pub fn resolve(
-        &mut self,
-    ) -> Vec<(String, liquide_theme_css::value::PropertyValue)> {
+    pub fn resolve(&mut self) -> Vec<(String, liquide_theme_css::value::PropertyValue)> {
         if self.declarations.is_empty() {
             return Vec::new();
         }
@@ -293,7 +295,17 @@ impl CascadeMap {
             i = j;
         }
 
-        // Second pass: extract values from winning declarations.
+        // Second pass: apply winning declarations in cascade-priority order
+        // rather than property-name order. This preserves shorthand reset
+        // behavior such as `all`, which must run after lower-priority
+        // longhands and before higher-priority overrides.
+        winners.sort_by(|left, right| {
+            self.declarations[*left]
+                .priority
+                .cmp(&self.declarations[*right].priority)
+        });
+
+        // Third pass: extract values from winning declarations.
         let mut result = Vec::with_capacity(winners.len());
         for winner_idx in winners {
             let decl = &mut self.declarations[winner_idx];
@@ -350,10 +362,8 @@ impl CascadeMap {
             }
 
             let property = sorted[i].property.clone();
-            let mut origin_winners: Vec<(
-                CascadeOrigin,
-                liquide_theme_css::value::PropertyValue,
-            )> = Vec::new();
+            let mut origin_winners: Vec<(CascadeOrigin, liquide_theme_css::value::PropertyValue)> =
+                Vec::new();
 
             // Representative origins for each class
             for target_class in 0u8..=2 {
@@ -408,11 +418,7 @@ fn cascade_origin_class(origin: CascadeOrigin) -> u8 {
 /// initial winner. If it is `revert`, we fall back to the best declaration from a
 /// lower origin class; if `revert-layer`, we fall back within the same origin to a
 /// lower (for normal) or higher (for `!important`) layer.
-fn resolve_winner_in_group(
-    declarations: &[CascadeDeclaration],
-    start: usize,
-    end: usize,
-) -> usize {
+fn resolve_winner_in_group(declarations: &[CascadeDeclaration], start: usize, end: usize) -> usize {
     let mut idx = end - 1;
     // Guard against infinite loops from malformed/chained reverts.
     let max_iterations = end - start;
@@ -479,7 +485,19 @@ fn resolve_winner_in_group(
                     }
                 }
                 if !found {
-                    // No lower layer — keyword stays; handled as `unset`.
+                    // No lower layer within the same origin. Per CSS Cascade 5,
+                    // `revert-layer` then continues by falling back across
+                    // lower origins, just like `revert`.
+                    let winner_class = cascade_origin_class(winner_origin);
+                    for k in (start..idx).rev() {
+                        if cascade_origin_class(declarations[k].priority.origin) < winner_class {
+                            idx = k;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
                     return idx;
                 }
             }
@@ -546,7 +564,11 @@ mod tests {
     #[test]
     fn important_overrides_normal() {
         let normal_author = CascadePriority::author(
-            Specificity { id: 1, class: 0, type_sel: 0 },
+            Specificity {
+                id: 1,
+                class: 0,
+                type_sel: 0,
+            },
             100,
         );
         let important_author = CascadePriority::author_important(Specificity::ZERO, 0);
@@ -555,8 +577,22 @@ mod tests {
 
     #[test]
     fn specificity_within_origin() {
-        let low = CascadePriority::author(Specificity { id: 0, class: 1, type_sel: 0 }, 0);
-        let high = CascadePriority::author(Specificity { id: 1, class: 0, type_sel: 0 }, 0);
+        let low = CascadePriority::author(
+            Specificity {
+                id: 0,
+                class: 1,
+                type_sel: 0,
+            },
+            0,
+        );
+        let high = CascadePriority::author(
+            Specificity {
+                id: 1,
+                class: 0,
+                type_sel: 0,
+            },
+            0,
+        );
         assert!(low < high);
     }
 
@@ -579,7 +615,11 @@ mod tests {
             property: "color".into(),
             value: PropertyValue::Keyword("blue".into()),
             priority: CascadePriority::author(
-                Specificity { id: 0, class: 1, type_sel: 0 },
+                Specificity {
+                    id: 0,
+                    class: 1,
+                    type_sel: 0,
+                },
                 1,
             ),
         });
@@ -609,7 +649,11 @@ mod tests {
         map.add_properties(
             &props_normal,
             CascadePriority::author(
-                Specificity { id: 1, class: 0, type_sel: 0 },
+                Specificity {
+                    id: 1,
+                    class: 0,
+                    type_sel: 0,
+                },
                 1,
             ),
         );
@@ -617,7 +661,9 @@ mod tests {
         let resolved = map.resolve();
         let opacity = resolved.iter().find(|(k, _)| k == "opacity").unwrap();
         // The important value (100.0) should win despite lower specificity
-        assert!(matches!(&opacity.1, PropertyValue::Number(n) if (*n - 100.0).abs() < f32::EPSILON));
+        assert!(
+            matches!(&opacity.1, PropertyValue::Number(n) if (*n - 100.0).abs() < f32::EPSILON)
+        );
     }
 
     #[test]
@@ -645,13 +691,20 @@ mod tests {
         map.add_properties(
             &props_normal,
             CascadePriority::author(
-                Specificity { id: 1, class: 0, type_sel: 0 },
+                Specificity {
+                    id: 1,
+                    class: 0,
+                    type_sel: 0,
+                },
                 1,
             ),
         );
 
         let resolved = map.resolve();
-        let bg = resolved.iter().find(|(k, _)| k == "background-color").unwrap();
+        let bg = resolved
+            .iter()
+            .find(|(k, _)| k == "background-color")
+            .unwrap();
         // Important red should win over normal blue at higher specificity
         assert!(matches!(&bg.1, PropertyValue::Color(c) if c.r == 255 && c.b == 0));
     }
@@ -758,6 +811,36 @@ mod tests {
     }
 
     #[test]
+    fn revert_layer_falls_back_across_lower_origins_when_no_lower_layer_exists() {
+        let mut map = CascadeMap::new();
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("ua-red".into()),
+            priority: CascadePriority::ua(0),
+        });
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("user-green".into()),
+            priority: CascadePriority::user(Specificity::ZERO, 1),
+        });
+        let mut author = CascadePriority::author(Specificity::ZERO, 2);
+        author.layer_order = 3;
+        map.add(CascadeDeclaration {
+            property: "color".into(),
+            value: PropertyValue::Keyword("revert-layer".into()),
+            priority: author,
+        });
+
+        let resolved = map.resolve();
+        let color = resolved.iter().find(|(key, _)| key == "color").unwrap();
+        assert!(
+            matches!(&color.1, PropertyValue::Keyword(kw) if kw == "user-green"),
+            "revert-layer should fall back across lower origins when no lower layer exists, got {:?}",
+            color.1
+        );
+    }
+
+    #[test]
     fn chained_revert_resolves() {
         // Author `revert` → User `revert` → UA value.
         let mut map = CascadeMap::new();
@@ -806,8 +889,14 @@ mod tests {
         let per_origin = map.resolve_per_origin();
         let color = per_origin.get("color").expect("color should be present");
         assert_eq!(color.len(), 3, "should have UA, User, and Author entries");
-        assert!(matches!(&color[0], (CascadeOrigin::UserAgent, PropertyValue::Keyword(kw)) if kw == "ua-val"));
-        assert!(matches!(&color[1], (CascadeOrigin::User, PropertyValue::Keyword(kw)) if kw == "user-val"));
-        assert!(matches!(&color[2], (CascadeOrigin::Author, PropertyValue::Keyword(kw)) if kw == "author-val"));
+        assert!(
+            matches!(&color[0], (CascadeOrigin::UserAgent, PropertyValue::Keyword(kw)) if kw == "ua-val")
+        );
+        assert!(
+            matches!(&color[1], (CascadeOrigin::User, PropertyValue::Keyword(kw)) if kw == "user-val")
+        );
+        assert!(
+            matches!(&color[2], (CascadeOrigin::Author, PropertyValue::Keyword(kw)) if kw == "author-val")
+        );
     }
 }

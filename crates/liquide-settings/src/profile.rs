@@ -186,8 +186,14 @@ impl ProfileStore {
         name_a: &str,
         name_b: &str,
     ) -> Result<Vec<(String, String, String)>, ProfileError> {
-        let a = self.profiles.get(name_a).ok_or(ProfileError::NotFound(name_a.to_string()))?;
-        let b = self.profiles.get(name_b).ok_or(ProfileError::NotFound(name_b.to_string()))?;
+        let a = self
+            .profiles
+            .get(name_a)
+            .ok_or(ProfileError::NotFound(name_a.to_string()))?;
+        let b = self
+            .profiles
+            .get(name_b)
+            .ok_or(ProfileError::NotFound(name_b.to_string()))?;
 
         diff_user_profiles(a, b)
     }
@@ -205,11 +211,7 @@ pub fn diff_user_profiles(
         match b.get(key) {
             Some(val_b) => {
                 if val_a != val_b {
-                    diffs.push((
-                        key.to_string(),
-                        format!("{}", val_a),
-                        format!("{}", val_b),
-                    ));
+                    diffs.push((key.to_string(), format!("{}", val_a), format!("{}", val_b)));
                 }
             }
             None => {
@@ -299,7 +301,14 @@ mod tests {
     fn profile_keys_sorted() {
         let p = sample_profile();
         let keys = p.keys();
-        assert_eq!(keys, vec!["appearance.font_size", "appearance.theme", "desktop.show_icons"]);
+        assert_eq!(
+            keys,
+            vec![
+                "appearance.font_size",
+                "appearance.theme",
+                "desktop.show_icons"
+            ]
+        );
     }
 
     #[test]
@@ -373,9 +382,18 @@ mod tests {
         let imported = store2.load("work").unwrap();
         assert_eq!(imported.name, "work");
         assert_eq!(imported.description, "Work environment");
-        assert_eq!(imported.get("appearance.theme"), Some(&SettingValue::String("night".into())));
-        assert_eq!(imported.get("appearance.font_size"), Some(&SettingValue::Int(16)));
-        assert_eq!(imported.get("desktop.show_icons"), Some(&SettingValue::Bool(false)));
+        assert_eq!(
+            imported.get("appearance.theme"),
+            Some(&SettingValue::String("night".into()))
+        );
+        assert_eq!(
+            imported.get("appearance.font_size"),
+            Some(&SettingValue::Int(16))
+        );
+        assert_eq!(
+            imported.get("desktop.show_icons"),
+            Some(&SettingValue::Bool(false))
+        );
     }
 
     #[test]

@@ -28,16 +28,10 @@ pub async fn execute(_client: &Client, output: &Output, cmd: &SnapCommand) -> Re
             output.message(&format!("Info for snap '{}':", args.snap));
         }
         SnapCommand::Connections(args) => {
-            output.message(&format!(
-                "Interface connections for '{}':",
-                args.snap
-            ));
+            output.message(&format!("Interface connections for '{}':", args.snap));
         }
         SnapCommand::Connect(args) => {
-            output.message(&format!(
-                "Connecting {}:{}...",
-                args.snap, args.interface
-            ));
+            output.message(&format!("Connecting {}:{}...", args.snap, args.interface));
         }
         SnapCommand::Disconnect(args) => {
             output.message(&format!(

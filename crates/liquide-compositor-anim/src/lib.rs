@@ -14,37 +14,32 @@
 //! 3. When animations complete, compositor notifies main thread to commit
 //!    final values.
 
-mod easing;
-mod keyframe;
 mod animation;
-mod transition;
-mod scheduler;
 mod apply;
-mod spring;
+mod easing;
 mod gesture_anim;
-mod workspace_transition;
-mod particle;
 mod group;
+mod keyframe;
+mod particle;
+mod scheduler;
+mod spring;
+mod transition;
+mod workspace_transition;
 
-pub use easing::{EasingFunction, StepPosition};
-pub use keyframe::{AnimValue, Keyframe, KeyframeTrack};
 pub use animation::{Animation, AnimationId, AnimationState, FillMode, PlayDirection};
-pub use transition::Transition;
-pub use scheduler::{AnimationEvent, CompositorAnimScheduler};
 pub use apply::{
-    LayerAnimState, collect_layer_state, apply_to_transform, compose_affine,
-    decompose_affine, recompose_affine,
+    LayerAnimState, apply_to_transform, collect_layer_state, compose_affine, decompose_affine,
+    recompose_affine,
 };
-pub use spring::{SpringConfig, SpringAnimation, critically_damped, underdamped_period};
-pub use gesture_anim::{
-    GestureAnimation, GestureConfig, GestureTarget, GesturePhase,
-};
+pub use easing::{EasingFunction, StepPosition};
+pub use gesture_anim::{GestureAnimation, GestureConfig, GesturePhase, GestureTarget};
+pub use group::{AnimationGroup, AnimationSequence, AnimationTimeline, GroupState};
+pub use keyframe::{AnimValue, Keyframe, KeyframeTrack};
+pub use particle::{EmitterConfig, Particle, ParticleEmitter, ParticlePreset};
+pub use scheduler::{AnimationEvent, CompositorAnimScheduler};
+pub use spring::{SpringAnimation, SpringConfig, critically_damped, underdamped_period};
+pub use transition::Transition;
 pub use workspace_transition::{
-    Transform2D, Transform3D, TransitionStyle, TransitionDirection,
-    WorkspaceTransition, slide_transform, fade_transform, cube_transform,
-    stack_transform,
-};
-pub use particle::{Particle, ParticlePreset, EmitterConfig, ParticleEmitter};
-pub use group::{
-    GroupState, AnimationGroup, AnimationSequence, AnimationTimeline,
+    Transform2D, Transform3D, TransitionDirection, TransitionStyle, WorkspaceTransition,
+    cube_transform, fade_transform, slide_transform, stack_transform,
 };

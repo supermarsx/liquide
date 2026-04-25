@@ -33,47 +33,32 @@ impl FontIndex {
 
         // Index family name tokens.
         for token in tokenize(&entry.family) {
-            self.token_index
-                .entry(token)
-                .or_default()
-                .push(idx);
+            self.token_index.entry(token).or_default().push(idx);
         }
 
         // Index style.
         for token in tokenize(&entry.style) {
-            self.token_index
-                .entry(token)
-                .or_default()
-                .push(idx);
+            self.token_index.entry(token).or_default().push(idx);
         }
 
         // Index tags.
         for tag in &entry.tags {
             for token in tokenize(tag) {
-                self.token_index
-                    .entry(token)
-                    .or_default()
-                    .push(idx);
+                self.token_index.entry(token).or_default().push(idx);
             }
         }
 
         // Index designer.
         if !entry.designer.is_empty() {
             for token in tokenize(&entry.designer) {
-                self.token_index
-                    .entry(token)
-                    .or_default()
-                    .push(idx);
+                self.token_index.entry(token).or_default().push(idx);
             }
         }
 
         // Index source.
         let source_str = entry.source.to_string();
         for token in tokenize(&source_str) {
-            self.token_index
-                .entry(token)
-                .or_default()
-                .push(idx);
+            self.token_index.entry(token).or_default().push(idx);
         }
 
         // Index format.

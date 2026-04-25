@@ -1,7 +1,7 @@
 use crate::easing::EasingFunction;
-use crate::effects::{Rect, EffectManager, EffectState, WindowEffect};
+use crate::effects::{EffectManager, EffectState, Rect, WindowEffect};
 use crate::snap_preview::{SnapPreview, SnapZone};
-use crate::workspace_transition::{WorkspaceTransition, TransitionDirection};
+use crate::workspace_transition::{TransitionDirection, WorkspaceTransition};
 use std::time::Duration;
 
 // ── Easing tests ─────────────────────────────────────────────────────
@@ -73,7 +73,10 @@ fn easing_ease_in_slower_start() {
 fn easing_ease_out_faster_start() {
     // EaseOut at t=0.5 should be > 0.5
     let v = EasingFunction::EaseOut.eval(0.5);
-    assert!(v > 0.5, "EaseOut at 0.5 should be greater than 0.5, got {v}");
+    assert!(
+        v > 0.5,
+        "EaseOut at 0.5 should be greater than 0.5, got {v}"
+    );
 }
 
 #[test]
@@ -139,7 +142,11 @@ fn effect_open_produces_frame() {
         opacity_from: 0.0,
         opacity_to: 1.0,
     };
-    let mut state = EffectState::new(effect, EasingFunction::EaseOutCubic, Duration::from_millis(200));
+    let mut state = EffectState::new(
+        effect,
+        EasingFunction::EaseOutCubic,
+        Duration::from_millis(200),
+    );
     let frame = state.update();
     assert_eq!(frame.window_id, 1);
     assert!(frame.opacity >= 0.0);
@@ -235,7 +242,11 @@ fn manager_reduce_motion_skips_animations() {
     mgr.close_window(2, Rect::new(0.0, 0.0, 800.0, 600.0));
     assert_eq!(mgr.active_count(), 0);
 
-    mgr.transform_window(3, Rect::new(0.0, 0.0, 100.0, 100.0), Rect::new(50.0, 50.0, 200.0, 200.0));
+    mgr.transform_window(
+        3,
+        Rect::new(0.0, 0.0, 100.0, 100.0),
+        Rect::new(50.0, 50.0, 200.0, 200.0),
+    );
     assert_eq!(mgr.active_count(), 0);
 
     mgr.focus_window(4, Rect::new(0.0, 0.0, 400.0, 300.0));
@@ -285,7 +296,11 @@ fn manager_open_cancels_previous() {
 fn manager_multiple_windows() {
     let mut mgr = EffectManager::new();
     mgr.open_window(1, Rect::new(0.0, 0.0, 800.0, 600.0));
-    mgr.transform_window(2, Rect::new(0.0, 0.0, 100.0, 100.0), Rect::new(50.0, 50.0, 200.0, 200.0));
+    mgr.transform_window(
+        2,
+        Rect::new(0.0, 0.0, 100.0, 100.0),
+        Rect::new(50.0, 50.0, 200.0, 200.0),
+    );
     mgr.focus_window(3, Rect::new(100.0, 100.0, 400.0, 300.0));
     assert_eq!(mgr.active_count(), 3);
 
@@ -327,13 +342,20 @@ fn effect_state_new_with_start_deterministic() {
     // At 500ms
     let mid = start + Duration::from_millis(500);
     let frame = state.update_with_now(mid);
-    assert!((frame.bounds.x - 50.0).abs() < 1.0, "at t=0.5, x should be ~50, got {}", frame.bounds.x);
+    assert!(
+        (frame.bounds.x - 50.0).abs() < 1.0,
+        "at t=0.5, x should be ~50, got {}",
+        frame.bounds.x
+    );
     assert!(!frame.finished);
 
     // At 1000ms
     let end = start + Duration::from_millis(1000);
     let frame = state.update_with_now(end);
-    assert!((frame.bounds.x - 100.0).abs() < 1e-3, "at t=1.0, x should be 100");
+    assert!(
+        (frame.bounds.x - 100.0).abs() < 1e-3,
+        "at t=1.0, x should be 100"
+    );
     assert!(frame.finished);
 }
 
@@ -367,55 +389,82 @@ fn effect_state_update_with_now_vs_update_consistency() {
 #[test]
 fn snap_detect_left_edge() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(2.0, 500.0, screen, 10.0), SnapZone::Left);
+    assert_eq!(
+        SnapPreview::detect_zone(2.0, 500.0, screen, 10.0),
+        SnapZone::Left
+    );
 }
 
 #[test]
 fn snap_detect_right_edge() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(1918.0, 500.0, screen, 10.0), SnapZone::Right);
+    assert_eq!(
+        SnapPreview::detect_zone(1918.0, 500.0, screen, 10.0),
+        SnapZone::Right
+    );
 }
 
 #[test]
 fn snap_detect_top_edge_maximizes() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(960.0, 2.0, screen, 10.0), SnapZone::Maximize);
+    assert_eq!(
+        SnapPreview::detect_zone(960.0, 2.0, screen, 10.0),
+        SnapZone::Maximize
+    );
 }
 
 #[test]
 fn snap_detect_bottom_edge() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(960.0, 1078.0, screen, 10.0), SnapZone::Bottom);
+    assert_eq!(
+        SnapPreview::detect_zone(960.0, 1078.0, screen, 10.0),
+        SnapZone::Bottom
+    );
 }
 
 #[test]
 fn snap_detect_top_left_corner() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(2.0, 2.0, screen, 10.0), SnapZone::TopLeft);
+    assert_eq!(
+        SnapPreview::detect_zone(2.0, 2.0, screen, 10.0),
+        SnapZone::TopLeft
+    );
 }
 
 #[test]
 fn snap_detect_top_right_corner() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(1918.0, 2.0, screen, 10.0), SnapZone::TopRight);
+    assert_eq!(
+        SnapPreview::detect_zone(1918.0, 2.0, screen, 10.0),
+        SnapZone::TopRight
+    );
 }
 
 #[test]
 fn snap_detect_bottom_left_corner() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(2.0, 1078.0, screen, 10.0), SnapZone::BottomLeft);
+    assert_eq!(
+        SnapPreview::detect_zone(2.0, 1078.0, screen, 10.0),
+        SnapZone::BottomLeft
+    );
 }
 
 #[test]
 fn snap_detect_bottom_right_corner() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(1918.0, 1078.0, screen, 10.0), SnapZone::BottomRight);
+    assert_eq!(
+        SnapPreview::detect_zone(1918.0, 1078.0, screen, 10.0),
+        SnapZone::BottomRight
+    );
 }
 
 #[test]
 fn snap_detect_center_is_none() {
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-    assert_eq!(SnapPreview::detect_zone(960.0, 540.0, screen, 10.0), SnapZone::None);
+    assert_eq!(
+        SnapPreview::detect_zone(960.0, 540.0, screen, 10.0),
+        SnapZone::None
+    );
 }
 
 #[test]

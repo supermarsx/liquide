@@ -183,8 +183,7 @@ const DEFAULT_APP_MENU: &str = r#"<app-menu id="{{id}}" style="left: {{pos_left}
 </app-menu>
 "#;
 
-const DEFAULT_DOCK_ITEM: &str =
-    r#"<dock-item data-app-id="{{app_id}}" data-label="{{label}}" {{#if is_active}}class="active"{{/if}}>{{label}}</dock-item>"#;
+const DEFAULT_DOCK_ITEM: &str = r#"<dock-item data-app-id="{{app_id}}" data-label="{{label}}" {{#if is_active}}class="active"{{/if}}>{{label}}</dock-item>"#;
 
 const DEFAULT_MENU_ITEM: &str = r#"<menu-item data-action="{{action}}" {{#if icon}}data-icon="{{icon}}"{{/if}}>{{label}}</menu-item>"#;
 
@@ -356,11 +355,7 @@ impl TemplateRegistry {
         let rel = path.strip_prefix(base).ok()?;
         let stem = rel.with_extension("");
         // Normalise path separators to forward slashes.
-        Some(
-            stem.to_string_lossy()
-                .replace('\\', "/")
-                .to_string(),
-        )
+        Some(stem.to_string_lossy().replace('\\', "/").to_string())
     }
 
     /// Get a template source by name.
@@ -599,9 +594,7 @@ impl<'a> HtmlChunkParser<'a> {
 
         // Closing tag?
         if let Some(name) = tag_content.strip_prefix('/') {
-            return Some(HtmlChunk::CloseTag {
-                _tag: name.trim(),
-            });
+            return Some(HtmlChunk::CloseTag { _tag: name.trim() });
         }
 
         // Self-closing?
@@ -633,7 +626,6 @@ impl<'a> HtmlChunkParser<'a> {
             })
         }
     }
-
 }
 
 /// Parse HTML attributes from a string like `id="foo" class="bar"`.
@@ -684,9 +676,7 @@ fn parse_attrs(s: &str) -> Vec<(&str, &str)> {
             attrs.push((key, val));
         } else {
             // Unquoted — up to next whitespace.
-            let end = rest
-                .find(|c: char| c.is_whitespace())
-                .unwrap_or(rest.len());
+            let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
             let val = &rest[..end];
             rest = &rest[end..];
             attrs.push((key, val));
@@ -924,7 +914,10 @@ mod tests {
     #[test]
     fn render_if_with_elements() {
         let mut reg = TemplateRegistry::new();
-        reg.register("test", r#"<window {{#if focused}}class="focused"{{/if}} />"#);
+        reg.register(
+            "test",
+            r#"<window {{#if focused}}class="focused"{{/if}} />"#,
+        );
 
         let mut ctx = TemplateContext::new();
         ctx.set("focused", true);
@@ -1002,11 +995,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("components")).unwrap();
 
         std::fs::write(dir.join("page.html"), "<div>page</div>").unwrap();
-        std::fs::write(
-            dir.join("components").join("card.html"),
-            "<div>card</div>",
-        )
-        .unwrap();
+        std::fs::write(dir.join("components").join("card.html"), "<div>card</div>").unwrap();
 
         let mut reg = TemplateRegistry::new();
         reg.add_search_path(&dir);
@@ -1070,10 +1059,7 @@ mod tests {
         // "greeting" should have a text child "Hello".
         let text_kids = doc.children(greeting);
         assert_eq!(text_kids.len(), 1);
-        assert_eq!(
-            doc.get(text_kids[0]).unwrap().text_content(),
-            Some("Hello")
-        );
+        assert_eq!(doc.get(text_kids[0]).unwrap().text_content(), Some("Hello"));
     }
 
     #[test]
@@ -1138,10 +1124,7 @@ mod tests {
     #[test]
     fn render_into_dom_nested() {
         let mut reg = TemplateRegistry::new();
-        reg.register(
-            "deep",
-            "<a><b><c>text</c></b></a>",
-        );
+        reg.register("deep", "<a><b><c>text</c></b></a>");
 
         let mut doc = Document::new();
         let root = doc.root();

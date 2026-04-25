@@ -1,10 +1,10 @@
-use crate::service::*;
-use crate::registry::*;
-use crate::lifecycle::*;
 use crate::health::*;
-use crate::state::*;
 use crate::inhibitor::*;
+use crate::lifecycle::*;
+use crate::registry::*;
+use crate::service::*;
 use crate::shutdown::*;
+use crate::state::*;
 
 // ── Registry tests ──────────────────────────────────────────────────
 
@@ -185,7 +185,8 @@ fn start_already_running_is_noop() {
     });
 
     let mut lm = LifecycleManager::new();
-    lm.start_service(&ServiceId("svc".into()), &mut reg).unwrap();
+    lm.start_service(&ServiceId("svc".into()), &mut reg)
+        .unwrap();
     // Second start should be a no-op
     let result = lm.start_service(&ServiceId("svc".into()), &mut reg);
     assert!(result.is_ok());
@@ -222,11 +223,18 @@ fn stop_builtin_service() {
     });
 
     let mut lm = LifecycleManager::new();
-    lm.start_service(&ServiceId("svc".into()), &mut reg).unwrap();
-    assert_eq!(reg.get(&ServiceId("svc".into())).unwrap().state, ServiceState::Running);
+    lm.start_service(&ServiceId("svc".into()), &mut reg)
+        .unwrap();
+    assert_eq!(
+        reg.get(&ServiceId("svc".into())).unwrap().state,
+        ServiceState::Running
+    );
 
     lm.stop_service(&ServiceId("svc".into()), &mut reg).unwrap();
-    assert_eq!(reg.get(&ServiceId("svc".into())).unwrap().state, ServiceState::Stopped);
+    assert_eq!(
+        reg.get(&ServiceId("svc".into())).unwrap().state,
+        ServiceState::Stopped
+    );
 }
 
 #[test]
@@ -243,8 +251,12 @@ fn start_all_starts_auto_services() {
     // All auto-start services should be running
     for entry in reg.all_services() {
         if entry.descriptor.auto_start {
-            assert_eq!(entry.state, ServiceState::Running,
-                "service {} should be running", entry.descriptor.id);
+            assert_eq!(
+                entry.state,
+                ServiceState::Running,
+                "service {} should be running",
+                entry.descriptor.id
+            );
         }
     }
 }
@@ -261,8 +273,12 @@ fn stop_all_stops_everything() {
     lm.stop_all(&mut reg);
 
     for entry in reg.all_services() {
-        assert_eq!(entry.state, ServiceState::Stopped,
-            "service {} should be stopped", entry.descriptor.id);
+        assert_eq!(
+            entry.state,
+            ServiceState::Stopped,
+            "service {} should be stopped",
+            entry.descriptor.id
+        );
     }
 }
 
@@ -283,10 +299,17 @@ fn dependency_starts_before_dependent() {
 
     let mut lm = LifecycleManager::new();
     // Starting "main" should auto-start "dep" first
-    lm.start_service(&ServiceId("main".into()), &mut reg).unwrap();
+    lm.start_service(&ServiceId("main".into()), &mut reg)
+        .unwrap();
 
-    assert_eq!(reg.get(&ServiceId("dep".into())).unwrap().state, ServiceState::Running);
-    assert_eq!(reg.get(&ServiceId("main".into())).unwrap().state, ServiceState::Running);
+    assert_eq!(
+        reg.get(&ServiceId("dep".into())).unwrap().state,
+        ServiceState::Running
+    );
+    assert_eq!(
+        reg.get(&ServiceId("main".into())).unwrap().state,
+        ServiceState::Running
+    );
 }
 
 // ── Health tests ────────────────────────────────────────────────────
@@ -358,8 +381,12 @@ fn builtin_startup_order_compositor_before_input() {
 
     let pos_comp = ids.iter().position(|&x| x == "compositor").unwrap();
     let pos_input = ids.iter().position(|&x| x == "input-manager").unwrap();
-    assert!(pos_comp < pos_input,
-        "compositor (pos {}) should start before input-manager (pos {})", pos_comp, pos_input);
+    assert!(
+        pos_comp < pos_input,
+        "compositor (pos {}) should start before input-manager (pos {})",
+        pos_comp,
+        pos_input
+    );
 }
 
 #[test]
@@ -379,16 +406,28 @@ fn service_state_transitions() {
         ..Default::default()
     });
 
-    assert_eq!(reg.get(&ServiceId("svc".into())).unwrap().state, ServiceState::Stopped);
+    assert_eq!(
+        reg.get(&ServiceId("svc".into())).unwrap().state,
+        ServiceState::Stopped
+    );
 
     reg.set_state(&ServiceId("svc".into()), ServiceState::Starting);
-    assert_eq!(reg.get(&ServiceId("svc".into())).unwrap().state, ServiceState::Starting);
+    assert_eq!(
+        reg.get(&ServiceId("svc".into())).unwrap().state,
+        ServiceState::Starting
+    );
 
     reg.set_state(&ServiceId("svc".into()), ServiceState::Running);
-    assert_eq!(reg.get(&ServiceId("svc".into())).unwrap().state, ServiceState::Running);
+    assert_eq!(
+        reg.get(&ServiceId("svc".into())).unwrap().state,
+        ServiceState::Running
+    );
 
     reg.set_state(&ServiceId("svc".into()), ServiceState::Failed);
-    assert_eq!(reg.get(&ServiceId("svc".into())).unwrap().state, ServiceState::Failed);
+    assert_eq!(
+        reg.get(&ServiceId("svc".into())).unwrap().state,
+        ServiceState::Failed
+    );
 }
 
 #[test]
@@ -396,10 +435,7 @@ fn lifecycle_error_display() {
     let err = LifecycleError::NotFound(ServiceId("foo".into()));
     assert!(err.to_string().contains("foo"));
 
-    let err = LifecycleError::DependencyCycle(vec![
-        ServiceId("a".into()),
-        ServiceId("b".into()),
-    ]);
+    let err = LifecycleError::DependencyCycle(vec![ServiceId("a".into()), ServiceId("b".into())]);
     let msg = err.to_string();
     assert!(msg.contains("a"));
     assert!(msg.contains("b"));
@@ -489,7 +525,10 @@ fn snapshot_roundtrip_special_characters() {
     let serialized = serialize_snapshot(&snap);
     let deserialized = deserialize_snapshot(&serialized).unwrap();
     assert_eq!(deserialized.name, "work\tsession");
-    assert_eq!(deserialized.windows[0].title, "Title with\ttab and\nnewline");
+    assert_eq!(
+        deserialized.windows[0].title,
+        "Title with\ttab and\nnewline"
+    );
     assert_eq!(deserialized.windows[0].geometry, (-10, -20, 100, 200));
     assert!(deserialized.windows[0].is_minimized);
 }
@@ -497,14 +536,21 @@ fn snapshot_roundtrip_special_characters() {
 #[test]
 fn snapshot_deserialize_missing_header() {
     let result = deserialize_snapshot("TIMESTAMP:123\nWORKSPACE:0\n");
-    assert!(matches!(result, Err(SessionError::DeserializationFailed(_))));
+    assert!(matches!(
+        result,
+        Err(SessionError::DeserializationFailed(_))
+    ));
 }
 
 #[test]
 fn snapshot_deserialize_invalid_geometry() {
-    let bad = "SESSION:test\nTIMESTAMP:0\nWORKSPACE:0\nFOCUSED:\nWINDOW:app\ttitle\t1,2,3\t0\t0\t0\n";
+    let bad =
+        "SESSION:test\nTIMESTAMP:0\nWORKSPACE:0\nFOCUSED:\nWINDOW:app\ttitle\t1,2,3\t0\t0\t0\n";
     let result = deserialize_snapshot(bad);
-    assert!(matches!(result, Err(SessionError::DeserializationFailed(_))));
+    assert!(matches!(
+        result,
+        Err(SessionError::DeserializationFailed(_))
+    ));
 }
 
 #[test]
@@ -562,7 +608,10 @@ fn session_store_delete() {
 #[test]
 fn session_store_delete_not_found() {
     let mut store = SessionStore::new();
-    assert!(matches!(store.delete_session("x"), Err(SessionError::SessionNotFound(_))));
+    assert!(matches!(
+        store.delete_session("x"),
+        Err(SessionError::SessionNotFound(_))
+    ));
 }
 
 #[test]
@@ -603,7 +652,10 @@ fn session_store_valid_transitions() {
 fn session_store_invalid_transition() {
     let mut store = SessionStore::new();
     let result = store.transition(SessionState::Locked);
-    assert!(matches!(result, Err(SessionError::InvalidStateTransition { .. })));
+    assert!(matches!(
+        result,
+        Err(SessionError::InvalidStateTransition { .. })
+    ));
 }
 
 #[test]
@@ -655,7 +707,10 @@ fn inhibit_flag_display() {
         InhibitFlag::LOGOUT.union(InhibitFlag::SUSPEND).to_string(),
         "logout|suspend"
     );
-    assert_eq!(InhibitFlag::ALL.to_string(), "logout|switch-user|suspend|idle");
+    assert_eq!(
+        InhibitFlag::ALL.to_string(),
+        "logout|switch-user|suspend|idle"
+    );
 }
 
 #[test]
@@ -694,7 +749,11 @@ fn inhibitor_is_inhibited() {
 #[test]
 fn inhibitor_multiple_flags() {
     let mut reg = InhibitorRegistry::new();
-    reg.add("player", "playing video", InhibitFlag::SUSPEND.union(InhibitFlag::IDLE));
+    reg.add(
+        "player",
+        "playing video",
+        InhibitFlag::SUSPEND.union(InhibitFlag::IDLE),
+    );
     assert!(reg.is_inhibited(InhibitFlag::SUSPEND));
     assert!(reg.is_inhibited(InhibitFlag::IDLE));
     assert!(!reg.is_inhibited(InhibitFlag::LOGOUT));
@@ -914,7 +973,10 @@ fn shutdown_reason_display() {
 #[test]
 fn shutdown_phase_display() {
     assert_eq!(ShutdownPhase::Idle.to_string(), "idle");
-    assert_eq!(ShutdownPhase::RequestingConfirmation.to_string(), "requesting-confirmation");
+    assert_eq!(
+        ShutdownPhase::RequestingConfirmation.to_string(),
+        "requesting-confirmation"
+    );
     assert_eq!(ShutdownPhase::SavingSession.to_string(), "saving-session");
     assert_eq!(ShutdownPhase::ClosingApps.to_string(), "closing-apps");
     assert_eq!(ShutdownPhase::ForceClosing.to_string(), "force-closing");

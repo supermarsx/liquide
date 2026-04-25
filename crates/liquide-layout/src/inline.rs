@@ -3,7 +3,10 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{Direction, Display, Hyphens, Overflow, OverflowWrap, Position, TextAlign, TextAlignLast, TextOverflow, TextWrapMode, UnicodeBidi, VerticalAlign, WhiteSpace};
+use liquide_style_engine::computed::{
+    Direction, Display, Hyphens, Overflow, OverflowWrap, Position, TextAlign, TextAlignLast,
+    TextOverflow, TextWrapMode, UnicodeBidi, VerticalAlign, WhiteSpace,
+};
 
 use crate::geometry::Rect;
 use crate::ruby::RubyContainerResult;
@@ -40,10 +43,18 @@ pub fn align_offset_directional(
         TextAlign::Right => container_width - content_width,
         TextAlign::Left => 0.0,
         TextAlign::End => {
-            if is_rtl { 0.0 } else { container_width - content_width }
+            if is_rtl {
+                0.0
+            } else {
+                container_width - content_width
+            }
         }
         TextAlign::Start | TextAlign::Justify => {
-            if is_rtl { container_width - content_width } else { 0.0 }
+            if is_rtl {
+                container_width - content_width
+            } else {
+                0.0
+            }
         }
     }
 }
@@ -139,7 +150,7 @@ struct PlacedFragment {
     width: f32,
     #[allow(dead_code)] // Used for vertical alignment calculations
     height: f32,
-    #[allow(dead_code)] // Used for baseline alignment calculations  
+    #[allow(dead_code)] // Used for baseline alignment calculations
     baseline: f32,
     node_id: NodeId,
     /// Bidi embedding level (even = LTR, odd = RTL).
@@ -544,7 +555,14 @@ fn break_into_lines(
                 cursor_x += width;
                 current_line.push(idx);
             }
-            InlineItem::Word { ref text, width, height, baseline, node_id, font_size } => {
+            InlineItem::Word {
+                ref text,
+                width,
+                height,
+                baseline,
+                node_id,
+                font_size,
+            } => {
                 let _needed = pending_open_width + width;
                 pending_open_width = 0.0;
                 let effective_max = if is_first_line { max_width } else { max_width };
@@ -561,9 +579,18 @@ fn break_into_lines(
                     let remaining_space = max_width - cursor_x;
                     let hyphenated = if remaining_space > 0.0 {
                         try_hyphenate_word(
-                            text, font_size, font_family, font_weight,
-                            text_measurer, text_props, hyphens, hyphenate_char,
-                            remaining_space, height, baseline, node_id,
+                            text,
+                            font_size,
+                            font_family,
+                            font_weight,
+                            text_measurer,
+                            text_props,
+                            hyphens,
+                            hyphenate_char,
+                            remaining_space,
+                            height,
+                            baseline,
+                            node_id,
                         )
                     } else {
                         None
@@ -595,7 +622,10 @@ fn break_into_lines(
                         current_line.push(idx);
                     }
                 } else if wraps
-                    && matches!(overflow_wrap, OverflowWrap::BreakWord | OverflowWrap::Anywhere)
+                    && matches!(
+                        overflow_wrap,
+                        OverflowWrap::BreakWord | OverflowWrap::Anywhere
+                    )
                     && width > max_width
                     && current_line.is_empty()
                 {
@@ -675,9 +705,7 @@ fn try_hyphenate_word(
                 sh
             }
         }
-        Hyphens::Manual => {
-            soft_hyphen_points(word)
-        }
+        Hyphens::Manual => soft_hyphen_points(word),
         Hyphens::None => return None,
     };
 
@@ -687,7 +715,12 @@ fn try_hyphenate_word(
 
     // Measure the hyphen character width.
     let hyphen_metrics = text_measurer.measure(
-        hyphenate_char, font_size, font_family, font_weight, None, props,
+        hyphenate_char,
+        font_size,
+        font_family,
+        font_weight,
+        None,
+        props,
     );
     let _hyphen_w = hyphen_metrics.width;
 
@@ -715,7 +748,12 @@ fn try_hyphenate_word(
         // Measure first part + hyphen.
         let first_display = format!("{}{}", first_text, hyphenate_char);
         let m = text_measurer.measure(
-            &first_display, font_size, font_family, font_weight, None, props,
+            &first_display,
+            font_size,
+            font_family,
+            font_weight,
+            None,
+            props,
         );
 
         // Skip zero-width or negative-width break points
@@ -731,10 +769,20 @@ fn try_hyphenate_word(
 
             let first_display_clean = format!("{}{}", clean_first, hyphenate_char);
             let m1 = text_measurer.measure(
-                &first_display_clean, font_size, font_family, font_weight, None, props,
+                &first_display_clean,
+                font_size,
+                font_family,
+                font_weight,
+                None,
+                props,
             );
             let m2 = text_measurer.measure(
-                &clean_second, font_size, font_family, font_weight, None, props,
+                &clean_second,
+                font_size,
+                font_family,
+                font_weight,
+                None,
+                props,
             );
 
             let first_item = InlineItem::Word {
@@ -811,7 +859,11 @@ fn compute_bidi_levels(items: &[InlineItem], base_level: u8) -> Vec<u8> {
 
     for (i, item) in items.iter().enumerate() {
         match item {
-            InlineItem::OpenInline { direction, unicode_bidi, .. } => {
+            InlineItem::OpenInline {
+                direction,
+                unicode_bidi,
+                ..
+            } => {
                 let current = *stack.last().unwrap_or(&base_level);
                 let new_level = match unicode_bidi {
                     UnicodeBidi::Embed | UnicodeBidi::BidiOverride => match direction {
@@ -850,7 +902,11 @@ fn reorder_line_bidi(fragments: &mut [PlacedFragment], base_level: u8) {
         return;
     }
 
-    let max_level = fragments.iter().map(|f| f.bidi_level).max().unwrap_or(base_level);
+    let max_level = fragments
+        .iter()
+        .map(|f| f.bidi_level)
+        .max()
+        .unwrap_or(base_level);
 
     if max_level <= base_level {
         // All fragments at or below the base level.
@@ -1005,9 +1061,7 @@ fn layout_lines(
                     cursor_x += edges.inline_end();
                 }
                 InlineItem::RubyContainer {
-                    node_id,
-                    result,
-                    ..
+                    node_id, result, ..
                 } => {
                     // Place ruby container as an atomic inline fragment.
                     let total_h = result.total_block_size();
@@ -1045,8 +1099,7 @@ fn layout_lines(
         // ── Apply text-align: justify — distribute extra space between words ──
         let should_justify = matches!(effective_align, TextAlign::Justify)
             && (!is_last_line || text_align_last == TextAlignLast::Justify);
-        if should_justify && line_content_width < max_width
-        {
+        if should_justify && line_content_width < max_width {
             let space_count = fragments
                 .iter()
                 .filter(|f| f.height == 0.0 && f.width > 0.0)
@@ -1076,7 +1129,8 @@ fn layout_lines(
         let base_level: u8 = if is_rtl { 1 } else { 0 };
         reorder_line_bidi(&mut fragments, base_level);
 
-        let shift = align_offset_directional(effective_align, max_width, line_content_width, is_rtl);
+        let shift =
+            align_offset_directional(effective_align, max_width, line_content_width, is_rtl);
         if shift > 0.0 {
             for frag in &mut fragments {
                 frag.x += shift;
@@ -1429,9 +1483,8 @@ pub fn layout_inline(
                             b.padding_rect = content_rect;
                             b.border_rect = content_rect;
                             b.margin_rect = content_rect;
-                            b.baseline = Some(
-                                result.annotation_overhead() + result.base_height * 0.8,
-                            );
+                            b.baseline =
+                                Some(result.annotation_overhead() + result.base_height * 0.8);
                         }
                         tree.add_child(box_id, *child_box_id);
                     }
@@ -1612,16 +1665,19 @@ mod tests {
                 width: 50.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(0),
+                node_id: 0u64,
                 font_size: 16.0,
             },
-            InlineItem::Space { width: 4.0, node_id: NodeId(0) },
+            InlineItem::Space {
+                width: 4.0,
+                node_id: 0u64,
+            },
             InlineItem::Word {
                 text: "world".into(),
                 width: 50.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(0),
+                node_id: 0u64,
                 font_size: 16.0,
             },
         ];
@@ -1632,16 +1688,14 @@ mod tests {
     #[test]
     fn bidi_levels_all_rtl_base() {
         // Plain words at base level 1 all get level 1.
-        let items = vec![
-            InlineItem::Word {
-                text: "مرحبا".into(),
-                width: 60.0,
-                height: 16.0,
-                baseline: 12.0,
-                node_id: NodeId(0),
-                font_size: 16.0,
-            },
-        ];
+        let items = vec![InlineItem::Word {
+            text: "مرحبا".into(),
+            width: 60.0,
+            height: 16.0,
+            baseline: 12.0,
+            node_id: 0u64,
+            font_size: 16.0,
+        }];
         let levels = compute_bidi_levels(&items, 1);
         assert_eq!(levels, vec![1]);
     }
@@ -1655,12 +1709,12 @@ mod tests {
                 width: 50.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(0),
+                node_id: 0u64,
                 font_size: 16.0,
             },
             InlineItem::OpenInline {
-                node_id: NodeId(1),
-                box_id: LayoutBoxId(1),
+                node_id: 1u64,
+                box_id: 1usize,
                 edges: InlineEdges::default(),
                 vertical_align: VerticalAlign::Baseline,
                 font_size: 16.0,
@@ -1672,12 +1726,12 @@ mod tests {
                 width: 40.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(1),
+                node_id: 1u64,
                 font_size: 16.0,
             },
             InlineItem::CloseInline {
-                node_id: NodeId(1),
-                box_id: LayoutBoxId(1),
+                node_id: 1u64,
+                box_id: 1usize,
                 edges: InlineEdges::default(),
             },
             InlineItem::Word {
@@ -1685,7 +1739,7 @@ mod tests {
                 width: 50.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(0),
+                node_id: 0u64,
                 font_size: 16.0,
             },
         ];
@@ -1703,12 +1757,12 @@ mod tests {
                 width: 60.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(0),
+                node_id: 0u64,
                 font_size: 16.0,
             },
             InlineItem::OpenInline {
-                node_id: NodeId(1),
-                box_id: LayoutBoxId(1),
+                node_id: 1u64,
+                box_id: 1usize,
                 edges: InlineEdges::default(),
                 vertical_align: VerticalAlign::Baseline,
                 font_size: 16.0,
@@ -1720,12 +1774,12 @@ mod tests {
                 width: 50.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(1),
+                node_id: 1u64,
                 font_size: 16.0,
             },
             InlineItem::CloseInline {
-                node_id: NodeId(1),
-                box_id: LayoutBoxId(1),
+                node_id: 1u64,
+                box_id: 1usize,
                 edges: InlineEdges::default(),
             },
         ];
@@ -1739,8 +1793,8 @@ mod tests {
         // unicode-bidi: normal does not change the embedding level.
         let items = vec![
             InlineItem::OpenInline {
-                node_id: NodeId(1),
-                box_id: LayoutBoxId(1),
+                node_id: 1u64,
+                box_id: 1usize,
                 edges: InlineEdges::default(),
                 vertical_align: VerticalAlign::Baseline,
                 font_size: 16.0,
@@ -1752,12 +1806,12 @@ mod tests {
                 width: 40.0,
                 height: 16.0,
                 baseline: 12.0,
-                node_id: NodeId(1),
+                node_id: 1u64,
                 font_size: 16.0,
             },
             InlineItem::CloseInline {
-                node_id: NodeId(1),
-                box_id: LayoutBoxId(1),
+                node_id: 1u64,
+                box_id: 1usize,
                 edges: InlineEdges::default(),
             },
         ];
@@ -1774,7 +1828,7 @@ mod tests {
             width: w,
             height: 16.0,
             baseline: 12.0,
-            node_id: NodeId(node),
+            node_id: node as u64,
             bidi_level: level,
         }
     }
@@ -1788,9 +1842,9 @@ mod tests {
             make_frag(20.0, 10.0, 0, 2),
         ];
         reorder_line_bidi(&mut frags, 0);
-        assert_eq!(frags[0].node_id, NodeId(0));
-        assert_eq!(frags[1].node_id, NodeId(1));
-        assert_eq!(frags[2].node_id, NodeId(2));
+        assert_eq!(frags[0].node_id, 0u64);
+        assert_eq!(frags[1].node_id, 1u64);
+        assert_eq!(frags[2].node_id, 2u64);
     }
 
     #[test]
@@ -1802,9 +1856,9 @@ mod tests {
             make_frag(30.0, 10.0, 1, 2),
         ];
         reorder_line_bidi(&mut frags, 1);
-        assert_eq!(frags[0].node_id, NodeId(2));
-        assert_eq!(frags[1].node_id, NodeId(1));
-        assert_eq!(frags[2].node_id, NodeId(0));
+        assert_eq!(frags[0].node_id, 2u64);
+        assert_eq!(frags[1].node_id, 1u64);
+        assert_eq!(frags[2].node_id, 0u64);
         // x positions recomputed
         assert_eq!(frags[0].x, 0.0);
         assert_eq!(frags[1].x, 10.0);
@@ -1816,17 +1870,17 @@ mod tests {
         // LTR base with RTL embed in the middle: [LTR][RTL RTL][LTR]
         // The RTL run (level 1) should be reversed within.
         let mut frags = vec![
-            make_frag(0.0, 10.0, 0, 0),   // LTR "A"
-            make_frag(10.0, 10.0, 1, 1),  // RTL "ب"
-            make_frag(20.0, 10.0, 1, 2),  // RTL "ت"
-            make_frag(30.0, 10.0, 0, 3),  // LTR "B"
+            make_frag(0.0, 10.0, 0, 0),  // LTR "A"
+            make_frag(10.0, 10.0, 1, 1), // RTL "ب"
+            make_frag(20.0, 10.0, 1, 2), // RTL "ت"
+            make_frag(30.0, 10.0, 0, 3), // LTR "B"
         ];
         reorder_line_bidi(&mut frags, 0);
         // RTL run reversed: A, ت, ب, B
-        assert_eq!(frags[0].node_id, NodeId(0));
-        assert_eq!(frags[1].node_id, NodeId(2));
-        assert_eq!(frags[2].node_id, NodeId(1));
-        assert_eq!(frags[3].node_id, NodeId(3));
+        assert_eq!(frags[0].node_id, 0u64);
+        assert_eq!(frags[1].node_id, 2u64);
+        assert_eq!(frags[2].node_id, 1u64);
+        assert_eq!(frags[3].node_id, 3u64);
     }
 
     #[test]
@@ -1836,17 +1890,17 @@ mod tests {
         // L2 reverses level-2 run (no-op since already in logical order),
         // then base RTL reverses entire line.
         let mut frags = vec![
-            make_frag(0.0, 10.0, 1, 0),   // RTL "أ"
-            make_frag(10.0, 10.0, 2, 1),  // LTR "A"
-            make_frag(20.0, 10.0, 2, 2),  // LTR "B"
-            make_frag(30.0, 10.0, 1, 3),  // RTL "ب"
+            make_frag(0.0, 10.0, 1, 0),  // RTL "أ"
+            make_frag(10.0, 10.0, 2, 1), // LTR "A"
+            make_frag(20.0, 10.0, 2, 2), // LTR "B"
+            make_frag(30.0, 10.0, 1, 3), // RTL "ب"
         ];
         reorder_line_bidi(&mut frags, 1);
         // After L2: level 2 run [A,B] stays, then base RTL reverses all → ب, A, B, أ
-        assert_eq!(frags[0].node_id, NodeId(3));
-        assert_eq!(frags[1].node_id, NodeId(1));
-        assert_eq!(frags[2].node_id, NodeId(2));
-        assert_eq!(frags[3].node_id, NodeId(0));
+        assert_eq!(frags[0].node_id, 3u64);
+        assert_eq!(frags[1].node_id, 1u64);
+        assert_eq!(frags[2].node_id, 2u64);
+        assert_eq!(frags[3].node_id, 0u64);
     }
 
     #[test]

@@ -102,10 +102,7 @@ impl PlatformDpi {
 
     /// Parse `Xft.dpi` from `xrdb -query` output.
     fn read_xft_dpi() -> Option<f32> {
-        let output = Command::new("xrdb")
-            .arg("-query")
-            .output()
-            .ok()?;
+        let output = Command::new("xrdb").arg("-query").output().ok()?;
 
         if !output.status.success() {
             return None;
@@ -156,7 +153,8 @@ impl PlatformDpi {
         // Simple text parsing to avoid a JSON dependency.
         let text = String::from_utf8_lossy(&output.stdout);
         // Find "focused": true, then the nearest "scale": value.
-        let focused_pos = text.find("\"focused\":true")
+        let focused_pos = text
+            .find("\"focused\":true")
             .or_else(|| text.find("\"focused\": true"))?;
 
         // Search backwards and forwards for "scale"
@@ -166,9 +164,7 @@ impl PlatformDpi {
 
     /// Parse scale from `wlr-randr` output.
     fn read_wlr_randr_scale() -> Option<DpiScale> {
-        let output = Command::new("wlr-randr")
-            .output()
-            .ok()?;
+        let output = Command::new("wlr-randr").output().ok()?;
 
         if !output.status.success() {
             return None;
@@ -249,10 +245,7 @@ impl PlatformDpi {
 
     /// Enumerate X11 monitors via xrandr. Parse scale from resolution vs. physical size.
     fn enumerate_xrandr_monitors() -> Option<Vec<(MonitorId, DpiScale)>> {
-        let output = Command::new("xrandr")
-            .arg("--query")
-            .output()
-            .ok()?;
+        let output = Command::new("xrandr").arg("--query").output().ok()?;
 
         if !output.status.success() {
             return None;

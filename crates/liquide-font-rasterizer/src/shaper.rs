@@ -35,13 +35,19 @@ impl FontFeature {
     /// Create an enabled feature from a 4-byte tag.
     #[must_use]
     pub fn enabled(tag: &[u8; 4]) -> Self {
-        Self { tag: *tag, value: 1 }
+        Self {
+            tag: *tag,
+            value: 1,
+        }
     }
 
     /// Create a disabled feature from a 4-byte tag.
     #[must_use]
     pub fn disabled(tag: &[u8; 4]) -> Self {
-        Self { tag: *tag, value: 0 }
+        Self {
+            tag: *tag,
+            value: 0,
+        }
     }
 
     /// Create a feature with a specific value (for stylistic sets, etc.).
@@ -53,55 +59,82 @@ impl FontFeature {
     /// Standard ligatures (liga).
     #[must_use]
     pub fn ligatures(enabled: bool) -> Self {
-        Self { tag: *b"liga", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"liga",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Kerning (kern).
     #[must_use]
     pub fn kerning(enabled: bool) -> Self {
-        Self { tag: *b"kern", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"kern",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Small caps (smcp).
     #[must_use]
     pub fn small_caps(enabled: bool) -> Self {
-        Self { tag: *b"smcp", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"smcp",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Oldstyle figures (onum).
     #[must_use]
     pub fn oldstyle_figures(enabled: bool) -> Self {
-        Self { tag: *b"onum", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"onum",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Tabular figures (tnum).
     #[must_use]
     pub fn tabular_figures(enabled: bool) -> Self {
-        Self { tag: *b"tnum", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"tnum",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Contextual alternates (calt).
     #[must_use]
     pub fn contextual_alternates(enabled: bool) -> Self {
-        Self { tag: *b"calt", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"calt",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Fractions (frac).
     #[must_use]
     pub fn fractions(enabled: bool) -> Self {
-        Self { tag: *b"frac", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"frac",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Ordinals (ordn).
     #[must_use]
     pub fn ordinals(enabled: bool) -> Self {
-        Self { tag: *b"ordn", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"ordn",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Discretionary ligatures (dlig).
     #[must_use]
     pub fn discretionary_ligatures(enabled: bool) -> Self {
-        Self { tag: *b"dlig", value: if enabled { 1 } else { 0 } }
+        Self {
+            tag: *b"dlig",
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Stylistic set (ss01–ss20).
@@ -109,14 +142,14 @@ impl FontFeature {
     pub fn stylistic_set(n: u8, enabled: bool) -> Self {
         let n = n.clamp(1, 20);
         let tag = [b's', b's', b'0' + (n / 10), b'0' + (n % 10)];
-        Self { tag, value: if enabled { 1 } else { 0 } }
+        Self {
+            tag,
+            value: if enabled { 1 } else { 0 },
+        }
     }
 
     /// Convert to rustybuzz Feature.
     fn to_rustybuzz(&self) -> rustybuzz::Feature {
-        // Create a tag from 4 bytes as a u32 (big-endian)
-        let tag_u32 = u32::from_be_bytes(self.tag);
-        // Use from_bytes_lossy to create the feature tag
         rustybuzz::Feature::new(
             rustybuzz::ttf_parser::Tag::from_bytes_lossy(&self.tag),
             self.value,
@@ -323,10 +356,8 @@ impl<'a> TextShaper<'a> {
         buffer.push_str(text);
 
         // Convert FontFeature to rustybuzz::Feature
-        let rb_features: Vec<rustybuzz::Feature> = features
-            .iter()
-            .map(|f| f.to_rustybuzz())
-            .collect();
+        let rb_features: Vec<rustybuzz::Feature> =
+            features.iter().map(|f| f.to_rustybuzz()).collect();
 
         let glyph_buffer = rustybuzz::shape(face, &rb_features, buffer);
         let infos = glyph_buffer.glyph_infos();

@@ -221,7 +221,10 @@ fn test_paint_context_new() {
 #[test]
 fn test_paint_context_fill_rect() {
     let mut ctx = PaintContext::new(Rect::new(0.0, 0.0, 100.0, 100.0));
-    ctx.fill_rect(Rect::new(10.0, 10.0, 50.0, 50.0), Brush::Solid(Color::white()));
+    ctx.fill_rect(
+        Rect::new(10.0, 10.0, 50.0, 50.0),
+        Brush::Solid(Color::white()),
+    );
     assert_eq!(ctx.commands().len(), 1);
     match &ctx.commands()[0] {
         PaintCommand::FillRect { rect, .. } => {
@@ -281,10 +284,7 @@ fn test_paint_context_draw_line() {
 fn test_paint_context_fill_circle() {
     let mut ctx = PaintContext::new(Rect::new(0.0, 0.0, 100.0, 100.0));
     ctx.fill_circle(50.0, 50.0, 25.0, Brush::Solid(Color::from_rgb(0, 0, 255)));
-    assert!(matches!(
-        ctx.commands()[0],
-        PaintCommand::FillCircle { .. }
-    ));
+    assert!(matches!(ctx.commands()[0], PaintCommand::FillCircle { .. }));
 }
 
 #[test]
@@ -314,8 +314,14 @@ fn test_paint_context_push_pop_clip() {
 #[test]
 fn test_paint_context_into_commands() {
     let mut ctx = PaintContext::new(Rect::new(0.0, 0.0, 100.0, 100.0));
-    ctx.fill_rect(Rect::new(0.0, 0.0, 10.0, 10.0), Brush::Solid(Color::white()));
-    ctx.fill_rect(Rect::new(10.0, 10.0, 10.0, 10.0), Brush::Solid(Color::black()));
+    ctx.fill_rect(
+        Rect::new(0.0, 0.0, 10.0, 10.0),
+        Brush::Solid(Color::white()),
+    );
+    ctx.fill_rect(
+        Rect::new(10.0, 10.0, 10.0, 10.0),
+        Brush::Solid(Color::black()),
+    );
     let commands = ctx.into_commands();
     assert_eq!(commands.len(), 2);
 }
@@ -323,9 +329,18 @@ fn test_paint_context_into_commands() {
 #[test]
 fn test_paint_context_multiple_commands() {
     let mut ctx = PaintContext::new(Rect::new(0.0, 0.0, 800.0, 600.0));
-    ctx.fill_rect(Rect::new(0.0, 0.0, 800.0, 600.0), Brush::Solid(Color::white()));
+    ctx.fill_rect(
+        Rect::new(0.0, 0.0, 800.0, 600.0),
+        Brush::Solid(Color::white()),
+    );
     ctx.stroke_rect(Rect::new(10.0, 10.0, 100.0, 100.0), StrokeStyle::default());
     ctx.draw_text("Hello World", 20.0, 30.0, TextStyle::default());
-    ctx.draw_line(0.0, 0.0, 800.0, 600.0, StrokeStyle::new(2.0, Color::from_rgb(255, 0, 0)));
+    ctx.draw_line(
+        0.0,
+        0.0,
+        800.0,
+        600.0,
+        StrokeStyle::new(2.0, Color::from_rgb(255, 0, 0)),
+    );
     assert_eq!(ctx.commands().len(), 4);
 }

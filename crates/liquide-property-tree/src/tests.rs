@@ -1,12 +1,12 @@
 //! Tests for the property tree system.
 
+use crate::Rect;
 use crate::clip_tree::{ClipTree, ClipType};
 use crate::effect_tree::{BlendMode, EffectTree, FilterOp};
 use crate::property_set::{NodeMapping, PropertyTreeSet};
 use crate::scroll_tree::ScrollTree;
 use crate::transform::Transform2D;
-use crate::transform_tree::{TransformTree, ROOT_ID};
-use crate::Rect;
+use crate::transform_tree::{ROOT_ID, TransformTree};
 
 // ═════════════════════════════════════════════════════
 //  Transform2D tests
@@ -127,10 +127,12 @@ fn transform2d_invert_roundtrip() {
     let t = Transform2D::new(1.5, 0.3, -0.7, 2.1, 100.0, -50.0);
     let inv = t.invert().unwrap();
     let composed = t.multiply(&inv);
-    assert!(composed.is_identity() || {
-        let (x, y) = composed.transform_point(42.0, 17.0);
-        (x - 42.0).abs() < 1e-3 && (y - 17.0).abs() < 1e-3
-    });
+    assert!(
+        composed.is_identity() || {
+            let (x, y) = composed.transform_point(42.0, 17.0);
+            (x - 42.0).abs() < 1e-3 && (y - 17.0).abs() < 1e-3
+        }
+    );
 }
 
 #[test]
@@ -309,6 +311,44 @@ fn transform_tree_children_of() {
     assert_eq!(a_children.len(), 1);
 }
 
+#[test]
+fn transform_tree_add_invalid_parent_falls_back_to_root() {
+    let mut tree = TransformTree::new();
+    let node = tree.add(Some(999), Transform2D::translate(3.0, 4.0), true);
+    tree.update();
+
+    let added = tree.get(node).unwrap();
+    assert_eq!(added.parent, Some(ROOT_ID));
+
+    let world = tree.world_transform(node);
+    assert!((world.tx() - 3.0).abs() < 1e-5);
+    assert!((world.ty() - 4.0).abs() < 1e-5);
+}
+
+#[test]
+fn transform_tree_get_mut_normalizes_invalid_parent_and_marks_dirty() {
+    let mut tree = TransformTree::new();
+    let parent = tree.add(Some(ROOT_ID), Transform2D::translate(10.0, 0.0), true);
+    let child = tree.add(Some(parent), Transform2D::translate(5.0, 0.0), true);
+    tree.update();
+
+    {
+        let node = tree.get_mut(child).unwrap();
+        node.parent = Some(999);
+        node.local_transform = Transform2D::translate(20.0, 0.0);
+    }
+
+    assert!(tree.has_dirty());
+    tree.update();
+
+    let child_node = tree.get(child).unwrap();
+    assert_eq!(child_node.parent, Some(ROOT_ID));
+    assert!(tree.children_of(ROOT_ID).contains(&child));
+
+    let world = tree.world_transform(child);
+    assert!((world.tx() - 20.0).abs() < 1e-5);
+}
+
 // ═════════════════════════════════════════════════════
 //  ClipTree tests
 // ═════════════════════════════════════════════════════
@@ -325,7 +365,11 @@ fn clip_tree_add_and_accumulate() {
     // Set root clip to (0,0)-(100,100)
     tree.set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 100.0, 100.0));
     // Child clip (50,50)-(150,150)
-    let child = tree.add(Some(ROOT_ID), Rect::new(50.0, 50.0, 100.0, 100.0), ClipType::Rect);
+    let child = tree.add(
+        Some(ROOT_ID),
+        Rect::new(50.0, 50.0, 100.0, 100.0),
+        ClipType::Rect,
+    );
     tree.update();
 
     let acc = tree.accumulated_clip_rect(child).unwrap();
@@ -339,7 +383,11 @@ fn clip_tree_add_and_accumulate() {
 fn clip_tree_nested_clips() {
     let mut tree = ClipTree::new();
     tree.set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 200.0, 200.0));
-    let a = tree.add(Some(ROOT_ID), Rect::new(10.0, 10.0, 100.0, 100.0), ClipType::Rect);
+    let a = tree.add(
+        Some(ROOT_ID),
+        Rect::new(10.0, 10.0, 100.0, 100.0),
+        ClipType::Rect,
+    );
     let b = tree.add(Some(a), Rect::new(30.0, 30.0, 50.0, 50.0), ClipType::Rect);
     tree.update();
 
@@ -355,7 +403,11 @@ fn clip_tree_fully_clipped() {
     let mut tree = ClipTree::new();
     tree.set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 50.0, 50.0));
     // Child clip outside root
-    let child = tree.add(Some(ROOT_ID), Rect::new(100.0, 100.0, 50.0, 50.0), ClipType::Rect);
+    let child = tree.add(
+        Some(ROOT_ID),
+        Rect::new(100.0, 100.0, 50.0, 50.0),
+        ClipType::Rect,
+    );
     tree.update();
 
     let acc = tree.accumulated_clip_rect(child).unwrap();
@@ -367,7 +419,11 @@ fn clip_tree_fully_clipped() {
 fn clip_tree_is_visible() {
     let mut tree = ClipTree::new();
     tree.set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 100.0, 100.0));
-    let child = tree.add(Some(ROOT_ID), Rect::new(0.0, 0.0, 100.0, 100.0), ClipType::Rect);
+    let child = tree.add(
+        Some(ROOT_ID),
+        Rect::new(0.0, 0.0, 100.0, 100.0),
+        ClipType::Rect,
+    );
     tree.update();
 
     assert!(tree.is_visible(child, Rect::new(10.0, 10.0, 20.0, 20.0)));
@@ -377,11 +433,17 @@ fn clip_tree_is_visible() {
 #[test]
 fn clip_tree_clip_chain() {
     let mut tree = ClipTree::new();
-    let a = tree.add(Some(ROOT_ID), Rect::new(10.0, 10.0, 80.0, 80.0), ClipType::Rect);
+    let a = tree.add(
+        Some(ROOT_ID),
+        Rect::new(10.0, 10.0, 80.0, 80.0),
+        ClipType::Rect,
+    );
     let b = tree.add(
         Some(a),
         Rect::new(20.0, 20.0, 40.0, 40.0),
-        ClipType::RoundedRect { radii: (5.0, 5.0, 5.0, 5.0) },
+        ClipType::RoundedRect {
+            radii: (5.0, 5.0, 5.0, 5.0),
+        },
     );
 
     let chain = tree.accumulated_clip(b);
@@ -391,16 +453,27 @@ fn clip_tree_clip_chain() {
 #[test]
 fn clip_tree_clip_type_variants() {
     let mut tree = ClipTree::new();
-    let _c1 = tree.add(Some(ROOT_ID), Rect::new(0.0, 0.0, 50.0, 50.0), ClipType::Rect);
+    let _c1 = tree.add(
+        Some(ROOT_ID),
+        Rect::new(0.0, 0.0, 50.0, 50.0),
+        ClipType::Rect,
+    );
     let _c2 = tree.add(
         Some(ROOT_ID),
         Rect::new(0.0, 0.0, 50.0, 50.0),
-        ClipType::RoundedRect { radii: (8.0, 8.0, 8.0, 8.0) },
+        ClipType::RoundedRect {
+            radii: (8.0, 8.0, 8.0, 8.0),
+        },
     );
     let _c3 = tree.add(
         Some(ROOT_ID),
         Rect::new(0.0, 0.0, 50.0, 50.0),
-        ClipType::CircleEllipse { cx: 25.0, cy: 25.0, rx: 25.0, ry: 25.0 },
+        ClipType::CircleEllipse {
+            cx: 25.0,
+            cy: 25.0,
+            rx: 25.0,
+            ry: 25.0,
+        },
     );
     let _c4 = tree.add(
         Some(ROOT_ID),
@@ -413,12 +486,25 @@ fn clip_tree_clip_type_variants() {
 #[test]
 fn clip_tree_dirty_after_set() {
     let mut tree = ClipTree::new();
-    let child = tree.add(Some(ROOT_ID), Rect::new(0.0, 0.0, 50.0, 50.0), ClipType::Rect);
+    let child = tree.add(
+        Some(ROOT_ID),
+        Rect::new(0.0, 0.0, 50.0, 50.0),
+        ClipType::Rect,
+    );
     tree.update();
     assert!(!tree.has_dirty());
 
     tree.set_clip_rect(child, Rect::new(10.0, 10.0, 40.0, 40.0));
     assert!(tree.has_dirty());
+}
+
+#[test]
+fn clip_tree_add_invalid_parent_falls_back_to_root() {
+    let mut tree = ClipTree::new();
+    let node = tree.add(Some(999), Rect::new(0.0, 0.0, 10.0, 10.0), ClipType::Rect);
+    tree.update();
+
+    assert_eq!(tree.get(node).unwrap().parent, Some(ROOT_ID));
 }
 
 // ═════════════════════════════════════════════════════
@@ -545,6 +631,31 @@ fn effect_tree_clear() {
     assert_eq!(tree.len(), 1);
 }
 
+#[test]
+fn effect_tree_add_invalid_parent_falls_back_to_root() {
+    let mut tree = EffectTree::new();
+    let node = tree.add(Some(999), 1.0, BlendMode::Normal, Vec::new(), false);
+    tree.update();
+
+    assert_eq!(tree.get(node).unwrap().parent, Some(ROOT_ID));
+}
+
+#[test]
+fn effect_tree_effect_mutations_mark_dirty() {
+    let mut tree = EffectTree::new();
+    let node = tree.add(Some(ROOT_ID), 1.0, BlendMode::Normal, Vec::new(), false);
+    tree.update();
+    assert!(!tree.has_dirty());
+
+    tree.set_filters(node, vec![FilterOp::Blur(4.0)]);
+    assert!(tree.has_dirty());
+    tree.update();
+    assert!(!tree.has_dirty());
+
+    tree.set_blend_mode(node, BlendMode::Multiply);
+    assert!(tree.has_dirty());
+}
+
 // ═════════════════════════════════════════════════════
 //  ScrollTree tests
 // ═════════════════════════════════════════════════════
@@ -622,6 +733,26 @@ fn scroll_tree_clear() {
     assert_eq!(tree.len(), 1);
 }
 
+#[test]
+fn scroll_tree_add_invalid_parent_falls_back_to_root() {
+    let mut tree = ScrollTree::new();
+    let node = tree.add(Some(999), (0.0, 0.0), (100.0, 100.0), true);
+    tree.update();
+
+    assert_eq!(tree.get(node).unwrap().parent, Some(ROOT_ID));
+}
+
+#[test]
+fn scroll_tree_scroll_into_view_uses_explicit_viewport_size() {
+    let mut tree = ScrollTree::new();
+    let node = tree.add(Some(ROOT_ID), (50.0, 50.0), (400.0, 400.0), true);
+    tree.set_viewport_size(node, 100.0, 80.0);
+
+    let (new_dx, new_dy) = tree.scroll_into_view(node, (170.0, 140.0, 40.0, 30.0));
+    assert!((new_dx - 110.0).abs() < 1e-5);
+    assert!((new_dy - 90.0).abs() < 1e-5);
+}
+
 // ═════════════════════════════════════════════════════
 //  PropertyTreeSet tests
 // ═════════════════════════════════════════════════════
@@ -657,7 +788,9 @@ fn property_set_map_point_identity() {
 #[test]
 fn property_set_map_point_with_transform() {
     let mut set = PropertyTreeSet::new();
-    let t_id = set.transform_tree.add(Some(ROOT_ID), Transform2D::translate(100.0, 200.0), true);
+    let t_id = set
+        .transform_tree
+        .add(Some(ROOT_ID), Transform2D::translate(100.0, 200.0), true);
     let mapping = NodeMapping {
         transform_id: t_id,
         ..Default::default()
@@ -673,7 +806,9 @@ fn property_set_map_point_with_transform() {
 #[test]
 fn property_set_map_point_with_scroll() {
     let mut set = PropertyTreeSet::new();
-    let s_id = set.scroll_tree.add(Some(ROOT_ID), (0.0, 0.0), (500.0, 500.0), true);
+    let s_id = set
+        .scroll_tree
+        .add(Some(ROOT_ID), (0.0, 0.0), (500.0, 500.0), true);
     set.scroll_tree.set_scroll_offset(s_id, 30.0, 60.0);
     let mapping = NodeMapping {
         scroll_id: s_id,
@@ -709,8 +844,13 @@ fn property_set_hit_test() {
 #[test]
 fn property_set_visible_rect() {
     let mut set = PropertyTreeSet::new();
-    let c_id = set.clip_tree.add(Some(ROOT_ID), Rect::new(0.0, 0.0, 50.0, 50.0), ClipType::Rect);
-    set.clip_tree.set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 1000.0, 1000.0));
+    let c_id = set.clip_tree.add(
+        Some(ROOT_ID),
+        Rect::new(0.0, 0.0, 50.0, 50.0),
+        ClipType::Rect,
+    );
+    set.clip_tree
+        .set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 1000.0, 1000.0));
     let mapping = NodeMapping {
         clip_id: c_id,
         ..Default::default()
@@ -734,7 +874,8 @@ fn property_set_visible_rect_fully_clipped() {
         Rect::new(200.0, 200.0, 50.0, 50.0),
         ClipType::Rect,
     );
-    set.clip_tree.set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 1000.0, 1000.0));
+    set.clip_tree
+        .set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 1000.0, 1000.0));
     let mapping = NodeMapping {
         clip_id: c_id,
         ..Default::default()
@@ -747,9 +888,39 @@ fn property_set_visible_rect_fully_clipped() {
 }
 
 #[test]
+fn property_set_visible_rect_transforms_clipped_local_bounds() {
+    let mut set = PropertyTreeSet::new();
+    let t_id = set
+        .transform_tree
+        .add(Some(ROOT_ID), Transform2D::translate(100.0, 100.0), true);
+    let c_id = set.clip_tree.add(
+        Some(ROOT_ID),
+        Rect::new(0.0, 0.0, 50.0, 50.0),
+        ClipType::Rect,
+    );
+    set.clip_tree
+        .set_clip_rect(ROOT_ID, Rect::new(-1000.0, -1000.0, 2000.0, 2000.0));
+    let mapping = NodeMapping {
+        transform_id: t_id,
+        clip_id: c_id,
+        ..Default::default()
+    };
+    let elem = set.add_element(mapping, Rect::new(0.0, 0.0, 100.0, 100.0));
+    set.update();
+
+    let visible = set.visible_rect(elem).unwrap();
+    assert!((visible.x - 100.0).abs() < 1e-5);
+    assert!((visible.y - 100.0).abs() < 1e-5);
+    assert!((visible.width - 50.0).abs() < 1e-5);
+    assert!((visible.height - 50.0).abs() < 1e-5);
+}
+
+#[test]
 fn property_set_damage_rect_basic() {
     let mut set = PropertyTreeSet::new();
-    let t_id = set.transform_tree.add(Some(ROOT_ID), Transform2D::translate(50.0, 50.0), true);
+    let t_id = set
+        .transform_tree
+        .add(Some(ROOT_ID), Transform2D::translate(50.0, 50.0), true);
     let mapping = NodeMapping {
         transform_id: t_id,
         ..Default::default()
@@ -790,9 +961,83 @@ fn property_set_damage_rect_with_blur() {
 }
 
 #[test]
+fn property_set_damage_rect_includes_ancestor_filters() {
+    let mut set = PropertyTreeSet::new();
+    let ancestor = set.effect_tree.add(
+        Some(ROOT_ID),
+        1.0,
+        BlendMode::Normal,
+        vec![FilterOp::Blur(5.0)],
+        false,
+    );
+    let child = set
+        .effect_tree
+        .add(Some(ancestor), 1.0, BlendMode::Normal, Vec::new(), false);
+    let mapping = NodeMapping {
+        effect_id: child,
+        ..Default::default()
+    };
+    let elem = set.add_element(mapping, Rect::new(0.0, 0.0, 100.0, 100.0));
+    set.update();
+
+    let damage = set.damage_rect(elem);
+    assert!((damage.x - (-15.0)).abs() < 1e-5);
+    assert!((damage.y - (-15.0)).abs() < 1e-5);
+    assert!((damage.width - 130.0).abs() < 1e-5);
+    assert!((damage.height - 130.0).abs() < 1e-5);
+}
+
+#[test]
+fn property_set_hit_test_respects_transformed_clip() {
+    let mut set = PropertyTreeSet::new();
+    let t_id = set
+        .transform_tree
+        .add(Some(ROOT_ID), Transform2D::translate(100.0, 0.0), true);
+    let c_id = set.clip_tree.add(
+        Some(ROOT_ID),
+        Rect::new(0.0, 0.0, 50.0, 50.0),
+        ClipType::Rect,
+    );
+    set.clip_tree
+        .set_clip_rect(ROOT_ID, Rect::new(-1000.0, -1000.0, 2000.0, 2000.0));
+    let mapping = NodeMapping {
+        transform_id: t_id,
+        clip_id: c_id,
+        ..Default::default()
+    };
+    let elem = set.add_element(mapping, Rect::new(0.0, 0.0, 100.0, 100.0));
+    set.update();
+
+    let hits = set.map_point_from_screen((125.0, 25.0));
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].0, elem);
+
+    let hits = set.map_point_from_screen((175.0, 25.0));
+    assert!(hits.is_empty());
+}
+
+#[test]
+fn property_set_hit_test_skips_fully_transparent_effect_chains() {
+    let mut set = PropertyTreeSet::new();
+    let e_id = set
+        .effect_tree
+        .add(Some(ROOT_ID), 0.0, BlendMode::Normal, Vec::new(), false);
+    let mapping = NodeMapping {
+        effect_id: e_id,
+        ..Default::default()
+    };
+    set.add_element(mapping, Rect::new(0.0, 0.0, 100.0, 100.0));
+    set.update();
+
+    let hits = set.map_point_from_screen((10.0, 10.0));
+    assert!(hits.is_empty());
+}
+
+#[test]
 fn property_set_clear() {
     let mut set = PropertyTreeSet::new();
-    set.transform_tree.add(Some(ROOT_ID), Transform2D::identity(), true);
+    set.transform_tree
+        .add(Some(ROOT_ID), Transform2D::identity(), true);
     set.add_element(NodeMapping::default(), Rect::new(0.0, 0.0, 10.0, 10.0));
     set.clear();
     assert_eq!(set.element_count(), 0);
@@ -802,11 +1047,22 @@ fn property_set_clear() {
 #[test]
 fn property_set_update_all_trees() {
     let mut set = PropertyTreeSet::new();
-    let t_id = set.transform_tree.add(Some(ROOT_ID), Transform2D::translate(5.0, 5.0), true);
-    let c_id = set.clip_tree.add(Some(ROOT_ID), Rect::new(0.0, 0.0, 200.0, 200.0), ClipType::Rect);
-    set.clip_tree.set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 1000.0, 1000.0));
-    let e_id = set.effect_tree.add(Some(ROOT_ID), 0.8, BlendMode::Normal, Vec::new(), false);
-    let s_id = set.scroll_tree.add(Some(ROOT_ID), (0.0, 0.0), (100.0, 100.0), true);
+    let t_id = set
+        .transform_tree
+        .add(Some(ROOT_ID), Transform2D::translate(5.0, 5.0), true);
+    let c_id = set.clip_tree.add(
+        Some(ROOT_ID),
+        Rect::new(0.0, 0.0, 200.0, 200.0),
+        ClipType::Rect,
+    );
+    set.clip_tree
+        .set_clip_rect(ROOT_ID, Rect::new(0.0, 0.0, 1000.0, 1000.0));
+    let e_id = set
+        .effect_tree
+        .add(Some(ROOT_ID), 0.8, BlendMode::Normal, Vec::new(), false);
+    let s_id = set
+        .scroll_tree
+        .add(Some(ROOT_ID), (0.0, 0.0), (100.0, 100.0), true);
 
     let mapping = NodeMapping {
         transform_id: t_id,

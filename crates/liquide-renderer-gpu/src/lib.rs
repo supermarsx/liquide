@@ -1,10 +1,13 @@
 #![doc = "GPU-accelerated renderer using Vulkan compute shaders for the Liquide compositor."]
 #![doc = ""]
-#![doc = "Implements GPU-based rendering of scene graph primitives using Vulkan"]
-#![doc = "compute pipelines for compositing, blur, shadow, and cursor rendering."]
-#![doc = "This renderer must produce visually equivalent output to the CPU reference"]
-#![doc = "renderer in `liquide-renderer-cpu`.  If no GPU is available or the device"]
-#![doc = "is lost, rendering falls back to the CPU path transparently."]
+#![doc = "DEPRECATED: This crate is a stub that never executed real GPU work —"]
+#![doc = "`ComputePipeline::execute_frame` returns zero-timed placeholder frames."]
+#![doc = "New code MUST use `liquide-renderer-wgpu` (production) or"]
+#![doc = "`liquide-renderer-cpu` (reference). This crate is retained only so"]
+#![doc = "existing call sites compile while they migrate away."]
+#![deprecated(
+    note = "liquide-renderer-gpu is a non-functional stub. Use liquide-renderer-wgpu or liquide-renderer-cpu."
+)]
 
 pub mod audit;
 pub mod blur;

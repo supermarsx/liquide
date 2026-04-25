@@ -83,12 +83,10 @@ impl Privileges {
             use std::fs;
             use std::os::unix::fs::PermissionsExt;
 
-            fs::create_dir_all(&path).map_err(|e| {
-                LogindError::Privilege(format!("failed to create {path}: {e}"))
-            })?;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).map_err(|e| {
-                LogindError::Privilege(format!("failed to chmod {path}: {e}"))
-            })?;
+            fs::create_dir_all(&path)
+                .map_err(|e| LogindError::Privilege(format!("failed to create {path}: {e}")))?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .map_err(|e| LogindError::Privilege(format!("failed to chmod {path}: {e}")))?;
         }
 
         #[cfg(not(target_os = "linux"))]
@@ -109,14 +107,8 @@ impl Privileges {
         env.insert("XDG_RUNTIME_DIR".to_string(), runtime_dir);
         env.insert("XDG_SESSION_TYPE".to_string(), "wayland".to_string());
         env.insert("WAYLAND_DISPLAY".to_string(), "wayland-0".to_string());
-        env.insert(
-            "XDG_CURRENT_DESKTOP".to_string(),
-            "LiquiDE".to_string(),
-        );
-        env.insert(
-            "XDG_SESSION_DESKTOP".to_string(),
-            "liquide".to_string(),
-        );
+        env.insert("XDG_CURRENT_DESKTOP".to_string(), "LiquiDE".to_string());
+        env.insert("XDG_SESSION_DESKTOP".to_string(), "liquide".to_string());
         env
     }
 }

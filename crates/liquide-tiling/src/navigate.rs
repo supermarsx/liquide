@@ -94,9 +94,5 @@ pub fn prev_index(current: usize, len: usize) -> usize {
     if len == 0 {
         return 0;
     }
-    if current == 0 {
-        len - 1
-    } else {
-        current - 1
-    }
+    if current == 0 { len - 1 } else { current - 1 }
 }

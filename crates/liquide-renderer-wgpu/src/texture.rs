@@ -12,12 +12,7 @@ pub struct GpuTexture {
 
 impl GpuTexture {
     /// Create a new RGBA texture.
-    pub fn new(
-        device: &wgpu::Device,
-        width: u32,
-        height: u32,
-        label: &str,
-    ) -> Result<Self> {
+    pub fn new(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Result<Self> {
         let size = wgpu::Extent3d {
             width,
             height,

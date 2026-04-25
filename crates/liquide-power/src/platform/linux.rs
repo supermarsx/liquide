@@ -98,10 +98,8 @@ impl PowerManager {
 
             let status = read_file("status").unwrap_or_default();
             let capacity_str = read_file("capacity").unwrap_or_default();
-            let energy_now = read_file("energy_now")
-                .and_then(|s| s.parse::<u64>().ok());
-            let power_now = read_file("power_now")
-                .and_then(|s| s.parse::<u64>().ok());
+            let energy_now = read_file("energy_now").and_then(|s| s.parse::<u64>().ok());
+            let power_now = read_file("power_now").and_then(|s| s.parse::<u64>().ok());
 
             let percent = capacity_str.parse::<u8>().unwrap_or(0).min(100);
             let charging = status == "Charging";

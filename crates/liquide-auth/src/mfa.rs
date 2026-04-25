@@ -101,9 +101,9 @@ pub fn verify_with_store(
 ) -> super::Result<bool> {
     match challenge.method {
         MfaMethod::Totp => {
-            let secret = store.take_secret(&challenge.challenge_id).ok_or(
-                AuthError::MfaFailed
-            )?;
+            let secret = store
+                .take_secret(&challenge.challenge_id)
+                .ok_or(AuthError::MfaFailed)?;
             verify_totp(&secret, code)
         }
         MfaMethod::Fido2 => {
@@ -226,9 +226,7 @@ fn hmac_sha1(key: &[u8], message: &[u8]) -> [u8; 20] {
 
 /// SHA-1 hash (FIPS 180-4) -- ONLY for HMAC-SHA1 in TOTP. NOT for security.
 fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut h: [u32; 5] = [
-        0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0,
-    ];
+    let mut h: [u32; 5] = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0];
 
     // Pre-processing: pad message
     let bit_len = (data.len() as u64) * 8;
@@ -399,10 +397,7 @@ mod tests {
         // Non-digits
         assert_eq!(verify_totp("JBSWY3DPEHPK3PXP", "abcdef").unwrap(), false);
         // Too long
-        assert_eq!(
-            verify_totp("JBSWY3DPEHPK3PXP", "1234567").unwrap(),
-            false
-        );
+        assert_eq!(verify_totp("JBSWY3DPEHPK3PXP", "1234567").unwrap(), false);
     }
 
     #[test]

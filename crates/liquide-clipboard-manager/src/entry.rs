@@ -152,7 +152,10 @@ impl ClipboardEntry {
                 truncate_preview(plain_fallback, max_len)
             }
             ClipboardContent::Image {
-                width, height, format, ..
+                width,
+                height,
+                format,
+                ..
             } => {
                 let label = match format {
                     ImageFormat::Png => "PNG",
@@ -199,7 +202,16 @@ impl ClipboardEntry {
 /// (ellipsis) if truncated.  Newlines are replaced with "\u{21b5}" (return
 /// symbol) for single-line display.
 fn truncate_preview(s: &str, max_len: usize) -> String {
-    let sanitised: String = s.chars().map(|c| if c == '\n' || c == '\r' { '\u{21b5}' } else { c }).collect();
+    let sanitised: String = s
+        .chars()
+        .map(|c| {
+            if c == '\n' || c == '\r' {
+                '\u{21b5}'
+            } else {
+                c
+            }
+        })
+        .collect();
     if sanitised.chars().count() <= max_len {
         sanitised
     } else {

@@ -48,9 +48,7 @@ pub fn install_from_path(
     let dest_path = install_dir.join(file_name);
     std::fs::copy(source_path, &dest_path)?;
 
-    let file_size = std::fs::metadata(&dest_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let file_size = std::fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
 
     let stem = dest_path
         .file_stem()

@@ -121,9 +121,7 @@ fn item_display() {
 fn category_sort_keys_order() {
     assert!(ItemCategory::Hardware.sort_key() < ItemCategory::SystemServices.sort_key());
     assert!(ItemCategory::SystemServices.sort_key() < ItemCategory::Communications.sort_key());
-    assert!(
-        ItemCategory::Communications.sort_key() < ItemCategory::ApplicationStatus.sort_key()
-    );
+    assert!(ItemCategory::Communications.sort_key() < ItemCategory::ApplicationStatus.sort_key());
 }
 
 #[test]
@@ -246,11 +244,20 @@ fn menu_find_item_nested() {
 #[test]
 fn menu_activate_checkbox() {
     let mut menu = TrayMenu::new().add_item(TrayMenuItem::checkbox(1, "Enable", false));
-    assert_eq!(menu.find_item(1).unwrap().type_, MenuItemType::Checkbox(false));
+    assert_eq!(
+        menu.find_item(1).unwrap().type_,
+        MenuItemType::Checkbox(false)
+    );
     assert!(menu.activate_item(1));
-    assert_eq!(menu.find_item(1).unwrap().type_, MenuItemType::Checkbox(true));
+    assert_eq!(
+        menu.find_item(1).unwrap().type_,
+        MenuItemType::Checkbox(true)
+    );
     assert!(menu.activate_item(1));
-    assert_eq!(menu.find_item(1).unwrap().type_, MenuItemType::Checkbox(false));
+    assert_eq!(
+        menu.find_item(1).unwrap().type_,
+        MenuItemType::Checkbox(false)
+    );
 }
 
 #[test]
@@ -273,7 +280,10 @@ fn menu_activate_disabled() {
     let mut menu =
         TrayMenu::new().add_item(TrayMenuItem::checkbox(1, "Disabled", false).with_enabled(false));
     assert!(!menu.activate_item(1));
-    assert_eq!(menu.find_item(1).unwrap().type_, MenuItemType::Checkbox(false));
+    assert_eq!(
+        menu.find_item(1).unwrap().type_,
+        MenuItemType::Checkbox(false)
+    );
 }
 
 #[test]
@@ -344,9 +354,18 @@ fn menu_item_type_predicates() {
 
 #[test]
 fn menu_item_type_toggle() {
-    assert_eq!(MenuItemType::Checkbox(false).toggled(), MenuItemType::Checkbox(true));
-    assert_eq!(MenuItemType::Checkbox(true).toggled(), MenuItemType::Checkbox(false));
-    assert_eq!(MenuItemType::Radio(false).toggled(), MenuItemType::Radio(true));
+    assert_eq!(
+        MenuItemType::Checkbox(false).toggled(),
+        MenuItemType::Checkbox(true)
+    );
+    assert_eq!(
+        MenuItemType::Checkbox(true).toggled(),
+        MenuItemType::Checkbox(false)
+    );
+    assert_eq!(
+        MenuItemType::Radio(false).toggled(),
+        MenuItemType::Radio(true)
+    );
     assert_eq!(MenuItemType::Standard.toggled(), MenuItemType::Standard);
     assert_eq!(MenuItemType::Separator.toggled(), MenuItemType::Separator);
 }
@@ -418,7 +437,10 @@ fn build_tree_nested() {
     assert_eq!(menu.len(), 1);
     assert_eq!(menu.items[0].children.len(), 2);
     assert_eq!(menu.items[0].children[0].label, "Child");
-    assert_eq!(menu.items[0].children[1].type_, MenuItemType::Checkbox(true));
+    assert_eq!(
+        menu.items[0].children[1].type_,
+        MenuItemType::Checkbox(true)
+    );
 }
 
 #[test]
@@ -732,7 +754,10 @@ fn host_items_by_category() {
     assert_eq!(hw.len(), 1);
     assert_eq!(hw[0].id, "hw");
 
-    assert!(host.items_by_category(ItemCategory::SystemServices).is_empty());
+    assert!(
+        host.items_by_category(ItemCategory::SystemServices)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -1094,7 +1119,10 @@ fn item_at_point_overflow_indicator() {
     let bounds = compute_tray_bounds(10, 50.0, &layout);
     assert!(bounds.has_overflow);
     let ov = bounds.overflow_indicator.unwrap();
-    assert_eq!(item_at_point(&bounds, ov.x + 1.0, ov.y + 1.0), Some(usize::MAX));
+    assert_eq!(
+        item_at_point(&bounds, ov.x + 1.0, ov.y + 1.0),
+        Some(usize::MAX)
+    );
 }
 
 #[test]

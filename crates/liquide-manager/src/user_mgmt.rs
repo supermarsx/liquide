@@ -94,7 +94,13 @@ impl AdminStore {
     }
 
     /// Record a failed login attempt. Returns true if account is now locked out.
-    pub fn record_failure(&mut self, username: &str, max_attempts: u32, lockout_sec: u64, now: u64) -> bool {
+    pub fn record_failure(
+        &mut self,
+        username: &str,
+        max_attempts: u32,
+        lockout_sec: u64,
+        now: u64,
+    ) -> bool {
         if let Some(account) = self.accounts.iter_mut().find(|a| a.username == username) {
             account.login_failures += 1;
             if account.login_failures >= max_attempts {

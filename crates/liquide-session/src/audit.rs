@@ -17,47 +17,25 @@ pub enum AuditLevel {
 #[derive(Debug, Clone)]
 pub enum SessionAuditEvent {
     /// A new session was created.
-    SessionCreated {
-        session_id: String,
-        user: String,
-    },
+    SessionCreated { session_id: String, user: String },
     /// A state transition occurred.
-    StateTransition {
-        from: String,
-        to: String,
-    },
+    StateTransition { from: String, to: String },
     /// The heartbeat monitor detected a timeout.
-    HeartbeatTimeout {
-        missed: u32,
-    },
+    HeartbeatTimeout { missed: u32 },
     /// A worker was started.
-    WorkerStarted {
-        worker: String,
-    },
+    WorkerStarted { worker: String },
     /// A worker was stopped.
-    WorkerStopped {
-        worker: String,
-    },
+    WorkerStopped { worker: String },
     /// A worker failed.
-    WorkerFailed {
-        worker: String,
-        reason: String,
-    },
+    WorkerFailed { worker: String, reason: String },
     /// A restart attempt was made.
-    RestartAttempt {
-        count: u32,
-        backoff_ms: u64,
-    },
+    RestartAttempt { count: u32, backoff_ms: u64 },
     /// The session entered safe mode.
     SafeModeEntered,
     /// A plugin was quarantined.
-    PluginQuarantined {
-        plugin_id: String,
-    },
+    PluginQuarantined { plugin_id: String },
     /// A sandbox violation was detected.
-    SandboxViolation {
-        detail: String,
-    },
+    SandboxViolation { detail: String },
     /// A resource limit warning was raised.
     ResourceLimitWarning {
         resource: String,
@@ -69,9 +47,7 @@ pub enum SessionAuditEvent {
         token_id: String,
     },
     /// The session was terminated.
-    SessionTerminated {
-        reason: String,
-    },
+    SessionTerminated { reason: String },
 }
 
 impl SessionAuditEvent {

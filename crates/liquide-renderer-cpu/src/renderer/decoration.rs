@@ -11,11 +11,7 @@ use super::SoftwareRenderer;
 
 impl SoftwareRenderer {
     /// Render a Decoration scene node.
-    pub(crate) fn render_decoration_node(
-        &mut self,
-        node: &FlatNode,
-        fb: &mut FrameBuffer,
-    ) {
+    pub(crate) fn render_decoration_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 

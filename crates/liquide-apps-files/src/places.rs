@@ -78,7 +78,13 @@ impl PlaceItem {
 
     /// Create a device place.
     #[must_use]
-    pub fn device(label: &str, icon: &str, uri: &str, ejectable: bool, free_space: Option<u64>) -> Self {
+    pub fn device(
+        label: &str,
+        icon: &str,
+        uri: &str,
+        ejectable: bool,
+        free_space: Option<u64>,
+    ) -> Self {
         Self {
             label: label.to_string(),
             icon: icon.to_string(),
@@ -186,7 +192,8 @@ impl PlacesModel {
         for (label, icon, path) in &bookmarks {
             // Home always shown; others only if they exist on disk.
             if *label == "Home" || std::path::Path::new(path).is_dir() {
-                self.items.push(PlaceItem::bookmark(label, icon, &format!("file://{path}")));
+                self.items
+                    .push(PlaceItem::bookmark(label, icon, &format!("file://{path}")));
             }
         }
 
@@ -259,11 +266,19 @@ impl PlacesModel {
     }
 
     /// Add a mounted device.
-    pub fn mount_device(&mut self, label: &str, icon: &str, uri: &str, ejectable: bool, free_space: Option<u64>) {
+    pub fn mount_device(
+        &mut self,
+        label: &str,
+        icon: &str,
+        uri: &str,
+        ejectable: bool,
+        free_space: Option<u64>,
+    ) {
         if self.devices.iter().any(|d| d.uri == uri) {
             return;
         }
-        self.devices.push(PlaceItem::device(label, icon, uri, ejectable, free_space));
+        self.devices
+            .push(PlaceItem::device(label, icon, uri, ejectable, free_space));
         self.refresh();
     }
 
@@ -364,7 +379,13 @@ fn detect_system_devices() -> Vec<PlaceItem> {
             if std::path::Path::new(&drive).exists() {
                 let label = format!("{}: Drive", letter as char);
                 let uri = format!("file:///{}", drive.replace('\\', "/"));
-                devices.push(PlaceItem::device(&label, "drive-harddisk", &uri, false, None));
+                devices.push(PlaceItem::device(
+                    &label,
+                    "drive-harddisk",
+                    &uri,
+                    false,
+                    None,
+                ));
             }
         }
     }
@@ -372,7 +393,13 @@ fn detect_system_devices() -> Vec<PlaceItem> {
     #[cfg(target_os = "linux")]
     {
         // Root filesystem.
-        devices.push(PlaceItem::device("Filesystem", "drive-harddisk", "file:///", false, None));
+        devices.push(PlaceItem::device(
+            "Filesystem",
+            "drive-harddisk",
+            "file:///",
+            false,
+            None,
+        ));
         // Scan /media/$USER and /mnt for mounted volumes.
         if let Ok(user) = std::env::var("USER") {
             let media = format!("/media/{user}");
@@ -395,7 +422,13 @@ fn detect_system_devices() -> Vec<PlaceItem> {
     #[cfg(target_os = "macos")]
     {
         // Root filesystem.
-        devices.push(PlaceItem::device("Macintosh HD", "drive-harddisk", "file:///", false, None));
+        devices.push(PlaceItem::device(
+            "Macintosh HD",
+            "drive-harddisk",
+            "file:///",
+            false,
+            None,
+        ));
         // Scan /Volumes for mounted volumes.
         if let Ok(rd) = std::fs::read_dir("/Volumes") {
             for entry in rd.flatten() {

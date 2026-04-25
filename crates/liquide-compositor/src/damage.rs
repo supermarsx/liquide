@@ -69,8 +69,76 @@ impl DamageSet {
     }
 
     /// Merge another damage set into this one.
+    ///
+    /// Deduplicates identical (x, y, class) tuples by preferring the
+    /// highest-priority (lowest numeric value) damage class when the same
+    /// tile coordinate is already present.  Without this the tile encoder
+    /// may re-encode the same tile `N` times and the sort-by-priority
+    /// step is not stable enough to rescue downstream consumers.
     pub fn merge(&mut self, other: &DamageSet) {
-        self.tiles.extend_from_slice(&other.tiles);
+        use std::collections::HashMap;
+        // Fast path: current set empty.
+        if self.tiles.is_empty() {
+            self.tiles.reserve(other.tiles.len());
+            // Still dedup within `other` itself.
+            let mut seen: HashMap<(u32, u32), DamageClass> =
+                HashMap::with_capacity(other.tiles.len());
+            for t in &other.tiles {
+                let key = (t.x, t.y);
+                match seen.get(&key) {
+                    Some(existing) if existing.priority() <= t.class.priority() => {}
+                    _ => {
+                        seen.insert(key, t.class);
+                    }
+                }
+            }
+            self.tiles.extend(
+                seen.into_iter()
+                    .map(|((x, y), class)| DamageTile { x, y, class }),
+            );
+            return;
+        }
+        // General path.
+        let mut seen: HashMap<(u32, u32), DamageClass> =
+            HashMap::with_capacity(self.tiles.len() + other.tiles.len());
+        for t in self.tiles.iter().chain(other.tiles.iter()) {
+            let key = (t.x, t.y);
+            match seen.get(&key) {
+                Some(existing) if existing.priority() <= t.class.priority() => {}
+                _ => {
+                    seen.insert(key, t.class);
+                }
+            }
+        }
+        self.tiles.clear();
+        self.tiles.extend(
+            seen.into_iter()
+                .map(|((x, y), class)| DamageTile { x, y, class }),
+        );
+    }
+
+    /// Deduplicate tiles in place, keeping the highest-priority class per
+    /// (x, y) coordinate.  Call after a sequence of `mark_*` / `add()` calls.
+    pub fn dedup(&mut self) {
+        if self.tiles.len() < 2 {
+            return;
+        }
+        use std::collections::HashMap;
+        let mut seen: HashMap<(u32, u32), DamageClass> = HashMap::with_capacity(self.tiles.len());
+        for t in self.tiles.iter() {
+            let key = (t.x, t.y);
+            match seen.get(&key) {
+                Some(existing) if existing.priority() <= t.class.priority() => {}
+                _ => {
+                    seen.insert(key, t.class);
+                }
+            }
+        }
+        self.tiles.clear();
+        self.tiles.extend(
+            seen.into_iter()
+                .map(|((x, y), class)| DamageTile { x, y, class }),
+        );
     }
 
     /// Whether the damage set is empty (no tiles changed).
@@ -105,7 +173,15 @@ impl DamageSet {
     }
 
     /// Mark all tiles overlapping a pixel-coordinate rectangle as damaged.
-    pub fn mark_rect(&mut self, x: u32, y: u32, width: u32, height: u32, grid_width: u32, grid_height: u32) {
+    pub fn mark_rect(
+        &mut self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        grid_width: u32,
+        grid_height: u32,
+    ) {
         if self.tile_size == 0 || width == 0 || height == 0 {
             return;
         }

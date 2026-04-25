@@ -6,9 +6,12 @@ use crate::tree::AccessibilityTree;
 fn setup() -> (AccessibilityTree, FocusManager, KeyboardNavigation) {
     let mut tree = AccessibilityTree::new();
     tree.set_root(AccessibleNode::new(1, Role::Window, "Main"));
-    tree.add_node(1, AccessibleNode::new(2, Role::Button, "A")).unwrap();
-    tree.add_node(1, AccessibleNode::new(3, Role::Button, "B")).unwrap();
-    tree.add_node(1, AccessibleNode::new(4, Role::Button, "C")).unwrap();
+    tree.add_node(1, AccessibleNode::new(2, Role::Button, "A"))
+        .unwrap();
+    tree.add_node(1, AccessibleNode::new(3, Role::Button, "B"))
+        .unwrap();
+    tree.add_node(1, AccessibleNode::new(4, Role::Button, "C"))
+        .unwrap();
     let mut fm = FocusManager::new();
     fm.build_tab_order(&tree);
     let nav = KeyboardNavigation::new();
@@ -70,7 +73,8 @@ fn test_region_cycling() {
 fn test_no_focusable_nodes() {
     let mut tree = AccessibilityTree::new();
     tree.set_root(AccessibleNode::new(1, Role::Window, "Main"));
-    tree.add_node(1, AccessibleNode::new(2, Role::Label, "Info")).unwrap();
+    tree.add_node(1, AccessibleNode::new(2, Role::Label, "Info"))
+        .unwrap();
     let mut fm = FocusManager::new();
     fm.build_tab_order(&tree);
     let mut nav = KeyboardNavigation::new();
@@ -80,7 +84,10 @@ fn test_no_focusable_nodes() {
 
 #[test]
 fn test_navigation_result_types() {
-    assert_eq!(NavigationResult::FocusMoved(1), NavigationResult::FocusMoved(1));
+    assert_eq!(
+        NavigationResult::FocusMoved(1),
+        NavigationResult::FocusMoved(1)
+    );
     assert_ne!(NavigationResult::FocusMoved(1), NavigationResult::Escaped);
     assert_eq!(NavigationResult::NoChange, NavigationResult::NoChange);
 }

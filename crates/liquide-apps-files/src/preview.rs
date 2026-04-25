@@ -6,11 +6,23 @@ use crate::entry::{EntryKind, FileEntry};
 #[derive(Debug, Clone)]
 pub enum PreviewContent {
     /// Text preview (first N lines).
-    Text { lines: Vec<String>, truncated: bool, total_lines: usize },
+    Text {
+        lines: Vec<String>,
+        truncated: bool,
+        total_lines: usize,
+    },
     /// Image metadata (dimensions, format).
-    Image { width: u32, height: u32, format: String },
+    Image {
+        width: u32,
+        height: u32,
+        format: String,
+    },
     /// Directory summary.
-    Directory { file_count: usize, dir_count: usize, total_size: u64 },
+    Directory {
+        file_count: usize,
+        dir_count: usize,
+        total_size: u64,
+    },
     /// Binary file (just show size + type).
     Binary { size: u64, mime_type: String },
     /// No preview available.
@@ -67,16 +79,29 @@ impl Preview {
         let lines = all_lines.into_iter().take(max_lines).collect();
         Self {
             path,
-            content: PreviewContent::Text { lines, truncated, total_lines: total },
+            content: PreviewContent::Text {
+                lines,
+                truncated,
+                total_lines: total,
+            },
         }
     }
 
     /// Create a directory summary preview.
     #[must_use]
-    pub fn directory_summary(path: String, file_count: usize, dir_count: usize, total_size: u64) -> Self {
+    pub fn directory_summary(
+        path: String,
+        file_count: usize,
+        dir_count: usize,
+        total_size: u64,
+    ) -> Self {
         Self {
             path,
-            content: PreviewContent::Directory { file_count, dir_count, total_size },
+            content: PreviewContent::Directory {
+                file_count,
+                dir_count,
+                total_size,
+            },
         }
     }
 

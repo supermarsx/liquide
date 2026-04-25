@@ -42,14 +42,9 @@ pub enum ImeEvent {
     /// IME composition started.
     CompositionStarted,
     /// Composition text updated.
-    CompositionUpdated {
-        text: String,
-        cursor: usize,
-    },
+    CompositionUpdated { text: String, cursor: usize },
     /// Composition committed – insert this text.
-    CompositionCommitted {
-        text: String,
-    },
+    CompositionCommitted { text: String },
     /// Composition cancelled.
     CompositionCancelled,
     /// Candidate list changed.
@@ -166,10 +161,8 @@ impl ImeContext {
                 let text = state.text.clone();
                 let cursor = state.cursor;
                 self.composition = state;
-                self.events.push(ImeEvent::CompositionUpdated {
-                    text,
-                    cursor,
-                });
+                self.events
+                    .push(ImeEvent::CompositionUpdated { text, cursor });
             }
             CompositionUpdate::Commit(text) => {
                 self.composition = CompositionState::empty();
@@ -230,8 +223,8 @@ impl ImeContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::composition::CompositionClause;
     use crate::composition::ClauseStyle;
+    use crate::composition::CompositionClause;
 
     #[test]
     fn test_ime_context_lifecycle() {

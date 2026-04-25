@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::animation::{Animation, AnimationId, AnimationState};
 use crate::easing::EasingFunction;
-use crate::keyframe::{AnimValue, Keyframe, KeyframeTrack};
+use crate::keyframe::AnimValue;
 use crate::transition::Transition;
 
 /// Events emitted by the scheduler for the main thread to consume.
@@ -125,7 +125,8 @@ impl CompositorAnimScheduler {
 
             // Detect iteration boundary.
             if anim.current_iteration > prev_iter && anim.state == AnimationState::Running {
-                self.pending_events.push(AnimationEvent::IterationEnd(*id, anim.current_iteration));
+                self.pending_events
+                    .push(AnimationEvent::IterationEnd(*id, anim.current_iteration));
             }
 
             if !still_active {
@@ -197,15 +198,26 @@ impl Default for CompositorAnimScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keyframe::KeyframeTrack;
+    use crate::keyframe::{Keyframe, KeyframeTrack};
 
     fn make_anim(scheduler: &mut CompositorAnimScheduler, duration_ms: f32) -> AnimationId {
         let id = scheduler.next_animation_id();
         let mut tracks = HashMap::new();
-        tracks.insert("opacity".to_string(), KeyframeTrack::new(vec![
-            Keyframe { offset: 0.0, value: AnimValue::Float(0.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 1.0, value: AnimValue::Float(1.0), easing: EasingFunction::Linear },
-        ]));
+        tracks.insert(
+            "opacity".to_string(),
+            KeyframeTrack::new(vec![
+                Keyframe {
+                    offset: 0.0,
+                    value: AnimValue::Float(0.0),
+                    easing: EasingFunction::Linear,
+                },
+                Keyframe {
+                    offset: 1.0,
+                    value: AnimValue::Float(1.0),
+                    easing: EasingFunction::Linear,
+                },
+            ]),
+        );
         let anim = Animation::new(id, tracks, duration_ms);
         scheduler.add_animation(anim);
         id
@@ -264,9 +276,12 @@ mod tests {
     fn transition_lifecycle() {
         let mut s = CompositorAnimScheduler::new();
         let _id = s.add_transition(
-            42, "opacity".to_string(),
-            AnimValue::Float(0.0), AnimValue::Float(1.0),
-            200.0, EasingFunction::Linear,
+            42,
+            "opacity".to_string(),
+            AnimValue::Float(0.0),
+            AnimValue::Float(1.0),
+            200.0,
+            EasingFunction::Linear,
         );
         assert_eq!(s.active_count(), 1);
 
@@ -286,17 +301,23 @@ mod tests {
     fn transition_retarget_on_add() {
         let mut s = CompositorAnimScheduler::new();
         let id1 = s.add_transition(
-            1, "opacity".to_string(),
-            AnimValue::Float(0.0), AnimValue::Float(1.0),
-            200.0, EasingFunction::Linear,
+            1,
+            "opacity".to_string(),
+            AnimValue::Float(0.0),
+            AnimValue::Float(1.0),
+            200.0,
+            EasingFunction::Linear,
         );
         s.tick_all(100.0); // midpoint → 0.5
 
         // Adding same layer+property should retarget, not create new.
         let id2 = s.add_transition(
-            1, "opacity".to_string(),
-            AnimValue::Float(0.0), AnimValue::Float(0.0),
-            200.0, EasingFunction::Linear,
+            1,
+            "opacity".to_string(),
+            AnimValue::Float(0.0),
+            AnimValue::Float(0.0),
+            200.0,
+            EasingFunction::Linear,
         );
         // Should return the same ID since it was retargeted.
         assert_eq!(id1, id2);
@@ -329,10 +350,21 @@ mod tests {
         let mut s = CompositorAnimScheduler::new();
         let id = s.next_animation_id();
         let mut tracks = HashMap::new();
-        tracks.insert("opacity".to_string(), KeyframeTrack::new(vec![
-            Keyframe { offset: 0.0, value: AnimValue::Float(0.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 1.0, value: AnimValue::Float(1.0), easing: EasingFunction::Linear },
-        ]));
+        tracks.insert(
+            "opacity".to_string(),
+            KeyframeTrack::new(vec![
+                Keyframe {
+                    offset: 0.0,
+                    value: AnimValue::Float(0.0),
+                    easing: EasingFunction::Linear,
+                },
+                Keyframe {
+                    offset: 1.0,
+                    value: AnimValue::Float(1.0),
+                    easing: EasingFunction::Linear,
+                },
+            ]),
+        );
         let mut anim = Animation::new(id, tracks, 100.0);
         anim.iteration_count = 3.0;
         s.add_animation(anim);

@@ -6,9 +6,9 @@ use std::sync::Arc;
 use bytes::{Bytes, BytesMut};
 use liquide_protocol::FrameHeader;
 
+use crate::Transport;
 use crate::codec;
 use crate::stats::TransportStats;
-use crate::Transport;
 
 /// A framed connection that wraps a [`Transport`] and adds protocol-level
 /// frame encoding/decoding plus statistics tracking.
@@ -39,11 +39,7 @@ impl<T: Transport> Connection<T> {
     /// Send a protocol frame (header + payload) over the transport.
     ///
     /// The header and payload are serialised into a single transport message.
-    pub async fn send_frame(
-        &self,
-        header: &FrameHeader,
-        payload: &[u8],
-    ) -> crate::Result<()> {
+    pub async fn send_frame(&self, header: &FrameHeader, payload: &[u8]) -> crate::Result<()> {
         let mut buf = BytesMut::with_capacity(codec::FRAME_HEADER_SIZE + payload.len());
         codec::encode_frame(header, payload, &mut buf);
         let data = buf.freeze();

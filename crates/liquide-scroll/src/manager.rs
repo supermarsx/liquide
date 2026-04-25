@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use crate::momentum::MomentumScroller;
 use crate::overscroll::OverscrollEffect;
-use crate::scrollbar::{self, AutoHideController, Orientation, Rect, ScrollbarHit, ScrollbarState, ScrollbarStyle};
-use crate::smooth::{SmoothScroller, SNAP_ANIMATION_DURATION_MS};
+use crate::scrollbar::{
+    self, AutoHideController, Orientation, Rect, ScrollbarHit, ScrollbarState, ScrollbarStyle,
+};
+use crate::smooth::{SNAP_ANIMATION_DURATION_MS, SmoothScroller};
 use crate::snap::{self, SnapAlignment, SnapConfig, SnapType};
 use crate::state::ScrollState;
 use crate::wheel::WheelConfig;
@@ -110,8 +112,12 @@ impl ScrollManager {
         // Cancel any active momentum when user scrolls with wheel.
         c.momentum.cancel();
 
-        let dx = self.wheel_config.compute_delta(delta.0, false, c.state.viewport_size.0);
-        let dy = self.wheel_config.compute_delta(delta.1, false, c.state.viewport_size.1);
+        let dx = self
+            .wheel_config
+            .compute_delta(delta.0, false, c.state.viewport_size.0);
+        let dy = self
+            .wheel_config
+            .compute_delta(delta.1, false, c.state.viewport_size.1);
 
         let use_smooth = smooth || self.wheel_config.smooth_wheel;
 
@@ -230,7 +236,8 @@ impl ScrollManager {
         // Convert track-space delta to content-space delta.
         // Track length approximation: viewport size (the scrollbar track typically spans the viewport).
         let track_length = viewport;
-        let ratio = (content - viewport) / (track_length - 30.0_f32.max(track_length * viewport / content));
+        let ratio =
+            (content - viewport) / (track_length - 30.0_f32.max(track_length * viewport / content));
         let content_delta = delta * ratio.max(1.0);
 
         match orientation {
@@ -329,13 +336,21 @@ impl ScrollManager {
     /// Compute the vertical scrollbar state for a container.
     pub fn scrollbar_v(&self, id: u64, track_length: f32) -> Option<ScrollbarState> {
         let c = self.containers.get(&id)?;
-        Some(scrollbar::compute(&c.state, track_length, Orientation::Vertical))
+        Some(scrollbar::compute(
+            &c.state,
+            track_length,
+            Orientation::Vertical,
+        ))
     }
 
     /// Compute the horizontal scrollbar state for a container.
     pub fn scrollbar_h(&self, id: u64, track_length: f32) -> Option<ScrollbarState> {
         let c = self.containers.get(&id)?;
-        Some(scrollbar::compute(&c.state, track_length, Orientation::Horizontal))
+        Some(scrollbar::compute(
+            &c.state,
+            track_length,
+            Orientation::Horizontal,
+        ))
     }
 
     /// Get the auto-hide opacity for the vertical scrollbar.
@@ -361,9 +376,9 @@ impl ScrollManager {
 
     /// Whether any container has active animations.
     pub fn has_active_animations(&self) -> bool {
-        self.containers.values().any(|c| {
-            c.smooth.is_animating() || c.momentum.is_active()
-        })
+        self.containers
+            .values()
+            .any(|c| c.smooth.is_animating() || c.momentum.is_active())
     }
 
     /// Get the overscroll visual displacement for rendering.
@@ -446,7 +461,8 @@ fn try_snap(c: &mut ScrollContainer) {
 
     if snapped {
         let current = c.state.offset;
-        c.smooth.scroll_to(current, target, SNAP_ANIMATION_DURATION_MS);
+        c.smooth
+            .scroll_to(current, target, SNAP_ANIMATION_DURATION_MS);
     }
 }
 

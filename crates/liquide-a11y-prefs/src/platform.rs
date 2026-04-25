@@ -32,8 +32,7 @@ fn detect_platform(prefs: &mut AccessibilityPreferences) {
 #[cfg(target_os = "windows")]
 fn detect_windows(prefs: &mut AccessibilityPreferences) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION, SPI_GETHIGHCONTRAST,
-        SPI_GETSCREENREADER,
+        SPI_GETCLIENTAREAANIMATION, SPI_GETHIGHCONTRAST, SPI_GETSCREENREADER, SystemParametersInfoW,
     };
 
     // --- High contrast ---
@@ -50,12 +49,7 @@ fn detect_windows(prefs: &mut AccessibilityPreferences) {
     hc_buf[..4].copy_from_slice(&hc_size.to_le_bytes());
 
     let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETHIGHCONTRAST,
-            hc_size,
-            hc_buf.as_mut_ptr().cast(),
-            0,
-        )
+        SystemParametersInfoW(SPI_GETHIGHCONTRAST, hc_size, hc_buf.as_mut_ptr().cast(), 0)
     };
     if ok != 0 {
         let flags = u32::from_le_bytes([hc_buf[4], hc_buf[5], hc_buf[6], hc_buf[7]]);
@@ -248,8 +242,7 @@ fn detect_linux(prefs: &mut AccessibilityPreferences) {
     }
 
     // --- Text scaling factor ---
-    if let Some(factor) =
-        gsettings_get_double("org.gnome.desktop.interface", "text-scaling-factor")
+    if let Some(factor) = gsettings_get_double("org.gnome.desktop.interface", "text-scaling-factor")
     {
         prefs.text_scale_factor = factor as f32;
         prefs.large_text = factor > 1.2;
@@ -267,18 +260,17 @@ fn detect_linux(prefs: &mut AccessibilityPreferences) {
     {
         prefs.reduced_motion = true;
     }
-    if let Some(val) =
-        gsettings_get_bool("org.gnome.desktop.interface", "enable-animations")
-    {
+    if let Some(val) = gsettings_get_bool("org.gnome.desktop.interface", "enable-animations") {
         if !val {
             prefs.reduced_motion = true;
         }
     }
 
     // --- Screen reader ---
-    if let Some(val) =
-        gsettings_get_bool("org.gnome.desktop.a11y.applications", "screen-reader-enabled")
-    {
+    if let Some(val) = gsettings_get_bool(
+        "org.gnome.desktop.a11y.applications",
+        "screen-reader-enabled",
+    ) {
         prefs.screen_reader_active = val;
     }
 
@@ -294,8 +286,7 @@ fn detect_linux(prefs: &mut AccessibilityPreferences) {
     }
 
     // --- Reduced transparency (GNOME 42+) ---
-    if let Some(val) =
-        gsettings_get_bool("org.gnome.desktop.a11y.interface", "reduce-transparency")
+    if let Some(val) = gsettings_get_bool("org.gnome.desktop.a11y.interface", "reduce-transparency")
     {
         prefs.reduced_transparency = val;
     }
@@ -363,16 +354,12 @@ fn detect_macos(prefs: &mut AccessibilityPreferences) {
     }
 
     // --- Increase contrast ---
-    if defaults_read_bool("com.apple.universalaccess", "increaseContrast")
-        .unwrap_or(false)
-    {
+    if defaults_read_bool("com.apple.universalaccess", "increaseContrast").unwrap_or(false) {
         prefs.increase_contrast = true;
     }
 
     // --- Inverted colors ---
-    if defaults_read_bool("com.apple.universalaccess", "whiteOnBlack")
-        .unwrap_or(false)
-    {
+    if defaults_read_bool("com.apple.universalaccess", "whiteOnBlack").unwrap_or(false) {
         prefs.inverted_colors = true;
     }
 
@@ -382,23 +369,17 @@ fn detect_macos(prefs: &mut AccessibilityPreferences) {
     }
 
     // --- Screen reader (VoiceOver) ---
-    if defaults_read_bool("com.apple.universalaccess", "voiceOverOnOffKey")
-        .unwrap_or(false)
-    {
+    if defaults_read_bool("com.apple.universalaccess", "voiceOverOnOffKey").unwrap_or(false) {
         prefs.screen_reader_active = true;
     }
 
     // --- Sticky keys ---
-    if defaults_read_bool("com.apple.universalaccess", "stickyKey")
-        .unwrap_or(false)
-    {
+    if defaults_read_bool("com.apple.universalaccess", "stickyKey").unwrap_or(false) {
         prefs.sticky_keys = true;
     }
 
     // --- Slow keys ---
-    if defaults_read_bool("com.apple.universalaccess", "slowKey")
-        .unwrap_or(false)
-    {
+    if defaults_read_bool("com.apple.universalaccess", "slowKey").unwrap_or(false) {
         prefs.slow_keys = true;
     }
 

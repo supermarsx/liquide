@@ -3,15 +3,15 @@
 //! Provides USB device forwarding with tiered capabilities, policy enforcement,
 //! smart card redirection, file transfer, bandwidth limiting, and audit logging.
 
-pub mod device;
-pub mod config;
-pub mod policy;
-pub mod message;
-pub mod manager;
-pub mod smartcard;
-pub mod file_transfer;
 pub mod audit;
 pub mod bandwidth;
+pub mod config;
+pub mod device;
+pub mod file_transfer;
+pub mod manager;
+pub mod message;
+pub mod policy;
+pub mod smartcard;
 pub mod tier;
 
 #[cfg(test)]
@@ -59,16 +59,20 @@ pub enum UsbError {
 pub type Result<T> = std::result::Result<T, UsbError>;
 
 // Re-exports
-pub use device::{DeviceClass, VidPid, DeviceInfo, DeviceState, UsbDevice, SecurityKeyDb};
-pub use config::{TierMode, TransportChannel, PinEntry, UsbConfig, SmartCardConfig, SecurityKeyOverrides};
-pub use policy::{PolicyResult, UsbPolicy};
-pub use message::{
-    DeviceRedirectionMsg, UsbAttachRequest, UsbAttachResponse, DetachReason,
-    UsbDetachNotification, UsbDataTransfer, CapabilityAnnouncement,
-};
-pub use manager::UsbManager;
-pub use smartcard::{ApduCommand, ApduResponse, SmartCardReaderState, SmartCardReader};
-pub use file_transfer::{MountPoint, FileEntry, FileOperation, FileTransferRequest, FileTransferResponse};
 pub use audit::{AuditLevel, UsbAuditEvent};
 pub use bandwidth::BandwidthLimiter;
-pub use tier::{UsbTier, TierCapabilities, TierNegotiator};
+pub use config::{
+    PinEntry, SecurityKeyOverrides, SmartCardConfig, TierMode, TransportChannel, UsbConfig,
+};
+pub use device::{DeviceClass, DeviceInfo, DeviceState, SecurityKeyDb, UsbDevice, VidPid};
+pub use file_transfer::{
+    FileEntry, FileOperation, FileTransferRequest, FileTransferResponse, MountPoint,
+};
+pub use manager::UsbManager;
+pub use message::{
+    CapabilityAnnouncement, DetachReason, DeviceRedirectionMsg, UsbAttachRequest,
+    UsbAttachResponse, UsbDataTransfer, UsbDetachNotification,
+};
+pub use policy::{PolicyResult, UsbPolicy};
+pub use smartcard::{ApduCommand, ApduResponse, SmartCardReader, SmartCardReaderState};
+pub use tier::{TierCapabilities, TierNegotiator, UsbTier};

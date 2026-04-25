@@ -51,7 +51,7 @@ pub fn high_contrast_light() -> ThemeOverrides {
     ThemeOverrides {
         bg_color: (255, 255, 255),
         fg_color: (0, 0, 0),
-        accent_color: (0, 0, 170),    // strong blue, 8.6:1 on white
+        accent_color: (0, 0, 170), // strong blue, 8.6:1 on white
         border_color: (0, 0, 0),
         link_color: (0, 0, 238),      // classic link blue, 6.6:1 on white
         disabled_color: (96, 96, 96), // 5.3:1 on white (meets AA)
@@ -68,9 +68,9 @@ pub fn high_contrast_dark() -> ThemeOverrides {
     ThemeOverrides {
         bg_color: (0, 0, 0),
         fg_color: (255, 255, 255),
-        accent_color: (255, 255, 0),   // yellow on black: 19.6:1
+        accent_color: (255, 255, 0), // yellow on black: 19.6:1
         border_color: (255, 255, 255),
-        link_color: (0, 255, 255),     // cyan on black: 16.7:1
+        link_color: (0, 255, 255),       // cyan on black: 16.7:1
         disabled_color: (160, 160, 160), // 10.4:1 on black
         selection_bg: (255, 255, 0),
         selection_fg: (0, 0, 0),

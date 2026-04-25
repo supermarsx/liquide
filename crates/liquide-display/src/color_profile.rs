@@ -206,9 +206,15 @@ impl ColorProfile {
 
         // RGB to XYZ matrix (M).
         let rgb_to_xyz = [
-            sr * xr_xyz, sg * xg_xyz, sb * xb_xyz,
-            sr,           sg,           sb,
-            sr * zr_xyz, sg * zg_xyz, sb * zb_xyz,
+            sr * xr_xyz,
+            sg * xg_xyz,
+            sb * xb_xyz,
+            sr,
+            sg,
+            sb,
+            sr * zr_xyz,
+            sg * zg_xyz,
+            sb * zb_xyz,
         ];
 
         // Invert to get XYZ to RGB.

@@ -41,7 +41,7 @@ impl MeasurementSystem {
     pub fn weight_unit(&self) -> &'static str {
         match self {
             Self::Metric => "kg",
-            Self::Imperial => "st",   // stone (UK)
+            Self::Imperial => "st",    // stone (UK)
             Self::USCustomary => "lb", // pounds (US)
         }
     }
@@ -52,7 +52,7 @@ pub fn measurement_for_locale(locale: &Locale) -> MeasurementSystem {
     match locale.territory.as_deref() {
         Some("US") => MeasurementSystem::USCustomary,
         Some("GB") => MeasurementSystem::Imperial,
-        Some("MM") => MeasurementSystem::Imperial,  // Myanmar
+        Some("MM") => MeasurementSystem::Imperial, // Myanmar
         Some("LR") => MeasurementSystem::USCustomary, // Liberia
         _ => MeasurementSystem::Metric,
     }

@@ -5,7 +5,7 @@
 //! disabled state handling, and inline style propagation.
 
 use liquide_components::accordion::{
-    AccordionComponent, AccordionMode, AccordionSection, toggle_section,
+    toggle_section, AccordionComponent, AccordionMode, AccordionSection,
 };
 use liquide_components::template::{Component, TemplateNode, TemplateRenderer};
 use liquide_dom::{Document, PseudoStateFlags};
@@ -52,11 +52,9 @@ fn accordion_renders_to_dom() {
 
 #[test]
 fn accordion_expanded_section_has_visible_content() {
-    let sections = vec![
-        AccordionSection::new("s1", "Section 1")
-            .expanded(true)
-            .child(TemplateNode::text("Visible text")),
-    ];
+    let sections = vec![AccordionSection::new("s1", "Section 1")
+        .expanded(true)
+        .child(TemplateNode::text("Visible text"))];
 
     let (mut doc, mount) = create_doc_with_mount("accordion-test");
     let component = AccordionComponent::new("test", &sections);
@@ -68,7 +66,7 @@ fn accordion_expanded_section_has_visible_content() {
     assert_eq!(item_children.len(), 2);
 
     let content = item_children[1]; // accordion-content
-    // Content should have display: block
+                                    // Content should have display: block
     assert_eq!(
         doc.get_inline_style(content, "display").as_deref(),
         Some("block"),
@@ -76,16 +74,17 @@ fn accordion_expanded_section_has_visible_content() {
     );
     // Content should have the text child
     let content_children = doc.children(content).to_vec();
-    assert!(!content_children.is_empty(), "expanded content should have children");
+    assert!(
+        !content_children.is_empty(),
+        "expanded content should have children"
+    );
 }
 
 #[test]
 fn accordion_collapsed_section_hides_content() {
-    let sections = vec![
-        AccordionSection::new("s1", "Section 1")
-            .expanded(false)
-            .child(TemplateNode::text("Hidden text")),
-    ];
+    let sections = vec![AccordionSection::new("s1", "Section 1")
+        .expanded(false)
+        .child(TemplateNode::text("Hidden text"))];
 
     let (mut doc, mount) = create_doc_with_mount("accordion-test");
     let component = AccordionComponent::new("test", &sections);
@@ -116,8 +115,14 @@ fn accordion_toggle_and_rerender() {
     TemplateRenderer::apply_to_node(&mut doc, mount, &c1.render());
 
     let items = doc.children(mount).to_vec();
-    assert!(doc.get(items[0]).unwrap().has_class("expanded"), "s1 starts expanded");
-    assert!(doc.get(items[1]).unwrap().has_class("collapsed"), "s2 starts collapsed");
+    assert!(
+        doc.get(items[0]).unwrap().has_class("expanded"),
+        "s1 starts expanded"
+    );
+    assert!(
+        doc.get(items[1]).unwrap().has_class("collapsed"),
+        "s2 starts collapsed"
+    );
 
     // Toggle s2 (single mode → s1 closes, s2 opens)
     toggle_section(&mut sections, 1, AccordionMode::Single);
@@ -129,8 +134,14 @@ fn accordion_toggle_and_rerender() {
     TemplateRenderer::apply_to_node(&mut doc, mount, &c2.render());
 
     let items = doc.children(mount).to_vec();
-    assert!(doc.get(items[0]).unwrap().has_class("collapsed"), "s1 should be collapsed after toggle");
-    assert!(doc.get(items[1]).unwrap().has_class("expanded"), "s2 should be expanded after toggle");
+    assert!(
+        doc.get(items[0]).unwrap().has_class("collapsed"),
+        "s1 should be collapsed after toggle"
+    );
+    assert!(
+        doc.get(items[1]).unwrap().has_class("expanded"),
+        "s2 should be expanded after toggle"
+    );
 }
 
 #[test]
@@ -151,9 +162,18 @@ fn accordion_multiple_mode_toggle() {
     TemplateRenderer::apply_to_node(&mut doc, mount, &component.render());
 
     let items = doc.children(mount).to_vec();
-    assert!(doc.get(items[0]).unwrap().has_class("expanded"), "A expanded");
-    assert!(doc.get(items[1]).unwrap().has_class("collapsed"), "B collapsed");
-    assert!(doc.get(items[2]).unwrap().has_class("expanded"), "C expanded");
+    assert!(
+        doc.get(items[0]).unwrap().has_class("expanded"),
+        "A expanded"
+    );
+    assert!(
+        doc.get(items[1]).unwrap().has_class("collapsed"),
+        "B collapsed"
+    );
+    assert!(
+        doc.get(items[2]).unwrap().has_class("expanded"),
+        "C expanded"
+    );
 }
 
 // ── Keyed reconciliation across renders ──────────────────────────────────
@@ -182,7 +202,11 @@ fn accordion_keyed_sections_reused() {
     TemplateRenderer::apply_to_node(&mut doc, mount, &c2.render());
 
     let items_v2 = doc.children(mount).to_vec();
-    assert_eq!(items_v2.len(), 2, "should have 2 items after removing middle");
+    assert_eq!(
+        items_v2.len(),
+        2,
+        "should have 2 items after removing middle"
+    );
 
     // Keyed nodes should be reused (same NodeIds)
     assert_eq!(items_v2[0], items_v1[2], "s3 should be reused");
@@ -210,24 +234,21 @@ fn accordion_disabled_section_in_dom() {
     // Disabled section should have disabled class and pseudo-state
     assert!(doc.get(items[1]).unwrap().has_class("disabled"));
     assert!(
-        doc.get(items[1]).unwrap().has_pseudo_state(PseudoStateFlags::DISABLED),
+        doc.get(items[1])
+            .unwrap()
+            .has_pseudo_state(PseudoStateFlags::DISABLED),
         "disabled accordion item should have :disabled pseudo-state"
     );
 }
 
 #[test]
 fn toggle_disabled_section_noop() {
-    let mut sections = vec![
-        AccordionSection::new("s1", "Disabled")
-            .expanded(false)
-            .enabled(false),
-    ];
+    let mut sections = vec![AccordionSection::new("s1", "Disabled")
+        .expanded(false)
+        .enabled(false)];
 
     toggle_section(&mut sections, 0, AccordionMode::Multiple);
-    assert!(
-        !sections[0].expanded,
-        "disabled section should not toggle"
-    );
+    assert!(!sections[0].expanded, "disabled section should not toggle");
 }
 
 // ── Empty accordion ──────────────────────────────────────────────────────

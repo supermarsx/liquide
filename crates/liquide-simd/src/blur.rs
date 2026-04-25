@@ -446,7 +446,10 @@ unsafe fn downsample_2x_sse2(
 
             let load4 = |off: usize| -> __m128i {
                 let pixel = _mm_cvtsi32_si128(i32::from_le_bytes([
-                    src[off], src[off + 1], src[off + 2], src[off + 3],
+                    src[off],
+                    src[off + 1],
+                    src[off + 2],
+                    src[off + 3],
                 ]));
                 _mm_unpacklo_epi8(pixel, zero)
             };
@@ -521,7 +524,12 @@ mod tests {
 
         for i in 0..src.len() {
             let diff = (dst_scalar[i] as i16 - dst_simd[i] as i16).abs();
-            assert!(diff <= 1, "byte {i}: scalar={} simd={}", dst_scalar[i], dst_simd[i]);
+            assert!(
+                diff <= 1,
+                "byte {i}: scalar={} simd={}",
+                dst_scalar[i],
+                dst_simd[i]
+            );
         }
     }
 
@@ -539,7 +547,12 @@ mod tests {
 
         for i in 0..src.len() {
             let diff = (dst_scalar[i] as i16 - dst_simd[i] as i16).abs();
-            assert!(diff <= 1, "byte {i}: scalar={} simd={}", dst_scalar[i], dst_simd[i]);
+            assert!(
+                diff <= 1,
+                "byte {i}: scalar={} simd={}",
+                dst_scalar[i],
+                dst_simd[i]
+            );
         }
     }
 
@@ -563,7 +576,12 @@ mod tests {
 
         for i in 0..src.len() {
             let diff = (dst_scalar[i] as i16 - dst_fma[i] as i16).abs();
-            assert!(diff <= 1, "byte {i}: scalar={} fma={}", dst_scalar[i], dst_fma[i]);
+            assert!(
+                diff <= 1,
+                "byte {i}: scalar={} fma={}",
+                dst_scalar[i],
+                dst_fma[i]
+            );
         }
     }
 
@@ -587,7 +605,12 @@ mod tests {
 
         for i in 0..src.len() {
             let diff = (dst_scalar[i] as i16 - dst_fma[i] as i16).abs();
-            assert!(diff <= 1, "byte {i}: scalar={} fma={}", dst_scalar[i], dst_fma[i]);
+            assert!(
+                diff <= 1,
+                "byte {i}: scalar={} fma={}",
+                dst_scalar[i],
+                dst_fma[i]
+            );
         }
     }
 

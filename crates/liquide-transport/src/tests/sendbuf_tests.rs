@@ -1,5 +1,7 @@
 use crate::priority::Priority;
-use crate::sendbuf::{PoolConfig, SendBufferPool, DEFAULT_CAPACITY, DEFAULT_RESERVED, SIZE_CLASSES};
+use crate::sendbuf::{
+    DEFAULT_CAPACITY, DEFAULT_RESERVED, PoolConfig, SIZE_CLASSES, SendBufferPool,
+};
 
 // ---------------------------------------------------------------------------
 // Constants

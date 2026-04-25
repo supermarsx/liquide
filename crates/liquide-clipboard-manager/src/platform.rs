@@ -48,6 +48,59 @@ pub trait PlatformClipboard {
     fn has_content(&self) -> bool;
 }
 
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct DropFilesHeader {
+    p_files: u32,
+    x: i32,
+    y: i32,
+    f_nc: i32,
+    f_wide: i32,
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn build_windows_hdrop_payload(paths: &[String]) -> PlatformResult<Vec<u8>> {
+    if paths.iter().any(|path| path.chars().any(|ch| ch == '\0')) {
+        return Err(PlatformClipboardError::InvalidData(
+            "file paths cannot contain NUL characters".into(),
+        ));
+    }
+
+    let mut wide_paths = Vec::new();
+    for path in paths {
+        wide_paths.extend(path.encode_utf16());
+        wide_paths.push(0);
+    }
+    wide_paths.push(0);
+
+    let header = DropFilesHeader {
+        p_files: std::mem::size_of::<DropFilesHeader>() as u32,
+        x: 0,
+        y: 0,
+        f_nc: 0,
+        f_wide: 1,
+    };
+    let payload_len = std::mem::size_of::<DropFilesHeader>() + (wide_paths.len() * 2);
+    let mut payload = vec![0u8; payload_len];
+
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            &header as *const DropFilesHeader as *const u8,
+            payload.as_mut_ptr(),
+            std::mem::size_of::<DropFilesHeader>(),
+        );
+        std::ptr::copy_nonoverlapping(
+            wide_paths.as_ptr() as *const u8,
+            payload
+                .as_mut_ptr()
+                .add(std::mem::size_of::<DropFilesHeader>()),
+            wide_paths.len() * 2,
+        );
+    }
+
+    Ok(payload)
+}
+
 // ---------------------------------------------------------------------------
 // Windows implementation (Platform clipboard via windows-sys)
 // ---------------------------------------------------------------------------
@@ -63,7 +116,7 @@ mod win32 {
         OpenClipboard, SetClipboardData,
     };
     use windows_sys::Win32::System::Memory::{
-        GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+        GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
     };
     use windows_sys::Win32::System::Ole::CF_HDROP;
 
@@ -165,10 +218,8 @@ mod win32 {
                             "DIB header too small".into(),
                         ));
                     }
-                    let width =
-                        i32::from_le_bytes([data[4], data[5], data[6], data[7]]) as u32;
-                    let height_raw =
-                        i32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+                    let width = i32::from_le_bytes([data[4], data[5], data[6], data[7]]) as u32;
+                    let height_raw = i32::from_le_bytes([data[8], data[9], data[10], data[11]]);
                     let height = height_raw.unsigned_abs();
 
                     return Ok(ClipboardContent::Image {
@@ -185,8 +236,12 @@ mod win32 {
                     if handle.is_null() {
                         return Err(PlatformClipboardError::FormatUnavailable);
                     }
-                    let count =
-                        windows_sys::Win32::UI::Shell::DragQueryFileW(handle as _, u32::MAX, ptr::null_mut(), 0);
+                    let count = windows_sys::Win32::UI::Shell::DragQueryFileW(
+                        handle as _,
+                        u32::MAX,
+                        ptr::null_mut(),
+                        0,
+                    );
                     let mut paths = Vec::new();
                     for i in 0..count {
                         let len = windows_sys::Win32::UI::Shell::DragQueryFileW(
@@ -225,10 +280,8 @@ mod win32 {
                         // Determine the text to write — for RichText we use the
                         // plain_fallback which is already bound as `text` by the
                         // match arm.
-                        let wide: Vec<u16> = text
-                            .encode_utf16()
-                            .chain(std::iter::once(0))
-                            .collect();
+                        let wide: Vec<u16> =
+                            text.encode_utf16().chain(std::iter::once(0)).collect();
                         let bytes = wide.len() * 2;
                         let hmem = GlobalAlloc(GMEM_MOVEABLE, bytes);
                         if hmem.is_null() {
@@ -276,33 +329,28 @@ mod win32 {
                         }
                     }
                     ClipboardContent::FilePaths(_) => {
-                        // CF_HDROP write requires constructing a DROPFILES
-                        // struct; for now we serialise as text/uri-list.
-                        let text = match content {
-                            ClipboardContent::FilePaths(paths) => paths.join("\n"),
+                        let payload = match content {
+                            ClipboardContent::FilePaths(paths) => {
+                                build_windows_hdrop_payload(paths)?
+                            }
                             _ => unreachable!(),
                         };
-                        let wide: Vec<u16> = text
-                            .encode_utf16()
-                            .chain(std::iter::once(0))
-                            .collect();
-                        let bytes = wide.len() * 2;
-                        let hmem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+                        let hmem = GlobalAlloc(GMEM_MOVEABLE, payload.len());
                         if hmem.is_null() {
                             return Err(PlatformClipboardError::IoError(
                                 "GlobalAlloc failed".into(),
                             ));
                         }
-                        let dest = GlobalLock(hmem) as *mut u16;
+                        let dest = GlobalLock(hmem) as *mut u8;
                         if dest.is_null() {
                             GlobalFree(hmem);
                             return Err(PlatformClipboardError::IoError(
                                 "GlobalLock failed".into(),
                             ));
                         }
-                        ptr::copy_nonoverlapping(wide.as_ptr(), dest, wide.len());
+                        ptr::copy_nonoverlapping(payload.as_ptr(), dest, payload.len());
                         GlobalUnlock(hmem);
-                        if SetClipboardData(CF_UNICODETEXT, hmem as HANDLE).is_null() {
+                        if SetClipboardData(CF_HDROP as u32, hmem as HANDLE).is_null() {
                             GlobalFree(hmem);
                             return Err(PlatformClipboardError::IoError(
                                 "SetClipboardData failed".into(),
@@ -312,10 +360,7 @@ mod win32 {
                     ClipboardContent::Color { r, g, b, a } => {
                         // Serialise colour as text "#RRGGBBAA".
                         let hex = format!("#{r:02x}{g:02x}{b:02x}{a:02x}");
-                        let wide: Vec<u16> = hex
-                            .encode_utf16()
-                            .chain(std::iter::once(0))
-                            .collect();
+                        let wide: Vec<u16> = hex.encode_utf16().chain(std::iter::once(0)).collect();
                         let bytes = wide.len() * 2;
                         let hmem = GlobalAlloc(GMEM_MOVEABLE, bytes);
                         if hmem.is_null() {
@@ -480,9 +525,7 @@ mod linux {
                 .wait()
                 .map_err(|e| PlatformClipboardError::IoError(e.to_string()))?;
             if !status.success() {
-                return Err(PlatformClipboardError::IoError(
-                    "wl-copy failed".into(),
-                ));
+                return Err(PlatformClipboardError::IoError("wl-copy failed".into()));
             }
             Ok(())
         }
@@ -562,9 +605,7 @@ mod macos {
                 .wait()
                 .map_err(|e| PlatformClipboardError::IoError(e.to_string()))?;
             if !status.success() {
-                return Err(PlatformClipboardError::IoError(
-                    "pbcopy failed".into(),
-                ));
+                return Err(PlatformClipboardError::IoError("pbcopy failed".into()));
             }
             Ok(())
         }
@@ -636,5 +677,65 @@ impl PlatformClipboard for NullClipboard {
 
     fn has_content(&self) -> bool {
         false
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::{PlatformClipboardError, build_windows_hdrop_payload};
+
+    #[repr(C)]
+    struct DropFilesHeader {
+        p_files: u32,
+        x: i32,
+        y: i32,
+        f_nc: i32,
+        f_wide: i32,
+    }
+
+    fn decode_hdrop_payload(payload: &[u8]) -> Vec<String> {
+        let header = unsafe { &*(payload.as_ptr() as *const DropFilesHeader) };
+        let data = &payload[header.p_files as usize..];
+        let words: Vec<u16> = data
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+
+        let mut decoded = Vec::new();
+        let mut current = Vec::new();
+        for word in words {
+            if word == 0 {
+                if current.is_empty() {
+                    break;
+                }
+                decoded.push(String::from_utf16(&current).unwrap());
+                current.clear();
+            } else {
+                current.push(word);
+            }
+        }
+        decoded
+    }
+
+    #[test]
+    fn windows_hdrop_payload_round_trips_paths() {
+        let paths = vec![
+            r"C:\Users\Alice Smith\notes #1.txt".to_string(),
+            r"D:\Projects\Liquide".to_string(),
+        ];
+
+        let payload = build_windows_hdrop_payload(&paths).unwrap();
+        let header = unsafe { &*(payload.as_ptr() as *const DropFilesHeader) };
+
+        assert_eq!(header.p_files as usize, std::mem::size_of::<DropFilesHeader>());
+        assert_eq!(header.f_wide, 1);
+        assert_eq!(decode_hdrop_payload(&payload), paths);
+    }
+
+    #[test]
+    fn windows_hdrop_payload_rejects_nul_characters() {
+        let err = build_windows_hdrop_payload(&["bad\0path".to_string()]).unwrap_err();
+
+        assert!(matches!(err, PlatformClipboardError::InvalidData(_)));
     }
 }

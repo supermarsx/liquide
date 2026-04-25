@@ -1,7 +1,11 @@
 use crate::{Dialog, DialogId, DialogResult};
+use liquide_popups::DialogInfo;
 
 /// Validator function type — returns Ok(()) on valid input, Err(message) on invalid
 pub type ValidatorFn = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
+const DEFAULT_INPUT_DIALOG_WIDTH: f32 = 420.0;
+const DEFAULT_INPUT_DIALOG_HEIGHT: f32 = 180.0;
 
 /// Text input dialog state
 pub struct InputDialog {
@@ -22,7 +26,14 @@ impl std::fmt::Debug for InputDialog {
             .field("id", &self.id)
             .field("title", &self.title)
             .field("label", &self.label)
-            .field("value", &if self.password_mode { "***".to_string() } else { self.value.clone() })
+            .field(
+                "value",
+                &if self.password_mode {
+                    "***".to_string()
+                } else {
+                    self.value.clone()
+                },
+            )
             .field("placeholder", &self.placeholder)
             .field("password_mode", &self.password_mode)
             .field("has_validator", &self.validator.is_some())
@@ -33,11 +44,7 @@ impl std::fmt::Debug for InputDialog {
 }
 
 impl InputDialog {
-    pub fn new(
-        id: DialogId,
-        title: impl Into<String>,
-        label: impl Into<String>,
-    ) -> Self {
+    pub fn new(id: DialogId, title: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             id,
             title: title.into(),
@@ -52,11 +59,7 @@ impl InputDialog {
     }
 
     /// Create a password input dialog
-    pub fn password(
-        id: DialogId,
-        title: impl Into<String>,
-        label: impl Into<String>,
-    ) -> Self {
+    pub fn password(id: DialogId, title: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             password_mode: true,
             ..Self::new(id, title, label)
@@ -76,7 +79,10 @@ impl InputDialog {
     }
 
     /// Set a validation function
-    pub fn with_validator(mut self, validator: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static) -> Self {
+    pub fn with_validator(
+        mut self,
+        validator: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
         self.validator = Some(Box::new(validator));
         self
     }
@@ -122,7 +128,11 @@ impl InputDialog {
         if self.validate() {
             DialogResult::Ok(self.value.clone())
         } else {
-            DialogResult::Cancelled
+            DialogResult::Invalid(
+                self.validation_error
+                    .clone()
+                    .unwrap_or_else(|| "Invalid input".to_string()),
+            )
         }
     }
 
@@ -137,6 +147,20 @@ impl Dialog for InputDialog {
     fn id(&self) -> DialogId {
         self.id
     }
+    fn title(&self) -> &str {
+        &self.title
+    }
+}
+
+impl DialogInfo for InputDialog {
+    fn preferred_size(&self) -> (f32, f32) {
+        let mut height = DEFAULT_INPUT_DIALOG_HEIGHT;
+        if self.validation_error.is_some() {
+            height += 28.0;
+        }
+        (DEFAULT_INPUT_DIALOG_WIDTH, height)
+    }
+
     fn title(&self) -> &str {
         &self.title
     }
@@ -163,15 +187,13 @@ mod tests {
 
     #[test]
     fn test_initial_value() {
-        let dlg = InputDialog::new(DialogId(1), "T", "L")
-            .with_initial_value("hello");
+        let dlg = InputDialog::new(DialogId(1), "T", "L").with_initial_value("hello");
         assert_eq!(dlg.value, "hello");
     }
 
     #[test]
     fn test_placeholder() {
-        let dlg = InputDialog::new(DialogId(1), "T", "L")
-            .with_placeholder("type here...");
+        let dlg = InputDialog::new(DialogId(1), "T", "L").with_placeholder("type here...");
         assert_eq!(dlg.placeholder, "type here...");
     }
 
@@ -184,8 +206,7 @@ mod tests {
 
     #[test]
     fn test_max_length() {
-        let mut dlg = InputDialog::new(DialogId(1), "T", "L")
-            .with_max_length(5);
+        let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_max_length(5);
         dlg.set_value("hello world");
         assert_eq!(dlg.value, "hello");
     }
@@ -199,14 +220,13 @@ mod tests {
 
     #[test]
     fn test_validate_passes() {
-        let mut dlg = InputDialog::new(DialogId(1), "T", "L")
-            .with_validator(|s| {
-                if s.is_empty() {
-                    Err("Cannot be empty".into())
-                } else {
-                    Ok(())
-                }
-            });
+        let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_validator(|s| {
+            if s.is_empty() {
+                Err("Cannot be empty".into())
+            } else {
+                Ok(())
+            }
+        });
         dlg.set_value("hello");
         assert!(dlg.validate());
         assert!(!dlg.has_error());
@@ -214,14 +234,13 @@ mod tests {
 
     #[test]
     fn test_validate_fails() {
-        let mut dlg = InputDialog::new(DialogId(1), "T", "L")
-            .with_validator(|s| {
-                if s.is_empty() {
-                    Err("Cannot be empty".into())
-                } else {
-                    Ok(())
-                }
-            });
+        let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_validator(|s| {
+            if s.is_empty() {
+                Err("Cannot be empty".into())
+            } else {
+                Ok(())
+            }
+        });
         assert!(!dlg.validate());
         assert!(dlg.has_error());
         assert_eq!(dlg.validation_error.as_deref(), Some("Cannot be empty"));
@@ -229,14 +248,13 @@ mod tests {
 
     #[test]
     fn test_validate_error_clears_on_input() {
-        let mut dlg = InputDialog::new(DialogId(1), "T", "L")
-            .with_validator(|s| {
-                if s.is_empty() {
-                    Err("Empty".into())
-                } else {
-                    Ok(())
-                }
-            });
+        let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_validator(|s| {
+            if s.is_empty() {
+                Err("Empty".into())
+            } else {
+                Ok(())
+            }
+        });
         dlg.validate(); // fails
         assert!(dlg.has_error());
         dlg.set_value("x"); // clears error
@@ -255,22 +273,21 @@ mod tests {
 
     #[test]
     fn test_confirm_invalid() {
-        let mut dlg = InputDialog::new(DialogId(1), "T", "L")
-            .with_validator(|s| {
-                if s.len() < 3 {
-                    Err("Too short".into())
-                } else {
-                    Ok(())
-                }
-            });
+        let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_validator(|s| {
+            if s.len() < 3 {
+                Err("Too short".into())
+            } else {
+                Ok(())
+            }
+        });
         dlg.set_value("ab");
-        assert_eq!(dlg.confirm(), DialogResult::Cancelled);
+        assert_eq!(dlg.confirm(), DialogResult::Invalid("Too short".into()));
     }
 
     #[test]
     fn test_debug_hides_password() {
-        let dlg = InputDialog::password(DialogId(1), "Login", "Pass:")
-            .with_initial_value("secret123");
+        let dlg =
+            InputDialog::password(DialogId(1), "Login", "Pass:").with_initial_value("secret123");
         let debug = format!("{:?}", dlg);
         assert!(!debug.contains("secret123"));
         assert!(debug.contains("***"));
@@ -280,7 +297,7 @@ mod tests {
     fn test_dialog_trait() {
         let dlg = InputDialog::new(DialogId(99), "Title", "Label");
         assert_eq!(dlg.id(), DialogId(99));
-        assert_eq!(dlg.title(), "Title");
-        assert!(dlg.is_modal());
+        assert_eq!(Dialog::title(&dlg), "Title");
+        assert!(Dialog::is_modal(&dlg));
     }
 }

@@ -1,6 +1,10 @@
-/// Stub backend — stores bindings but never fires. Used for testing and
+/// Stub backend — stores bindings but never fires. Used for tests and
 /// unsupported platforms.
-pub mod stub;
+#[cfg(any(
+	test,
+	not(any(target_os = "windows", target_os = "linux", target_os = "macos"))
+))]
+pub(crate) mod stub;
 
 #[cfg(target_os = "windows")]
 mod windows;

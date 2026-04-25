@@ -71,10 +71,7 @@ pub enum WorkspaceEvent {
     /// A workspace was destroyed.
     Destroyed { id: WorkspaceId },
     /// The active workspace changed.
-    Switched {
-        from: WorkspaceId,
-        to: WorkspaceId,
-    },
+    Switched { from: WorkspaceId, to: WorkspaceId },
     /// A window was moved between workspaces.
     WindowMoved {
         window_id: u64,
@@ -88,10 +85,7 @@ pub enum WorkspaceEvent {
         new_name: String,
     },
     /// Workspaces were reordered.
-    Reordered {
-        from_idx: usize,
-        to_idx: usize,
-    },
+    Reordered { from_idx: usize, to_idx: usize },
 }
 
 // ── WorkspaceManager ─────────────────────────────────────────────────
@@ -157,7 +151,8 @@ impl WorkspaceManager {
 
     /// Return a reference to the active workspace.
     pub fn active_workspace_ref(&self) -> &Workspace {
-        self.workspace(self.active).expect("active workspace must exist")
+        self.workspace(self.active)
+            .expect("active workspace must exist")
     }
 
     /// Return a reference to a workspace by ID.
@@ -403,10 +398,8 @@ impl WorkspaceManager {
         let ws = self.workspaces.remove(from_idx);
         self.workspaces.insert(to_idx, ws);
         self.reindex();
-        self.events.push(WorkspaceEvent::Reordered {
-            from_idx,
-            to_idx,
-        });
+        self.events
+            .push(WorkspaceEvent::Reordered { from_idx, to_idx });
         true
     }
 
@@ -490,18 +483,14 @@ impl WorkspaceManager {
     fn can_create(&self) -> bool {
         match self.config.count_mode {
             WorkspaceCountMode::Fixed { .. } => false,
-            WorkspaceCountMode::Dynamic { max, .. } => {
-                max == 0 || self.workspaces.len() < max
-            }
+            WorkspaceCountMode::Dynamic { max, .. } => max == 0 || self.workspaces.len() < max,
         }
     }
 
     fn can_destroy(&self) -> bool {
         match self.config.count_mode {
             WorkspaceCountMode::Fixed { .. } => false,
-            WorkspaceCountMode::Dynamic { min, .. } => {
-                self.workspaces.len() > min.max(1)
-            }
+            WorkspaceCountMode::Dynamic { min, .. } => self.workspaces.len() > min.max(1),
         }
     }
 
@@ -771,7 +760,11 @@ mod tests {
         mgr.drain_events(); // clear initial
         let id2 = mgr.create_workspace(None).unwrap();
         let events = mgr.drain_events();
-        assert!(events.iter().any(|e| matches!(e, WorkspaceEvent::Created { id } if *id == id2)));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, WorkspaceEvent::Created { id } if *id == id2))
+        );
     }
 
     #[test]

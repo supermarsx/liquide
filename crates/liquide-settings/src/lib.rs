@@ -1,18 +1,18 @@
-pub mod schema;
-pub mod store;
+pub mod dconf;
+pub mod lockdown;
 pub mod panels;
 pub mod policy;
-pub mod lockdown;
-pub mod dconf;
 pub mod profile;
+pub mod schema;
+pub mod store;
 
-pub use schema::{Setting, SettingValue, SettingKey, SettingCategory};
+pub use dconf::{DconfError, DconfLock, DconfPath, DconfStore};
+pub use lockdown::{Feature, LockdownManager, LockdownProfile};
+pub use policy::{PolicyDatabase, PolicyEntry, PolicyError, PolicyKey, PolicySource, PolicyValue};
+pub use profile::{ProfileError, ProfileStore, UserProfile};
 pub use schema::{SchemaEntry, SchemaValueType, SettingsSchema, ValidationError};
-pub use store::{SettingsStore, SettingsError};
-pub use policy::{PolicyKey, PolicyValue, PolicySource, PolicyDatabase, PolicyEntry, PolicyError};
-pub use lockdown::{Feature, LockdownProfile, LockdownManager};
-pub use dconf::{DconfPath, DconfStore, DconfLock, DconfError};
-pub use profile::{UserProfile, ProfileStore, ProfileError};
+pub use schema::{Setting, SettingCategory, SettingKey, SettingValue};
+pub use store::{SettingsError, SettingsStore};
 
 #[cfg(test)]
 mod tests;

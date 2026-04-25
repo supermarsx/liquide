@@ -9,8 +9,8 @@ use liquide_layout::{DefaultTextMeasurer, LayoutInput, LayoutTree, Size};
 use liquide_paint::DisplayList;
 
 use liquide_animation::{AnimationScheduler, TransitionEngine};
-use liquide_style_engine::engine::ViewportSize;
 use liquide_style_engine::StyleEngine;
+use liquide_style_engine::engine::ViewportSize;
 
 use crate::font_text_measurer::FontTextMeasurer;
 use crate::theme_loader;
@@ -110,8 +110,10 @@ impl DesktopPipeline {
     /// follow-up frame when `true`).
     pub fn run(&mut self, doc: &Document, dt_ms: f32) -> (PipelineOutput, bool) {
         // Use real font metrics when a font database is available.
-        let font_measurer: Option<FontTextMeasurer> =
-            self.font_db.as_ref().map(|db| FontTextMeasurer::new(Arc::clone(db)));
+        let font_measurer: Option<FontTextMeasurer> = self
+            .font_db
+            .as_ref()
+            .map(|db| FontTextMeasurer::new(Arc::clone(db)));
         let default_measurer = DefaultTextMeasurer;
         let text_measurer: &dyn liquide_layout::TextMeasurer = match &font_measurer {
             Some(fm) => fm,
@@ -134,11 +136,14 @@ impl DesktopPipeline {
             && self.transition_engine.active_count() == 0
             && self.animation_scheduler.active_count() == 0
         {
-            return (PipelineOutput {
-                styles: Arc::clone(self.last_styles.as_ref().unwrap()),
-                layout: Arc::clone(self.last_layout.as_ref().unwrap()),
-                display_list: Arc::clone(self.last_display_list.as_ref().unwrap()),
-            }, false);
+            return (
+                PipelineOutput {
+                    styles: Arc::clone(self.last_styles.as_ref().unwrap()),
+                    layout: Arc::clone(self.last_layout.as_ref().unwrap()),
+                    display_list: Arc::clone(self.last_display_list.as_ref().unwrap()),
+                },
+                false,
+            );
         }
 
         // 1. Style — unwrap Arc for mutation (try_unwrap succeeds when we're
@@ -199,7 +204,9 @@ impl DesktopPipeline {
             }
 
             for node_id in relayout_roots {
-                layout = self.layout_engine.relayout_subtree(&input, node_id, &layout);
+                layout = self
+                    .layout_engine
+                    .relayout_subtree(&input, node_id, &layout);
             }
 
             layout
@@ -248,7 +255,8 @@ impl DesktopPipeline {
         }
 
         // 3. Paint — unwrap Arc for mutation
-        let recompute_paint = recompute_layout || has_paint_work || self.last_display_list.is_none();
+        let recompute_paint =
+            recompute_layout || has_paint_work || self.last_display_list.is_none();
         let display_list = if recompute_paint {
             let _ = self.last_display_list.take();
             self.painter.paint(doc, &layout, &styles)
@@ -270,11 +278,14 @@ impl DesktopPipeline {
         self.last_layout = Some(Arc::clone(&layout));
         self.last_display_list = Some(Arc::clone(&display_list));
 
-        (PipelineOutput {
-            styles,
-            layout,
-            display_list,
-        }, animations_active)
+        (
+            PipelineOutput {
+                styles,
+                layout,
+                display_list,
+            },
+            animations_active,
+        )
     }
 
     /// Run the full pipeline and convert the result to compositor SceneNodes.
@@ -282,8 +293,14 @@ impl DesktopPipeline {
     /// Glass SceneNodes are generated for elements with `blur-radius` CSS
     /// property. These are placed *before* the element's normal paint output
     /// so the blur effect renders behind the content.
-    pub fn render_to_scene(&mut self, doc: &Document, base_z: u32, dt_ms: f32) -> (Vec<SceneNode>, bool) {
-        let (nodes, _output, animations_active) = self.render_to_scene_with_output(doc, base_z, dt_ms);
+    pub fn render_to_scene(
+        &mut self,
+        doc: &Document,
+        base_z: u32,
+        dt_ms: f32,
+    ) -> (Vec<SceneNode>, bool) {
+        let (nodes, _output, animations_active) =
+            self.render_to_scene_with_output(doc, base_z, dt_ms);
         (nodes, animations_active)
     }
 

@@ -1,7 +1,10 @@
 //! CSS clip-path parsing.
 
 /// Parse a CSS `clip-path` string into a `ClipPath` shape.
-pub(crate) fn parse_clip_path(value: &str, bounds: &liquide_layout::Rect) -> Option<crate::display_list::ClipPath> {
+pub(crate) fn parse_clip_path(
+    value: &str,
+    bounds: &liquide_layout::Rect,
+) -> Option<crate::display_list::ClipPath> {
     use crate::display_list::ClipPath;
     let trimmed = value.trim();
 
@@ -9,28 +12,37 @@ pub(crate) fn parse_clip_path(value: &str, bounds: &liquide_layout::Rect) -> Opt
         // circle(r at cx cy) or circle(r)
         let inner = trimmed.trim_start_matches("circle(").trim_end_matches(')');
         let parts: Vec<&str> = inner.split_whitespace().collect();
-        let r = parse_length_or_percent(parts.first().copied().unwrap_or("50%"), bounds.width * 0.5);
+        let r =
+            parse_length_or_percent(parts.first().copied().unwrap_or("50%"), bounds.width * 0.5);
         let (cx, cy) = if parts.len() >= 4 && parts[1] == "at" {
             (
                 parse_length_or_percent(parts[2], bounds.width) + bounds.x,
                 parse_length_or_percent(parts[3], bounds.height) + bounds.y,
             )
         } else {
-            (bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5)
+            (
+                bounds.x + bounds.width * 0.5,
+                bounds.y + bounds.height * 0.5,
+            )
         };
         Some(ClipPath::Circle { cx, cy, r })
     } else if trimmed.starts_with("ellipse(") {
         let inner = trimmed.trim_start_matches("ellipse(").trim_end_matches(')');
         let parts: Vec<&str> = inner.split_whitespace().collect();
-        let rx = parse_length_or_percent(parts.first().copied().unwrap_or("50%"), bounds.width * 0.5);
-        let ry = parse_length_or_percent(parts.get(1).copied().unwrap_or("50%"), bounds.height * 0.5);
+        let rx =
+            parse_length_or_percent(parts.first().copied().unwrap_or("50%"), bounds.width * 0.5);
+        let ry =
+            parse_length_or_percent(parts.get(1).copied().unwrap_or("50%"), bounds.height * 0.5);
         let (cx, cy) = if parts.len() >= 5 && parts[2] == "at" {
             (
                 parse_length_or_percent(parts[3], bounds.width) + bounds.x,
                 parse_length_or_percent(parts[4], bounds.height) + bounds.y,
             )
         } else {
-            (bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5)
+            (
+                bounds.x + bounds.width * 0.5,
+                bounds.y + bounds.height * 0.5,
+            )
         };
         Some(ClipPath::Ellipse { cx, cy, rx, ry })
     } else if trimmed.starts_with("inset(") {
@@ -51,7 +63,9 @@ pub(crate) fn parse_clip_path(value: &str, bounds: &liquide_layout::Rect) -> Opt
             right,
             bottom,
             left,
-            radius: liquide_style_engine::dimension::Corners::all(0.0),
+            radius: liquide_style_engine::dimension::Corners::all(
+                liquide_style_engine::dimension::EllipticalRadius::default(),
+            ),
         })
     } else if trimmed.starts_with("polygon(") {
         let inner = trimmed.trim_start_matches("polygon(").trim_end_matches(')');
@@ -197,7 +211,14 @@ mod tests {
         let bounds = Rect::new(0.0, 0.0, 200.0, 200.0);
         let clip = parse_clip_path("inset(10px)", &bounds);
         assert!(clip.is_some());
-        if let Some(ClipPath::Inset { top, right, bottom, left, .. }) = clip {
+        if let Some(ClipPath::Inset {
+            top,
+            right,
+            bottom,
+            left,
+            ..
+        }) = clip
+        {
             assert!((top - 10.0).abs() < 0.01);
             assert!((right - 10.0).abs() < 0.01);
             assert!((bottom - 10.0).abs() < 0.01);
@@ -212,7 +233,14 @@ mod tests {
         let bounds = Rect::new(0.0, 0.0, 200.0, 200.0);
         let clip = parse_clip_path("inset(10px 20px 30px 40px)", &bounds);
         assert!(clip.is_some());
-        if let Some(ClipPath::Inset { top, right, bottom, left, .. }) = clip {
+        if let Some(ClipPath::Inset {
+            top,
+            right,
+            bottom,
+            left,
+            ..
+        }) = clip
+        {
             assert!((top - 10.0).abs() < 0.01);
             assert!((right - 20.0).abs() < 0.01);
             assert!((bottom - 30.0).abs() < 0.01);

@@ -45,8 +45,8 @@ pub fn calendar_for_locale(locale: &Locale) -> CalendarSystem {
         "ar" | "fa" | "ur" | "ps" => {
             // Arabic-script locales generally use Islamic calendar alongside Gregorian
             match locale.territory.as_deref() {
-                Some("SA") | Some("AE") | Some("QA") | Some("BH") | Some("KW") |
-                Some("OM") | Some("YE") | Some("IR") | Some("AF") => CalendarSystem::Islamic,
+                Some("SA") | Some("AE") | Some("QA") | Some("BH") | Some("KW") | Some("OM")
+                | Some("YE") | Some("IR") | Some("AF") => CalendarSystem::Islamic,
                 _ => CalendarSystem::Gregorian,
             }
         }

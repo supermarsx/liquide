@@ -63,22 +63,53 @@ impl BlankController {
     }
 
     /// Advance smooth brightness transitions.
+    ///
+    /// The interpolation operates in **linear light** (the internal
+    /// `current_brightness` is gamma-encoded with γ = 2.2). This means a
+    /// linear ramp on `current_brightness` produces a perceptually linear
+    /// dim — matching how displays respond to backlight voltage. Callers
+    /// that want the *perceived* value should read
+    /// [`perceived_brightness`](Self::perceived_brightness).
     pub fn tick(&mut self, dt_ms: f32) {
         if (self.current_brightness - self.target_brightness).abs() < 0.001 {
             self.current_brightness = self.target_brightness;
             return;
         }
 
-        let step = self.transition_speed * dt_ms;
-        if self.current_brightness < self.target_brightness {
-            self.current_brightness = (self.current_brightness + step).min(self.target_brightness);
+        // Advance in *linear* light to keep the ramp perceptually uniform.
+        // `current_brightness` is the sRGB/encoded value; convert to linear,
+        // step, then convert back.
+        let cur_lin = encoded_to_linear(self.current_brightness);
+        let tgt_lin = encoded_to_linear(self.target_brightness);
+        let step_lin = self.transition_speed * dt_ms;
+        let next_lin = if cur_lin < tgt_lin {
+            (cur_lin + step_lin).min(tgt_lin)
         } else {
-            self.current_brightness = (self.current_brightness - step).max(self.target_brightness);
-        }
+            (cur_lin - step_lin).max(tgt_lin)
+        };
+        self.current_brightness = linear_to_encoded(next_lin);
     }
 
     /// Current interpolated brightness (0.0..=1.0).
     pub fn current_brightness(&self) -> f32 {
+        self.current_brightness
+    }
+
+    /// Current interpolated brightness converted to **linear** light
+    /// (0.0..=1.0) via the inverse γ = 2.2 curve.
+    ///
+    /// Use this when applying the brightness to a GPU uniform that expects
+    /// a linear-space scalar (most renderers do). The stored
+    /// `current_brightness` is gamma-encoded so the [`tick`](Self::tick)
+    /// ramp is perceptually linear.
+    pub fn linear_brightness(&self) -> f32 {
+        encoded_to_linear(self.current_brightness)
+    }
+
+    /// Perceived brightness (0.0..=1.0) — alias for
+    /// [`current_brightness`](Self::current_brightness), provided for clarity
+    /// when the caller wants the “what the user sees” value.
+    pub fn perceived_brightness(&self) -> f32 {
         self.current_brightness
     }
 
@@ -96,6 +127,23 @@ impl BlankController {
     pub fn is_transition_complete(&self) -> bool {
         (self.current_brightness - self.target_brightness).abs() < 0.001
     }
+}
+
+/// The display gamma used by [`BlankController`] when mapping its internal
+/// encoded brightness to linear light. `2.2` is the de-facto standard for
+/// consumer desktop displays (sRGB's average effective γ).
+pub const DISPLAY_GAMMA: f32 = 2.2;
+
+/// Convert a gamma-encoded brightness (0..1) to linear light.
+#[inline]
+pub fn encoded_to_linear(v: f32) -> f32 {
+    v.clamp(0.0, 1.0).powf(DISPLAY_GAMMA)
+}
+
+/// Convert a linear-light value (0..1) to gamma-encoded.
+#[inline]
+pub fn linear_to_encoded(v: f32) -> f32 {
+    v.clamp(0.0, 1.0).powf(1.0 / DISPLAY_GAMMA)
 }
 
 #[cfg(test)]

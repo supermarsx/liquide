@@ -28,10 +28,7 @@ fn work_area_y_equals_statusbar_height() {
     let shell = Shell::new(1920.0, 1080.0);
     let bar_h = shell.status_bar.config().height;
     let work = shell.work_area();
-    assert_eq!(
-        work.y, bar_h,
-        "work area top should equal statusbar height"
-    );
+    assert_eq!(work.y, bar_h, "work area top should equal statusbar height");
 }
 
 #[test]

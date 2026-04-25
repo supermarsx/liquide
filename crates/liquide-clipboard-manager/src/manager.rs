@@ -157,14 +157,20 @@ impl ClipboardManager {
 
     /// Save the current history to a writer.  Sensitive entries are
     /// excluded.  Returns the number of entries written.
-    pub fn save_history<W: std::io::Write>(&self, writer: &mut W) -> Result<usize, crate::persistence::PersistError> {
+    pub fn save_history<W: std::io::Write>(
+        &self,
+        writer: &mut W,
+    ) -> Result<usize, crate::persistence::PersistError> {
         let entries: Vec<ClipboardEntry> = self.history.iter().cloned().collect();
         crate::persistence::save_entries(&entries, writer)
     }
 
     /// Load history from a reader, appending entries to the current
     /// history.  Returns the number of entries loaded.
-    pub fn load_history<R: std::io::Read>(&mut self, reader: &mut R) -> Result<usize, crate::persistence::PersistError> {
+    pub fn load_history<R: std::io::Read>(
+        &mut self,
+        reader: &mut R,
+    ) -> Result<usize, crate::persistence::PersistError> {
         let entries = crate::persistence::load_entries(reader)?;
         let count = entries.len();
         for entry in entries {

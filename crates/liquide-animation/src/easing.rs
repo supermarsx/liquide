@@ -24,18 +24,14 @@ impl CubicBezier {
     fn sample_x(&self, t: f32) -> f32 {
         let t2 = t * t;
         let t3 = t2 * t;
-        3.0 * (1.0 - t) * (1.0 - t) * t * self.x1
-            + 3.0 * (1.0 - t) * t2 * self.x2
-            + t3
+        3.0 * (1.0 - t) * (1.0 - t) * t * self.x1 + 3.0 * (1.0 - t) * t2 * self.x2 + t3
     }
 
     /// Evaluate the bezier at parameter `t` on the Y axis.
     fn sample_y(&self, t: f32) -> f32 {
         let t2 = t * t;
         let t3 = t2 * t;
-        3.0 * (1.0 - t) * (1.0 - t) * t * self.y1
-            + 3.0 * (1.0 - t) * t2 * self.y2
-            + t3
+        3.0 * (1.0 - t) * (1.0 - t) * t * self.y1 + 3.0 * (1.0 - t) * t2 * self.y2 + t3
     }
 
     /// Solve for the parameter `t` that produces a given `x` value

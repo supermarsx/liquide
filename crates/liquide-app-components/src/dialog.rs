@@ -12,10 +12,7 @@ pub enum DialogKind {
         cancel_label: String,
     },
     /// Single-button alert/info dialog.
-    Alert {
-        message: String,
-        ok_label: String,
-    },
+    Alert { message: String, ok_label: String },
     /// Progress indicator dialog.
     Progress {
         message: String,
@@ -113,7 +110,12 @@ mod tests {
     #[test]
     fn dialog_progress() {
         let d = Dialog::progress("Installing", "Please wait...");
-        if let DialogKind::Progress { progress, cancelable, .. } = &d.kind {
+        if let DialogKind::Progress {
+            progress,
+            cancelable,
+            ..
+        } = &d.kind
+        {
             assert_eq!(*progress, 0.0);
             assert!(!cancelable);
         } else {

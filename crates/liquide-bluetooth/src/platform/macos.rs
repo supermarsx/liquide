@@ -99,11 +99,11 @@ impl BluetoothManager {
                 } else if let Some(val) = trimmed.strip_prefix("Name:") {
                     ctrl_name = val.trim().to_string();
                 } else if let Some(val) = trimmed.strip_prefix("State:") {
-                    ctrl_powered = val.trim().to_lowercase() == "on"
-                        || val.trim().to_lowercase() == "attrib";
+                    ctrl_powered =
+                        val.trim().to_lowercase() == "on" || val.trim().to_lowercase() == "attrib";
                 } else if let Some(val) = trimmed.strip_prefix("Discoverable:") {
-                    ctrl_discoverable = val.trim().to_lowercase() == "yes"
-                        || val.trim().to_lowercase() == "on";
+                    ctrl_discoverable =
+                        val.trim().to_lowercase() == "yes" || val.trim().to_lowercase() == "on";
                 } else if let Some(val) = trimmed.strip_prefix("Bluetooth Power:") {
                     ctrl_powered = val.trim().to_lowercase() == "on";
                 }
@@ -236,9 +236,10 @@ impl Default for BluetoothManager {
 
 impl BluetoothBackend for BluetoothManager {
     fn adapters(&self) -> Vec<BluetoothAdapter> {
-        let Ok(output) =
-            Self::run_cmd("system_profiler", &["SPBluetoothDataType", "-detailLevel", "basic"])
-        else {
+        let Ok(output) = Self::run_cmd(
+            "system_profiler",
+            &["SPBluetoothDataType", "-detailLevel", "basic"],
+        ) else {
             return Vec::new();
         };
         let (adapter, _) = Self::parse_system_profiler(&output);
@@ -258,9 +259,10 @@ impl BluetoothBackend for BluetoothManager {
     fn start_discovery(&mut self, _adapter_id: &str) -> Result<(), BtError> {
         Self::run_cmd("blueutil", &["--discoverable", "1"])?;
         // Refresh device list from system_profiler
-        let Ok(output) =
-            Self::run_cmd("system_profiler", &["SPBluetoothDataType", "-detailLevel", "full"])
-        else {
+        let Ok(output) = Self::run_cmd(
+            "system_profiler",
+            &["SPBluetoothDataType", "-detailLevel", "full"],
+        ) else {
             return Ok(());
         };
         let (_, devices) = Self::parse_system_profiler(&output);
@@ -289,9 +291,10 @@ impl BluetoothBackend for BluetoothManager {
     }
 
     fn discovered_devices(&self) -> Vec<BluetoothDevice> {
-        let Ok(output) =
-            Self::run_cmd("system_profiler", &["SPBluetoothDataType", "-detailLevel", "full"])
-        else {
+        let Ok(output) = Self::run_cmd(
+            "system_profiler",
+            &["SPBluetoothDataType", "-detailLevel", "full"],
+        ) else {
             return self.cached_discovered.clone();
         };
         let (_, devices) = Self::parse_system_profiler(&output);
@@ -299,9 +302,10 @@ impl BluetoothBackend for BluetoothManager {
     }
 
     fn paired_devices(&self) -> Vec<BluetoothDevice> {
-        let Ok(output) =
-            Self::run_cmd("system_profiler", &["SPBluetoothDataType", "-detailLevel", "full"])
-        else {
+        let Ok(output) = Self::run_cmd(
+            "system_profiler",
+            &["SPBluetoothDataType", "-detailLevel", "full"],
+        ) else {
             return Vec::new();
         };
         let (_, devices) = Self::parse_system_profiler(&output);

@@ -249,7 +249,10 @@ fn calculator_double_negate() {
 #[test]
 fn convert_f_to_c_freezing() {
     let result = convert_units(32.0, "F", "C").unwrap();
-    assert!((result - 0.0).abs() < 1e-6, "32F should be 0C, got {result}");
+    assert!(
+        (result - 0.0).abs() < 1e-6,
+        "32F should be 0C, got {result}"
+    );
 }
 
 #[test]

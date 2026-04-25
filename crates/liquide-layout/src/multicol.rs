@@ -11,7 +11,9 @@
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{BorderLineStyle, BreakValue, ColumnFill, ColumnSpan, Display, Position};
+use liquide_style_engine::computed::{
+    BorderLineStyle, BreakValue, ColumnFill, ColumnSpan, Display, Position,
+};
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -356,7 +358,9 @@ pub fn layout_multicol<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 const MAX_BALANCE_ITERS: usize = 100;
                 let mut balance_iters = 0usize;
 
-                for (item_idx, &(child_box_id, child_h, brk_before, brk_after, brk_inside_avoid)) in items.iter().enumerate() {
+                for (item_idx, &(child_box_id, child_h, brk_before, brk_after, brk_inside_avoid)) in
+                    items.iter().enumerate()
+                {
                     balance_iters += 1;
                     if balance_iters > MAX_BALANCE_ITERS {
                         break;
@@ -464,9 +468,7 @@ pub fn layout_multicol<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     if rule_width > 0.0 && rule_style != BorderLineStyle::None && column_count > 1 {
         let used_cols = columns_used.max(1).min(column_count);
         for i in 1..used_cols {
-            let rule_x = i as f32 * (col_width + column_gap)
-                - column_gap / 2.0
-                - rule_width / 2.0;
+            let rule_x = i as f32 * (col_width + column_gap) - column_gap / 2.0 - rule_width / 2.0;
             let rule_box_id = tree.alloc(node_id, BoxType::Block);
             if let Some(rb) = tree.get_mut(rule_box_id) {
                 let rule_rect = Rect::new(rule_x, 0.0, rule_width, max_col_height);

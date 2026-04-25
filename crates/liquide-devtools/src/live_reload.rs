@@ -110,16 +110,15 @@ impl LiveReloadWatcher {
 
         // Create the notify watcher.
         let watcher_tx = fs_tx.clone();
-        let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
-            match res {
+        let mut watcher =
+            notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
                 Ok(event) => {
                     let _ = watcher_tx.send(event);
                 }
                 Err(e) => {
                     error!("file watcher error: {:?}", e);
                 }
-            }
-        })?;
+            })?;
 
         // Watch template and CSS directories.
         let templates_dir = self.config.project_root.join("assets").join("templates");
@@ -194,10 +193,7 @@ impl LiveReloadWatcher {
                             targets,
                             timestamp: Instant::now(),
                         };
-                        info!(
-                            "live-reload: {} target(s) changed",
-                            event.targets.len()
-                        );
+                        info!("live-reload: {} target(s) changed", event.targets.len());
                         if tx.send(event).is_err() {
                             debug!("live-reload consumer disconnected, exiting");
                             return;

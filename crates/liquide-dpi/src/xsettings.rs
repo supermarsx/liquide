@@ -56,16 +56,16 @@ impl XSettings {
     /// prepending to a child process's environment.
     pub fn to_env_vars(&self) -> Vec<(String, String)> {
         vec![
-            ("QT_SCALE_FACTOR".to_string(), format!("{}", self.qt_scale_factor)),
+            (
+                "QT_SCALE_FACTOR".to_string(),
+                format!("{}", self.qt_scale_factor),
+            ),
             ("GDK_SCALE".to_string(), format!("{}", self.gdk_scale)),
             (
                 "GDK_DPI_SCALE".to_string(),
                 format!("{:.4}", self.gdk_dpi_scale),
             ),
-            (
-                "QT_FONT_DPI".to_string(),
-                format!("{}", self.xft_dpi),
-            ),
+            ("QT_FONT_DPI".to_string(), format!("{}", self.xft_dpi)),
         ]
     }
 

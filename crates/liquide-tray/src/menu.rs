@@ -269,6 +269,69 @@ impl TrayMenu {
             false
         }
     }
+
+    /// Flatten this menu into a simple list of top-level entries suitable for
+    /// piping into a context-menu layout engine.
+    ///
+    /// This is a **shallow** flatten: only top-level items become
+    /// [`MenuLayoutEntry`] rows; nested submenus keep their children in the
+    /// `children` field so the consumer can build a cascading menu.
+    /// Invisible items are omitted.
+    pub fn flatten(&self) -> Vec<MenuLayoutEntry> {
+        self.items
+            .iter()
+            .filter(|i| i.visible)
+            .map(MenuLayoutEntry::from)
+            .collect()
+    }
+}
+
+/// Shape-compatible row representation for piping a [`TrayMenu`] into a
+/// generic context-menu layout engine.
+///
+/// This is intentionally a small, stable subset of what `liquide-context-menu`
+/// understands — the tray crate does not depend on the context-menu crate to
+/// keep the dependency graph shallow, so shells construct their own
+/// `liquide_context_menu::MenuItem` from `MenuLayoutEntry` when building a
+/// real menu.
+#[derive(Debug, Clone)]
+pub struct MenuLayoutEntry {
+    pub id: MenuItemId,
+    pub label: String,
+    pub icon: String,
+    pub enabled: bool,
+    pub separator: bool,
+    pub checked: Option<bool>,
+    pub children: Vec<TrayMenuItem>,
+}
+
+impl From<&TrayMenuItem> for MenuLayoutEntry {
+    fn from(item: &TrayMenuItem) -> Self {
+        let (separator, checked) = match item.type_ {
+            MenuItemType::Separator => (true, None),
+            MenuItemType::Checkbox(v) | MenuItemType::Radio(v) => (false, Some(v)),
+            MenuItemType::Standard => (false, None),
+        };
+        Self {
+            id: item.id,
+            label: item.label.clone(),
+            icon: item.icon.clone(),
+            enabled: item.enabled,
+            separator,
+            checked,
+            children: item.children.clone(),
+        }
+    }
+}
+
+impl From<TrayMenu> for Vec<MenuLayoutEntry> {
+    fn from(menu: TrayMenu) -> Self {
+        menu.items
+            .iter()
+            .filter(|i| i.visible)
+            .map(MenuLayoutEntry::from)
+            .collect()
+    }
 }
 
 impl std::fmt::Display for TrayMenu {

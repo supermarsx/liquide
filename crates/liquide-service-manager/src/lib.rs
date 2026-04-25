@@ -7,16 +7,18 @@
 //! - Health monitoring with thresholds and auto-recovery (`health`)
 //! - Process watchdog with exponential backoff restarts (`watchdog`)
 
-pub mod service;
-pub mod registry;
 pub mod dependency;
 pub mod health;
+pub mod registry;
+pub mod service;
 pub mod watchdog;
 
-pub use service::{RestartPolicy, ServiceConfig, ServiceId, ServiceInfo, ServiceState};
-pub use registry::{RegistryError, ServiceEvent, ServiceRegistry};
 pub use dependency::DependencyGraph;
-pub use health::{HealthCheck, HealthConfig, HealthEvent, HealthMonitor, HealthReport, HealthStatus};
+pub use health::{
+    HealthCheck, HealthConfig, HealthEvent, HealthMonitor, HealthReport, HealthStatus,
+};
+pub use registry::{RegistryError, ServiceEvent, ServiceRegistry};
+pub use service::{RestartPolicy, ServiceConfig, ServiceId, ServiceInfo, ServiceState};
 pub use watchdog::{Watchdog, WatchdogConfig, WatchdogEvent};
 
 #[cfg(test)]
@@ -67,9 +69,15 @@ mod tests {
         registry.register(compositor_cfg).unwrap();
 
         // 5. Start in dependency order
-        registry.start_service(&ServiceId::new("dbus"), 1000).unwrap();
-        registry.start_service(&ServiceId::new("audio"), 1001).unwrap();
-        registry.start_service(&ServiceId::new("compositor"), 1002).unwrap();
+        registry
+            .start_service(&ServiceId::new("dbus"), 1000)
+            .unwrap();
+        registry
+            .start_service(&ServiceId::new("audio"), 1001)
+            .unwrap();
+        registry
+            .start_service(&ServiceId::new("compositor"), 1002)
+            .unwrap();
 
         assert_eq!(registry.all_services().len(), 3);
 
@@ -105,14 +113,23 @@ mod tests {
         assert!(pending.contains(&ServiceId::new("audio")));
 
         // 9. Registry: mark audio as failed, then restart
-        registry.mark_failed(&ServiceId::new("audio"), "unexpected exit").unwrap();
+        registry
+            .mark_failed(&ServiceId::new("audio"), "unexpected exit")
+            .unwrap();
         assert!(matches!(
             registry.service_state(&ServiceId::new("audio")).unwrap(),
             ServiceState::Failed(_)
         ));
 
-        registry.restart_service(&ServiceId::new("audio"), 2001).unwrap();
-        assert!(registry.service_state(&ServiceId::new("audio")).unwrap().is_running());
+        registry
+            .restart_service(&ServiceId::new("audio"), 2001)
+            .unwrap();
+        assert!(
+            registry
+                .service_state(&ServiceId::new("audio"))
+                .unwrap()
+                .is_running()
+        );
 
         watchdog.mark_restarted(&ServiceId::new("audio"), 2001);
         assert!(watchdog.is_alive(&ServiceId::new("audio")));
@@ -120,7 +137,10 @@ mod tests {
         // 10. Stop order for dbus (audio and compositor depend on it)
         let stop_order = graph.stop_order(&ServiceId::new("dbus"));
         // Must stop dependents before dbus
-        let dbus_pos = stop_order.iter().position(|id| id == &ServiceId::new("dbus")).unwrap();
+        let dbus_pos = stop_order
+            .iter()
+            .position(|id| id == &ServiceId::new("dbus"))
+            .unwrap();
         assert_eq!(dbus_pos, stop_order.len() - 1); // dbus is last to stop
     }
 
@@ -168,11 +188,14 @@ mod tests {
 
         // Start in dependency order
         let order = graph.start_order(&ServiceId::new("top")).unwrap();
-        assert_eq!(order, vec![
-            ServiceId::new("base"),
-            ServiceId::new("mid"),
-            ServiceId::new("top"),
-        ]);
+        assert_eq!(
+            order,
+            vec![
+                ServiceId::new("base"),
+                ServiceId::new("mid"),
+                ServiceId::new("top"),
+            ]
+        );
     }
 
     #[test]
@@ -186,10 +209,13 @@ mod tests {
         registry.start_service(&id, 500).unwrap();
 
         let mut health = HealthMonitor::new();
-        health.register(id.clone(), HealthConfig {
-            failure_threshold: 2,
-            ..Default::default()
-        });
+        health.register(
+            id.clone(),
+            HealthConfig {
+                failure_threshold: 2,
+                ..Default::default()
+            },
+        );
 
         let mut watchdog = Watchdog::new();
         watchdog.register_pid(id.clone(), 500);

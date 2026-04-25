@@ -70,9 +70,7 @@ impl AccessibilityBridge {
             AnnouncePriority::Polite => "text",
             AnnouncePriority::Assertive => "important",
         };
-        let _ = Command::new("spd-say")
-            .args(["-P", urgency, text])
-            .spawn();
+        let _ = Command::new("spd-say").args(["-P", urgency, text]).spawn();
     }
 }
 

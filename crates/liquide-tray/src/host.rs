@@ -219,8 +219,7 @@ impl TrayHost {
     pub fn update_tooltip(&mut self, id: &str, tooltip: ToolTip) -> bool {
         if let Some(item) = self.items.get_mut(id) {
             item.tooltip = Some(tooltip);
-            self.events
-                .push(TrayEvent::ToolTipChanged(id.to_string()));
+            self.events.push(TrayEvent::ToolTipChanged(id.to_string()));
             true
         } else {
             false

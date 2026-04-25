@@ -62,10 +62,7 @@ impl MonitorArrangement {
 /// For `Stacked`, monitors are placed top-to-bottom sorted by connector name.
 /// For `Mirror`, all monitors are at (0, 0).
 /// For `Custom`, the provided positions are used directly.
-pub fn auto_arrange(
-    monitors: &[DisplayInfo],
-    policy: &ArrangementPolicy,
-) -> MonitorArrangement {
+pub fn auto_arrange(monitors: &[DisplayInfo], policy: &ArrangementPolicy) -> MonitorArrangement {
     let enabled: Vec<&DisplayInfo> = monitors.iter().filter(|d| d.enabled).collect();
 
     match policy {
@@ -287,13 +284,7 @@ impl DisplayArrangement {
     /// Arrange the given displays horizontally left-to-right with the specified
     /// gap (in virtual desktop pixels) between them. The first display in `ids`
     /// is placed at `(start_x, start_y)`.
-    pub fn align_horizontal(
-        &mut self,
-        ids: &[DisplayId],
-        gap: i32,
-        start_x: i32,
-        start_y: i32,
-    ) {
+    pub fn align_horizontal(&mut self, ids: &[DisplayId], gap: i32, start_x: i32, start_y: i32) {
         let mut x = start_x;
         for &id in ids {
             if let Some(d) = self.get_mut(id) {
@@ -306,13 +297,7 @@ impl DisplayArrangement {
 
     /// Arrange the given displays vertically top-to-bottom with the specified
     /// gap between them.
-    pub fn align_vertical(
-        &mut self,
-        ids: &[DisplayId],
-        gap: i32,
-        start_x: i32,
-        start_y: i32,
-    ) {
+    pub fn align_vertical(&mut self, ids: &[DisplayId], gap: i32, start_x: i32, start_y: i32) {
         let mut y = start_y;
         for &id in ids {
             if let Some(d) = self.get_mut(id) {
@@ -348,12 +333,7 @@ impl DisplayArrangement {
             return (0, 0, 0, 0);
         }
 
-        (
-            min_x,
-            min_y,
-            (max_x - min_x) as u32,
-            (max_y - min_y) as u32,
-        )
+        (min_x, min_y, (max_x - min_x) as u32, (max_y - min_y) as u32)
     }
 
     /// Find which display contains the given virtual desktop point.
@@ -445,10 +425,7 @@ impl DisplayArrangement {
                 // Verify this gap region isn't covered by another display.
                 let gap_rect = (gap_left, vert_top, gap_right, vert_bot);
                 let covered = bounds.iter().any(|&(dx, dy, dr, db)| {
-                    dx <= gap_rect.0
-                        && dr >= gap_rect.2
-                        && dy <= gap_rect.1
-                        && db >= gap_rect.3
+                    dx <= gap_rect.0 && dr >= gap_rect.2 && dy <= gap_rect.1 && db >= gap_rect.3
                 });
                 if !covered {
                     gap_rects.push((
@@ -483,10 +460,7 @@ impl DisplayArrangement {
                 }
                 let gap_rect = (horz_left, gap_top, horz_right, gap_bot);
                 let covered = bounds.iter().any(|&(dx, dy, dr, db)| {
-                    dx <= gap_rect.0
-                        && dr >= gap_rect.2
-                        && dy <= gap_rect.1
-                        && db >= gap_rect.3
+                    dx <= gap_rect.0 && dr >= gap_rect.2 && dy <= gap_rect.1 && db >= gap_rect.3
                 });
                 if !covered {
                     gap_rects.push((
@@ -516,16 +490,7 @@ impl DisplayArrangement {
 
 /// Check if two axis-aligned rectangles overlap (strictly — touching edges
 /// are not considered overlap).
-fn rects_overlap(
-    ax: i32,
-    ay: i32,
-    aw: u32,
-    ah: u32,
-    bx: i32,
-    by: i32,
-    bw: u32,
-    bh: u32,
-) -> bool {
+fn rects_overlap(ax: i32, ay: i32, aw: u32, ah: u32, bx: i32, by: i32, bw: u32, bh: u32) -> bool {
     let ar = ax + aw as i32;
     let ab = ay + ah as i32;
     let br = bx + bw as i32;

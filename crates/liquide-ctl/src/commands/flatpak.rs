@@ -25,25 +25,16 @@ pub async fn execute(_client: &Client, output: &Output, cmd: &FlatpakCommand) ->
             }
         }
         FlatpakCommand::Permissions(args) => {
-            output.message(&format!(
-                "Permissions for {} not available.",
-                args.app_id
-            ));
+            output.message(&format!("Permissions for {} not available.", args.app_id));
         }
         FlatpakCommand::Override(args) => {
-            output.message(&format!(
-                "Setting overrides for {}...",
-                args.app_id
-            ));
+            output.message(&format!("Setting overrides for {}...", args.app_id));
         }
         FlatpakCommand::RemoteList => {
             output.message("No Flatpak remotes configured.");
         }
         FlatpakCommand::RemoteAdd(args) => {
-            output.message(&format!(
-                "Adding remote '{}' ({})...",
-                args.name, args.url
-            ));
+            output.message(&format!("Adding remote '{}' ({})...", args.name, args.url));
         }
         FlatpakCommand::RemoteRemove(args) => {
             output.message(&format!("Removing remote '{}'...", args.name));

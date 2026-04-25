@@ -79,7 +79,9 @@ impl CompositionState {
     /// Get the currently selected clause (if any).
     #[must_use]
     pub fn selected_clause(&self) -> Option<&CompositionClause> {
-        self.clauses.iter().find(|c| c.style == ClauseStyle::Selected)
+        self.clauses
+            .iter()
+            .find(|c| c.style == ClauseStyle::Selected)
     }
 
     /// Get the text of a clause.

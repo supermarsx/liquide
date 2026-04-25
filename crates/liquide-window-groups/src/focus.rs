@@ -82,11 +82,7 @@ pub struct CurrentFocus {
 
 impl CurrentFocus {
     /// Create a new CurrentFocus.
-    pub fn new(
-        window_id: u64,
-        app_id: Option<String>,
-        last_user_activity_us: u64,
-    ) -> Self {
+    pub fn new(window_id: u64, app_id: Option<String>, last_user_activity_us: u64) -> Self {
         Self {
             window_id,
             app_id,
@@ -155,9 +151,7 @@ pub fn should_allow_focus_steal(
 
         FocusPolicy::Moderate => {
             // Allow from the same application.
-            if let (Some(req_app), Some(cur_app)) =
-                (&request.requestor_app_id, &current.app_id)
-            {
+            if let (Some(req_app), Some(cur_app)) = (&request.requestor_app_id, &current.app_id) {
                 if req_app == cur_app {
                     return FocusDecision::Allow;
                 }

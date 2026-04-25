@@ -67,10 +67,15 @@ impl Region {
             (Region::Empty, _) | (_, Region::Empty) => Region::Empty,
             (Region::Rect(a), Region::Rect(b)) => {
                 let i = a.intersection(b);
-                if i.is_empty() { Region::Empty } else { Region::Rect(i) }
+                if i.is_empty() {
+                    Region::Empty
+                } else {
+                    Region::Rect(i)
+                }
             }
             (Region::Rect(a), Region::RectList(bs)) | (Region::RectList(bs), Region::Rect(a)) => {
-                let result: Vec<Rect> = bs.iter()
+                let result: Vec<Rect> = bs
+                    .iter()
                     .map(|b| a.intersection(b))
                     .filter(|r| !r.is_empty())
                     .collect();
@@ -96,9 +101,7 @@ impl Region {
         match (self, other) {
             (Region::Empty, r) => r.clone(),
             (r, Region::Empty) => r.clone(),
-            (Region::Rect(a), Region::Rect(b)) => {
-                Region::RectList(vec![*a, *b])
-            }
+            (Region::Rect(a), Region::Rect(b)) => Region::RectList(vec![*a, *b]),
             (Region::Rect(a), Region::RectList(bs)) => {
                 let mut result = vec![*a];
                 result.extend_from_slice(bs);
@@ -125,9 +128,7 @@ impl Region {
         match (self, other) {
             (Region::Empty, _) => Region::Empty,
             (r, Region::Empty) => r.clone(),
-            (Region::Rect(a), Region::Rect(b)) => {
-                Self::from_rects(subtract_rect_rect(a, b))
-            }
+            (Region::Rect(a), Region::Rect(b)) => Self::from_rects(subtract_rect_rect(a, b)),
             (Region::Rect(a), Region::RectList(bs)) => {
                 let mut current = vec![*a];
                 for b in bs {
@@ -227,10 +228,7 @@ mod tests {
 
     #[test]
     fn rect_list_region() {
-        let r = Region::RectList(vec![
-            Rect::new(0, 0, 10, 10),
-            Rect::new(20, 20, 10, 10),
-        ]);
+        let r = Region::RectList(vec![Rect::new(0, 0, 10, 10), Rect::new(20, 20, 10, 10)]);
         assert!(r.contains_point(5, 5));
         assert!(r.contains_point(25, 25));
         assert!(!r.contains_point(15, 15));
@@ -300,10 +298,7 @@ mod tests {
 
     #[test]
     fn region_intersect_rect_list() {
-        let a = Region::RectList(vec![
-            Rect::new(0, 0, 50, 50),
-            Rect::new(60, 60, 50, 50),
-        ]);
+        let a = Region::RectList(vec![Rect::new(0, 0, 50, 50), Rect::new(60, 60, 50, 50)]);
         let b = Region::Rect(Rect::new(25, 25, 50, 50));
         let i = a.intersect(&b);
         // First rect intersects at (25,25,25,25), second at (60,60,15,15)

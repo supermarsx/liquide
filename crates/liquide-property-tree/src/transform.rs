@@ -25,53 +25,77 @@ impl Transform2D {
     /// Create from raw matrix coefficients.
     #[must_use]
     pub fn new(a: f32, b: f32, c: f32, d: f32, tx: f32, ty: f32) -> Self {
-        Self { m: [a, b, c, d, tx, ty] }
+        Self {
+            m: [a, b, c, d, tx, ty],
+        }
     }
 
     /// The identity transform (no-op).
     #[must_use]
     pub fn identity() -> Self {
-        Self { m: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0] }
+        Self {
+            m: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        }
     }
 
     /// A pure translation.
     #[must_use]
     pub fn translate(tx: f32, ty: f32) -> Self {
-        Self { m: [1.0, 0.0, 0.0, 1.0, tx, ty] }
+        Self {
+            m: [1.0, 0.0, 0.0, 1.0, tx, ty],
+        }
     }
 
     /// A pure scale.
     #[must_use]
     pub fn scale(sx: f32, sy: f32) -> Self {
-        Self { m: [sx, 0.0, 0.0, sy, 0.0, 0.0] }
+        Self {
+            m: [sx, 0.0, 0.0, sy, 0.0, 0.0],
+        }
     }
 
     /// A pure rotation (counter-clockwise, in radians).
     #[must_use]
     pub fn rotate(radians: f32) -> Self {
         let (sin, cos) = radians.sin_cos();
-        Self { m: [cos, -sin, sin, cos, 0.0, 0.0] }
+        Self {
+            m: [cos, -sin, sin, cos, 0.0, 0.0],
+        }
     }
 
     /// A pure skew (angles in radians).
     #[must_use]
     pub fn skew(sx: f32, sy: f32) -> Self {
-        Self { m: [1.0, sx.tan(), sy.tan(), 1.0, 0.0, 0.0] }
+        Self {
+            m: [1.0, sx.tan(), sy.tan(), 1.0, 0.0, 0.0],
+        }
     }
 
     /// Accessors for individual matrix components.
     #[inline]
-    pub fn a(&self) -> f32 { self.m[0] }
+    pub fn a(&self) -> f32 {
+        self.m[0]
+    }
     #[inline]
-    pub fn b(&self) -> f32 { self.m[1] }
+    pub fn b(&self) -> f32 {
+        self.m[1]
+    }
     #[inline]
-    pub fn c(&self) -> f32 { self.m[2] }
+    pub fn c(&self) -> f32 {
+        self.m[2]
+    }
     #[inline]
-    pub fn d(&self) -> f32 { self.m[3] }
+    pub fn d(&self) -> f32 {
+        self.m[3]
+    }
     #[inline]
-    pub fn tx(&self) -> f32 { self.m[4] }
+    pub fn tx(&self) -> f32 {
+        self.m[4]
+    }
     #[inline]
-    pub fn ty(&self) -> f32 { self.m[5] }
+    pub fn ty(&self) -> f32 {
+        self.m[5]
+    }
 
     /// Compose two transforms: apply `self` first, then `other`.
     ///

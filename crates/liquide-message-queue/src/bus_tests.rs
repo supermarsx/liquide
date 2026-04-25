@@ -219,9 +219,7 @@ fn match_rule_empty_matches_everything() {
 
 #[test]
 fn match_rule_sender_filter() {
-    let rule = MatchRuleBuilder::new()
-        .sender("org.liquide.Shell")
-        .build();
+    let rule = MatchRuleBuilder::new().sender("org.liquide.Shell").build();
     assert!(rule.matches("org.liquide.Shell", "i", "m", "/", None));
     assert!(!rule.matches("org.liquide.Audio", "i", "m", "/", None));
 }
@@ -719,14 +717,8 @@ fn bus_call_message() {
     let mut bus = MessageBus::new();
     bus.services_mut().register(Box::new(EchoService));
 
-    let msg = BusMessage::method_call(
-        "client",
-        "org.liquide.Echo",
-        "/",
-        "org.liquide.Echo",
-        "Add",
-    )
-    .with_body(vec![BusValue::Int32(10), BusValue::Int32(20)]);
+    let msg = BusMessage::method_call("client", "org.liquide.Echo", "/", "org.liquide.Echo", "Add")
+        .with_body(vec![BusValue::Int32(10), BusValue::Int32(20)]);
 
     let resp = bus.call_message(&msg).unwrap();
     assert_eq!(resp.values, vec![BusValue::Int32(30)]);
@@ -798,10 +790,7 @@ fn bus_signal_with_args() {
 
     let signals = bus.drain_signals(sub);
     assert_eq!(signals.len(), 1);
-    assert_eq!(
-        signals[0].args[0],
-        BusValue::String("dark".into())
-    );
+    assert_eq!(signals[0].args[0], BusValue::String("dark".into()));
 }
 
 #[test]
@@ -823,8 +812,8 @@ fn bus_multiple_subscribers() {
 
 #[test]
 fn bus_message_signal_construction() {
-    let msg = BusMessage::signal("sender", "/path", "iface", "member")
-        .with_arg(BusValue::Bool(true));
+    let msg =
+        BusMessage::signal("sender", "/path", "iface", "member").with_arg(BusValue::Bool(true));
     assert_eq!(msg.msg_type, BusMessageType::Signal);
     assert_eq!(msg.sender, "sender");
     assert_eq!(msg.destination, "");
@@ -833,8 +822,8 @@ fn bus_message_signal_construction() {
 
 #[test]
 fn bus_message_method_call_construction() {
-    let msg = BusMessage::method_call("s", "d", "/p", "i", "m")
-        .with_body(vec![BusValue::Int32(42)]);
+    let msg =
+        BusMessage::method_call("s", "d", "/p", "i", "m").with_body(vec![BusValue::Int32(42)]);
     assert_eq!(msg.msg_type, BusMessageType::MethodCall);
     assert_eq!(msg.destination, "d");
     assert_eq!(msg.body, vec![BusValue::Int32(42)]);
@@ -925,9 +914,7 @@ fn integration_service_call_and_signal_flow() {
     // A listener subscribes to echo-related signals.
     let sub = bus.subscribe(
         "listener",
-        MatchRuleBuilder::new()
-            .sender("org.liquide.Echo")
-            .build(),
+        MatchRuleBuilder::new().sender("org.liquide.Echo").build(),
     );
 
     // Client calls a method.
@@ -945,13 +932,8 @@ fn integration_service_call_and_signal_flow() {
 
     // Service publishes a signal after doing work.
     bus.publish(
-        Signal::new(
-            "org.liquide.Echo",
-            "/",
-            "org.liquide.Echo",
-            "WorkDone",
-        )
-        .with_arg(BusValue::String("complete".into())),
+        Signal::new("org.liquide.Echo", "/", "org.liquide.Echo", "WorkDone")
+            .with_arg(BusValue::String("complete".into())),
     );
 
     // Listener drains.

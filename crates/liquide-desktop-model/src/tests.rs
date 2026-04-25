@@ -1,15 +1,15 @@
 //! Tests for the desktop model crate.
 
 use crate::atom_table::AtomTable;
-use crate::clipboard::{formats, ClipboardData};
+use crate::clipboard::{ClipboardData, formats};
 use crate::desktop::{
-    Desktop, DESKTOP_DEFAULT, DESKTOP_DISCONNECT, DESKTOP_SCREENSAVER, DESKTOP_WINLOGON,
+    DESKTOP_DEFAULT, DESKTOP_DISCONNECT, DESKTOP_SCREENSAVER, DESKTOP_WINLOGON, Desktop,
 };
 use crate::error::DesktopError;
 use crate::heap::DesktopHeap;
 use crate::manager::DesktopManager;
 use crate::security::{DesktopAccess, DesktopFlags, DesktopSecurity, WindowStationFlags};
-use crate::station::{WindowStation, SYSTEM_CLASSES};
+use crate::station::{SYSTEM_CLASSES, WindowStation};
 use crate::types::{DesktopId, WindowId, WindowStationId};
 
 // =======================================================================
@@ -203,11 +203,18 @@ fn clipboard_available_formats() {
     cb.set_data(formats::HTML, b"h".to_vec()).unwrap();
     let mut fmts = cb.available_formats();
     fmts.sort();
-    assert_eq!(fmts, vec![formats::TEXT, formats::HTML].into_iter().min().map(|_| {
-        let mut v = vec![formats::TEXT, formats::HTML];
-        v.sort();
-        v
-    }).unwrap());
+    assert_eq!(
+        fmts,
+        vec![formats::TEXT, formats::HTML]
+            .into_iter()
+            .min()
+            .map(|_| {
+                let mut v = vec![formats::TEXT, formats::HTML];
+                v.sort();
+                v
+            })
+            .unwrap()
+    );
     cb.close().unwrap();
 }
 
@@ -298,7 +305,11 @@ fn security_grant_extra_access() {
     let d1 = DesktopId(1);
     let d2 = DesktopId(2);
     sec.assign_thread(100, d1);
-    sec.grant_access(100, d2, DesktopAccess::READ_OBJECTS | DesktopAccess::ENUMERATE);
+    sec.grant_access(
+        100,
+        d2,
+        DesktopAccess::READ_OBJECTS | DesktopAccess::ENUMERATE,
+    );
     assert!(sec.check_access(d2, 100, DesktopAccess::READ_OBJECTS));
     assert!(sec.check_access(d2, 100, DesktopAccess::ENUMERATE));
     assert!(!sec.check_access(d2, 100, DesktopAccess::WRITE_OBJECTS));
@@ -310,7 +321,11 @@ fn security_revoke_access() {
     let d1 = DesktopId(1);
     let d2 = DesktopId(2);
     sec.assign_thread(100, d1);
-    sec.grant_access(100, d2, DesktopAccess::READ_OBJECTS | DesktopAccess::WRITE_OBJECTS);
+    sec.grant_access(
+        100,
+        d2,
+        DesktopAccess::READ_OBJECTS | DesktopAccess::WRITE_OBJECTS,
+    );
     sec.revoke_access(100, d2, DesktopAccess::WRITE_OBJECTS);
     assert!(sec.check_access(d2, 100, DesktopAccess::READ_OBJECTS));
     assert!(!sec.check_access(d2, 100, DesktopAccess::WRITE_OBJECTS));
@@ -464,7 +479,9 @@ fn manager_switch_desktop_wrong_station() {
     let mut mgr = DesktopManager::new();
     let sid1 = mgr.create_station("WinSta0", 0).unwrap();
     let _d1 = mgr.create_desktop(sid1, "Default").unwrap();
-    let sid2 = mgr.create_non_interactive_station("Service-0x0-1$", 1).unwrap();
+    let sid2 = mgr
+        .create_non_interactive_station("Service-0x0-1$", 1)
+        .unwrap();
     let d2 = mgr.create_desktop(sid2, "Default").unwrap();
     let err = mgr.switch_desktop(d2).unwrap_err();
     assert!(matches!(err, DesktopError::StationMismatch { .. }));
@@ -491,6 +508,36 @@ fn manager_input_lock_blocks_switch() {
     mgr.unlock_input();
     mgr.switch_desktop(d1).unwrap();
     assert_eq!(mgr.active_desktop(), Some(d1));
+}
+
+#[test]
+fn manager_lock_input_requires_active_secure_desktop() {
+    let mut mgr = DesktopManager::new();
+    let sid = mgr.create_station("WinSta0", 0).unwrap();
+    let default = mgr.create_desktop(sid, "Default").unwrap();
+    let winlogon = mgr.create_secure_desktop(sid, "Winlogon").unwrap();
+
+    let err = mgr.lock_input(default).unwrap_err();
+    assert!(matches!(
+        err,
+        DesktopError::InputLockRequiresActiveSecureDesktop {
+            desktop,
+            active_desktop: Some(active_desktop),
+        } if desktop == default && active_desktop == default
+    ));
+
+    let err = mgr.lock_input(winlogon).unwrap_err();
+    assert!(matches!(
+        err,
+        DesktopError::InputLockRequiresActiveSecureDesktop {
+            desktop,
+            active_desktop: Some(active_desktop),
+        } if desktop == winlogon && active_desktop == default
+    ));
+
+    mgr.switch_desktop(winlogon).unwrap();
+    mgr.lock_input(winlogon).unwrap();
+    assert_eq!(mgr.input_locked_desktop(), Some(winlogon));
 }
 
 #[test]
@@ -642,7 +689,7 @@ fn manager_close_desktop_with_input_lock() {
     let mut mgr = DesktopManager::new();
     let sid = mgr.create_station("WinSta0", 0).unwrap();
     let d1 = mgr.create_desktop(sid, "A").unwrap();
-    let d2 = mgr.create_desktop(sid, "B").unwrap();
+    let d2 = mgr.create_secure_desktop(sid, "B").unwrap();
 
     mgr.switch_desktop(d2).unwrap();
     mgr.lock_input(d2).unwrap();

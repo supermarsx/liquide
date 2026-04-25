@@ -1,6 +1,4 @@
-use crate::config::{
-    JailConfig, ResumeConfig, ResourceLimits, SessionConfig, SupervisorConfig,
-};
+use crate::config::{JailConfig, ResourceLimits, ResumeConfig, SessionConfig, SupervisorConfig};
 use crate::crash::RestartAction;
 use crate::ipc::SupervisorCommand;
 use crate::resume::TokenScope;
@@ -252,7 +250,8 @@ fn test_runtime_supervisor_command_shutdown() {
     let mut rt = make_runtime("rt-1");
     rt.initialize().unwrap();
 
-    rt.handle_supervisor_command(SupervisorCommand::Shutdown).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::Shutdown)
+        .unwrap();
     assert_eq!(rt.state(), SessionState::Terminated);
 }
 
@@ -261,10 +260,12 @@ fn test_runtime_supervisor_command_lock_unlock() {
     let mut rt = make_runtime("rt-1");
     rt.initialize().unwrap();
 
-    rt.handle_supervisor_command(SupervisorCommand::Lock).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::Lock)
+        .unwrap();
     assert_eq!(rt.state(), SessionState::Locked);
 
-    rt.handle_supervisor_command(SupervisorCommand::Unlock).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::Unlock)
+        .unwrap();
     assert_eq!(rt.state(), SessionState::Running);
 }
 
@@ -273,10 +274,12 @@ fn test_runtime_supervisor_command_suspend_resume() {
     let mut rt = make_runtime("rt-1");
     rt.initialize().unwrap();
 
-    rt.handle_supervisor_command(SupervisorCommand::Suspend).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::Suspend)
+        .unwrap();
     assert_eq!(rt.state(), SessionState::Suspended);
 
-    rt.handle_supervisor_command(SupervisorCommand::Resume).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::Resume)
+        .unwrap();
     assert_eq!(rt.state(), SessionState::Running);
 }
 
@@ -285,7 +288,8 @@ fn test_runtime_supervisor_command_force_terminate() {
     let mut rt = make_runtime("rt-1");
     rt.initialize().unwrap();
 
-    rt.handle_supervisor_command(SupervisorCommand::ForceTerminate).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::ForceTerminate)
+        .unwrap();
     assert_eq!(rt.state(), SessionState::Terminated);
 }
 
@@ -294,7 +298,8 @@ fn test_runtime_supervisor_command_restart_session() {
     let mut rt = make_runtime("rt-1");
     rt.initialize().unwrap();
 
-    rt.handle_supervisor_command(SupervisorCommand::RestartSession).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::RestartSession)
+        .unwrap();
     assert_eq!(rt.state(), SessionState::Terminated);
 }
 
@@ -303,7 +308,8 @@ fn test_runtime_supervisor_command_update_policy() {
     let mut rt = make_runtime("rt-1");
     rt.initialize().unwrap();
 
-    rt.handle_supervisor_command(SupervisorCommand::UpdatePolicy).unwrap();
+    rt.handle_supervisor_command(SupervisorCommand::UpdatePolicy)
+        .unwrap();
     // State should remain Running; update policy is a no-op stub.
     assert_eq!(rt.state(), SessionState::Running);
 }

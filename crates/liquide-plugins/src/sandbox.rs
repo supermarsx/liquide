@@ -1,6 +1,6 @@
-use crate::manifest::{Permission, ExtensionPoint};
-use crate::registry::PluginError;
 use crate::PluginManifest;
+use crate::manifest::{ExtensionPoint, Permission};
+use crate::registry::PluginError;
 
 /// Tracks the set of permissions granted to a plugin at runtime.
 pub struct PluginCapabilities {
@@ -77,7 +77,10 @@ impl SandboxedPlugin {
     /// from the manifest's declared permissions.
     pub fn new(manifest: PluginManifest) -> Self {
         let capabilities = PluginCapabilities::from_manifest(&manifest);
-        Self { manifest, capabilities }
+        Self {
+            manifest,
+            capabilities,
+        }
     }
 
     /// Execute a named action. The action name is checked against a mapping
@@ -125,7 +128,7 @@ fn required_permission_for_action(action: &str) -> Option<Permission> {
 mod tests {
     use super::*;
     use crate::PluginId;
-    use crate::manifest::{Permission, ExtensionPoint};
+    use crate::manifest::{ExtensionPoint, Permission};
 
     fn test_manifest(perms: Vec<Permission>) -> PluginManifest {
         PluginManifest {
@@ -261,7 +264,10 @@ mod tests {
     #[test]
     fn execute_filesystem_action_denied() {
         let sp = SandboxedPlugin::new(test_manifest(vec![]));
-        assert_eq!(sp.execute_action("read_file").unwrap_err(), PluginError::PermissionDenied);
+        assert_eq!(
+            sp.execute_action("read_file").unwrap_err(),
+            PluginError::PermissionDenied
+        );
     }
 
     #[test]
@@ -280,13 +286,19 @@ mod tests {
     #[test]
     fn execute_screenshot_action_denied() {
         let sp = SandboxedPlugin::new(test_manifest(vec![Permission::Network]));
-        assert_eq!(sp.execute_action("take_screenshot").unwrap_err(), PluginError::PermissionDenied);
+        assert_eq!(
+            sp.execute_action("take_screenshot").unwrap_err(),
+            PluginError::PermissionDenied
+        );
     }
 
     #[test]
     fn execute_audio_action_denied() {
         let sp = SandboxedPlugin::new(test_manifest(vec![]));
-        assert_eq!(sp.execute_action("play_sound").unwrap_err(), PluginError::PermissionDenied);
+        assert_eq!(
+            sp.execute_action("play_sound").unwrap_err(),
+            PluginError::PermissionDenied
+        );
     }
 
     #[test]

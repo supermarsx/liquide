@@ -19,7 +19,10 @@ impl FileClipboard {
     /// Create a new empty clipboard.
     #[must_use]
     pub fn new() -> Self {
-        Self { entries: Vec::new(), operation: None }
+        Self {
+            entries: Vec::new(),
+            operation: None,
+        }
     }
 
     /// Copy entries to the clipboard.
@@ -36,19 +39,27 @@ impl FileClipboard {
 
     /// Get clipboard entries.
     #[must_use]
-    pub fn entries(&self) -> &[FileEntry] { &self.entries }
+    pub fn entries(&self) -> &[FileEntry] {
+        &self.entries
+    }
 
     /// Get the clipboard operation.
     #[must_use]
-    pub fn operation(&self) -> Option<ClipboardOp> { self.operation }
+    pub fn operation(&self) -> Option<ClipboardOp> {
+        self.operation
+    }
 
     /// Whether the clipboard has entries.
     #[must_use]
-    pub fn has_entries(&self) -> bool { !self.entries.is_empty() }
+    pub fn has_entries(&self) -> bool {
+        !self.entries.is_empty()
+    }
 
     /// Number of entries in the clipboard.
     #[must_use]
-    pub fn count(&self) -> usize { self.entries.len() }
+    pub fn count(&self) -> usize {
+        self.entries.len()
+    }
 
     /// Clear the clipboard.
     pub fn clear(&mut self) {
@@ -65,5 +76,7 @@ impl FileClipboard {
 }
 
 impl Default for FileClipboard {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

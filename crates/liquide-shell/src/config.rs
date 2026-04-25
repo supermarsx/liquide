@@ -2,12 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use liquide_dock::DockConfig;
 use crate::launcher::LauncherConfig;
 use crate::notification::NotificationConfig;
 use crate::seamless::SeamlessConfig;
-use liquide_statusbar::ShellBarConfig;
 use crate::tiling::TilingConfig;
+use liquide_dock::DockConfig;
+use liquide_statusbar::ShellBarConfig;
 
 /// Aggregate shell configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

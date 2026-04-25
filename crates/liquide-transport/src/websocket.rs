@@ -12,16 +12,11 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_tungstenite::{
-    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,
 };
 
-type WsSink = futures_util::stream::SplitSink<
-    WebSocketStream<MaybeTlsStream<TcpStream>>,
-    Message,
->;
-type WsStream = futures_util::stream::SplitStream<
-    WebSocketStream<MaybeTlsStream<TcpStream>>,
->;
+type WsSink = futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
+type WsStream = futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 /// WebSocket transport for browser-based clients.
 pub struct WebSocketTransport {

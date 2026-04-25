@@ -168,16 +168,9 @@ pub enum PointerEvent {
         y: f64,
     },
     /// Pointer left a surface.
-    Leave {
-        serial: u32,
-        surface: ObjectId,
-    },
+    Leave { serial: u32, surface: ObjectId },
     /// Pointer moved within the focused surface.
-    Motion {
-        time: u32,
-        x: f64,
-        y: f64,
-    },
+    Motion { time: u32, x: f64, y: f64 },
     /// A button was pressed or released.
     Button {
         serial: u32,
@@ -186,25 +179,13 @@ pub enum PointerEvent {
         state: ButtonState,
     },
     /// Scroll axis event.
-    Axis {
-        time: u32,
-        axis: Axis,
-        value: f64,
-    },
+    Axis { time: u32, axis: Axis, value: f64 },
     /// Indicates the source of an axis event.
-    AxisSource {
-        source: AxisSource,
-    },
+    AxisSource { source: AxisSource },
     /// Axis stop (finger lifted from touchpad).
-    AxisStop {
-        time: u32,
-        axis: Axis,
-    },
+    AxisStop { time: u32, axis: Axis },
     /// Discrete axis step (wheel clicks).
-    AxisDiscrete {
-        axis: Axis,
-        discrete: i32,
-    },
+    AxisDiscrete { axis: Axis, discrete: i32 },
     /// Frame boundary: all events up to this point belong together.
     Frame,
 }
@@ -335,10 +316,7 @@ pub struct Modifiers {
 #[derive(Debug, Clone)]
 pub enum KeyboardEvent {
     /// Keymap update.
-    Keymap {
-        format: KeymapFormat,
-        size: u32,
-    },
+    Keymap { format: KeymapFormat, size: u32 },
     /// Keyboard focus entered a surface.
     Enter {
         serial: u32,
@@ -346,10 +324,7 @@ pub enum KeyboardEvent {
         keys: Vec<u32>,
     },
     /// Keyboard focus left a surface.
-    Leave {
-        serial: u32,
-        surface: ObjectId,
-    },
+    Leave { serial: u32, surface: ObjectId },
     /// A key was pressed or released.
     Key {
         serial: u32,
@@ -360,10 +335,7 @@ pub enum KeyboardEvent {
     /// Modifier state changed.
     Modifiers(Modifiers),
     /// Repeat rate and delay.
-    RepeatInfo {
-        rate: i32,
-        delay: i32,
-    },
+    RepeatInfo { rate: i32, delay: i32 },
 }
 
 /// Keyboard input sub-object.
@@ -486,18 +458,9 @@ pub enum TouchEvent {
         y: f64,
     },
     /// Touch point removed.
-    Up {
-        serial: u32,
-        time: u32,
-        id: i32,
-    },
+    Up { serial: u32, time: u32, id: i32 },
     /// Touch point moved.
-    Motion {
-        time: u32,
-        id: i32,
-        x: f64,
-        y: f64,
-    },
+    Motion { time: u32, id: i32, x: f64, y: f64 },
     /// End of a logical touch event group.
     Frame,
     /// All active touch points cancelled (e.g. palm rejection).
@@ -534,15 +497,7 @@ impl Touch {
     }
 
     /// Record a touch-down event.
-    pub fn down(
-        &mut self,
-        serial: u32,
-        time: u32,
-        surface: ObjectId,
-        id: i32,
-        x: f64,
-        y: f64,
-    ) {
+    pub fn down(&mut self, serial: u32, time: u32, surface: ObjectId, id: i32, x: f64, y: f64) {
         if !self.active_points.contains(&id) {
             self.active_points.push(id);
         }

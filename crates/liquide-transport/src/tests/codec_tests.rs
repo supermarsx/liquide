@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use liquide_protocol::channel::{ChannelId, ALL_CHANNELS};
+use liquide_protocol::channel::{ALL_CHANNELS, ChannelId};
 use liquide_protocol::frame::{FrameFlags, FrameHeader};
 
 use crate::codec;
@@ -38,8 +38,7 @@ fn encode_decode_frame_roundtrip() {
     let mut buf = BytesMut::new();
     codec::encode_frame(&header, payload, &mut buf);
 
-    let (dec_header, dec_payload) =
-        codec::decode_frame(&buf).expect("decode_frame should succeed");
+    let (dec_header, dec_payload) = codec::decode_frame(&buf).expect("decode_frame should succeed");
     assert_eq!(dec_header.channel, ChannelId::CONTROL);
     assert_eq!(dec_header.sequence, 1);
     assert_eq!(dec_header.payload_len, 5);
@@ -134,7 +133,9 @@ async fn write_read_frame_roundtrip() {
     let header = FrameHeader::new(ChannelId::VIDEO, 10, 0, 0, FrameFlags::COMPRESSED, 4);
     let payload = b"tile";
     let mut buf = Vec::new();
-    codec::write_frame(&mut buf, &header, payload).await.unwrap();
+    codec::write_frame(&mut buf, &header, payload)
+        .await
+        .unwrap();
 
     let mut cursor = std::io::Cursor::new(buf);
     let (dec_hdr, dec_payload) = codec::read_frame(&mut cursor, crate::MAX_MESSAGE_SIZE)

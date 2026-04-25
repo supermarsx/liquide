@@ -77,13 +77,15 @@ fn find_assets_dir() -> Option<&'static str> {
         if fonts_dir.is_dir() {
             // Check that at least one .ttf or .otf file exists.
             if let Ok(entries) = std::fs::read_dir(&fonts_dir) {
-                let has_fonts = entries
-                    .filter_map(|e| e.ok())
-                    .any(|e| e.file_type().is_ok_and(|ft| ft.is_dir() || {
-                        let name = e.file_name();
-                        let n = name.to_string_lossy();
-                        n.ends_with(".ttf") || n.ends_with(".otf")
-                    }));
+                let has_fonts = entries.filter_map(|e| e.ok()).any(|e| {
+                    e.file_type().is_ok_and(|ft| {
+                        ft.is_dir() || {
+                            let name = e.file_name();
+                            let n = name.to_string_lossy();
+                            n.ends_with(".ttf") || n.ends_with(".otf")
+                        }
+                    })
+                });
                 // Need actual font subdirs (e.g. Inter/)
                 if has_fonts {
                     // Leak is fine for test — we need 'static lifetime.
@@ -279,7 +281,11 @@ fn test_text_renders_non_empty_with_font_db() {
 
     // Fill black
     fb.pixels_mut().expect("CPU framebuffer required").fill(0);
-    for pixel in fb.pixels_mut().expect("CPU framebuffer required").chunks_exact_mut(4) {
+    for pixel in fb
+        .pixels_mut()
+        .expect("CPU framebuffer required")
+        .chunks_exact_mut(4)
+    {
         pixel[3] = 255;
     }
 
@@ -312,10 +318,7 @@ fn test_text_renders_non_empty_with_font_db() {
         .filter(|px| px[0] > 10 || px[1] > 10 || px[2] > 10)
         .count();
 
-    println!(
-        "Non-black pixels in rendered frame: {}",
-        nonblack_pixels
-    );
+    println!("Non-black pixels in rendered frame: {}", nonblack_pixels);
 
     assert!(
         nonblack_pixels > 0,

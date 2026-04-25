@@ -521,10 +521,7 @@ mod tests {
         let root = doc.root();
         let p = doc.children(root)[0];
         let txt = doc.children(p)[0];
-        assert_eq!(
-            doc.get(txt).unwrap().text_content(),
-            Some("& < > \"")
-        );
+        assert_eq!(doc.get(txt).unwrap().text_content(), Some("& < > \""));
     }
 
     #[test]
@@ -532,7 +529,10 @@ mod tests {
         let doc = parse_html(r#"<div data-val="a &amp; b"></div>"#);
         let root = doc.root();
         let div = doc.children(root)[0];
-        assert_eq!(doc.get_attribute(div, "data-val"), Some("a & b".to_string()));
+        assert_eq!(
+            doc.get_attribute(div, "data-val"),
+            Some("a & b".to_string())
+        );
     }
 
     #[test]
@@ -580,7 +580,10 @@ mod tests {
         assert_eq!(doc.children(statusbar).len(), 3);
 
         // Tag names
-        assert_eq!(doc.tag_name(doc.children(root)[0]).unwrap(), "desktop-background");
+        assert_eq!(
+            doc.tag_name(doc.children(root)[0]).unwrap(),
+            "desktop-background"
+        );
         assert_eq!(doc.tag_name(doc.children(root)[1]).unwrap(), "statusbar");
     }
 
@@ -733,7 +736,11 @@ mod tests {
     fn parse_style_attribute() {
         let mut doc = Document::new();
         let root = doc.root();
-        parse_html_into(&mut doc, root, r#"<div style="left: 100; top: 200">Hello</div>"#);
+        parse_html_into(
+            &mut doc,
+            root,
+            r#"<div style="left: 100; top: 200">Hello</div>"#,
+        );
         let div = doc.children(root)[0];
         assert_eq!(doc.get_inline_style(div, "left"), Some("100".to_string()));
         assert_eq!(doc.get_inline_style(div, "top"), Some("200".to_string()));
@@ -745,11 +752,21 @@ mod tests {
     fn parse_style_multiple_properties() {
         let mut doc = Document::new();
         let root = doc.root();
-        parse_html_into(&mut doc, root, r#"<span style="color: red; font-size: 14; display: flex">text</span>"#);
+        parse_html_into(
+            &mut doc,
+            root,
+            r#"<span style="color: red; font-size: 14; display: flex">text</span>"#,
+        );
         let span = doc.children(root)[0];
         assert_eq!(doc.get_inline_style(span, "color"), Some("red".to_string()));
-        assert_eq!(doc.get_inline_style(span, "font-size"), Some("14".to_string()));
-        assert_eq!(doc.get_inline_style(span, "display"), Some("flex".to_string()));
+        assert_eq!(
+            doc.get_inline_style(span, "font-size"),
+            Some("14".to_string())
+        );
+        assert_eq!(
+            doc.get_inline_style(span, "display"),
+            Some("flex".to_string())
+        );
     }
 
     #[test]
@@ -775,7 +792,11 @@ mod tests {
     fn parse_style_does_not_appear_as_attribute() {
         let mut doc = Document::new();
         let root = doc.root();
-        parse_html_into(&mut doc, root, r#"<div style="left: 50" data-foo="bar">x</div>"#);
+        parse_html_into(
+            &mut doc,
+            root,
+            r#"<div style="left: 50" data-foo="bar">x</div>"#,
+        );
         let div = doc.children(root)[0];
         // style should NOT be in regular attributes
         assert!(doc.get_attribute(div, "style").is_none());

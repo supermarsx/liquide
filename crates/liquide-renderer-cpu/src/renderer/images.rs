@@ -13,11 +13,7 @@ use super::SoftwareRenderer;
 
 impl SoftwareRenderer {
     /// Render an Image scene node.
-    pub(crate) fn render_image_node(
-        &mut self,
-        node: &FlatNode,
-        fb: &mut FrameBuffer,
-    ) {
+    pub(crate) fn render_image_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
@@ -48,12 +44,7 @@ impl SoftwareRenderer {
                         let offset_y = (dst_h - scaled_h) / 2.0;
                         (
                             Rect::new(0.0, 0.0, src_w, src_h),
-                            Rect::new(
-                                bounds.x + offset_x,
-                                bounds.y + offset_y,
-                                scaled_w,
-                                scaled_h,
-                            ),
+                            Rect::new(bounds.x + offset_x, bounds.y + offset_y, scaled_w, scaled_h),
                         )
                     }
                     liquide_compositor::scene::ImageFit::Cover => {
@@ -63,12 +54,7 @@ impl SoftwareRenderer {
                         let crop_x = ((scaled_w - dst_w) / 2.0) / scale;
                         let crop_y = ((scaled_h - dst_h) / 2.0) / scale;
                         (
-                            Rect::new(
-                                crop_x,
-                                crop_y,
-                                src_w - crop_x * 2.0,
-                                src_h - crop_y * 2.0,
-                            ),
+                            Rect::new(crop_x, crop_y, src_w - crop_x * 2.0, src_h - crop_y * 2.0),
                             bounds,
                         )
                     }
@@ -129,11 +115,7 @@ impl SoftwareRenderer {
     }
 
     /// Render a BackgroundFill scene node.
-    pub(crate) fn render_background_fill_node(
-        &mut self,
-        node: &FlatNode,
-        fb: &mut FrameBuffer,
-    ) {
+    pub(crate) fn render_background_fill_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
@@ -186,9 +168,7 @@ impl SoftwareRenderer {
                             let src = Rect::new(0.0, 0.0, tw, th);
                             match background.repeat {
                                 BackgroundRepeat::NoRepeat => {
-                                    self.draw_scaled_texture(
-                                        fb, &texture, src, img_rect, opacity,
-                                    );
+                                    self.draw_scaled_texture(fb, &texture, src, img_rect, opacity);
                                 }
                                 BackgroundRepeat::Repeat
                                 | BackgroundRepeat::Space
@@ -197,12 +177,8 @@ impl SoftwareRenderer {
                                     while ty < bounds.y + bounds.height {
                                         let mut tx = bounds.x;
                                         while tx < bounds.x + bounds.width {
-                                            let tile = Rect::new(
-                                                tx,
-                                                ty,
-                                                img_rect.width,
-                                                img_rect.height,
-                                            );
+                                            let tile =
+                                                Rect::new(tx, ty, img_rect.width, img_rect.height);
                                             self.draw_scaled_texture(
                                                 fb, &texture, src, tile, opacity,
                                             );
@@ -220,9 +196,7 @@ impl SoftwareRenderer {
                                             img_rect.width,
                                             img_rect.height,
                                         );
-                                        self.draw_scaled_texture(
-                                            fb, &texture, src, tile, opacity,
-                                        );
+                                        self.draw_scaled_texture(fb, &texture, src, tile, opacity);
                                         tx += img_rect.width;
                                     }
                                 }
@@ -235,9 +209,7 @@ impl SoftwareRenderer {
                                             img_rect.width,
                                             img_rect.height,
                                         );
-                                        self.draw_scaled_texture(
-                                            fb, &texture, src, tile, opacity,
-                                        );
+                                        self.draw_scaled_texture(fb, &texture, src, tile, opacity);
                                         ty += img_rect.height;
                                     }
                                 }
@@ -251,11 +223,7 @@ impl SoftwareRenderer {
     }
 
     /// Render a BorderImage scene node.
-    pub(crate) fn render_border_image_node(
-        &mut self,
-        node: &FlatNode,
-        fb: &mut FrameBuffer,
-    ) {
+    pub(crate) fn render_border_image_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
@@ -265,8 +233,7 @@ impl SoftwareRenderer {
                 BackgroundImage::ImageId(image_id) => {
                     let texture_key = image_texture_key(*image_id);
                     if let Some(texture) = self.texture_cache.get_by_key(texture_key) {
-                        let src =
-                            Rect::new(0.0, 0.0, texture.width as f32, texture.height as f32);
+                        let src = Rect::new(0.0, 0.0, texture.width as f32, texture.height as f32);
                         self.draw_scaled_texture(fb, &texture, src, bounds, opacity);
                     }
                 }

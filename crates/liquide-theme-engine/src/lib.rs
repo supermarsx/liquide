@@ -4,26 +4,25 @@
 //! CSS variable generation, smooth theme transitions, built-in themes,
 //! and a simple TOML-like theme file parser.
 
+pub mod builtin;
 pub mod color;
-pub mod palette;
 pub mod definition;
 pub mod manager;
-pub mod transition;
-pub mod builtin;
+pub mod palette;
 pub mod parser;
+pub mod transition;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export primary types at crate root for convenience.
+pub use builtin::{builtin_liquid_glass, builtin_midday, builtin_night, builtin_sunset};
 pub use color::Color;
-pub use palette::ColorPalette;
 pub use definition::{
-    ThemeVariant, ThemeMetadata, ThemeDefinition,
-    WindowTheme, StatusBarTheme, DockTheme, MenuTheme,
-    TooltipTheme, NotificationTheme, GlassParams,
+    DockTheme, GlassParams, MenuTheme, NotificationTheme, StatusBarTheme, ThemeDefinition,
+    ThemeMetadata, ThemeVariant, TooltipTheme, WindowTheme,
 };
-pub use manager::{ThemeManager, ThemeError};
+pub use manager::{ThemeError, ThemeManager};
+pub use palette::ColorPalette;
+pub use parser::{ParseError, ParsedTheme, parse_theme, parse_theme_source};
 pub use transition::ThemeTransition;
-pub use parser::{parse_theme, ParseError};
-pub use builtin::{builtin_night, builtin_midday, builtin_sunset, builtin_liquid_glass};

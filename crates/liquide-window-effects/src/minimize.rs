@@ -82,11 +82,7 @@ impl MinimizeAnimation {
     /// Current opacity: fades to 0 during minimize, fades from 0 during restore.
     pub fn current_opacity(&self) -> f32 {
         let t = self.progress();
-        if self.minimizing {
-            1.0 - t
-        } else {
-            t
-        }
+        if self.minimizing { 1.0 - t } else { t }
     }
 
     pub fn is_active(&self) -> bool {
@@ -222,7 +218,12 @@ mod tests {
         // zero-duration means progress() returns 1.0 immediately
         let r = anim.current_rect();
         assert!((r.x - icon_rect().x).abs() < 1e-3);
-        assert!(!anim.is_active() || { anim.tick(0.0); !anim.is_active() });
+        assert!(
+            !anim.is_active() || {
+                anim.tick(0.0);
+                !anim.is_active()
+            }
+        );
     }
 
     #[test]

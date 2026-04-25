@@ -11,4 +11,7 @@ description = "DRM/KMS display output backend for LiquiDE standalone compositor"
 thiserror.workspace = true
 tracing.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]

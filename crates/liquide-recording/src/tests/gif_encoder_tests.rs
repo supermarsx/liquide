@@ -15,10 +15,10 @@ fn test_gif_encoder_empty() {
 fn test_gif_encoder_single_frame() {
     let mut enc = GifEncoder::new(2, 2, 10);
     let frame = vec![
-        255, 0, 0, 255,   // red
-        0, 255, 0, 255,   // green
-        0, 0, 255, 255,   // blue
-        255, 255, 0, 255,  // yellow
+        255, 0, 0, 255, // red
+        0, 255, 0, 255, // green
+        0, 0, 255, 255, // blue
+        255, 255, 0, 255, // yellow
     ];
     enc.add_frame(&frame);
     assert_eq!(enc.frame_count(), 1);
@@ -110,10 +110,10 @@ fn test_gif_encoder_large_frame() {
     let mut frame = Vec::with_capacity(64 * 64 * 4);
     for y in 0..64u32 {
         for x in 0..64u32 {
-            frame.push((x * 4) as u8);   // R
-            frame.push((y * 4) as u8);   // G
-            frame.push(128);              // B
-            frame.push(255);              // A
+            frame.push((x * 4) as u8); // R
+            frame.push((y * 4) as u8); // G
+            frame.push(128); // B
+            frame.push(255); // A
         }
     }
     enc.add_frame(&frame);

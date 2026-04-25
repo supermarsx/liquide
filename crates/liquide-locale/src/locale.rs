@@ -59,7 +59,14 @@ impl Locale {
             } else {
                 enc
             };
-            (&s[..dot_pos], if enc.is_empty() { None } else { Some(enc.to_string()) })
+            (
+                &s[..dot_pos],
+                if enc.is_empty() {
+                    None
+                } else {
+                    Some(enc.to_string())
+                },
+            )
         } else {
             // Strip @modifier if present
             let base = if let Some(at_pos) = s.find('@') {
@@ -71,7 +78,8 @@ impl Locale {
         };
 
         // Split language and territory
-        let (language, territory) = if let Some(sep_pos) = lang_terr.find(|c| c == '_' || c == '-') {
+        let (language, territory) = if let Some(sep_pos) = lang_terr.find(|c| c == '_' || c == '-')
+        {
             let lang = &lang_terr[..sep_pos];
             let terr = &lang_terr[sep_pos + 1..];
             if lang.is_empty() {
@@ -79,7 +87,11 @@ impl Locale {
             }
             (
                 lang.to_lowercase(),
-                if terr.is_empty() { None } else { Some(terr.to_uppercase()) },
+                if terr.is_empty() {
+                    None
+                } else {
+                    Some(terr.to_uppercase())
+                },
             )
         } else {
             if lang_terr.is_empty() {
@@ -89,7 +101,10 @@ impl Locale {
         };
 
         // Validate language code (2 or 3 chars, all alpha)
-        if language.len() < 2 || language.len() > 3 || !language.chars().all(|c| c.is_ascii_alphabetic()) {
+        if language.len() < 2
+            || language.len() > 3
+            || !language.chars().all(|c| c.is_ascii_alphabetic())
+        {
             return None;
         }
 

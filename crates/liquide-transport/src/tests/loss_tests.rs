@@ -1,8 +1,6 @@
 use liquide_protocol::channel::ChannelId;
 
-use crate::loss::{
-    ChannelSequenceTracker, LossRecoveryManager, RecoveryAction, RecoveryStrategy,
-};
+use crate::loss::{ChannelSequenceTracker, LossRecoveryManager, RecoveryAction, RecoveryStrategy};
 
 // ---------------------------------------------------------------------------
 // Sequence Tracker

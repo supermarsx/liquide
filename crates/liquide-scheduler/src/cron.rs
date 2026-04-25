@@ -13,10 +13,7 @@ pub enum ParseError {
         max: u8,
     },
     /// A field token could not be parsed.
-    InvalidToken {
-        field: &'static str,
-        token: String,
-    },
+    InvalidToken { field: &'static str, token: String },
     /// Step value is zero.
     ZeroStep { field: &'static str },
     /// Range start > end.
@@ -111,7 +108,11 @@ impl CronField {
                 (min..=max).filter(|v| (v - min) % step == 0).collect()
             }
             CronField::List(vals) => {
-                let mut out: Vec<u8> = vals.iter().copied().filter(|v| *v >= min && *v <= max).collect();
+                let mut out: Vec<u8> = vals
+                    .iter()
+                    .copied()
+                    .filter(|v| *v >= min && *v <= max)
+                    .collect();
                 out.sort();
                 out.dedup();
                 out
@@ -121,15 +122,23 @@ impl CronField {
 }
 
 /// Parse a single cron field token.
-fn parse_field(token: &str, field_name: &'static str, min: u8, max: u8) -> Result<CronField, ParseError> {
+fn parse_field(
+    token: &str,
+    field_name: &'static str,
+    min: u8,
+    max: u8,
+) -> Result<CronField, ParseError> {
     // Check for list (comma-separated)
     if token.contains(',') {
         let mut vals = Vec::new();
         for part in token.split(',') {
-            let v = part.trim().parse::<u8>().map_err(|_| ParseError::InvalidToken {
-                field: field_name,
-                token: part.to_string(),
-            })?;
+            let v = part
+                .trim()
+                .parse::<u8>()
+                .map_err(|_| ParseError::InvalidToken {
+                    field: field_name,
+                    token: part.to_string(),
+                })?;
             if v < min || v > max {
                 return Err(ParseError::OutOfRange {
                     field: field_name,
@@ -165,14 +174,18 @@ fn parse_field(token: &str, field_name: &'static str, min: u8, max: u8) -> Resul
     // Range: A-B
     if token.contains('-') {
         let parts: Vec<&str> = token.splitn(2, '-').collect();
-        let lo = parts[0].parse::<u8>().map_err(|_| ParseError::InvalidToken {
-            field: field_name,
-            token: token.to_string(),
-        })?;
-        let hi = parts[1].parse::<u8>().map_err(|_| ParseError::InvalidToken {
-            field: field_name,
-            token: token.to_string(),
-        })?;
+        let lo = parts[0]
+            .parse::<u8>()
+            .map_err(|_| ParseError::InvalidToken {
+                field: field_name,
+                token: token.to_string(),
+            })?;
+        let hi = parts[1]
+            .parse::<u8>()
+            .map_err(|_| ParseError::InvalidToken {
+                field: field_name,
+                token: token.to_string(),
+            })?;
         if lo > hi {
             return Err(ParseError::InvalidRange {
                 field: field_name,

@@ -24,7 +24,8 @@ impl WaylandDisplay {
     }
 
     pub fn with_socket(name: &str) -> Self {
-        let xdg_runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".into());
+        let xdg_runtime =
+            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".into());
         Self {
             socket_path: format!("{xdg_runtime}/{name}"),
             clients: HashMap::new(),

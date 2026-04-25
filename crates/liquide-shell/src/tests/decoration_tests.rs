@@ -1,10 +1,13 @@
-use liquide_compositor::geometry::Rect;
 use crate::decoration::*;
+use liquide_compositor::geometry::Rect;
 
 fn default_window() -> (Rect, DecorationStyle) {
     // Client area at (100, 136) with size 400x300
     // Title bar from y=100 to y=136 (height=36)
-    (Rect::new(100.0, 136.0, 400.0, 300.0), DecorationStyle::default())
+    (
+        Rect::new(100.0, 136.0, 400.0, 300.0),
+        DecorationStyle::default(),
+    )
 }
 
 // ── Style defaults ──────────────────────────────────────────────
@@ -230,19 +233,31 @@ fn click_expanded_rect_covers_resize_zone() {
 
     // 5px outside right edge should be within expanded rect
     let pt_right = liquide_compositor::geometry::Point::new(605.0, 350.0);
-    assert!(expanded.contains(pt_right), "point 5px outside right edge should be in expanded rect");
+    assert!(
+        expanded.contains(pt_right),
+        "point 5px outside right edge should be in expanded rect"
+    );
 
     // 5px outside bottom edge
     let pt_bottom = liquide_compositor::geometry::Point::new(400.0, 504.0);
-    assert!(expanded.contains(pt_bottom), "point 4px outside bottom edge should be in expanded rect");
+    assert!(
+        expanded.contains(pt_bottom),
+        "point 4px outside bottom edge should be in expanded rect"
+    );
 
     // 5px outside left edge
     let pt_left = liquide_compositor::geometry::Point::new(195.0, 350.0);
-    assert!(expanded.contains(pt_left), "point 5px outside left edge should be in expanded rect");
+    assert!(
+        expanded.contains(pt_left),
+        "point 5px outside left edge should be in expanded rect"
+    );
 
     // 5px outside top edge
     let pt_top = liquide_compositor::geometry::Point::new(400.0, 195.0);
-    assert!(expanded.contains(pt_top), "point 5px outside top edge should be in expanded rect");
+    assert!(
+        expanded.contains(pt_top),
+        "point 5px outside top edge should be in expanded rect"
+    );
 }
 
 #[test]
@@ -261,12 +276,19 @@ fn click_expanded_rect_with_border_width_misses_resize_zone() {
 
     // 3px outside right edge — missed by old expanded (only extends 1px)
     let pt = liquide_compositor::geometry::Point::new(603.0, 350.0);
-    assert!(!expanded.contains(pt), "old border_width expansion should NOT cover 3px outside");
+    assert!(
+        !expanded.contains(pt),
+        "old border_width expansion should NOT cover 3px outside"
+    );
 
     // But hit_test_decoration would classify it as resize
     let client = Rect::new(200.0, 236.0, 400.0, 264.0); // client starts 36px below
     let zone = hit_test_decoration(client, &style, 603.0, 350.0);
-    assert_eq!(zone, HitZone::ResizeRight, "hit_test should see resize zone here");
+    assert_eq!(
+        zone,
+        HitZone::ResizeRight,
+        "hit_test should see resize zone here"
+    );
 }
 
 // ── Renderer/hit-test position alignment ────────────────────────
@@ -279,8 +301,12 @@ fn button_positions_match_renderer() {
     // Simulate: window bounds = (100, 100, 500, 400)
     // Client area for hit_test: (100, 130, 500, 370)
     let window_bounds = Rect::new(100.0, 100.0, 500.0, 400.0);
-    let client = Rect::new(100.0, window_bounds.y + style.title_bar_height,
-                           500.0, 400.0 - style.title_bar_height);
+    let client = Rect::new(
+        100.0,
+        window_bounds.y + style.title_bar_height,
+        500.0,
+        400.0 - style.title_bar_height,
+    );
 
     let btn_w = style.button_width; // 32
     let btn_margin = style.button_right_margin; // 4
@@ -329,7 +355,12 @@ fn button_positions_match_renderer() {
         "close button top-left corner should hit CloseButton"
     );
     assert_eq!(
-        hit_test_decoration(client, &style, render_close_x + btn_w - 0.5, render_btn_y + btn_h - 0.5),
+        hit_test_decoration(
+            client,
+            &style,
+            render_close_x + btn_w - 0.5,
+            render_btn_y + btn_h - 0.5
+        ),
         HitZone::CloseButton,
         "close button bottom-right corner should hit CloseButton"
     );

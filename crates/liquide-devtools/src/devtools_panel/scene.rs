@@ -26,17 +26,18 @@ impl DevToolsPanel {
         let mut nodes = Vec::new();
 
         // Layout overlay (always rendered if active, even when panel hidden).
-        let overlay_nodes =
-            self.layout_overlay
-                .build_overlay(layout, styles, self.screen_width, self.screen_height);
-        nodes.extend(overlay_nodes);
-
-        // Element picker highlight.
-        let picker_nodes = self.element_picker.build_highlight(
+        let overlay_nodes = self.layout_overlay.build_overlay(
             layout,
+            styles,
             self.screen_width,
             self.screen_height,
         );
+        nodes.extend(overlay_nodes);
+
+        // Element picker highlight.
+        let picker_nodes =
+            self.element_picker
+                .build_highlight(layout, self.screen_width, self.screen_height);
         nodes.extend(picker_nodes);
 
         // Hover highlight — when the user hovers over a node in the Elements
@@ -73,7 +74,7 @@ impl DevToolsPanel {
                         nodes.push(SceneNode::new(
                             915_010,
                             SceneNodeKind::SelectionOverlay {
-                                fill: Color::new(255, 152, 0, 15),    // subtle orange fill
+                                fill: Color::new(255, 152, 0, 15),          // subtle orange fill
                                 border_color: Color::new(255, 152, 0, 140), // orange border
                                 border_width: 1.0,
                             },

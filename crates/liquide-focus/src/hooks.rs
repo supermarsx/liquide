@@ -99,11 +99,7 @@ impl HookChain {
     ///
     /// Returns `Some(message)` if the message survived all hooks (possibly
     /// transformed), or `None` if any hook blocked it.
-    pub fn run(
-        &mut self,
-        window_id: WindowId,
-        message: WindowMessage,
-    ) -> Option<WindowMessage> {
+    pub fn run(&mut self, window_id: WindowId, message: WindowMessage) -> Option<WindowMessage> {
         let mut current = message;
 
         for entry in &mut self.hooks {

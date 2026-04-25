@@ -1,13 +1,13 @@
 //! Tests for the liquide-dpi crate.
 
+use crate::cursor_scale::*;
+use crate::fractional::*;
 use crate::geometry::*;
 use crate::monitor::*;
+use crate::per_monitor::*;
 use crate::platform::PlatformDpi;
 use crate::scale::*;
-use crate::fractional::*;
-use crate::per_monitor::*;
 use crate::text_scaling::*;
-use crate::cursor_scale::*;
 use crate::xsettings::*;
 
 // ── DpiScale tests ────────────────────────────────────────────────────
@@ -290,10 +290,8 @@ fn rect_intersection() {
 
 #[test]
 fn rect_from_point_size() {
-    let r = LogicalRect::from_point_size(
-        LogicalPoint::new(10.0, 20.0),
-        LogicalSize::new(100.0, 50.0),
-    );
+    let r =
+        LogicalRect::from_point_size(LogicalPoint::new(10.0, 20.0), LogicalSize::new(100.0, 50.0));
     assert_eq!(r.x, 10.0);
     assert_eq!(r.y, 20.0);
     assert_eq!(r.width, 100.0);
@@ -633,8 +631,9 @@ fn snap_to_nearest_between_steps() {
 
 #[test]
 fn snap_to_nearest_clamps_low() {
+    // MIN is 0.5x (sub-hiDPI / virtual-display scenarios).
     let s = snap_to_nearest(0.3);
-    assert_eq!(s.factor(), 1.0);
+    assert_eq!(s.factor(), 0.5);
 }
 
 #[test]
@@ -866,7 +865,11 @@ fn scale_manager_on_monitor_change() {
     let events = sm.drain_events();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        ScaleEvent::MonitorScaleChanged { monitor_id, old_scale, new_scale } => {
+        ScaleEvent::MonitorScaleChanged {
+            monitor_id,
+            old_scale,
+            new_scale,
+        } => {
             assert_eq!(*monitor_id, 1);
             assert_eq!(*old_scale, 1.0);
             assert_eq!(*new_scale, 2.0);
@@ -894,7 +897,10 @@ fn scale_manager_set_global_scale() {
     let events = sm.drain_events();
     assert_eq!(events.len(), 1);
     match &events[0] {
-        ScaleEvent::GlobalScaleChanged { old_scale, new_scale } => {
+        ScaleEvent::GlobalScaleChanged {
+            old_scale,
+            new_scale,
+        } => {
             assert_eq!(*old_scale, 1.0);
             assert_eq!(*new_scale, 1.5);
         }
@@ -1238,7 +1244,10 @@ fn xsettings_to_env_vars() {
     let xs = XSettings::from_ui_scale(1.5);
     let vars = xs.to_env_vars();
     assert_eq!(vars.len(), 4);
-    assert!(vars.iter().any(|(k, v)| k == "QT_SCALE_FACTOR" && v == "1.5"));
+    assert!(
+        vars.iter()
+            .any(|(k, v)| k == "QT_SCALE_FACTOR" && v == "1.5")
+    );
     assert!(vars.iter().any(|(k, v)| k == "GDK_SCALE" && v == "2"));
     assert!(vars.iter().any(|(k, _)| k == "GDK_DPI_SCALE"));
     assert!(vars.iter().any(|(k, _)| k == "QT_FONT_DPI"));

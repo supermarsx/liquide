@@ -2,13 +2,13 @@
 
 use bytes::{Bytes, BytesMut};
 use liquide_protocol::channel::{ChannelClass, ChannelId, Direction, Priority, TransportBinding};
-use liquide_protocol::codec::{cbor_decode, cbor_encode, FrameCodec};
+use liquide_protocol::codec::{FrameCodec, cbor_decode, cbor_encode};
 use liquide_protocol::compress::{
-    channel_compression, compress, decompress, CompressionAlgorithm, MAX_DECOMPRESSED_SIZE,
+    CompressionAlgorithm, MAX_DECOMPRESSED_SIZE, channel_compression, compress, decompress,
 };
-use liquide_protocol::fragment::{fragment, Reassembler, MAX_FRAGMENT_PAYLOAD};
-use liquide_protocol::frame::{FrameFlags, FrameHeader, FRAME_VERSION};
-use liquide_protocol::message::{is_valid_range, MessageType};
+use liquide_protocol::fragment::{MAX_FRAGMENT_PAYLOAD, Reassembler, fragment};
+use liquide_protocol::frame::{FRAME_VERSION, FrameFlags, FrameHeader};
+use liquide_protocol::message::{MessageType, is_valid_range};
 use liquide_protocol::messages::audio::*;
 use liquide_protocol::messages::clipboard::*;
 use liquide_protocol::messages::common::*;
@@ -19,8 +19,8 @@ use liquide_protocol::messages::input::*;
 use liquide_protocol::messages::tile::*;
 use liquide_protocol::messages::video::*;
 use liquide_protocol::state::*;
-use liquide_protocol::version::{is_compatible, MAGIC, MIN_SUPPORTED_VERSION, PROTOCOL_VERSION};
-use liquide_protocol::{ProtocolError, PROTOCOL_MAGIC};
+use liquide_protocol::version::{MAGIC, MIN_SUPPORTED_VERSION, PROTOCOL_VERSION, is_compatible};
+use liquide_protocol::{PROTOCOL_MAGIC, ProtocolError};
 
 // =========================================================================
 // Version & magic
@@ -57,10 +57,7 @@ fn protocol_error_display() {
     let e = ProtocolError::UnsupportedVersion("proto/99".into());
     assert!(e.to_string().contains("proto/99"));
 
-    let e = ProtocolError::PayloadTooLarge {
-        size: 100,
-        max: 50,
-    };
+    let e = ProtocolError::PayloadTooLarge { size: 100, max: 50 };
     assert!(e.to_string().contains("100"));
 
     let e = ProtocolError::CrcMismatch {
@@ -192,9 +189,18 @@ fn direction_wire_strings() {
     assert_eq!(Direction::ClientToServer.as_str(), "c2s");
     assert_eq!(Direction::Bidirectional.as_str(), "bidirectional");
 
-    assert_eq!(Direction::from_str_wire("s2c"), Some(Direction::ServerToClient));
-    assert_eq!(Direction::from_str_wire("c2s"), Some(Direction::ClientToServer));
-    assert_eq!(Direction::from_str_wire("bidirectional"), Some(Direction::Bidirectional));
+    assert_eq!(
+        Direction::from_str_wire("s2c"),
+        Some(Direction::ServerToClient)
+    );
+    assert_eq!(
+        Direction::from_str_wire("c2s"),
+        Some(Direction::ClientToServer)
+    );
+    assert_eq!(
+        Direction::from_str_wire("bidirectional"),
+        Some(Direction::Bidirectional)
+    );
     assert_eq!(Direction::from_str_wire("unknown"), None);
 }
 
@@ -203,10 +209,19 @@ fn transport_binding() {
     assert_eq!(ChannelId::CONTROL.tcp_udp_binding(), TransportBinding::Tcp);
     assert_eq!(ChannelId::VIDEO.tcp_udp_binding(), TransportBinding::Udp);
     assert_eq!(ChannelId::CURSOR.tcp_udp_binding(), TransportBinding::Udp);
-    assert_eq!(ChannelId::AUDIO_PLAYBACK.tcp_udp_binding(), TransportBinding::Udp);
-    assert_eq!(ChannelId::CLIPBOARD.tcp_udp_binding(), TransportBinding::Tcp);
+    assert_eq!(
+        ChannelId::AUDIO_PLAYBACK.tcp_udp_binding(),
+        TransportBinding::Udp
+    );
+    assert_eq!(
+        ChannelId::CLIPBOARD.tcp_udp_binding(),
+        TransportBinding::Tcp
+    );
     assert_eq!(ChannelId::INPUT.tcp_udp_binding(), TransportBinding::Tcp);
-    assert_eq!(ChannelId::from_u16(0xF0).tcp_udp_binding(), TransportBinding::Tcp);
+    assert_eq!(
+        ChannelId::from_u16(0xF0).tcp_udp_binding(),
+        TransportBinding::Tcp
+    );
 }
 
 // =========================================================================
@@ -273,12 +288,27 @@ fn message_type_vendor_experimental() {
 #[test]
 fn message_type_expected_channel() {
     assert_eq!(MessageType::Ping.expected_channel(), ChannelId::CONTROL);
-    assert_eq!(MessageType::CrashInfo.expected_channel(), ChannelId::EMERGENCY);
-    assert_eq!(MessageType::VideoFrameData.expected_channel(), ChannelId::VIDEO);
-    assert_eq!(MessageType::CursorShape.expected_channel(), ChannelId::CURSOR);
+    assert_eq!(
+        MessageType::CrashInfo.expected_channel(),
+        ChannelId::EMERGENCY
+    );
+    assert_eq!(
+        MessageType::VideoFrameData.expected_channel(),
+        ChannelId::VIDEO
+    );
+    assert_eq!(
+        MessageType::CursorShape.expected_channel(),
+        ChannelId::CURSOR
+    );
     assert_eq!(MessageType::TileBatch.expected_channel(), ChannelId::TILE);
-    assert_eq!(MessageType::AudioData.expected_channel(), ChannelId::AUDIO_PLAYBACK);
-    assert_eq!(MessageType::ClipboardData.expected_channel(), ChannelId::CLIPBOARD);
+    assert_eq!(
+        MessageType::AudioData.expected_channel(),
+        ChannelId::AUDIO_PLAYBACK
+    );
+    assert_eq!(
+        MessageType::ClipboardData.expected_channel(),
+        ChannelId::CLIPBOARD
+    );
     assert_eq!(MessageType::KeyDown.expected_channel(), ChannelId::INPUT);
 }
 
@@ -575,17 +605,35 @@ fn compress_zstd_custom_level() {
 
 #[test]
 fn compression_algorithm_from_u8() {
-    assert_eq!(CompressionAlgorithm::from_u8(0), Some(CompressionAlgorithm::None));
-    assert_eq!(CompressionAlgorithm::from_u8(1), Some(CompressionAlgorithm::Lz4));
-    assert_eq!(CompressionAlgorithm::from_u8(2), Some(CompressionAlgorithm::Zstd));
+    assert_eq!(
+        CompressionAlgorithm::from_u8(0),
+        Some(CompressionAlgorithm::None)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_u8(1),
+        Some(CompressionAlgorithm::Lz4)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_u8(2),
+        Some(CompressionAlgorithm::Zstd)
+    );
     assert_eq!(CompressionAlgorithm::from_u8(255), None);
 }
 
 #[test]
 fn compression_algorithm_from_str() {
-    assert_eq!(CompressionAlgorithm::from_str("none"), Some(CompressionAlgorithm::None));
-    assert_eq!(CompressionAlgorithm::from_str("lz4"), Some(CompressionAlgorithm::Lz4));
-    assert_eq!(CompressionAlgorithm::from_str("zstd"), Some(CompressionAlgorithm::Zstd));
+    assert_eq!(
+        CompressionAlgorithm::from_str("none"),
+        Some(CompressionAlgorithm::None)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_str("lz4"),
+        Some(CompressionAlgorithm::Lz4)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_str("zstd"),
+        Some(CompressionAlgorithm::Zstd)
+    );
     assert_eq!(CompressionAlgorithm::from_str("gzip"), None);
 }
 
@@ -611,12 +659,30 @@ fn decompress_none_size_limit() {
 
 #[test]
 fn channel_compression_assignments() {
-    assert_eq!(channel_compression(ChannelId::CONTROL), CompressionAlgorithm::Lz4);
-    assert_eq!(channel_compression(ChannelId::VIDEO), CompressionAlgorithm::None);
-    assert_eq!(channel_compression(ChannelId::TILE), CompressionAlgorithm::Zstd);
-    assert_eq!(channel_compression(ChannelId::INPUT), CompressionAlgorithm::None);
-    assert_eq!(channel_compression(ChannelId::FILE_TRANSFER), CompressionAlgorithm::Zstd);
-    assert_eq!(channel_compression(ChannelId::CLIPBOARD), CompressionAlgorithm::Lz4);
+    assert_eq!(
+        channel_compression(ChannelId::CONTROL),
+        CompressionAlgorithm::Lz4
+    );
+    assert_eq!(
+        channel_compression(ChannelId::VIDEO),
+        CompressionAlgorithm::None
+    );
+    assert_eq!(
+        channel_compression(ChannelId::TILE),
+        CompressionAlgorithm::Zstd
+    );
+    assert_eq!(
+        channel_compression(ChannelId::INPUT),
+        CompressionAlgorithm::None
+    );
+    assert_eq!(
+        channel_compression(ChannelId::FILE_TRANSFER),
+        CompressionAlgorithm::Zstd
+    );
+    assert_eq!(
+        channel_compression(ChannelId::CLIPBOARD),
+        CompressionAlgorithm::Lz4
+    );
 }
 
 // =========================================================================
@@ -926,12 +992,18 @@ fn cursor_state_flow() {
 
 #[test]
 fn serde_ping_pong() {
-    let ping = Ping { nonce: u64::MAX, timestamp_us: 0 };
+    let ping = Ping {
+        nonce: u64::MAX,
+        timestamp_us: 0,
+    };
     let encoded = cbor_encode(&ping).unwrap();
     let decoded: Ping = cbor_decode(&encoded).unwrap();
     assert_eq!(ping, decoded);
 
-    let pong = Pong { nonce: 0, timestamp_us: u64::MAX };
+    let pong = Pong {
+        nonce: 0,
+        timestamp_us: u64::MAX,
+    };
     let encoded = cbor_encode(&pong).unwrap();
     let decoded: Pong = cbor_decode(&encoded).unwrap();
     assert_eq!(pong, decoded);
@@ -971,12 +1043,17 @@ fn serde_server_hello() {
         selected_transport: "quic".into(),
         selected_video_codec: "h264".into(),
         selected_audio_codec: "opus".into(),
-        channels: [(0x10, ChannelConfig {
-            name: "Video".into(),
-            direction: "s2c".into(),
-            reliable: false,
-            compression: "none".into(),
-        })].into_iter().collect(),
+        channels: [(
+            0x10,
+            ChannelConfig {
+                name: "Video".into(),
+                direction: "s2c".into(),
+                reliable: false,
+                compression: "none".into(),
+            },
+        )]
+        .into_iter()
+        .collect(),
         session_id: "sess-001".into(),
         resume_accepted: Some(false),
         features: [("clipboard".into(), true)].into_iter().collect(),
@@ -1018,7 +1095,12 @@ fn serde_video_messages() {
         width: 1920,
         height: 1080,
         data_size: 50000,
-        damage_rects: Some(vec![Rect { x: 0, y: 0, width: 1920, height: 1080 }]),
+        damage_rects: Some(vec![Rect {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        }]),
         quantizer: Some(28),
         timestamp_us: 16666,
         color_space: Some(ColorSpaceInfo {
@@ -1091,7 +1173,11 @@ fn serde_clipboard_messages() {
 
 #[test]
 fn serde_cursor_messages() {
-    let pos = CursorPositionMsg { x: 100.5, y: 200.3, timestamp_us: 1000 };
+    let pos = CursorPositionMsg {
+        x: 100.5,
+        y: 200.3,
+        timestamp_us: 1000,
+    };
     let encoded = cbor_encode(&pos).unwrap();
     let decoded: CursorPositionMsg = cbor_decode(&encoded).unwrap();
     assert_eq!(pos, decoded);
@@ -1229,7 +1315,12 @@ fn frame_header_version_mismatch() {
 
 #[test]
 fn rect_serde() {
-    let rect = Rect { x: 10, y: 20, width: 100, height: 200 };
+    let rect = Rect {
+        x: 10,
+        y: 20,
+        width: 100,
+        height: 200,
+    };
     let encoded = cbor_encode(&rect).unwrap();
     let decoded: Rect = cbor_decode(&encoded).unwrap();
     assert_eq!(rect, decoded);

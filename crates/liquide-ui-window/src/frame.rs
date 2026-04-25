@@ -34,7 +34,9 @@ pub struct WindowFrame {
 
 impl WindowFrame {
     pub fn new() -> Self {
-        Self { style: FrameStyle::default() }
+        Self {
+            style: FrameStyle::default(),
+        }
     }
 
     pub fn with_style(style: FrameStyle) -> Self {
@@ -42,9 +44,33 @@ impl WindowFrame {
     }
 
     /// Hit-test a point against the resize handles.
-    /// Returns which resize edge (if any) the point is on.
-    pub fn hit_test_resize(&self, x: f32, y: f32, win_x: f32, win_y: f32, win_w: f32, win_h: f32) -> ResizeEdge {
-        let tol = self.style.resize_tolerance;
+    /// Returns which resize edge (if any) the point is on. `dpi_scale`
+    /// grows the tolerance on HiDPI displays so the hit region scales
+    /// with the visual pixel size of the handles.
+    pub fn hit_test_resize(
+        &self,
+        x: f32,
+        y: f32,
+        win_x: f32,
+        win_y: f32,
+        win_w: f32,
+        win_h: f32,
+    ) -> ResizeEdge {
+        self.hit_test_resize_scaled(x, y, win_x, win_y, win_w, win_h, 1.0)
+    }
+
+    /// DPI-aware variant of `hit_test_resize`.
+    pub fn hit_test_resize_scaled(
+        &self,
+        x: f32,
+        y: f32,
+        win_x: f32,
+        win_y: f32,
+        win_w: f32,
+        win_h: f32,
+        dpi_scale: f32,
+    ) -> ResizeEdge {
+        let tol = self.style.resize_tolerance * dpi_scale.max(0.25);
         let left = win_x;
         let right = win_x + win_w;
         let top = win_y;
@@ -56,23 +82,41 @@ impl WindowFrame {
         let on_bottom = y >= bottom - tol && y < bottom + tol;
 
         // Corners
-        if on_left && on_top { return ResizeEdge::TopLeft; }
-        if on_right && on_top { return ResizeEdge::TopRight; }
-        if on_left && on_bottom { return ResizeEdge::BottomLeft; }
-        if on_right && on_bottom { return ResizeEdge::BottomRight; }
+        if on_left && on_top {
+            return ResizeEdge::TopLeft;
+        }
+        if on_right && on_top {
+            return ResizeEdge::TopRight;
+        }
+        if on_left && on_bottom {
+            return ResizeEdge::BottomLeft;
+        }
+        if on_right && on_bottom {
+            return ResizeEdge::BottomRight;
+        }
 
         // Edges
-        if on_left { return ResizeEdge::Left; }
-        if on_right { return ResizeEdge::Right; }
-        if on_top { return ResizeEdge::Top; }
-        if on_bottom { return ResizeEdge::Bottom; }
+        if on_left {
+            return ResizeEdge::Left;
+        }
+        if on_right {
+            return ResizeEdge::Right;
+        }
+        if on_top {
+            return ResizeEdge::Top;
+        }
+        if on_bottom {
+            return ResizeEdge::Bottom;
+        }
 
         ResizeEdge::None
     }
 }
 
 impl Default for WindowFrame {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Resize edge zones.
@@ -90,7 +134,9 @@ pub enum ResizeEdge {
 }
 
 impl ResizeEdge {
-    pub fn is_some(&self) -> bool { *self != ResizeEdge::None }
+    pub fn is_some(&self) -> bool {
+        *self != ResizeEdge::None
+    }
 }
 
 #[cfg(test)]

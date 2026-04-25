@@ -111,9 +111,9 @@ pub fn hit_test_decoration(
         let btn_y = top + (tbh - btn_h) / 2.0;
 
         let close_x = right - btn_w - btn_margin;
-        let max_x   = right - btn_w * 2.0 - btn_margin;
-        let min_x   = right - btn_w * 3.0 - btn_margin;
-        let aot_x   = right - btn_w * 4.0 - btn_margin;
+        let max_x = right - btn_w * 2.0 - btn_margin;
+        let min_x = right - btn_w * 3.0 - btn_margin;
+        let aot_x = right - btn_w * 4.0 - btn_margin;
 
         if x >= close_x && x < close_x + btn_w && y >= btn_y && y < btn_y + btn_h {
             return HitZone::CloseButton;

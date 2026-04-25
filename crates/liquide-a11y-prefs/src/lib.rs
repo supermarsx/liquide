@@ -29,19 +29,19 @@
 //! }
 //! ```
 
-pub mod prefs;
-pub mod platform;
-pub mod high_contrast;
-pub mod reduced_motion;
 pub mod contrast;
+pub mod high_contrast;
+pub mod platform;
+pub mod prefs;
+pub mod reduced_motion;
 pub mod watcher;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export the most commonly used types at the crate root.
-pub use prefs::{AccessibilityPreferences, CursorSize};
-pub use platform::detect;
 pub use high_contrast::ThemeOverrides;
+pub use platform::detect;
+pub use prefs::{AccessibilityPreferences, CursorSize};
 pub use reduced_motion::AnimationOverrides;
 pub use watcher::PreferenceChange;

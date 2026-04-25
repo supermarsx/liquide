@@ -57,8 +57,7 @@ fn peek_does_not_advance() {
 
 #[test]
 fn custom_factor() {
-    let mut b = Backoff::new(Duration::from_millis(100), Duration::from_secs(60))
-        .with_factor(3.0);
+    let mut b = Backoff::new(Duration::from_millis(100), Duration::from_secs(60)).with_factor(3.0);
     let _d0 = b.next_delay(); // base ~100 ms
     let d1 = b.next_delay(); // base ~300 ms (100 * 3^1)
     // d1 should be roughly 3× d0 (with jitter).

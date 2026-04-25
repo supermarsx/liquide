@@ -63,10 +63,10 @@ impl DirtyRectManager {
         }
 
         let rect = Rect::new(x, y, width, height);
-        
+
         // Clip to screen bounds
         let rect = self.clip_to_screen(rect);
-        
+
         // Don't add zero-area rects
         if rect.width <= 0.0 || rect.height <= 0.0 {
             return;
@@ -84,7 +84,8 @@ impl DirtyRectManager {
         }
 
         if !merged {
-            self.dirty_rects.push(DirtyRect::new(rect, self.current_frame));
+            self.dirty_rects
+                .push(DirtyRect::new(rect, self.current_frame));
         }
 
         // If we have too many dirty rects, switch to full damage
@@ -222,9 +223,9 @@ mod tests {
     fn test_dirty_rect_basic() {
         let mut manager = DirtyRectManager::new(1920, 1080);
         manager.clear(); // Clear initial full damage
-        
+
         manager.mark_dirty(10.0, 10.0, 100.0, 100.0);
-        
+
         assert_eq!(manager.dirty_rects().len(), 1);
         assert!(!manager.is_full_damage());
     }
@@ -233,11 +234,11 @@ mod tests {
     fn test_dirty_rect_merging() {
         let mut manager = DirtyRectManager::new(1920, 1080);
         manager.clear();
-        
+
         // Mark two overlapping regions
         manager.mark_dirty(10.0, 10.0, 100.0, 100.0);
         manager.mark_dirty(50.0, 50.0, 100.0, 100.0);
-        
+
         // Should be merged into one rect
         assert_eq!(manager.dirty_rects().len(), 1);
     }
@@ -246,7 +247,7 @@ mod tests {
     fn test_dirty_rect_full_damage_threshold() {
         let mut manager = DirtyRectManager::new(1920, 1080);
         manager.clear();
-        
+
         // Add many widely-spaced dirty rects to trigger full damage (no merging)
         // Use a grid pattern to fit 40 rects on screen
         for i in 0..40 {
@@ -254,7 +255,7 @@ mod tests {
             let col = i % 10;
             manager.mark_dirty(col as f32 * 180.0, row as f32 * 250.0, 40.0, 40.0);
         }
-        
+
         assert!(manager.is_full_damage());
     }
 
@@ -262,13 +263,13 @@ mod tests {
     fn test_dirty_rect_clipping() {
         let mut manager = DirtyRectManager::new(1920, 1080);
         manager.clear();
-        
+
         // Mark a rect that extends beyond screen bounds
         manager.mark_dirty(1800.0, 1000.0, 300.0, 300.0);
-        
+
         assert_eq!(manager.dirty_rects().len(), 1);
         let rect = manager.dirty_rects()[0].rect;
-        
+
         // Should be clipped to screen bounds
         assert!(rect.x + rect.width <= 1920.0);
         assert!(rect.y + rect.height <= 1080.0);
@@ -278,12 +279,12 @@ mod tests {
     fn test_dirty_rect_intersection_check() {
         let mut manager = DirtyRectManager::new(1920, 1080);
         manager.clear();
-        
+
         manager.mark_dirty(100.0, 100.0, 200.0, 200.0);
-        
+
         let intersecting = Rect::new(150.0, 150.0, 100.0, 100.0);
         let non_intersecting = Rect::new(400.0, 400.0, 100.0, 100.0);
-        
+
         assert!(manager.intersects_dirty(&intersecting));
         assert!(!manager.intersects_dirty(&non_intersecting));
     }

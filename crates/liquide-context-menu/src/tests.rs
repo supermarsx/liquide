@@ -15,6 +15,10 @@ fn screen() -> Rect {
     Rect::new(0.0, 0.0, 1920.0, 1080.0)
 }
 
+fn offset_screen() -> Rect {
+    Rect::new(1440.0, 180.0, 1280.0, 720.0)
+}
+
 fn theme() -> MenuTheme {
     MenuTheme::default_theme()
 }
@@ -45,7 +49,10 @@ fn menu_item_checkbox() {
     assert_eq!(cb.checked, Some(true));
     assert!(!cb.separator);
     assert!(cb.is_activatable());
-    assert!(matches!(cb.kind, MenuItemKind::Toggle { checked: true, .. }));
+    assert!(matches!(
+        cb.kind,
+        MenuItemKind::Toggle { checked: true, .. }
+    ));
 }
 
 #[test]
@@ -144,11 +151,14 @@ fn context_menu_builder_add_checkbox() {
 #[test]
 fn context_menu_builder_add_radio_group() {
     let menu = ContextMenu::builder()
-        .add_radio_group(1, &[
-            ("Small", MenuAction(10), false),
-            ("Medium", MenuAction(11), true),
-            ("Large", MenuAction(12), false),
-        ])
+        .add_radio_group(
+            1,
+            &[
+                ("Small", MenuAction(10), false),
+                ("Medium", MenuAction(11), true),
+                ("Large", MenuAction(12), false),
+            ],
+        )
         .build();
     assert_eq!(menu.items().len(), 3);
     assert_eq!(menu.items()[0].radio_group, Some(1));
@@ -233,11 +243,25 @@ fn context_menu_set_items_resets_hover() {
 }
 
 #[test]
-fn context_menu_activate_hovered_separator_returns_none() {
-    let items = vec![
-        MenuItem::separator(),
+fn context_menu_compute_bounds_respects_non_zero_origin_screen() {
+    let mut menu = ContextMenu::new(vec![
         MenuItem::action("A", MenuAction(1)),
-    ];
+        MenuItem::action("B", MenuAction(2)),
+        MenuItem::action("C", MenuAction(3)),
+    ]);
+
+    menu.open(Point::new(2_800.0, 1_200.0));
+    let bounds = menu.compute_bounds(offset_screen());
+
+    assert!(bounds.x >= offset_screen().x);
+    assert!(bounds.y >= offset_screen().y);
+    assert!(bounds.x + bounds.width <= offset_screen().x + offset_screen().width);
+    assert!(bounds.y + bounds.height <= offset_screen().y + offset_screen().height);
+}
+
+#[test]
+fn context_menu_activate_hovered_separator_returns_none() {
+    let items = vec![MenuItem::separator(), MenuItem::action("A", MenuAction(1))];
     let mut menu = ContextMenu::new(items);
     menu.open(Point::new(100.0, 100.0));
     // Manually set hover to separator.
@@ -259,7 +283,11 @@ fn preset_desktop_context_menu() {
     // Should have separators.
     assert!(items.iter().any(|i| i.separator));
     // Should have a "Sort By" submenu.
-    assert!(items.iter().any(|i| i.label == "Sort By" && i.has_submenu()));
+    assert!(
+        items
+            .iter()
+            .any(|i| i.label == "Sort By" && i.has_submenu())
+    );
 }
 
 #[test]
@@ -267,7 +295,11 @@ fn preset_file_context_menu_file() {
     let items = presets::file_context_menu(false, 1);
     assert!(!items.is_empty());
     // Should have "Open With" submenu for files.
-    assert!(items.iter().any(|i| i.label == "Open With" && i.has_submenu()));
+    assert!(
+        items
+            .iter()
+            .any(|i| i.label == "Open With" && i.has_submenu())
+    );
     // Should have danger item (Move to Trash).
     assert!(items.iter().any(|i| i.danger));
 }

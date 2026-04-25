@@ -56,7 +56,12 @@ pub struct EdgeDetector {
 
 impl EdgeDetector {
     pub fn new(config: EdgeConfig, screen_width: f64, screen_height: f64) -> Self {
-        Self { config, screen_width, screen_height, active: None }
+        Self {
+            config,
+            screen_width,
+            screen_height,
+            active: None,
+        }
     }
 
     pub fn set_screen_size(&mut self, width: f64, height: f64) {
@@ -79,7 +84,10 @@ impl EdgeDetector {
         if progress * self.screen_span(gesture) < self.config.min_drag_distance {
             return None;
         }
-        Some(EdgeDetection { gesture, progress: progress.clamp(0.0, 1.0) })
+        Some(EdgeDetection {
+            gesture,
+            progress: progress.clamp(0.0, 1.0),
+        })
     }
 
     /// Call on pointer/touch release. Returns final detection if threshold met.
@@ -101,11 +109,17 @@ impl EdgeDetector {
 
     fn classify_edge(&self, x: f64, y: f64) -> Option<EdgeGesture> {
         let d = self.config.trigger_distance;
-        if x <= d { Some(EdgeGesture::LeftEdgePull) }
-        else if x >= self.screen_width - d { Some(EdgeGesture::RightEdgePull) }
-        else if y <= d { Some(EdgeGesture::TopEdgePull) }
-        else if y >= self.screen_height - d { Some(EdgeGesture::BottomEdgePull) }
-        else { None }
+        if x <= d {
+            Some(EdgeGesture::LeftEdgePull)
+        } else if x >= self.screen_width - d {
+            Some(EdgeGesture::RightEdgePull)
+        } else if y <= d {
+            Some(EdgeGesture::TopEdgePull)
+        } else if y >= self.screen_height - d {
+            Some(EdgeGesture::BottomEdgePull)
+        } else {
+            None
+        }
     }
 
     fn compute_progress(&self, gesture: EdgeGesture, sx: f64, sy: f64, x: f64, y: f64) -> f64 {
@@ -186,7 +200,13 @@ pub struct HotCornerDetector {
 
 impl HotCornerDetector {
     pub fn new(config: HotCornerConfig, screen_width: f64, screen_height: f64) -> Self {
-        Self { config, screen_width, screen_height, dwelling: None, fired: false }
+        Self {
+            config,
+            screen_width,
+            screen_height,
+            dwelling: None,
+            fired: false,
+        }
     }
 
     /// Update pointer position. `timestamp_us` is a monotonic microsecond clock.
@@ -202,7 +222,11 @@ impl HotCornerDetector {
                 if elapsed_ms >= self.config.delay_ms {
                     self.fired = true;
                     let action = self.action_for(c);
-                    if action != HotCornerAction::None { Some(action) } else { None }
+                    if action != HotCornerAction::None {
+                        Some(action)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -227,11 +251,17 @@ impl HotCornerDetector {
         let is_top = y <= s;
         let is_bottom = y >= self.screen_height - s;
 
-        if is_left && is_top { Some(HotCorner::TopLeft) }
-        else if is_right && is_top { Some(HotCorner::TopRight) }
-        else if is_left && is_bottom { Some(HotCorner::BottomLeft) }
-        else if is_right && is_bottom { Some(HotCorner::BottomRight) }
-        else { None }
+        if is_left && is_top {
+            Some(HotCorner::TopLeft)
+        } else if is_right && is_top {
+            Some(HotCorner::TopRight)
+        } else if is_left && is_bottom {
+            Some(HotCorner::BottomLeft)
+        } else if is_right && is_bottom {
+            Some(HotCorner::BottomRight)
+        } else {
+            None
+        }
     }
 
     fn action_for(&self, corner: HotCorner) -> HotCornerAction {
@@ -296,7 +326,10 @@ mod tests {
 
     #[test]
     fn edge_disabled() {
-        let cfg = EdgeConfig { enabled: false, ..EdgeConfig::default() };
+        let cfg = EdgeConfig {
+            enabled: false,
+            ..EdgeConfig::default()
+        };
         let mut det = EdgeDetector::new(cfg, 1920.0, 1080.0);
         det.begin(5.0, 500.0);
         assert!(!det.is_active());
@@ -322,7 +355,10 @@ mod tests {
 
     #[test]
     fn edge_insufficient_drag() {
-        let cfg = EdgeConfig { min_drag_distance: 100.0, ..EdgeConfig::default() };
+        let cfg = EdgeConfig {
+            min_drag_distance: 100.0,
+            ..EdgeConfig::default()
+        };
         let mut det = EdgeDetector::new(cfg, 1920.0, 1080.0);
         det.begin(5.0, 500.0);
         let r = det.update(15.0, 500.0); // only 10px drag
@@ -331,7 +367,10 @@ mod tests {
 
     #[test]
     fn hot_corner_top_left_triggers() {
-        let cfg = HotCornerConfig { delay_ms: 100, ..HotCornerConfig::default() };
+        let cfg = HotCornerConfig {
+            delay_ms: 100,
+            ..HotCornerConfig::default()
+        };
         let mut hc = HotCornerDetector::new(cfg, 1920.0, 1080.0);
         // Enter corner
         assert!(hc.update(1.0, 1.0, 0).is_none());
@@ -342,7 +381,10 @@ mod tests {
 
     #[test]
     fn hot_corner_no_retrigger_until_leave() {
-        let cfg = HotCornerConfig { delay_ms: 10, ..HotCornerConfig::default() };
+        let cfg = HotCornerConfig {
+            delay_ms: 10,
+            ..HotCornerConfig::default()
+        };
         let mut hc = HotCornerDetector::new(cfg, 1920.0, 1080.0);
         hc.update(1.0, 1.0, 0);
         hc.update(1.0, 1.0, 100_000); // triggers
@@ -371,7 +413,10 @@ mod tests {
 
     #[test]
     fn hot_corner_bottom_left() {
-        let cfg = HotCornerConfig { delay_ms: 0, ..HotCornerConfig::default() };
+        let cfg = HotCornerConfig {
+            delay_ms: 0,
+            ..HotCornerConfig::default()
+        };
         let mut hc = HotCornerDetector::new(cfg, 1920.0, 1080.0);
         hc.update(1.0, 1079.0, 0);
         let r = hc.update(1.0, 1079.0, 100_000);

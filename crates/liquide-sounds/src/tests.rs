@@ -139,10 +139,7 @@ mod tests {
     #[test]
     fn theme_insert_and_get() {
         let mut t = SoundTheme::new("t", "T");
-        t.insert(
-            SoundEvent::Login,
-            SoundFile::new("login.wav"),
-        );
+        t.insert(SoundEvent::Login, SoundFile::new("login.wav"));
         assert!(t.has_sound(SoundEvent::Login));
         assert!(!t.has_sound(SoundEvent::Logout));
         assert_eq!(t.len(), 1);

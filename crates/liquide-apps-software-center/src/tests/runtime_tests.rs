@@ -1,6 +1,7 @@
 //! Tests for the software center runtime.
 
 use crate::config::SoftwareCenterConfig;
+use crate::install::PackageSource;
 use crate::package::{AppCategory, License, PackageInfo, Version};
 use crate::runtime::SoftwareCenterRuntime;
 
@@ -20,7 +21,11 @@ fn make_package(id: &str, name: &str, installed: bool) -> PackageInfo {
         screenshots: Vec::new(),
         icon: "icon".into(),
         installed,
-        installed_version: if installed { Some(Version::new(1, 0, 0)) } else { None },
+        installed_version: if installed {
+            Some(Version::new(1, 0, 0))
+        } else {
+            None
+        },
         repository_id: "official".into(),
     }
 }
@@ -88,7 +93,46 @@ fn test_runtime_update_package() {
 
 #[test]
 fn test_runtime_config() {
-    let config = SoftwareCenterConfig { max_concurrent_downloads: 5, ..SoftwareCenterConfig::default() };
+    let config = SoftwareCenterConfig {
+        max_concurrent_downloads: 5,
+        ..SoftwareCenterConfig::default()
+    };
     let rt = SoftwareCenterRuntime::new(config);
     assert_eq!(rt.config().max_concurrent_downloads, 5);
+}
+
+#[test]
+fn test_runtime_install_command_uses_platform_backend() {
+    let mut rt = SoftwareCenterRuntime::new(SoftwareCenterConfig::default());
+    rt.load_packages(vec![make_package("a", "Alpha", false)]);
+
+    let spec = rt.install_command("a").unwrap();
+
+    #[cfg(target_os = "windows")]
+    {
+        assert_eq!(rt.package_source("a").unwrap(), PackageSource::Winget);
+        assert_eq!(spec.program, "winget");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(rt.package_source("a").unwrap(), PackageSource::Apt);
+        assert_eq!(spec.program, "apt-get");
+    }
+}
+
+#[test]
+fn test_runtime_flatpak_repo_uses_flatpak_backend() {
+    let mut rt = SoftwareCenterRuntime::new(SoftwareCenterConfig::default());
+    let mut pkg = make_package("org.example.Flatpak", "Flatpak App", false);
+    pkg.repository_id = "flatpak".into();
+    rt.load_packages(vec![pkg]);
+
+    let spec = rt.install_command("org.example.Flatpak").unwrap();
+
+    assert_eq!(
+        rt.package_source("org.example.Flatpak").unwrap(),
+        PackageSource::Flatpak
+    );
+    assert_eq!(spec.program, "flatpak");
 }

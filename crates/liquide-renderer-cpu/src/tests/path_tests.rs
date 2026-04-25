@@ -31,7 +31,11 @@ fn triangle_fill_covers_interior() {
 
     // Outside the triangle should be black (untouched)
     let outside = fb.get_pixel(5, 5);
-    assert_eq!(outside.r, 0, "outside should be untouched: got {:?}", outside);
+    assert_eq!(
+        outside.r, 0,
+        "outside should be untouched: got {:?}",
+        outside
+    );
 }
 
 #[test]
@@ -61,7 +65,11 @@ fn rectangle_fill_via_path() {
 
     // Corner should be green
     let corner = fb.get_pixel(11, 11);
-    assert!(corner.g > 200, "interior corner should be green: got {:?}", corner);
+    assert!(
+        corner.g > 200,
+        "interior corner should be green: got {:?}",
+        corner
+    );
 }
 
 #[test]
@@ -152,11 +160,19 @@ fn stroke_triangle() {
 
     // Bottom edge should have red pixels
     let bottom_edge = fb.get_pixel(32, 50);
-    assert!(bottom_edge.r > 200, "bottom edge should be red: got {:?}", bottom_edge);
+    assert!(
+        bottom_edge.r > 200,
+        "bottom edge should be red: got {:?}",
+        bottom_edge
+    );
 
     // Center of the triangle should remain untouched (black)
     let center = fb.get_pixel(32, 35);
-    assert!(center.r < 50, "center should be mostly untouched: got {:?}", center);
+    assert!(
+        center.r < 50,
+        "center should be mostly untouched: got {:?}",
+        center
+    );
 }
 
 #[test]
@@ -169,25 +185,31 @@ fn stroke_width_affects_coverage() {
         .line_to(54.0, 32.0)
         .build();
 
-    stroke_path(
-        &mut fb,
-        &path,
-        4.0,
-        Color::WHITE,
-        BlendMode::SrcOver,
-    );
+    stroke_path(&mut fb, &path, 4.0, Color::WHITE, BlendMode::SrcOver);
 
     // Center of the line should be white
     let center = fb.get_pixel(32, 32);
-    assert_eq!(center.r, 255, "center of stroke should be white: got {:?}", center);
+    assert_eq!(
+        center.r, 255,
+        "center of stroke should be white: got {:?}",
+        center
+    );
 
     // 1 pixel above center should still be in the stroke (half width = 2)
     let above = fb.get_pixel(32, 31);
-    assert!(above.r > 200, "1px above should be in stroke: got {:?}", above);
+    assert!(
+        above.r > 200,
+        "1px above should be in stroke: got {:?}",
+        above
+    );
 
     // 3 pixels above center should be outside the stroke
     let far_above = fb.get_pixel(32, 29);
-    assert!(far_above.r < 50, "3px above should be outside stroke: got {:?}", far_above);
+    assert!(
+        far_above.r < 50,
+        "3px above should be outside stroke: got {:?}",
+        far_above
+    );
 }
 
 #[test]
@@ -217,11 +239,17 @@ fn path_flatten_produces_lines() {
 
     let bounds = path.bounds();
     // Bounds should cover the x range roughly 0..60
-    assert!(bounds.width > 50.0,
-        "path bounds should cover cubic extent: got {:?}", bounds);
+    assert!(
+        bounds.width > 50.0,
+        "path bounds should cover cubic extent: got {:?}",
+        bounds
+    );
     // The cubic control points go up to y=40, so bounds should reflect that
-    assert!(bounds.height > 20.0,
-        "path bounds should cover control point height: got {:?}", bounds);
+    assert!(
+        bounds.height > 20.0,
+        "path bounds should cover control point height: got {:?}",
+        bounds
+    );
 }
 
 #[test]
@@ -240,7 +268,11 @@ fn empty_path_noop() {
         BlendMode::SrcOver,
         &lut,
     );
-    assert_eq!(fb.pixels(), &before[..], "fill_path on empty path should be a no-op");
+    assert_eq!(
+        fb.pixels(),
+        &before[..],
+        "fill_path on empty path should be a no-op"
+    );
 
     // stroke_path with empty path should do nothing
     stroke_path(
@@ -250,7 +282,11 @@ fn empty_path_noop() {
         Color::new(255, 0, 0, 255),
         BlendMode::SrcOver,
     );
-    assert_eq!(fb.pixels(), &before[..], "stroke_path on empty path should be a no-op");
+    assert_eq!(
+        fb.pixels(),
+        &before[..],
+        "stroke_path on empty path should be a no-op"
+    );
 }
 
 #[test]
@@ -285,10 +321,18 @@ fn fill_path_gradient() {
 
     // Left side should be red-ish
     let left = fb.get_pixel(12, 30);
-    assert!(left.r > left.b, "left side should be more red: got {:?}", left);
+    assert!(
+        left.r > left.b,
+        "left side should be more red: got {:?}",
+        left
+    );
     // Right side should be blue-ish
     let right = fb.get_pixel(48, 30);
-    assert!(right.b > right.r, "right side should be more blue: got {:?}", right);
+    assert!(
+        right.b > right.r,
+        "right side should be more blue: got {:?}",
+        right
+    );
 }
 
 #[test]
@@ -311,12 +355,18 @@ fn stroke_open_path() {
 
     // The horizontal line should produce pixels
     let on_line = fb.get_pixel(32, 32);
-    assert_eq!(on_line.r, 255,
-        "stroke should produce white pixels on the line: got {:?}", on_line);
+    assert_eq!(
+        on_line.r, 255,
+        "stroke should produce white pixels on the line: got {:?}",
+        on_line
+    );
     // Off the line should be untouched
     let off_line = fb.get_pixel(32, 5);
-    assert_eq!(off_line.r, 0,
-        "off-line pixel should be untouched: got {:?}", off_line);
+    assert_eq!(
+        off_line.r, 0,
+        "off-line pixel should be untouched: got {:?}",
+        off_line
+    );
 }
 
 #[test]
@@ -367,8 +417,16 @@ fn arc_to_produces_curve() {
     );
 
     let center = fb.get_pixel(32, 32);
-    assert!(center.r > 200, "arc circle center should be filled: got {:?}", center);
+    assert!(
+        center.r > 200,
+        "arc circle center should be filled: got {:?}",
+        center
+    );
 
     let outside = fb.get_pixel(5, 5);
-    assert_eq!(outside.r, 0, "outside arc circle should be black: got {:?}", outside);
+    assert_eq!(
+        outside.r, 0,
+        "outside arc circle should be black: got {:?}",
+        outside
+    );
 }

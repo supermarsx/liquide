@@ -74,7 +74,10 @@ fn message_type_discriminant_ordering() {
     // Paint is before input
     assert!(MessageType::Paint.discriminant() < MessageType::MouseMove.discriminant());
     // Timer has its own discriminant
-    assert_eq!(MessageType::Timer(1).discriminant(), MessageType::Timer(99).discriminant());
+    assert_eq!(
+        MessageType::Timer(1).discriminant(),
+        MessageType::Timer(99).discriminant()
+    );
 }
 
 // ── WakeBits ────────────────────────────────────────────────────────────
@@ -189,7 +192,10 @@ fn queue_wake_bits_updated_on_post() {
     assert!(q.wake_bits().contains(WakeBits::QS_MOUSE));
 
     // Remove key message
-    let _ = q.peek_message(Some(MessageFilter::single(MessageType::KeyDown, true)), true);
+    let _ = q.peek_message(
+        Some(MessageFilter::single(MessageType::KeyDown, true)),
+        true,
+    );
     // Key bit should be cleared (no more key messages)
     assert!(!q.wake_bits().contains(WakeBits::QS_KEY));
     // Mouse bit still set
@@ -262,7 +268,13 @@ fn paint_multiple_invalidations_coalesce() {
 
     let msg = q.peek_message(None, true).unwrap();
     assert_eq!(msg.msg, MessageType::Paint);
-    assert!(q.peek_message(Some(MessageFilter::single(MessageType::Paint, false)), false).is_none());
+    assert!(
+        q.peek_message(
+            Some(MessageFilter::single(MessageType::Paint, false)),
+            false
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -590,10 +602,22 @@ fn purge_window_removes_all_related() {
     q.set_capture(10);
     q.set_focus_window(10);
     // drain focus gained msg
-    let _ = q.peek_message(Some(MessageFilter::for_window(10, true).with_range(MessageType::FocusGained, MessageType::FocusGained)), true);
+    let _ = q.peek_message(
+        Some(
+            MessageFilter::for_window(10, true)
+                .with_range(MessageType::FocusGained, MessageType::FocusGained),
+        ),
+        true,
+    );
     q.set_active_window(10);
     // drain activate msg
-    let _ = q.peek_message(Some(MessageFilter::for_window(10, true).with_range(MessageType::Activate, MessageType::Activate)), true);
+    let _ = q.peek_message(
+        Some(
+            MessageFilter::for_window(10, true)
+                .with_range(MessageType::Activate, MessageType::Activate),
+        ),
+        true,
+    );
 
     q.purge_window(10);
 
@@ -639,10 +663,14 @@ fn pump_bounded_processes_messages() {
 
     let pump = MessagePump::new();
     let mut handled = Vec::new();
-    let result = pump.run_bounded(&mut q, &mut |msg: &QueueMessage| -> i64 {
-        handled.push(msg.msg);
-        0
-    }, 10);
+    let result = pump.run_bounded(
+        &mut q,
+        &mut |msg: &QueueMessage| -> i64 {
+            handled.push(msg.msg);
+            0
+        },
+        10,
+    );
 
     assert_eq!(result, None); // no Quit
     assert_eq!(handled, vec![MessageType::Show, MessageType::KeyDown]);
@@ -657,10 +685,14 @@ fn pump_bounded_stops_on_quit() {
 
     let pump = MessagePump::new();
     let mut count = 0;
-    let result = pump.run_bounded(&mut q, &mut |_msg: &QueueMessage| -> i64 {
-        count += 1;
-        0
-    }, 10);
+    let result = pump.run_bounded(
+        &mut q,
+        &mut |_msg: &QueueMessage| -> i64 {
+            count += 1;
+            0
+        },
+        10,
+    );
 
     assert_eq!(result, Some(42));
     assert_eq!(count, 1); // only Show was dispatched before Quit
@@ -765,8 +797,8 @@ fn filter_combined_window_and_range() {
     q.post_message(QueueMessage::new(20, MessageType::KeyDown));
     q.post_message(QueueMessage::new(10, MessageType::MouseDown));
 
-    let f = MessageFilter::for_window(10, true)
-        .with_range(MessageType::KeyDown, MessageType::KeyChar);
+    let f =
+        MessageFilter::for_window(10, true).with_range(MessageType::KeyDown, MessageType::KeyChar);
     let msg = q.peek_message(Some(f), true).unwrap();
     assert_eq!(msg.target, 10);
     assert_eq!(msg.msg, MessageType::KeyDown);

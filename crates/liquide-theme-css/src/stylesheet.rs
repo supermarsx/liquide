@@ -1,10 +1,50 @@
 //! CSS stylesheet representation
 
+use crate::error::Result as ThemeResult;
+use crate::parser::ThemeParser;
 use crate::property::PropertySet;
 use crate::selector::Selector;
 use crate::value::{FontFaceRule, KeyframesRule, PropertyValue};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const MAX_IMPORT_DEPTH: usize = 10;
+const ANONYMOUS_LAYER_PREFIX: &str = "__liquide_anon_layer__";
+const STRUCTURAL_RECORD_SEPARATOR: char = '\u{1f}';
+const STRUCTURAL_FIELD_SEPARATOR: char = '\u{1e}';
+
+pub const STRUCTURAL_CONDITION_SENTINEL: &str = "__liquide_structural__";
+
+static NEXT_ANONYMOUS_LAYER_ID: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ImportLayer {
+    Named(String),
+    Anonymous,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImportRule {
+    pub url: String,
+    pub layer: Option<ImportLayer>,
+    pub supports_condition: Option<String>,
+    pub media_condition: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StructuralContainerConstraint {
+    pub name: Option<String>,
+    pub condition: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StructuralCondition {
+    pub containers: Vec<StructuralContainerConstraint>,
+    pub scope_start: Option<String>,
+    pub scope_end: Option<String>,
+}
 
 /// A parsed CSS stylesheet
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -21,8 +61,8 @@ pub struct StyleSheet {
     /// `@font-face` rules.
     font_faces: Vec<FontFaceRule>,
 
-    /// `@import` URLs (resolved externally).
-    imports: Vec<String>,
+    /// `@import` rules and qualifiers (resolved externally when desired).
+    imports: Vec<ImportRule>,
 
     /// `@layer` ordering — layer names in cascade order.
     layer_order: Vec<String>,
@@ -219,6 +259,27 @@ impl StyleSheet {
         Self::default()
     }
 
+    /// Load one or more stylesheet paths and resolve their local `@import` trees.
+    pub fn load_paths_with_imports(paths: &[PathBuf]) -> ThemeResult<Self> {
+        let parser = ThemeParser::new();
+        let candidates = Self::collect_stylesheet_candidates(paths)?;
+        let root_files = Self::detect_root_stylesheets(&parser, &candidates, paths)?;
+
+        let mut combined = StyleSheet::new();
+        for root in root_files {
+            let mut visiting = HashSet::new();
+            let sheet = Self::load_root_with_imports(&parser, &root, &mut visiting, 0)?;
+            combined.merge(&sheet);
+        }
+
+        Ok(combined)
+    }
+
+    /// Load a single stylesheet path and resolve its local `@import` tree.
+    pub fn load_path_with_imports<P: AsRef<Path>>(path: P) -> ThemeResult<Self> {
+        Self::load_paths_with_imports(&[path.as_ref().to_path_buf()])
+    }
+
     /// Add a rule
     pub fn add_rule(&mut self, selector: Selector, properties: PropertySet) {
         self.rules.push(StyleRule::new(selector, properties));
@@ -247,13 +308,7 @@ impl StyleSheet {
         properties: PropertySet,
         media_condition: String,
     ) {
-        self.add_rule_with_conditions(
-            selector,
-            properties,
-            Some(media_condition),
-            None,
-            None,
-        );
+        self.add_rule_with_conditions(selector, properties, Some(media_condition), None, None);
     }
 
     /// Add a rule that is gated on a `@supports` condition string.
@@ -263,13 +318,7 @@ impl StyleSheet {
         properties: PropertySet,
         supports_condition: String,
     ) {
-        self.add_rule_with_conditions(
-            selector,
-            properties,
-            None,
-            Some(supports_condition),
-            None,
-        );
+        self.add_rule_with_conditions(selector, properties, None, Some(supports_condition), None);
     }
 
     /// Set a CSS variable
@@ -407,6 +456,9 @@ impl StyleSheet {
 
     /// Merge another stylesheet
     pub fn merge(&mut self, other: &StyleSheet) {
+        for layer_name in &other.layer_order {
+            self.add_layer(layer_name);
+        }
         self.rules.extend(other.rules.clone());
         self.variables.extend(other.variables.clone());
         self.keyframes.extend(other.keyframes.clone());
@@ -453,11 +505,21 @@ impl StyleSheet {
     // ── @import ────────────────────────────────────────────────────────
     /// Add an `@import` URL.
     pub fn add_import(&mut self, url: String) {
-        self.imports.push(url);
+        self.add_import_rule(ImportRule {
+            url,
+            layer: None,
+            supports_condition: None,
+            media_condition: None,
+        });
     }
 
-    /// All `@import` URLs.
-    pub fn imports(&self) -> &[String] {
+    /// Add an `@import` rule with full qualifier metadata.
+    pub fn add_import_rule(&mut self, import: ImportRule) {
+        self.imports.push(import);
+    }
+
+    /// All `@import` rules.
+    pub fn imports(&self) -> &[ImportRule] {
         &self.imports
     }
 
@@ -467,6 +529,18 @@ impl StyleSheet {
         if !self.layer_order.contains(&name.to_string()) {
             self.layer_order.push(name.to_string());
         }
+    }
+
+    /// Allocate a stable internal name for an anonymous layer.
+    pub fn allocate_anonymous_layer(&mut self) -> String {
+        let name = Self::next_anonymous_layer_name();
+        self.add_layer(&name);
+        name
+    }
+
+    /// Generate a stable internal name for an anonymous layer without registering it.
+    pub fn fresh_anonymous_layer_name() -> String {
+        Self::next_anonymous_layer_name()
     }
 
     /// Add a style rule to a named layer.
@@ -564,6 +638,341 @@ impl StyleSheet {
         &self.starting_style_rules
     }
 
+    pub fn encode_structural_condition(condition: &StructuralCondition) -> String {
+        let mut records = Vec::new();
+
+        if let Some(scope_start) = &condition.scope_start {
+            records.push(format!(
+                "scope-start{STRUCTURAL_FIELD_SEPARATOR}{scope_start}"
+            ));
+        }
+        if let Some(scope_end) = &condition.scope_end {
+            records.push(format!("scope-end{STRUCTURAL_FIELD_SEPARATOR}{scope_end}"));
+        }
+        for container in &condition.containers {
+            records.push(format!(
+                "container{STRUCTURAL_FIELD_SEPARATOR}{}{STRUCTURAL_FIELD_SEPARATOR}{}",
+                container.name.as_deref().unwrap_or(""),
+                container.condition
+            ));
+        }
+
+        records.join(&STRUCTURAL_RECORD_SEPARATOR.to_string())
+    }
+
+    pub fn decode_structural_condition(
+        name: Option<&str>,
+        condition: &str,
+    ) -> Option<StructuralCondition> {
+        if name != Some(STRUCTURAL_CONDITION_SENTINEL) {
+            return None;
+        }
+
+        let mut decoded = StructuralCondition::default();
+        for record in condition.split(STRUCTURAL_RECORD_SEPARATOR) {
+            let mut fields = record.split(STRUCTURAL_FIELD_SEPARATOR);
+            match fields.next()? {
+                "scope-start" => decoded.scope_start = fields.next().map(|value| value.to_string()),
+                "scope-end" => decoded.scope_end = fields.next().map(|value| value.to_string()),
+                "container" => {
+                    let raw_name = fields.next().unwrap_or("");
+                    let raw_condition = fields.next().unwrap_or("");
+                    decoded.containers.push(StructuralContainerConstraint {
+                        name: if raw_name.is_empty() {
+                            None
+                        } else {
+                            Some(raw_name.to_string())
+                        },
+                        condition: raw_condition.to_string(),
+                    });
+                }
+                _ => return None,
+            }
+        }
+
+        Some(decoded)
+    }
+
+    fn next_anonymous_layer_name() -> String {
+        format!(
+            "{ANONYMOUS_LAYER_PREFIX}{}",
+            NEXT_ANONYMOUS_LAYER_ID.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    fn detect_root_stylesheets(
+        parser: &ThemeParser,
+        candidates: &[PathBuf],
+        watched_paths: &[PathBuf],
+    ) -> ThemeResult<Vec<PathBuf>> {
+        let candidate_set: HashSet<PathBuf> = candidates.iter().cloned().collect();
+        let explicit_files: HashSet<PathBuf> = watched_paths
+            .iter()
+            .filter(|path| path.is_file() && Self::is_css_file(path))
+            .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+            .collect();
+        let mut imported = HashSet::new();
+
+        for candidate in candidates {
+            let sheet = parser.parse_file(candidate)?;
+            let base_dir = candidate.parent().unwrap_or_else(|| Path::new("."));
+            for import in sheet.imports() {
+                let import_path = base_dir.join(Self::strip_import_url(&import.url));
+                if let Ok(canonical) = import_path.canonicalize() {
+                    if candidate_set.contains(&canonical) {
+                        imported.insert(canonical);
+                    }
+                }
+            }
+        }
+
+        let mut roots: Vec<PathBuf> = candidates
+            .iter()
+            .filter(|path| explicit_files.contains(*path) || !imported.contains(*path))
+            .cloned()
+            .collect();
+        if roots.is_empty() {
+            roots = candidates.to_vec();
+        }
+        roots.sort();
+        Ok(roots)
+    }
+
+    fn collect_stylesheet_candidates(paths: &[PathBuf]) -> ThemeResult<Vec<PathBuf>> {
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+
+        for path in paths {
+            if path.is_file() && Self::is_css_file(path) {
+                let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                if seen.insert(canonical.clone()) {
+                    candidates.push(canonical);
+                }
+            } else if path.is_dir() {
+                Self::collect_stylesheet_candidates_in_dir(path, &mut candidates, &mut seen)?;
+            }
+        }
+
+        candidates.sort();
+        Ok(candidates)
+    }
+
+    fn collect_stylesheet_candidates_in_dir(
+        dir: &Path,
+        candidates: &mut Vec<PathBuf>,
+        seen: &mut HashSet<PathBuf>,
+    ) -> ThemeResult<()> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<std::result::Result<_, _>>()?;
+        entries.sort_by_key(|entry| entry.path());
+
+        for entry in entries {
+            let path = entry.path();
+            if path.is_dir() {
+                Self::collect_stylesheet_candidates_in_dir(&path, candidates, seen)?;
+            } else if path.is_file() && Self::is_css_file(&path) {
+                let canonical = path.canonicalize().unwrap_or(path);
+                if seen.insert(canonical.clone()) {
+                    candidates.push(canonical);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn load_root_with_imports(
+        parser: &ThemeParser,
+        path: &Path,
+        visiting: &mut HashSet<PathBuf>,
+        depth: usize,
+    ) -> ThemeResult<Self> {
+        if depth > MAX_IMPORT_DEPTH {
+            return Ok(StyleSheet::new());
+        }
+
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if !visiting.insert(canonical.clone()) {
+            return Ok(StyleSheet::new());
+        }
+
+        let stylesheet = parser.parse_file(&canonical)?;
+        let imports = stylesheet.imports.clone();
+        let mut combined = StyleSheet::new();
+        let base_dir = canonical.parent().unwrap_or_else(|| Path::new("."));
+
+        for import in imports {
+            let import_path = base_dir.join(Self::strip_import_url(&import.url));
+            let mut imported = Self::load_root_with_imports(parser, &import_path, visiting, depth + 1)?;
+            imported.apply_import_context(&import);
+            combined.merge(&imported);
+        }
+
+        visiting.remove(&canonical);
+        combined.merge(&stylesheet);
+        Ok(combined)
+    }
+
+    fn apply_import_context(&mut self, import: &ImportRule) {
+        if let Some(layer) = &import.layer {
+            self.apply_import_layer(layer);
+        }
+        if let Some(condition) = import.media_condition.as_deref() {
+            self.apply_media_gate(condition);
+        }
+        if let Some(condition) = import.supports_condition.as_deref() {
+            self.apply_supports_gate(condition);
+        }
+    }
+
+    fn apply_import_layer(&mut self, layer: &ImportLayer) {
+        let base_layer = match layer {
+            ImportLayer::Named(name) => name.clone(),
+            ImportLayer::Anonymous => Self::next_anonymous_layer_name(),
+        };
+
+        let existing_layers = std::mem::take(&mut self.layer_order);
+        let mut renamed_layers = HashMap::new();
+        self.add_layer(&base_layer);
+        for layer_name in existing_layers {
+            let qualified = Self::qualify_layer_name(Some(&base_layer), &layer_name);
+            renamed_layers.insert(layer_name, qualified.clone());
+            self.add_layer(&qualified);
+        }
+
+        self.update_rule_layers(&base_layer, &renamed_layers);
+    }
+
+    fn update_rule_layers(&mut self, base_layer: &str, renamed_layers: &HashMap<String, String>) {
+        for rule in &mut self.rules {
+            Self::reassign_rule_layer(rule, base_layer, renamed_layers);
+        }
+        for container_rule in &mut self.container_rules {
+            for rule in &mut container_rule.rules {
+                Self::reassign_rule_layer(rule, base_layer, renamed_layers);
+            }
+        }
+        for scope_rule in &mut self.scope_rules {
+            for rule in &mut scope_rule.rules {
+                Self::reassign_rule_layer(rule, base_layer, renamed_layers);
+            }
+        }
+        for rule in &mut self.starting_style_rules {
+            Self::reassign_rule_layer(rule, base_layer, renamed_layers);
+        }
+    }
+
+    fn reassign_rule_layer(
+        rule: &mut StyleRule,
+        base_layer: &str,
+        renamed_layers: &HashMap<String, String>,
+    ) {
+        rule.layer = Some(match rule.layer.as_ref() {
+            Some(existing) => renamed_layers
+                .get(existing)
+                .cloned()
+                .unwrap_or_else(|| Self::qualify_layer_name(Some(base_layer), existing)),
+            None => base_layer.to_string(),
+        });
+    }
+
+    fn apply_media_gate(&mut self, outer_condition: &str) {
+        for rule in &mut self.rules {
+            rule.media_condition = Self::combine_gate_conditions(
+                outer_condition,
+                rule.media_condition.as_deref(),
+            );
+        }
+        for container_rule in &mut self.container_rules {
+            for rule in &mut container_rule.rules {
+                rule.media_condition = Self::combine_gate_conditions(
+                    outer_condition,
+                    rule.media_condition.as_deref(),
+                );
+            }
+        }
+        for scope_rule in &mut self.scope_rules {
+            for rule in &mut scope_rule.rules {
+                rule.media_condition = Self::combine_gate_conditions(
+                    outer_condition,
+                    rule.media_condition.as_deref(),
+                );
+            }
+        }
+        for rule in &mut self.starting_style_rules {
+            rule.media_condition = Self::combine_gate_conditions(
+                outer_condition,
+                rule.media_condition.as_deref(),
+            );
+        }
+    }
+
+    fn apply_supports_gate(&mut self, outer_condition: &str) {
+        for rule in &mut self.rules {
+            rule.supports_condition = Self::combine_gate_conditions(
+                outer_condition,
+                rule.supports_condition.as_deref(),
+            );
+        }
+        for container_rule in &mut self.container_rules {
+            for rule in &mut container_rule.rules {
+                rule.supports_condition = Self::combine_gate_conditions(
+                    outer_condition,
+                    rule.supports_condition.as_deref(),
+                );
+            }
+        }
+        for scope_rule in &mut self.scope_rules {
+            for rule in &mut scope_rule.rules {
+                rule.supports_condition = Self::combine_gate_conditions(
+                    outer_condition,
+                    rule.supports_condition.as_deref(),
+                );
+            }
+        }
+        for rule in &mut self.starting_style_rules {
+            rule.supports_condition = Self::combine_gate_conditions(
+                outer_condition,
+                rule.supports_condition.as_deref(),
+            );
+        }
+    }
+
+    fn combine_gate_conditions(outer: &str, inner: Option<&str>) -> Option<String> {
+        let outer = outer.trim();
+        if outer.is_empty() {
+            return inner.map(|value| value.to_string());
+        }
+
+        match inner.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(inner) => Some(format!("({outer}) and ({inner})")),
+            None => Some(outer.to_string()),
+        }
+    }
+
+    fn qualify_layer_name(parent: Option<&str>, layer_name: &str) -> String {
+        match parent.filter(|name| !name.is_empty()) {
+            Some(parent) => format!("{parent}.{layer_name}"),
+            None => layer_name.to_string(),
+        }
+    }
+
+    fn is_css_file(path: &Path) -> bool {
+        path.extension().and_then(|ext| ext.to_str()) == Some("css")
+    }
+
+    fn strip_import_url(raw: &str) -> String {
+        let mut url = raw.trim();
+        if let Some(inner) = url.strip_prefix("url(") {
+            url = inner.strip_suffix(')').unwrap_or(inner).trim();
+        }
+        if (url.starts_with('"') && url.ends_with('"'))
+            || (url.starts_with('\'') && url.ends_with('\''))
+        {
+            url = &url[1..url.len() - 1];
+        }
+        url.to_string()
+    }
+
     fn layer_rank(&self, rule: &StyleRule) -> u32 {
         match rule
             .layer
@@ -584,23 +993,33 @@ impl StyleSheet {
         if let Some(rest) = condition.strip_prefix("not ") {
             return !self.evaluate_media_condition(rest.trim(), env);
         }
-        if condition.contains(" and ") {
-            return condition
-                .split(" and ")
-                .all(|part| self.evaluate_media_condition(part.trim(), env));
+
+        if let Some(parts) = Self::split_top_level_keyword(condition, "or") {
+            return parts
+                .iter()
+                .any(|part| self.evaluate_media_condition(part, env));
         }
-        if condition.contains(" or ") {
-            return condition
-                .split(" or ")
-                .any(|part| self.evaluate_media_condition(part.trim(), env));
+        if let Some(parts) = Self::split_top_level_keyword(condition, "and") {
+            return parts
+                .iter()
+                .all(|part| self.evaluate_media_condition(part, env));
+        }
+        if let Some(parts) = Self::split_top_level_commas(condition) {
+            return parts
+                .iter()
+                .any(|part| self.evaluate_media_condition(part, env));
         }
 
-        let inner = condition
-            .strip_prefix('(')
-            .and_then(|s| s.strip_suffix(')'))
-            .unwrap_or(condition)
-            .trim();
+        match condition {
+            "all" | "screen" => true,
+            "print" | "not all" => false,
+            _ => Self::strip_wrapping_parens(condition)
+                .map(|inner| self.evaluate_media_feature_or_comparison(inner.trim(), env))
+                .unwrap_or(false),
+        }
+    }
 
+    fn evaluate_media_feature_or_comparison(&self, inner: &str, env: &QueryEnvironment) -> bool {
         if let Some(result) = self.evaluate_media_comparison(inner, env) {
             return result;
         }
@@ -611,22 +1030,22 @@ impl StyleSheet {
             match feature {
                 "min-width" => Self::parse_px_value(value)
                     .map(|v| env.viewport_width >= v)
-                    .unwrap_or(true),
+                    .unwrap_or(false),
                 "max-width" => Self::parse_px_value(value)
                     .map(|v| env.viewport_width <= v)
-                    .unwrap_or(true),
+                    .unwrap_or(false),
                 "min-height" => Self::parse_px_value(value)
                     .map(|v| env.viewport_height >= v)
-                    .unwrap_or(true),
+                    .unwrap_or(false),
                 "max-height" => Self::parse_px_value(value)
                     .map(|v| env.viewport_height <= v)
-                    .unwrap_or(true),
+                    .unwrap_or(false),
                 "width" => Self::parse_px_value(value)
                     .map(|v| (env.viewport_width - v).abs() < 1.0)
-                    .unwrap_or(true),
+                    .unwrap_or(false),
                 "height" => Self::parse_px_value(value)
                     .map(|v| (env.viewport_height - v).abs() < 1.0)
-                    .unwrap_or(true),
+                    .unwrap_or(false),
                 "prefers-color-scheme" => env.preferred_color_scheme.eq_ignore_ascii_case(value),
                 "prefers-reduced-motion" => {
                     let v = value.eq_ignore_ascii_case("reduce");
@@ -640,35 +1059,47 @@ impl StyleSheet {
                     };
                     actual.eq_ignore_ascii_case(value)
                 }
-                _ => true,
+                _ => false,
             }
         } else {
-            true
+            false
         }
     }
 
-    fn evaluate_media_comparison(
-        &self,
-        inner: &str,
+    fn evaluate_media_comparison(&self, inner: &str, env: &QueryEnvironment) -> Option<bool> {
+        let tokens: Vec<&str> = inner.split_whitespace().collect();
+        match tokens.as_slice() {
+            [lhs, op, rhs] if Self::is_media_comparison_operator(op) => {
+                Self::evaluate_media_comparison_pair(lhs, op, rhs, env)
+            }
+            [lhs, op1, mid, op2, rhs]
+                if Self::is_media_comparison_operator(op1)
+                    && Self::is_media_comparison_operator(op2) =>
+            {
+                Some(
+                    Self::evaluate_media_comparison_pair(lhs, op1, mid, env)?
+                        && Self::evaluate_media_comparison_pair(mid, op2, rhs, env)?,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn evaluate_media_comparison_pair(
+        lhs: &str,
+        op: &str,
+        rhs: &str,
         env: &QueryEnvironment,
     ) -> Option<bool> {
-        for op in ["<=", ">=", "<", ">"] {
-            if let Some((lhs_raw, rhs_raw)) = inner.split_once(op) {
-                let lhs = lhs_raw.trim();
-                let rhs = rhs_raw.trim();
-                let lhs_val = Self::media_dimension_value(lhs, env)?;
-                let rhs_val = Self::media_dimension_value(rhs, env)?;
-                let result = match op {
-                    "<=" => lhs_val <= rhs_val,
-                    ">=" => lhs_val >= rhs_val,
-                    "<" => lhs_val < rhs_val,
-                    ">" => lhs_val > rhs_val,
-                    _ => return None,
-                };
-                return Some(result);
-            }
-        }
-        None
+        let lhs_val = Self::media_dimension_value(lhs.trim(), env)?;
+        let rhs_val = Self::media_dimension_value(rhs.trim(), env)?;
+        Some(match op {
+            "<=" => lhs_val <= rhs_val,
+            ">=" => lhs_val >= rhs_val,
+            "<" => lhs_val < rhs_val,
+            ">" => lhs_val > rhs_val,
+            _ => return None,
+        })
     }
 
     fn media_dimension_value(token: &str, env: &QueryEnvironment) -> Option<f32> {
@@ -688,26 +1119,24 @@ impl StyleSheet {
         if let Some(rest) = condition.strip_prefix("not ") {
             return !self.evaluate_supports_condition(rest.trim(), env);
         }
-        if condition.contains(" and ") {
-            return condition
-                .split(" and ")
-                .all(|part| self.evaluate_supports_condition(part.trim(), env));
+
+        if let Some(parts) = Self::split_top_level_keyword(condition, "or") {
+            return parts
+                .iter()
+                .any(|part| self.evaluate_supports_condition(part, env));
         }
-        if condition.contains(" or ") {
-            return condition
-                .split(" or ")
-                .any(|part| self.evaluate_supports_condition(part.trim(), env));
+        if let Some(parts) = Self::split_top_level_keyword(condition, "and") {
+            return parts
+                .iter()
+                .all(|part| self.evaluate_supports_condition(part, env));
         }
 
-        let inner = condition
-            .strip_prefix('(')
-            .and_then(|s| s.strip_suffix(')'))
-            .unwrap_or(condition)
-            .trim();
+        let inner = Self::strip_wrapping_parens(condition).unwrap_or(condition).trim();
 
-        if let Some((property, value)) = inner.split_once(':') {
+        if let Some(colon_index) = Self::find_top_level_delimiter(inner, ':') {
+            let property = inner[..colon_index].trim();
+            let value = inner[colon_index + 1..].trim();
             let property = property.trim();
-            let value = value.trim();
             let property_supported = if env.supported_properties.is_empty() {
                 Self::is_supported_css_property(property)
             } else {
@@ -715,11 +1144,112 @@ impl StyleSheet {
             };
             property_supported && Self::is_supported_css_value(property, value)
         } else {
-            true
+            false
         }
     }
 
-    fn parse_px_value(value: &str) -> Option<f32> {
+    fn split_top_level_keyword<'a>(input: &'a str, keyword: &str) -> Option<Vec<&'a str>> {
+        let pattern = format!(" {keyword} ");
+        let mut depth = 0i32;
+        let mut start = 0usize;
+        let mut skip_until = 0usize;
+        let mut parts = Vec::new();
+
+        for (idx, ch) in input.char_indices() {
+            if idx < skip_until {
+                continue;
+            }
+
+            match ch {
+                '(' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                _ => {}
+            }
+
+            if depth == 0 && input[idx..].starts_with(&pattern) {
+                parts.push(input[start..idx].trim());
+                start = idx + pattern.len();
+                skip_until = start;
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            parts.push(input[start..].trim());
+            Some(parts)
+        }
+    }
+
+    fn split_top_level_commas(input: &str) -> Option<Vec<&str>> {
+        let mut depth = 0i32;
+        let mut start = 0usize;
+        let mut parts = Vec::new();
+
+        for (idx, ch) in input.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(input[start..idx].trim());
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            parts.push(input[start..].trim());
+            Some(parts)
+        }
+    }
+
+    fn strip_wrapping_parens(input: &str) -> Option<&str> {
+        if !(input.starts_with('(') && input.ends_with(')')) {
+            return None;
+        }
+
+        let mut depth = 0i32;
+        for (idx, ch) in input.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 && idx != input.len() - 1 {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if depth == 0 {
+            Some(&input[1..input.len() - 1])
+        } else {
+            None
+        }
+    }
+
+    fn find_top_level_delimiter(input: &str, delimiter: char) -> Option<usize> {
+        let mut depth = 0i32;
+        for (idx, ch) in input.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                _ if ch == delimiter && depth == 0 => return Some(idx),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn is_media_comparison_operator(value: &str) -> bool {
+        matches!(value, "<" | ">" | "<=" | ">=")
+    }
+
+    pub fn parse_px_value(value: &str) -> Option<f32> {
         let value = value.trim();
         if let Some(px) = value.strip_suffix("px") {
             px.trim().parse::<f32>().ok()
@@ -732,7 +1262,7 @@ impl StyleSheet {
         }
     }
 
-    fn is_supported_css_property(property: &str) -> bool {
+    pub fn is_supported_css_property(property: &str) -> bool {
         matches!(
             property,
             "display"
@@ -812,7 +1342,7 @@ impl StyleSheet {
         )
     }
 
-    fn is_supported_css_value(property: &str, value: &str) -> bool {
+    pub fn is_supported_css_value(property: &str, value: &str) -> bool {
         let value = value.trim();
         match property {
             "display" => matches!(
@@ -832,7 +1362,10 @@ impl StyleSheet {
                     | "list-item"
                     | "flow-root"
             ),
-            "position" => matches!(value, "static" | "relative" | "absolute" | "fixed" | "sticky"),
+            "position" => matches!(
+                value,
+                "static" | "relative" | "absolute" | "fixed" | "sticky"
+            ),
             "visibility" => matches!(value, "visible" | "hidden" | "collapse"),
             "overflow" | "overflow-x" | "overflow-y" => {
                 matches!(value, "visible" | "hidden" | "scroll" | "auto" | "clip")
@@ -883,12 +1416,19 @@ impl StyleSheet {
             | "margin" | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
             | "padding" | "padding-top" | "padding-right" | "padding-bottom" | "padding-left"
             | "top" | "right" | "bottom" | "left" | "gap" | "row-gap" | "column-gap"
-            | "border-radius" | "border-width" | "font-size" | "line-height"
-            | "letter-spacing" | "word-spacing" | "text-indent" | "flex-basis" => {
+            | "border-radius" | "border-width" | "font-size" | "line-height" | "letter-spacing"
+            | "word-spacing" | "text-indent" | "flex-basis" => {
                 matches!(
                     value,
-                    "auto" | "none" | "0" | "inherit" | "initial" | "unset"
-                        | "min-content" | "max-content" | "fit-content"
+                    "auto"
+                        | "none"
+                        | "0"
+                        | "inherit"
+                        | "initial"
+                        | "unset"
+                        | "min-content"
+                        | "max-content"
+                        | "fit-content"
                 ) || value.ends_with("px")
                     || value.ends_with("em")
                     || value.ends_with("rem")
@@ -918,8 +1458,14 @@ impl StyleSheet {
             "opacity" | "flex-grow" | "flex-shrink" | "z-index" | "order" | "font-weight" => {
                 matches!(
                     value,
-                    "auto" | "normal" | "bold" | "bolder" | "lighter"
-                        | "inherit" | "initial" | "unset"
+                    "auto"
+                        | "normal"
+                        | "bold"
+                        | "bolder"
+                        | "lighter"
+                        | "inherit"
+                        | "initial"
+                        | "unset"
                 ) || value.parse::<f32>().is_ok()
             }
             _ => Self::is_supported_css_property(property),

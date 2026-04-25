@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn toggle() {
         let mut cl = ClassList::new();
-        assert!(cl.toggle("a"));  // added
+        assert!(cl.toggle("a")); // added
         assert!(!cl.toggle("a")); // removed
         assert!(cl.is_empty());
     }

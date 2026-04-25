@@ -136,12 +136,7 @@ pub fn compute_expose_layout(
         let thumb_w = tw.round().max(1.0) as u32;
         let thumb_h = th.round().max(1.0) as u32;
 
-        let label_rect = OverviewRect::new(
-            cx,
-            cy + usable_h + 2.0,
-            cell_w,
-            config.label_height,
-        );
+        let label_rect = OverviewRect::new(cx, cy + usable_h + 2.0, cell_w, config.label_height);
 
         slots.push(ExposeSlot {
             window_id: win.id,
@@ -211,12 +206,7 @@ impl ExposeManager {
     }
 
     /// Activate the expose view with the given windows.
-    pub fn activate(
-        &mut self,
-        windows: &[ExposeWindow],
-        screen_width: f32,
-        screen_height: f32,
-    ) {
+    pub fn activate(&mut self, windows: &[ExposeWindow], screen_width: f32, screen_height: f32) {
         self.slots = compute_expose_layout(windows, screen_width, screen_height, &self.config);
         self.grid_cols = optimal_grid(windows.len(), self.config.max_columns).0;
         self.state = ExposeState::Animating(0.0);

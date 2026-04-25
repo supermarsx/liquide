@@ -11,11 +11,7 @@ use super::SoftwareRenderer;
 
 impl SoftwareRenderer {
     /// Render a Border scene node.
-    pub(crate) fn render_border_node(
-        &mut self,
-        node: &FlatNode,
-        fb: &mut FrameBuffer,
-    ) {
+    pub(crate) fn render_border_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
@@ -27,228 +23,202 @@ impl SoftwareRenderer {
 
             if !has_radius {
                 // Fast path: straight edges (fill_rect per side)
-                let draw_border_side =
-                    |fb: &mut FrameBuffer,
-                     side_rect: Rect,
-                     side: &liquide_compositor::scene::BorderSide,
-                     op: f32,
-                     horizontal: bool| {
-                        if side.width <= 0.0
-                            || side.style == BorderSideStyle::None
-                            || side.style == BorderSideStyle::Hidden
-                        {
-                            return;
-                        }
-                        let mut c = side.color;
-                        if op < 1.0 {
-                            c.a = (c.a as f32 * op + 0.5) as u8;
-                        }
-                        if c.a == 0 {
-                            return;
-                        }
+                let draw_border_side = |fb: &mut FrameBuffer,
+                                        side_rect: Rect,
+                                        side: &liquide_compositor::scene::BorderSide,
+                                        op: f32,
+                                        horizontal: bool| {
+                    if side.width <= 0.0
+                        || side.style == BorderSideStyle::None
+                        || side.style == BorderSideStyle::Hidden
+                    {
+                        return;
+                    }
+                    let mut c = side.color;
+                    if op < 1.0 {
+                        c.a = (c.a as f32 * op + 0.5) as u8;
+                    }
+                    if c.a == 0 {
+                        return;
+                    }
 
-                        match side.style {
-                            BorderSideStyle::Solid => {
-                                rasterizer::fill_rect(fb, side_rect, c, BlendMode::SrcOver);
-                            }
-                            BorderSideStyle::Dashed => {
-                                let dash_len = (side.width * 3.0).max(3.0);
-                                let gap_len = dash_len;
-                                if horizontal {
-                                    let mut dx = side_rect.x;
-                                    let end = side_rect.x + side_rect.width;
-                                    while dx < end {
-                                        let seg_w = dash_len.min(end - dx);
-                                        rasterizer::fill_rect(
-                                            fb,
-                                            Rect::new(dx, side_rect.y, seg_w, side_rect.height),
-                                            c,
-                                            BlendMode::SrcOver,
-                                        );
-                                        dx += dash_len + gap_len;
-                                    }
-                                } else {
-                                    let mut dy = side_rect.y;
-                                    let end = side_rect.y + side_rect.height;
-                                    while dy < end {
-                                        let seg_h = dash_len.min(end - dy);
-                                        rasterizer::fill_rect(
-                                            fb,
-                                            Rect::new(side_rect.x, dy, side_rect.width, seg_h),
-                                            c,
-                                            BlendMode::SrcOver,
-                                        );
-                                        dy += dash_len + gap_len;
-                                    }
-                                }
-                            }
-                            BorderSideStyle::Dotted => {
-                                let dot_size = side.width;
-                                let spacing = dot_size * 2.0;
-                                if horizontal {
-                                    let mut dx = side_rect.x + dot_size * 0.5;
-                                    let end = side_rect.x + side_rect.width;
-                                    let cy = side_rect.y + side_rect.height * 0.5;
-                                    while dx < end {
-                                        let r = (dot_size * 0.5).max(0.5);
-                                        rasterizer::fill_rect(
-                                            fb,
-                                            Rect::new(dx - r, cy - r, r * 2.0, r * 2.0),
-                                            c,
-                                            BlendMode::SrcOver,
-                                        );
-                                        dx += spacing;
-                                    }
-                                } else {
-                                    let mut dy = side_rect.y + dot_size * 0.5;
-                                    let end = side_rect.y + side_rect.height;
-                                    let cx = side_rect.x + side_rect.width * 0.5;
-                                    while dy < end {
-                                        let r = (dot_size * 0.5).max(0.5);
-                                        rasterizer::fill_rect(
-                                            fb,
-                                            Rect::new(cx - r, dy - r, r * 2.0, r * 2.0),
-                                            c,
-                                            BlendMode::SrcOver,
-                                        );
-                                        dy += spacing;
-                                    }
-                                }
-                            }
-                            BorderSideStyle::Double => {
-                                let line_w = (side.width / 3.0).max(1.0);
-                                if horizontal {
+                    match side.style {
+                        BorderSideStyle::Solid => {
+                            rasterizer::fill_rect(fb, side_rect, c, BlendMode::SrcOver);
+                        }
+                        BorderSideStyle::Dashed => {
+                            let dash_len = (side.width * 3.0).max(3.0);
+                            let gap_len = dash_len;
+                            if horizontal {
+                                let mut dx = side_rect.x;
+                                let end = side_rect.x + side_rect.width;
+                                while dx < end {
+                                    let seg_w = dash_len.min(end - dx);
                                     rasterizer::fill_rect(
                                         fb,
-                                        Rect::new(
-                                            side_rect.x,
-                                            side_rect.y,
-                                            side_rect.width,
-                                            line_w,
-                                        ),
+                                        Rect::new(dx, side_rect.y, seg_w, side_rect.height),
                                         c,
                                         BlendMode::SrcOver,
                                     );
+                                    dx += dash_len + gap_len;
+                                }
+                            } else {
+                                let mut dy = side_rect.y;
+                                let end = side_rect.y + side_rect.height;
+                                while dy < end {
+                                    let seg_h = dash_len.min(end - dy);
                                     rasterizer::fill_rect(
                                         fb,
-                                        Rect::new(
-                                            side_rect.x,
-                                            side_rect.y + side_rect.height - line_w,
-                                            side_rect.width,
-                                            line_w,
-                                        ),
+                                        Rect::new(side_rect.x, dy, side_rect.width, seg_h),
                                         c,
                                         BlendMode::SrcOver,
                                     );
-                                } else {
-                                    rasterizer::fill_rect(
-                                        fb,
-                                        Rect::new(
-                                            side_rect.x,
-                                            side_rect.y,
-                                            line_w,
-                                            side_rect.height,
-                                        ),
-                                        c,
-                                        BlendMode::SrcOver,
-                                    );
-                                    rasterizer::fill_rect(
-                                        fb,
-                                        Rect::new(
-                                            side_rect.x + side_rect.width - line_w,
-                                            side_rect.y,
-                                            line_w,
-                                            side_rect.height,
-                                        ),
-                                        c,
-                                        BlendMode::SrcOver,
-                                    );
+                                    dy += dash_len + gap_len;
                                 }
                             }
-                            BorderSideStyle::Groove | BorderSideStyle::Ridge => {
-                                let is_groove = side.style == BorderSideStyle::Groove;
-                                let light = Color::new(
-                                    (c.r as u16 * 3 / 4 + 64).min(255) as u8,
-                                    (c.g as u16 * 3 / 4 + 64).min(255) as u8,
-                                    (c.b as u16 * 3 / 4 + 64).min(255) as u8,
-                                    c.a,
-                                );
-                                let dark = Color::new(c.r / 2, c.g / 2, c.b / 2, c.a);
-                                let (outer_c, inner_c) = if is_groove {
-                                    (dark, light)
-                                } else {
-                                    (light, dark)
-                                };
-                                let half = (side.width / 2.0).max(1.0);
-                                if horizontal {
+                        }
+                        BorderSideStyle::Dotted => {
+                            let dot_size = side.width;
+                            let spacing = dot_size * 2.0;
+                            if horizontal {
+                                let mut dx = side_rect.x + dot_size * 0.5;
+                                let end = side_rect.x + side_rect.width;
+                                let cy = side_rect.y + side_rect.height * 0.5;
+                                while dx < end {
+                                    let r = (dot_size * 0.5).max(0.5);
                                     rasterizer::fill_rect(
                                         fb,
-                                        Rect::new(
-                                            side_rect.x,
-                                            side_rect.y,
-                                            side_rect.width,
-                                            half,
-                                        ),
-                                        outer_c,
+                                        Rect::new(dx - r, cy - r, r * 2.0, r * 2.0),
+                                        c,
                                         BlendMode::SrcOver,
                                     );
+                                    dx += spacing;
+                                }
+                            } else {
+                                let mut dy = side_rect.y + dot_size * 0.5;
+                                let end = side_rect.y + side_rect.height;
+                                let cx = side_rect.x + side_rect.width * 0.5;
+                                while dy < end {
+                                    let r = (dot_size * 0.5).max(0.5);
                                     rasterizer::fill_rect(
                                         fb,
-                                        Rect::new(
-                                            side_rect.x,
-                                            side_rect.y + half,
-                                            side_rect.width,
-                                            (side_rect.height - half).max(0.0),
-                                        ),
-                                        inner_c,
+                                        Rect::new(cx - r, dy - r, r * 2.0, r * 2.0),
+                                        c,
                                         BlendMode::SrcOver,
                                     );
-                                } else {
-                                    rasterizer::fill_rect(
-                                        fb,
-                                        Rect::new(
-                                            side_rect.x,
-                                            side_rect.y,
-                                            half,
-                                            side_rect.height,
-                                        ),
-                                        outer_c,
-                                        BlendMode::SrcOver,
-                                    );
-                                    rasterizer::fill_rect(
-                                        fb,
-                                        Rect::new(
-                                            side_rect.x + half,
-                                            side_rect.y,
-                                            (side_rect.width - half).max(0.0),
-                                            side_rect.height,
-                                        ),
-                                        inner_c,
-                                        BlendMode::SrcOver,
-                                    );
+                                    dy += spacing;
                                 }
                             }
-                            BorderSideStyle::Inset | BorderSideStyle::Outset => {
-                                let is_inset = side.style == BorderSideStyle::Inset;
-                                let light = Color::new(
-                                    (c.r as u16 * 3 / 4 + 64).min(255) as u8,
-                                    (c.g as u16 * 3 / 4 + 64).min(255) as u8,
-                                    (c.b as u16 * 3 / 4 + 64).min(255) as u8,
-                                    c.a,
-                                );
-                                let dark = Color::new(c.r / 2, c.g / 2, c.b / 2, c.a);
-                                let use_dark = is_inset;
-                                let final_c = if use_dark { dark } else { light };
+                        }
+                        BorderSideStyle::Double => {
+                            let line_w = (side.width / 3.0).max(1.0);
+                            if horizontal {
                                 rasterizer::fill_rect(
                                     fb,
-                                    side_rect,
-                                    final_c,
+                                    Rect::new(side_rect.x, side_rect.y, side_rect.width, line_w),
+                                    c,
+                                    BlendMode::SrcOver,
+                                );
+                                rasterizer::fill_rect(
+                                    fb,
+                                    Rect::new(
+                                        side_rect.x,
+                                        side_rect.y + side_rect.height - line_w,
+                                        side_rect.width,
+                                        line_w,
+                                    ),
+                                    c,
+                                    BlendMode::SrcOver,
+                                );
+                            } else {
+                                rasterizer::fill_rect(
+                                    fb,
+                                    Rect::new(side_rect.x, side_rect.y, line_w, side_rect.height),
+                                    c,
+                                    BlendMode::SrcOver,
+                                );
+                                rasterizer::fill_rect(
+                                    fb,
+                                    Rect::new(
+                                        side_rect.x + side_rect.width - line_w,
+                                        side_rect.y,
+                                        line_w,
+                                        side_rect.height,
+                                    ),
+                                    c,
                                     BlendMode::SrcOver,
                                 );
                             }
-                            BorderSideStyle::None | BorderSideStyle::Hidden => {}
                         }
-                    };
+                        BorderSideStyle::Groove | BorderSideStyle::Ridge => {
+                            let is_groove = side.style == BorderSideStyle::Groove;
+                            let light = Color::new(
+                                (c.r as u16 * 3 / 4 + 64).min(255) as u8,
+                                (c.g as u16 * 3 / 4 + 64).min(255) as u8,
+                                (c.b as u16 * 3 / 4 + 64).min(255) as u8,
+                                c.a,
+                            );
+                            let dark = Color::new(c.r / 2, c.g / 2, c.b / 2, c.a);
+                            let (outer_c, inner_c) = if is_groove {
+                                (dark, light)
+                            } else {
+                                (light, dark)
+                            };
+                            let half = (side.width / 2.0).max(1.0);
+                            if horizontal {
+                                rasterizer::fill_rect(
+                                    fb,
+                                    Rect::new(side_rect.x, side_rect.y, side_rect.width, half),
+                                    outer_c,
+                                    BlendMode::SrcOver,
+                                );
+                                rasterizer::fill_rect(
+                                    fb,
+                                    Rect::new(
+                                        side_rect.x,
+                                        side_rect.y + half,
+                                        side_rect.width,
+                                        (side_rect.height - half).max(0.0),
+                                    ),
+                                    inner_c,
+                                    BlendMode::SrcOver,
+                                );
+                            } else {
+                                rasterizer::fill_rect(
+                                    fb,
+                                    Rect::new(side_rect.x, side_rect.y, half, side_rect.height),
+                                    outer_c,
+                                    BlendMode::SrcOver,
+                                );
+                                rasterizer::fill_rect(
+                                    fb,
+                                    Rect::new(
+                                        side_rect.x + half,
+                                        side_rect.y,
+                                        (side_rect.width - half).max(0.0),
+                                        side_rect.height,
+                                    ),
+                                    inner_c,
+                                    BlendMode::SrcOver,
+                                );
+                            }
+                        }
+                        BorderSideStyle::Inset | BorderSideStyle::Outset => {
+                            let is_inset = side.style == BorderSideStyle::Inset;
+                            let light = Color::new(
+                                (c.r as u16 * 3 / 4 + 64).min(255) as u8,
+                                (c.g as u16 * 3 / 4 + 64).min(255) as u8,
+                                (c.b as u16 * 3 / 4 + 64).min(255) as u8,
+                                c.a,
+                            );
+                            let dark = Color::new(c.r / 2, c.g / 2, c.b / 2, c.a);
+                            let use_dark = is_inset;
+                            let final_c = if use_dark { dark } else { light };
+                            rasterizer::fill_rect(fb, side_rect, final_c, BlendMode::SrcOver);
+                        }
+                        BorderSideStyle::None | BorderSideStyle::Hidden => {}
+                    }
+                };
 
                 // Top border
                 draw_border_side(

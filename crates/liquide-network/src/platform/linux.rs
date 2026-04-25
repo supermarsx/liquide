@@ -112,8 +112,7 @@ impl NetworkManager {
             )));
         }
 
-        sock.set_read_timeout(Some(Duration::from_secs(5)))
-            .ok();
+        sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
 
         sock.send(cmd.as_bytes()).map_err(|e| {
             cleanup();
@@ -186,11 +185,7 @@ fn get_ipv4_address(iface: &str) -> Option<String> {
         let mut ifr: Ifreq = std::mem::zeroed();
         let name_bytes = iface.as_bytes();
         let copy_len = name_bytes.len().min(IFNAMSIZ - 1);
-        std::ptr::copy_nonoverlapping(
-            name_bytes.as_ptr(),
-            ifr.ifr_name.as_mut_ptr(),
-            copy_len,
-        );
+        std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), ifr.ifr_name.as_mut_ptr(), copy_len);
 
         let ret = ioctl(fd, SIOCGIFADDR, &mut ifr as *mut Ifreq);
         close(fd);
@@ -286,11 +281,7 @@ fn set_interface_flags(iface: &str, up: bool) -> Result<(), NetworkError> {
         let mut ifr: Ifreq = std::mem::zeroed();
         let name_bytes = iface.as_bytes();
         let copy_len = name_bytes.len().min(IFNAMSIZ - 1);
-        std::ptr::copy_nonoverlapping(
-            name_bytes.as_ptr(),
-            ifr.ifr_name.as_mut_ptr(),
-            copy_len,
-        );
+        std::ptr::copy_nonoverlapping(name_bytes.as_ptr(), ifr.ifr_name.as_mut_ptr(), copy_len);
 
         // Get current flags
         let ret = ioctl(fd, SIOCGIFFLAGS, &mut ifr as *mut Ifreq);
@@ -402,8 +393,7 @@ impl NetworkBackend for NetworkManager {
 
             let iface_type = classify_interface(&base, &name);
             let state = read_operstate(&base);
-            let hw_address = read_sysfs(&base.join("address"))
-                .filter(|a| a != "00:00:00:00:00:00");
+            let hw_address = read_sysfs(&base.join("address")).filter(|a| a != "00:00:00:00:00:00");
 
             // Speed in Mbps (only meaningful when link is up)
             let speed_mbps = if state == ConnectionState::Connected {
@@ -451,8 +441,7 @@ impl NetworkBackend for NetworkManager {
         let name = id.0.clone();
         let iface_type = classify_interface(&base, &name);
         let state = read_operstate(&base);
-        let hw_address = read_sysfs(&base.join("address"))
-            .filter(|a| a != "00:00:00:00:00:00");
+        let hw_address = read_sysfs(&base.join("address")).filter(|a| a != "00:00:00:00:00:00");
 
         let speed_mbps = if state == ConnectionState::Connected {
             read_sysfs(&base.join("speed")).and_then(|s| {
@@ -488,9 +477,9 @@ impl NetworkBackend for NetworkManager {
     }
 
     fn scan_wifi(&mut self) -> Result<(), NetworkError> {
-        let iface = self.wifi_interface().ok_or_else(|| {
-            NetworkError::PlatformError("no WiFi interface found".into())
-        })?;
+        let iface = self
+            .wifi_interface()
+            .ok_or_else(|| NetworkError::PlatformError("no WiFi interface found".into()))?;
 
         // Trigger a scan
         let _ = self.wpa_command(&iface, "SCAN");
@@ -509,7 +498,9 @@ impl NetworkBackend for NetworkManager {
             .map(|l| l.trim_start_matches("ssid=").to_string());
 
         // Get saved networks (for is_saved flag)
-        let networks = self.wpa_command(&iface, "LIST_NETWORKS").unwrap_or_default();
+        let networks = self
+            .wpa_command(&iface, "LIST_NETWORKS")
+            .unwrap_or_default();
         let saved_ssids: Vec<String> = networks
             .lines()
             .skip(1) // header line
@@ -581,9 +572,9 @@ impl NetworkBackend for NetworkManager {
     }
 
     fn connect_wifi(&mut self, ssid: &str, password: Option<&str>) -> Result<(), NetworkError> {
-        let iface = self.wifi_interface().ok_or_else(|| {
-            NetworkError::PlatformError("no WiFi interface found".into())
-        })?;
+        let iface = self
+            .wifi_interface()
+            .ok_or_else(|| NetworkError::PlatformError("no WiFi interface found".into()))?;
 
         // Check if already connected to this SSID
         let status = self.wpa_command(&iface, "STATUS").unwrap_or_default();
@@ -597,9 +588,7 @@ impl NetworkBackend for NetworkManager {
         let resp = self.wpa_command(&iface, "ADD_NETWORK")?;
         let net_id = resp.trim().to_string();
         if net_id == "FAIL" {
-            return Err(NetworkError::PlatformError(
-                "ADD_NETWORK failed".into(),
-            ));
+            return Err(NetworkError::PlatformError("ADD_NETWORK failed".into()));
         }
 
         // Set SSID (must be quoted for wpa_supplicant)
@@ -636,9 +625,7 @@ impl NetworkBackend for NetworkManager {
         let resp = self.wpa_command(&iface, &cmd)?;
         if resp.trim() == "FAIL" {
             let _ = self.wpa_command(&iface, &format!("REMOVE_NETWORK {net_id}"));
-            return Err(NetworkError::PlatformError(
-                "SELECT_NETWORK failed".into(),
-            ));
+            return Err(NetworkError::PlatformError("SELECT_NETWORK failed".into()));
         }
 
         // Save config
@@ -653,24 +640,20 @@ impl NetworkBackend for NetworkManager {
             return Err(NetworkError::InterfaceNotFound);
         }
         if !base.join("wireless").exists() {
-            return Err(NetworkError::PlatformError(
-                "not a WiFi interface".into(),
-            ));
+            return Err(NetworkError::PlatformError("not a WiFi interface".into()));
         }
 
         let resp = self.wpa_command(&interface_id.0, "DISCONNECT")?;
         if resp.trim() == "FAIL" {
-            return Err(NetworkError::PlatformError(
-                "DISCONNECT failed".into(),
-            ));
+            return Err(NetworkError::PlatformError("DISCONNECT failed".into()));
         }
         Ok(())
     }
 
     fn forget_wifi(&mut self, ssid: &str) -> Result<(), NetworkError> {
-        let iface = self.wifi_interface().ok_or_else(|| {
-            NetworkError::PlatformError("no WiFi interface found".into())
-        })?;
+        let iface = self
+            .wifi_interface()
+            .ok_or_else(|| NetworkError::PlatformError("no WiFi interface found".into()))?;
 
         // List networks and find the one matching the SSID
         let networks = self.wpa_command(&iface, "LIST_NETWORKS")?;
@@ -725,9 +708,8 @@ impl NetworkBackend for NetworkManager {
             let name = entry.file_name().to_string_lossy().to_string();
             let base = net_dir.join(&name);
 
-            let is_vpn = name.starts_with("wg")
-                || name.starts_with("tun")
-                || name.starts_with("tap");
+            let is_vpn =
+                name.starts_with("wg") || name.starts_with("tun") || name.starts_with("tap");
 
             if !is_vpn {
                 continue;
@@ -904,9 +886,8 @@ mod tests {
     #[test]
     fn poll_events_drains() {
         let mut mgr = NetworkManager::new();
-        mgr.pending_events.push(NetworkEvent::ConnectivityChanged(
-            ConnectivityState::Full,
-        ));
+        mgr.pending_events
+            .push(NetworkEvent::ConnectivityChanged(ConnectivityState::Full));
         let events = mgr.poll_events();
         assert_eq!(events.len(), 1);
         assert!(mgr.poll_events().is_empty());

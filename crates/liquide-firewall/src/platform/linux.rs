@@ -45,16 +45,12 @@ impl PlatformFirewall {
         let output = Command::new(program)
             .args(args)
             .output()
-            .map_err(|e| {
-                FirewallError::PlatformError(format!("failed to run {program}: {e}"))
-            })?;
+            .map_err(|e| FirewallError::PlatformError(format!("failed to run {program}: {e}")))?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            if stderr.contains("Permission denied")
-                || stderr.contains("Operation not permitted")
-            {
+            if stderr.contains("Permission denied") || stderr.contains("Operation not permitted") {
                 Err(FirewallError::PermissionDenied)
             } else {
                 Err(FirewallError::PlatformError(stderr))
@@ -70,14 +66,22 @@ impl PlatformFirewall {
         Self::run(
             "nft",
             &[
-                "add", "chain", "inet", "liquide", "input",
+                "add",
+                "chain",
+                "inet",
+                "liquide",
+                "input",
                 "{ type filter hook input priority 0; policy accept; }",
             ],
         )?;
         Self::run(
             "nft",
             &[
-                "add", "chain", "inet", "liquide", "output",
+                "add",
+                "chain",
+                "inet",
+                "liquide",
+                "output",
                 "{ type filter hook output priority 0; policy accept; }",
             ],
         )?;
@@ -203,20 +207,10 @@ impl PlatformFirewall {
         let _ = Self::run("iptables", &["-N", "LIQUIDE_INPUT"]);
         let _ = Self::run("iptables", &["-N", "LIQUIDE_OUTPUT"]);
         // Jump from built-in chains (ignore duplicates).
-        let _ = Self::run(
-            "iptables",
-            &["-C", "INPUT", "-j", "LIQUIDE_INPUT"],
-        )
-        .or_else(|_| {
-            Self::run("iptables", &["-A", "INPUT", "-j", "LIQUIDE_INPUT"])
-        });
-        let _ = Self::run(
-            "iptables",
-            &["-C", "OUTPUT", "-j", "LIQUIDE_OUTPUT"],
-        )
-        .or_else(|_| {
-            Self::run("iptables", &["-A", "OUTPUT", "-j", "LIQUIDE_OUTPUT"])
-        });
+        let _ = Self::run("iptables", &["-C", "INPUT", "-j", "LIQUIDE_INPUT"])
+            .or_else(|_| Self::run("iptables", &["-A", "INPUT", "-j", "LIQUIDE_INPUT"]));
+        let _ = Self::run("iptables", &["-C", "OUTPUT", "-j", "LIQUIDE_OUTPUT"])
+            .or_else(|_| Self::run("iptables", &["-A", "OUTPUT", "-j", "LIQUIDE_OUTPUT"]));
         Ok(())
     }
 
@@ -482,11 +476,8 @@ impl FirewallBackend for PlatformFirewall {
             LinuxBackend::Iptables => {
                 // Delete by comment match.
                 for chain in &["LIQUIDE_INPUT", "LIQUIDE_OUTPUT"] {
-                    let output = Self::run(
-                        "iptables",
-                        &["-L", chain, "--line-numbers", "-n"],
-                    )
-                    .unwrap_or_default();
+                    let output = Self::run("iptables", &["-L", chain, "--line-numbers", "-n"])
+                        .unwrap_or_default();
                     let mut line_nums: Vec<u32> = Vec::new();
                     for line in output.lines() {
                         if line.contains(rule_name) {
@@ -501,10 +492,7 @@ impl FirewallBackend for PlatformFirewall {
                     line_nums.sort();
                     line_nums.reverse();
                     for num in line_nums {
-                        Self::run(
-                            "iptables",
-                            &["-D", chain, &num.to_string()],
-                        )?;
+                        Self::run("iptables", &["-D", chain, &num.to_string()])?;
                     }
                 }
                 Ok(())
@@ -521,8 +509,7 @@ impl FirewallBackend for PlatformFirewall {
     fn list_rules(&self) -> Result<Vec<String>, FirewallError> {
         match self.backend {
             LinuxBackend::Nftables => {
-                let output =
-                    Self::run("nft", &["-a", "list", "table", "inet", "liquide"])?;
+                let output = Self::run("nft", &["-a", "list", "table", "inet", "liquide"])?;
                 let names: Vec<String> = output
                     .lines()
                     .filter(|l| l.contains("comment"))
@@ -538,11 +525,8 @@ impl FirewallBackend for PlatformFirewall {
             LinuxBackend::Iptables => {
                 let mut names = Vec::new();
                 for chain in &["LIQUIDE_INPUT", "LIQUIDE_OUTPUT"] {
-                    let output = Self::run(
-                        "iptables",
-                        &["-L", chain, "-n", "--line-numbers"],
-                    )
-                    .unwrap_or_default();
+                    let output = Self::run("iptables", &["-L", chain, "-n", "--line-numbers"])
+                        .unwrap_or_default();
                     for line in output.lines() {
                         if let Some(idx) = line.find("/* ") {
                             let rest = &line[idx + 3..];
@@ -598,14 +582,8 @@ impl FirewallBackend for PlatformFirewall {
                     self.iptables_ensure_chain()?;
                 } else {
                     self.iptables_flush()?;
-                    let _ = Self::run(
-                        "iptables",
-                        &["-D", "INPUT", "-j", "LIQUIDE_INPUT"],
-                    );
-                    let _ = Self::run(
-                        "iptables",
-                        &["-D", "OUTPUT", "-j", "LIQUIDE_OUTPUT"],
-                    );
+                    let _ = Self::run("iptables", &["-D", "INPUT", "-j", "LIQUIDE_INPUT"]);
+                    let _ = Self::run("iptables", &["-D", "OUTPUT", "-j", "LIQUIDE_OUTPUT"]);
                     let _ = Self::run("iptables", &["-X", "LIQUIDE_INPUT"]);
                     let _ = Self::run("iptables", &["-X", "LIQUIDE_OUTPUT"]);
                 }

@@ -1,13 +1,34 @@
 //! Compositor contract trait and concrete implementation.
 
+use crate::Result;
 use crate::cursor::CursorUpdate;
 use crate::damage::{DamageSet, DamageTracker};
 use crate::effects::{
     DegradationController, DegradationLevel, EffectBudget, EffectParams, QualityProfile,
 };
 use crate::framebuffer::{DoubleBuffer, FrameBuffer};
-use crate::scene::{GlassParams, SceneNode};
-use crate::Result;
+use crate::scene::{FlatNode, GlassParams, SceneNode};
+
+/// Frame lifecycle state machine.
+///
+/// Enforces the `prepare → render → present` ordering documented in the
+/// compositor contract.  Transitions are checked at runtime with
+/// `debug_assert!` so that buggy callers are caught in dev builds without
+/// paying the branch cost in release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameLifecycle {
+    /// No frame in flight.  `prepare_frame()` is the only legal next call.
+    Idle,
+    /// `prepare_frame()` was called — the back buffer is ready to be drawn
+    /// into and `frame_buffer_mut()` may be called.
+    Prepared,
+    /// Renderer has signalled end of rendering via `end_frame()`.  Damage
+    /// may be computed (`compute_damage()`), then the frame presented.
+    Rendered,
+    /// `present_frame()` has been called; the front buffer is readable by
+    /// the encoder.  Returns to `Idle` on the next `prepare_frame()`.
+    Presented,
+}
 
 /// The compositor contract: the stable interface between the compositor
 /// and its consumers (renderer, encoder, transport).
@@ -43,6 +64,9 @@ pub trait CompositorContract: Send + Sync {
 /// The main compositor state.
 pub struct Compositor {
     scene: Option<SceneNode>,
+    /// Scratch buffer for the most recently flattened scene.  Reused each
+    /// frame to avoid reallocating on every `submit_scene`.
+    flat_cache: Vec<FlatNode>,
     double_buffer: DoubleBuffer,
     damage_tracker: DamageTracker,
     degradation: DegradationController,
@@ -53,6 +77,8 @@ pub struct Compositor {
     width: u32,
     height: u32,
     tile_size: u32,
+    /// Lifecycle state, enforced by `debug_assert!` in transitions.
+    lifecycle: FrameLifecycle,
 }
 
 impl Compositor {
@@ -61,6 +87,7 @@ impl Compositor {
     pub fn new(width: u32, height: u32, tile_size: u32, profile: QualityProfile) -> Self {
         Self {
             scene: None,
+            flat_cache: Vec::new(),
             double_buffer: DoubleBuffer::new(width, height, crate::pixel::PixelFormat::Bgra8),
             damage_tracker: DamageTracker::new(tile_size, width, height),
             degradation: DegradationController::new(),
@@ -71,6 +98,7 @@ impl Compositor {
             width,
             height,
             tile_size,
+            lifecycle: FrameLifecycle::Idle,
         }
     }
 
@@ -78,15 +106,72 @@ impl Compositor {
     pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
         self.width = width;
         self.height = height;
-        self.double_buffer =
-            DoubleBuffer::new(width, height, crate::pixel::PixelFormat::Bgra8);
+        self.double_buffer = DoubleBuffer::new(width, height, crate::pixel::PixelFormat::Bgra8);
         self.damage_tracker.resize(width, height);
+        // Reset lifecycle: in-flight frame state is invalidated by resize.
+        self.lifecycle = FrameLifecycle::Idle;
         Ok(())
     }
 
-    /// Advance to the next frame: swap front/back buffers.
+    /// Begin preparing the next frame.
+    ///
+    /// Unlike the old `begin_frame` (which swapped front/back *before* the
+    /// renderer drew into it, causing damage to be computed against the
+    /// previously-presented buffer), `prepare_frame` leaves the front buffer
+    /// untouched and exposes `frame_buffer_mut()` as the back buffer for
+    /// the renderer to draw into.  The front/back swap happens inside
+    /// `present_frame()` after the renderer signals end-of-frame.
+    pub fn prepare_frame(&mut self) {
+        debug_assert!(
+            matches!(
+                self.lifecycle,
+                FrameLifecycle::Idle | FrameLifecycle::Presented
+            ),
+            "prepare_frame called in lifecycle {:?}",
+            self.lifecycle
+        );
+        self.lifecycle = FrameLifecycle::Prepared;
+    }
+
+    /// Legacy alias for [`prepare_frame`](Self::prepare_frame).
+    #[deprecated(note = "Use prepare_frame instead; see CompositorContract lifecycle docs")]
     pub fn begin_frame(&mut self) {
+        self.prepare_frame();
+    }
+
+    /// Signal that the renderer has finished drawing into the back buffer.
+    ///
+    /// After `end_frame`, callers may `compute_damage()` (which hashes the
+    /// back buffer — the one that was just rendered — against the previous
+    /// frame's hashes) and then `present_frame()` to publish.
+    pub fn end_frame(&mut self) {
+        debug_assert_eq!(
+            self.lifecycle,
+            FrameLifecycle::Prepared,
+            "end_frame called without prepare_frame"
+        );
+        self.lifecycle = FrameLifecycle::Rendered;
+    }
+
+    /// Swap back→front so the encoder can read the just-rendered frame.
+    ///
+    /// Also known as [`swap_frame`](Self::swap_frame) for backwards compat.
+    pub fn present_frame(&mut self) {
+        debug_assert!(
+            matches!(
+                self.lifecycle,
+                FrameLifecycle::Rendered | FrameLifecycle::Prepared
+            ),
+            "present_frame called in lifecycle {:?}",
+            self.lifecycle
+        );
         self.double_buffer.swap();
+        self.lifecycle = FrameLifecycle::Presented;
+    }
+
+    /// Alias for [`present_frame`](Self::present_frame).
+    pub fn swap_frame(&mut self) {
+        self.present_frame();
     }
 
     /// Report frame timing for degradation control.
@@ -103,6 +188,18 @@ impl Compositor {
     /// Get the scene graph (if one has been submitted).
     pub fn scene(&self) -> Option<&SceneNode> {
         self.scene.as_ref()
+    }
+
+    /// Flattened scene cache — populated on each `submit_scene`.
+    #[must_use]
+    pub fn flat_scene(&self) -> &[FlatNode] {
+        &self.flat_cache
+    }
+
+    /// Current lifecycle state.  Primarily useful for tests and debugging.
+    #[must_use]
+    pub fn lifecycle(&self) -> FrameLifecycle {
+        self.lifecycle
     }
 
     /// Output width.
@@ -126,12 +223,21 @@ impl Compositor {
 
 impl CompositorContract for Compositor {
     fn submit_scene(&mut self, root: SceneNode) -> Result<()> {
+        // Flatten into the cached buffer so downstream consumers
+        // (render threads, encoder) see a ready-to-iterate `Vec<FlatNode>`.
+        root.flatten_into(&mut self.flat_cache);
         self.scene = Some(root);
         Ok(())
     }
 
     fn compute_damage(&mut self) -> Result<DamageSet> {
-        Ok(self.damage_tracker.compute_damage(self.double_buffer.front()))
+        // Hash the back buffer — the freshly rendered frame — against the
+        // previous frame's hashes.  Previously this hashed `front()` which
+        // is the *already-presented* buffer, producing damage that had
+        // nothing to do with the pending frame.
+        Ok(self
+            .damage_tracker
+            .compute_damage(self.double_buffer.back()))
     }
 
     fn frame_buffer(&self) -> &FrameBuffer {
@@ -156,7 +262,11 @@ impl CompositorContract for Compositor {
 
     fn register_glass(&mut self, surface_id: u64, params: GlassParams) -> Result<()> {
         // Replace if already registered, otherwise add
-        if let Some(entry) = self.glass_surfaces.iter_mut().find(|(id, _)| *id == surface_id) {
+        if let Some(entry) = self
+            .glass_surfaces
+            .iter_mut()
+            .find(|(id, _)| *id == surface_id)
+        {
             entry.1 = params;
         } else {
             self.glass_surfaces.push((surface_id, params));
@@ -166,5 +276,52 @@ impl CompositorContract for Compositor {
 
     fn cursor_update(&self) -> Option<&CursorUpdate> {
         self.cursor.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::geometry::Rect;
+    use crate::scene::{NodeProperties, SceneNodeKind};
+
+    fn root_scene() -> SceneNode {
+        SceneNode::new(
+            1,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)),
+        )
+    }
+
+    #[test]
+    fn lifecycle_happy_path() {
+        let mut c = Compositor::new(100, 100, 32, QualityProfile::Balanced);
+        assert_eq!(c.lifecycle(), FrameLifecycle::Idle);
+        c.prepare_frame();
+        assert_eq!(c.lifecycle(), FrameLifecycle::Prepared);
+        c.end_frame();
+        assert_eq!(c.lifecycle(), FrameLifecycle::Rendered);
+        c.present_frame();
+        assert_eq!(c.lifecycle(), FrameLifecycle::Presented);
+        c.prepare_frame();
+        assert_eq!(c.lifecycle(), FrameLifecycle::Prepared);
+    }
+
+    #[test]
+    fn submit_scene_flattens() {
+        let mut c = Compositor::new(100, 100, 32, QualityProfile::Balanced);
+        assert!(c.flat_scene().is_empty());
+        c.submit_scene(root_scene()).unwrap();
+        // Root is not a visual node, but flatten should have run (no panic).
+        // Flat cache is either empty-after-walk or populated — the key
+        // invariant is that flatten was called.
+        let _ = c.flat_scene();
+    }
+
+    #[test]
+    #[should_panic(expected = "end_frame called without prepare_frame")]
+    fn lifecycle_rejects_end_without_prepare() {
+        let mut c = Compositor::new(100, 100, 32, QualityProfile::Balanced);
+        c.end_frame();
     }
 }

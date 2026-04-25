@@ -31,12 +31,12 @@
 //! 1. At frame start, call `cache.advance_generation(keep)` to evict stale entries.
 //! 2. Walk the tree top-down.  For each node:
 //!    a. Check `dirty.needs_layout(node)`.  If clean and no dirty descendants,
-//!       skip entirely (`stats.record_skipped()`).
+//!    skip entirely (`stats.record_skipped()`).
 //!    b. Build `LayoutConstraints` from the parent.
 //!    c. Try `cache.lookup(node, &constraints)`.  On hit, return the cached
-//!       `LayoutResult` (`stats.record_cache_hit()`).
+//!    `LayoutResult` (`stats.record_cache_hit()`).
 //!    d. On miss, compute layout, then `cache.store(node, constraints, result)`
-//!       (`stats.record_layout()`).
+//!    (`stats.record_layout()`).
 //! 3. Clear dirty flags as nodes are processed.
 
 pub mod cache;

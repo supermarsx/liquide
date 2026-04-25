@@ -15,11 +15,11 @@ use liquide_compositor::geometry::Affine2D;
 use liquide_dom::NodeId;
 use liquide_layout::geometry::{Point, Rect};
 use liquide_layout::tree::{LayoutBoxId, LayoutTree};
+use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
     ContentVisibility, Display, Float, Overflow, PointerEvents, Position, Transform, Visibility,
 };
-use liquide_style_engine::dimension::Dimension;
-use liquide_style_engine::StyleMap;
+use liquide_style_engine::dimension::{Corners, Dimension, EllipticalRadius};
 
 /// Result of a hit test.
 #[derive(Debug, Clone)]
@@ -162,7 +162,11 @@ impl HitTestEngine {
         clip_rect: Option<Rect>,
     ) -> Option<HitTestResult> {
         let layout_box = self.layout.get(box_id)?;
-        let style = self.styles.get(layout_box.node).cloned().unwrap_or_default();
+        let style = self
+            .styles
+            .get(layout_box.node)
+            .cloned()
+            .unwrap_or_default();
         let (ox, oy) = paint_offset;
 
         // ── Visibility checks ─────────────────────────────────────────
@@ -189,16 +193,18 @@ impl HitTestEngine {
         let local_point = if !style.transform.is_empty() {
             let abs_border = layout_box.border_rect.offset(ox, oy);
             // Compute transform origin from style (matching painter behavior)
-            let origin_x = abs_border.x + resolve_origin_dimension(
-                &style.transform_origin.x,
-                abs_border.width,
-                style.font_size,
-            );
-            let origin_y = abs_border.y + resolve_origin_dimension(
-                &style.transform_origin.y,
-                abs_border.height,
-                style.font_size,
-            );
+            let origin_x = abs_border.x
+                + resolve_origin_dimension(
+                    &style.transform_origin.x,
+                    abs_border.width,
+                    style.font_size,
+                );
+            let origin_y = abs_border.y
+                + resolve_origin_dimension(
+                    &style.transform_origin.y,
+                    abs_border.height,
+                    style.font_size,
+                );
             match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
                 Some(p) => p,
                 None => return None, // Singular transform — can't hit
@@ -213,6 +219,20 @@ impl HitTestEngine {
             return None;
         }
 
+        // ── Shape-aware corner cull (border-radius) ──────────────────
+        // Reject points that fall inside the border rect but outside the
+        // rounded-corner quadrants. Leaves the vast majority of nodes
+        // (radius = 0) untouched.
+        if !style.border_radius.top_left.is_zero()
+            || !style.border_radius.top_right.is_zero()
+            || !style.border_radius.bottom_right.is_zero()
+            || !style.border_radius.bottom_left.is_zero()
+        {
+            if !point_inside_rounded_rect(local_point, &abs_border, &style.border_radius) {
+                return None;
+            }
+        }
+
         // ── Clip check ────────────────────────────────────────────────
         // If there's an active clip from a parent, reject if outside it.
         if let Some(ref cr) = clip_rect {
@@ -224,9 +244,13 @@ impl HitTestEngine {
         // ── Compute child clip rect ───────────────────────────────────
         // If this box has overflow != visible, it establishes a new clip
         // region (the padding box) for descendants.
-        let child_clip = if matches!(style.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip)
-            || matches!(style.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip)
-        {
+        let child_clip = if matches!(
+            style.overflow_x,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
+        ) || matches!(
+            style.overflow_y,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
+        ) {
             let abs_padding = layout_box.padding_rect.offset(ox, oy);
             // Intersect with existing clip
             Some(match clip_rect {
@@ -257,17 +281,28 @@ impl HitTestEngine {
         let mut positive_z: Vec<(LayoutBoxId, i32)> = Vec::new();
 
         for &child_id in &children {
-            let child_style = self.layout.get(child_id)
+            let child_style = self
+                .layout
+                .get(child_id)
                 .and_then(|cb| self.styles.get(cb.node))
                 .cloned();
-            let child_display = child_style.as_ref().map(|s| s.display).unwrap_or(Display::Block);
-            let child_position = child_style.as_ref().map(|s| s.position).unwrap_or(Position::Static);
+            let child_display = child_style
+                .as_ref()
+                .map(|s| s.display)
+                .unwrap_or(Display::Block);
+            let child_position = child_style
+                .as_ref()
+                .map(|s| s.position)
+                .unwrap_or(Position::Static);
             let child_z = child_style.as_ref().and_then(|s| s.z_index);
             let is_positioned = matches!(
                 child_position,
                 Position::Relative | Position::Absolute | Position::Fixed | Position::Sticky
             );
-            let is_float = child_style.as_ref().map(|s| s.float != Float::None).unwrap_or(false);
+            let is_float = child_style
+                .as_ref()
+                .map(|s| s.float != Float::None)
+                .unwrap_or(false);
 
             if is_positioned {
                 match child_z {
@@ -277,7 +312,10 @@ impl HitTestEngine {
                 }
             } else if is_float {
                 floats.push(child_id);
-            } else if matches!(child_display, Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid) {
+            } else if matches!(
+                child_display,
+                Display::Inline | Display::InlineBlock | Display::InlineFlex | Display::InlineGrid
+            ) {
                 in_flow_inline.push(child_id);
             } else {
                 in_flow_block.push(child_id);
@@ -291,37 +329,43 @@ impl HitTestEngine {
         // Hit-test in reverse painting order (highest z-index first):
         // 6. Positive z-index (highest first)
         for &(child_id, _) in positive_z.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip) {
+            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            {
                 return Some(result);
             }
         }
         // 5. Positioned with z-index auto or 0 (reverse DOM order)
         for &child_id in z_auto_or_zero.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip) {
+            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            {
                 return Some(result);
             }
         }
         // 4. In-flow inline (reverse DOM order)
         for &child_id in in_flow_inline.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip) {
+            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            {
                 return Some(result);
             }
         }
         // 3. Floats (reverse DOM order)
         for &child_id in floats.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip) {
+            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            {
                 return Some(result);
             }
         }
         // 2. In-flow block (reverse DOM order)
         for &child_id in in_flow_block.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip) {
+            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            {
                 return Some(result);
             }
         }
         // 1. Negative z-index (highest-first, so reverse the sorted list)
         for &(child_id, _) in negative_z.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip) {
+            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            {
                 return Some(result);
             }
         }
@@ -333,10 +377,8 @@ impl HitTestEngine {
         }
 
         let abs_content = layout_box.content_rect.offset(ox, oy);
-        let point_in_node = Point::new(
-            local_point.x - abs_content.x,
-            local_point.y - abs_content.y,
-        );
+        let point_in_node =
+            Point::new(local_point.x - abs_content.x, local_point.y - abs_content.y);
 
         // Build ancestor chain by walking up via parent pointers
         let mut ancestors = Vec::new();
@@ -370,7 +412,11 @@ impl HitTestEngine {
             Some(b) => b,
             None => return,
         };
-        let style = self.styles.get(layout_box.node).cloned().unwrap_or_default();
+        let style = self
+            .styles
+            .get(layout_box.node)
+            .cloned()
+            .unwrap_or_default();
         let (ox, oy) = paint_offset;
 
         // Visibility / pointer-events checks
@@ -388,16 +434,18 @@ impl HitTestEngine {
         let local_point = if !style.transform.is_empty() {
             let abs_border = layout_box.border_rect.offset(ox, oy);
             // Compute transform origin from style (matching painter behavior)
-            let origin_x = abs_border.x + resolve_origin_dimension(
-                &style.transform_origin.x,
-                abs_border.width,
-                style.font_size,
-            );
-            let origin_y = abs_border.y + resolve_origin_dimension(
-                &style.transform_origin.y,
-                abs_border.height,
-                style.font_size,
-            );
+            let origin_x = abs_border.x
+                + resolve_origin_dimension(
+                    &style.transform_origin.x,
+                    abs_border.width,
+                    style.font_size,
+                );
+            let origin_y = abs_border.y
+                + resolve_origin_dimension(
+                    &style.transform_origin.y,
+                    abs_border.height,
+                    style.font_size,
+                );
             match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
                 Some(p) => p,
                 None => return,
@@ -411,6 +459,17 @@ impl HitTestEngine {
             return;
         }
 
+        // Shape-aware corner cull (border-radius).
+        if !style.border_radius.top_left.is_zero()
+            || !style.border_radius.top_right.is_zero()
+            || !style.border_radius.bottom_right.is_zero()
+            || !style.border_radius.bottom_left.is_zero()
+        {
+            if !point_inside_rounded_rect(local_point, &abs_border, &style.border_radius) {
+                return;
+            }
+        }
+
         // Clip check
         if let Some(ref cr) = clip_rect {
             if !cr.contains(local_point) {
@@ -422,10 +481,8 @@ impl HitTestEngine {
         if style.visibility != Visibility::Hidden && this_receives_events {
             let abs_border = layout_box.border_rect.offset(ox, oy);
             let abs_content = layout_box.content_rect.offset(ox, oy);
-            let point_in_node = Point::new(
-                local_point.x - abs_content.x,
-                local_point.y - abs_content.y,
-            );
+            let point_in_node =
+                Point::new(local_point.x - abs_content.x, local_point.y - abs_content.y);
             results.push(HitTestResult {
                 node: layout_box.node,
                 point_in_node,
@@ -435,9 +492,13 @@ impl HitTestEngine {
         }
 
         // Child clip
-        let child_clip = if matches!(style.overflow_x, Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip)
-            || matches!(style.overflow_y, Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip)
-        {
+        let child_clip = if matches!(
+            style.overflow_x,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
+        ) || matches!(
+            style.overflow_y,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
+        ) {
             let abs_padding = layout_box.padding_rect.offset(ox, oy);
             Some(match clip_rect {
                 Some(existing) => intersect_rects(&existing, &abs_padding),
@@ -594,6 +655,9 @@ fn compose_transform_matrix(transforms: &[Transform], origin_x: f32, origin_y: f
                 // So CSS (a,b,c,d,e,f) maps to Affine2D (a, c, b, d, e, f)
                 mul(*ma, *mc, *mb, *md, *me, *mf);
             }
+            // TODO(t9 Phase 2): real impl for 3D transforms / Matrix3d / Perspective
+            // in hit-test affine projection. Ignored here to preserve 2D behaviour.
+            _ => {}
         }
     }
 
@@ -603,12 +667,196 @@ fn compose_transform_matrix(transforms: &[Transform], origin_x: f32, origin_y: f
     Affine2D { a, b, c, d, tx, ty }
 }
 
+/// Test whether `point` lies inside the rounded-rectangle defined by `rect`
+/// and the four corner radii in `radii`.
+///
+/// The caller must have already verified that `rect.contains(point)`; this
+/// function only rejects points that lie in the four corner squares but
+/// outside the quarter-ellipses that define the rounded corners.
+///
+/// Radii are clamped so that adjacent radii sum to at most the corresponding
+/// side length (per CSS §5.1 border-radius spec).
+pub fn point_inside_rounded_rect(
+    point: Point,
+    rect: &Rect,
+    radii: &Corners<EllipticalRadius>,
+) -> bool {
+    // Clamp radii: per CSS, if the sum of adjacent radii exceeds the side
+    // length, scale every radius by the same factor `f = 1/max(ratio)`.
+    let (tl, tr, br, bl) = clamp_radii(rect, radii);
+
+    let px = point.x;
+    let py = point.y;
+    let x0 = rect.x;
+    let y0 = rect.y;
+    let x1 = x0 + rect.width;
+    let y1 = y0 + rect.height;
+
+    // Top-left quadrant
+    if px < x0 + tl.x && py < y0 + tl.y {
+        return point_inside_quarter_ellipse(px, py, x0 + tl.x, y0 + tl.y, tl.x, tl.y);
+    }
+    // Top-right quadrant
+    if px > x1 - tr.x && py < y0 + tr.y {
+        return point_inside_quarter_ellipse(px, py, x1 - tr.x, y0 + tr.y, tr.x, tr.y);
+    }
+    // Bottom-right quadrant
+    if px > x1 - br.x && py > y1 - br.y {
+        return point_inside_quarter_ellipse(px, py, x1 - br.x, y1 - br.y, br.x, br.y);
+    }
+    // Bottom-left quadrant
+    if px < x0 + bl.x && py > y1 - bl.y {
+        return point_inside_quarter_ellipse(px, py, x0 + bl.x, y1 - bl.y, bl.x, bl.y);
+    }
+    // Not in any corner region — the bounding-rect test already passed.
+    true
+}
+
+#[inline]
+fn point_inside_quarter_ellipse(px: f32, py: f32, cx: f32, cy: f32, rx: f32, ry: f32) -> bool {
+    if rx <= 0.0 || ry <= 0.0 {
+        return true;
+    }
+    let dx = (px - cx) / rx;
+    let dy = (py - cy) / ry;
+    dx * dx + dy * dy <= 1.0
+}
+
+fn clamp_radii(
+    rect: &Rect,
+    radii: &Corners<EllipticalRadius>,
+) -> (
+    EllipticalRadius,
+    EllipticalRadius,
+    EllipticalRadius,
+    EllipticalRadius,
+) {
+    let tl = radii.top_left;
+    let tr = radii.top_right;
+    let br = radii.bottom_right;
+    let bl = radii.bottom_left;
+
+    let w = rect.width.max(0.0);
+    let h = rect.height.max(0.0);
+
+    // Per CSS border-radius §5.1: compute f = min(side/sum) across all
+    // sides where sum > side. If f < 1, scale all radii by f.
+    let f = [
+        side_factor(tl.x + tr.x, w),
+        side_factor(bl.x + br.x, w),
+        side_factor(tl.y + bl.y, h),
+        side_factor(tr.y + br.y, h),
+    ]
+    .into_iter()
+    .fold(1.0f32, f32::min);
+
+    if f < 1.0 {
+        (
+            EllipticalRadius {
+                x: tl.x * f,
+                y: tl.y * f,
+            },
+            EllipticalRadius {
+                x: tr.x * f,
+                y: tr.y * f,
+            },
+            EllipticalRadius {
+                x: br.x * f,
+                y: br.y * f,
+            },
+            EllipticalRadius {
+                x: bl.x * f,
+                y: bl.y * f,
+            },
+        )
+    } else {
+        (tl, tr, br, bl)
+    }
+}
+
+#[inline]
+fn side_factor(sum: f32, side: f32) -> f32 {
+    if side <= 0.0 || sum <= 0.0 || sum <= side {
+        1.0
+    } else {
+        side / sum
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use liquide_dom::Document;
     use liquide_layout::{DefaultImageMeasurer, DefaultTextMeasurer, LayoutEngine, Size};
     use liquide_style_engine::engine::StyleEngine;
+
+    #[test]
+    fn shape_aware_hit_test_rounded_corner_cull() {
+        let rect = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let radii = Corners {
+            top_left: EllipticalRadius { x: 20.0, y: 20.0 },
+            top_right: EllipticalRadius { x: 20.0, y: 20.0 },
+            bottom_right: EllipticalRadius { x: 20.0, y: 20.0 },
+            bottom_left: EllipticalRadius { x: 20.0, y: 20.0 },
+        };
+        // Center of box is inside.
+        assert!(point_inside_rounded_rect(
+            Point::new(50.0, 50.0),
+            &rect,
+            &radii
+        ));
+        // Mid-edge is inside.
+        assert!(point_inside_rounded_rect(
+            Point::new(50.0, 0.5),
+            &rect,
+            &radii
+        ));
+        // Extreme top-left corner (0,0) is outside the rounded edge.
+        assert!(!point_inside_rounded_rect(
+            Point::new(0.5, 0.5),
+            &rect,
+            &radii
+        ));
+        // Extreme top-right corner.
+        assert!(!point_inside_rounded_rect(
+            Point::new(99.5, 0.5),
+            &rect,
+            &radii
+        ));
+        // Extreme bottom-right corner.
+        assert!(!point_inside_rounded_rect(
+            Point::new(99.5, 99.5),
+            &rect,
+            &radii
+        ));
+        // Inside the corner quadrant but inside the ellipse is OK.
+        assert!(point_inside_rounded_rect(
+            Point::new(15.0, 15.0),
+            &rect,
+            &radii
+        ));
+    }
+
+    #[test]
+    fn shape_aware_zero_radius_accepts_all_inside() {
+        let rect = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let radii = Corners {
+            top_left: EllipticalRadius { x: 0.0, y: 0.0 },
+            top_right: EllipticalRadius { x: 0.0, y: 0.0 },
+            bottom_right: EllipticalRadius { x: 0.0, y: 0.0 },
+            bottom_left: EllipticalRadius { x: 0.0, y: 0.0 },
+        };
+        assert!(point_inside_rounded_rect(
+            Point::new(0.5, 0.5),
+            &rect,
+            &radii
+        ));
+        assert!(point_inside_rounded_rect(
+            Point::new(99.5, 99.5),
+            &rect,
+            &radii
+        ));
+    }
 
     #[test]
     fn basic_hit_test() {
@@ -622,7 +870,12 @@ mod tests {
 
         let style_map = se.restyle_all(&doc);
         let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
-        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let layout_tree = le.layout(
+            &doc,
+            &style_map,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+        );
 
         let engine = HitTestEngine::from_owned(layout_tree, style_map);
         let result = engine.hit_test(Point::new(100.0, 50.0));
@@ -637,26 +890,34 @@ mod tests {
         let transforms = vec![Transform::Rotate(45.0)];
         let origin_x = 50.0;
         let origin_y = 50.0;
-        
+
         let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
         let original = Point::new(75.0, 50.0);
-        
+
         // Forward transform using Affine2D
         let transformed = matrix.transform_point(liquide_compositor::geometry::Point::new(
-            original.x, original.y
+            original.x, original.y,
         ));
         let transformed_point = Point::new(transformed.x, transformed.y);
-        
+
         // Inverse transform
         let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
-        
+
         assert!(recovered.is_some(), "Should be able to inverse transform");
         let recovered = recovered.unwrap();
-        
-        assert!((recovered.x - original.x).abs() < 0.001, 
-            "X should round-trip: {} vs {}", recovered.x, original.x);
-        assert!((recovered.y - original.y).abs() < 0.001, 
-            "Y should round-trip: {} vs {}", recovered.y, original.y);
+
+        assert!(
+            (recovered.x - original.x).abs() < 0.001,
+            "X should round-trip: {} vs {}",
+            recovered.x,
+            original.x
+        );
+        assert!(
+            (recovered.y - original.y).abs() < 0.001,
+            "Y should round-trip: {} vs {}",
+            recovered.y,
+            original.y
+        );
     }
 
     /// Test that multiple transforms compose correctly and round-trip
@@ -670,26 +931,34 @@ mod tests {
         ];
         let origin_x = 100.0;
         let origin_y = 100.0;
-        
+
         let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
         let original = Point::new(150.0, 75.0);
-        
+
         // Forward transform
         let transformed = matrix.transform_point(liquide_compositor::geometry::Point::new(
-            original.x, original.y
+            original.x, original.y,
         ));
         let transformed_point = Point::new(transformed.x, transformed.y);
-        
+
         // Inverse transform
         let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
-        
+
         assert!(recovered.is_some(), "Should be able to inverse transform");
         let recovered = recovered.unwrap();
-        
-        assert!((recovered.x - original.x).abs() < 0.001, 
-            "X should round-trip: {} vs {}", recovered.x, original.x);
-        assert!((recovered.y - original.y).abs() < 0.001, 
-            "Y should round-trip: {} vs {}", recovered.y, original.y);
+
+        assert!(
+            (recovered.x - original.x).abs() < 0.001,
+            "X should round-trip: {} vs {}",
+            recovered.x,
+            original.x
+        );
+        assert!(
+            (recovered.y - original.y).abs() < 0.001,
+            "Y should round-trip: {} vs {}",
+            recovered.y,
+            original.y
+        );
     }
 
     /// Test skew transform round-trip
@@ -698,20 +967,20 @@ mod tests {
         let transforms = vec![Transform::Skew(15.0, 10.0)];
         let origin_x = 50.0;
         let origin_y = 50.0;
-        
+
         let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
         let original = Point::new(80.0, 60.0);
-        
+
         let transformed = matrix.transform_point(liquide_compositor::geometry::Point::new(
-            original.x, original.y
+            original.x, original.y,
         ));
         let transformed_point = Point::new(transformed.x, transformed.y);
-        
+
         let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
-        
+
         assert!(recovered.is_some());
         let recovered = recovered.unwrap();
-        
+
         assert!((recovered.x - original.x).abs() < 0.001);
         assert!((recovered.y - original.y).abs() < 0.001);
     }

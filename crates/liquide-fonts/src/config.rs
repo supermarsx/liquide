@@ -183,11 +183,7 @@ impl Default for FontConfig {
             FontRole::Accessibility,
             FontStack::new(
                 FontRole::Accessibility,
-                vec![
-                    "Noto Sans".into(),
-                    "Inter".into(),
-                    "sans-serif".into(),
-                ],
+                vec!["Noto Sans".into(), "Inter".into(), "sans-serif".into()],
                 16.0,
             )
             .with_weight(400)
@@ -214,11 +210,7 @@ impl Default for FontConfig {
             FontRole::StatusBar,
             FontStack::new(
                 FontRole::StatusBar,
-                vec![
-                    "Manrope".into(),
-                    "Inter".into(),
-                    "sans-serif".into(),
-                ],
+                vec!["Manrope".into(), "Inter".into(), "sans-serif".into()],
                 12.0,
             )
             .with_weight(500)
@@ -230,11 +222,7 @@ impl Default for FontConfig {
             FontRole::Dock,
             FontStack::new(
                 FontRole::Dock,
-                vec![
-                    "Manrope".into(),
-                    "Inter".into(),
-                    "sans-serif".into(),
-                ],
+                vec!["Manrope".into(), "Inter".into(), "sans-serif".into()],
                 11.0,
             )
             .with_weight(500),
@@ -261,11 +249,7 @@ impl Default for FontConfig {
             FontRole::Notification,
             FontStack::new(
                 FontRole::Notification,
-                vec![
-                    "Manrope".into(),
-                    "Inter".into(),
-                    "sans-serif".into(),
-                ],
+                vec!["Manrope".into(), "Inter".into(), "sans-serif".into()],
                 13.0,
             )
             .with_weight(400),
@@ -276,11 +260,7 @@ impl Default for FontConfig {
             FontRole::Launcher,
             FontStack::new(
                 FontRole::Launcher,
-                vec![
-                    "Manrope".into(),
-                    "Inter".into(),
-                    "sans-serif".into(),
-                ],
+                vec!["Manrope".into(), "Inter".into(), "sans-serif".into()],
                 15.0,
             )
             .with_weight(400),
@@ -366,8 +346,8 @@ mod tests {
     #[test]
     fn set_and_retrieve_stack() {
         let mut config = FontConfig::default();
-        let custom = FontStack::new(FontRole::StatusBar, vec!["CustomFont".into()], 11.0)
-            .with_weight(600);
+        let custom =
+            FontStack::new(FontRole::StatusBar, vec!["CustomFont".into()], 11.0).with_weight(600);
         config.set_stack(custom);
 
         let got = config.stack_for_role(FontRole::StatusBar);

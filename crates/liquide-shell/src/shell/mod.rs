@@ -2,8 +2,8 @@
 //! dock, status bar, launcher, tiling, shortcuts, notifications, and
 //! seamless window mode.
 
-pub mod batch;
 mod accessors;
+pub mod batch;
 mod devtools;
 mod dom_sync;
 mod events;
@@ -43,7 +43,6 @@ use crate::pipeline::{DesktopPipeline, PipelineConfig};
 use crate::screen_time::ScreenTimeTracker;
 use crate::seamless::SeamlessManager;
 use crate::shortcuts::{ShellAction, ShortcutManager};
-use liquide_statusbar::ShellStatusBar;
 use crate::theme::ShellTheme;
 use crate::theme_loader;
 use crate::tiling::TilingEngine;
@@ -52,6 +51,7 @@ use crate::workspace::WorkspaceManager;
 use liquide_dock::Dock;
 use liquide_dom::template_registry::TemplateRegistry;
 use liquide_hit_test::{EventDispatcher, HitTestEngine};
+use liquide_statusbar::ShellStatusBar;
 
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
@@ -114,11 +114,7 @@ impl ContextMenuItem {
     pub fn defaults() -> Vec<Self> {
         vec![
             Self::new("Open Terminal", "terminal", ShellAction::OpenTerminal),
-            Self::new(
-                "Open File Manager",
-                "folder",
-                ShellAction::OpenFileManager,
-            ),
+            Self::new("Open File Manager", "folder", ShellAction::OpenFileManager),
             Self::new(
                 "Change Wallpaper",
                 "preferences-desktop-wallpaper",
@@ -258,8 +254,7 @@ impl Shell {
             base_font_size: 14.0,
         };
         let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
-        css_pipeline
-            .set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
+        css_pipeline.set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
 
         let thread_css = theme_loader::default_theme_css().to_string();
         let thread_coordinator = crate::threading::ShellThreadCoordinator::new(
@@ -357,8 +352,7 @@ impl Shell {
             base_font_size: 14.0,
         };
         let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
-        css_pipeline
-            .set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
+        css_pipeline.set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
 
         let thread_css = theme_loader::default_theme_css().to_string();
         let thread_coordinator = crate::threading::ShellThreadCoordinator::new(
@@ -468,10 +462,30 @@ impl Shell {
     pub(crate) fn register_default_apps(launcher: &mut Launcher) {
         let defaults = [
             ("com.liquide.files", "Files", "folder", "File manager"),
-            ("com.liquide.terminal", "Terminal", "terminal", "Command line"),
-            ("com.liquide.browser", "Browser", "web-browser", "Web browser"),
-            ("com.liquide.settings", "Settings", "preferences-system", "System settings"),
-            ("com.liquide.calculator", "Calculator", "calculator", "Calculator"),
+            (
+                "com.liquide.terminal",
+                "Terminal",
+                "terminal",
+                "Command line",
+            ),
+            (
+                "com.liquide.browser",
+                "Browser",
+                "web-browser",
+                "Web browser",
+            ),
+            (
+                "com.liquide.settings",
+                "Settings",
+                "preferences-system",
+                "System settings",
+            ),
+            (
+                "com.liquide.calculator",
+                "Calculator",
+                "calculator",
+                "Calculator",
+            ),
         ];
         for (app_id, name, icon, desc) in &defaults {
             launcher.add_app(LauncherApp {
@@ -494,27 +508,51 @@ impl Shell {
     pub(crate) fn keycode_to_char(key: liquide_input::keyboard::KeyCode) -> Option<char> {
         use liquide_input::keyboard::KeyCode;
         match key {
-            KeyCode::A => Some('a'), KeyCode::B => Some('b'), KeyCode::C => Some('c'),
-            KeyCode::D => Some('d'), KeyCode::E => Some('e'), KeyCode::F => Some('f'),
-            KeyCode::G => Some('g'), KeyCode::H => Some('h'), KeyCode::I => Some('i'),
-            KeyCode::J => Some('j'), KeyCode::K => Some('k'), KeyCode::L => Some('l'),
-            KeyCode::M => Some('m'), KeyCode::N => Some('n'), KeyCode::O => Some('o'),
-            KeyCode::P => Some('p'), KeyCode::Q => Some('q'), KeyCode::R => Some('r'),
-            KeyCode::S => Some('s'), KeyCode::T => Some('t'), KeyCode::U => Some('u'),
-            KeyCode::V => Some('v'), KeyCode::W => Some('w'), KeyCode::X => Some('x'),
-            KeyCode::Y => Some('y'), KeyCode::Z => Some('z'),
-            KeyCode::Digit0 => Some('0'), KeyCode::Digit1 => Some('1'),
-            KeyCode::Digit2 => Some('2'), KeyCode::Digit3 => Some('3'),
-            KeyCode::Digit4 => Some('4'), KeyCode::Digit5 => Some('5'),
-            KeyCode::Digit6 => Some('6'), KeyCode::Digit7 => Some('7'),
-            KeyCode::Digit8 => Some('8'), KeyCode::Digit9 => Some('9'),
-            KeyCode::Space => Some(' '), KeyCode::Minus => Some('-'),
-            KeyCode::Equal => Some('='), KeyCode::Period => Some('.'),
-            KeyCode::Comma => Some(','), KeyCode::Slash => Some('/'),
+            KeyCode::A => Some('a'),
+            KeyCode::B => Some('b'),
+            KeyCode::C => Some('c'),
+            KeyCode::D => Some('d'),
+            KeyCode::E => Some('e'),
+            KeyCode::F => Some('f'),
+            KeyCode::G => Some('g'),
+            KeyCode::H => Some('h'),
+            KeyCode::I => Some('i'),
+            KeyCode::J => Some('j'),
+            KeyCode::K => Some('k'),
+            KeyCode::L => Some('l'),
+            KeyCode::M => Some('m'),
+            KeyCode::N => Some('n'),
+            KeyCode::O => Some('o'),
+            KeyCode::P => Some('p'),
+            KeyCode::Q => Some('q'),
+            KeyCode::R => Some('r'),
+            KeyCode::S => Some('s'),
+            KeyCode::T => Some('t'),
+            KeyCode::U => Some('u'),
+            KeyCode::V => Some('v'),
+            KeyCode::W => Some('w'),
+            KeyCode::X => Some('x'),
+            KeyCode::Y => Some('y'),
+            KeyCode::Z => Some('z'),
+            KeyCode::Digit0 => Some('0'),
+            KeyCode::Digit1 => Some('1'),
+            KeyCode::Digit2 => Some('2'),
+            KeyCode::Digit3 => Some('3'),
+            KeyCode::Digit4 => Some('4'),
+            KeyCode::Digit5 => Some('5'),
+            KeyCode::Digit6 => Some('6'),
+            KeyCode::Digit7 => Some('7'),
+            KeyCode::Digit8 => Some('8'),
+            KeyCode::Digit9 => Some('9'),
+            KeyCode::Space => Some(' '),
+            KeyCode::Minus => Some('-'),
+            KeyCode::Equal => Some('='),
+            KeyCode::Period => Some('.'),
+            KeyCode::Comma => Some(','),
+            KeyCode::Slash => Some('/'),
             _ => None,
         }
     }
-
 }
 
 impl Drop for Shell {

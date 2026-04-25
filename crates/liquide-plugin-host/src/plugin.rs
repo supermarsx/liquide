@@ -146,11 +146,7 @@ impl fmt::Display for LoadedPlugin {
         write!(
             f,
             "{}({}, \"{}\", v{}, {})",
-            self.id,
-            self.manifest.id,
-            self.manifest.name,
-            self.manifest.version,
-            self.state,
+            self.id, self.manifest.id, self.manifest.name, self.manifest.version, self.state,
         )
     }
 }

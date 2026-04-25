@@ -11,7 +11,7 @@ mod text;
 
 use std::collections::HashMap;
 
-use liquide_compositor::damage::{DamageSet, DamageTile};
+use liquide_compositor::damage::{DamageClass, DamageSet, DamageTile};
 use liquide_compositor::effects::EffectParams;
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
@@ -593,9 +593,7 @@ impl Renderer for SoftwareRenderer {
             self.render_node_with_lod(node, fb, lod_level);
         }
 
-        // Return value is unused by all call sites (`let _ = renderer.render(...)`)
-        // so we avoid cloning the entire damage tiles Vec.
-        Ok(Vec::new())
+        Ok(self.classify_damage_tiles(nodes, damage, fb))
     }
 
     fn blur_enabled(&self) -> bool {
@@ -628,7 +626,9 @@ impl Renderer for SoftwareRenderer {
         match self.lod_manager.get_performance_mode() {
             crate::lod::PerformanceMode::Quality => liquide_compositor::RenderQuality::Quality,
             crate::lod::PerformanceMode::Balanced => liquide_compositor::RenderQuality::Balanced,
-            crate::lod::PerformanceMode::Performance => liquide_compositor::RenderQuality::Performance,
+            crate::lod::PerformanceMode::Performance => {
+                liquide_compositor::RenderQuality::Performance
+            }
         }
     }
 
@@ -636,13 +636,119 @@ impl Renderer for SoftwareRenderer {
         let lod_mode = match mode {
             liquide_compositor::RenderQuality::Quality => crate::lod::PerformanceMode::Quality,
             liquide_compositor::RenderQuality::Balanced => crate::lod::PerformanceMode::Balanced,
-            liquide_compositor::RenderQuality::Performance => crate::lod::PerformanceMode::Performance,
+            liquide_compositor::RenderQuality::Performance => {
+                crate::lod::PerformanceMode::Performance
+            }
         };
         self.lod_manager.set_performance_mode(lod_mode);
     }
 }
 
 impl SoftwareRenderer {
+    fn classify_damage_tiles(
+        &self,
+        nodes: &[FlatNode],
+        damage: &DamageSet,
+        fb: &FrameBuffer,
+    ) -> Vec<DamageTile> {
+        if damage.tiles.is_empty() {
+            return Vec::new();
+        }
+
+        let mut damage_tiles: HashMap<(u32, u32), DamageClass> =
+            HashMap::with_capacity(damage.tiles.len());
+        for tile in &damage.tiles {
+            damage_tiles
+                .entry((tile.x, tile.y))
+                .and_modify(|existing| {
+                    if tile.class.priority() < existing.priority() {
+                        *existing = tile.class;
+                    }
+                })
+                .or_insert(tile.class);
+        }
+
+        let mut classified: HashMap<(u32, u32), DamageClass> =
+            HashMap::with_capacity(damage_tiles.len());
+
+        let fb_bounds = Rect::new(0.0, 0.0, fb.width as f32, fb.height as f32);
+        let tile_size = damage.tile_size as f32;
+        let max_tx = fb.width.div_ceil(damage.tile_size);
+        let max_ty = fb.height.div_ceil(damage.tile_size);
+
+        for node in nodes {
+            let Some(node_class) = Self::classify_node_kind(&node.kind) else {
+                continue;
+            };
+
+            let clipped_bounds = node
+                .clip
+                .as_ref()
+                .map_or(Some(node.absolute_bounds), |clip| {
+                    node.absolute_bounds.intersection(clip)
+                })
+                .and_then(|bounds| bounds.intersection(&fb_bounds));
+
+            let Some(bounds) = clipped_bounds else {
+                continue;
+            };
+
+            let tx_start = (bounds.x.max(0.0) / tile_size).floor() as u32;
+            let ty_start = (bounds.y.max(0.0) / tile_size).floor() as u32;
+            let tx_end = (bounds.right().max(0.0) / tile_size).ceil() as u32;
+            let ty_end = (bounds.bottom().max(0.0) / tile_size).ceil() as u32;
+
+            for ty in ty_start..ty_end.min(max_ty) {
+                for tx in tx_start..tx_end.min(max_tx) {
+                    if damage_tiles.contains_key(&(tx, ty)) {
+                        classified
+                            .entry((tx, ty))
+                            .and_modify(|existing| {
+                                if node_class.priority() < existing.priority() {
+                                    *existing = node_class;
+                                }
+                            })
+                            .or_insert(node_class);
+                    }
+                }
+            }
+        }
+
+        for (&coords, &fallback_class) in &damage_tiles {
+            classified.entry(coords).or_insert(fallback_class);
+        }
+
+        let mut tiles: Vec<DamageTile> = classified
+            .into_iter()
+            .map(|((x, y), class)| DamageTile { x, y, class })
+            .collect();
+        tiles.sort_by_key(|tile| (tile.class.priority(), tile.y, tile.x));
+        tiles
+    }
+
+    fn classify_node_kind(kind: &SceneNodeKind) -> Option<DamageClass> {
+        match kind {
+            SceneNodeKind::Cursor { .. } => Some(DamageClass::CursorOnly),
+            SceneNodeKind::Text { .. } | SceneNodeKind::TextCaret { .. } => {
+                Some(DamageClass::TextGlyph)
+            }
+            SceneNodeKind::Surface { .. }
+            | SceneNodeKind::ChildSurface { .. }
+            | SceneNodeKind::Image { .. }
+            | SceneNodeKind::BlurCache => Some(DamageClass::BitmapRegion),
+            SceneNodeKind::Root
+            | SceneNodeKind::Workspace { .. }
+            | SceneNodeKind::Overlay
+            | SceneNodeKind::Content
+            | SceneNodeKind::ShellLayer
+            | SceneNodeKind::RenderLayer { .. }
+            | SceneNodeKind::ClipPath { .. }
+            | SceneNodeKind::Filter { .. }
+            | SceneNodeKind::BackdropFilter { .. } => None,
+            _ => Some(DamageClass::UiPrimitive),
+        }
+    }
+
     /// Render a single flattened node into the frame buffer with LOD support.
     fn render_node_with_lod(&mut self, node: &FlatNode, fb: &mut FrameBuffer, lod_level: LodLevel) {
         // Compute the visible (clipped) region if a clip rect is set.
@@ -808,7 +914,12 @@ impl SoftwareRenderer {
                 self.render_gradient(fb, bounds, gradient, opacity, node.corner_radius);
             }
 
-            SceneNodeKind::SvgPath { d, fill, stroke, stroke_width } => {
+            SceneNodeKind::SvgPath {
+                d,
+                fill,
+                stroke,
+                stroke_width,
+            } => {
                 use liquide_paint::svg_path::flatten_path_cached;
                 let segments = flatten_path_cached(d);
                 if let Some(fill_color) = fill {
@@ -840,8 +951,10 @@ impl SoftwareRenderer {
                     for seg in &segments {
                         rasterizer::draw_line(
                             fb,
-                            ox + seg.x1, oy + seg.y1,
-                            ox + seg.x2, oy + seg.y2,
+                            ox + seg.x1,
+                            oy + seg.y1,
+                            ox + seg.x2,
+                            oy + seg.y2,
                             sc,
                             *stroke_width,
                         );
@@ -875,7 +988,12 @@ impl SoftwareRenderer {
                                 }
                                 let mut px = fb.get_pixel(x, y);
                                 if coverage <= 0.0 {
-                                    px = Color { r: 0, g: 0, b: 0, a: 0 };
+                                    px = Color {
+                                        r: 0,
+                                        g: 0,
+                                        b: 0,
+                                        a: 0,
+                                    };
                                 } else {
                                     // Premultiplied alpha: scale all channels by coverage
                                     // to avoid dark halos at anti-aliased edges.
@@ -906,10 +1024,17 @@ impl SoftwareRenderer {
                                 let fx = x as f32 + 0.5;
                                 let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() - r;
                                 let coverage = (-d + 0.5).clamp(0.0, 1.0);
-                                if coverage >= 1.0 { continue; }
+                                if coverage >= 1.0 {
+                                    continue;
+                                }
                                 let mut px = fb.get_pixel(x, y);
                                 if coverage <= 0.0 {
-                                    px = Color { r: 0, g: 0, b: 0, a: 0 };
+                                    px = Color {
+                                        r: 0,
+                                        g: 0,
+                                        b: 0,
+                                        a: 0,
+                                    };
                                 } else {
                                     px.r = (px.r as f32 * coverage + 0.5) as u8;
                                     px.g = (px.g as f32 * coverage + 0.5) as u8;
@@ -942,10 +1067,17 @@ impl SoftwareRenderer {
                                 let ny = (fy - cy) / ery;
                                 let d = (nx * nx + ny * ny).sqrt() - 1.0;
                                 let coverage = (-d * erx.min(ery) + 0.5).clamp(0.0, 1.0);
-                                if coverage >= 1.0 { continue; }
+                                if coverage >= 1.0 {
+                                    continue;
+                                }
                                 let mut px = fb.get_pixel(x, y);
                                 if coverage <= 0.0 {
-                                    px = Color { r: 0, g: 0, b: 0, a: 0 };
+                                    px = Color {
+                                        r: 0,
+                                        g: 0,
+                                        b: 0,
+                                        a: 0,
+                                    };
                                 } else {
                                     px.r = (px.r as f32 * coverage + 0.5) as u8;
                                     px.g = (px.g as f32 * coverage + 0.5) as u8;
@@ -957,15 +1089,20 @@ impl SoftwareRenderer {
                         }
                     }
                     ClipPathKind::Polygon { points } => {
-                        if points.len() < 3 { /* skip degenerate polygon */ }
-                        else {
+                        if points.len() < 3 { /* skip degenerate polygon */
+                        } else {
                             let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
                             let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
                             let bx1 = (bounds.right().ceil() as u32).min(fb.width);
                             let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
                             let pts: Vec<(f32, f32)> = points
                                 .iter()
-                                .map(|p| (bounds.x + p.0 * bounds.width, bounds.y + p.1 * bounds.height))
+                                .map(|p| {
+                                    (
+                                        bounds.x + p.0 * bounds.width,
+                                        bounds.y + p.1 * bounds.height,
+                                    )
+                                })
                                 .collect();
                             for y in by0..by1 {
                                 let fy = y as f32 + 0.5;
@@ -980,10 +1117,15 @@ impl SoftwareRenderer {
                                         let (x0, y0) = pts[i];
                                         let (x1, y1) = pts[j];
                                         if y0 <= fy {
-                                            if y1 > fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) > 0.0 {
+                                            if y1 > fy
+                                                && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0))
+                                                    > 0.0
+                                            {
                                                 winding += 1;
                                             }
-                                        } else if y1 <= fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) < 0.0 {
+                                        } else if y1 <= fy
+                                            && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) < 0.0
+                                        {
                                             winding -= 1;
                                         }
                                         // Point-to-segment distance squared
@@ -994,7 +1136,8 @@ impl SoftwareRenderer {
                                             ((fx - x0) * ex + (fy - y0) * ey) / len_sq
                                         } else {
                                             0.0
-                                        }.clamp(0.0, 1.0);
+                                        }
+                                        .clamp(0.0, 1.0);
                                         let px = x0 + t * ex - fx;
                                         let py = y0 + t * ey - fy;
                                         min_dist_sq = min_dist_sq.min(px * px + py * py);
@@ -1003,10 +1146,17 @@ impl SoftwareRenderer {
                                     let inside = winding != 0;
                                     let signed_dist = if inside { dist } else { -dist };
                                     let coverage = (signed_dist + 0.5).clamp(0.0, 1.0);
-                                    if coverage >= 1.0 { continue; }
+                                    if coverage >= 1.0 {
+                                        continue;
+                                    }
                                     let mut px = fb.get_pixel(x, y);
                                     if coverage <= 0.0 {
-                                        px = Color { r: 0, g: 0, b: 0, a: 0 };
+                                        px = Color {
+                                            r: 0,
+                                            g: 0,
+                                            b: 0,
+                                            a: 0,
+                                        };
                                     } else {
                                         px.r = (px.r as f32 * coverage + 0.5) as u8;
                                         px.g = (px.g as f32 * coverage + 0.5) as u8;
@@ -1089,7 +1239,10 @@ impl SoftwareRenderer {
                 }
             }
 
-            SceneNodeKind::RenderLayer { blend_mode, isolate } => {
+            SceneNodeKind::RenderLayer {
+                blend_mode,
+                isolate,
+            } => {
                 // Unconditionally set the blend mode so that a normal
                 // (SrcOver) layer resets the mode after a previous
                 // non-default layer.  True isolation would require
@@ -1277,7 +1430,8 @@ impl<'a> Iterator for WordSplitter<'a> {
         }
         let bytes = self.remaining.as_bytes();
         let is_space = bytes[0] == b' ';
-        let end = self.remaining
+        let end = self
+            .remaining
             .char_indices()
             .skip(1)
             .find(|(_, ch)| (*ch == ' ') != is_space)

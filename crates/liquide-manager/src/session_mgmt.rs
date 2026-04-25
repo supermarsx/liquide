@@ -90,14 +90,12 @@ impl SessionStore {
     }
 
     /// Register or update a session.
-    pub fn upsert(
-        &mut self,
-        session_id: String,
-        user: String,
-        server: String,
-        started_at: u64,
-    ) {
-        if let Some(s) = self.sessions.iter_mut().find(|s| s.session_id == session_id) {
+    pub fn upsert(&mut self, session_id: String, user: String, server: String, started_at: u64) {
+        if let Some(s) = self
+            .sessions
+            .iter_mut()
+            .find(|s| s.session_id == session_id)
+        {
             s.user = user;
             s.server = server;
         } else {
@@ -120,7 +118,11 @@ impl SessionStore {
 
     /// Update live metrics for a session.
     pub fn update_metrics(&mut self, session_id: &str, latency: f32, fps: f32, bandwidth: u64) {
-        if let Some(s) = self.sessions.iter_mut().find(|s| s.session_id == session_id) {
+        if let Some(s) = self
+            .sessions
+            .iter_mut()
+            .find(|s| s.session_id == session_id)
+        {
             s.latency_ms = latency;
             s.fps = fps;
             s.bandwidth_bps = bandwidth;

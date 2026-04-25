@@ -141,13 +141,16 @@ impl LazyPaintManager {
 
     /// Register a paintable surface.
     pub fn register_surface(&mut self, id: SurfaceId, opaque: bool) {
-        self.surfaces.insert(id, SurfacePaintState {
-            damage: PaintDamage::None,
-            needs_paint: false,
-            needs_erase: false,
-            generation: 0,
-            opaque,
-        });
+        self.surfaces.insert(
+            id,
+            SurfacePaintState {
+                damage: PaintDamage::None,
+                needs_paint: false,
+                needs_erase: false,
+                generation: 0,
+                opaque,
+            },
+        );
     }
 
     /// Unregister a surface (window closed).

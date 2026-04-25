@@ -47,12 +47,20 @@ macro_rules! guid {
 }
 
 /// IID_IDXGIFactory1 {770AAE78-F26F-4DBA-A829-253C83D1B387}
-const IID_IDXGI_FACTORY1: GUID =
-    guid!(0x770aae78, 0xf26f, 0x4dba, [0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87]);
+const IID_IDXGI_FACTORY1: GUID = guid!(
+    0x770aae78,
+    0xf26f,
+    0x4dba,
+    [0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87]
+);
 
 /// IID_ID3D11Texture2D {6F15AAF2-D208-4E89-9AB4-489535D34F9C}
-const IID_ID3D11_TEXTURE2D: GUID =
-    guid!(0x6f15aaf2, 0xd208, 0x4e89, [0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c]);
+const IID_ID3D11_TEXTURE2D: GUID = guid!(
+    0x6f15aaf2,
+    0xd208,
+    0x4e89,
+    [0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c]
+);
 
 // ---------------------------------------------------------------------------
 // DXGI / D3D11 constants
@@ -113,8 +121,7 @@ struct DXGI_SWAP_CHAIN_DESC {
 #[repr(C)]
 #[allow(dead_code)]
 struct IUnknownVtbl {
-    query_interface:
-        unsafe extern "system" fn(*mut c_void, REFIID, *mut *mut c_void) -> HRESULT,
+    query_interface: unsafe extern "system" fn(*mut c_void, REFIID, *mut *mut c_void) -> HRESULT,
     add_ref: unsafe extern "system" fn(*mut c_void) -> u32,
     release: unsafe extern "system" fn(*mut c_void) -> u32,
 }
@@ -179,25 +186,22 @@ unsafe fn vtable_fn(obj: *mut c_void, slot: usize) -> *const c_void {
 #[link(name = "d3d11")]
 unsafe extern "system" {
     fn D3D11CreateDevice(
-        adapter: *mut c_void,           // IDXGIAdapter*
-        driver_type: u32,               // D3D_DRIVER_TYPE
-        software: *mut c_void,          // HMODULE
-        flags: u32,                     // D3D11_CREATE_DEVICE_FLAG
-        feature_levels: *const u32,     // D3D_FEATURE_LEVEL*
+        adapter: *mut c_void,       // IDXGIAdapter*
+        driver_type: u32,           // D3D_DRIVER_TYPE
+        software: *mut c_void,      // HMODULE
+        flags: u32,                 // D3D11_CREATE_DEVICE_FLAG
+        feature_levels: *const u32, // D3D_FEATURE_LEVEL*
         num_feature_levels: u32,
         sdk_version: u32,
-        device: *mut *mut c_void,       // ID3D11Device**
-        feature_level: *mut u32,        // D3D_FEATURE_LEVEL*
-        context: *mut *mut c_void,      // ID3D11DeviceContext**
+        device: *mut *mut c_void,  // ID3D11Device**
+        feature_level: *mut u32,   // D3D_FEATURE_LEVEL*
+        context: *mut *mut c_void, // ID3D11DeviceContext**
     ) -> HRESULT;
 }
 
 #[link(name = "dxgi")]
 unsafe extern "system" {
-    fn CreateDXGIFactory1(
-        riid: REFIID,
-        factory: *mut *mut c_void,
-    ) -> HRESULT;
+    fn CreateDXGIFactory1(riid: REFIID, factory: *mut *mut c_void) -> HRESULT;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,12 +215,12 @@ unsafe extern "system" {
 /// presented.  No staging texture is needed.
 pub struct DxgiPresenter {
     #[allow(dead_code)]
-    device: *mut c_void,        // ID3D11Device
-    context: *mut c_void,       // ID3D11DeviceContext
-    swap_chain: *mut c_void,    // IDXGISwapChain
+    device: *mut c_void, // ID3D11Device
+    context: *mut c_void,    // ID3D11DeviceContext
+    swap_chain: *mut c_void, // IDXGISwapChain
     width: u32,
     height: u32,
-    tearing: bool,              // swap chain supports ALLOW_TEARING
+    tearing: bool, // swap chain supports ALLOW_TEARING
 }
 
 // Safety: the COM pointers are only accessed from the thread that created
@@ -246,9 +250,9 @@ impl DxgiPresenter {
         // Output pointers are stack-allocated and properly initialized to null.
         let hr = unsafe {
             D3D11CreateDevice(
-                ptr::null_mut(),            // default adapter
+                ptr::null_mut(), // default adapter
                 D3D_DRIVER_TYPE_HARDWARE,
-                ptr::null_mut(),            // no software rasterizer
+                ptr::null_mut(), // no software rasterizer
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                 levels.as_ptr(),
                 levels.len() as u32,
@@ -269,7 +273,10 @@ impl DxgiPresenter {
         if hr != S_OK || factory.is_null() {
             // SAFETY: Releasing COM objects on failure path. device and context
             // are non-null (checked above) and have a valid Release method.
-            unsafe { Self::release(device); Self::release(context); }
+            unsafe {
+                Self::release(device);
+                Self::release(context);
+            }
             return Err(format!("CreateDXGIFactory1 failed: 0x{hr:08X}"));
         }
 
@@ -291,7 +298,7 @@ impl DxgiPresenter {
                 quality: 0,
             },
             buffer_usage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
-            buffer_count: 3,  // triple-buffer to avoid Present blocking on DWM
+            buffer_count: 3, // triple-buffer to avoid Present blocking on DWM
             output_window: hwnd,
             windowed: ffi::TRUE,
             swap_effect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
@@ -310,8 +317,7 @@ impl DxgiPresenter {
         // SAFETY: vtable_fn reads the CreateSwapChain function pointer from
         // the IDXGIFactory vtable at slot 10. The factory pointer is valid.
         // transmute is sound because we match the COM calling convention exactly.
-        let create_sc: CreateSwapChainFn =
-            unsafe { std::mem::transmute(vtable_fn(factory, 10)) };
+        let create_sc: CreateSwapChainFn = unsafe { std::mem::transmute(vtable_fn(factory, 10)) };
         // SAFETY: Calling CreateSwapChain through the vtable with valid params.
         let hr = unsafe { create_sc(factory, device, &sc_desc, &mut swap_chain) };
 
@@ -349,7 +355,9 @@ impl DxgiPresenter {
 
         // Release factory (no longer needed).
         // SAFETY: factory is a valid COM object.
-        unsafe { Self::release(factory); }
+        unsafe {
+            Self::release(factory);
+        }
 
         Ok(Self {
             device,
@@ -366,7 +374,13 @@ impl DxgiPresenter {
     /// Uploads `pixels` directly into the swap-chain back buffer via
     /// `UpdateSubresource`, then calls `Present(0, flags)` for immediate
     /// presentation (no vsync — the caller handles frame pacing).
-    pub fn present(&mut self, pixels: &[u8], width: u32, height: u32, stride: u32) -> Result<(), String> {
+    pub fn present(
+        &mut self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+    ) -> Result<(), String> {
         if width != self.width || height != self.height {
             self.resize(width, height)?;
         }
@@ -394,7 +408,7 @@ impl DxgiPresenter {
             // 2. Upload CPU pixels into the back buffer.
             //    UpdateSubresource copies from system memory to GPU memory
             //    in a single call — no staging texture needed.
-            
+
             // SAFETY: Validate buffer bounds to prevent out-of-bounds reads.
             // UpdateSubresource will read `height` rows of `stride` bytes each.
             // The minimum required buffer size is:
@@ -415,7 +429,11 @@ impl DxgiPresenter {
                 Self::release(back_buffer);
                 return Err(format!(
                     "pixel buffer too small: {} bytes provided, {} required for {}x{} @ stride {}",
-                    pixels.len(), min_buffer_size, width, height, stride
+                    pixels.len(),
+                    min_buffer_size,
+                    width,
+                    height,
+                    stride
                 ));
             }
 
@@ -424,13 +442,12 @@ impl DxgiPresenter {
                 this: *mut c_void,
                 dst_resource: *mut c_void,
                 dst_subresource: u32,
-                dst_box: *const c_void,    // NULL = entire resource
+                dst_box: *const c_void, // NULL = entire resource
                 src_data: *const c_void,
                 src_row_pitch: u32,
                 src_depth_pitch: u32,
             );
-            let update: UpdateSubresourceFn =
-                std::mem::transmute(vtable_fn(self.context, 48));
+            let update: UpdateSubresourceFn = std::mem::transmute(vtable_fn(self.context, 48));
             update(
                 self.context,
                 back_buffer,
@@ -455,7 +472,11 @@ impl DxgiPresenter {
                 flags: u32,
             ) -> HRESULT;
             let present: PresentFn = std::mem::transmute(vtable_fn(self.swap_chain, 8));
-            let present_flags = if self.tearing { DXGI_PRESENT_ALLOW_TEARING } else { 0 };
+            let present_flags = if self.tearing {
+                DXGI_PRESENT_ALLOW_TEARING
+            } else {
+                0
+            };
             let hr = present(self.swap_chain, 0, present_flags);
             if hr != S_OK {
                 return Err(format!("Present failed: 0x{hr:08X}"));
@@ -480,8 +501,19 @@ impl DxgiPresenter {
                 flags: u32,
             ) -> HRESULT;
             let resize: ResizeBuffersFn = std::mem::transmute(vtable_fn(self.swap_chain, 13));
-            let flags = if self.tearing { DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING } else { 0 };
-            let hr = resize(self.swap_chain, 0, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, flags);
+            let flags = if self.tearing {
+                DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
+            } else {
+                0
+            };
+            let hr = resize(
+                self.swap_chain,
+                0,
+                width,
+                height,
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                flags,
+            );
             if hr != S_OK {
                 return Err(format!("ResizeBuffers failed: 0x{hr:08X}"));
             }

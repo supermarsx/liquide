@@ -1,9 +1,7 @@
 //! Tests for touch input, gesture translation, and the input translator.
 
 use crate::gesture::GestureKind;
-use crate::input::{
-    GestureEvent, InputTranslator, MouseAction, TouchEvent, TouchMode, TouchPhase,
-};
+use crate::input::{GestureEvent, InputTranslator, MouseAction, TouchEvent, TouchMode, TouchPhase};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -64,13 +62,7 @@ fn test_direct_touch_began_produces_move() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     let event = tap_event(1, 100.0, 200.0, TouchPhase::Began, 0);
     let action = translator.translate_touch(&event);
-    assert_eq!(
-        action,
-        Some(MouseAction::Move {
-            x: 100.0,
-            y: 200.0
-        })
-    );
+    assert_eq!(action, Some(MouseAction::Move { x: 100.0, y: 200.0 }));
 }
 
 #[test]
@@ -78,13 +70,7 @@ fn test_direct_touch_moved_produces_move() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     let event = tap_event(1, 150.0, 250.0, TouchPhase::Moved, 10);
     let action = translator.translate_touch(&event);
-    assert_eq!(
-        action,
-        Some(MouseAction::Move {
-            x: 150.0,
-            y: 250.0
-        })
-    );
+    assert_eq!(action, Some(MouseAction::Move { x: 150.0, y: 250.0 }));
 }
 
 #[test]
@@ -105,10 +91,7 @@ fn test_direct_touch_ended_during_drag_produces_drag_end() {
 
     let event = tap_event(1, 70.0, 80.0, TouchPhase::Ended, 100);
     let action = translator.translate_touch(&event);
-    assert_eq!(
-        action,
-        Some(MouseAction::DragEnd { x: 70.0, y: 80.0 })
-    );
+    assert_eq!(action, Some(MouseAction::DragEnd { x: 70.0, y: 80.0 }));
     assert!(!translator.is_dragging());
 }
 
@@ -121,13 +104,7 @@ fn test_single_tap_produces_left_click() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     let g = gesture(GestureKind::SingleTap, 100.0, 200.0);
     let action = translator.translate_gesture(&g);
-    assert_eq!(
-        action,
-        Some(MouseAction::LeftClick {
-            x: 100.0,
-            y: 200.0
-        })
-    );
+    assert_eq!(action, Some(MouseAction::LeftClick { x: 100.0, y: 200.0 }));
 }
 
 #[test]
@@ -135,13 +112,7 @@ fn test_two_finger_tap_produces_right_click() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     let g = gesture(GestureKind::TwoFingerTap, 100.0, 200.0);
     let action = translator.translate_gesture(&g);
-    assert_eq!(
-        action,
-        Some(MouseAction::RightClick {
-            x: 100.0,
-            y: 200.0
-        })
-    );
+    assert_eq!(action, Some(MouseAction::RightClick { x: 100.0, y: 200.0 }));
 }
 
 #[test]
@@ -149,10 +120,7 @@ fn test_long_press_starts_drag() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     let g = gesture(GestureKind::LongPress, 50.0, 60.0);
     let action = translator.translate_gesture(&g);
-    assert_eq!(
-        action,
-        Some(MouseAction::DragStart { x: 50.0, y: 60.0 })
-    );
+    assert_eq!(action, Some(MouseAction::DragStart { x: 50.0, y: 60.0 }));
     assert!(translator.is_dragging());
 }
 
@@ -164,10 +132,7 @@ fn test_long_press_drag_continues_drag() {
     // Now drag move.
     let g = gesture(GestureKind::LongPressDrag, 30.0, 40.0);
     let action = translator.translate_gesture(&g);
-    assert_eq!(
-        action,
-        Some(MouseAction::DragMove { x: 30.0, y: 40.0 })
-    );
+    assert_eq!(action, Some(MouseAction::DragMove { x: 30.0, y: 40.0 }));
 }
 
 #[test]
@@ -177,10 +142,7 @@ fn test_three_finger_swipe_produces_middle_click() {
     let action = translator.translate_gesture(&g);
     assert_eq!(
         action,
-        Some(MouseAction::MiddleClick {
-            x: 100.0,
-            y: 200.0
-        })
+        Some(MouseAction::MiddleClick { x: 100.0, y: 200.0 })
     );
 }
 
@@ -230,10 +192,7 @@ fn test_pan_in_trackpad_mode_moves_cursor() {
         timestamp: 0,
     };
     let action = translator.translate_gesture(&g);
-    assert_eq!(
-        action,
-        Some(MouseAction::Move { x: 10.0, y: 20.0 })
-    );
+    assert_eq!(action, Some(MouseAction::Move { x: 10.0, y: 20.0 }));
 }
 
 // ===========================================================================
@@ -245,10 +204,7 @@ fn test_end_drag_when_dragging() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     translator.translate_gesture(&gesture(GestureKind::LongPress, 10.0, 20.0));
     let action = translator.end_drag(30.0, 40.0);
-    assert_eq!(
-        action,
-        Some(MouseAction::DragEnd { x: 30.0, y: 40.0 })
-    );
+    assert_eq!(action, Some(MouseAction::DragEnd { x: 30.0, y: 40.0 }));
     assert!(!translator.is_dragging());
 }
 

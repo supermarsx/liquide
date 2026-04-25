@@ -9,6 +9,57 @@ use crate::dimension::Sides;
 use crate::value_resolve::{parse_inline_value, *};
 
 impl StyleEngine {
+    pub(crate) fn apply_all_property(
+        &self,
+        val: &liquide_theme_css::value::PropertyValue,
+        style: &mut ComputedStyle,
+        inherited_style: &ComputedStyle,
+        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+    ) {
+        fn css_wide_keyword(
+            val: &liquide_theme_css::value::PropertyValue,
+        ) -> Option<&'static str> {
+            let text = val.as_string()?.trim().to_ascii_lowercase();
+            if text.contains("revert-layer") {
+                Some("revert-layer")
+            } else if text.contains("revert") {
+                Some("revert")
+            } else if text.contains("unset") {
+                Some("unset")
+            } else if text.contains("inherit") {
+                Some("inherit")
+            } else if text.contains("initial") {
+                Some("initial")
+            } else {
+                None
+            }
+        }
+
+        let resolved = match val.as_string() {
+            Some(text) if text.contains("var(") => self.resolve_var_in_value(text, scope_vars),
+            _ => Some(val.clone()),
+        };
+
+        let Some(resolved) = resolved else {
+            return;
+        };
+
+        let Some(kw) = css_wide_keyword(&resolved) else {
+            return;
+        };
+
+        match kw {
+            "initial" => {
+                *style = ComputedStyle::default();
+            }
+            "unset" | "revert" | "revert-layer" => {
+                *style = ComputedStyle::default();
+                style.inherit_from(inherited_style);
+            }
+            _ => {}
+        }
+    }
+
     /// Apply extended CSS properties (transition, animation, SVG, shorthands, etc.).
     pub(crate) fn apply_extended_property(
         &self,
@@ -74,23 +125,27 @@ impl StyleEngine {
                 }
             }
             "transition-property" => {
-                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.transition_property = if kw == "none" { None } else { Some(kw.clone()) };
+                if let Some(value) = val.as_string() {
+                    style.transition_property = if value == "none" {
+                        None
+                    } else {
+                        Some(value.to_string())
+                    };
                 }
             }
             "transition-duration" => {
-                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.transition_duration = Some(kw.clone());
+                if let Some(value) = val.as_string() {
+                    style.transition_duration = Some(value.to_string());
                 }
             }
             "transition-timing-function" => {
-                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.transition_timing_function = Some(kw.clone());
+                if let Some(value) = val.as_string() {
+                    style.transition_timing_function = Some(value.to_string());
                 }
             }
             "transition-delay" => {
-                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.transition_delay = Some(kw.clone());
+                if let Some(value) = val.as_string() {
+                    style.transition_delay = Some(value.to_string());
                 }
             }
             "transition-behavior" => {
@@ -439,14 +494,22 @@ impl StyleEngine {
             }
             "font-language-override" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.font_language_override = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.font_language_override = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
                     style.font_language_override = Some(s.clone());
                 }
             }
             "font-palette" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.font_palette = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.font_palette = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
 
@@ -515,7 +578,11 @@ impl StyleEngine {
             }
             "text-box-edge" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.text_box_edge = if kw == "auto" || kw == "leading" { None } else { Some(kw.clone()) };
+                    style.text_box_edge = if kw == "auto" || kw == "leading" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "text-size-adjust" | "-webkit-text-size-adjust" => {
@@ -525,12 +592,20 @@ impl StyleEngine {
             }
             "text-spacing-trim" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.text_spacing_trim = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.text_spacing_trim = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "text-autospace" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.text_autospace = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.text_autospace = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "white-space-collapse" => {
@@ -564,7 +639,8 @@ impl StyleEngine {
             }
             "hyphenate-limit-chars" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.hyphenate_limit_chars = if kw == "auto" { None } else { Some(kw.clone()) };
+                    style.hyphenate_limit_chars =
+                        if kw == "auto" { None } else { Some(kw.clone()) };
                 }
             }
             "hanging-punctuation" => {
@@ -574,7 +650,11 @@ impl StyleEngine {
             }
             "initial-letter" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.initial_letter = if kw == "normal" { None } else { Some(kw.clone()) };
+                    style.initial_letter = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
 
@@ -626,8 +706,12 @@ impl StyleEngine {
             }
             "contain-intrinsic-width" => style.contain_intrinsic_width = resolve_dimension(val),
             "contain-intrinsic-height" => style.contain_intrinsic_height = resolve_dimension(val),
-            "contain-intrinsic-inline-size" => style.contain_intrinsic_width = resolve_dimension(val),
-            "contain-intrinsic-block-size" => style.contain_intrinsic_height = resolve_dimension(val),
+            "contain-intrinsic-inline-size" => {
+                style.contain_intrinsic_width = resolve_dimension(val)
+            }
+            "contain-intrinsic-block-size" => {
+                style.contain_intrinsic_height = resolve_dimension(val)
+            }
 
             // ── Shape ──
             "shape-outside" => {
@@ -677,16 +761,47 @@ impl StyleEngine {
                     style.mask_image = if kw == "none" { None } else { Some(kw.clone()) };
                 }
             }
-            "mask-mode" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.mask_mode = Some(kw.clone()); } }
-            "mask-position" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.mask_position = Some(kw.clone()); } }
-            "mask-size" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.mask_size = Some(kw.clone()); } }
-            "mask-repeat" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.mask_repeat = Some(kw.clone()); } }
-            "mask-origin" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.mask_origin = Some(kw.clone()); } }
-            "mask-clip" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.mask_clip = Some(kw.clone()); } }
-            "mask-composite" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.mask_composite = Some(kw.clone()); } }
+            "mask-mode" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_mode = Some(kw.clone());
+                }
+            }
+            "mask-position" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_position = Some(kw.clone());
+                }
+            }
+            "mask-size" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_size = Some(kw.clone());
+                }
+            }
+            "mask-repeat" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_repeat = Some(kw.clone());
+                }
+            }
+            "mask-origin" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_origin = Some(kw.clone());
+                }
+            }
+            "mask-clip" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_clip = Some(kw.clone());
+                }
+            }
+            "mask-composite" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.mask_composite = Some(kw.clone());
+                }
+            }
             "mask-type" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.mask_type = match kw.as_str() { "alpha" => MaskType::Alpha, _ => MaskType::Luminance };
+                    style.mask_type = match kw.as_str() {
+                        "alpha" => MaskType::Alpha,
+                        _ => MaskType::Luminance,
+                    };
                 }
             }
 
@@ -695,7 +810,10 @@ impl StyleEngine {
                 // image-rendering already handled in apply_remaining_property
                 if key == "image-orientation" {
                     if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                        style.image_orientation = match kw.as_str() { "none" => ImageOrientation::None, _ => ImageOrientation::FromImage };
+                        style.image_orientation = match kw.as_str() {
+                            "none" => ImageOrientation::None,
+                            _ => ImageOrientation::FromImage,
+                        };
                     }
                 }
             }
@@ -705,20 +823,31 @@ impl StyleEngine {
                 if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.fill = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.fill = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
+                    style.fill = if kw == "none" {
+                        Some("none".into())
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "fill-opacity" => style.fill_opacity = resolve_number(val),
             "fill-rule" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.fill_rule = match kw.as_str() { "evenodd" => FillRule::EvenOdd, _ => FillRule::NonZero };
+                    style.fill_rule = match kw.as_str() {
+                        "evenodd" => FillRule::EvenOdd,
+                        _ => FillRule::NonZero,
+                    };
                 }
             }
             "stroke" => {
                 if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.stroke = Some(format!("rgba({},{},{},{})", c.r, c.g, c.b, c.a));
                 } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.stroke = if kw == "none" { Some("none".into()) } else { Some(kw.clone()) };
+                    style.stroke = if kw == "none" {
+                        Some("none".into())
+                    } else {
+                        Some(kw.clone())
+                    };
                 }
             }
             "stroke-width" => style.stroke_width = resolve_dimension(val),
@@ -730,39 +859,87 @@ impl StyleEngine {
             "stroke-dashoffset" => style.stroke_dashoffset = resolve_dimension(val),
             "stroke-linecap" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.stroke_linecap = match kw.as_str() { "round" => StrokeLinecap::Round, "square" => StrokeLinecap::Square, _ => StrokeLinecap::Butt };
+                    style.stroke_linecap = match kw.as_str() {
+                        "round" => StrokeLinecap::Round,
+                        "square" => StrokeLinecap::Square,
+                        _ => StrokeLinecap::Butt,
+                    };
                 }
             }
             "stroke-linejoin" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.stroke_linejoin = match kw.as_str() { "round" => StrokeLinejoin::Round, "bevel" => StrokeLinejoin::Bevel, _ => StrokeLinejoin::Miter };
+                    style.stroke_linejoin = match kw.as_str() {
+                        "round" => StrokeLinejoin::Round,
+                        "bevel" => StrokeLinejoin::Bevel,
+                        _ => StrokeLinejoin::Miter,
+                    };
                 }
             }
             "stroke-miterlimit" => style.stroke_miterlimit = resolve_number(val),
             "stroke-opacity" => style.stroke_opacity = resolve_number(val),
             "color-interpolation" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.color_interpolation = match kw.as_str() { "linearRGB" | "linearrgb" => ColorInterpolation::LinearRGB, "auto" => ColorInterpolation::Auto, _ => ColorInterpolation::SRGB };
+                    style.color_interpolation = match kw.as_str() {
+                        "linearRGB" | "linearrgb" => ColorInterpolation::LinearRGB,
+                        "auto" => ColorInterpolation::Auto,
+                        _ => ColorInterpolation::SRGB,
+                    };
                 }
             }
             "color-interpolation-filters" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.color_interpolation_filters = match kw.as_str() { "sRGB" | "srgb" => ColorInterpolation::SRGB, "auto" => ColorInterpolation::Auto, _ => ColorInterpolation::LinearRGB };
+                    style.color_interpolation_filters = match kw.as_str() {
+                        "sRGB" | "srgb" => ColorInterpolation::SRGB,
+                        "auto" => ColorInterpolation::Auto,
+                        _ => ColorInterpolation::LinearRGB,
+                    };
                 }
             }
-            "flood-color" => { if let Some(c) = resolve_color_with_current(val, style.color) { style.flood_color = c; } }
+            "flood-color" => {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
+                    style.flood_color = c;
+                }
+            }
             "flood-opacity" => style.flood_opacity = resolve_number(val),
-            "lighting-color" => { if let Some(c) = resolve_color_with_current(val, style.color) { style.lighting_color = c; } }
-            "stop-color" => { if let Some(c) = resolve_color_with_current(val, style.color) { style.stop_color = c; } }
+            "lighting-color" => {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
+                    style.lighting_color = c;
+                }
+            }
+            "stop-color" => {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
+                    style.stop_color = c;
+                }
+            }
             "stop-opacity" => style.stop_opacity = resolve_number(val),
             "dominant-baseline" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.dominant_baseline = match kw.as_str() { "text-bottom" => DominantBaseline::TextBottom, "alphabetic" => DominantBaseline::Alphabetic, "ideographic" => DominantBaseline::Ideographic, "middle" => DominantBaseline::Middle, "central" => DominantBaseline::Central, "mathematical" => DominantBaseline::Mathematical, "hanging" => DominantBaseline::Hanging, "text-top" => DominantBaseline::TextTop, _ => DominantBaseline::Auto };
+                    style.dominant_baseline = match kw.as_str() {
+                        "text-bottom" => DominantBaseline::TextBottom,
+                        "alphabetic" => DominantBaseline::Alphabetic,
+                        "ideographic" => DominantBaseline::Ideographic,
+                        "middle" => DominantBaseline::Middle,
+                        "central" => DominantBaseline::Central,
+                        "mathematical" => DominantBaseline::Mathematical,
+                        "hanging" => DominantBaseline::Hanging,
+                        "text-top" => DominantBaseline::TextTop,
+                        _ => DominantBaseline::Auto,
+                    };
                 }
             }
             "alignment-baseline" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.alignment_baseline = match kw.as_str() { "baseline" => AlignmentBaseline::Baseline, "text-bottom" => AlignmentBaseline::TextBottom, "alphabetic" => AlignmentBaseline::Alphabetic, "ideographic" => AlignmentBaseline::Ideographic, "middle" => AlignmentBaseline::Middle, "central" => AlignmentBaseline::Central, "mathematical" => AlignmentBaseline::Mathematical, "text-top" => AlignmentBaseline::TextTop, _ => AlignmentBaseline::Auto };
+                    style.alignment_baseline = match kw.as_str() {
+                        "baseline" => AlignmentBaseline::Baseline,
+                        "text-bottom" => AlignmentBaseline::TextBottom,
+                        "alphabetic" => AlignmentBaseline::Alphabetic,
+                        "ideographic" => AlignmentBaseline::Ideographic,
+                        "middle" => AlignmentBaseline::Middle,
+                        "central" => AlignmentBaseline::Central,
+                        "mathematical" => AlignmentBaseline::Mathematical,
+                        "text-top" => AlignmentBaseline::TextTop,
+                        _ => AlignmentBaseline::Auto,
+                    };
                 }
             }
             "baseline-source" => {
@@ -772,36 +949,70 @@ impl StyleEngine {
             }
             "clip-rule" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.clip_rule = match kw.as_str() { "evenodd" => ClipRule::EvenOdd, _ => ClipRule::NonZero };
+                    style.clip_rule = match kw.as_str() {
+                        "evenodd" => ClipRule::EvenOdd,
+                        _ => ClipRule::NonZero,
+                    };
                 }
             }
             "shape-rendering" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.shape_rendering = match kw.as_str() { "optimizeSpeed" | "optimizespeed" => ShapeRendering::OptimizeSpeed, "crispEdges" | "crispedges" => ShapeRendering::CrispEdges, "geometricPrecision" | "geometricprecision" => ShapeRendering::GeometricPrecision, _ => ShapeRendering::Auto };
+                    style.shape_rendering = match kw.as_str() {
+                        "optimizeSpeed" | "optimizespeed" => ShapeRendering::OptimizeSpeed,
+                        "crispEdges" | "crispedges" => ShapeRendering::CrispEdges,
+                        "geometricPrecision" | "geometricprecision" => {
+                            ShapeRendering::GeometricPrecision
+                        }
+                        _ => ShapeRendering::Auto,
+                    };
                 }
             }
             "text-anchor" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.text_anchor = match kw.as_str() { "middle" => TextAnchor::Middle, "end" => TextAnchor::End, _ => TextAnchor::Start };
+                    style.text_anchor = match kw.as_str() {
+                        "middle" => TextAnchor::Middle,
+                        "end" => TextAnchor::End,
+                        _ => TextAnchor::Start,
+                    };
                 }
             }
             "vector-effect" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.vector_effect = match kw.as_str() { "non-scaling-stroke" => VectorEffect::NonScalingStroke, _ => VectorEffect::None };
+                    style.vector_effect = match kw.as_str() {
+                        "non-scaling-stroke" => VectorEffect::NonScalingStroke,
+                        _ => VectorEffect::None,
+                    };
                 }
             }
-            "marker-start" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.marker_start = if kw == "none" { None } else { Some(kw.clone()) }; } }
-            "marker-mid" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.marker_mid = if kw == "none" { None } else { Some(kw.clone()) }; } }
-            "marker-end" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.marker_end = if kw == "none" { None } else { Some(kw.clone()) }; } }
+            "marker-start" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.marker_start = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "marker-mid" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.marker_mid = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "marker-end" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.marker_end = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
             "marker" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     let v = if kw == "none" { None } else { Some(kw.clone()) };
-                    style.marker_start = v.clone(); style.marker_mid = v.clone(); style.marker_end = v;
+                    style.marker_start = v.clone();
+                    style.marker_mid = v.clone();
+                    style.marker_end = v;
                 }
             }
             "d" => {
-                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.d = if kw == "none" { None } else { Some(kw.clone()) }; }
-                else if let liquide_theme_css::value::PropertyValue::String(s) = val { style.d = Some(s.clone()); }
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.d = if kw == "none" { None } else { Some(kw.clone()) };
+                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                    style.d = Some(s.clone());
+                }
             }
             "cx" => style.cx = resolve_dimension(val),
             "cy" => style.cy = resolve_dimension(val),
@@ -814,45 +1025,141 @@ impl StyleEngine {
             // ── Ruby ──
             "ruby-position" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.ruby_position = match kw.as_str() { "under" => RubyPosition::Under, "alternate" | "alternate over" => RubyPosition::AlternateOver, "alternate under" => RubyPosition::AlternateUnder, _ => RubyPosition::Over };
+                    style.ruby_position = match kw.as_str() {
+                        "under" => RubyPosition::Under,
+                        "alternate" | "alternate over" => RubyPosition::AlternateOver,
+                        "alternate under" => RubyPosition::AlternateUnder,
+                        _ => RubyPosition::Over,
+                    };
                 }
             }
             "ruby-align" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.ruby_align = match kw.as_str() { "center" => RubyAlign::Center, "start" => RubyAlign::Start, "space-between" => RubyAlign::SpaceBetween, _ => RubyAlign::SpaceAround };
+                    style.ruby_align = match kw.as_str() {
+                        "center" => RubyAlign::Center,
+                        "start" => RubyAlign::Start,
+                        "space-between" => RubyAlign::SpaceBetween,
+                        _ => RubyAlign::SpaceAround,
+                    };
                 }
             }
 
             // ── Anchor positioning ──
-            "anchor-name" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.anchor_name = if kw == "none" { None } else { Some(kw.clone()) }; } }
-            "position-anchor" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.position_anchor = if kw == "auto" { None } else { Some(kw.clone()) }; } }
-            "position-area" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.position_area = if kw == "none" { None } else { Some(kw.clone()) }; } }
-
-            // ── View transitions ──
-            "view-transition-name" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.view_transition_name = if kw == "none" { None } else { Some(kw.clone()) }; } }
-            "view-transition-class" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.view_transition_class = if kw == "none" { None } else { Some(kw.clone()) }; } }
-
-            // ── Scroll timeline ──
-            "scroll-timeline-name" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.scroll_timeline_name = if kw == "none" { None } else { Some(kw.clone()) }; } }
-            "scroll-timeline-axis" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.scroll_timeline_axis = Some(kw.clone()); } }
-            "view-timeline-name" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.view_timeline_name = if kw == "none" { None } else { Some(kw.clone()) }; } }
-            "view-timeline-axis" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.view_timeline_axis = Some(kw.clone()); } }
-            "view-timeline-inset" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.view_timeline_inset = Some(kw.clone()); } }
-            "timeline-scope" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.timeline_scope = if kw == "none" { None } else { Some(kw.clone()) }; } }
-
-            // ── Misc ──
-            "page" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.page = if kw == "auto" { None } else { Some(kw.clone()) }; } }
-            "zoom" => {
-                if let liquide_theme_css::value::PropertyValue::Number(n) = val { style.zoom = *n; }
-                else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "normal" { style.zoom = 1.0; } else if let Ok(n) = kw.replace('%', "").parse::<f32>() { style.zoom = n / 100.0; }
+            "anchor-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.anchor_name = if kw == "none" { None } else { Some(kw.clone()) };
                 }
             }
-            "overlay" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.overlay = if kw == "none" { None } else { Some(kw.clone()) }; } }
-            "math-depth" => { if let liquide_theme_css::value::PropertyValue::Number(n) = val { style.math_depth = *n as i32; } }
-            "math-style" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.math_style = if kw == "normal" { None } else { Some(kw.clone()) }; } }
-            "reading-flow" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.reading_flow = if kw == "normal" { None } else { Some(kw.clone()) }; } }
-            "field-sizing" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.field_sizing = if kw == "fixed" { None } else { Some(kw.clone()) }; } }
+            "position-anchor" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.position_anchor = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "position-area" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.position_area = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ── View transitions ──
+            "view-transition-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_transition_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "view-transition-class" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_transition_class =
+                        if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ── Scroll timeline ──
+            "scroll-timeline-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_timeline_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "scroll-timeline-axis" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.scroll_timeline_axis = Some(kw.clone());
+                }
+            }
+            "view-timeline-name" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_timeline_name = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "view-timeline-axis" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_timeline_axis = Some(kw.clone());
+                }
+            }
+            "view-timeline-inset" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.view_timeline_inset = Some(kw.clone());
+                }
+            }
+            "timeline-scope" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.timeline_scope = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+
+            // ── Misc ──
+            "page" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.page = if kw == "auto" { None } else { Some(kw.clone()) };
+                }
+            }
+            "zoom" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.zoom = *n;
+                } else if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    if kw == "normal" {
+                        style.zoom = 1.0;
+                    } else if let Ok(n) = kw.replace('%', "").parse::<f32>() {
+                        style.zoom = n / 100.0;
+                    }
+                }
+            }
+            "overlay" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.overlay = if kw == "none" { None } else { Some(kw.clone()) };
+                }
+            }
+            "math-depth" => {
+                if let liquide_theme_css::value::PropertyValue::Number(n) = val {
+                    style.math_depth = *n as i32;
+                }
+            }
+            "math-style" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.math_style = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
+                }
+            }
+            "reading-flow" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.reading_flow = if kw == "normal" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
+                }
+            }
+            "field-sizing" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.field_sizing = if kw == "fixed" {
+                        None
+                    } else {
+                        Some(kw.clone())
+                    };
+                }
+            }
 
             // ── Scroll margin/padding logical ──
             "scroll-margin-block-start" => style.scroll_margin.top = resolve_dimension(val),
@@ -871,12 +1178,20 @@ impl StyleEngine {
             // ── Overscroll-behavior logical ──
             "overscroll-behavior-block" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.overscroll_behavior_y = match kw.as_str() { "contain" => OverscrollBehavior::Contain, "none" => OverscrollBehavior::None, _ => OverscrollBehavior::Auto };
+                    style.overscroll_behavior_y = match kw.as_str() {
+                        "contain" => OverscrollBehavior::Contain,
+                        "none" => OverscrollBehavior::None,
+                        _ => OverscrollBehavior::Auto,
+                    };
                 }
             }
             "overscroll-behavior-inline" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    style.overscroll_behavior_x = match kw.as_str() { "contain" => OverscrollBehavior::Contain, "none" => OverscrollBehavior::None, _ => OverscrollBehavior::Auto };
+                    style.overscroll_behavior_x = match kw.as_str() {
+                        "contain" => OverscrollBehavior::Contain,
+                        "none" => OverscrollBehavior::None,
+                        _ => OverscrollBehavior::Auto,
+                    };
                 }
             }
 
@@ -885,13 +1200,31 @@ impl StyleEngine {
                 let s = val.as_string().unwrap_or_default().to_string();
                 let parts: Vec<&str> = s.split_whitespace().collect();
                 let parse_pos = |p: &str| -> Dimension {
-                    match p { "left" | "top" => Dimension::Percent(0.0), "center" => Dimension::Percent(50.0), "right" | "bottom" => Dimension::Percent(100.0),
-                        other => { if let Some(stripped) = other.strip_suffix('%') { Dimension::Percent(stripped.parse::<f32>().unwrap_or(50.0)) } else if let Some(px) = Self::parse_px_value(other) { Dimension::Px(px) } else { Dimension::Percent(50.0) } }
+                    match p {
+                        "left" | "top" => Dimension::Percent(0.0),
+                        "center" => Dimension::Percent(50.0),
+                        "right" | "bottom" => Dimension::Percent(100.0),
+                        other => {
+                            if let Some(stripped) = other.strip_suffix('%') {
+                                Dimension::Percent(stripped.parse::<f32>().unwrap_or(50.0))
+                            } else if let Some(px) = Self::parse_px_value(other) {
+                                Dimension::Px(px)
+                            } else {
+                                Dimension::Percent(50.0)
+                            }
+                        }
                     }
                 };
                 match parts.len() {
-                    1 => { let v = parse_pos(parts[0]); style.object_position_x = v.clone(); style.object_position_y = v; }
-                    2.. => { style.object_position_x = parse_pos(parts[0]); style.object_position_y = parse_pos(parts[1]); }
+                    1 => {
+                        let v = parse_pos(parts[0]);
+                        style.object_position_x = v.clone();
+                        style.object_position_y = v;
+                    }
+                    2.. => {
+                        style.object_position_x = parse_pos(parts[0]);
+                        style.object_position_y = parse_pos(parts[1]);
+                    }
                     _ => {}
                 }
             }
@@ -908,11 +1241,17 @@ impl StyleEngine {
                         "circle" => style.list_style_type = ListStyleType::Circle,
                         "square" => style.list_style_type = ListStyleType::Square,
                         "decimal" => style.list_style_type = ListStyleType::Decimal,
-                        "decimal-leading-zero" => style.list_style_type = ListStyleType::DecimalLeadingZero,
+                        "decimal-leading-zero" => {
+                            style.list_style_type = ListStyleType::DecimalLeadingZero
+                        }
                         "lower-roman" => style.list_style_type = ListStyleType::LowerRoman,
                         "upper-roman" => style.list_style_type = ListStyleType::UpperRoman,
-                        "lower-alpha" | "lower-latin" => style.list_style_type = ListStyleType::LowerAlpha,
-                        "upper-alpha" | "upper-latin" => style.list_style_type = ListStyleType::UpperAlpha,
+                        "lower-alpha" | "lower-latin" => {
+                            style.list_style_type = ListStyleType::LowerAlpha
+                        }
+                        "upper-alpha" | "upper-latin" => {
+                            style.list_style_type = ListStyleType::UpperAlpha
+                        }
                         _ => {}
                     }
                 }
@@ -921,41 +1260,115 @@ impl StyleEngine {
             // ── border shorthand ──
             "border" => {
                 let s = val.as_string().unwrap_or_default().to_string();
-                let mut width = None; let mut border_style = None; let mut color = None;
+                let mut width = None;
+                let mut border_style = None;
+                let mut color = None;
                 for token in s.split_whitespace() {
                     match token {
-                        "none" | "hidden" => border_style = Some(BorderLineStyle::None), "solid" => border_style = Some(BorderLineStyle::Solid),
-                        "dashed" => border_style = Some(BorderLineStyle::Dashed), "dotted" => border_style = Some(BorderLineStyle::Dotted),
-                        "double" => border_style = Some(BorderLineStyle::Double), "groove" => border_style = Some(BorderLineStyle::Groove),
-                        "ridge" => border_style = Some(BorderLineStyle::Ridge), "inset" => border_style = Some(BorderLineStyle::Inset),
+                        "none" | "hidden" => border_style = Some(BorderLineStyle::None),
+                        "solid" => border_style = Some(BorderLineStyle::Solid),
+                        "dashed" => border_style = Some(BorderLineStyle::Dashed),
+                        "dotted" => border_style = Some(BorderLineStyle::Dotted),
+                        "double" => border_style = Some(BorderLineStyle::Double),
+                        "groove" => border_style = Some(BorderLineStyle::Groove),
+                        "ridge" => border_style = Some(BorderLineStyle::Ridge),
+                        "inset" => border_style = Some(BorderLineStyle::Inset),
                         "outset" => border_style = Some(BorderLineStyle::Outset),
-                        "thin" => width = Some(1.0f32), "medium" => width = Some(3.0f32), "thick" => width = Some(5.0f32),
-                        other => { if let Some(px) = Self::parse_px_value(other) { width = Some(px); } else if let Some(c) = resolve_color(&parse_inline_value(other)) { color = Some(c); } }
+                        "thin" => width = Some(1.0f32),
+                        "medium" => width = Some(3.0f32),
+                        "thick" => width = Some(5.0f32),
+                        other => {
+                            if let Some(px) = Self::parse_px_value(other) {
+                                width = Some(px);
+                            } else if let Some(c) = resolve_color(&parse_inline_value(other)) {
+                                color = Some(c);
+                            }
+                        }
                     }
                 }
-                if let Some(w) = width { style.border_width = Sides::all(w); }
-                if let Some(bs) = border_style { style.border_style = Sides::all(bs); }
-                if let Some(c) = color { style.border_color = Sides::all(c); }
+                if let Some(w) = width {
+                    style.border_width = Sides::all(w);
+                }
+                if let Some(bs) = border_style {
+                    style.border_style = Sides::all(bs);
+                }
+                if let Some(c) = color {
+                    style.border_color = Sides::all(c);
+                }
             }
             "border-top" | "border-right" | "border-bottom" | "border-left" => {
                 let s = val.as_string().unwrap_or_default().to_string();
-                let mut width = None; let mut border_style = None; let mut color = None;
+                let mut width = None;
+                let mut border_style = None;
+                let mut color = None;
                 for token in s.split_whitespace() {
                     match token {
-                        "none" | "hidden" => border_style = Some(BorderLineStyle::None), "solid" => border_style = Some(BorderLineStyle::Solid),
-                        "dashed" => border_style = Some(BorderLineStyle::Dashed), "dotted" => border_style = Some(BorderLineStyle::Dotted),
-                        "double" => border_style = Some(BorderLineStyle::Double), "groove" => border_style = Some(BorderLineStyle::Groove),
-                        "ridge" => border_style = Some(BorderLineStyle::Ridge), "inset" => border_style = Some(BorderLineStyle::Inset),
+                        "none" | "hidden" => border_style = Some(BorderLineStyle::None),
+                        "solid" => border_style = Some(BorderLineStyle::Solid),
+                        "dashed" => border_style = Some(BorderLineStyle::Dashed),
+                        "dotted" => border_style = Some(BorderLineStyle::Dotted),
+                        "double" => border_style = Some(BorderLineStyle::Double),
+                        "groove" => border_style = Some(BorderLineStyle::Groove),
+                        "ridge" => border_style = Some(BorderLineStyle::Ridge),
+                        "inset" => border_style = Some(BorderLineStyle::Inset),
                         "outset" => border_style = Some(BorderLineStyle::Outset),
-                        "thin" => width = Some(1.0f32), "medium" => width = Some(3.0f32), "thick" => width = Some(5.0f32),
-                        other => { if let Some(px) = Self::parse_px_value(other) { width = Some(px); } else if let Some(c) = resolve_color(&parse_inline_value(other)) { color = Some(c); } }
+                        "thin" => width = Some(1.0f32),
+                        "medium" => width = Some(3.0f32),
+                        "thick" => width = Some(5.0f32),
+                        other => {
+                            if let Some(px) = Self::parse_px_value(other) {
+                                width = Some(px);
+                            } else if let Some(c) = resolve_color(&parse_inline_value(other)) {
+                                color = Some(c);
+                            }
+                        }
                     }
                 }
                 match key {
-                    "border-top" => { if let Some(w) = width { style.border_width.top = w; } if let Some(bs) = border_style { style.border_style.top = bs; } if let Some(c) = color { style.border_color.top = c; } }
-                    "border-right" => { if let Some(w) = width { style.border_width.right = w; } if let Some(bs) = border_style { style.border_style.right = bs; } if let Some(c) = color { style.border_color.right = c; } }
-                    "border-bottom" => { if let Some(w) = width { style.border_width.bottom = w; } if let Some(bs) = border_style { style.border_style.bottom = bs; } if let Some(c) = color { style.border_color.bottom = c; } }
-                    "border-left" => { if let Some(w) = width { style.border_width.left = w; } if let Some(bs) = border_style { style.border_style.left = bs; } if let Some(c) = color { style.border_color.left = c; } }
+                    "border-top" => {
+                        if let Some(w) = width {
+                            style.border_width.top = w;
+                        }
+                        if let Some(bs) = border_style {
+                            style.border_style.top = bs;
+                        }
+                        if let Some(c) = color {
+                            style.border_color.top = c;
+                        }
+                    }
+                    "border-right" => {
+                        if let Some(w) = width {
+                            style.border_width.right = w;
+                        }
+                        if let Some(bs) = border_style {
+                            style.border_style.right = bs;
+                        }
+                        if let Some(c) = color {
+                            style.border_color.right = c;
+                        }
+                    }
+                    "border-bottom" => {
+                        if let Some(w) = width {
+                            style.border_width.bottom = w;
+                        }
+                        if let Some(bs) = border_style {
+                            style.border_style.bottom = bs;
+                        }
+                        if let Some(c) = color {
+                            style.border_color.bottom = c;
+                        }
+                    }
+                    "border-left" => {
+                        if let Some(w) = width {
+                            style.border_width.left = w;
+                        }
+                        if let Some(bs) = border_style {
+                            style.border_style.left = bs;
+                        }
+                        if let Some(c) = color {
+                            style.border_color.left = c;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -966,39 +1379,94 @@ impl StyleEngine {
                 let tokens: Vec<&str> = s.split_whitespace().collect();
                 if !tokens.is_empty() {
                     match tokens[0] {
-                        "caption" | "icon" | "menu" | "message-box" | "small-caption" | "status-bar" => {
-                            style.font_size = 14.0; style.font_family = Arc::new(vec!["sans-serif".to_string()]);
+                        "caption" | "icon" | "menu" | "message-box" | "small-caption"
+                        | "status-bar" => {
+                            style.font_size = 14.0;
+                            style.font_family = Arc::new(vec!["sans-serif".to_string()]);
                         }
                         _ => {
                             let mut idx = 0;
                             loop {
-                                if idx >= tokens.len() { break; }
+                                if idx >= tokens.len() {
+                                    break;
+                                }
                                 match tokens[idx] {
-                                    "italic" => { style.font_style = FontStyle::Italic; idx += 1; }
-                                    "oblique" => { style.font_style = FontStyle::Oblique; idx += 1; }
-                                    "normal" => { idx += 1; }
-                                    "small-caps" => { style.font_variant_caps = FontVariantCaps::SmallCaps; idx += 1; }
-                                    "bold" | "bolder" => { style.font_weight = 700; idx += 1; }
-                                    "lighter" => { style.font_weight = 300; idx += 1; }
+                                    "italic" => {
+                                        style.font_style = FontStyle::Italic;
+                                        idx += 1;
+                                    }
+                                    "oblique" => {
+                                        style.font_style = FontStyle::Oblique;
+                                        idx += 1;
+                                    }
+                                    "normal" => {
+                                        idx += 1;
+                                    }
+                                    "small-caps" => {
+                                        style.font_variant_caps = FontVariantCaps::SmallCaps;
+                                        idx += 1;
+                                    }
+                                    "bold" | "bolder" => {
+                                        style.font_weight = 700;
+                                        idx += 1;
+                                    }
+                                    "lighter" => {
+                                        style.font_weight = 300;
+                                        idx += 1;
+                                    }
                                     _ => {
-                                        if let Ok(n) = tokens[idx].parse::<u16>() { if n % 100 == 0 { style.font_weight = n; idx += 1; continue; } }
+                                        if let Ok(n) = tokens[idx].parse::<u16>() {
+                                            if n % 100 == 0 {
+                                                style.font_weight = n;
+                                                idx += 1;
+                                                continue;
+                                            }
+                                        }
                                         break;
                                     }
                                 }
                             }
                             if idx < tokens.len() {
-                                let size_token = tokens[idx]; idx += 1;
+                                let size_token = tokens[idx];
+                                idx += 1;
                                 if let Some(slash) = size_token.find('/') {
-                                    let size_str = &size_token[..slash]; let lh_str = &size_token[slash + 1..];
-                                    if let Some(sz) = Self::parse_px_value(size_str) { style.font_size = sz; }
-                                    if let Some(lh) = Self::parse_px_value(lh_str) { style.line_height = LineHeight::Px(lh); }
-                                    else if let Ok(factor) = lh_str.parse::<f32>() { style.line_height = LineHeight::Number(factor); }
-                                } else if let Some(sz) = Self::parse_px_value(size_token) { style.font_size = sz; }
-                                else { style.font_size = match size_token { "xx-small" => 9.0, "x-small" => 10.0, "small" => 13.0, "medium" => 16.0, "large" => 18.0, "x-large" => 24.0, "xx-large" => 32.0, _ => 16.0 }; }
+                                    let size_str = &size_token[..slash];
+                                    let lh_str = &size_token[slash + 1..];
+                                    if let Some(sz) = Self::parse_px_value(size_str) {
+                                        style.font_size = sz;
+                                    }
+                                    if let Some(lh) = Self::parse_px_value(lh_str) {
+                                        style.line_height = LineHeight::Px(lh);
+                                    } else if let Ok(factor) = lh_str.parse::<f32>() {
+                                        style.line_height = LineHeight::Number(factor);
+                                    }
+                                } else if let Some(sz) = Self::parse_px_value(size_token) {
+                                    style.font_size = sz;
+                                } else {
+                                    style.font_size = match size_token {
+                                        "xx-small" => 9.0,
+                                        "x-small" => 10.0,
+                                        "small" => 13.0,
+                                        "medium" => 16.0,
+                                        "large" => 18.0,
+                                        "x-large" => 24.0,
+                                        "xx-large" => 32.0,
+                                        _ => 16.0,
+                                    };
+                                }
                             }
                             if idx < tokens.len() {
                                 let family = tokens[idx..].join(" ");
-                                style.font_family = Arc::new(family.split(',').map(|f| f.trim().trim_matches(|c| c == '\'' || c == '"').to_string()).collect());
+                                style.font_family = Arc::new(
+                                    family
+                                        .split(',')
+                                        .map(|f| {
+                                            f.trim()
+                                                .trim_matches(|c| c == '\'' || c == '"')
+                                                .to_string()
+                                        })
+                                        .collect(),
+                                );
                             }
                         }
                     }
@@ -1009,113 +1477,16 @@ impl StyleEngine {
             "scrollbar-color" => {
                 let s = val.as_string().unwrap_or_default().to_string();
                 let trimmed = s.trim();
-                if trimmed == "auto" { style.scrollbar_color = None; }
-                else {
+                if trimmed == "auto" {
+                    style.scrollbar_color = None;
+                } else {
                     let parts: Vec<&str> = trimmed.splitn(2, char::is_whitespace).collect();
                     if parts.len() == 2 {
                         let thumb = resolve_color(&parse_inline_value(parts[0]));
                         let track = resolve_color(&parse_inline_value(parts[1].trim()));
-                        if let (Some(t), Some(tr)) = (thumb, track) { style.scrollbar_color = Some((t, tr)); }
-                    }
-                }
-            }
-
-            // ── all ──
-            "all" => {
-                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    match kw.as_str() {
-                        "initial" => {
-                            // Reset everything to initial values
-                            *style = ComputedStyle::default();
+                        if let (Some(t), Some(tr)) = (thumb, track) {
+                            style.scrollbar_color = Some((t, tr));
                         }
-                        "unset" | "revert" => {
-                            // For 'all: unset', inherited properties keep inherited values,
-                            // non-inherited properties reset to initial.
-                            // Since inherit_from() already ran, we just need to reset non-inherited fields.
-                            let initial = ComputedStyle::default();
-                            style.display = initial.display;
-                            style.position = initial.position;
-                            style.box_sizing = initial.box_sizing;
-                            style.width = initial.width;
-                            style.height = initial.height;
-                            style.min_width = initial.min_width;
-                            style.max_width = initial.max_width;
-                            style.min_height = initial.min_height;
-                            style.max_height = initial.max_height;
-                            style.margin = initial.margin;
-                            style.padding = initial.padding;
-                            style.border_width = initial.border_width;
-                            style.border_style = initial.border_style;
-                            style.border_color = initial.border_color;
-                            style.border_radius = initial.border_radius;
-                            style.top = initial.top;
-                            style.right = initial.right;
-                            style.bottom = initial.bottom;
-                            style.left = initial.left;
-                            style.z_index = initial.z_index;
-                            style.float = initial.float;
-                            style.clear = initial.clear;
-                            style.background_color = initial.background_color;
-                            style.background = initial.background;
-                            style.box_shadow = initial.box_shadow;
-                            style.opacity = initial.opacity;
-                            style.overflow_x = initial.overflow_x;
-                            style.overflow_y = initial.overflow_y;
-                            style.transform = initial.transform;
-                            style.filter = initial.filter;
-                            style.backdrop_filter = initial.backdrop_filter;
-                            style.mix_blend_mode = initial.mix_blend_mode;
-                            style.mask = initial.mask;
-                            style.clip_path = initial.clip_path;
-                            style.outline = initial.outline;
-                            style.flex_direction = initial.flex_direction;
-                            style.flex_wrap = initial.flex_wrap;
-                            style.flex_grow = initial.flex_grow;
-                            style.flex_shrink = initial.flex_shrink;
-                            style.flex_basis = initial.flex_basis;
-                            style.justify_content = initial.justify_content;
-                            style.align_items = initial.align_items;
-                            style.align_self = initial.align_self;
-                            style.align_content = initial.align_content;
-                            style.order = initial.order;
-                            style.contain = initial.contain;
-                            // Grid properties
-                            style.grid_template_columns = initial.grid_template_columns.clone();
-                            style.grid_template_rows = initial.grid_template_rows.clone();
-                            style.grid_auto_flow = initial.grid_auto_flow;
-                            style.grid_column = initial.grid_column.clone();
-                            style.grid_row = initial.grid_row.clone();
-                            style.grid_auto_columns = initial.grid_auto_columns.clone();
-                            style.grid_auto_rows = initial.grid_auto_rows.clone();
-                            // Aspect ratio
-                            style.aspect_ratio = initial.aspect_ratio;
-                            // Gap
-                            style.gap = initial.gap.clone();
-                            style.row_gap = initial.row_gap.clone();
-                            style.column_gap = initial.column_gap.clone();
-                            // Transitions
-                            style.transition_property = None;
-                            style.transition_duration = None;
-                            style.transition_timing_function = None;
-                            style.transition_delay = None;
-                            // Animations
-                            style.animation_name = None;
-                            style.animation_duration = None;
-                            style.animation_timing_function = None;
-                            style.animation_delay = None;
-                            // Transform extras
-                            style.transform_origin = initial.transform_origin.clone();
-                            style.perspective = initial.perspective.clone();
-                            // Visual
-                            style.isolation = initial.isolation;
-                            style.will_change = initial.will_change.clone();
-                            style.content_visibility = initial.content_visibility;
-                            // Writing mode
-                            style.writing_mode = initial.writing_mode;
-                            style.direction = initial.direction;
-                            style.unicode_bidi = initial.unicode_bidi;
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -1125,9 +1496,13 @@ impl StyleEngine {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     for token in kw.split_whitespace() {
                         match token {
-                            "row" => style.flex_direction = FlexDirection::Row, "row-reverse" => style.flex_direction = FlexDirection::RowReverse,
-                            "column" => style.flex_direction = FlexDirection::Column, "column-reverse" => style.flex_direction = FlexDirection::ColumnReverse,
-                            "nowrap" => style.flex_wrap = FlexWrap::NoWrap, "wrap" => style.flex_wrap = FlexWrap::Wrap, "wrap-reverse" => style.flex_wrap = FlexWrap::WrapReverse,
+                            "row" => style.flex_direction = FlexDirection::Row,
+                            "row-reverse" => style.flex_direction = FlexDirection::RowReverse,
+                            "column" => style.flex_direction = FlexDirection::Column,
+                            "column-reverse" => style.flex_direction = FlexDirection::ColumnReverse,
+                            "nowrap" => style.flex_wrap = FlexWrap::NoWrap,
+                            "wrap" => style.flex_wrap = FlexWrap::Wrap,
+                            "wrap-reverse" => style.flex_wrap = FlexWrap::WrapReverse,
                             _ => {}
                         }
                     }
@@ -1140,9 +1515,17 @@ impl StyleEngine {
                     for token in kw.split_whitespace() {
                         match token {
                             "none" => style.text_decoration_line = Some("none".to_string()),
-                            "underline" | "overline" | "line-through" => style.text_decoration_line = Some(token.to_string()),
-                            "solid" | "double" | "dotted" | "dashed" | "wavy" => style.text_decoration_style = Some(token.to_string()),
-                            _ => { if let Some(c) = resolve_color(&parse_inline_value(token)) { style.text_decoration_color = Some(c); } }
+                            "underline" | "overline" | "line-through" => {
+                                style.text_decoration_line = Some(token.to_string())
+                            }
+                            "solid" | "double" | "dotted" | "dashed" | "wavy" => {
+                                style.text_decoration_style = Some(token.to_string())
+                            }
+                            _ => {
+                                if let Some(c) = resolve_color(&parse_inline_value(token)) {
+                                    style.text_decoration_color = Some(c);
+                                }
+                            }
                         }
                     }
                 }
@@ -1153,8 +1536,15 @@ impl StyleEngine {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     for token in kw.split_whitespace() {
                         match token {
-                            "filled" | "open" | "dot" | "circle" | "double-circle" | "triangle" | "sesame" | "none" => style.text_emphasis_style = Some(token.to_string()),
-                            _ => { if let Some(c) = resolve_color(&parse_inline_value(token)) { style.text_emphasis_color = Some(c); } }
+                            "filled" | "open" | "dot" | "circle" | "double-circle" | "triangle"
+                            | "sesame" | "none" => {
+                                style.text_emphasis_style = Some(token.to_string())
+                            }
+                            _ => {
+                                if let Some(c) = resolve_color(&parse_inline_value(token)) {
+                                    style.text_emphasis_color = Some(c);
+                                }
+                            }
                         }
                     }
                 }
@@ -1164,21 +1554,48 @@ impl StyleEngine {
             "font-variant" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     match kw.as_str() {
-                        "normal" => { style.font_variant_caps = FontVariantCaps::Normal; style.font_variant_ligatures = FontVariantLigatures::Normal; style.font_variant_numeric = FontVariantNumeric::Normal; }
-                        "none" => { style.font_variant_ligatures = FontVariantLigatures::None; }
+                        "normal" => {
+                            style.font_variant_caps = FontVariantCaps::Normal;
+                            style.font_variant_ligatures = FontVariantLigatures::Normal;
+                            style.font_variant_numeric = FontVariantNumeric::Normal;
+                        }
+                        "none" => {
+                            style.font_variant_ligatures = FontVariantLigatures::None;
+                        }
                         _ => {
                             for token in kw.split_whitespace() {
                                 match token {
-                                    "small-caps" => style.font_variant_caps = FontVariantCaps::SmallCaps,
-                                    "all-small-caps" => style.font_variant_caps = FontVariantCaps::AllSmallCaps,
-                                    "petite-caps" => style.font_variant_caps = FontVariantCaps::PetiteCaps,
-                                    "all-petite-caps" => style.font_variant_caps = FontVariantCaps::AllPetiteCaps,
+                                    "small-caps" => {
+                                        style.font_variant_caps = FontVariantCaps::SmallCaps
+                                    }
+                                    "all-small-caps" => {
+                                        style.font_variant_caps = FontVariantCaps::AllSmallCaps
+                                    }
+                                    "petite-caps" => {
+                                        style.font_variant_caps = FontVariantCaps::PetiteCaps
+                                    }
+                                    "all-petite-caps" => {
+                                        style.font_variant_caps = FontVariantCaps::AllPetiteCaps
+                                    }
                                     "unicase" => style.font_variant_caps = FontVariantCaps::Unicase,
-                                    "titling-caps" => style.font_variant_caps = FontVariantCaps::TitlingCaps,
-                                    "common-ligatures" => style.font_variant_ligatures = FontVariantLigatures::CommonLigatures,
-                                    "no-common-ligatures" => style.font_variant_ligatures = FontVariantLigatures::NoCommonLigatures,
-                                    "ordinal" => style.font_variant_numeric = FontVariantNumeric::OldstyleNums,
-                                    "slashed-zero" => style.font_variant_numeric = FontVariantNumeric::TabularNums,
+                                    "titling-caps" => {
+                                        style.font_variant_caps = FontVariantCaps::TitlingCaps
+                                    }
+                                    "common-ligatures" => {
+                                        style.font_variant_ligatures =
+                                            FontVariantLigatures::CommonLigatures
+                                    }
+                                    "no-common-ligatures" => {
+                                        style.font_variant_ligatures =
+                                            FontVariantLigatures::NoCommonLigatures
+                                    }
+                                    "ordinal" => {
+                                        style.font_variant_numeric =
+                                            FontVariantNumeric::OldstyleNums
+                                    }
+                                    "slashed-zero" => {
+                                        style.font_variant_numeric = FontVariantNumeric::TabularNums
+                                    }
                                     _ => {}
                                 }
                             }
@@ -1191,51 +1608,144 @@ impl StyleEngine {
             "font-synthesis" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     match kw.as_str() {
-                        "none" => { style.font_synthesis_weight = FontSynthesisWeight::None; style.font_synthesis_style = FontSynthesisStyle::None; style.font_synthesis_small_caps = FontSynthesisSmallCaps::None; }
-                        _ => { for token in kw.split_whitespace() { match token { "weight" => style.font_synthesis_weight = FontSynthesisWeight::Auto, "style" => style.font_synthesis_style = FontSynthesisStyle::Auto, "small-caps" => style.font_synthesis_small_caps = FontSynthesisSmallCaps::Auto, _ => {} } } }
+                        "none" => {
+                            style.font_synthesis_weight = FontSynthesisWeight::None;
+                            style.font_synthesis_style = FontSynthesisStyle::None;
+                            style.font_synthesis_small_caps = FontSynthesisSmallCaps::None;
+                        }
+                        _ => {
+                            for token in kw.split_whitespace() {
+                                match token {
+                                    "weight" => {
+                                        style.font_synthesis_weight = FontSynthesisWeight::Auto
+                                    }
+                                    "style" => {
+                                        style.font_synthesis_style = FontSynthesisStyle::Auto
+                                    }
+                                    "small-caps" => {
+                                        style.font_synthesis_small_caps =
+                                            FontSynthesisSmallCaps::Auto
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                     }
                 }
             }
 
             // ── border-image shorthand ──
-            "border-image" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.border_image_source = Some(kw.clone()); } }
+            "border-image" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.border_image_source = Some(kw.clone());
+                }
+            }
 
             // ── border-block/inline shorthands ──
-            "border-block" | "border-block-start" | "border-block-end" |
-            "border-inline" | "border-inline-start" | "border-inline-end" => {
+            "border-block"
+            | "border-block-start"
+            | "border-block-end"
+            | "border-inline"
+            | "border-inline-start"
+            | "border-inline-end" => {
                 let s = val.as_string().unwrap_or_default().to_string();
-                let mut bw = None; let mut bs = None; let mut bc = None;
+                let mut bw = None;
+                let mut bs = None;
+                let mut bc = None;
                 for token in s.split_whitespace() {
                     match token {
-                        "none" | "hidden" => bs = Some(BorderLineStyle::None), "solid" => bs = Some(BorderLineStyle::Solid),
-                        "dashed" => bs = Some(BorderLineStyle::Dashed), "dotted" => bs = Some(BorderLineStyle::Dotted),
-                        "double" => bs = Some(BorderLineStyle::Double), "groove" | "ridge" | "inset" | "outset" => bs = Some(BorderLineStyle::Solid),
-                        "thin" => bw = Some(1.0f32), "medium" => bw = Some(3.0f32), "thick" => bw = Some(5.0f32),
-                        other => { if let Some(px) = Self::parse_px_value(other) { bw = Some(px); } else if let Some(c) = resolve_color(&parse_inline_value(other)) { bc = Some(c); } }
+                        "none" | "hidden" => bs = Some(BorderLineStyle::None),
+                        "solid" => bs = Some(BorderLineStyle::Solid),
+                        "dashed" => bs = Some(BorderLineStyle::Dashed),
+                        "dotted" => bs = Some(BorderLineStyle::Dotted),
+                        "double" => bs = Some(BorderLineStyle::Double),
+                        "groove" | "ridge" | "inset" | "outset" => {
+                            bs = Some(BorderLineStyle::Solid)
+                        }
+                        "thin" => bw = Some(1.0f32),
+                        "medium" => bw = Some(3.0f32),
+                        "thick" => bw = Some(5.0f32),
+                        other => {
+                            if let Some(px) = Self::parse_px_value(other) {
+                                bw = Some(px);
+                            } else if let Some(c) = resolve_color(&parse_inline_value(other)) {
+                                bc = Some(c);
+                            }
+                        }
                     }
                 }
                 match key {
                     "border-block" => {
-                        if let Some(w) = bw { style.border_block_start_width = w; style.border_block_end_width = w; }
-                        if let Some(s) = bs { style.border_block_start_style = s; style.border_block_end_style = s; }
-                        if let Some(c) = bc { style.border_block_start_color = c; style.border_block_end_color = c; }
+                        if let Some(w) = bw {
+                            style.border_block_start_width = w;
+                            style.border_block_end_width = w;
+                        }
+                        if let Some(s) = bs {
+                            style.border_block_start_style = s;
+                            style.border_block_end_style = s;
+                        }
+                        if let Some(c) = bc {
+                            style.border_block_start_color = c;
+                            style.border_block_end_color = c;
+                        }
                     }
                     "border-block-start" => {
-                        if let Some(w) = bw { style.border_block_start_width = w; } if let Some(s) = bs { style.border_block_start_style = s; } if let Some(c) = bc { style.border_block_start_color = c; }
+                        if let Some(w) = bw {
+                            style.border_block_start_width = w;
+                        }
+                        if let Some(s) = bs {
+                            style.border_block_start_style = s;
+                        }
+                        if let Some(c) = bc {
+                            style.border_block_start_color = c;
+                        }
                     }
                     "border-block-end" => {
-                        if let Some(w) = bw { style.border_block_end_width = w; } if let Some(s) = bs { style.border_block_end_style = s; } if let Some(c) = bc { style.border_block_end_color = c; }
+                        if let Some(w) = bw {
+                            style.border_block_end_width = w;
+                        }
+                        if let Some(s) = bs {
+                            style.border_block_end_style = s;
+                        }
+                        if let Some(c) = bc {
+                            style.border_block_end_color = c;
+                        }
                     }
                     "border-inline" => {
-                        if let Some(w) = bw { style.border_inline_start_width = w; style.border_inline_end_width = w; }
-                        if let Some(s) = bs { style.border_inline_start_style = s; style.border_inline_end_style = s; }
-                        if let Some(c) = bc { style.border_inline_start_color = c; style.border_inline_end_color = c; }
+                        if let Some(w) = bw {
+                            style.border_inline_start_width = w;
+                            style.border_inline_end_width = w;
+                        }
+                        if let Some(s) = bs {
+                            style.border_inline_start_style = s;
+                            style.border_inline_end_style = s;
+                        }
+                        if let Some(c) = bc {
+                            style.border_inline_start_color = c;
+                            style.border_inline_end_color = c;
+                        }
                     }
                     "border-inline-start" => {
-                        if let Some(w) = bw { style.border_inline_start_width = w; } if let Some(s) = bs { style.border_inline_start_style = s; } if let Some(c) = bc { style.border_inline_start_color = c; }
+                        if let Some(w) = bw {
+                            style.border_inline_start_width = w;
+                        }
+                        if let Some(s) = bs {
+                            style.border_inline_start_style = s;
+                        }
+                        if let Some(c) = bc {
+                            style.border_inline_start_color = c;
+                        }
                     }
                     "border-inline-end" => {
-                        if let Some(w) = bw { style.border_inline_end_width = w; } if let Some(s) = bs { style.border_inline_end_style = s; } if let Some(c) = bc { style.border_inline_end_color = c; }
+                        if let Some(w) = bw {
+                            style.border_inline_end_width = w;
+                        }
+                        if let Some(s) = bs {
+                            style.border_inline_end_style = s;
+                        }
+                        if let Some(c) = bc {
+                            style.border_inline_end_color = c;
+                        }
                     }
                     _ => {}
                 }
@@ -1245,18 +1755,28 @@ impl StyleEngine {
             "container" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     if let Some(slash_pos) = kw.find('/') {
-                        let name = kw[..slash_pos].trim(); let ctype = kw[slash_pos + 1..].trim();
+                        let name = kw[..slash_pos].trim();
+                        let ctype = kw[slash_pos + 1..].trim();
                         style.container_name = Some(name.to_string());
-                        style.container_type = match ctype { "inline-size" => ContainerType::InlineSize, "size" => ContainerType::Size, _ => ContainerType::Normal };
-                    } else { style.container_name = Some(kw.clone()); }
+                        style.container_type = match ctype {
+                            "inline-size" => ContainerType::InlineSize,
+                            "size" => ContainerType::Size,
+                            _ => ContainerType::Normal,
+                        };
+                    } else {
+                        style.container_name = Some(kw.clone());
+                    }
                 }
             }
 
             // ── grid-template shorthand ──
             "grid-template" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "none" { style.grid_template_columns = Vec::new(); style.grid_template_rows = Vec::new(); style.grid_template_areas = Vec::new(); }
-                    else if let Some(slash_pos) = kw.find('/') {
+                    if kw == "none" {
+                        style.grid_template_columns = Vec::new();
+                        style.grid_template_rows = Vec::new();
+                        style.grid_template_areas = Vec::new();
+                    } else if let Some(slash_pos) = kw.find('/') {
                         style.grid_template_rows = parse_track_list(kw[..slash_pos].trim());
                         style.grid_template_columns = parse_track_list(kw[slash_pos + 1..].trim());
                     }
@@ -1266,15 +1786,28 @@ impl StyleEngine {
             // ── grid shorthand ──
             "grid" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "none" { style.grid_template_columns = Vec::new(); style.grid_template_rows = Vec::new(); style.grid_template_areas = Vec::new(); style.grid_auto_flow = GridAutoFlow::Row; }
-                    else if let Some(slash_pos) = kw.find('/') {
-                        let rows_str = kw[..slash_pos].trim(); let cols_str = kw[slash_pos + 1..].trim();
+                    if kw == "none" {
+                        style.grid_template_columns = Vec::new();
+                        style.grid_template_rows = Vec::new();
+                        style.grid_template_areas = Vec::new();
+                        style.grid_auto_flow = GridAutoFlow::Row;
+                    } else if let Some(slash_pos) = kw.find('/') {
+                        let rows_str = kw[..slash_pos].trim();
+                        let cols_str = kw[slash_pos + 1..].trim();
                         if cols_str.starts_with("auto-flow") {
                             style.grid_template_rows = parse_track_list(rows_str);
-                            style.grid_auto_flow = if cols_str.contains("dense") { GridAutoFlow::ColumnDense } else { GridAutoFlow::Column };
+                            style.grid_auto_flow = if cols_str.contains("dense") {
+                                GridAutoFlow::ColumnDense
+                            } else {
+                                GridAutoFlow::Column
+                            };
                         } else if rows_str.starts_with("auto-flow") {
                             style.grid_template_columns = parse_track_list(cols_str);
-                            style.grid_auto_flow = if rows_str.contains("dense") { GridAutoFlow::RowDense } else { GridAutoFlow::Row };
+                            style.grid_auto_flow = if rows_str.contains("dense") {
+                                GridAutoFlow::RowDense
+                            } else {
+                                GridAutoFlow::Row
+                            };
                         } else {
                             style.grid_template_rows = parse_track_list(rows_str);
                             style.grid_template_columns = parse_track_list(cols_str);
@@ -1289,7 +1822,11 @@ impl StyleEngine {
             // ── mask shorthand ──
             "mask" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-                    if kw == "none" { style.mask_image = None; } else { style.mask_image = Some(kw.clone()); }
+                    if kw == "none" {
+                        style.mask_image = None;
+                    } else {
+                        style.mask_image = Some(kw.clone());
+                    }
                 }
             }
 
@@ -1297,27 +1834,61 @@ impl StyleEngine {
             "scroll-timeline" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     let parts: Vec<&str> = kw.split_whitespace().collect();
-                    if !parts.is_empty() { style.scroll_timeline_name = Some(parts[0].to_string()); }
-                    if parts.len() > 1 { style.scroll_timeline_axis = Some(parts[1].to_string()); }
+                    if !parts.is_empty() {
+                        style.scroll_timeline_name = Some(parts[0].to_string());
+                    }
+                    if parts.len() > 1 {
+                        style.scroll_timeline_axis = Some(parts[1].to_string());
+                    }
                 }
             }
             "view-timeline" => {
                 if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
                     let parts: Vec<&str> = kw.split_whitespace().collect();
-                    if !parts.is_empty() { style.view_timeline_name = Some(parts[0].to_string()); }
-                    if parts.len() > 1 { style.view_timeline_axis = Some(parts[1].to_string()); }
+                    if !parts.is_empty() {
+                        style.view_timeline_name = Some(parts[0].to_string());
+                    }
+                    if parts.len() > 1 {
+                        style.view_timeline_axis = Some(parts[1].to_string());
+                    }
                 }
             }
-            "offset" => { if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val { style.offset_path = Some(kw.clone()); } }
+            "offset" => {
+                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+                    style.offset_path = Some(kw.clone());
+                }
+            }
 
             // ── Scroll shorthands ──
-            "scroll-margin-block" => { let d = resolve_dimension(val); style.scroll_margin.top = d.clone(); style.scroll_margin.bottom = d; }
-            "scroll-margin-inline" => { let d = resolve_dimension(val); style.scroll_margin.left = d.clone(); style.scroll_margin.right = d; }
-            "scroll-padding-block" => { let d = resolve_dimension(val); style.scroll_padding.top = d.clone(); style.scroll_padding.bottom = d; }
-            "scroll-padding-inline" => { let d = resolve_dimension(val); style.scroll_padding.left = d.clone(); style.scroll_padding.right = d; }
+            "scroll-margin-block" => {
+                let d = resolve_dimension(val);
+                style.scroll_margin.top = d.clone();
+                style.scroll_margin.bottom = d;
+            }
+            "scroll-margin-inline" => {
+                let d = resolve_dimension(val);
+                style.scroll_margin.left = d.clone();
+                style.scroll_margin.right = d;
+            }
+            "scroll-padding-block" => {
+                let d = resolve_dimension(val);
+                style.scroll_padding.top = d.clone();
+                style.scroll_padding.bottom = d;
+            }
+            "scroll-padding-inline" => {
+                let d = resolve_dimension(val);
+                style.scroll_padding.left = d.clone();
+                style.scroll_padding.right = d;
+            }
 
             // ── No-op / stub properties ──
-            "speak" | "position-try-fallbacks" | "position-visibility" | "animation-range" | "animation-range-start" | "animation-range-end" | "baseline-shift" => {}
+            "speak"
+            | "position-try-fallbacks"
+            | "position-visibility"
+            | "animation-range"
+            | "animation-range-start"
+            | "animation-range-end"
+            | "baseline-shift" => {}
 
             _ => { /* Unknown property — silently ignore */ }
         }
@@ -1381,7 +1952,9 @@ impl StyleEngine {
             "bottom" => style.bottom = default.bottom,
             "left" => style.left = default.left,
             // Grid properties
-            "grid-template-columns" => style.grid_template_columns = default.grid_template_columns.clone(),
+            "grid-template-columns" => {
+                style.grid_template_columns = default.grid_template_columns.clone()
+            }
             "grid-template-rows" => style.grid_template_rows = default.grid_template_rows.clone(),
             "grid-auto-flow" => style.grid_auto_flow = default.grid_auto_flow,
             "grid-column-start" | "grid-column" => style.grid_column = default.grid_column.clone(),
@@ -1392,8 +1965,14 @@ impl StyleEngine {
             "aspect-ratio" => style.aspect_ratio = default.aspect_ratio,
             // Gap
             "gap" | "grid-gap" => style.gap = default.gap.clone(),
-            "row-gap" | "grid-row-gap" => { style.row_gap = default.row_gap.clone(); style.gap.height = default.gap.height.clone(); }
-            "column-gap" | "grid-column-gap" => { style.column_gap = default.column_gap.clone(); style.gap.width = default.gap.width.clone(); }
+            "row-gap" | "grid-row-gap" => {
+                style.row_gap = default.row_gap.clone();
+                style.gap.height = default.gap.height.clone();
+            }
+            "column-gap" | "grid-column-gap" => {
+                style.column_gap = default.column_gap.clone();
+                style.gap.width = default.gap.width.clone();
+            }
             // Transitions
             "transition-property" => style.transition_property = None,
             "transition-duration" => style.transition_duration = None,
@@ -1443,7 +2022,10 @@ impl StyleEngine {
             "mask" => style.mask = default.mask.clone(),
             // Layout extras
             "object-fit" => style.object_fit = default.object_fit,
-            "object-position" => { style.object_position_x = default.object_position_x; style.object_position_y = default.object_position_y; }
+            "object-position" => {
+                style.object_position_x = default.object_position_x;
+                style.object_position_y = default.object_position_y;
+            }
             "resize" => style.resize = default.resize,
             "column-count" => style.column_count = default.column_count,
             "column-width" => style.column_width = default.column_width,

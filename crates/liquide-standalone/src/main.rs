@@ -75,13 +75,17 @@ async fn main() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    use liquide_standalone::launcher::StandaloneLauncher;
     use liquide_standalone::config::StandaloneConfig;
+    use liquide_standalone::launcher::StandaloneLauncher;
 
     let config = StandaloneConfig {
         dev_mode: cli.dev_mode,
         vt_number: if cli.vt == 0 { None } else { Some(cli.vt) },
-        drm_device: if cli.drm_device.is_empty() { None } else { Some(cli.drm_device) },
+        drm_device: if cli.drm_device.is_empty() {
+            None
+        } else {
+            Some(cli.drm_device)
+        },
         fps_cap: cli.fps_cap,
         wayland_socket: cli.wayland_socket,
         enable_xwayland: cli.xwayland,
@@ -92,37 +96,41 @@ async fn run(cli: Cli) -> Result<()> {
 
     // Phase 1: Session & VT setup
     info!("Phase 1: Session setup");
-    launcher.setup_session()
+    launcher
+        .setup_session()
         .context("Failed to set up session/VT")?;
 
     // Phase 2: DRM/KMS initialization
     info!("Phase 2: DRM/KMS setup");
-    launcher.setup_display()
+    launcher
+        .setup_display()
         .context("Failed to set up DRM/KMS display")?;
 
     // Phase 3: Input device enumeration
     info!("Phase 3: Input setup");
-    launcher.setup_input()
+    launcher
+        .setup_input()
         .context("Failed to set up input devices")?;
 
     // Phase 4: Wayland server (if enabled)
     if config.enable_wayland {
         info!("Phase 4: Wayland server setup");
-        launcher.setup_wayland()
+        launcher
+            .setup_wayland()
             .context("Failed to set up Wayland server")?;
     }
 
     // Phase 5: XWayland (if enabled)
     if config.enable_xwayland && config.enable_wayland {
         info!("Phase 5: XWayland setup");
-        launcher.setup_xwayland()
+        launcher
+            .setup_xwayland()
             .context("Failed to set up XWayland")?;
     }
 
     // Phase 6: Run the compositor event loop
     info!("Phase 6: Entering compositor event loop");
-    launcher.run()
-        .context("Compositor event loop failed")?;
+    launcher.run().context("Compositor event loop failed")?;
 
     info!("LiquiDE Standalone Compositor shut down cleanly");
     Ok(())

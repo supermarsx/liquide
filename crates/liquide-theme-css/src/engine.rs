@@ -26,7 +26,7 @@ impl ThemeEngine {
         let stylesheet = parser.parse_str(css)?;
         Ok(Self::new(stylesheet))
     }
-    
+
     /// Create a new theme engine with custom cache size
     ///
     /// # Arguments
@@ -38,7 +38,7 @@ impl ThemeEngine {
             cache: QueryCache::new(cache_size),
         }
     }
-    
+
     /// Query styles for an element
     ///
     /// Returns the computed property set after applying CSS cascade rules.
@@ -65,7 +65,7 @@ impl ThemeEngine {
     ) -> Result<PropertySet> {
         self.query_with_id_and_environment(element, None, classes, pseudo_classes, env)
     }
-    
+
     /// Query styles with ID
     ///
     /// Results are cached for performance.
@@ -80,13 +80,16 @@ impl ThemeEngine {
         if let Some(properties) = self.cache.get(element, classes, id, pseudo_classes) {
             return Ok(properties);
         }
-        
+
         // Compute styles
-        let properties = self.stylesheet.compute_styles(element, classes, id, pseudo_classes);
-        
+        let properties = self
+            .stylesheet
+            .compute_styles(element, classes, id, pseudo_classes);
+
         // Cache the result
-        self.cache.insert(element, classes, id, pseudo_classes, properties.clone());
-        
+        self.cache
+            .insert(element, classes, id, pseudo_classes, properties.clone());
+
         Ok(properties)
     }
 
@@ -109,7 +112,7 @@ impl ThemeEngine {
             env,
         ))
     }
-    
+
     /// Get a specific property value
     pub fn get_property(
         &self,
@@ -121,7 +124,7 @@ impl ThemeEngine {
         let styles = self.query(element, classes, pseudo_classes)?;
         Ok(styles.get(property).cloned())
     }
-    
+
     /// Check if element has a specific style
     pub fn has_property(
         &self,
@@ -136,17 +139,17 @@ impl ThemeEngine {
             false
         }
     }
-    
+
     /// Get a CSS variable
     pub fn get_variable(&self, name: &str) -> Option<&PropertyValue> {
         self.stylesheet.get_variable(name)
     }
-    
+
     /// Get the underlying stylesheet
     pub fn stylesheet(&self) -> &StyleSheet {
         &self.stylesheet
     }
-    
+
     /// Replace the stylesheet (for hot-reloading)
     ///
     /// Clears the query cache when stylesheet changes.
@@ -154,17 +157,17 @@ impl ThemeEngine {
         self.stylesheet = stylesheet;
         self.cache.clear();
     }
-    
+
     /// Get cache statistics
     pub fn cache_stats(&self) -> crate::cache::CacheStats {
         self.cache.stats()
     }
-    
+
     /// Clear the query cache
     pub fn clear_cache(&self) {
         self.cache.clear();
     }
-    
+
     /// Pre-warm cache with common queries
     ///
     /// # Example
@@ -177,9 +180,11 @@ impl ThemeEngine {
     /// engine.prewarm_cache(&common_queries);
     /// ```
     pub fn prewarm_cache(&self, queries: &[(String, Vec<String>, Option<String>, Vec<String>)]) {
-        self.cache.prewarm(queries, |element, classes, id, pseudo_classes| {
-            self.stylesheet.compute_styles(element, classes, id, pseudo_classes)
-        });
+        self.cache
+            .prewarm(queries, |element, classes, id, pseudo_classes| {
+                self.stylesheet
+                    .compute_styles(element, classes, id, pseudo_classes)
+            });
     }
 }
 

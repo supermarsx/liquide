@@ -1,4 +1,5 @@
 use crate::{Dialog, DialogId, DialogResult};
+use liquide_popups::DialogInfo;
 
 /// RGBA color (0-255 per channel)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,6 +258,16 @@ impl Dialog for ColorPickerState {
     }
 }
 
+impl DialogInfo for ColorPickerState {
+    fn preferred_size(&self) -> (f32, f32) {
+        (520.0, 460.0)
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,13 +446,12 @@ mod tests {
 
     #[test]
     fn test_with_initial_color() {
-        let picker = ColorPickerState::new(DialogId(1), "Pick Color")
-            .with_initial_color(Rgba {
-                r: 0,
-                g: 128,
-                b: 255,
-                a: 200,
-            });
+        let picker = ColorPickerState::new(DialogId(1), "Pick Color").with_initial_color(Rgba {
+            r: 0,
+            g: 128,
+            b: 255,
+            a: 200,
+        });
         assert!(picker.original_color.is_some());
         let color = picker.current_color();
         assert!((color.r as i16).abs() <= 1);

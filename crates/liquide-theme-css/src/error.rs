@@ -10,10 +10,7 @@ pub type Result<T> = std::result::Result<T, ThemeError>;
 pub enum ThemeError {
     /// CSS parsing error
     #[error("CSS parse error at {location}: {message}")]
-    ParseError {
-        message: String,
-        location: String,
-    },
+    ParseError { message: String, location: String },
 
     /// Invalid selector
     #[error("Invalid selector: {0}")]
@@ -21,10 +18,7 @@ pub enum ThemeError {
 
     /// Invalid property value
     #[error("Invalid property value for '{property}': {value}")]
-    InvalidValue {
-        property: String,
-        value: String,
-    },
+    InvalidValue { property: String, value: String },
 
     /// Property not found
     #[error("Property '{0}' not found")]

@@ -26,9 +26,7 @@ pub(crate) fn parse_border_image_quad(value: &str, fallback: f32) -> (f32, f32, 
 
 /// Parse CSS border-image-repeat value (e.g. "stretch", "round repeat").
 /// Returns (repeat_x, repeat_y).
-pub(crate) fn parse_border_image_repeat(
-    value: &str,
-) -> (BorderImageRepeat, BorderImageRepeat) {
+pub(crate) fn parse_border_image_repeat(value: &str) -> (BorderImageRepeat, BorderImageRepeat) {
     let parse_one = |s: &str| -> BorderImageRepeat {
         match s.trim() {
             "repeat" => BorderImageRepeat::Repeat,
@@ -39,7 +37,12 @@ pub(crate) fn parse_border_image_repeat(
     };
     let parts: Vec<&str> = value.split_whitespace().collect();
     let x = parse_one(parts.first().copied().unwrap_or("stretch"));
-    let y = parse_one(parts.get(1).copied().unwrap_or(parts.first().copied().unwrap_or("stretch")));
+    let y = parse_one(
+        parts
+            .get(1)
+            .copied()
+            .unwrap_or(parts.first().copied().unwrap_or("stretch")),
+    );
     (x, y)
 }
 
@@ -47,6 +50,7 @@ pub(crate) fn parse_border_image_repeat(
 
 /// A rectangle defined by position and size (independent of layout crate).
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub(crate) struct SliceRect {
     pub x: f32,
     pub y: f32,
@@ -55,6 +59,7 @@ pub(crate) struct SliceRect {
 }
 
 impl SliceRect {
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.width <= 0.0 || self.height <= 0.0
     }
@@ -66,6 +71,7 @@ impl SliceRect {
 /// Edges are tiled according to `repeat_x` / `repeat_y`.
 /// The center is optionally filled (CSS `border-image-slice: … fill`).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct NineSlice {
     // Corners: top-left, top-right, bottom-right, bottom-left
     pub corner_tl: SliceRect,
@@ -86,6 +92,7 @@ pub(crate) struct NineSlice {
 /// # Parameters
 /// - `element`: the bounding rectangle of the element (after outset).
 /// - `widths`: (top, right, bottom, left) border-image widths in pixels.
+#[allow(dead_code)]
 pub(crate) fn compute_nine_slice_regions(
     element_x: f32,
     element_y: f32,
@@ -118,17 +125,62 @@ pub(crate) fn compute_nine_slice_regions(
 
     NineSlice {
         // Corners
-        corner_tl: SliceRect { x: element_x, y: element_y, width: wl, height: wt },
-        corner_tr: SliceRect { x: element_x + element_w - wr, y: element_y, width: wr, height: wt },
-        corner_br: SliceRect { x: element_x + element_w - wr, y: element_y + element_h - wb, width: wr, height: wb },
-        corner_bl: SliceRect { x: element_x, y: element_y + element_h - wb, width: wl, height: wb },
+        corner_tl: SliceRect {
+            x: element_x,
+            y: element_y,
+            width: wl,
+            height: wt,
+        },
+        corner_tr: SliceRect {
+            x: element_x + element_w - wr,
+            y: element_y,
+            width: wr,
+            height: wt,
+        },
+        corner_br: SliceRect {
+            x: element_x + element_w - wr,
+            y: element_y + element_h - wb,
+            width: wr,
+            height: wb,
+        },
+        corner_bl: SliceRect {
+            x: element_x,
+            y: element_y + element_h - wb,
+            width: wl,
+            height: wb,
+        },
         // Edges
-        edge_top: SliceRect { x: inner_x, y: element_y, width: inner_w, height: wt },
-        edge_right: SliceRect { x: element_x + element_w - wr, y: inner_y, width: wr, height: inner_h },
-        edge_bottom: SliceRect { x: inner_x, y: element_y + element_h - wb, width: inner_w, height: wb },
-        edge_left: SliceRect { x: element_x, y: inner_y, width: wl, height: inner_h },
+        edge_top: SliceRect {
+            x: inner_x,
+            y: element_y,
+            width: inner_w,
+            height: wt,
+        },
+        edge_right: SliceRect {
+            x: element_x + element_w - wr,
+            y: inner_y,
+            width: wr,
+            height: inner_h,
+        },
+        edge_bottom: SliceRect {
+            x: inner_x,
+            y: element_y + element_h - wb,
+            width: inner_w,
+            height: wb,
+        },
+        edge_left: SliceRect {
+            x: element_x,
+            y: inner_y,
+            width: wl,
+            height: inner_h,
+        },
         // Center
-        center: SliceRect { x: inner_x, y: inner_y, width: inner_w, height: inner_h },
+        center: SliceRect {
+            x: inner_x,
+            y: inner_y,
+            width: inner_w,
+            height: inner_h,
+        },
     }
 }
 
@@ -137,9 +189,8 @@ pub(crate) fn compute_nine_slice_regions(
 /// Slice values are percentages of the source image dimensions.
 /// Returns regions in the same `NineSlice` layout but with coordinates
 /// normalized to [0, 1] for use as texture UV coordinates.
-pub(crate) fn compute_source_slice_uvs(
-    slice: (f32, f32, f32, f32),
-) -> NineSlice {
+#[allow(dead_code)]
+pub(crate) fn compute_source_slice_uvs(slice: (f32, f32, f32, f32)) -> NineSlice {
     // slice values are in percentage (0..100), normalize to 0..1
     let st = (slice.0 / 100.0).clamp(0.0, 1.0);
     let sr = (slice.1 / 100.0).clamp(0.0, 1.0);
@@ -152,15 +203,60 @@ pub(crate) fn compute_source_slice_uvs(
     let inner_h = (1.0 - st - sb).max(0.0);
 
     NineSlice {
-        corner_tl: SliceRect { x: 0.0, y: 0.0, width: sl, height: st },
-        corner_tr: SliceRect { x: 1.0 - sr, y: 0.0, width: sr, height: st },
-        corner_br: SliceRect { x: 1.0 - sr, y: 1.0 - sb, width: sr, height: sb },
-        corner_bl: SliceRect { x: 0.0, y: 1.0 - sb, width: sl, height: sb },
-        edge_top: SliceRect { x: inner_u, y: 0.0, width: inner_w, height: st },
-        edge_right: SliceRect { x: 1.0 - sr, y: inner_v, width: sr, height: inner_h },
-        edge_bottom: SliceRect { x: inner_u, y: 1.0 - sb, width: inner_w, height: sb },
-        edge_left: SliceRect { x: 0.0, y: inner_v, width: sl, height: inner_h },
-        center: SliceRect { x: inner_u, y: inner_v, width: inner_w, height: inner_h },
+        corner_tl: SliceRect {
+            x: 0.0,
+            y: 0.0,
+            width: sl,
+            height: st,
+        },
+        corner_tr: SliceRect {
+            x: 1.0 - sr,
+            y: 0.0,
+            width: sr,
+            height: st,
+        },
+        corner_br: SliceRect {
+            x: 1.0 - sr,
+            y: 1.0 - sb,
+            width: sr,
+            height: sb,
+        },
+        corner_bl: SliceRect {
+            x: 0.0,
+            y: 1.0 - sb,
+            width: sl,
+            height: sb,
+        },
+        edge_top: SliceRect {
+            x: inner_u,
+            y: 0.0,
+            width: inner_w,
+            height: st,
+        },
+        edge_right: SliceRect {
+            x: 1.0 - sr,
+            y: inner_v,
+            width: sr,
+            height: inner_h,
+        },
+        edge_bottom: SliceRect {
+            x: inner_u,
+            y: 1.0 - sb,
+            width: inner_w,
+            height: sb,
+        },
+        edge_left: SliceRect {
+            x: 0.0,
+            y: inner_v,
+            width: sl,
+            height: inner_h,
+        },
+        center: SliceRect {
+            x: inner_u,
+            y: inner_v,
+            width: inner_w,
+            height: inner_h,
+        },
     }
 }
 
@@ -171,6 +267,7 @@ pub(crate) fn compute_source_slice_uvs(
 /// - `Repeat`: tiles at natural size, possibly clipped at ends.
 /// - `Round`: tiles resized so an integer number fills `edge_len`.
 /// - `Space`: tiles at natural size with equal spacing between them.
+#[allow(dead_code)]
 pub(crate) fn compute_edge_tiling(
     edge_len: f32,
     natural_tile_size: f32,
@@ -200,6 +297,7 @@ pub(crate) fn compute_edge_tiling(
 
 /// Compute the spacing between tiles for `Space` repeat mode.
 /// Returns 0.0 for other modes.
+#[allow(dead_code)]
 pub(crate) fn compute_space_gap(
     edge_len: f32,
     tile_size: f32,
@@ -225,22 +323,34 @@ mod tests {
 
     #[test]
     fn parse_quad_two() {
-        assert_eq!(parse_border_image_quad("10 20", 0.0), (10.0, 20.0, 10.0, 20.0));
+        assert_eq!(
+            parse_border_image_quad("10 20", 0.0),
+            (10.0, 20.0, 10.0, 20.0)
+        );
     }
 
     #[test]
     fn parse_quad_three() {
-        assert_eq!(parse_border_image_quad("10 20 30", 0.0), (10.0, 20.0, 30.0, 20.0));
+        assert_eq!(
+            parse_border_image_quad("10 20 30", 0.0),
+            (10.0, 20.0, 30.0, 20.0)
+        );
     }
 
     #[test]
     fn parse_quad_four() {
-        assert_eq!(parse_border_image_quad("10 20 30 40", 0.0), (10.0, 20.0, 30.0, 40.0));
+        assert_eq!(
+            parse_border_image_quad("10 20 30 40", 0.0),
+            (10.0, 20.0, 30.0, 40.0)
+        );
     }
 
     #[test]
     fn parse_quad_percent() {
-        assert_eq!(parse_border_image_quad("25%", 0.0), (25.0, 25.0, 25.0, 25.0));
+        assert_eq!(
+            parse_border_image_quad("25%", 0.0),
+            (25.0, 25.0, 25.0, 25.0)
+        );
     }
 
     #[test]

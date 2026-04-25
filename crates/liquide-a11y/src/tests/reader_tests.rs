@@ -12,7 +12,9 @@ fn test_null_reader_discards() {
 fn test_log_reader_captures() {
     let mut reader = LogReader::new();
     reader.announce("hello", AnnouncePriority::Polite).unwrap();
-    reader.announce("alert!", AnnouncePriority::Assertive).unwrap();
+    reader
+        .announce("alert!", AnnouncePriority::Assertive)
+        .unwrap();
     assert_eq!(reader.messages().len(), 2);
     assert_eq!(reader.messages()[0].0, "hello");
     assert_eq!(reader.messages()[1].1, AnnouncePriority::Assertive);
@@ -22,7 +24,9 @@ fn test_log_reader_captures() {
 fn test_priority_levels() {
     let mut reader = LogReader::new();
     reader.announce("low", AnnouncePriority::Polite).unwrap();
-    reader.announce("high", AnnouncePriority::Assertive).unwrap();
+    reader
+        .announce("high", AnnouncePriority::Assertive)
+        .unwrap();
     assert_eq!(reader.messages()[0].1, AnnouncePriority::Polite);
     assert_eq!(reader.messages()[1].1, AnnouncePriority::Assertive);
 }

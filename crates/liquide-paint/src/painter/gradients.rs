@@ -9,8 +9,11 @@ use liquide_compositor::scene::GradientSpec;
 /// replicated forward and backward until the entire [0, 1] interval is
 /// covered.  For non-repeating gradients (or when stops already span ≥1.0)
 /// the original stops are returned unchanged.
-fn tile_stops(stops: &[(f32, liquide_compositor::pixel::Color)], repeating: bool) -> Vec<GradientStop> {
-    let mut grad_stops: Vec<GradientStop> = stops
+fn tile_stops(
+    stops: &[(f32, liquide_compositor::pixel::Color)],
+    repeating: bool,
+) -> Vec<GradientStop> {
+    let grad_stops: Vec<GradientStop> = stops
         .iter()
         .map(|&(offset, color)| GradientStop { offset, color })
         .collect();
@@ -50,7 +53,11 @@ fn tile_stops(stops: &[(f32, liquide_compositor::pixel::Color)], repeating: bool
         base += span;
     }
 
-    tiled.sort_by(|a, b| a.offset.partial_cmp(&b.offset).unwrap_or(std::cmp::Ordering::Equal));
+    tiled.sort_by(|a, b| {
+        a.offset
+            .partial_cmp(&b.offset)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     tiled
 }
 
@@ -62,12 +69,20 @@ fn tile_stops(stops: &[(f32, liquide_compositor::pixel::Color)], repeating: bool
 pub(crate) fn emit_gradient(
     list: &mut DisplayList,
     rect: &liquide_layout::Rect,
-    radius: &liquide_style_engine::dimension::Corners<f32>,
+    radius: &liquide_style_engine::dimension::Corners<
+        liquide_style_engine::dimension::EllipticalRadius,
+    >,
     gradient: &GradientSpec,
     repeating: bool,
 ) {
     match gradient {
-        GradientSpec::Linear { start_x, start_y, end_x, end_y, stops } => {
+        GradientSpec::Linear {
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            stops,
+        } => {
             // Convert normalized start/end to angle in degrees
             let dx = end_x - start_x;
             let dy = end_y - start_y;
@@ -80,7 +95,13 @@ pub(crate) fn emit_gradient(
                 radius: radius.clone(),
             });
         }
-        GradientSpec::Radial { center_x, center_y, radius: grad_radius, radius_y: grad_radius_y, stops } => {
+        GradientSpec::Radial {
+            center_x,
+            center_y,
+            radius: grad_radius,
+            radius_y: grad_radius_y,
+            stops,
+        } => {
             let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::RadialGradient {
                 rect: *rect,
@@ -91,7 +112,12 @@ pub(crate) fn emit_gradient(
                 stops: grad_stops,
             });
         }
-        GradientSpec::Conic { center_x, center_y, start_angle, stops } => {
+        GradientSpec::Conic {
+            center_x,
+            center_y,
+            start_angle,
+            stops,
+        } => {
             let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::ConicGradient {
                 rect: *rect,
@@ -105,7 +131,12 @@ pub(crate) fn emit_gradient(
             // Mesh gradients not yet supported — emit a fallback solid color
             list.push(DisplayItem::SolidColor {
                 rect: *rect,
-                color: liquide_compositor::pixel::Color { r: 200, g: 200, b: 200, a: 255 },
+                color: liquide_compositor::pixel::Color {
+                    r: 200,
+                    g: 200,
+                    b: 200,
+                    a: 255,
+                },
                 radius: radius.clone(),
             });
         }

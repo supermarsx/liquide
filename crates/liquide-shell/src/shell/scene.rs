@@ -3,9 +3,7 @@
 use std::sync::Arc;
 
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::scene::{
-    DecorationButtons, NodeProperties, SceneNode, SceneNodeKind,
-};
+use liquide_compositor::scene::{DecorationButtons, NodeProperties, SceneNode, SceneNodeKind};
 
 use crate::decoration::HitZone;
 use crate::scene_builder::*;
@@ -41,11 +39,12 @@ impl Shell {
         self.sync_dom();
 
         // ── Run the CSS pipeline (all shell chrome) ─────────
-        let (pipeline_nodes, pipeline_output, _animations_active) = self.css_pipeline.render_to_scene_with_output(
-            &mut self.desktop_dom.doc,
-            0, // base z-order
-            crate::DEFAULT_FRAME_DELTA_MS,
-        );
+        let (pipeline_nodes, pipeline_output, _animations_active) =
+            self.css_pipeline.render_to_scene_with_output(
+                &mut self.desktop_dom.doc,
+                0, // base z-order
+                crate::DEFAULT_FRAME_DELTA_MS,
+            );
 
         // Collect threaded fallback nodes. These are composited only when the
         // main pipeline returns no chrome nodes, to avoid duplicate rendering.
@@ -229,7 +228,8 @@ impl Shell {
                         button_colors: button_colors.clone(),
                         button_layout: button_layout.clone(),
                     },
-                    NodeProperties::new(window.bounds).with_z_order(window.z_order.max(0) as u32 * 10 + 2),
+                    NodeProperties::new(window.bounds)
+                        .with_z_order(window.z_order.max(0) as u32 * 10 + 2),
                 ));
             }
 

@@ -126,9 +126,7 @@ impl Dispatcher {
     /// Check whether any plugins are registered for the given extension point.
     #[must_use]
     pub fn has_handlers(&self, point: ExtensionPoint) -> bool {
-        self.hooks
-            .get(&point)
-            .is_some_and(|p| !p.is_empty())
+        self.hooks.get(&point).is_some_and(|p| !p.is_empty())
     }
 
     /// Simulate dispatching a call to all plugins registered for an extension
@@ -156,10 +154,7 @@ impl Dispatcher {
     /// registered.
     #[must_use]
     pub fn active_extension_point_count(&self) -> usize {
-        self.hooks
-            .values()
-            .filter(|v| !v.is_empty())
-            .count()
+        self.hooks.values().filter(|v| !v.is_empty()).count()
     }
 }
 

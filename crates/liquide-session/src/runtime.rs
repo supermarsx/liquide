@@ -1,7 +1,7 @@
 //! Session runtime coordinator — the central manager.
 
 use crate::audit::SessionAuditEvent;
-use crate::config::{JailConfig, ResumeConfig, ResourceLimits, SessionConfig, SupervisorConfig};
+use crate::config::{JailConfig, ResourceLimits, ResumeConfig, SessionConfig, SupervisorConfig};
 use crate::crash::{RestartAction, RestartTracker, SafeMode};
 use crate::heartbeat::{HeartbeatConfig, HeartbeatMonitor, HeartbeatStatus};
 use crate::ipc::SupervisorCommand;
@@ -9,7 +9,7 @@ use crate::resume::ResumeManager;
 use crate::sandbox::SandboxEnforcer;
 use crate::state::{SessionState, SessionStateMachine};
 use crate::worker::{WorkerKind, WorkerManager};
-use crate::{SessionError, Result};
+use crate::{Result, SessionError};
 
 /// The core session runtime, coordinating all subsystems.
 pub struct SessionRuntime {
@@ -74,7 +74,8 @@ impl SessionRuntime {
     /// Initialize the session: authenticate, start workers, enter Running state.
     pub fn initialize(&mut self) -> Result<()> {
         // Transition through authentication.
-        self.state_machine.transition_to(SessionState::Authenticating)?;
+        self.state_machine
+            .transition_to(SessionState::Authenticating)?;
         self.audit_events.push(SessionAuditEvent::StateTransition {
             from: SessionState::Created.to_string(),
             to: SessionState::Authenticating.to_string(),
@@ -94,8 +95,7 @@ impl SessionRuntime {
         self.start_essential_workers();
 
         // Collect worker audit events into the runtime's event buffer.
-        self.audit_events
-            .extend(self.worker_manager.drain_events());
+        self.audit_events.extend(self.worker_manager.drain_events());
 
         if self.safe_mode.is_active() {
             self.state_machine.set_safe_mode(true);
@@ -300,8 +300,7 @@ impl SessionRuntime {
     /// Terminate the session.
     fn terminate(&mut self, reason: &str) -> Result<()> {
         let from = self.state_machine.state();
-        self.state_machine
-            .transition_to(SessionState::Terminated)?;
+        self.state_machine.transition_to(SessionState::Terminated)?;
         self.audit_events.push(SessionAuditEvent::StateTransition {
             from: from.to_string(),
             to: SessionState::Terminated.to_string(),

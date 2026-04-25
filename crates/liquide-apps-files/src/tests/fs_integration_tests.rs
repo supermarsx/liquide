@@ -3,7 +3,7 @@
 use crate::config::FilesConfig;
 use crate::entry::EntryKind;
 use crate::listing::DirectoryListing;
-use crate::operations::{execute_operation, FileOp};
+use crate::operations::{FileOp, execute_operation};
 use crate::runtime::FilesRuntime;
 use crate::trash::TrashManager;
 use std::fs;
@@ -240,11 +240,12 @@ fn test_trash_manager_physical_trash_and_restore() {
     fs::write(&file, "trash content").unwrap();
 
     let mut tm = TrashManager::with_dir(trash_dir.to_string_lossy().to_string());
-    let entry = tm.trash(
-        &file.to_string_lossy(),
-        fs::metadata(&file).map(|m| m.len()).unwrap_or(0),
-    )
-    .unwrap();
+    let entry = tm
+        .trash(
+            &file.to_string_lossy(),
+            fs::metadata(&file).map(|m| m.len()).unwrap_or(0),
+        )
+        .unwrap();
 
     // File should be moved to trash/files/.
     assert!(!file.exists(), "original should be gone");

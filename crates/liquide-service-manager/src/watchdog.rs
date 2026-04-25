@@ -200,8 +200,7 @@ impl Watchdog {
             proc.restart_count += 1;
 
             // Exponential backoff
-            let new_backoff =
-                proc.backoff_ms * self.config.backoff_multiplier as u64;
+            let new_backoff = proc.backoff_ms * self.config.backoff_multiplier as u64;
             proc.backoff_ms = new_backoff.min(self.config.max_backoff_ms);
         }
     }
@@ -346,7 +345,11 @@ mod tests {
 
         let events = wd.tick(1000);
         assert_eq!(events.len(), 2);
-        assert!(events.iter().all(|e| matches!(e, WatchdogEvent::Heartbeat(_))));
+        assert!(
+            events
+                .iter()
+                .all(|e| matches!(e, WatchdogEvent::Heartbeat(_)))
+        );
     }
 
     #[test]

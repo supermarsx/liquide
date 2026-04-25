@@ -103,9 +103,7 @@ impl SoftwareRenderer {
                     offset_y: 0.0,
                     shadow_color,
                 };
-                if let Some(mask) =
-                    BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
-                {
+                if let Some(mask) = BoxShadow::generate_shadow_mask(fb.width, fb.height, &params) {
                     BoxShadow::composite_shadow_mask(fb, &mask);
                     self.shadow_cache_insert(
                         node.id,
@@ -161,38 +159,48 @@ impl SoftwareRenderer {
                         let frac = (steps - i) as f32 / steps as f32;
                         let mut sc = c;
                         sc.a = (c.a as f32 * frac * 0.5) as u8;
-                        if sc.a == 0 { continue; }
+                        if sc.a == 0 {
+                            continue;
+                        }
                         let t = i as f32;
                         // Top edge
                         let top_y = iy + oy.max(0.0) + t;
                         if top_y < iy + ih {
                             rasterizer::fill_rect(
-                                fb, Rect::new(ix, top_y, iw, 1.0_f32.min(ih)),
-                                sc, BlendMode::SrcOver,
+                                fb,
+                                Rect::new(ix, top_y, iw, 1.0_f32.min(ih)),
+                                sc,
+                                BlendMode::SrcOver,
                             );
                         }
                         // Bottom edge
                         let bot_y = iy + ih - 1.0 + oy.min(0.0) - t;
                         if bot_y >= iy {
                             rasterizer::fill_rect(
-                                fb, Rect::new(ix, bot_y, iw, 1.0_f32.min(ih)),
-                                sc, BlendMode::SrcOver,
+                                fb,
+                                Rect::new(ix, bot_y, iw, 1.0_f32.min(ih)),
+                                sc,
+                                BlendMode::SrcOver,
                             );
                         }
                         // Left edge
                         let left_x = ix + ox.max(0.0) + t;
                         if left_x < ix + iw {
                             rasterizer::fill_rect(
-                                fb, Rect::new(left_x, iy, 1.0_f32.min(iw), ih),
-                                sc, BlendMode::SrcOver,
+                                fb,
+                                Rect::new(left_x, iy, 1.0_f32.min(iw), ih),
+                                sc,
+                                BlendMode::SrcOver,
                             );
                         }
                         // Right edge
                         let right_x = ix + iw - 1.0 + ox.min(0.0) - t;
                         if right_x >= ix {
                             rasterizer::fill_rect(
-                                fb, Rect::new(right_x, iy, 1.0_f32.min(iw), ih),
-                                sc, BlendMode::SrcOver,
+                                fb,
+                                Rect::new(right_x, iy, 1.0_f32.min(iw), ih),
+                                sc,
+                                BlendMode::SrcOver,
                             );
                         }
                     }
@@ -262,28 +270,23 @@ impl SoftwareRenderer {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Grayscale.apply(fb, bounds);
                         } else {
-                            crate::filter::PixelFilter::Saturate(1.0 - amount)
-                                .apply(fb, bounds);
+                            crate::filter::PixelFilter::Saturate(1.0 - amount).apply(fb, bounds);
                         }
                     }
                     BackdropFilterSpec::Sepia(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Sepia.apply(fb, bounds);
                         } else if *amount > 0.001 {
-                            crate::filter::PixelFilter::ColorMatrix(
-                                partial_sepia_matrix(*amount),
-                            )
-                            .apply(fb, bounds);
+                            crate::filter::PixelFilter::ColorMatrix(partial_sepia_matrix(*amount))
+                                .apply(fb, bounds);
                         }
                     }
                     BackdropFilterSpec::Invert(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Invert.apply(fb, bounds);
                         } else if *amount > 0.001 {
-                            crate::filter::PixelFilter::ColorMatrix(
-                                partial_invert_matrix(*amount),
-                            )
-                            .apply(fb, bounds);
+                            crate::filter::PixelFilter::ColorMatrix(partial_invert_matrix(*amount))
+                                .apply(fb, bounds);
                         }
                     }
                     BackdropFilterSpec::Opacity(o) => {
@@ -295,11 +298,7 @@ impl SoftwareRenderer {
     }
 
     /// Render a Filter scene node.
-    pub(crate) fn render_filter_node(
-        &mut self,
-        node: &FlatNode,
-        fb: &mut FrameBuffer,
-    ) {
+    pub(crate) fn render_filter_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
@@ -329,28 +328,23 @@ impl SoftwareRenderer {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Grayscale.apply(fb, bounds);
                         } else {
-                            crate::filter::PixelFilter::Saturate(1.0 - amount)
-                                .apply(fb, bounds);
+                            crate::filter::PixelFilter::Saturate(1.0 - amount).apply(fb, bounds);
                         }
                     }
                     FilterSpec::Sepia(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Sepia.apply(fb, bounds);
                         } else if *amount > 0.001 {
-                            crate::filter::PixelFilter::ColorMatrix(
-                                partial_sepia_matrix(*amount),
-                            )
-                            .apply(fb, bounds);
+                            crate::filter::PixelFilter::ColorMatrix(partial_sepia_matrix(*amount))
+                                .apply(fb, bounds);
                         }
                     }
                     FilterSpec::Invert(amount) => {
                         if *amount >= 0.99 {
                             crate::filter::PixelFilter::Invert.apply(fb, bounds);
                         } else if *amount > 0.001 {
-                            crate::filter::PixelFilter::ColorMatrix(
-                                partial_invert_matrix(*amount),
-                            )
-                            .apply(fb, bounds);
+                            crate::filter::PixelFilter::ColorMatrix(partial_invert_matrix(*amount))
+                                .apply(fb, bounds);
                         }
                     }
                     FilterSpec::Opacity(o) => {
@@ -436,8 +430,9 @@ impl SoftwareRenderer {
                 let src_off = fb.pixel_offset(x0, y0 + row);
                 let dst_off = (row * w * 4) as usize;
                 let bytes = (w * 4) as usize;
-                snapshot[dst_off..dst_off + bytes]
-                    .copy_from_slice(&fb.pixels_mut().expect("CPU framebuffer required")[src_off..src_off + bytes]);
+                snapshot[dst_off..dst_off + bytes].copy_from_slice(
+                    &fb.pixels_mut().expect("CPU framebuffer required")[src_off..src_off + bytes],
+                );
             }
             self.blur_worker
                 .request_blur(node_id, snapshot, w, h, radius);

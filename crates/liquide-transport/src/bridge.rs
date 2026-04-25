@@ -10,14 +10,14 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use tokio::sync::mpsc;
 use tokio::sync::Notify;
+use tokio::sync::mpsc;
 
 use liquide_protocol::channel::ChannelId;
 use liquide_protocol::frame::FrameHeader;
 
 use crate::congestion::CongestionController;
-use crate::priority::{Priority, PriorityMapper, NUM_PRIORITIES};
+use crate::priority::{NUM_PRIORITIES, Priority, PriorityMapper};
 use crate::sendbuf::SendBufferPool;
 
 // ---------------------------------------------------------------------------
@@ -168,7 +168,10 @@ pub struct TransportBridge {
     /// Priority mapper for resolving frame priorities.
     mapper: PriorityMapper,
     /// Per-priority send queues.
-    pub(crate) send_queues: Vec<(mpsc::Sender<QueuedFrame>, Mutex<mpsc::Receiver<QueuedFrame>>)>,
+    pub(crate) send_queues: Vec<(
+        mpsc::Sender<QueuedFrame>,
+        Mutex<mpsc::Receiver<QueuedFrame>>,
+    )>,
     /// Per-channel receive queues.
     recv_queues: HashMap<ChannelId, mpsc::Sender<Bytes>>,
     /// Channel handles (for external callers).
@@ -291,8 +294,7 @@ impl TransportBridge {
             .recv_queues
             .get(&channel)
             .ok_or(BridgeError::UnknownChannel(channel))?;
-        tx.try_send(payload)
-            .map_err(|_| BridgeError::Closed)
+        tx.try_send(payload).map_err(|_| BridgeError::Closed)
     }
 
     /// Drain frames from the priority queues according to the scheduling algorithm.
@@ -436,12 +438,7 @@ impl TransportBridge {
         }
     }
 
-    fn drain_latest(
-        &self,
-        out: &mut Vec<QueuedFrame>,
-        priority: Priority,
-        remaining: &mut u64,
-    ) {
+    fn drain_latest(&self, out: &mut Vec<QueuedFrame>, priority: Priority, remaining: &mut u64) {
         let idx = priority.as_index();
         let mut rx = liquide_common::sync::lock_or_recover(&self.send_queues[idx].1);
         let mut latest = None;

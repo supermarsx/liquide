@@ -4,33 +4,37 @@
 //! Also provides screen-capture session management, frame buffering,
 //! GIF encoding, and streaming (screen-sharing) support.
 
-pub mod format;
-pub mod segment;
-pub mod muxer;
-pub mod storage;
-pub mod retention;
-pub mod session;
-pub mod metadata;
 pub mod capture;
 pub mod capture_session;
+pub mod format;
 pub mod frame_buffer;
 pub mod gif_encoder;
+pub mod metadata;
+pub mod muxer;
+pub mod retention;
+pub mod segment;
+pub mod session;
+pub mod storage;
 pub mod streaming;
 
 #[cfg(test)]
 mod tests;
 
-pub use format::{RecordingHeader, RecordingState, ChapterMark};
-pub use segment::{SegmentKind, SegmentHeader, VideoSegment, AudioSegment, EventSegment, MetadataSegment};
-pub use muxer::RecordingMuxer;
-pub use storage::{StorageBackend, MemoryStorage, FilePathStorage};
-pub use retention::{RetentionPolicy, RecordingEntry};
-pub use session::{RecordingSession, RecordingSessionConfig, RecordingStats};
-pub use metadata::{RecordingMetadata, Annotation, AccessLogEntry, AccessAction};
-pub use capture::{CaptureRegion, OutputFormat, RecordingQuality, RecordingConfig, RecordingResult};
+pub use capture::{
+    CaptureRegion, OutputFormat, RecordingConfig, RecordingQuality, RecordingResult,
+};
 pub use capture_session::{CaptureSession, CaptureState};
+pub use format::{ChapterMark, RecordingHeader, RecordingState};
 pub use frame_buffer::{CapturedFrame, FrameRingBuffer};
 pub use gif_encoder::GifEncoder;
+pub use metadata::{AccessAction, AccessLogEntry, Annotation, RecordingMetadata};
+pub use muxer::RecordingMuxer;
+pub use retention::{RecordingEntry, RetentionPolicy};
+pub use segment::{
+    AudioSegment, EventSegment, MetadataSegment, SegmentHeader, SegmentKind, VideoSegment,
+};
+pub use session::{RecordingSession, RecordingSessionConfig, RecordingStats};
+pub use storage::{FilePathStorage, MemoryStorage, StorageBackend};
 pub use streaming::{StreamConfig, StreamSession, StreamState};
 
 use thiserror::Error;

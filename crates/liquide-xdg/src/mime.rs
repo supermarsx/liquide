@@ -103,9 +103,17 @@ fn magic_table() -> Vec<(usize, &'static [u8], MimeType)> {
         (0, b"%PDF", MimeType::new("application", "pdf")),
         (0, b"PK\x03\x04", MimeType::new("application", "zip")),
         (0, b"\x1f\x8b", MimeType::new("application", "gzip")),
-        (0, b"Rar!\x1a\x07", MimeType::new("application", "x-rar-compressed")),
+        (
+            0,
+            b"Rar!\x1a\x07",
+            MimeType::new("application", "x-rar-compressed"),
+        ),
         (0, b"\xfd7zXZ\x00", MimeType::new("application", "x-xz")),
-        (0, b"7z\xbc\xaf\x27\x1c", MimeType::new("application", "x-7z-compressed")),
+        (
+            0,
+            b"7z\xbc\xaf\x27\x1c",
+            MimeType::new("application", "x-7z-compressed"),
+        ),
         (0, b"\x7fELF", MimeType::new("application", "x-executable")),
         // Audio
         (0, b"ID3", MimeType::new("audio", "mpeg")),
@@ -265,10 +273,12 @@ impl MimeDatabase {
 
     /// Get the default application for a MIME type.
     pub fn get_association(&self, mime: &MimeType) -> Option<MimeAssociation> {
-        self.associations.get(&mime.essence()).map(|id| MimeAssociation {
-            mime_type: mime.clone(),
-            desktop_entry_id: id.clone(),
-        })
+        self.associations
+            .get(&mime.essence())
+            .map(|id| MimeAssociation {
+                mime_type: mime.clone(),
+                desktop_entry_id: id.clone(),
+            })
     }
 
     /// Register a custom extension mapping.
@@ -338,18 +348,39 @@ mod tests {
     #[test]
     fn guess_from_extension_common() {
         let db = MimeDatabase::new();
-        assert_eq!(db.guess_from_extension("txt"), Some(MimeType::new("text", "plain")));
-        assert_eq!(db.guess_from_extension("png"), Some(MimeType::new("image", "png")));
-        assert_eq!(db.guess_from_extension("rs"), Some(MimeType::new("text", "x-rust")));
-        assert_eq!(db.guess_from_extension("pdf"), Some(MimeType::new("application", "pdf")));
-        assert_eq!(db.guess_from_extension("mp4"), Some(MimeType::new("video", "mp4")));
+        assert_eq!(
+            db.guess_from_extension("txt"),
+            Some(MimeType::new("text", "plain"))
+        );
+        assert_eq!(
+            db.guess_from_extension("png"),
+            Some(MimeType::new("image", "png"))
+        );
+        assert_eq!(
+            db.guess_from_extension("rs"),
+            Some(MimeType::new("text", "x-rust"))
+        );
+        assert_eq!(
+            db.guess_from_extension("pdf"),
+            Some(MimeType::new("application", "pdf"))
+        );
+        assert_eq!(
+            db.guess_from_extension("mp4"),
+            Some(MimeType::new("video", "mp4"))
+        );
     }
 
     #[test]
     fn guess_from_extension_case_insensitive() {
         let db = MimeDatabase::new();
-        assert_eq!(db.guess_from_extension("PNG"), Some(MimeType::new("image", "png")));
-        assert_eq!(db.guess_from_extension("Html"), Some(MimeType::new("text", "html")));
+        assert_eq!(
+            db.guess_from_extension("PNG"),
+            Some(MimeType::new("image", "png"))
+        );
+        assert_eq!(
+            db.guess_from_extension("Html"),
+            Some(MimeType::new("text", "html"))
+        );
     }
 
     #[test]
@@ -527,7 +558,10 @@ mod tests {
     #[test]
     fn association_missing() {
         let db = MimeDatabase::new();
-        assert!(db.get_association(&MimeType::new("text", "plain")).is_none());
+        assert!(
+            db.get_association(&MimeType::new("text", "plain"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -543,7 +577,11 @@ mod tests {
     #[test]
     fn extension_count_at_least_50() {
         let db = MimeDatabase::new();
-        assert!(db.extension_count() >= 50, "expected >= 50, got {}", db.extension_count());
+        assert!(
+            db.extension_count() >= 50,
+            "expected >= 50, got {}",
+            db.extension_count()
+        );
     }
 
     #[test]

@@ -277,48 +277,108 @@ fn detect_features_impl() -> u64 {
     // wrapper macro) due to Rust 2024 edition macro hygiene changes.
 
     // SSE family
-    if is_x86_feature_detected!("sse2") { f |= features::SSE2; }
-    if is_x86_feature_detected!("sse3") { f |= features::SSE3; }
-    if is_x86_feature_detected!("ssse3") { f |= features::SSSE3; }
-    if is_x86_feature_detected!("sse4.1") { f |= features::SSE41; }
-    if is_x86_feature_detected!("sse4.2") { f |= features::SSE42; }
+    if is_x86_feature_detected!("sse2") {
+        f |= features::SSE2;
+    }
+    if is_x86_feature_detected!("sse3") {
+        f |= features::SSE3;
+    }
+    if is_x86_feature_detected!("ssse3") {
+        f |= features::SSSE3;
+    }
+    if is_x86_feature_detected!("sse4.1") {
+        f |= features::SSE41;
+    }
+    if is_x86_feature_detected!("sse4.2") {
+        f |= features::SSE42;
+    }
 
     // AVX family
-    if is_x86_feature_detected!("avx") { f |= features::AVX; }
-    if is_x86_feature_detected!("avx2") { f |= features::AVX2; }
+    if is_x86_feature_detected!("avx") {
+        f |= features::AVX;
+    }
+    if is_x86_feature_detected!("avx2") {
+        f |= features::AVX2;
+    }
 
     // AVX-512
-    if is_x86_feature_detected!("avx512f") { f |= features::AVX512F; }
-    if is_x86_feature_detected!("avx512bw") { f |= features::AVX512BW; }
-    if is_x86_feature_detected!("avx512vl") { f |= features::AVX512VL; }
-    if is_x86_feature_detected!("avx512vbmi") { f |= features::AVX512VBMI; }
-    if is_x86_feature_detected!("avx512vbmi2") { f |= features::AVX512VBMI2; }
-    if is_x86_feature_detected!("avx512vnni") { f |= features::AVX512VNNI; }
-    if is_x86_feature_detected!("avx512vpopcntdq") { f |= features::AVX512VPOPCNTDQ; }
-    if is_x86_feature_detected!("avx512bitalg") { f |= features::AVX512BITALG; }
-    if is_x86_feature_detected!("avx512ifma") { f |= features::AVX512IFMA; }
+    if is_x86_feature_detected!("avx512f") {
+        f |= features::AVX512F;
+    }
+    if is_x86_feature_detected!("avx512bw") {
+        f |= features::AVX512BW;
+    }
+    if is_x86_feature_detected!("avx512vl") {
+        f |= features::AVX512VL;
+    }
+    if is_x86_feature_detected!("avx512vbmi") {
+        f |= features::AVX512VBMI;
+    }
+    if is_x86_feature_detected!("avx512vbmi2") {
+        f |= features::AVX512VBMI2;
+    }
+    if is_x86_feature_detected!("avx512vnni") {
+        f |= features::AVX512VNNI;
+    }
+    if is_x86_feature_detected!("avx512vpopcntdq") {
+        f |= features::AVX512VPOPCNTDQ;
+    }
+    if is_x86_feature_detected!("avx512bitalg") {
+        f |= features::AVX512BITALG;
+    }
+    if is_x86_feature_detected!("avx512ifma") {
+        f |= features::AVX512IFMA;
+    }
 
     // Arithmetic / FP
-    if is_x86_feature_detected!("fma") { f |= features::FMA; }
-    if is_x86_feature_detected!("f16c") { f |= features::F16C; }
+    if is_x86_feature_detected!("fma") {
+        f |= features::FMA;
+    }
+    if is_x86_feature_detected!("f16c") {
+        f |= features::F16C;
+    }
 
     // Bit manipulation
-    if is_x86_feature_detected!("popcnt") { f |= features::POPCNT; }
-    if is_x86_feature_detected!("lzcnt") { f |= features::LZCNT; }
-    if is_x86_feature_detected!("bmi1") { f |= features::BMI1; }
-    if is_x86_feature_detected!("bmi2") { f |= features::BMI2; }
+    if is_x86_feature_detected!("popcnt") {
+        f |= features::POPCNT;
+    }
+    if is_x86_feature_detected!("lzcnt") {
+        f |= features::LZCNT;
+    }
+    if is_x86_feature_detected!("bmi1") {
+        f |= features::BMI1;
+    }
+    if is_x86_feature_detected!("bmi2") {
+        f |= features::BMI2;
+    }
 
     // Crypto / hashing
-    if is_x86_feature_detected!("aes") { f |= features::AES; }
-    if is_x86_feature_detected!("pclmulqdq") { f |= features::PCLMULQDQ; }
-    if is_x86_feature_detected!("vpclmulqdq") { f |= features::VPCLMULQDQ; }
-    if is_x86_feature_detected!("sha") { f |= features::SHA; }
+    if is_x86_feature_detected!("aes") {
+        f |= features::AES;
+    }
+    if is_x86_feature_detected!("pclmulqdq") {
+        f |= features::PCLMULQDQ;
+    }
+    if is_x86_feature_detected!("vpclmulqdq") {
+        f |= features::VPCLMULQDQ;
+    }
+    if is_x86_feature_detected!("sha") {
+        f |= features::SHA;
+    }
 
     // Special
-    if is_x86_feature_detected!("gfni") { f |= features::GFNI; }
-    if is_x86_feature_detected!("vaes") { f |= features::VAES; }
-    if is_x86_feature_detected!("movbe") { f |= features::MOVBE; }
-    if is_x86_feature_detected!("adx") { f |= features::ADX; }
+    if is_x86_feature_detected!("gfni") {
+        f |= features::GFNI;
+    }
+    if is_x86_feature_detected!("vaes") {
+        f |= features::VAES;
+    }
+    if is_x86_feature_detected!("movbe") {
+        f |= features::MOVBE;
+    }
+    if is_x86_feature_detected!("adx") {
+        f |= features::ADX;
+    }
 
     f
 }

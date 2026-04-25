@@ -8,11 +8,11 @@ use liquide_dom::NodeId;
 use liquide_hit_test::engine::{HitTestEngine, HitTestResult};
 use liquide_layout::geometry::{Point, Rect};
 use liquide_layout::tree::{BoxType, LayoutBox, LayoutTree};
+use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
     ComputedStyle, ContentVisibility, Display, Overflow, PointerEvents, Position, Transform,
     TransformOrigin, Visibility,
 };
-use liquide_style_engine::StyleMap;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -108,7 +108,11 @@ fn hit_test_edge_of_child() {
     // Just outside bottom-right
     let result = engine.hit_test(Point::new(300.1, 300.1));
     assert!(result.is_some());
-    assert_eq!(result.unwrap().node, root_node, "should hit root, not child");
+    assert_eq!(
+        result.unwrap().node,
+        root_node,
+        "should hit root, not child"
+    );
 }
 
 // ── Visibility ───────────────────────────────────────────────────────────
@@ -243,7 +247,10 @@ fn hit_test_pointer_events_none_parent_allows_child_hits() {
 
     // Click inside child (absolute: 50+10=60, 50+10=60)
     let result = engine.hit_test(Point::new(70.0, 70.0));
-    assert!(result.is_some(), "child with pointer-events:auto should be hit");
+    assert!(
+        result.is_some(),
+        "child with pointer-events:auto should be hit"
+    );
     assert_eq!(result.unwrap().node, child_node);
 }
 
@@ -456,10 +463,7 @@ fn hit_test_composed_translate_then_scale() {
     let mut styles = default_styles_for(&[root_node, child_node]);
 
     let mut s = ComputedStyle::default();
-    s.transform = vec![
-        Transform::Translate(100.0, 0.0),
-        Transform::Scale(2.0, 2.0),
-    ];
+    s.transform = vec![Transform::Translate(100.0, 0.0), Transform::Scale(2.0, 2.0)];
     styles.insert(child_node, s);
 
     let engine = HitTestEngine::from_owned(tree, styles);
@@ -593,7 +597,10 @@ fn hit_test_scroll_offset_shifts_children() {
     // With scroll_offset=(0, 50), what was at y=0 is now at visual y=-50.
     // Clicking at visual y=25 should correspond to content y=75 (within child).
     let result = engine.hit_test(Point::new(50.0, 25.0));
-    assert!(result.is_some(), "should hit something in scrolled container");
+    assert!(
+        result.is_some(),
+        "should hit something in scrolled container"
+    );
 }
 
 // ── Deeply nested hit testing ────────────────────────────────────────────

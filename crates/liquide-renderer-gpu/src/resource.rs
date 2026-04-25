@@ -193,7 +193,9 @@ mod tests {
     fn sub_mb_allocation_rounds_up() {
         let mut alloc = test_allocator(256);
         // 512 KB should round up to 1 MB, not truncate to 0
-        let id = alloc.allocate(AllocationPurpose::StagingBuffer, 512 * 1024).unwrap();
+        let id = alloc
+            .allocate(AllocationPurpose::StagingBuffer, 512 * 1024)
+            .unwrap();
         assert_eq!(alloc.budget().allocated_mb, 1);
         assert!(alloc.free(&id));
         assert_eq!(alloc.budget().allocated_mb, 0);
@@ -203,7 +205,9 @@ mod tests {
     fn exact_mb_not_over_counted() {
         let mut alloc = test_allocator(256);
         // Exactly 1 MB should still be 1 MB
-        let id = alloc.allocate(AllocationPurpose::TextureAtlas, 1024 * 1024).unwrap();
+        let id = alloc
+            .allocate(AllocationPurpose::TextureAtlas, 1024 * 1024)
+            .unwrap();
         assert_eq!(alloc.budget().allocated_mb, 1);
         assert!(alloc.free(&id));
         assert_eq!(alloc.budget().allocated_mb, 0);
@@ -212,7 +216,9 @@ mod tests {
     #[test]
     fn budget_exceeded() {
         let mut alloc = test_allocator(2);
-        let _id = alloc.allocate(AllocationPurpose::RenderTarget, 2 * 1024 * 1024).unwrap();
+        let _id = alloc
+            .allocate(AllocationPurpose::RenderTarget, 2 * 1024 * 1024)
+            .unwrap();
         // 1 more byte should round up to 1 MB, exceeding the 2 MB budget
         let result = alloc.allocate(AllocationPurpose::StagingBuffer, 1);
         assert!(result.is_err());

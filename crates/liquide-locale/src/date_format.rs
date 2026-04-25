@@ -42,65 +42,162 @@ fn month_names_for_language(lang: &str) -> MonthNames {
     match lang {
         "de" => MonthNames {
             full: [
-                "Januar", "Februar", "M\u{00e4}rz", "April", "Mai", "Juni",
-                "Juli", "August", "September", "Oktober", "November", "Dezember",
+                "Januar",
+                "Februar",
+                "M\u{00e4}rz",
+                "April",
+                "Mai",
+                "Juni",
+                "Juli",
+                "August",
+                "September",
+                "Oktober",
+                "November",
+                "Dezember",
             ],
             abbreviated: [
-                "Jan", "Feb", "M\u{00e4}r", "Apr", "Mai", "Jun",
-                "Jul", "Aug", "Sep", "Okt", "Nov", "Dez",
+                "Jan",
+                "Feb",
+                "M\u{00e4}r",
+                "Apr",
+                "Mai",
+                "Jun",
+                "Jul",
+                "Aug",
+                "Sep",
+                "Okt",
+                "Nov",
+                "Dez",
             ],
         },
         "fr" => MonthNames {
             full: [
-                "janvier", "f\u{00e9}vrier", "mars", "avril", "mai", "juin",
-                "juillet", "ao\u{00fb}t", "septembre", "octobre", "novembre", "d\u{00e9}cembre",
+                "janvier",
+                "f\u{00e9}vrier",
+                "mars",
+                "avril",
+                "mai",
+                "juin",
+                "juillet",
+                "ao\u{00fb}t",
+                "septembre",
+                "octobre",
+                "novembre",
+                "d\u{00e9}cembre",
             ],
             abbreviated: [
-                "janv.", "f\u{00e9}vr.", "mars", "avr.", "mai", "juin",
-                "juil.", "ao\u{00fb}t", "sept.", "oct.", "nov.", "d\u{00e9}c.",
+                "janv.",
+                "f\u{00e9}vr.",
+                "mars",
+                "avr.",
+                "mai",
+                "juin",
+                "juil.",
+                "ao\u{00fb}t",
+                "sept.",
+                "oct.",
+                "nov.",
+                "d\u{00e9}c.",
             ],
         },
         "es" => MonthNames {
             full: [
-                "enero", "febrero", "marzo", "abril", "mayo", "junio",
-                "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+                "enero",
+                "febrero",
+                "marzo",
+                "abril",
+                "mayo",
+                "junio",
+                "julio",
+                "agosto",
+                "septiembre",
+                "octubre",
+                "noviembre",
+                "diciembre",
             ],
             abbreviated: [
-                "ene.", "feb.", "mar.", "abr.", "may.", "jun.",
-                "jul.", "ago.", "sept.", "oct.", "nov.", "dic.",
+                "ene.", "feb.", "mar.", "abr.", "may.", "jun.", "jul.", "ago.", "sept.", "oct.",
+                "nov.", "dic.",
             ],
         },
         "ja" => MonthNames {
             full: [
-                "1\u{6708}", "2\u{6708}", "3\u{6708}", "4\u{6708}", "5\u{6708}", "6\u{6708}",
-                "7\u{6708}", "8\u{6708}", "9\u{6708}", "10\u{6708}", "11\u{6708}", "12\u{6708}",
+                "1\u{6708}",
+                "2\u{6708}",
+                "3\u{6708}",
+                "4\u{6708}",
+                "5\u{6708}",
+                "6\u{6708}",
+                "7\u{6708}",
+                "8\u{6708}",
+                "9\u{6708}",
+                "10\u{6708}",
+                "11\u{6708}",
+                "12\u{6708}",
             ],
             abbreviated: [
-                "1\u{6708}", "2\u{6708}", "3\u{6708}", "4\u{6708}", "5\u{6708}", "6\u{6708}",
-                "7\u{6708}", "8\u{6708}", "9\u{6708}", "10\u{6708}", "11\u{6708}", "12\u{6708}",
+                "1\u{6708}",
+                "2\u{6708}",
+                "3\u{6708}",
+                "4\u{6708}",
+                "5\u{6708}",
+                "6\u{6708}",
+                "7\u{6708}",
+                "8\u{6708}",
+                "9\u{6708}",
+                "10\u{6708}",
+                "11\u{6708}",
+                "12\u{6708}",
             ],
         },
         "zh" => MonthNames {
             full: [
-                "\u{4e00}\u{6708}", "\u{4e8c}\u{6708}", "\u{4e09}\u{6708}",
-                "\u{56db}\u{6708}", "\u{4e94}\u{6708}", "\u{516d}\u{6708}",
-                "\u{4e03}\u{6708}", "\u{516b}\u{6708}", "\u{4e5d}\u{6708}",
-                "\u{5341}\u{6708}", "\u{5341}\u{4e00}\u{6708}", "\u{5341}\u{4e8c}\u{6708}",
+                "\u{4e00}\u{6708}",
+                "\u{4e8c}\u{6708}",
+                "\u{4e09}\u{6708}",
+                "\u{56db}\u{6708}",
+                "\u{4e94}\u{6708}",
+                "\u{516d}\u{6708}",
+                "\u{4e03}\u{6708}",
+                "\u{516b}\u{6708}",
+                "\u{4e5d}\u{6708}",
+                "\u{5341}\u{6708}",
+                "\u{5341}\u{4e00}\u{6708}",
+                "\u{5341}\u{4e8c}\u{6708}",
             ],
             abbreviated: [
-                "1\u{6708}", "2\u{6708}", "3\u{6708}", "4\u{6708}", "5\u{6708}", "6\u{6708}",
-                "7\u{6708}", "8\u{6708}", "9\u{6708}", "10\u{6708}", "11\u{6708}", "12\u{6708}",
+                "1\u{6708}",
+                "2\u{6708}",
+                "3\u{6708}",
+                "4\u{6708}",
+                "5\u{6708}",
+                "6\u{6708}",
+                "7\u{6708}",
+                "8\u{6708}",
+                "9\u{6708}",
+                "10\u{6708}",
+                "11\u{6708}",
+                "12\u{6708}",
             ],
         },
         // English and fallback
         _ => MonthNames {
             full: [
-                "January", "February", "March", "April", "May", "June",
-                "July", "August", "September", "October", "November", "December",
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
             ],
             abbreviated: [
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
             ],
         },
     }
@@ -110,54 +207,85 @@ fn day_names_for_language(lang: &str) -> DayNames {
     match lang {
         "de" => DayNames {
             full: [
-                "Sonntag", "Montag", "Dienstag", "Mittwoch",
-                "Donnerstag", "Freitag", "Samstag",
+                "Sonntag",
+                "Montag",
+                "Dienstag",
+                "Mittwoch",
+                "Donnerstag",
+                "Freitag",
+                "Samstag",
             ],
             abbreviated: ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"],
         },
         "fr" => DayNames {
             full: [
-                "dimanche", "lundi", "mardi", "mercredi",
-                "jeudi", "vendredi", "samedi",
+                "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
             ],
             abbreviated: ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."],
         },
         "es" => DayNames {
             full: [
-                "domingo", "lunes", "martes", "mi\u{00e9}rcoles",
-                "jueves", "viernes", "s\u{00e1}bado",
+                "domingo",
+                "lunes",
+                "martes",
+                "mi\u{00e9}rcoles",
+                "jueves",
+                "viernes",
+                "s\u{00e1}bado",
             ],
-            abbreviated: ["dom.", "lun.", "mar.", "mi\u{00e9}.", "jue.", "vie.", "s\u{00e1}b."],
+            abbreviated: [
+                "dom.",
+                "lun.",
+                "mar.",
+                "mi\u{00e9}.",
+                "jue.",
+                "vie.",
+                "s\u{00e1}b.",
+            ],
         },
         "ja" => DayNames {
             full: [
-                "\u{65e5}\u{66dc}\u{65e5}", "\u{6708}\u{66dc}\u{65e5}",
-                "\u{706b}\u{66dc}\u{65e5}", "\u{6c34}\u{66dc}\u{65e5}",
-                "\u{6728}\u{66dc}\u{65e5}", "\u{91d1}\u{66dc}\u{65e5}",
+                "\u{65e5}\u{66dc}\u{65e5}",
+                "\u{6708}\u{66dc}\u{65e5}",
+                "\u{706b}\u{66dc}\u{65e5}",
+                "\u{6c34}\u{66dc}\u{65e5}",
+                "\u{6728}\u{66dc}\u{65e5}",
+                "\u{91d1}\u{66dc}\u{65e5}",
                 "\u{571f}\u{66dc}\u{65e5}",
             ],
             abbreviated: [
-                "\u{65e5}", "\u{6708}", "\u{706b}", "\u{6c34}",
-                "\u{6728}", "\u{91d1}", "\u{571f}",
+                "\u{65e5}", "\u{6708}", "\u{706b}", "\u{6c34}", "\u{6728}", "\u{91d1}", "\u{571f}",
             ],
         },
         "zh" => DayNames {
             full: [
-                "\u{661f}\u{671f}\u{65e5}", "\u{661f}\u{671f}\u{4e00}",
-                "\u{661f}\u{671f}\u{4e8c}", "\u{661f}\u{671f}\u{4e09}",
-                "\u{661f}\u{671f}\u{56db}", "\u{661f}\u{671f}\u{4e94}",
+                "\u{661f}\u{671f}\u{65e5}",
+                "\u{661f}\u{671f}\u{4e00}",
+                "\u{661f}\u{671f}\u{4e8c}",
+                "\u{661f}\u{671f}\u{4e09}",
+                "\u{661f}\u{671f}\u{56db}",
+                "\u{661f}\u{671f}\u{4e94}",
                 "\u{661f}\u{671f}\u{516d}",
             ],
             abbreviated: [
-                "\u{5468}\u{65e5}", "\u{5468}\u{4e00}", "\u{5468}\u{4e8c}",
-                "\u{5468}\u{4e09}", "\u{5468}\u{56db}", "\u{5468}\u{4e94}",
+                "\u{5468}\u{65e5}",
+                "\u{5468}\u{4e00}",
+                "\u{5468}\u{4e8c}",
+                "\u{5468}\u{4e09}",
+                "\u{5468}\u{56db}",
+                "\u{5468}\u{4e94}",
                 "\u{5468}\u{516d}",
             ],
         },
         _ => DayNames {
             full: [
-                "Sunday", "Monday", "Tuesday", "Wednesday",
-                "Thursday", "Friday", "Saturday",
+                "Sunday",
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
             ],
             abbreviated: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
         },
@@ -208,7 +336,7 @@ fn date_order(locale: &Locale) -> (char, char, char) {
         "en" => {
             match locale.territory.as_deref() {
                 Some("US") | None => ('M', 'D', 'Y'),
-                _ => ('D', 'M', 'Y'),  // en_GB etc.
+                _ => ('D', 'M', 'Y'), // en_GB etc.
             }
         }
         // Day-month-year: most of the world
@@ -230,12 +358,10 @@ pub fn format_date(year: i32, month: u32, day: u32, locale: &Locale, style: Date
             let sep = match locale.language.as_str() {
                 "ja" | "zh" | "ko" => "/",
                 "de" | "fr" | "es" | "it" | "pt" | "ru" | "pl" | "nl" => ".",
-                "en" => {
-                    match locale.territory.as_deref() {
-                        Some("US") | None => "/",
-                        _ => "/",
-                    }
-                }
+                "en" => match locale.territory.as_deref() {
+                    Some("US") | None => "/",
+                    _ => "/",
+                },
                 _ => "/",
             };
             match order {
@@ -253,23 +379,23 @@ pub fn format_date(year: i32, month: u32, day: u32, locale: &Locale, style: Date
 
             match locale.language.as_str() {
                 "ja" | "zh" => {
-                    format!("{}{}{}{}",
+                    format!(
+                        "{}{}{}{}",
                         year,
                         "\u{5e74}",
                         abbr,
-                        format!("{}\u{65e5}", day))
+                        format!("{}\u{65e5}", day)
+                    )
                 }
                 "de" => format!("{}. {} {}", day, abbr, year),
                 "fr" => format!("{} {} {}", day, abbr, year),
                 "es" => format!("{} {} {}", day, abbr, year),
-                _ => {
-                    match order {
-                        ('M', 'D', 'Y') => format!("{} {}, {}", abbr, day, year),
-                        ('D', 'M', 'Y') => format!("{} {} {}", day, abbr, year),
-                        ('Y', 'M', 'D') => format!("{} {} {}", year, abbr, day),
-                        _ => format!("{} {}, {}", abbr, day, year),
-                    }
-                }
+                _ => match order {
+                    ('M', 'D', 'Y') => format!("{} {}, {}", abbr, day, year),
+                    ('D', 'M', 'Y') => format!("{} {} {}", day, abbr, year),
+                    ('Y', 'M', 'D') => format!("{} {} {}", year, abbr, day),
+                    _ => format!("{} {}, {}", abbr, day, year),
+                },
             }
         }
         DateStyle::Long => {
@@ -280,29 +406,33 @@ pub fn format_date(year: i32, month: u32, day: u32, locale: &Locale, style: Date
 
             match locale.language.as_str() {
                 "ja" | "zh" => {
-                    format!("{}{}{}{}{}{}",
-                        year, "\u{5e74}",
-                        month, "\u{6708}",
-                        day, "\u{65e5}")
+                    format!(
+                        "{}{}{}{}{}{}",
+                        year, "\u{5e74}", month, "\u{6708}", day, "\u{65e5}"
+                    )
                 }
                 "de" => format!("{}. {} {}", day, full, year),
                 "fr" => format!("{} {} {}", day, full, year),
                 "es" => format!("{} de {} de {}", day, full, year),
-                _ => {
-                    match order {
-                        ('M', 'D', 'Y') => format!("{} {}, {}", full, day, year),
-                        ('D', 'M', 'Y') => format!("{} {} {}", day, full, year),
-                        ('Y', 'M', 'D') => format!("{} {} {}", year, full, day),
-                        _ => format!("{} {}, {}", full, day, year),
-                    }
-                }
+                _ => match order {
+                    ('M', 'D', 'Y') => format!("{} {}, {}", full, day, year),
+                    ('D', 'M', 'Y') => format!("{} {} {}", day, full, year),
+                    ('Y', 'M', 'D') => format!("{} {} {}", year, full, day),
+                    _ => format!("{} {}, {}", full, day, year),
+                },
             }
         }
     }
 }
 
 /// Format a time according to locale conventions.
-pub fn format_time(hour: u32, minute: u32, second: u32, locale: &Locale, style: TimeStyle) -> String {
+pub fn format_time(
+    hour: u32,
+    minute: u32,
+    second: u32,
+    locale: &Locale,
+    style: TimeStyle,
+) -> String {
     match style {
         TimeStyle::H24 => {
             format!("{:02}:{:02}", hour, minute)

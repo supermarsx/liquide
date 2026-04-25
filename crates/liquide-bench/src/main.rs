@@ -50,11 +50,7 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let filter = if cli.verbose {
-        "debug"
-    } else {
-        "info"
-    };
+    let filter = if cli.verbose { "debug" } else { "info" };
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -69,8 +65,7 @@ fn main() -> Result<()> {
 fn run(cli: Cli) -> Result<()> {
     info!(suite = %cli.suite, network = %cli.network, "Starting liquide-bench");
 
-    let suite = SuiteSelection::from_name(&cli.suite)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let suite = SuiteSelection::from_name(&cli.suite).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let config = BenchConfig {
         suite,

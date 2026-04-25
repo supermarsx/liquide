@@ -188,7 +188,10 @@ impl ProfileStore {
 
     /// List all profile names.
     pub fn names(&self) -> Vec<&str> {
-        self.profiles.iter().map(|p| p.profile.name.as_str()).collect()
+        self.profiles
+            .iter()
+            .map(|p| p.profile.name.as_str())
+            .collect()
     }
 
     /// Number of stored profiles.

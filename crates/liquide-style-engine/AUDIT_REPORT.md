@@ -3,6 +3,8 @@
 **Scope:** All 13 source files in `crates/liquide-style-engine/src/`
 **Total lines:** ~13,900
 
+**Status note (Apr 24 2026):** This audit predates the t13 CSS repair wave. The summary counts below remain the historical March baseline, but the support claims for `revert-layer`, `all: revert`, `:dir()`, `@scope`, import/supports/media handling, and multi-layer background preservation have been corrected inline where the t13 test surface now covers them.
+
 ---
 
 ## 1. TODO / FIXME / HACK / Stub Comments
@@ -85,8 +87,8 @@
 
 | # | File | Line | Description |
 |---|------|------|-------------|
-| 1 | engine.rs | ~963–967 | **`revert` / `revert-layer` not implemented** — both fall back to `unset` behavior. Per CSS Cascading Level 5, `revert` should roll back to the previous origin and `revert-layer` to the previous cascade layer. |
-| 2 | engine.rs | ~4247–4259 | **`all: revert` treated as `all: initial`** — `*style = ComputedStyle::default()` nukes inherited values; correct behavior for `all: unset` requires `inherit_from(parent)` for inherited properties. |
+| 1 | engine.rs | ~963–967 | **`revert-layer` is no longer fully missing, but broader revert parity is still incomplete** — t13-e5 landed lower-origin/layer fallback and the validated `all: revert` path, but the crate still does not claim full CSS-wide keyword parity across every edge case. |
+| 2 | engine.rs | ~4247–4259 | **The old `all: revert`/`all: initial` reset bug was fixed in t13-e5** — keep this row as a historical reminder that broader css-wide keyword parity still needs ongoing regression coverage. |
 | 3 | cascade.rs | ~268–275 | **`strip_important()` only inspects `Keyword` variant** — `!important` on color, length, or string values is not detected, meaning those declarations won't participate in the important cascade level correctly. |
 | 4 | engine.rs | (structural) | **No `@layer` conflict resolution between competing layers** — `layer_order` is tracked on `PreparedRule` but if two rules in different layers match with the same specificity, the engine relies only on `source_order` rather than the explicit layer ordering from `@layer`. `CascadePriority` does include `layer_order`, but it's always set to the global insertion order, not the `@layer` declaration order. |
 | 5 | engine.rs | (structural) | **`:host` / `::slotted` styles don't participate in a separate shadow-origin cascade** — shadow DOM styles are scope-filtered but not placed in a distinct cascade origin as specified by CSS Scoping. |
@@ -132,7 +134,7 @@
 | 7 | selector.rs | (structural) | **No `::backdrop` pseudo-element.** |
 | 8 | selector.rs | (structural) | **No `::cue` / `::cue-region` pseudo-elements.** |
 | 9 | selector.rs | (structural) | **No `::file-selector-button` pseudo-element.** |
-| 10 | selector.rs | (structural) | **No `:dir()` pseudo-class.** |
+| 10 | selector.rs | (structural) | **`:dir()` is no longer entirely missing** — inherited direction matching is covered after t13-e1, but broader selector-surface gaps still remain around unimplemented pseudo-classes/elements. |
 | 11 | selector.rs | (structural) | **No `:is()` / `:where()` specificity correctly handles forgiving selector lists** — parsing failures silently produce empty vectors. |
 | 12 | selector.rs | (structural) | **No `:defined`, `:any-link`, `:local-link`, `:target-within`, `:scope`, `:current`, `:past`, `:future` pseudo-classes.** |
 | 13 | selector.rs | (structural) | **No `:playing` / `:paused` / `:seeking` / `:buffering` / `:stalled` media pseudo-classes.** |
@@ -147,7 +149,7 @@
 | 2 | engine.rs | **`@page` / `@page` margin at-rules not supported.** |
 | 3 | engine.rs | **`@namespace` not supported.** |
 | 4 | engine.rs | **`@charset` not handled (but typically unnecessary).** |
-| 5 | engine.rs | **`@scope` (CSS Cascading Level 6) not supported.** |
+| 5 | engine.rs | **`@scope` remains partial rather than unsupported** — t13-e4 compiles scope-start/scope-end bounds and enforces the structural boundary checks, but the full scoping model is still incomplete. |
 | 6 | engine.rs | **`@starting-style` not supported.** |
 | 7 | engine.rs | **`@position-try` not supported** — anchor positioning fallbacks. |
 | 8 | engine.rs | **`@view-transition` not supported.** |
@@ -155,17 +157,17 @@
 ### 6e. Media Query Features
 | # | File | Line | Description |
 |---|------|------|-------------|
-| 1 | engine.rs | ~5730–5760 | **Only 5 media features supported**: `min-width`, `max-width`, `min-height`, `max-height`, `prefers-color-scheme`. Missing: `orientation`, `aspect-ratio`, `resolution`, `color`, `color-gamut`, `pointer`, `hover`, `prefers-reduced-motion`, `prefers-contrast`, `forced-colors`, `scripting`, `prefers-reduced-data`, `prefers-reduced-transparency`, `display-mode`, `dynamic-range`, `video-dynamic-range`, `update`, `overflow-block/inline`. |
-| 2 | engine.rs | ~5753 | **`prefers-color-scheme` always returns `"light"`** — no dark mode support. |
-| 3 | engine.rs | ~5740 | **`or` combinator in media queries not supported** — only `and` and comma (or-list) are handled. |
-| 4 | engine.rs | (structural) | **Range syntax for media queries not supported** — `(width > 768px)` / `(400px <= width <= 1200px)` not handled; only prefix `min-`/`max-` form. |
+| 1 | engine.rs | ~5730–5760 | **Media support is broader than this audit originally reported, but still far from complete** — t13-e4 covers `prefers-color-scheme`, `prefers-reduced-motion`, `hover`, `pointer`, `any-hover`, `any-pointer`, textual `or`, and range syntax alongside the viewport features, while higher-end media features remain missing. |
+| 2 | engine.rs | ~5753 | **`prefers-color-scheme` no longer hardcodes `light`** — the engine now follows the configured preference, but only `light`/`dark` are surfaced. |
+| 3 | engine.rs | ~5740 | **Textual `or` media combinators are now supported** — remaining condition gaps are the unsupported media features themselves, not the `or` syntax. |
+| 4 | engine.rs | (structural) | **Range syntax is no longer entirely unsupported** — t13-e4 added the validated comparison forms, but that does not imply full MQ4/MQ5 feature coverage. |
 
 ### 6f. Shorthand Decomposition
 | # | File | Line | Description |
 |---|------|------|-------------|
-| 1 | shorthand.rs | ~788 | **`transition` shorthand stub** — entire value passed as `transition-property`. Duration, timing-function, delay are not decomposed. |
+| 1 | shorthand.rs | ~788 | **`transition` shorthand is still not fully decomposed, but it is no longer token-blind** — t13-e3 preserved function-safe comma splitting and t13-e5 validated `transition-property: all` for the current numeric runtime subset. |
 | 2 | shorthand.rs | ~793 | **`animation` shorthand stub** — entire value passed as `animation-name`. Duration, timing-function, delay, iteration-count, direction, fill-mode, play-state are not decomposed. |
-| 3 | shorthand.rs | ~728 | **`background` shorthand incomplete** — only color/gradient/none/transparent extracted; position, size, repeat, attachment, origin, clip, and multiple backgrounds not handled. |
+| 3 | shorthand.rs | ~728 | **`background` shorthand remains incomplete, but layered images are no longer dropped outright** — t13-e3 preserves layered background tokens and image lists while full per-layer decomposition/rendering still remains incomplete. |
 | 4 | shorthand.rs | ~741 | **`font` shorthand path in `expand_shorthand`** is separate from the comprehensive parser in `engine.rs:apply_single_property` — the shorthand expander just passes the whole value as `font-size`, while the engine has a better parser. This dual-path risks inconsistency. |
 | 5 | shorthand.rs | ~326 | **`border-image` shorthand** — only `"none"` or full value as `border-image-source`. |
 | 6 | shorthand.rs | ~348 | **`mask` shorthand** — only `"none"` or full value as `mask-image`. |
@@ -183,7 +185,7 @@
 |---|------|-------------|
 | 1 | engine.rs | **`@supports` selector function (`selector()`)** — `evaluate_supports_condition()` handles property checks but not `selector()` queries. |
 | 2 | engine.rs | **Logical property shorthand two-value syntax** — `margin-inline: 10px 20px` (two-value) is not parsed; only single values. |
-| 3 | engine.rs | **Multiple backgrounds** — only one background layer is supported. |
+| 3 | engine.rs | **Multiple backgrounds are now preserved through parsing/expansion, but full per-layer rendering is still incomplete.** |
 | 4 | engine.rs | **Multiple box-shadows** — `box-shadow` is stored as a single `BoxShadow` optional, not a list. |
 | 5 | engine.rs | **Nesting (`&` selector)** — CSS Nesting Module not supported. |
 | 6 | computed.rs | **`initial-letter`** — field exists but no known property handler in `apply_single_property()`. |
@@ -205,4 +207,4 @@
 | Cascade / specificity gaps | 7 |
 | Missing CSS features | ~55+ individual items |
 
-**Overall assessment:** The engine provides broad coverage (~200+ CSS properties, cascade levels, specificity, inheritance, variables, calc, container queries, shadow DOM) but has significant depth gaps in color parsing (hex-only), shorthand decomposition (`transition`/`animation`/`mask`/`border-image`/`offset` are stubs), media query features (5 of ~30+), `revert`/`revert-layer` semantics, selector coverage (missing many Level 4 pseudo-classes/elements), and `counter()`/`attr()` resolution (placeholder-only).
+**Overall assessment:** The engine provides broad coverage (~200+ CSS properties, cascade levels, specificity, inheritance, variables, calc, container queries, shadow DOM), and t13 materially improved selector safety, import/scope handling, media fail-closed behavior, layered shorthand preservation, and custom-property invalidation. The remaining depth gaps are still real: shorthand decomposition is incomplete (`transition`/`animation`/`mask`/`border-image`/`offset`), media-query feature breadth is still limited, selector coverage still omits many Level 4 pseudo-classes/elements, and `counter()`/`attr()` resolution remains placeholder-only.

@@ -10,8 +10,8 @@ use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
 
 use crate::codec;
 
@@ -45,10 +45,7 @@ impl TlsTcpTransport {
     }
 
     /// Wrap an existing client-side TLS stream.
-    pub fn from_stream(
-        stream: TlsStream<TcpStream>,
-        peer: SocketAddr,
-    ) -> crate::Result<Self> {
+    pub fn from_stream(stream: TlsStream<TcpStream>, peer: SocketAddr) -> crate::Result<Self> {
         let local = stream.get_ref().0.local_addr().ok();
         let (reader, writer) = tokio::io::split(stream);
         Ok(Self {

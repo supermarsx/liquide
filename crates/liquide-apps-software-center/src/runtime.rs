@@ -2,9 +2,11 @@
 
 use crate::catalog::Catalog;
 use crate::config::SoftwareCenterConfig;
-use crate::install::{InstallAction, InstallOperation, InstallQueue};
+use crate::install::{
+    CommandSpec, InstallAction, InstallOperation, InstallQueue, PackageSource, build_command,
+};
 use crate::package::PackageInfo;
-use crate::repository::RepoManager;
+use crate::repository::{RepoManager, RepoType};
 use crate::update::UpdateManager;
 
 /// The software center runtime coordinating all subsystems.
@@ -39,29 +41,124 @@ impl SoftwareCenterRuntime {
 
     /// Get the catalog.
     #[must_use]
-    pub fn catalog(&self) -> &Catalog { &self.catalog }
+    pub fn catalog(&self) -> &Catalog {
+        &self.catalog
+    }
 
     /// Get mutable access to the catalog.
-    pub fn catalog_mut(&mut self) -> &mut Catalog { &mut self.catalog }
+    pub fn catalog_mut(&mut self) -> &mut Catalog {
+        &mut self.catalog
+    }
 
     // ---- Repos ----
 
     /// Get the repository manager.
     #[must_use]
-    pub fn repos(&self) -> &RepoManager { &self.repos }
+    pub fn repos(&self) -> &RepoManager {
+        &self.repos
+    }
 
     /// Get mutable access to the repository manager.
-    pub fn repos_mut(&mut self) -> &mut RepoManager { &mut self.repos }
+    pub fn repos_mut(&mut self) -> &mut RepoManager {
+        &mut self.repos
+    }
+
+    /// Fetch raw repository metadata over HTTP.
+    pub fn fetch_repository_metadata(&self, repo_id: &str) -> crate::Result<String> {
+        let repo = self
+            .repos
+            .find(repo_id)
+            .ok_or_else(|| crate::SoftwareCenterError::RepositoryNotFound(repo_id.into()))?;
+
+        let client = reqwest::blocking::Client::builder()
+            .user_agent("liquide-software-center/0.1")
+            .build()
+            .map_err(|e| crate::SoftwareCenterError::Transport(e.to_string()))?;
+
+        let response = client
+            .get(&repo.url)
+            .send()
+            .map_err(|e| crate::SoftwareCenterError::Transport(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| crate::SoftwareCenterError::Transport(e.to_string()))?;
+
+        response
+            .text()
+            .map_err(|e| crate::SoftwareCenterError::Transport(e.to_string()))
+    }
+
+    /// Resolve the package backend from repository type + current platform.
+    pub fn package_source(&self, package_id: &str) -> crate::Result<PackageSource> {
+        let pkg = self
+            .catalog
+            .find(package_id)
+            .ok_or_else(|| crate::SoftwareCenterError::PackageNotFound(package_id.into()))?;
+        let repo = self.repos.find(&pkg.repository_id).ok_or_else(|| {
+            crate::SoftwareCenterError::RepositoryNotFound(pkg.repository_id.clone())
+        })?;
+
+        match repo.repo_type {
+            RepoType::Flatpak => Ok(PackageSource::Flatpak),
+            _ => {
+                #[cfg(target_os = "windows")]
+                {
+                    Ok(PackageSource::Winget)
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    Ok(PackageSource::Apt)
+                }
+                #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+                {
+                    Err(crate::SoftwareCenterError::UnsupportedBackend(format!(
+                        "no package backend configured for target {}",
+                        std::env::consts::OS
+                    )))
+                }
+            }
+        }
+    }
+
+    /// Build the external command used to install a package.
+    pub fn install_command(&self, package_id: &str) -> crate::Result<CommandSpec> {
+        Ok(build_command(
+            InstallAction::Install,
+            self.package_source(package_id)?,
+            package_id,
+        ))
+    }
+
+    /// Build the external command used to remove a package.
+    pub fn remove_command(&self, package_id: &str) -> crate::Result<CommandSpec> {
+        Ok(build_command(
+            InstallAction::Remove,
+            self.package_source(package_id)?,
+            package_id,
+        ))
+    }
+
+    /// Build the external command used to update a package.
+    pub fn update_command(&self, package_id: &str) -> crate::Result<CommandSpec> {
+        Ok(build_command(
+            InstallAction::Update,
+            self.package_source(package_id)?,
+            package_id,
+        ))
+    }
 
     // ---- Install/Remove ----
 
     /// Install a package by ID.
     pub fn install(&mut self, package_id: &str) -> crate::Result<()> {
-        let pkg = self.catalog.find(package_id)
+        let pkg = self
+            .catalog
+            .find(package_id)
             .ok_or_else(|| crate::SoftwareCenterError::PackageNotFound(package_id.into()))?;
 
         if pkg.installed {
-            return Err(crate::SoftwareCenterError::AlreadyInstalled(package_id.into()));
+            return Err(crate::SoftwareCenterError::AlreadyInstalled(
+                package_id.into(),
+            ));
         }
 
         let op = InstallOperation::new(&pkg.id, &pkg.name, InstallAction::Install);
@@ -71,7 +168,9 @@ impl SoftwareCenterRuntime {
 
     /// Remove a package by ID.
     pub fn remove(&mut self, package_id: &str) -> crate::Result<()> {
-        let pkg = self.catalog.find(package_id)
+        let pkg = self
+            .catalog
+            .find(package_id)
             .ok_or_else(|| crate::SoftwareCenterError::PackageNotFound(package_id.into()))?;
 
         if !pkg.installed {
@@ -85,7 +184,9 @@ impl SoftwareCenterRuntime {
 
     /// Update a package by ID.
     pub fn update_package(&mut self, package_id: &str) -> crate::Result<()> {
-        let pkg = self.catalog.find(package_id)
+        let pkg = self
+            .catalog
+            .find(package_id)
             .ok_or_else(|| crate::SoftwareCenterError::PackageNotFound(package_id.into()))?;
 
         if !pkg.installed {
@@ -101,23 +202,33 @@ impl SoftwareCenterRuntime {
 
     /// Get the install queue.
     #[must_use]
-    pub fn queue(&self) -> &InstallQueue { &self.queue }
+    pub fn queue(&self) -> &InstallQueue {
+        &self.queue
+    }
 
     /// Get mutable access to the install queue.
-    pub fn queue_mut(&mut self) -> &mut InstallQueue { &mut self.queue }
+    pub fn queue_mut(&mut self) -> &mut InstallQueue {
+        &mut self.queue
+    }
 
     // ---- Updates ----
 
     /// Get the update manager.
     #[must_use]
-    pub fn updates(&self) -> &UpdateManager { &self.updates }
+    pub fn updates(&self) -> &UpdateManager {
+        &self.updates
+    }
 
     /// Get mutable access to the update manager.
-    pub fn updates_mut(&mut self) -> &mut UpdateManager { &mut self.updates }
+    pub fn updates_mut(&mut self) -> &mut UpdateManager {
+        &mut self.updates
+    }
 
     // ---- Config ----
 
     /// Get the configuration.
     #[must_use]
-    pub fn config(&self) -> &SoftwareCenterConfig { &self.config }
+    pub fn config(&self) -> &SoftwareCenterConfig {
+        &self.config
+    }
 }

@@ -194,8 +194,8 @@ fn test_negotiate_preferred_codec() {
         },
     ];
     let negotiator = CodecNegotiator::new(caps);
-    let result = negotiator
-        .negotiate_preferred(&[VideoCodec::H264, VideoCodec::H265], VideoCodec::H264);
+    let result =
+        negotiator.negotiate_preferred(&[VideoCodec::H264, VideoCodec::H265], VideoCodec::H264);
     assert!(result.is_some());
     assert_eq!(result.unwrap().codec, VideoCodec::H264);
 }

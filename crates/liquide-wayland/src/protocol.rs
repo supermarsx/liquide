@@ -583,11 +583,7 @@ mod tests {
 
     #[test]
     fn message_encode_fd_arg() {
-        let msg = WlMessage::new(
-            ObjectId(1),
-            0,
-            vec![Arg::Int(1), Arg::Fd, Arg::Uint(2)],
-        );
+        let msg = WlMessage::new(ObjectId(1), 0, vec![Arg::Int(1), Arg::Fd, Arg::Uint(2)]);
         let bytes = msg.encode();
         // Fd takes 0 bytes on wire
         assert_eq!(bytes.len(), 8 + 4 + 0 + 4);

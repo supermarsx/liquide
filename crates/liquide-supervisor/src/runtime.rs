@@ -85,8 +85,7 @@ impl SupervisorRuntime {
         };
 
         // Recompute available resources.
-        let sessions: Vec<&SessionRecord> =
-            self.session_registry.all_sessions().values().collect();
+        let sessions: Vec<&SessionRecord> = self.session_registry.all_sessions().values().collect();
         self.admission_controller
             .compute_available_resources(&sessions);
 
@@ -126,21 +125,18 @@ impl SupervisorRuntime {
 
         let result = self.spawner.spawn_session(&request)?;
 
-        let mut record = SessionRecord::new(
-            session_id.clone(),
-            user.to_string(),
-            result.pid,
-            budget,
-        );
+        let mut record =
+            SessionRecord::new(session_id.clone(), user.to_string(), result.pid, budget);
         record.state = SessionState::Running;
 
         self.heartbeat_tracker.register(session_id.clone());
         self.session_registry.register_session(record);
 
-        self.audit_events.push(SupervisorAuditEvent::SessionSpawned {
-            session_id: session_id.clone(),
-            user: user.to_string(),
-        });
+        self.audit_events
+            .push(SupervisorAuditEvent::SessionSpawned {
+                session_id: session_id.clone(),
+                user: user.to_string(),
+            });
 
         Ok(session_id)
     }
@@ -319,9 +315,7 @@ impl SupervisorRuntime {
                             Err(e) => ControlResponse::Error(e.to_string()),
                         }
                     }
-                    None => {
-                        ControlResponse::Error(format!("session not found: {}", session_id))
-                    }
+                    None => ControlResponse::Error(format!("session not found: {}", session_id)),
                 }
             }
             ControlCommand::LockSession { session_id } => {
@@ -330,13 +324,10 @@ impl SupervisorRuntime {
                         s.state = SessionState::Locked;
                         ControlResponse::Ok
                     }
-                    Some(s) => ControlResponse::Error(format!(
-                        "cannot lock session in state {}",
-                        s.state
-                    )),
-                    None => {
-                        ControlResponse::Error(format!("session not found: {}", session_id))
+                    Some(s) => {
+                        ControlResponse::Error(format!("cannot lock session in state {}", s.state))
                     }
+                    None => ControlResponse::Error(format!("session not found: {}", session_id)),
                 }
             }
             ControlCommand::UnlockSession { session_id } => {
@@ -349,9 +340,7 @@ impl SupervisorRuntime {
                         "cannot unlock session in state {}",
                         s.state
                     )),
-                    None => {
-                        ControlResponse::Error(format!("session not found: {}", session_id))
-                    }
+                    None => ControlResponse::Error(format!("session not found: {}", session_id)),
                 }
             }
             ControlCommand::SuspendSession { session_id } => {
@@ -364,9 +353,7 @@ impl SupervisorRuntime {
                         "cannot suspend session in state {}",
                         s.state
                     )),
-                    None => {
-                        ControlResponse::Error(format!("session not found: {}", session_id))
-                    }
+                    None => ControlResponse::Error(format!("session not found: {}", session_id)),
                 }
             }
             ControlCommand::ResumeSession { session_id } => {
@@ -379,14 +366,11 @@ impl SupervisorRuntime {
                         "cannot resume session in state {}",
                         s.state
                     )),
-                    None => {
-                        ControlResponse::Error(format!("session not found: {}", session_id))
-                    }
+                    None => ControlResponse::Error(format!("session not found: {}", session_id)),
                 }
             }
             ControlCommand::SetPolicy { .. } => {
-                self.audit_events
-                    .push(SupervisorAuditEvent::PolicyUpdated);
+                self.audit_events.push(SupervisorAuditEvent::PolicyUpdated);
                 ControlResponse::Ok
             }
             ControlCommand::GetStatus => ControlResponse::Status(self.status()),

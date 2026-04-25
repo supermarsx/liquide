@@ -107,12 +107,12 @@ impl CrashHandler {
     pub fn classify_crash(signal: Option<i32>, exit_code: Option<i32>) -> CrashCategory {
         if let Some(sig) = signal {
             match sig {
-                11 => CrashCategory::Segfault,       // SIGSEGV
-                6 => CrashCategory::Abort,            // SIGABRT
-                7 => CrashCategory::BusError,         // SIGBUS
-                8 => CrashCategory::FloatingPoint,    // SIGFPE
+                11 => CrashCategory::Segfault,          // SIGSEGV
+                6 => CrashCategory::Abort,              // SIGABRT
+                7 => CrashCategory::BusError,           // SIGBUS
+                8 => CrashCategory::FloatingPoint,      // SIGFPE
                 4 => CrashCategory::IllegalInstruction, // SIGILL
-                9 => CrashCategory::OomKill,          // SIGKILL (often OOM)
+                9 => CrashCategory::OomKill,            // SIGKILL (often OOM)
                 _ => CrashCategory::Unknown,
             }
         } else if let Some(code) = exit_code {

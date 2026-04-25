@@ -103,8 +103,7 @@ fn config_default_status_bar_height() {
 fn config_serde_json_roundtrip() {
     let original = ShellConfig::default();
     let json = serde_json::to_string(&original).expect("serialize to JSON");
-    let restored: ShellConfig =
-        serde_json::from_str(&json).expect("deserialize from JSON");
+    let restored: ShellConfig = serde_json::from_str(&json).expect("deserialize from JSON");
 
     // Compare key fields to verify the roundtrip preserved data.
     assert_eq!(restored.dock.icon_size, original.dock.icon_size);

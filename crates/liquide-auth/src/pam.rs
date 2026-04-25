@@ -4,9 +4,9 @@
 //! for password verification. This avoids a direct `libpam` FFI dependency
 //! while still leveraging the system PAM stack.
 
-use crate::provider::{AuthProvider, AuthResult, Credentials};
 #[cfg(unix)]
 use crate::AuthError;
+use crate::provider::{AuthProvider, AuthResult, Credentials};
 
 /// PAM-based authentication provider for local Unix accounts.
 pub struct PamProvider {
@@ -45,10 +45,7 @@ impl PamProvider {
     /// and exits 0 on success. It is the standard mechanism used by PAM's
     /// `pam_unix` module.
     #[cfg(unix)]
-    fn verify_password_unix(
-        username: &str,
-        password: &str,
-    ) -> std::result::Result<bool, String> {
+    fn verify_password_unix(username: &str, password: &str) -> std::result::Result<bool, String> {
         use std::io::Write;
         use std::process::{Command, Stdio};
 
@@ -192,12 +189,8 @@ mod tests {
             username: "u".into(),
             password: "p".into(),
         }));
-        assert!(!p.supports(&Credentials::OidcToken {
-            token: "t".into(),
-        }));
-        assert!(!p.supports(&Credentials::Certificate {
-            der: vec![],
-        }));
+        assert!(!p.supports(&Credentials::OidcToken { token: "t".into() }));
+        assert!(!p.supports(&Credentials::Certificate { der: vec![] }));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! the tiling engine generates non-overlapping layouts.
 
 use liquide_compositor::geometry::Rect;
-use liquide_shell::{Shell, ShellAction, SnapZone, TilingEngine, TilingConfig, TilingLayoutKind};
+use liquide_shell::{Shell, ShellAction, SnapZone, TilingConfig, TilingEngine, TilingLayoutKind};
 
 fn new_shell() -> Shell {
     Shell::new(1920.0, 1080.0)
@@ -37,7 +37,8 @@ fn tile_left_positions_window_on_left_half() {
     assert!(
         (win.bounds.height - work.height).abs() < 2.0,
         "tiled left window height should fill work area height ({}, got {})",
-        work.height, win.bounds.height
+        work.height,
+        win.bounds.height
     );
 }
 
@@ -57,7 +58,8 @@ fn tile_right_positions_window_on_right_half() {
     assert!(
         (win.bounds.x - (work.x + half_w)).abs() < 2.0,
         "tiled right window X should be near {}, got {}",
-        work.x + half_w, win.bounds.x
+        work.x + half_w,
+        win.bounds.x
     );
     assert!(
         (win.bounds.width - half_w).abs() < 2.0,
@@ -213,7 +215,10 @@ fn tiling_engine_spiral_layout() {
     // All rects should be within screen
     for (i, r) in rects.iter().enumerate() {
         assert!(r.width > 0.0, "spiral rect {i} should have positive width");
-        assert!(r.height > 0.0, "spiral rect {i} should have positive height");
+        assert!(
+            r.height > 0.0,
+            "spiral rect {i} should have positive height"
+        );
         assert!(
             r.x + r.width <= screen.width + 1.0,
             "spiral rect {i} should fit in screen"
@@ -257,12 +262,14 @@ fn tiling_engine_three_column() {
     assert!(
         rects[1].x < rects[0].x,
         "left column (idx 1) should be left of center (idx 0): {} vs {}",
-        rects[1].x, rects[0].x
+        rects[1].x,
+        rects[0].x
     );
     assert!(
         rects[0].x < rects[2].x,
         "center (idx 0) should be left of right column (idx 2): {} vs {}",
-        rects[0].x, rects[2].x
+        rects[0].x,
+        rects[2].x
     );
 }
 
@@ -277,8 +284,14 @@ fn tiling_engine_single_window_fills_screen() {
 
     let r = &rects[0];
     // Single window in split-h should fill (accounting for gaps)
-    assert!(r.width >= screen.width * 0.9, "single window should fill width");
-    assert!(r.height >= screen.height * 0.9, "single window should fill height");
+    assert!(
+        r.width >= screen.width * 0.9,
+        "single window should fill width"
+    );
+    assert!(
+        r.height >= screen.height * 0.9,
+        "single window should fill height"
+    );
 }
 
 // ── Snap Zones ──────────────────────────────────────────────────────────────
@@ -344,7 +357,10 @@ fn detect_snap_zone_at_screen_edges() {
 
     // Cursor at far left should detect Left zone
     let left = engine.detect_snap_zone(0.0, 540.0, screen);
-    assert!(left.is_some(), "cursor at left edge should detect snap zone");
+    assert!(
+        left.is_some(),
+        "cursor at left edge should detect snap zone"
+    );
     assert_eq!(
         left.unwrap(),
         SnapZone::Left,
@@ -353,7 +369,10 @@ fn detect_snap_zone_at_screen_edges() {
 
     // Cursor at far right
     let right = engine.detect_snap_zone(1919.0, 540.0, screen);
-    assert!(right.is_some(), "cursor at right edge should detect snap zone");
+    assert!(
+        right.is_some(),
+        "cursor at right edge should detect snap zone"
+    );
     assert_eq!(right.unwrap(), SnapZone::Right);
 }
 
@@ -376,14 +395,18 @@ fn arrange_dispatches_all_layout_kinds() {
 
     for kind in layouts {
         let rects = engine.arrange(kind, 4, screen);
-        assert!(
-            !rects.is_empty(),
-            "{:?} layout should produce rects",
-            kind
-        );
+        assert!(!rects.is_empty(), "{:?} layout should produce rects", kind);
         for r in &rects {
-            assert!(r.width > 0.0, "{:?} layout rect should have positive width", kind);
-            assert!(r.height > 0.0, "{:?} layout rect should have positive height", kind);
+            assert!(
+                r.width > 0.0,
+                "{:?} layout rect should have positive width",
+                kind
+            );
+            assert!(
+                r.height > 0.0,
+                "{:?} layout rect should have positive height",
+                kind
+            );
         }
     }
 }

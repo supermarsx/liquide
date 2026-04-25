@@ -53,8 +53,7 @@ fn key_event_none_text_not_serialized() {
         timestamp_us: 50_000,
     };
     let encoded = cbor_encode(&msg).expect("encode");
-    let value: ciborium::Value =
-        cbor_decode(&encoded).expect("decode as Value");
+    let value: ciborium::Value = cbor_decode(&encoded).expect("decode as Value");
     if let ciborium::Value::Map(entries) = &value {
         for (key, _) in entries {
             if let ciborium::Value::Text(k) = key {

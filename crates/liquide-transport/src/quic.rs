@@ -117,7 +117,8 @@ impl crate::Transport for QuicTransport {
             // Require explicit client config - no insecure default
             return Err(crate::TransportError::Protocol(
                 "QUIC transport requires explicit ClientConfig via with_client_config(). \
-                 Use QuicTransport::insecure_client_config() only for testing.".to_string()
+                 Use QuicTransport::insecure_client_config() only for testing."
+                    .to_string(),
             ));
         };
 

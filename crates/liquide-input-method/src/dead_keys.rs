@@ -177,8 +177,7 @@ impl ComposeState {
 
         // Check if any sequence has this as a prefix.
         let is_prefix = self.table.iter().any(|(seq, _)| {
-            seq.len() > self.sequence.len()
-                && seq[..self.sequence.len()] == self.sequence[..]
+            seq.len() > self.sequence.len() && seq[..self.sequence.len()] == self.sequence[..]
         });
 
         if is_prefix {
@@ -227,7 +226,6 @@ fn default_dead_key_map() -> (HashMap<(char, char), char>, Vec<char>) {
         ('\u{00B4}', 'U', '\u{00DA}'), // Ú
         ('\u{00B4}', 'y', '\u{00FD}'), // ý
         ('\u{00B4}', 'Y', '\u{00DD}'), // Ý
-
         // Grave accent (`)
         ('`', 'a', '\u{00E0}'), // à
         ('`', 'A', '\u{00C0}'), // À
@@ -236,7 +234,6 @@ fn default_dead_key_map() -> (HashMap<(char, char), char>, Vec<char>) {
         ('`', 'i', '\u{00EC}'), // ì
         ('`', 'o', '\u{00F2}'), // ò
         ('`', 'u', '\u{00F9}'), // ù
-
         // Circumflex (^)
         ('^', 'a', '\u{00E2}'), // â
         ('^', 'A', '\u{00C2}'), // Â
@@ -244,13 +241,11 @@ fn default_dead_key_map() -> (HashMap<(char, char), char>, Vec<char>) {
         ('^', 'i', '\u{00EE}'), // î
         ('^', 'o', '\u{00F4}'), // ô
         ('^', 'u', '\u{00FB}'), // û
-
         // Tilde (~)
         ('~', 'n', '\u{00F1}'), // ñ
         ('~', 'N', '\u{00D1}'), // Ñ
         ('~', 'a', '\u{00E3}'), // ã
         ('~', 'o', '\u{00F5}'), // õ
-
         // Diaeresis / umlaut (¨)
         ('\u{00A8}', 'a', '\u{00E4}'), // ä
         ('\u{00A8}', 'A', '\u{00C4}'), // Ä
@@ -261,22 +256,18 @@ fn default_dead_key_map() -> (HashMap<(char, char), char>, Vec<char>) {
         ('\u{00A8}', 'u', '\u{00FC}'), // ü
         ('\u{00A8}', 'U', '\u{00DC}'), // Ü
         ('\u{00A8}', 'y', '\u{00FF}'), // ÿ
-
         // Cedilla (¸)
         ('\u{00B8}', 'c', '\u{00E7}'), // ç
         ('\u{00B8}', 'C', '\u{00C7}'), // Ç
-
         // Ring above (°)
         ('\u{00B0}', 'a', '\u{00E5}'), // å
         ('\u{00B0}', 'A', '\u{00C5}'), // Å
         ('\u{00B0}', 'u', '\u{016F}'), // ů
-
         // Caron (ˇ)
         ('\u{02C7}', 'c', '\u{010D}'), // č
         ('\u{02C7}', 's', '\u{0161}'), // š
         ('\u{02C7}', 'z', '\u{017E}'), // ž
         ('\u{02C7}', 'r', '\u{0159}'), // ř
-
         // Macron (¯)
         ('\u{00AF}', 'a', '\u{0101}'), // ā
         ('\u{00AF}', 'e', '\u{0113}'), // ē
@@ -297,53 +288,47 @@ fn default_dead_key_map() -> (HashMap<(char, char), char>, Vec<char>) {
 fn default_compose_sequences() -> Vec<(Vec<char>, String)> {
     vec![
         // Copyright / registered / trademark
-        (vec!['o', 'c'], "\u{00A9}".into()),       // ©
-        (vec!['o', 'r'], "\u{00AE}".into()),       // ®
-        (vec!['t', 'm'], "\u{2122}".into()),       // ™
-        (vec!['(', 'c', ')'], "\u{00A9}".into()),  // ©
-        (vec!['(', 'r', ')'], "\u{00AE}".into()),  // ®
-
+        (vec!['o', 'c'], "\u{00A9}".into()),      // ©
+        (vec!['o', 'r'], "\u{00AE}".into()),      // ®
+        (vec!['t', 'm'], "\u{2122}".into()),      // ™
+        (vec!['(', 'c', ')'], "\u{00A9}".into()), // ©
+        (vec!['(', 'r', ')'], "\u{00AE}".into()), // ®
         // Currency
-        (vec!['e', '='], "\u{20AC}".into()),       // €
-        (vec!['l', '-'], "\u{00A3}".into()),       // £
-        (vec!['y', '='], "\u{00A5}".into()),       // ¥
-        (vec!['c', '/'], "\u{00A2}".into()),       // ¢
-
+        (vec!['e', '='], "\u{20AC}".into()), // €
+        (vec!['l', '-'], "\u{00A3}".into()), // £
+        (vec!['y', '='], "\u{00A5}".into()), // ¥
+        (vec!['c', '/'], "\u{00A2}".into()), // ¢
         // Fractions
-        (vec!['1', '2'], "\u{00BD}".into()),       // ½
-        (vec!['1', '4'], "\u{00BC}".into()),       // ¼
-        (vec!['3', '4'], "\u{00BE}".into()),       // ¾
-
+        (vec!['1', '2'], "\u{00BD}".into()), // ½
+        (vec!['1', '4'], "\u{00BC}".into()), // ¼
+        (vec!['3', '4'], "\u{00BE}".into()), // ¾
         // Math symbols
-        (vec!['+', '-'], "\u{00B1}".into()),       // ±
-        (vec!['-', ':'], "\u{00F7}".into()),       // ÷
-        (vec!['<', '='], "\u{2264}".into()),       // ≤
-        (vec!['>', '='], "\u{2265}".into()),       // ≥
-        (vec!['/', '='], "\u{2260}".into()),       // ≠
-        (vec!['~', '='], "\u{2248}".into()),       // ≈
+        (vec!['+', '-'], "\u{00B1}".into()),      // ±
+        (vec!['-', ':'], "\u{00F7}".into()),      // ÷
+        (vec!['<', '='], "\u{2264}".into()),      // ≤
+        (vec!['>', '='], "\u{2265}".into()),      // ≥
+        (vec!['/', '='], "\u{2260}".into()),      // ≠
+        (vec!['~', '='], "\u{2248}".into()),      // ≈
         (vec!['i', 'n', 'f'], "\u{221E}".into()), // ∞
-
         // Punctuation and typography
-        (vec!['.', '.'], "\u{2026}".into()),       // …
-        (vec!['-', '-'], "\u{2014}".into()),       // — (em dash)
-        (vec!['.', '-'], "\u{2013}".into()),       // – (en dash)
-        (vec!['<', '<'], "\u{00AB}".into()),       // «
-        (vec!['>', '>'], "\u{00BB}".into()),       // »
-        (vec!['!', '!'], "\u{00A1}".into()),       // ¡
-        (vec!['?', '?'], "\u{00BF}".into()),       // ¿
-        (vec!['s', 's'], "\u{00DF}".into()),       // ß
-        (vec![' ', ' '], "\u{00A0}".into()),       // non-breaking space
-
+        (vec!['.', '.'], "\u{2026}".into()), // …
+        (vec!['-', '-'], "\u{2014}".into()), // — (em dash)
+        (vec!['.', '-'], "\u{2013}".into()), // – (en dash)
+        (vec!['<', '<'], "\u{00AB}".into()), // «
+        (vec!['>', '>'], "\u{00BB}".into()), // »
+        (vec!['!', '!'], "\u{00A1}".into()), // ¡
+        (vec!['?', '?'], "\u{00BF}".into()), // ¿
+        (vec!['s', 's'], "\u{00DF}".into()), // ß
+        (vec![' ', ' '], "\u{00A0}".into()), // non-breaking space
         // Superscripts
-        (vec!['^', '0'], "\u{2070}".into()),       // ⁰
-        (vec!['^', '1'], "\u{00B9}".into()),       // ¹
-        (vec!['^', '2'], "\u{00B2}".into()),       // ²
-        (vec!['^', '3'], "\u{00B3}".into()),       // ³
-
+        (vec!['^', '0'], "\u{2070}".into()), // ⁰
+        (vec!['^', '1'], "\u{00B9}".into()), // ¹
+        (vec!['^', '2'], "\u{00B2}".into()), // ²
+        (vec!['^', '3'], "\u{00B3}".into()), // ³
         // Degree and section
-        (vec!['o', 'o'], "\u{00B0}".into()),       // °
-        (vec!['s', 'o'], "\u{00A7}".into()),       // §
-        (vec!['p', 'i'], "\u{03C0}".into()),       // π
-        (vec!['m', 'u'], "\u{00B5}".into()),       // µ
+        (vec!['o', 'o'], "\u{00B0}".into()), // °
+        (vec!['s', 'o'], "\u{00A7}".into()), // §
+        (vec!['p', 'i'], "\u{03C0}".into()), // π
+        (vec!['m', 'u'], "\u{00B5}".into()), // µ
     ]
 }

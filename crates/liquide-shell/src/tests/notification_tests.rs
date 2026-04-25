@@ -352,10 +352,7 @@ fn notification_max_visible_pushes_oldest_to_history() {
     mgr.notify(make_normal("app", "Third"), 3000);
     assert_eq!(mgr.active_count(), 2);
     assert_eq!(mgr.history_count(), 1);
-    assert_eq!(
-        mgr.history().front().unwrap().notification.summary,
-        "First"
-    );
+    assert_eq!(mgr.history().front().unwrap().notification.summary, "First");
     // Active should contain Second and Third
     assert_eq!(mgr.active_notifications()[0].notification.summary, "Second");
     assert_eq!(mgr.active_notifications()[1].notification.summary, "Third");
@@ -379,14 +376,8 @@ fn notification_history_capacity_ring() {
     }
     // History should be capped at 3 (most recent first)
     assert_eq!(mgr.history_count(), 3);
-    assert_eq!(
-        mgr.history().front().unwrap().notification.summary,
-        "N4"
-    );
-    assert_eq!(
-        mgr.history().back().unwrap().notification.summary,
-        "N2"
-    );
+    assert_eq!(mgr.history().front().unwrap().notification.summary, "N4");
+    assert_eq!(mgr.history().back().unwrap().notification.summary, "N2");
 }
 
 // ========== default timeout used when timeout_ms is 0 ==========
@@ -662,7 +653,11 @@ fn notification_tick_with_events_expired() {
     let id = mgr.notify(make_normal("app", "A"), 0).unwrap();
     let (expired_ids, events) = mgr.tick_with_events(2_000_000);
     assert_eq!(expired_ids, vec![id]);
-    assert!(events.iter().any(|e| matches!(e, NotificationEvent::Expired(eid) if *eid == id)));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, NotificationEvent::Expired(eid) if *eid == id))
+    );
 }
 
 // ========== DND schedule ==========
@@ -812,7 +807,11 @@ fn notification_tray_auto_demote_on_tick() {
     let (_, events) = mgr.tick_with_events(5_000_000); // 5 seconds
     assert!(mgr.visible_tray_icons().iter().any(|i| i.id == id));
     assert!(mgr.overflow_tray_icons().is_empty());
-    assert!(!events.iter().any(|e| matches!(e, NotificationEvent::TrayIconDemoted(_))));
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, NotificationEvent::TrayIconDemoted(_)))
+    );
 
     // After timeout: should be demoted
     let (_, events) = mgr.tick_with_events(11_000_000); // 11 seconds
@@ -830,7 +829,7 @@ fn notification_tray_auto_demote_not_repeated() {
         tray_auto_demote_secs: 10,
         ..NotificationConfig::default()
     });
-    let id = mgr.add_tray_icon("App", "tip", "icon", 0);
+    let _id = mgr.add_tray_icon("App", "tip", "icon", 0);
 
     // First tick after timeout: demote event
     let (_, events1) = mgr.tick_with_events(11_000_000);
@@ -963,7 +962,11 @@ fn notification_max_visible_prefers_non_persistent_eviction() {
         persistent: true,
         ..Default::default()
     };
-    mgr.notify_ext(make_normal("app", "Persistent"), 1000, Some(persistent_opts));
+    mgr.notify_ext(
+        make_normal("app", "Persistent"),
+        1000,
+        Some(persistent_opts),
+    );
     mgr.notify(make_normal("app", "Normal"), 2000);
 
     // Add a third: should evict the normal one, not the persistent one

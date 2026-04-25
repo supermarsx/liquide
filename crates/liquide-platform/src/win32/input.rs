@@ -149,9 +149,7 @@ pub fn modifiers_from_state() -> Modifiers {
         if ffi::GetKeyState(ffi::VK_MENU as i32) < 0 {
             bits |= Modifiers::ALT;
         }
-        if ffi::GetKeyState(ffi::VK_LWIN as i32) < 0
-            || ffi::GetKeyState(ffi::VK_RWIN as i32) < 0
-        {
+        if ffi::GetKeyState(ffi::VK_LWIN as i32) < 0 || ffi::GetKeyState(ffi::VK_RWIN as i32) < 0 {
             bits |= Modifiers::SUPER;
         }
     }
@@ -243,7 +241,7 @@ pub fn scancode_to_keycode(scancode: u32) -> Option<KeyCode> {
 
         // Extended keys (0xE0 prefix → bit 8 set)
         0x11D => Some(KeyCode::RightCtrl),
-        0x135 => Some(KeyCode::Slash),   // Numpad divide on extended
+        0x135 => Some(KeyCode::Slash), // Numpad divide on extended
         0x137 => Some(KeyCode::PrintScreen),
         0x138 => Some(KeyCode::RightAlt),
         0x145 => Some(KeyCode::NumLock),
@@ -268,8 +266,8 @@ pub fn scancode_to_keycode(scancode: u32) -> Option<KeyCode> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::ffi;
+    use super::*;
 
     // ── vk_to_keycode tests ─────────────────────────────────────────
 

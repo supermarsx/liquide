@@ -124,9 +124,10 @@ pub fn select_profile(caps: &GpuCapabilities) -> GpuProfile {
             // Integrated/virtual GPUs share VRAM with the host — cap them
             // at GpuShared instead of promoting to GpuFull or GpuDedicated.
             let selected = match (profile, caps.device_type) {
-                (GpuProfile::GpuFull | GpuProfile::GpuDedicated, GpuDeviceType::Integrated | GpuDeviceType::Virtual) => {
-                    GpuProfile::GpuShared
-                }
+                (
+                    GpuProfile::GpuFull | GpuProfile::GpuDedicated,
+                    GpuDeviceType::Integrated | GpuDeviceType::Virtual,
+                ) => GpuProfile::GpuShared,
                 _ => profile,
             };
             tracing::info!(profile = %selected, "selected GPU profile");

@@ -178,11 +178,21 @@ impl std::fmt::Display for WindowState {
 impl std::fmt::Display for WindowFlags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut parts = Vec::new();
-        if self.contains(Self::DECORATED) { parts.push("Decorated"); }
-        if self.contains(Self::RESIZABLE) { parts.push("Resizable"); }
-        if self.contains(Self::FOCUSABLE) { parts.push("Focusable"); }
-        if self.contains(Self::ALWAYS_ON_TOP) { parts.push("AlwaysOnTop"); }
-        if self.contains(Self::SKIP_TASKBAR) { parts.push("SkipTaskbar"); }
+        if self.contains(Self::DECORATED) {
+            parts.push("Decorated");
+        }
+        if self.contains(Self::RESIZABLE) {
+            parts.push("Resizable");
+        }
+        if self.contains(Self::FOCUSABLE) {
+            parts.push("Focusable");
+        }
+        if self.contains(Self::ALWAYS_ON_TOP) {
+            parts.push("AlwaysOnTop");
+        }
+        if self.contains(Self::SKIP_TASKBAR) {
+            parts.push("SkipTaskbar");
+        }
         if parts.is_empty() {
             write!(f, "(none)")
         } else {

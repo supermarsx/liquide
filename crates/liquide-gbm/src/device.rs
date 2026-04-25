@@ -56,10 +56,7 @@ impl GbmDevice {
         {
             // TODO: call gbm_create_device(drm_fd) via FFI
             tracing::debug!(drm_fd, "creating GBM device");
-            Ok(Self {
-                handle: 0,
-                drm_fd,
-            })
+            Ok(Self { handle: 0, drm_fd })
         }
         #[cfg(not(target_os = "linux"))]
         {

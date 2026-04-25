@@ -2,8 +2,8 @@
 
 use liquide_dom::PseudoStateFlags;
 
-use crate::types::{element_ids, ContextMenuItemInfo, MenuItemInfo};
 use crate::template::{Component, TemplateNode};
+use crate::types::{element_ids, ContextMenuItemInfo, MenuItemInfo};
 
 // ── Context Menu ─────────────────────────────────────────────────
 
@@ -29,8 +29,7 @@ impl Component for ContextMenuComponent<'_> {
     fn render(&self) -> TemplateNode {
         let mut item_idx = 0usize;
 
-        let mut menu = TemplateNode::el("context-menu")
-            .id(self.menu_id);
+        let mut menu = TemplateNode::el("context-menu").id(self.menu_id);
 
         // Apply inline position styles if provided
         if let Some((x, y)) = self.position {
@@ -39,26 +38,23 @@ impl Component for ContextMenuComponent<'_> {
                 .style("top", &format!("{y}"));
         }
 
-        menu.children(self.items.iter().enumerate().map(|(i, item)| {
-            match item {
-                ContextMenuItemInfo::Item(item) => {
-                    let current_idx = item_idx;
-                    item_idx += 1;
-                    TemplateNode::el("menu-item")
-                        .key(&i.to_string())
-                        .attr("data-index", &i.to_string())
-                        .class_if("disabled", item.disabled)
-                        .pseudo_if(PseudoStateFlags::DISABLED, item.disabled)
-                        .pseudo_if(
-                            PseudoStateFlags::HOVER,
-                            self.hover_index == Some(current_idx),
-                        )
-                        .child(TemplateNode::text(&item.label))
-                }
-                ContextMenuItemInfo::Separator => {
-                    TemplateNode::el("menu-separator")
-                        .key(&format!("sep-{i}"))
-                }
+        menu.children(self.items.iter().enumerate().map(|(i, item)| match item {
+            ContextMenuItemInfo::Item(item) => {
+                let current_idx = item_idx;
+                item_idx += 1;
+                TemplateNode::el("menu-item")
+                    .key(&i.to_string())
+                    .attr("data-index", &i.to_string())
+                    .class_if("disabled", item.disabled)
+                    .pseudo_if(PseudoStateFlags::DISABLED, item.disabled)
+                    .pseudo_if(
+                        PseudoStateFlags::HOVER,
+                        self.hover_index == Some(current_idx),
+                    )
+                    .child(TemplateNode::text(&item.label))
+            }
+            ContextMenuItemInfo::Separator => {
+                TemplateNode::el("menu-separator").key(&format!("sep-{i}"))
             }
         }))
     }
@@ -96,10 +92,7 @@ impl Component for SessionMenuComponent<'_> {
                     .key(&item.action)
                     .attr("data-action", &item.action)
                     .attr("data-index", &i.to_string())
-                    .pseudo_if(
-                        PseudoStateFlags::HOVER,
-                        self.hover_index == Some(i),
-                    );
+                    .pseudo_if(PseudoStateFlags::HOVER, self.hover_index == Some(i));
 
                 // Icon sub-element
                 if !item.icon.as_ref().map_or(true, |s| s.is_empty()) {
@@ -113,8 +106,7 @@ impl Component for SessionMenuComponent<'_> {
 
                 // Label
                 node.child(
-                    TemplateNode::el("menu-item-label")
-                        .child(TemplateNode::text(&item.label)),
+                    TemplateNode::el("menu-item-label").child(TemplateNode::text(&item.label)),
                 )
             }))
     }
@@ -141,10 +133,7 @@ impl Component for AppMenuComponent<'_> {
                     .key(&item.action)
                     .attr("data-action", &item.action)
                     .attr("data-index", &i.to_string())
-                    .pseudo_if(
-                        PseudoStateFlags::HOVER,
-                        self.hover_index == Some(i),
-                    );
+                    .pseudo_if(PseudoStateFlags::HOVER, self.hover_index == Some(i));
 
                 if !item.icon.as_ref().map_or(true, |s| s.is_empty()) {
                     node = node
@@ -156,8 +145,7 @@ impl Component for AppMenuComponent<'_> {
                 }
 
                 node.child(
-                    TemplateNode::el("menu-item-label")
-                        .child(TemplateNode::text(&item.label)),
+                    TemplateNode::el("menu-item-label").child(TemplateNode::text(&item.label)),
                 )
             }))
     }

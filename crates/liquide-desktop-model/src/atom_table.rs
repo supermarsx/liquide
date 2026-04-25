@@ -67,7 +67,10 @@ impl AtomTable {
     /// increments its refcount and returns the existing atom.
     pub fn add(&mut self, name: &str) -> Atom {
         if let Some(&atom_val) = self.name_to_atom.get(name) {
-            let entry = self.entries.get_mut(&atom_val).expect("atom table inconsistent");
+            let entry = self
+                .entries
+                .get_mut(&atom_val)
+                .expect("atom table inconsistent");
             // Don't overflow immortal system atoms.
             if entry.refcount < u32::MAX {
                 entry.refcount += 1;

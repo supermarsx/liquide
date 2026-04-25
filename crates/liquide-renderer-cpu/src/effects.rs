@@ -195,8 +195,7 @@ impl BoxShadow {
                 let fx = (x0 + mx) as f32 + 0.5;
                 let coverage = sdf_rounded_rect_coverage(fx, fy, &expanded_surface, r);
                 if coverage > 0.0 {
-                    let alpha =
-                        (shadow_color.a as f32 * coverage).round().clamp(0.0, 255.0) as u8;
+                    let alpha = (shadow_color.a as f32 * coverage).round().clamp(0.0, 255.0) as u8;
                     let off = ((my * w + mx) * 4) as usize;
                     mask[off] = ((shadow_color.b as u16 * alpha as u16 + 127) / 255) as u8;
                     mask[off + 1] = ((shadow_color.g as u16 * alpha as u16 + 127) / 255) as u8;
@@ -355,13 +354,7 @@ impl InnerGlow {
 impl Effect for InnerGlow {
     fn render(&self, fb: &mut FrameBuffer, region: Rect, params: &EffectParams) {
         let glow_color = Color::new(255, 255, 255, 60);
-        InnerGlow::render_glow(
-            fb,
-            region,
-            8.0,
-            params.inner_glow_width,
-            glow_color,
-        );
+        InnerGlow::render_glow(fb, region, 8.0, params.inner_glow_width, glow_color);
     }
 
     fn estimated_cost_ms(&self, region: Rect) -> f64 {

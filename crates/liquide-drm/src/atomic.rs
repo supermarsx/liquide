@@ -78,9 +78,7 @@ impl AtomicRequest {
     #[cfg(target_os = "linux")]
     pub fn commit(&self, _device: &DrmDevice, _flags: AtomicFlags) -> Result<()> {
         // TODO: implement via DRM_IOCTL_MODE_ATOMIC
-        Err(DrmError::AtomicCommit(
-            "not yet implemented".to_string(),
-        ))
+        Err(DrmError::AtomicCommit("not yet implemented".to_string()))
     }
 
     #[cfg(not(target_os = "linux"))]

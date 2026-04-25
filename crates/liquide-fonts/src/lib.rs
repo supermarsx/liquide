@@ -33,6 +33,21 @@ pub use config::FontConfig;
 pub use error::{FontError, Result};
 pub use roles::{FontRole, FontStack};
 
+/// System font discovery façade.
+///
+/// Re-exports the system-scan / metadata API from `liquide-font-manager`
+/// so consumers can rely on `liquide-fonts` as the single font façade.
+/// `SystemScanner` is an alias for `liquide_font_manager::FontManager`
+/// (the discovery/preview/fallback hub) to avoid colliding with this
+/// crate's own role-oriented `FontManager`.
+pub mod system_scan {
+    pub use liquide_font_manager::{
+        FontError as SystemScanError, FontFallback, FontFormat, FontInfo,
+        FontManager as SystemScanner, FontPreview, FontStretch, FontStyle, FontWeight,
+        PreviewConfig, UnicodeBlock,
+    };
+}
+
 /// The central font manager.
 ///
 /// Coordinates font discovery, installation, indexing, preview, and

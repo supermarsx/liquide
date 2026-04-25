@@ -21,7 +21,11 @@ pub struct EventDispatcher {
     /// Last click target + timestamp for double-click detection.
     last_click: Option<(NodeId, std::time::Instant)>,
     /// Registered event handlers: (node, discriminant filter, handler).
-    handlers: Vec<(NodeId, Option<std::mem::Discriminant<DomEventKind>>, EventHandler)>,
+    handlers: Vec<(
+        NodeId,
+        Option<std::mem::Discriminant<DomEventKind>>,
+        EventHandler,
+    )>,
 }
 
 impl EventDispatcher {
@@ -94,7 +98,10 @@ impl EventDispatcher {
 
         // Always dispatch mouse move to the target
         if let Some(target) = new_target {
-            events.push(DomEvent::new(target, DomEventKind::MouseMove { x: pos.x, y: pos.y }));
+            events.push(DomEvent::new(
+                target,
+                DomEventKind::MouseMove { x: pos.x, y: pos.y },
+            ));
         }
 
         self.hover_chain = new_chain;
@@ -119,7 +126,11 @@ impl EventDispatcher {
 
             events.push(DomEvent::new(
                 h.node,
-                DomEventKind::MouseDown { button, x: pos.x, y: pos.y },
+                DomEventKind::MouseDown {
+                    button,
+                    x: pos.x,
+                    y: pos.y,
+                },
             ));
 
             // Focus management
@@ -147,7 +158,11 @@ impl EventDispatcher {
 
             events.push(DomEvent::new(
                 h.node,
-                DomEventKind::MouseUp { button, x: pos.x, y: pos.y },
+                DomEventKind::MouseUp {
+                    button,
+                    x: pos.x,
+                    y: pos.y,
+                },
             ));
 
             // Generate click
@@ -161,17 +176,30 @@ impl EventDispatcher {
                 };
 
                 if is_double {
-                    events.push(DomEvent::new(h.node, DomEventKind::DoubleClick { x: pos.x, y: pos.y }));
+                    events.push(DomEvent::new(
+                        h.node,
+                        DomEventKind::DoubleClick { x: pos.x, y: pos.y },
+                    ));
                     self.last_click = None;
                 } else {
-                    events.push(DomEvent::new(h.node, DomEventKind::Click { button: MouseButton::Left, x: pos.x, y: pos.y }));
+                    events.push(DomEvent::new(
+                        h.node,
+                        DomEventKind::Click {
+                            button: MouseButton::Left,
+                            x: pos.x,
+                            y: pos.y,
+                        },
+                    ));
                     self.last_click = Some((h.node, now));
                 }
             }
 
             // Right-click context menu
             if matches!(button, MouseButton::Right) {
-                events.push(DomEvent::new(h.node, DomEventKind::ContextMenu { x: pos.x, y: pos.y }));
+                events.push(DomEvent::new(
+                    h.node,
+                    DomEventKind::ContextMenu { x: pos.x, y: pos.y },
+                ));
             }
         }
 
@@ -235,11 +263,7 @@ impl EventDispatcher {
     }
 
     /// Set focus explicitly.
-    pub fn set_focus(
-        &mut self,
-        node: Option<NodeId>,
-        doc: &mut Document,
-    ) -> Vec<DomEvent> {
+    pub fn set_focus(&mut self, node: Option<NodeId>, doc: &mut Document) -> Vec<DomEvent> {
         let mut events = Vec::new();
         if self.focus == node {
             return events;
@@ -290,12 +314,7 @@ impl EventDispatcher {
         }
     }
 
-    fn update_focus(
-        &mut self,
-        new_focus: NodeId,
-        doc: &mut Document,
-        events: &mut Vec<DomEvent>,
-    ) {
+    fn update_focus(&mut self, new_focus: NodeId, doc: &mut Document, events: &mut Vec<DomEvent>) {
         if self.focus == Some(new_focus) {
             return;
         }

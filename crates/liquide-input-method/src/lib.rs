@@ -17,29 +17,33 @@
 // even when not all are used in the default compose/engine configurations.
 #![allow(dead_code)]
 
-pub mod state;
-pub mod compose;
-pub mod engine;
-pub mod candidates;
-pub mod emoji;
-pub mod dead_keys;
 pub mod candidate_window;
+pub mod candidates;
+pub mod compose;
+pub mod dead_keys;
+pub mod emoji;
 pub mod emoji_picker;
+pub mod engine;
+pub mod state;
 pub mod switcher;
 
 #[cfg(test)]
 mod tests;
 
-pub use state::{InputMethodState, PreeditString, PreeditSegment, SegmentStyle, InputMode};
-pub use compose::{ComposeTable, ComposeResult};
-pub use engine::{InputMethodEngine, KeyEvent, InputAction};
+pub use candidate_window::{CandidateEntry, CandidateWindow};
 pub use candidates::{Candidate, CandidateLayout, CandidateLayoutItem};
-pub use emoji::{EmojiPicker as BasicEmojiPicker, EmojiEntry as BasicEmojiEntry, EmojiCategory as BasicEmojiCategory};
-pub use dead_keys::{DeadKeyState, DeadKeyResult, ComposeState, ComposeResult as CharComposeResult};
-pub use candidate_window::{CandidateWindow, CandidateEntry};
-pub use emoji_picker::{
-    EmojiPicker as KeywordEmojiPicker,
-    EmojiEntry as KeywordEmojiEntry,
-    EmojiCategory as KeywordEmojiCategory,
+pub use compose::{ComposeResult, ComposeTable};
+pub use dead_keys::{
+    ComposeResult as CharComposeResult, ComposeState, DeadKeyResult, DeadKeyState,
 };
-pub use switcher::{InputMethodSwitcher, InputMethodInfo};
+pub use emoji::{
+    EmojiCategory as BasicEmojiCategory, EmojiEntry as BasicEmojiEntry,
+    EmojiPicker as BasicEmojiPicker,
+};
+pub use emoji_picker::{
+    EmojiCategory as KeywordEmojiCategory, EmojiEntry as KeywordEmojiEntry,
+    EmojiPicker as KeywordEmojiPicker,
+};
+pub use engine::{InputAction, InputMethodEngine, KeyEvent};
+pub use state::{InputMethodState, InputMode, PreeditSegment, PreeditString, SegmentStyle};
+pub use switcher::{InputMethodInfo, InputMethodSwitcher};

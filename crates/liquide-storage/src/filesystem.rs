@@ -64,13 +64,7 @@ impl FileSystem {
     pub fn supports_posix_permissions(&self) -> bool {
         matches!(
             self,
-            Self::Ext4
-                | Self::Ext3
-                | Self::Btrfs
-                | Self::APFS
-                | Self::HFS
-                | Self::XFS
-                | Self::ZFS
+            Self::Ext4 | Self::Ext3 | Self::Btrfs | Self::APFS | Self::HFS | Self::XFS | Self::ZFS
         )
     }
 

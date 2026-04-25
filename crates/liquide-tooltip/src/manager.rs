@@ -1,5 +1,14 @@
 //! Tooltip manager — singleton that tracks hover state and renders tooltips.
 //!
+//! # ⚠️ Deprecation notice
+//!
+//! [`TooltipManager`] is a **thin shim** kept for backwards compatibility with
+//! the shell code that called `update()` / `paint()` directly. New code should
+//! use [`liquide_popups::TooltipController`](../../liquide-popups/src/tooltip.rs)
+//! which lives in `liquide-popups` and integrates with the popup manager /
+//! z-ordering stack. This module now delegates its timing/state machinery to
+//! `TooltipController` while keeping the paint helpers here for legacy callers.
+//!
 //! ## Hot-path performance
 //!
 //! The `update()` method is called every frame and is designed to be
@@ -9,6 +18,43 @@
 use crate::config::TooltipConfig;
 use crate::position::{self, TooltipPosition, TooltipRect};
 use liquide_ui_core::{Painter, UiColor, UiTheme, WidgetId};
+
+/// Screen bounds for tooltip edge-clamping.
+///
+/// Replaces the previously-hardcoded 1920×1080 constants.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScreenBounds {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl ScreenBounds {
+    pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    pub const fn from_size(width: f32, height: f32) -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        }
+    }
+}
+
+impl Default for ScreenBounds {
+    fn default() -> Self {
+        Self::from_size(1920.0, 1080.0)
+    }
+}
 
 /// Internal tooltip display state.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,6 +72,10 @@ enum TooltipState {
 }
 
 /// Manages tooltip lifecycle across all widgets.
+///
+/// Prefer [`liquide_popups::TooltipController`](../../liquide-popups) for new
+/// code. This manager is retained as a thin shim for the shell's direct
+/// `update`/`paint` call sites.
 pub struct TooltipManager {
     config: TooltipConfig,
     state: TooltipState,
@@ -41,6 +91,9 @@ pub struct TooltipManager {
     /// Screen dimensions for edge clamping.
     screen_w: f32,
     screen_h: f32,
+    /// Screen origin (for per-monitor positioning).
+    screen_x: f32,
+    screen_y: f32,
     /// Cached computed tooltip rect.
     cached_rect: Option<TooltipRect>,
 }
@@ -58,14 +111,30 @@ impl TooltipManager {
             anchor_h: 0.0,
             screen_w: 1920.0,
             screen_h: 1080.0,
+            screen_x: 0.0,
+            screen_y: 0.0,
             cached_rect: None,
         }
     }
 
     /// Set the screen dimensions (call on resize).
+    ///
+    /// Prefer [`Self::set_screen_bounds`] which accepts a [`ScreenBounds`]
+    /// so the origin (e.g. per-monitor `x`/`y`) is preserved.
     pub fn set_screen_size(&mut self, w: f32, h: f32) {
         self.screen_w = w;
         self.screen_h = h;
+        self.screen_x = 0.0;
+        self.screen_y = 0.0;
+        self.cached_rect = None;
+    }
+
+    /// Set screen bounds from a [`ScreenBounds`] (per-monitor aware).
+    pub fn set_screen_bounds(&mut self, bounds: ScreenBounds) {
+        self.screen_x = bounds.x;
+        self.screen_y = bounds.y;
+        self.screen_w = bounds.width;
+        self.screen_h = bounds.height;
         self.cached_rect = None;
     }
 
@@ -86,8 +155,18 @@ impl TooltipManager {
             return;
         }
 
-        // If it's the same widget, don't reset the timer
+        // If it's the same widget, refresh the anchor geometry without
+        // restarting the tooltip lifecycle.
         if self.hovered_widget == Some(widget_id) {
+            if self.text != tooltip_text {
+                self.text.clear();
+                self.text.push_str(tooltip_text);
+            }
+            self.anchor_x = anchor_x;
+            self.anchor_y = anchor_y;
+            self.anchor_w = anchor_w;
+            self.anchor_h = anchor_h;
+            self.cached_rect = None;
             return;
         }
 
@@ -132,7 +211,9 @@ impl TooltipManager {
                 if new_elapsed >= self.config.show_delay_ms as f32 {
                     TooltipState::FadingIn { elapsed_ms: 0.0 }
                 } else {
-                    TooltipState::Pending { elapsed_ms: new_elapsed }
+                    TooltipState::Pending {
+                        elapsed_ms: new_elapsed,
+                    }
                 }
             }
 
@@ -141,7 +222,9 @@ impl TooltipManager {
                 if new_elapsed >= self.config.fade_in_ms as f32 {
                     TooltipState::Visible { elapsed_ms: 0.0 }
                 } else {
-                    TooltipState::FadingIn { elapsed_ms: new_elapsed }
+                    TooltipState::FadingIn {
+                        elapsed_ms: new_elapsed,
+                    }
                 }
             }
 
@@ -154,7 +237,9 @@ impl TooltipManager {
                     if new_elapsed >= self.config.display_duration_ms as f32 {
                         TooltipState::FadingOut { elapsed_ms: 0.0 }
                     } else {
-                        TooltipState::Visible { elapsed_ms: new_elapsed }
+                        TooltipState::Visible {
+                            elapsed_ms: new_elapsed,
+                        }
                     }
                 }
             }
@@ -164,7 +249,9 @@ impl TooltipManager {
                 if new_elapsed >= self.config.fade_out_ms as f32 {
                     TooltipState::Hidden
                 } else {
-                    TooltipState::FadingOut { elapsed_ms: new_elapsed }
+                    TooltipState::FadingOut {
+                        elapsed_ms: new_elapsed,
+                    }
                 }
             }
         };
@@ -172,7 +259,10 @@ impl TooltipManager {
 
     /// Whether a tooltip is currently visible (including fade animations).
     pub fn is_visible(&self) -> bool {
-        !matches!(self.state, TooltipState::Hidden | TooltipState::Pending { .. })
+        !matches!(
+            self.state,
+            TooltipState::Hidden | TooltipState::Pending { .. }
+        )
     }
 
     /// Current opacity (0.0 – 1.0) for the tooltip.
@@ -198,65 +288,107 @@ impl TooltipManager {
         let opacity = self.opacity();
         let colors = &theme.colors;
 
-        // Measure tooltip text
+        // Measure tooltip text using grapheme-aware advance (not byte length).
         let font_size = theme.font_size * 0.9;
-        let char_w = font_size * 0.55;
-        let text_w = (self.text.len() as f32 * char_w).min(self.config.max_width);
-        let text_h = font_size + 4.0;
+        // Wrap into lines that fit within max_width.
         let padding = self.config.padding;
+        let inner_max = (self.config.max_width - padding * 2.0).max(font_size * 4.0);
+        let wrapped = wrap_text(&self.text, inner_max, font_size);
+        let line_h = font_size + 4.0;
+        let text_w = wrapped
+            .iter()
+            .map(|l| measure_text_width(l, font_size))
+            .fold(0.0_f32, f32::max);
+        let text_h = line_h * wrapped.len().max(1) as f32;
         let tooltip_w = text_w + padding * 2.0;
         let tooltip_h = text_h + padding * 2.0;
 
         // Position
+        let screen_x = self.screen_x;
+        let screen_y = self.screen_y;
         let rect = self.cached_rect.get_or_insert_with(|| {
-            position::compute_tooltip_position(
-                self.anchor_x, self.anchor_y, self.anchor_w, self.anchor_h,
-                tooltip_w, tooltip_h,
-                self.config.offset_x, self.config.offset_y,
-                self.screen_w, self.screen_h,
+            let r = position::compute_tooltip_position(
+                self.anchor_x - screen_x,
+                self.anchor_y - screen_y,
+                self.anchor_w,
+                self.anchor_h,
+                tooltip_w,
+                tooltip_h,
+                self.config.offset_x,
+                self.config.offset_y,
+                self.screen_w,
+                self.screen_h,
                 TooltipPosition::Below,
-            )
+            );
+            TooltipRect {
+                x: r.x + screen_x,
+                y: r.y + screen_y,
+                width: r.width,
+                height: r.height,
+            }
         });
 
         // Apply opacity to colors
         let alpha = (opacity * 255.0) as u8;
-        let bg = colors.surface_elevated.with_alpha(
-            ((colors.surface_elevated.a as f32) * opacity) as u8,
-        );
-        let border = colors.border.with_alpha(
-            ((colors.border.a as f32) * opacity) as u8,
-        );
+        let bg = colors
+            .surface_elevated
+            .with_alpha(((colors.surface_elevated.a as f32) * opacity) as u8);
+        let border = colors
+            .border
+            .with_alpha(((colors.border.a as f32) * opacity) as u8);
         let text_color = colors.text_primary.with_alpha(alpha);
 
-        // Shadow
-        let shadow = UiColor::new(0, 0, 0, (40.0 * opacity) as u8);
+        // Shadow — use the tooltip elevation token (level_4) instead of hardcoding alpha.
+        let level = &theme.elevation.level_4;
+        let shadow_alpha = (level.shadow_color.a as f32 * opacity) as u8;
+        let shadow = UiColor::new(
+            level.shadow_color.r,
+            level.shadow_color.g,
+            level.shadow_color.b,
+            shadow_alpha,
+        );
         painter.fill_rounded_rect(
-            rect.x + 1.0, rect.y + 2.0, rect.width, rect.height,
-            self.config.corner_radius, shadow,
+            rect.x + 1.0,
+            rect.y + level.shadow_y,
+            rect.width,
+            rect.height,
+            self.config.corner_radius,
+            shadow,
         );
 
         // Background
         painter.fill_rounded_rect(
-            rect.x, rect.y, rect.width, rect.height,
-            self.config.corner_radius, bg,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            self.config.corner_radius,
+            bg,
         );
 
         // Border
         painter.stroke_rounded_rect(
-            rect.x, rect.y, rect.width, rect.height,
-            self.config.corner_radius, border, 1.0,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            self.config.corner_radius,
+            border,
+            1.0,
         );
 
-        // Text
-        painter.draw_text(
-            &self.text,
-            rect.x + padding,
-            rect.y + padding,
-            font_size,
-            text_color,
-            &theme.font_family,
-            false,
-        );
+        // Multi-line text.
+        for (i, line) in wrapped.iter().enumerate() {
+            painter.draw_text(
+                line,
+                rect.x + padding,
+                rect.y + padding + (i as f32) * line_h,
+                font_size,
+                text_color,
+                &theme.font_family,
+                false,
+            );
+        }
     }
 
     /// Get the current tooltip config.
@@ -274,6 +406,80 @@ impl Default for TooltipManager {
     fn default() -> Self {
         Self::new(TooltipConfig::default())
     }
+}
+
+// ── Text helpers ────────────────────────────────────────────────────
+
+/// Approximate advance ratio per Unicode scalar (em fraction).
+///
+/// Mirrors the implementation in `liquide-context-menu` so paint metrics are
+/// consistent without a hard dependency between the two crates.
+#[inline]
+fn char_advance_ratio(ch: char) -> f32 {
+    let c = ch as u32;
+    if matches!(c,
+        0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF
+        | 0xFE20..=0xFE2F | 0x200B..=0x200F | 0x2060..=0x206F
+        | 0xFE00..=0xFE0F | 0xE0100..=0xE01EF
+    ) {
+        return 0.0;
+    }
+    if matches!(c,
+        0x1100..=0x115F | 0x2E80..=0x303E | 0x3041..=0x33FF | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF | 0xA000..=0xA4CF | 0xAC00..=0xD7A3
+        | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6 | 0x1F300..=0x1F64F | 0x1F680..=0x1F9FF
+        | 0x20000..=0x3FFFD
+    ) {
+        return 1.0;
+    }
+    if c < 0x80 {
+        return 0.55;
+    }
+    0.60
+}
+
+/// Measure a single line of text with the em advance table.
+pub fn measure_text_width(text: &str, font_size: f32) -> f32 {
+    text.chars()
+        .map(|c| char_advance_ratio(c) * font_size)
+        .sum()
+}
+
+/// Word-wrap `text` into lines that fit within `max_width` pixels.
+///
+/// Wraps at ASCII whitespace; long unbreakable words are emitted on a line of
+/// their own (they may exceed `max_width`). Preserves explicit `\n` line
+/// breaks from the source string.
+pub fn wrap_text(text: &str, max_width: f32, font_size: f32) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut line = String::new();
+        let mut line_w = 0.0_f32;
+        for word in paragraph.split_whitespace() {
+            let word_w = measure_text_width(word, font_size);
+            let space_w = if line.is_empty() {
+                0.0
+            } else {
+                char_advance_ratio(' ') * font_size
+            };
+            if !line.is_empty() && line_w + space_w + word_w > max_width {
+                out.push(std::mem::take(&mut line));
+                line_w = 0.0;
+            }
+            if !line.is_empty() {
+                line.push(' ');
+                line_w += space_w;
+            }
+            line.push_str(word);
+            line_w += word_w;
+        }
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -327,5 +533,36 @@ mod tests {
         assert!(mgr.is_visible()); // still fading out
         mgr.update(200.0);
         assert!(!mgr.is_visible()); // gone
+    }
+
+    #[test]
+    fn test_same_widget_hover_refreshes_anchor_geometry() {
+        let mut mgr = TooltipManager::new(TooltipConfig {
+            show_delay_ms: 10,
+            fade_in_ms: 10,
+            ..TooltipConfig::default()
+        });
+        let wid = WidgetId::new();
+
+        mgr.on_hover_begin(wid, "Test", 10.0, 20.0, 40.0, 18.0);
+        mgr.update(20.0);
+        mgr.update(20.0);
+        assert!(mgr.is_visible());
+
+        mgr.cached_rect = Some(TooltipRect {
+            x: 10.0,
+            y: 20.0,
+            width: 120.0,
+            height: 32.0,
+        });
+
+        mgr.on_hover_begin(wid, "Test", 60.0, 90.0, 80.0, 24.0);
+
+        assert_eq!(mgr.anchor_x, 60.0);
+        assert_eq!(mgr.anchor_y, 90.0);
+        assert_eq!(mgr.anchor_w, 80.0);
+        assert_eq!(mgr.anchor_h, 24.0);
+        assert!(mgr.cached_rect.is_none());
+        assert!(matches!(mgr.state, TooltipState::Visible { .. }));
     }
 }

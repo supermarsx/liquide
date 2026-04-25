@@ -7,7 +7,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Degradation level (L0 = full quality, L13 = emergency minimal rendering).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
 #[repr(u8)]
 pub enum DegradationLevel {
     #[default]

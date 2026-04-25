@@ -24,7 +24,9 @@ impl HealthCheck {
         for check in &self.checks {
             let result = check();
             worst = match (worst, result) {
-                (_, HealthStatus::Unhealthy) | (HealthStatus::Unhealthy, _) => HealthStatus::Unhealthy,
+                (_, HealthStatus::Unhealthy) | (HealthStatus::Unhealthy, _) => {
+                    HealthStatus::Unhealthy
+                }
                 (_, HealthStatus::Degraded) | (HealthStatus::Degraded, _) => HealthStatus::Degraded,
                 (_, HealthStatus::Unknown) | (HealthStatus::Unknown, _) => HealthStatus::Unknown,
                 _ => HealthStatus::Healthy,
@@ -35,7 +37,9 @@ impl HealthCheck {
 }
 
 impl Default for HealthCheck {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Check if a process is still alive by PID
@@ -63,5 +67,7 @@ pub fn is_process_alive(pid: u32) -> bool {
             .unwrap_or(false)
     }
     #[cfg(not(any(target_os = "windows", unix)))]
-    { false }
+    {
+        false
+    }
 }

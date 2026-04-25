@@ -70,7 +70,11 @@ fn test_display_name_fallback() {
     let entry = MachineEntry::new("1".to_string(), String::new(), "addr:3389".to_string());
     assert_eq!(entry.display_name(), "addr:3389");
 
-    let entry2 = MachineEntry::new("2".to_string(), "My PC".to_string(), "addr:3389".to_string());
+    let entry2 = MachineEntry::new(
+        "2".to_string(),
+        "My PC".to_string(),
+        "addr:3389".to_string(),
+    );
     assert_eq!(entry2.display_name(), "My PC");
 }
 

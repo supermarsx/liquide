@@ -1,16 +1,18 @@
-use criterion::{criterion_group, criterion_main, Criterion, black_box};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
+use liquide_compositor::damage::DamageTracker;
+use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::{Affine2D, Rect};
 use liquide_compositor::pixel::{Color, PixelFormat};
-use liquide_compositor::framebuffer::FrameBuffer;
-use liquide_compositor::damage::DamageTracker;
 use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
 
 fn build_deep_tree(id: &mut u64, depth: u32, breadth: u32) -> SceneNode {
     let node_id = *id;
     *id += 1;
     let kind = if depth == 0 {
-        SceneNodeKind::Background { color: Color::BLACK }
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        }
     } else {
         SceneNodeKind::Workspace { index: 0 }
     };

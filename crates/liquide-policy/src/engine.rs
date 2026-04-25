@@ -32,7 +32,9 @@ fn parse_source(s: &str) -> Result<PolicySource> {
         "group" => Ok(PolicySource::Group),
         "user" => Ok(PolicySource::User),
         "session" => Ok(PolicySource::Session),
-        other => Err(PolicyError::Parse(format!("unknown policy source: {other}"))),
+        other => Err(PolicyError::Parse(format!(
+            "unknown policy source: {other}"
+        ))),
     }
 }
 
@@ -64,13 +66,15 @@ pub fn load_from_dir(dir: &Path) -> Result<PolicyEngine> {
     let mut engine = PolicyEngine::new();
 
     let entries = std::fs::read_dir(dir).map_err(|e| {
-        PolicyError::NotFound(format!("cannot read policy directory {}: {e}", dir.display()))
+        PolicyError::NotFound(format!(
+            "cannot read policy directory {}: {e}",
+            dir.display()
+        ))
     })?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            PolicyError::Parse(format!("error reading directory entry: {e}"))
-        })?;
+        let entry =
+            entry.map_err(|e| PolicyError::Parse(format!("error reading directory entry: {e}")))?;
         let path = entry.path();
 
         // Only process .toml files.
@@ -83,23 +87,19 @@ pub fn load_from_dir(dir: &Path) -> Result<PolicyEngine> {
             continue;
         }
 
-        let contents = std::fs::read_to_string(&path).map_err(|e| {
-            PolicyError::Parse(format!("cannot read {}: {e}", path.display()))
-        })?;
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|e| PolicyError::Parse(format!("cannot read {}: {e}", path.display())))?;
 
-        let policy_file: PolicyFile = toml::from_str(&contents).map_err(|e| {
-            PolicyError::Parse(format!("{}: {e}", path.display()))
-        })?;
+        let policy_file: PolicyFile = toml::from_str(&contents)
+            .map_err(|e| PolicyError::Parse(format!("{}: {e}", path.display())))?;
 
-        let source = parse_source(&policy_file.source).map_err(|e| {
-            PolicyError::Parse(format!("{}: {e}", path.display()))
-        })?;
+        let source = parse_source(&policy_file.source)
+            .map_err(|e| PolicyError::Parse(format!("{}: {e}", path.display())))?;
 
         let mut ruleset = RuleSet::new();
         for rule_entry in policy_file.rules {
-            let action = parse_action(&rule_entry.action).map_err(|e| {
-                PolicyError::Parse(format!("{}: {e}", path.display()))
-            })?;
+            let action = parse_action(&rule_entry.action)
+                .map_err(|e| PolicyError::Parse(format!("{}: {e}", path.display())))?;
             ruleset.push(Rule {
                 key: rule_entry.key,
                 action,
@@ -189,7 +189,10 @@ action = "allow"
         let result = load_from_dir(dir.path());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("bad.toml"), "error should mention filename: {err}");
+        assert!(
+            err.contains("bad.toml"),
+            "error should mention filename: {err}"
+        );
     }
 
     #[test]

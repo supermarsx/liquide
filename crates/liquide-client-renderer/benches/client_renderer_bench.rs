@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use liquide_compositor::damage::DamageClass;
 use liquide_compositor::pixel::PixelFormat;
@@ -74,8 +74,7 @@ fn bench_apply_batch_full_frame(c: &mut Criterion) {
     };
 
     c.bench_function("apply_batch_1920x1080_lz4", |b| {
-        let mut assembler =
-            FrameAssembler::new(width, height, PixelFormat::Bgra8, config.clone());
+        let mut assembler = FrameAssembler::new(width, height, PixelFormat::Bgra8, config.clone());
         b.iter(|| {
             assembler.apply_batch(&batch).unwrap();
         });

@@ -240,18 +240,18 @@ pub fn compile_keymap(config: KeymapConfig) -> XkbKeymap {
     let mut lock_keycodes = HashMap::new();
 
     // Standard modifier keycodes (evdev offsets: hardware scancode + 8).
-    modifier_keycodes.insert(42, ModifierMask::SHIFT);   // Left Shift
-    modifier_keycodes.insert(54, ModifierMask::SHIFT);   // Right Shift
-    modifier_keycodes.insert(29, ModifierMask::CONTROL);  // Left Ctrl
-    modifier_keycodes.insert(97, ModifierMask::CONTROL);  // Right Ctrl
-    modifier_keycodes.insert(56, ModifierMask::MOD1);     // Left Alt
-    modifier_keycodes.insert(100, ModifierMask::MOD5);    // Right Alt (AltGr)
-    modifier_keycodes.insert(125, ModifierMask::MOD4);    // Left Super
-    modifier_keycodes.insert(126, ModifierMask::MOD4);    // Right Super
+    modifier_keycodes.insert(42, ModifierMask::SHIFT); // Left Shift
+    modifier_keycodes.insert(54, ModifierMask::SHIFT); // Right Shift
+    modifier_keycodes.insert(29, ModifierMask::CONTROL); // Left Ctrl
+    modifier_keycodes.insert(97, ModifierMask::CONTROL); // Right Ctrl
+    modifier_keycodes.insert(56, ModifierMask::MOD1); // Left Alt
+    modifier_keycodes.insert(100, ModifierMask::MOD5); // Right Alt (AltGr)
+    modifier_keycodes.insert(125, ModifierMask::MOD4); // Left Super
+    modifier_keycodes.insert(126, ModifierMask::MOD4); // Right Super
 
     // Lock modifiers.
-    lock_keycodes.insert(58, ModifierMask::LOCK);   // Caps Lock
-    lock_keycodes.insert(69, ModifierMask::MOD2);   // Num Lock
+    lock_keycodes.insert(58, ModifierMask::LOCK); // Caps Lock
+    lock_keycodes.insert(69, ModifierMask::MOD2); // Num Lock
     // Also register in modifier_keycodes.
     modifier_keycodes.insert(58, ModifierMask::LOCK);
     modifier_keycodes.insert(69, ModifierMask::MOD2);
@@ -287,36 +287,67 @@ pub fn compile_keymap(config: KeymapConfig) -> XkbKeymap {
         (44, XK_Z, XK_Z - 0x20),
     ];
     for &(kc, lower, upper) in letter_map {
-        keysym_map.insert(kc, KeySymEntry {
-            levels: [lower, upper, lower, upper],
-        });
+        keysym_map.insert(
+            kc,
+            KeySymEntry {
+                levels: [lower, upper, lower, upper],
+            },
+        );
     }
 
     // Digits and number row symbols.
     let digit_map: &[(u32, u32, u32)] = &[
-        (2, XK_1, 0x0021), // 1 / !
-        (3, XK_2, 0x0040), // 2 / @
-        (4, XK_3, 0x0023), // 3 / #
-        (5, XK_4, 0x0024), // 4 / $
-        (6, XK_5, 0x0025), // 5 / %
-        (7, XK_6, 0x005e), // 6 / ^
-        (8, XK_7, 0x0026), // 7 / &
-        (9, XK_8, 0x002a), // 8 / *
+        (2, XK_1, 0x0021),  // 1 / !
+        (3, XK_2, 0x0040),  // 2 / @
+        (4, XK_3, 0x0023),  // 3 / #
+        (5, XK_4, 0x0024),  // 4 / $
+        (6, XK_5, 0x0025),  // 5 / %
+        (7, XK_6, 0x005e),  // 6 / ^
+        (8, XK_7, 0x0026),  // 7 / &
+        (9, XK_8, 0x002a),  // 8 / *
         (10, XK_9, 0x0028), // 9 / (
         (11, XK_0, 0x0029), // 0 / )
     ];
     for &(kc, base, shifted) in digit_map {
-        keysym_map.insert(kc, KeySymEntry {
-            levels: [base, shifted, base, shifted],
-        });
+        keysym_map.insert(
+            kc,
+            KeySymEntry {
+                levels: [base, shifted, base, shifted],
+            },
+        );
     }
 
     // Special keys.
-    keysym_map.insert(57, KeySymEntry { levels: [XK_SPACE, XK_SPACE, XK_SPACE, XK_SPACE] });
-    keysym_map.insert(28, KeySymEntry { levels: [XK_RETURN, XK_RETURN, XK_RETURN, XK_RETURN] });
-    keysym_map.insert(1, KeySymEntry { levels: [XK_ESCAPE, XK_ESCAPE, XK_ESCAPE, XK_ESCAPE] });
-    keysym_map.insert(15, KeySymEntry { levels: [XK_TAB, XK_TAB, XK_TAB, XK_TAB] });
-    keysym_map.insert(14, KeySymEntry { levels: [XK_BACKSPACE, XK_BACKSPACE, XK_BACKSPACE, XK_BACKSPACE] });
+    keysym_map.insert(
+        57,
+        KeySymEntry {
+            levels: [XK_SPACE, XK_SPACE, XK_SPACE, XK_SPACE],
+        },
+    );
+    keysym_map.insert(
+        28,
+        KeySymEntry {
+            levels: [XK_RETURN, XK_RETURN, XK_RETURN, XK_RETURN],
+        },
+    );
+    keysym_map.insert(
+        1,
+        KeySymEntry {
+            levels: [XK_ESCAPE, XK_ESCAPE, XK_ESCAPE, XK_ESCAPE],
+        },
+    );
+    keysym_map.insert(
+        15,
+        KeySymEntry {
+            levels: [XK_TAB, XK_TAB, XK_TAB, XK_TAB],
+        },
+    );
+    keysym_map.insert(
+        14,
+        KeySymEntry {
+            levels: [XK_BACKSPACE, XK_BACKSPACE, XK_BACKSPACE, XK_BACKSPACE],
+        },
+    );
 
     XkbKeymap {
         config,
@@ -350,7 +381,12 @@ impl XkbState {
     /// Update state for a key press or release event.
     ///
     /// Returns a list of modifier changes produced by this key event.
-    pub fn update_key(&mut self, keycode: u32, pressed: bool, keymap: &XkbKeymap) -> Vec<ModifierChange> {
+    pub fn update_key(
+        &mut self,
+        keycode: u32,
+        pressed: bool,
+        keymap: &XkbKeymap,
+    ) -> Vec<ModifierChange> {
         let mut changes = Vec::new();
 
         if let Some(mask) = keymap.modifier_for_keycode(keycode) {

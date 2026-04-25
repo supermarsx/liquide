@@ -108,69 +108,82 @@ impl DomSerializer {
     fn serialize_node(&self, doc: &Document, node_id: NodeId, depth: i32) -> SerializedNode {
         let node = doc.get(node_id);
 
-        let (tag, element_id, classes, attributes, inline_styles, text, image_src, surface_id, pseudo_states, child_count) =
-            match node {
-                Some(n) => {
-                    let tag = n.tag.as_str().to_string();
-                    let element_id = n.element_id.clone();
-                    let classes = n.classes.iter().map(|s| s.to_string()).collect();
+        let (
+            tag,
+            element_id,
+            classes,
+            attributes,
+            inline_styles,
+            text,
+            image_src,
+            surface_id,
+            pseudo_states,
+            child_count,
+        ) = match node {
+            Some(n) => {
+                let tag = n.tag.as_str().to_string();
+                let element_id = n.element_id.clone();
+                let classes = n.classes.iter().map(|s| s.to_string()).collect();
 
-                    let attributes = if self.config.include_attrs {
-                        n.attrs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
-                    } else {
-                        vec![]
-                    };
+                let attributes = if self.config.include_attrs {
+                    n.attrs
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect()
+                } else {
+                    vec![]
+                };
 
-                    let inline_styles = if self.config.include_inline_styles {
-                        n.inline_styles
-                            .iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
-                            .collect()
-                    } else {
-                        vec![]
-                    };
+                let inline_styles = if self.config.include_inline_styles {
+                    n.inline_styles
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect()
+                } else {
+                    vec![]
+                };
 
-                    let (text, image_src, surface_id) = match &n.data {
-                        NodeData::Text(t) => (Some(t.clone()), None, None),
-                        NodeData::Image { src, .. } => (None, Some(src.clone()), None),
-                        NodeData::Surface { surface_id } => (None, None, Some(*surface_id)),
-                        _ => (None, None, None),
-                    };
+                let (text, image_src, surface_id) = match &n.data {
+                    NodeData::Text(t) => (Some(t.clone()), None, None),
+                    NodeData::Image { src, .. } => (None, Some(src.clone()), None),
+                    NodeData::Surface { surface_id } => (None, None, Some(*surface_id)),
+                    _ => (None, None, None),
+                };
 
-                    let pseudo_states = if self.config.include_pseudo_states {
-                        extract_pseudo_state_names(n)
-                    } else {
-                        vec![]
-                    };
+                let pseudo_states = if self.config.include_pseudo_states {
+                    extract_pseudo_state_names(n)
+                } else {
+                    vec![]
+                };
 
-                    let child_count = n.children.len();
+                let child_count = n.children.len();
 
-                    (
-                        tag,
-                        element_id,
-                        classes,
-                        attributes,
-                        inline_styles,
-                        text,
-                        image_src,
-                        surface_id,
-                        pseudo_states,
-                        child_count,
-                    )
-                }
-                None => (
-                    "<missing>".to_string(),
-                    None,
-                    vec![],
-                    vec![],
-                    vec![],
-                    None,
-                    None,
-                    None,
-                    vec![],
-                    0,
-                ),
-            };
+                (
+                    tag,
+                    element_id,
+                    classes,
+                    attributes,
+                    inline_styles,
+                    text,
+                    image_src,
+                    surface_id,
+                    pseudo_states,
+                    child_count,
+                )
+            }
+            None => (
+                "<missing>".to_string(),
+                None,
+                vec![],
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+                vec![],
+                0,
+            ),
+        };
 
         // Build children if within depth limit.
         let children = if self.config.max_depth >= 0 && depth >= self.config.max_depth {

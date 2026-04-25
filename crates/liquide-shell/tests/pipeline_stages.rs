@@ -5,11 +5,11 @@
 //!
 //! Each test inspects the scene tree at every observable point.
 
-use liquide_shell::Shell;
-use liquide_compositor::scene::{SceneNode, SceneNodeKind};
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::pixel::PixelFormat;
+use liquide_compositor::scene::{SceneNode, SceneNodeKind};
 use liquide_renderer_cpu::{Renderer, SoftwareRenderer};
+use liquide_shell::Shell;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helper utilities
@@ -93,20 +93,35 @@ struct ShadowInfo {
 fn inventory_scene(node: &SceneNode, inv: &mut SceneInventory) {
     let b = &node.properties.bounds;
     let z = node.properties.z_order;
-    let ni = || NodeInfo { id: node.id, x: b.x, y: b.y, w: b.width, h: b.height, z };
+    let ni = || NodeInfo {
+        id: node.id,
+        x: b.x,
+        y: b.y,
+        w: b.width,
+        h: b.height,
+        z,
+    };
 
     match &node.kind {
         SceneNodeKind::Root => {}
         SceneNodeKind::Background { color } => {
             inv.backgrounds.push(ni());
         }
-        SceneNodeKind::Text { text, font_size, font_weight, .. } => {
+        SceneNodeKind::Text {
+            text,
+            font_size,
+            font_weight,
+            ..
+        } => {
             inv.texts.push(TextInfo {
                 id: node.id,
                 text: text.clone(),
                 font_size: *font_size,
                 font_weight: *font_weight as u32,
-                x: b.x, y: b.y, w: b.width, h: b.height,
+                x: b.x,
+                y: b.y,
+                w: b.width,
+                h: b.height,
             });
         }
         SceneNodeKind::Glass(params) => {
@@ -114,8 +129,14 @@ fn inventory_scene(node: &SceneNode, inv: &mut SceneInventory) {
             inv.glass.push(GlassInfo {
                 id: node.id,
                 blur_radius: params.blur_radius,
-                tint_r: c.r, tint_g: c.g, tint_b: c.b, tint_a: c.a,
-                x: b.x, y: b.y, w: b.width, h: b.height,
+                tint_r: c.r,
+                tint_g: c.g,
+                tint_b: c.b,
+                tint_a: c.a,
+                x: b.x,
+                y: b.y,
+                w: b.width,
+                h: b.height,
             });
         }
         SceneNodeKind::Border { sides, .. } => {
@@ -125,7 +146,10 @@ fn inventory_scene(node: &SceneNode, inv: &mut SceneInventory) {
                 right_width: sides.right.width,
                 bottom_width: sides.bottom.width,
                 left_width: sides.left.width,
-                x: b.x, y: b.y, w: b.width, h: b.height,
+                x: b.x,
+                y: b.y,
+                w: b.width,
+                h: b.height,
             });
         }
         SceneNodeKind::BoxShadows { shadows } => {
@@ -134,7 +158,10 @@ fn inventory_scene(node: &SceneNode, inv: &mut SceneInventory) {
                 id: node.id,
                 count: shadows.len(),
                 blur_radius: blur,
-                x: b.x, y: b.y, w: b.width, h: b.height,
+                x: b.x,
+                y: b.y,
+                w: b.width,
+                h: b.height,
             });
         }
         SceneNodeKind::Image { .. } => inv.images.push(ni()),
@@ -166,7 +193,11 @@ fn render_scene(scene: &SceneNode) -> FrameBuffer {
     let mut damage = DamageSet::new(64);
     for y in 0..(1080 + 63) / 64 {
         for x in 0..(1920 + 63) / 64 {
-            damage.add(DamageTile { x, y, class: DamageClass::UiPrimitive });
+            damage.add(DamageTile {
+                x,
+                y,
+                class: DamageClass::UiPrimitive,
+            });
         }
     }
 
@@ -184,7 +215,10 @@ fn element_background_exists_in_scene() {
 
     println!("\n=== Background elements ===");
     for bg in &inv.backgrounds {
-        println!("  [{}] @({:.0},{:.0}) {}×{} z={}", bg.id, bg.x, bg.y, bg.w, bg.h, bg.z);
+        println!(
+            "  [{}] @({:.0},{:.0}) {}×{} z={}",
+            bg.id, bg.x, bg.y, bg.w, bg.h, bg.z
+        );
     }
 
     assert!(
@@ -200,10 +234,16 @@ fn element_background_has_valid_bounds() {
     for bg in &inv.backgrounds {
         assert!(bg.w > 0.0, "Background width must be > 0 (id={})", bg.id);
         assert!(bg.h > 0.0, "Background height must be > 0 (id={})", bg.id);
-        assert!(!bg.x.is_nan() && !bg.y.is_nan(), "Background position must not be NaN");
+        assert!(
+            !bg.x.is_nan() && !bg.y.is_nan(),
+            "Background position must not be NaN"
+        );
     }
 
-    println!("✅ {} backgrounds all have valid bounds", inv.backgrounds.len());
+    println!(
+        "✅ {} backgrounds all have valid bounds",
+        inv.backgrounds.len()
+    );
 }
 
 #[test]
@@ -215,12 +255,17 @@ fn element_background_renders_pixels() {
 
     // Dark backgrounds will produce near-black pixels with slight alpha blending.
     // Just verify rendering doesn't crash and produces at least some non-zero pixels.
-    let non_zero = fb.pixels().chunks_exact(4)
+    let non_zero = fb
+        .pixels()
+        .chunks_exact(4)
         .filter(|p| p[0] > 5 || p[1] > 5 || p[2] > 5)
         .count();
 
     println!("✅ Background rendering: {} non-zero pixels", non_zero);
-    assert!(non_zero > 0, "Background should produce some non-zero pixels");
+    assert!(
+        non_zero > 0,
+        "Background should produce some non-zero pixels"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -255,8 +300,16 @@ fn element_text_has_valid_content() {
     let (_, _, inv) = build_shell_and_inventory();
 
     for t in &inv.texts {
-        assert!(!t.text.is_empty(), "Text node {} should have non-empty content", t.id);
-        assert!(t.font_size > 0.0, "Text node {} font_size must be > 0", t.id);
+        assert!(
+            !t.text.is_empty(),
+            "Text node {} should have non-empty content",
+            t.id
+        );
+        assert!(
+            t.font_size > 0.0,
+            "Text node {} font_size must be > 0",
+            t.id
+        );
     }
 
     // Check for statusbar text (clock, logo) — dock labels use display:none
@@ -273,12 +326,18 @@ fn element_text_has_valid_bounds() {
     let (_, _, inv) = build_shell_and_inventory();
 
     for t in &inv.texts {
-        assert!(!t.x.is_nan() && !t.y.is_nan(), "Text position must not be NaN (id={})", t.id);
+        assert!(
+            !t.x.is_nan() && !t.y.is_nan(),
+            "Text position must not be NaN (id={})",
+            t.id
+        );
         // Text might have zero width if it's measured differently than expected,
         // but height should always be > 0
         assert!(
             t.h >= 0.0,
-            "Text height must be >= 0 (id={}, text='{}')", t.id, t.text
+            "Text height must be >= 0 (id={}, text='{}')",
+            t.id,
+            t.text
         );
     }
 
@@ -295,11 +354,16 @@ fn element_text_renders_to_pixels() {
     // With dark theme and white text, text pixels should have higher RGB values
     // in the text regions. Just verify no crash during rendering.
     let total = fb.pixels().len() / 4;
-    let non_black = fb.pixels().chunks_exact(4)
+    let non_black = fb
+        .pixels()
+        .chunks_exact(4)
         .filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10)
         .count();
 
-    println!("✅ With text: {} non-black pixels out of {} total", non_black, total);
+    println!(
+        "✅ With text: {} non-black pixels out of {} total",
+        non_black, total
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -314,8 +378,7 @@ fn element_glass_exists_in_scene() {
     for g in &inv.glass {
         println!(
             "  [{}] blur={} tint=rgba({},{},{},{}) @({:.0},{:.0}) {}×{}",
-            g.id, g.blur_radius, g.tint_r, g.tint_g, g.tint_b, g.tint_a,
-            g.x, g.y, g.w, g.h
+            g.id, g.blur_radius, g.tint_r, g.tint_g, g.tint_b, g.tint_a, g.x, g.y, g.w, g.h
         );
     }
 
@@ -375,8 +438,7 @@ fn element_border_exists_in_scene() {
     for b in &inv.borders {
         println!(
             "  [{}] top={:.1} right={:.1} bottom={:.1} left={:.1} @({:.0},{:.0}) {}×{}",
-            b.id, b.top_width, b.right_width, b.bottom_width, b.left_width,
-            b.x, b.y, b.w, b.h
+            b.id, b.top_width, b.right_width, b.bottom_width, b.left_width, b.x, b.y, b.w, b.h
         );
     }
 
@@ -391,14 +453,22 @@ fn element_border_has_positive_width() {
     let (_, _, inv) = build_shell_and_inventory();
 
     for b in &inv.borders {
-        let max_width = b.top_width.max(b.right_width).max(b.bottom_width).max(b.left_width);
+        let max_width = b
+            .top_width
+            .max(b.right_width)
+            .max(b.bottom_width)
+            .max(b.left_width);
         assert!(
             max_width > 0.0,
-            "Border node {} should have at least one side with width > 0", b.id
+            "Border node {} should have at least one side with width > 0",
+            b.id
         );
     }
 
-    println!("✅ {} border nodes all have positive width", inv.borders.len());
+    println!(
+        "✅ {} border nodes all have positive width",
+        inv.borders.len()
+    );
 }
 
 #[test]
@@ -410,7 +480,10 @@ fn element_border_has_valid_bounds() {
         assert!(b.h > 0.0, "Border height must be > 0 (id={})", b.id);
     }
 
-    println!("✅ {} border nodes all have valid bounds", inv.borders.len());
+    println!(
+        "✅ {} border nodes all have valid bounds",
+        inv.borders.len()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -433,17 +506,35 @@ fn full_pipeline_scene_inventory() {
     println!("  Shadows:       {}", inv.shadows.len());
     println!("  Other:         {}", inv.other.len());
 
-    let total = inv.backgrounds.len() + inv.texts.len() + inv.glass.len()
-        + inv.borders.len() + inv.box_shadows.len() + inv.images.len()
-        + inv.outlines.len() + inv.workspaces.len() + inv.shadows.len()
+    let total = inv.backgrounds.len()
+        + inv.texts.len()
+        + inv.glass.len()
+        + inv.borders.len()
+        + inv.box_shadows.len()
+        + inv.images.len()
+        + inv.outlines.len()
+        + inv.workspaces.len()
+        + inv.shadows.len()
         + inv.other.len();
     println!("\n  TOTAL:         {}", total);
 
     // Scene must have a minimum set of element types
-    assert!(inv.backgrounds.len() >= 2, "Need at least 2 backgrounds (desktop + dock/statusbar)");
-    assert!(inv.texts.len() >= 4, "Need at least 4 text nodes (dock labels)");
-    assert!(inv.glass.len() >= 1, "Need at least 1 glass node (blur effect)");
-    assert!(inv.borders.len() >= 1, "Need at least 1 border node (depth cue)");
+    assert!(
+        inv.backgrounds.len() >= 2,
+        "Need at least 2 backgrounds (desktop + dock/statusbar)"
+    );
+    assert!(
+        inv.texts.len() >= 4,
+        "Need at least 4 text nodes (dock labels)"
+    );
+    assert!(
+        inv.glass.len() >= 1,
+        "Need at least 1 glass node (blur effect)"
+    );
+    assert!(
+        inv.borders.len() >= 1,
+        "Need at least 1 border node (depth cue)"
+    );
 
     println!("\n✅ All required element types present in scene");
 }
@@ -454,25 +545,61 @@ fn full_pipeline_flattening_preserves_all_types() {
     let flat = scene.flatten();
 
     // Count text in flat list
-    let flat_text = flat.iter().filter(|n| matches!(n.kind, SceneNodeKind::Text { .. })).count();
-    let flat_bg = flat.iter().filter(|n| matches!(n.kind, SceneNodeKind::Background { .. })).count();
-    let flat_glass = flat.iter().filter(|n| matches!(n.kind, SceneNodeKind::Glass(_))).count();
-    let flat_border = flat.iter().filter(|n| matches!(n.kind, SceneNodeKind::Border { .. })).count();
+    let flat_text = flat
+        .iter()
+        .filter(|n| matches!(n.kind, SceneNodeKind::Text { .. }))
+        .count();
+    let flat_bg = flat
+        .iter()
+        .filter(|n| matches!(n.kind, SceneNodeKind::Background { .. }))
+        .count();
+    let flat_glass = flat
+        .iter()
+        .filter(|n| matches!(n.kind, SceneNodeKind::Glass(_)))
+        .count();
+    let flat_border = flat
+        .iter()
+        .filter(|n| matches!(n.kind, SceneNodeKind::Border { .. }))
+        .count();
 
     println!("\n=== Flattened scene ===");
-    println!("  Text:       {} (tree={}, flat={})", flat_text, inv.texts.len(), flat_text);
-    println!("  Background: {} (tree={}, flat={})", flat_bg, inv.backgrounds.len(), flat_bg);
-    println!("  Glass:      {} (tree={}, flat={})", flat_glass, inv.glass.len(), flat_glass);
-    println!("  Border:     {} (tree={}, flat={})", flat_border, inv.borders.len(), flat_border);
+    println!(
+        "  Text:       {} (tree={}, flat={})",
+        flat_text,
+        inv.texts.len(),
+        flat_text
+    );
+    println!(
+        "  Background: {} (tree={}, flat={})",
+        flat_bg,
+        inv.backgrounds.len(),
+        flat_bg
+    );
+    println!(
+        "  Glass:      {} (tree={}, flat={})",
+        flat_glass,
+        inv.glass.len(),
+        flat_glass
+    );
+    println!(
+        "  Border:     {} (tree={}, flat={})",
+        flat_border,
+        inv.borders.len(),
+        flat_border
+    );
 
     // Flattening should preserve or increase node count (never lose nodes)
     assert!(
         flat_text >= inv.texts.len(),
-        "Flattening lost text nodes: tree={}, flat={}", inv.texts.len(), flat_text
+        "Flattening lost text nodes: tree={}, flat={}",
+        inv.texts.len(),
+        flat_text
     );
     assert!(
         flat_bg >= inv.backgrounds.len(),
-        "Flattening lost backgrounds: tree={}, flat={}", inv.backgrounds.len(), flat_bg
+        "Flattening lost backgrounds: tree={}, flat={}",
+        inv.backgrounds.len(),
+        flat_bg
     );
 
     println!("\n✅ Flattening preserves all node types");
@@ -483,22 +610,37 @@ fn full_pipeline_rendering_no_crash() {
     let (_, scene, inv) = build_shell_and_inventory();
 
     // Verify scene is non-trivial before rendering
-    assert!(!inv.texts.is_empty(), "Need text for meaningful render test");
+    assert!(
+        !inv.texts.is_empty(),
+        "Need text for meaningful render test"
+    );
     assert!(!inv.backgrounds.is_empty(), "Need backgrounds");
     assert!(!inv.glass.is_empty(), "Need glass");
 
     let fb = render_scene(&scene);
 
-    assert_eq!(fb.pixels().len(), 1920 * 1080 * 4, "Framebuffer size correct");
+    assert_eq!(
+        fb.pixels().len(),
+        1920 * 1080 * 4,
+        "Framebuffer size correct"
+    );
 
-    let non_black = fb.pixels().chunks_exact(4)
+    let non_black = fb
+        .pixels()
+        .chunks_exact(4)
         .filter(|p| p[0] > 10 || p[1] > 10 || p[2] > 10)
         .count();
 
-    println!("✅ Full pipeline rendered: {} non-black pixels ({:.2}%)",
-        non_black, (non_black as f64 / (1920.0 * 1080.0)) * 100.0);
+    println!(
+        "✅ Full pipeline rendered: {} non-black pixels ({:.2}%)",
+        non_black,
+        (non_black as f64 / (1920.0 * 1080.0)) * 100.0
+    );
 
-    assert!(non_black > 0, "Rendering with all element types should produce visible pixels");
+    assert!(
+        non_black > 0,
+        "Rendering with all element types should produce visible pixels"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -513,9 +655,20 @@ fn element_box_shadow_if_present_has_valid_spec() {
     println!("  Count: {}", inv.box_shadows.len());
 
     for s in &inv.box_shadows {
-        assert!(s.count > 0, "BoxShadow node {} should have at least 1 shadow spec", s.id);
-        assert!(s.w > 0.0 && s.h > 0.0, "BoxShadow bounds must be > 0 (id={})", s.id);
-        println!("  [{}] {}×shadow blur={:.1} @({:.0},{:.0}) {}×{}", s.id, s.count, s.blur_radius, s.x, s.y, s.w, s.h);
+        assert!(
+            s.count > 0,
+            "BoxShadow node {} should have at least 1 shadow spec",
+            s.id
+        );
+        assert!(
+            s.w > 0.0 && s.h > 0.0,
+            "BoxShadow bounds must be > 0 (id={})",
+            s.id
+        );
+        println!(
+            "  [{}] {}×shadow blur={:.1} @({:.0},{:.0}) {}×{}",
+            s.id, s.count, s.blur_radius, s.x, s.y, s.w, s.h
+        );
     }
 
     // Glass themes may not use box-shadows (they use Glass for depth instead)
@@ -536,7 +689,9 @@ fn positioned_elements_have_children_laid_out() {
     // Statusbar text (clock, indicators) should exist — proves
     // positioned (position:fixed) flex children are laid out.
     // Note: dock labels use display:none so they won't appear as text nodes.
-    let statusbar_texts: Vec<_> = inv.texts.iter()
+    let statusbar_texts: Vec<_> = inv
+        .texts
+        .iter()
         .filter(|t| t.text.contains(':') || t.text == "LiquiDE")
         .collect();
     assert!(
@@ -565,23 +720,34 @@ fn print_tree(node: &SceneNode, depth: usize) {
     let b = &node.properties.bounds;
     let kind = match &node.kind {
         SceneNodeKind::Root => "Root".to_string(),
-        SceneNodeKind::Background { color } =>
-            format!("Bg rgba({},{},{},{})", color.r, color.g, color.b, color.a),
-        SceneNodeKind::Text { text, font_size, .. } =>
-            format!("Text \"{}\" {}px", if text.len() > 20 { &text[..20] } else { text }, font_size),
-        SceneNodeKind::Glass(p) =>
-            format!("Glass blur={} tint=({},{},{},{})", p.blur_radius, p.tint_color.r, p.tint_color.g, p.tint_color.b, p.tint_color.a),
-        SceneNodeKind::Border { sides, .. } =>
-            format!("Border t={:.0} r={:.0} b={:.0} l={:.0}", sides.top.width, sides.right.width, sides.bottom.width, sides.left.width),
-        SceneNodeKind::BoxShadows { shadows } =>
-            format!("BoxShadow ×{}", shadows.len()),
-        SceneNodeKind::Shadow { blur_radius, .. } =>
-            format!("Shadow blur={:.0}", blur_radius),
+        SceneNodeKind::Background { color } => {
+            format!("Bg rgba({},{},{},{})", color.r, color.g, color.b, color.a)
+        }
+        SceneNodeKind::Text {
+            text, font_size, ..
+        } => format!(
+            "Text \"{}\" {}px",
+            if text.len() > 20 { &text[..20] } else { text },
+            font_size
+        ),
+        SceneNodeKind::Glass(p) => format!(
+            "Glass blur={} tint=({},{},{},{})",
+            p.blur_radius, p.tint_color.r, p.tint_color.g, p.tint_color.b, p.tint_color.a
+        ),
+        SceneNodeKind::Border { sides, .. } => format!(
+            "Border t={:.0} r={:.0} b={:.0} l={:.0}",
+            sides.top.width, sides.right.width, sides.bottom.width, sides.left.width
+        ),
+        SceneNodeKind::BoxShadows { shadows } => format!("BoxShadow ×{}", shadows.len()),
+        SceneNodeKind::Shadow { blur_radius, .. } => format!("Shadow blur={:.0}", blur_radius),
         SceneNodeKind::Image { .. } => "Image".to_string(),
         SceneNodeKind::Workspace { index } => format!("Workspace {}", index),
         _ => format!("{:?}", std::mem::discriminant(&node.kind)),
     };
-    println!("{}[{}] {} @({:.0},{:.0}) {:.0}×{:.0} z={}", indent, node.id, kind, b.x, b.y, b.width, b.height, node.properties.z_order);
+    println!(
+        "{}[{}] {} @({:.0},{:.0}) {:.0}×{:.0} z={}",
+        indent, node.id, kind, b.x, b.y, b.width, b.height, node.properties.z_order
+    );
 
     for child in &node.children {
         print_tree(child, depth + 1);

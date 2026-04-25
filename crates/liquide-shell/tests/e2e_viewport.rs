@@ -11,8 +11,8 @@
 
 use liquide_dom::Document;
 use liquide_layout::{LayoutEngine, Size};
-use liquide_shell::pipeline::{DesktopPipeline, PipelineConfig};
 use liquide_shell::desktop_dom::DesktopDocument;
+use liquide_shell::pipeline::{DesktopPipeline, PipelineConfig};
 use liquide_style_engine::dimension::Dimension;
 use liquide_style_engine::engine::{StyleEngine, ViewportSize};
 
@@ -291,7 +291,13 @@ fn css_width_100_percent_fills_viewport() {
     let div = doc.create_element("div");
     doc.append_child(root, div);
 
-    let mut style = StyleEngine::new(ViewportSize { width: 1920.0, height: 1080.0 }, 16.0);
+    let mut style = StyleEngine::new(
+        ViewportSize {
+            width: 1920.0,
+            height: 1080.0,
+        },
+        16.0,
+    );
     style.add_stylesheet("div { width: 100%; height: 50px; }");
 
     let styles = style.restyle_all(&doc);
@@ -307,7 +313,13 @@ fn css_width_100vw_equals_viewport_width() {
     let div = doc.create_element("div");
     doc.append_child(root, div);
 
-    let mut style = StyleEngine::new(ViewportSize { width: 1920.0, height: 1080.0 }, 16.0);
+    let mut style = StyleEngine::new(
+        ViewportSize {
+            width: 1920.0,
+            height: 1080.0,
+        },
+        16.0,
+    );
     style.add_stylesheet("div { width: 100vw; }");
 
     let styles = style.restyle_all(&doc);
@@ -329,7 +341,13 @@ fn css_height_100vh_equals_viewport_height() {
     let div = doc.create_element("div");
     doc.append_child(root, div);
 
-    let mut style = StyleEngine::new(ViewportSize { width: 1920.0, height: 1080.0 }, 16.0);
+    let mut style = StyleEngine::new(
+        ViewportSize {
+            width: 1920.0,
+            height: 1080.0,
+        },
+        16.0,
+    );
     style.add_stylesheet("div { height: 100vh; }");
 
     let styles = style.restyle_all(&doc);
@@ -349,8 +367,15 @@ fn css_fixed_position_with_full_width() {
     let bar = doc.create_element("statusbar");
     doc.append_child(root, bar);
 
-    let mut style = StyleEngine::new(ViewportSize { width: 1920.0, height: 1080.0 }, 16.0);
-    style.add_stylesheet(r#"
+    let mut style = StyleEngine::new(
+        ViewportSize {
+            width: 1920.0,
+            height: 1080.0,
+        },
+        16.0,
+    );
+    style.add_stylesheet(
+        r#"
         statusbar {
             position: fixed;
             top: 0;
@@ -358,12 +383,16 @@ fn css_fixed_position_with_full_width() {
             width: 100%;
             height: 32;
         }
-    "#);
+    "#,
+    );
 
     let styles = style.restyle_all(&doc);
     let bar_style = styles.get(bar).unwrap();
 
-    assert!(matches!(bar_style.position, liquide_style_engine::computed::Position::Fixed));
+    assert!(matches!(
+        bar_style.position,
+        liquide_style_engine::computed::Position::Fixed
+    ));
     assert!(matches!(bar_style.width, Dimension::Percent(100.0)));
     assert!(matches!(bar_style.height, Dimension::Px(h) if (h - 32.0).abs() < 0.1));
 }
@@ -430,7 +459,6 @@ fn pipeline_viewport_resize_affects_layout() {
 
     let mut desktop = DesktopDocument::new();
 
-
     // Run at 1080p
     let (output_1080, _) = pipeline.run(&mut desktop.doc, 16.0);
 
@@ -444,6 +472,15 @@ fn pipeline_viewport_resize_affects_layout() {
     assert!(output_4k.layout.boxes.len() > 0);
 }
 
+fn canonical_box_id_for_element(
+    doc: &Document,
+    layout: &liquide_layout::LayoutTree,
+    element_id: &str,
+) -> Option<liquide_layout::LayoutBoxId> {
+    let node_id = doc.get_element_by_id(element_id)?;
+    layout.find_box_id_by_node(node_id)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Desktop DOM Layout Integration Tests
 // ═══════════════════════════════════════════════════════════════════════════
@@ -455,23 +492,25 @@ fn statusbar_positioned_at_top() {
 
     let mut desktop = DesktopDocument::new();
 
-
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // Find statusbar in layout
     let statusbar_id = desktop.doc.get_element_by_id("shell-statusbar");
     assert!(statusbar_id.is_some(), "Statusbar should exist in DOM");
 
-    let statusbar_box = output.layout.boxes.iter().find(|b| {
-        desktop.doc.get(b.node).map(|n| n.element_id.as_deref() == Some("shell-statusbar")).unwrap_or(false)
-    });
+    let statusbar_box = canonical_box_id_for_element(&desktop.doc, &output.layout, "shell-statusbar");
+    assert!(statusbar_box.is_some(), "Statusbar should exist in layout");
 
     if let Some(sb) = statusbar_box {
-        let abs = output.layout.absolute_border_rect(sb.id);
+        let abs = output.layout.absolute_border_rect(sb);
         // Statusbar should be at y=0 (top of viewport)
         assert!(abs.y < 10.0, "Statusbar should be at top (y={})", abs.y);
         // Width should span most or all of viewport
-        assert!(abs.width > 1000.0, "Statusbar width={} should be wide", abs.width);
+        assert!(
+            abs.width > 1000.0,
+            "Statusbar width={} should be wide",
+            abs.width
+        );
     }
 }
 
@@ -482,23 +521,24 @@ fn dock_positioned_at_bottom() {
 
     let mut desktop = DesktopDocument::new();
 
-
-
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     // Find dock in layout
     let dock_id = desktop.doc.get_element_by_id("shell-dock");
     assert!(dock_id.is_some(), "Dock should exist in DOM");
 
-    let dock_box = output.layout.boxes.iter().find(|b| {
-        desktop.doc.get(b.node).map(|n| n.element_id.as_deref() == Some("shell-dock")).unwrap_or(false)
-    });
+    let dock_box = canonical_box_id_for_element(&desktop.doc, &output.layout, "shell-dock");
+    assert!(dock_box.is_some(), "Dock should exist in layout");
 
     if let Some(d) = dock_box {
-        let abs = output.layout.absolute_border_rect(d.id);
+        let abs = output.layout.absolute_border_rect(d);
         // Dock should be near bottom of viewport (y + height should be close to viewport height)
         let bottom = abs.y + abs.height;
-        assert!(bottom > 1000.0, "Dock bottom={} should be near viewport bottom", bottom);
+        assert!(
+            bottom > 1000.0,
+            "Dock bottom={} should be near viewport bottom",
+            bottom
+        );
     }
 }
 
@@ -512,7 +552,6 @@ fn elements_respect_viewport_width() {
     let mut pipeline = DesktopPipeline::new(&config);
 
     let mut desktop = DesktopDocument::new();
-
 
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
@@ -540,7 +579,6 @@ fn elements_respect_viewport_height() {
     let mut pipeline = DesktopPipeline::new(&config);
 
     let mut desktop = DesktopDocument::new();
-
 
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
@@ -573,7 +611,6 @@ fn layout_at_720p() {
 
     let mut desktop = DesktopDocument::new();
 
-
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
@@ -590,7 +627,6 @@ fn layout_at_1440p() {
     let mut pipeline = DesktopPipeline::new(&config);
 
     let mut desktop = DesktopDocument::new();
-
 
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
@@ -609,7 +645,6 @@ fn layout_at_4k() {
 
     let mut desktop = DesktopDocument::new();
 
-
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
@@ -626,7 +661,6 @@ fn layout_at_ultrawide() {
     let mut pipeline = DesktopPipeline::new(&config);
 
     let mut desktop = DesktopDocument::new();
-
 
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
@@ -645,7 +679,6 @@ fn layout_at_portrait() {
 
     let mut desktop = DesktopDocument::new();
 
-
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 
     assert!(output.styles.len() > 0);
@@ -662,7 +695,6 @@ fn layout_at_small_viewport() {
     let mut pipeline = DesktopPipeline::new(&config);
 
     let mut desktop = DesktopDocument::new();
-
 
     let (output, _) = pipeline.run(&mut desktop.doc, 16.0);
 

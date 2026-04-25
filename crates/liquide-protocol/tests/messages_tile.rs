@@ -191,8 +191,7 @@ fn tile_update_none_fields_omitted() {
         data_size: None,
     };
     let encoded = cbor_encode(&update).expect("encode");
-    let value: ciborium::Value =
-        cbor_decode(&encoded).expect("decode as Value");
+    let value: ciborium::Value = cbor_decode(&encoded).expect("decode as Value");
     if let ciborium::Value::Map(entries) = &value {
         for (key, _) in entries {
             if let ciborium::Value::Text(k) = key {

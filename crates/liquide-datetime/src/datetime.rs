@@ -18,7 +18,14 @@ impl DateTime {
     /// Create a new DateTime. No validation is performed — callers should
     /// ensure values are in-range (month 1..=12, day 1..=31, etc.).
     pub fn new(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> Self {
-        Self { year, month, day, hour, minute, second }
+        Self {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+        }
     }
 
     /// Returns `true` if `self.year` is a leap year in the Gregorian calendar.
@@ -65,7 +72,11 @@ impl DateTime {
     pub fn to_unix_timestamp(&self) -> i64 {
         // Days from civil date to Unix epoch using the algorithm from
         // Howard Hinnant's `days_from_civil`.
-        let y = if self.month <= 2 { self.year as i64 - 1 } else { self.year as i64 };
+        let y = if self.month <= 2 {
+            self.year as i64 - 1
+        } else {
+            self.year as i64
+        };
         let era = if y >= 0 { y } else { y - 399 } / 400;
         let yoe = (y - era * 400) as u64; // year of era [0, 399]
         let m = self.month as u64;
@@ -117,8 +128,7 @@ impl DateTime {
     pub fn format_iso8601(&self) -> String {
         format!(
             "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-            self.year, self.month, self.day,
-            self.hour, self.minute, self.second,
+            self.year, self.month, self.day, self.hour, self.minute, self.second,
         )
     }
 
@@ -133,6 +143,38 @@ impl DateTime {
 impl std::fmt::Display for DateTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.format_iso8601())
+    }
+}
+
+impl DateTime {
+    /// Current wall-clock time in UTC.
+    ///
+    /// Uses [`std::time::SystemTime`] and falls back to the Unix epoch if
+    /// the system clock is before 1970-01-01 (which would be a bug elsewhere).
+    pub fn now_utc() -> DateTime {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        DateTime::from_unix_timestamp(ts)
+    }
+
+    /// Current wall-clock time adjusted by the given UTC offset in minutes.
+    ///
+    /// Negative offsets are west of UTC (e.g. `-300` for UTC-5 / EST).
+    pub fn now_with_offset(offset_minutes: i32) -> DateTime {
+        Self::now_utc().with_offset_minutes(offset_minutes)
+    }
+
+    /// Current wall-clock time in the system's local timezone.
+    ///
+    /// Queries the platform for the current UTC offset via
+    /// [`crate::PlatformTimeBridge::get_utc_offset_minutes`]. If the platform
+    /// call fails (unsupported OS, permissions, etc.), falls back to UTC.
+    pub fn now_local() -> DateTime {
+        let offset = crate::platform::PlatformTimeBridge::get_utc_offset_minutes().unwrap_or(0);
+        Self::now_with_offset(offset)
     }
 }
 
@@ -157,7 +199,13 @@ fn is_leap_year(year: i32) -> bool {
 fn days_in_month(year: i32, month: u32) -> u32 {
     match month {
         1 => 31,
-        2 => if is_leap_year(year) { 29 } else { 28 },
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
         3 => 31,
         4 => 30,
         5 => 31,

@@ -1,5 +1,7 @@
 //! Scene node ID allocation and shell scene building helpers.
 
+#![allow(dead_code)]
+
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
@@ -8,6 +10,7 @@ use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNod
 pub const NODE_ROOT: u64 = 0;
 pub const NODE_BACKGROUND: u64 = 1;
 pub const NODE_WORKSPACE_BASE: u64 = 100;
+#[allow(unused_imports)]
 pub use liquide_statusbar::{NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE};
 pub const NODE_DOCK: u64 = 2_000;
 pub const NODE_DOCK_ITEM_BASE: u64 = 2_100;

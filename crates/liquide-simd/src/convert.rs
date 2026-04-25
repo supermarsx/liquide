@@ -66,8 +66,8 @@ unsafe fn swap_rb_avx2(buf: &mut [u8]) {
 
     // Same mask pattern broadcast to both 128-bit lanes
     let mask = _mm256_setr_epi8(
-        2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15,
-        2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15,
+        2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11, 14, 13, 12, 15, 2, 1, 0, 3, 6, 5, 4, 7, 10, 9, 8, 11,
+        14, 13, 12, 15,
     );
 
     let len = buf.len();
@@ -227,13 +227,7 @@ pub fn upsample_2x_bilinear(src: &[u8], width: u32, height: u32) -> (Vec<u8>, u3
     }
 }
 
-fn upsample_2x_bilinear_scalar(
-    src: &[u8],
-    width: u32,
-    height: u32,
-    dst: &mut [u8],
-    dst_w: u32,
-) {
+fn upsample_2x_bilinear_scalar(src: &[u8], width: u32, height: u32, dst: &mut [u8], dst_w: u32) {
     let w = width as usize;
     let h = height as usize;
     let dw = dst_w as usize;
@@ -567,10 +561,14 @@ unsafe fn blend_constant_src_over_avx2(dst: &mut [u8], color: [u8; 4]) {
         let prod_hi = _mm256_mullo_epi16(d_hi, inv_a_v);
         let biased_lo = _mm256_add_epi16(prod_lo, half);
         let biased_hi = _mm256_add_epi16(prod_hi, half);
-        let approx_lo =
-            _mm256_srli_epi16::<8>(_mm256_add_epi16(biased_lo, _mm256_srli_epi16::<8>(biased_lo)));
-        let approx_hi =
-            _mm256_srli_epi16::<8>(_mm256_add_epi16(biased_hi, _mm256_srli_epi16::<8>(biased_hi)));
+        let approx_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_lo,
+            _mm256_srli_epi16::<8>(biased_lo),
+        ));
+        let approx_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_hi,
+            _mm256_srli_epi16::<8>(biased_hi),
+        ));
 
         let out_lo = _mm256_add_epi16(src_lo, approx_lo);
         let out_hi = _mm256_add_epi16(src_lo, approx_hi);
@@ -622,10 +620,14 @@ unsafe fn blend_constant_src_over_avx512(dst: &mut [u8], color: [u8; 4]) {
         let prod_hi = _mm512_mullo_epi16(d_hi, inv_a_v);
         let biased_lo = _mm512_add_epi16(prod_lo, half);
         let biased_hi = _mm512_add_epi16(prod_hi, half);
-        let approx_lo =
-            _mm512_srli_epi16::<8>(_mm512_add_epi16(biased_lo, _mm512_srli_epi16::<8>(biased_lo)));
-        let approx_hi =
-            _mm512_srli_epi16::<8>(_mm512_add_epi16(biased_hi, _mm512_srli_epi16::<8>(biased_hi)));
+        let approx_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_lo,
+            _mm512_srli_epi16::<8>(biased_lo),
+        ));
+        let approx_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_hi,
+            _mm512_srli_epi16::<8>(biased_hi),
+        ));
 
         let out_lo = _mm512_add_epi16(src_lo, approx_lo);
         let out_hi = _mm512_add_epi16(src_lo, approx_hi);

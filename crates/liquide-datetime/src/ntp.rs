@@ -32,7 +32,9 @@ impl NtpSync {
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         {
-            Err(TimeError::PlatformError("unsupported platform for NTP query".into()))
+            Err(TimeError::PlatformError(
+                "unsupported platform for NTP query".into(),
+            ))
         }
     }
 
@@ -78,7 +80,9 @@ impl NtpSync {
                 return parse_ntp_offset_value(val);
             }
         }
-        Err(TimeError::PlatformError("could not parse timedatectl offset".into()))
+        Err(TimeError::PlatformError(
+            "could not parse timedatectl offset".into(),
+        ))
     }
 
     #[cfg(target_os = "linux")]
@@ -113,7 +117,9 @@ impl NtpSync {
                 return parse_ntp_offset_value(val);
             }
         }
-        Err(TimeError::PlatformError("could not parse w32tm offset".into()))
+        Err(TimeError::PlatformError(
+            "could not parse w32tm offset".into(),
+        ))
     }
 
     #[cfg(target_os = "windows")]
@@ -154,7 +160,9 @@ impl NtpSync {
                 }
             }
         }
-        Err(TimeError::PlatformError("could not parse sntp offset".into()))
+        Err(TimeError::PlatformError(
+            "could not parse sntp offset".into(),
+        ))
     }
 
     #[cfg(target_os = "macos")]

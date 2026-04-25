@@ -22,9 +22,29 @@ pub struct HostFunction {
 
 /// Registry of all host functions.
 pub const HOST_FUNCTIONS: &[HostFunction] = &[
-    HostFunction { index: FN_LOG, name: "log", param_count: 2 },
-    HostFunction { index: FN_GET_CONFIG, name: "get_config", param_count: 1 },
-    HostFunction { index: FN_SEND_MESSAGE, name: "send_message", param_count: 2 },
-    HostFunction { index: FN_ALLOCATE_BUFFER, name: "allocate_buffer", param_count: 1 },
-    HostFunction { index: FN_FREE_BUFFER, name: "free_buffer", param_count: 1 },
+    HostFunction {
+        index: FN_LOG,
+        name: "log",
+        param_count: 2,
+    },
+    HostFunction {
+        index: FN_GET_CONFIG,
+        name: "get_config",
+        param_count: 1,
+    },
+    HostFunction {
+        index: FN_SEND_MESSAGE,
+        name: "send_message",
+        param_count: 2,
+    },
+    HostFunction {
+        index: FN_ALLOCATE_BUFFER,
+        name: "allocate_buffer",
+        param_count: 1,
+    },
+    HostFunction {
+        index: FN_FREE_BUFFER,
+        name: "free_buffer",
+        param_count: 1,
+    },
 ];

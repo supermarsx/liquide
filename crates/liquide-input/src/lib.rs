@@ -3,14 +3,14 @@
 //! Provides keyboard, mouse, and touch event types, input state tracking,
 //! and event routing to surfaces.
 
-pub mod keyboard;
-pub mod mouse;
-pub mod touch;
-pub mod event;
-pub mod state;
-pub mod router;
 pub mod device;
 pub mod dispatcher;
+pub mod event;
+pub mod keyboard;
+pub mod mouse;
+pub mod router;
+pub mod state;
+pub mod touch;
 
 use thiserror::Error;
 
@@ -38,15 +38,15 @@ pub enum InputError {
 pub type Result<T> = std::result::Result<T, InputError>;
 
 // Re-exports
+pub use device::DeviceManager;
+pub use device::InputDevice;
+pub use dispatcher::{DispatchedEvent, EventDispatcher};
+pub use event::{EventSource, InputEvent, InputPacket};
 pub use keyboard::{KeyCode, KeyEvent, KeyState, Modifiers};
 pub use mouse::{ButtonState, MouseButton, MouseEvent, ScrollAxis};
-pub use touch::{TouchEvent, TouchPhase, TouchPoint};
-pub use event::{EventSource, InputEvent, InputPacket};
-pub use state::InputState;
 pub use router::{GrabMode, HitTestResult, InputRouter, InputTarget};
-pub use device::InputDevice;
-pub use device::DeviceManager;
-pub use dispatcher::{DispatchedEvent, EventDispatcher};
+pub use state::InputState;
+pub use touch::{TouchEvent, TouchPhase, TouchPoint};
 
 #[cfg(test)]
 mod tests;

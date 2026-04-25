@@ -87,12 +87,24 @@ pub struct StaticNode {
 }
 
 impl NamespaceNode for StaticNode {
-    fn name(&self) -> &str { &self.name }
-    fn icon(&self) -> &str { &self.icon }
-    fn uri(&self) -> &str { &self.uri }
-    fn node_type(&self) -> NodeType { self.node_type }
-    fn parent_uri(&self) -> Option<&str> { self.parent_uri.as_deref() }
-    fn children(&self) -> Vec<String> { self.children.clone() }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn icon(&self) -> &str {
+        &self.icon
+    }
+    fn uri(&self) -> &str {
+        &self.uri
+    }
+    fn node_type(&self) -> NodeType {
+        self.node_type
+    }
+    fn parent_uri(&self) -> Option<&str> {
+        self.parent_uri.as_deref()
+    }
+    fn children(&self) -> Vec<String> {
+        self.children.clone()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +239,10 @@ impl NamespaceRoot {
     /// Get children of a node.
     #[must_use]
     pub fn children_of(&self, uri: &str) -> Vec<&StaticNode> {
-        self.nodes.values().filter(|n| n.parent_uri.as_deref() == Some(uri)).collect()
+        self.nodes
+            .values()
+            .filter(|n| n.parent_uri.as_deref() == Some(uri))
+            .collect()
     }
 
     // -----------------------------------------------------------------------
@@ -238,17 +253,72 @@ impl NamespaceRoot {
         let home = home_dir();
 
         let builtins: Vec<(&str, &str, String, NodeType)> = vec![
-            ("Home", "folder-home", format!("file://{home}"), NodeType::Folder),
-            ("Desktop", "folder-desktop", format!("file://{home}/Desktop"), NodeType::Folder),
-            ("Documents", "folder-documents", format!("file://{home}/Documents"), NodeType::Folder),
-            ("Downloads", "folder-download", format!("file://{home}/Downloads"), NodeType::Folder),
-            ("Music", "folder-music", format!("file://{home}/Music"), NodeType::Folder),
-            ("Pictures", "folder-pictures", format!("file://{home}/Pictures"), NodeType::Folder),
-            ("Videos", "folder-videos", format!("file://{home}/Videos"), NodeType::Folder),
-            ("Trash", "user-trash", "trash:///".to_string(), NodeType::Trash),
-            ("Recent", "document-open-recent", "recent:///".to_string(), NodeType::Recent),
-            ("Network", "network-workgroup", "network:///".to_string(), NodeType::Network),
-            ("Devices", "drive-harddisk", "devices:///".to_string(), NodeType::Drive),
+            (
+                "Home",
+                "folder-home",
+                format!("file://{home}"),
+                NodeType::Folder,
+            ),
+            (
+                "Desktop",
+                "folder-desktop",
+                format!("file://{home}/Desktop"),
+                NodeType::Folder,
+            ),
+            (
+                "Documents",
+                "folder-documents",
+                format!("file://{home}/Documents"),
+                NodeType::Folder,
+            ),
+            (
+                "Downloads",
+                "folder-download",
+                format!("file://{home}/Downloads"),
+                NodeType::Folder,
+            ),
+            (
+                "Music",
+                "folder-music",
+                format!("file://{home}/Music"),
+                NodeType::Folder,
+            ),
+            (
+                "Pictures",
+                "folder-pictures",
+                format!("file://{home}/Pictures"),
+                NodeType::Folder,
+            ),
+            (
+                "Videos",
+                "folder-videos",
+                format!("file://{home}/Videos"),
+                NodeType::Folder,
+            ),
+            (
+                "Trash",
+                "user-trash",
+                "trash:///".to_string(),
+                NodeType::Trash,
+            ),
+            (
+                "Recent",
+                "document-open-recent",
+                "recent:///".to_string(),
+                NodeType::Recent,
+            ),
+            (
+                "Network",
+                "network-workgroup",
+                "network:///".to_string(),
+                NodeType::Network,
+            ),
+            (
+                "Devices",
+                "drive-harddisk",
+                "devices:///".to_string(),
+                NodeType::Drive,
+            ),
         ];
 
         for (name, icon, uri, ntype) in builtins {

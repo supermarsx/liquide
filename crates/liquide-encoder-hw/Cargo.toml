@@ -16,3 +16,10 @@ serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[features]
+# `real-codecs` is a stub feature reserved for future integration with real
+# codec SDKs (openh264, NVENC, AMF, V4L2). The default build uses the in-tree
+# `NullCodec` honest placeholder emitter.
+default = []
+real-codecs = []

@@ -1,18 +1,153 @@
 //! Standalone compositor launcher — coordinates all subsystems.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::config::StandaloneConfig;
 use crate::display::{DisplayOutput, OutputInfo};
-use crate::event_loop::{EventLoop, EventLoopConfig};
-use crate::wayland::WaylandServerState;
-use liquide_drm::DrmDevice;
-use liquide_logind::{VirtualTerminal, VtMode, Privileges};
+use liquide_drm::{DrmDevice, enumerate_connectors};
 use liquide_libinput::EvdevEnumerator;
+use liquide_logind::{Privileges, VirtualTerminal, VtMode};
+use liquide_platform::standalone::{
+    StandaloneConfig as StandalonePlatformConfig, StandalonePlatform, StandalonePresentMode,
+    StandaloneScriptHandle,
+};
+use liquide_session::desktop::DesktopCompositor;
 use liquide_wayland_server::WaylandDisplay;
-use liquide_xwayland::{XWaylandProcess, XWaylandConfig};
-use tracing::{debug, info, warn};
+use liquide_xwayland::{XWaylandConfig, XWaylandProcess};
+use tracing::{info, warn};
+
+const DEFAULT_SURFACE_WIDTH: u32 = 1920;
+const DEFAULT_SURFACE_HEIGHT: u32 = 1080;
+const DEFAULT_REFRESH_HZ: u32 = 60;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StandaloneLaunchSummary {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) refresh_hz: u32,
+    pub(crate) requested_fps_cap: u32,
+    pub(crate) effective_fps_cap: u32,
+    pub(crate) present_mode: StandalonePresentMode,
+    pub(crate) live_present_feedback_capable: bool,
+    pub(crate) output_name: Option<String>,
+    pub(crate) fallback_reason: StandaloneLaunchFallbackReason,
+}
+
+impl StandaloneLaunchSummary {
+    fn log_surface_selection(&self) {
+        match &self.fallback_reason.geometry {
+            Some(StandaloneGeometryFallbackReason::NoOutputMetadata) => {
+                warn!(
+                    width = self.width,
+                    height = self.height,
+                    refresh_hz = self.refresh_hz,
+                    "no standalone output metadata available; falling back to default desktop surface"
+                );
+            }
+            _ => {
+                if let Some(output_name) = self.output_name.as_deref() {
+                    info!(
+                        output = %output_name,
+                        width = self.width,
+                        height = self.height,
+                        refresh_hz = self.refresh_hz,
+                        "configured standalone desktop surface from output metadata"
+                    );
+                } else {
+                    warn!(
+                        width = self.width,
+                        height = self.height,
+                        refresh_hz = self.refresh_hz,
+                        "no standalone output metadata available; falling back to default desktop surface"
+                    );
+                }
+            }
+        }
+    }
+
+    fn log_present_strategy(&self) {
+        if self.fallback_reason.present_feedback.is_some() {
+            warn!(
+                requested_fps_cap = self.requested_fps_cap,
+                fallback_pacing_hz = self.effective_fps_cap,
+                "typed DRM present feedback unavailable; standalone desktop will use timer pacing"
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct StandaloneLaunchFallbackReason {
+    pub(crate) geometry: Option<StandaloneGeometryFallbackReason>,
+    pub(crate) present_feedback: Option<StandalonePresentFeedbackFallbackReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StandaloneGeometryFallbackReason {
+    NoOutputMetadata,
+    MissingModeFields {
+        width_defaulted: bool,
+        height_defaulted: bool,
+        refresh_hz_defaulted: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StandalonePresentFeedbackFallbackReason {
+    NoLiveFeedbackCapability,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct StandaloneLaunchRuntimeInputs {
+    pub(crate) primary_output: Option<OutputInfo>,
+    pub(crate) live_present_feedback_capable: bool,
+    pub(crate) present_feedback_fd: Option<i32>,
+}
+
+impl StandaloneLaunchRuntimeInputs {
+    fn from_launcher(launcher: &StandaloneLauncher) -> Self {
+        Self {
+            primary_output: launcher.display_output.primary().cloned(),
+            live_present_feedback_capable: launcher.live_present_feedback_capable(),
+            present_feedback_fd: launcher.present_feedback_fd(),
+        }
+    }
+
+    fn active_live_present_feedback_capability(&self) -> bool {
+        self.live_present_feedback_capable && self.present_feedback_fd.is_some()
+    }
+
+    fn launch_summary(&self, requested_fps_cap: u32) -> StandaloneLaunchSummary {
+        StandaloneLauncher::build_launch_plan_for_inputs(
+            requested_fps_cap,
+            self.primary_output.as_ref(),
+            self.active_live_present_feedback_capability(),
+        )
+    }
+
+    fn drm_event_fd_for_summary(&self, summary: &StandaloneLaunchSummary) -> Option<i32> {
+        match summary.present_mode {
+            StandalonePresentMode::Queued => self.present_feedback_fd,
+            StandalonePresentMode::Immediate => None,
+        }
+    }
+
+    fn platform_config(
+        &self,
+        requested_fps_cap: u32,
+    ) -> (StandaloneLaunchSummary, StandalonePlatformConfig) {
+        let summary = self.launch_summary(requested_fps_cap);
+        let config = StandalonePlatformConfig {
+            width: summary.width,
+            height: summary.height,
+            hardware_cursor: true,
+            present_mode: summary.present_mode,
+            drm_event_fd: self.drm_event_fd_for_summary(&summary),
+        };
+        (summary, config)
+    }
+}
 
 /// The standalone compositor launcher.
 pub struct StandaloneLauncher {
@@ -22,7 +157,6 @@ pub struct StandaloneLauncher {
     wayland: Option<WaylandDisplay>,
     xwayland: Option<XWaylandProcess>,
     display_output: DisplayOutput,
-    wayland_state: WaylandServerState,
     running: Arc<AtomicBool>,
 }
 
@@ -36,9 +170,80 @@ impl StandaloneLauncher {
             wayland: None,
             xwayland: None,
             display_output: DisplayOutput::new(),
-            wayland_state: WaylandServerState::new(),
             running: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub(crate) fn build_launch_plan_for_inputs(
+        requested_fps_cap: u32,
+        primary_output: Option<&OutputInfo>,
+        live_present_feedback_capable: bool,
+    ) -> StandaloneLaunchSummary {
+        let width_defaulted = primary_output.map_or(true, |output| output.mode.width == 0);
+        let height_defaulted = primary_output.map_or(true, |output| output.mode.height == 0);
+        let refresh_hz_defaulted = primary_output.map_or(true, |output| output.mode.refresh_hz == 0);
+
+        let width = primary_output
+            .and_then(|output| (output.mode.width > 0).then_some(output.mode.width))
+            .unwrap_or(DEFAULT_SURFACE_WIDTH);
+        let height = primary_output
+            .and_then(|output| (output.mode.height > 0).then_some(output.mode.height))
+            .unwrap_or(DEFAULT_SURFACE_HEIGHT);
+        let refresh_hz = primary_output
+            .and_then(|output| (output.mode.refresh_hz > 0).then_some(output.mode.refresh_hz))
+            .unwrap_or(DEFAULT_REFRESH_HZ);
+
+        let present_mode = if live_present_feedback_capable {
+            StandalonePresentMode::Queued
+        } else {
+            StandalonePresentMode::Immediate
+        };
+        let effective_fps_cap = match present_mode {
+            StandalonePresentMode::Queued => requested_fps_cap,
+            StandalonePresentMode::Immediate if requested_fps_cap > 0 => requested_fps_cap,
+            StandalonePresentMode::Immediate => refresh_hz,
+        };
+
+        let geometry = match primary_output {
+            Some(_) if width_defaulted || height_defaulted || refresh_hz_defaulted => {
+                Some(StandaloneGeometryFallbackReason::MissingModeFields {
+                    width_defaulted,
+                    height_defaulted,
+                    refresh_hz_defaulted,
+                })
+            }
+            Some(_) => None,
+            None => Some(StandaloneGeometryFallbackReason::NoOutputMetadata),
+        };
+
+        StandaloneLaunchSummary {
+            width,
+            height,
+            refresh_hz,
+            requested_fps_cap,
+            effective_fps_cap,
+            present_mode,
+            live_present_feedback_capable,
+            output_name: primary_output.map(|output| output.name.clone()),
+            fallback_reason: StandaloneLaunchFallbackReason {
+                geometry,
+                present_feedback: (!live_present_feedback_capable)
+                    .then_some(StandalonePresentFeedbackFallbackReason::NoLiveFeedbackCapability),
+            },
+        }
+    }
+
+    fn current_runtime_inputs(&self) -> StandaloneLaunchRuntimeInputs {
+        StandaloneLaunchRuntimeInputs::from_launcher(self)
+    }
+
+    fn live_present_feedback_capable(&self) -> bool {
+        // Keep queued pacing disabled until the launcher can observe real page-flip-backed feedback.
+        false
+    }
+
+    fn present_feedback_fd(&self) -> Option<i32> {
+        self.drm.as_ref().map(|drm| drm.fd())
     }
 
     /// Phase 1: Set up session and VT.
@@ -81,6 +286,35 @@ impl StandaloneLauncher {
             info!("VT switched to graphics mode");
         }
 
+        self.display_output = match enumerate_connectors(&drm) {
+            Ok(connectors) => {
+                let display_output = DisplayOutput::from_connectors(&connectors);
+                if let Some(primary_output) = display_output.primary() {
+                    info!(
+                        output = %primary_output.name,
+                        width = primary_output.mode.width,
+                        height = primary_output.mode.height,
+                        refresh_hz = primary_output.mode.refresh_hz,
+                        usable_outputs = display_output.outputs().len(),
+                        "discovered standalone DRM output metadata"
+                    );
+                } else {
+                    warn!(
+                        enumerated_connectors = connectors.len(),
+                        "no usable standalone DRM output metadata discovered; retaining default launch fallback"
+                    );
+                }
+                display_output
+            }
+            Err(error) => {
+                warn!(
+                    %error,
+                    "failed to enumerate standalone DRM output metadata; retaining default launch fallback"
+                );
+                DisplayOutput::new()
+            }
+        };
+
         self.drm = Some(drm);
         Ok(())
     }
@@ -92,8 +326,19 @@ impl StandaloneLauncher {
         let enumerator = EvdevEnumerator::new();
         let devices = enumerator.scan()?;
 
-        let keyboards = devices.iter().filter(|d| d.device_class == liquide_libinput::DeviceClass::Keyboard).count();
-        let pointers = devices.iter().filter(|d| matches!(d.device_class, liquide_libinput::DeviceClass::Mouse | liquide_libinput::DeviceClass::Touchpad)).count();
+        let keyboards = devices
+            .iter()
+            .filter(|d| d.device_class == liquide_libinput::DeviceClass::Keyboard)
+            .count();
+        let pointers = devices
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.device_class,
+                    liquide_libinput::DeviceClass::Mouse | liquide_libinput::DeviceClass::Touchpad
+                )
+            })
+            .count();
 
         info!(
             total = devices.len(),
@@ -137,6 +382,24 @@ impl StandaloneLauncher {
     /// - Polls Wayland server for client requests
     /// - Renders frames and presents to display
     pub fn run(&mut self) -> anyhow::Result<()> {
+        self.run_with_observer(|_, _| {})
+    }
+
+    pub(crate) fn run_with_observer<F>(&mut self, observer: F) -> anyhow::Result<()>
+    where
+        F: FnOnce(StandaloneLaunchSummary, StandaloneScriptHandle),
+    {
+        self.run_with_runtime_inputs(self.current_runtime_inputs(), observer)
+    }
+
+    pub(crate) fn run_with_runtime_inputs<F>(
+        &mut self,
+        runtime_inputs: StandaloneLaunchRuntimeInputs,
+        observer: F,
+    ) -> anyhow::Result<()>
+    where
+        F: FnOnce(StandaloneLaunchSummary, StandaloneScriptHandle),
+    {
         self.running.store(true, Ordering::Release);
         info!("standalone compositor running");
 
@@ -147,68 +410,37 @@ impl StandaloneLauncher {
             "subsystem status"
         );
 
-        // ── Determine target refresh rate from primary output ───────
-        let refresh_hz = self
-            .display_output
-            .primary()
-            .map(|o| o.mode.refresh_hz)
-            .unwrap_or(60);
+        let (launch_plan, platform_config) = runtime_inputs.platform_config(self.config.fps_cap);
+        launch_plan.log_surface_selection();
+        launch_plan.log_present_strategy();
 
-        let mut loop_config = EventLoopConfig::with_refresh_hz(refresh_hz);
-        loop_config.drm_fd = self.drm.as_ref().map(|d| d.fd());
-        loop_config.wayland_active = self.wayland.as_ref().map_or(false, |w| w.is_running());
+        let mut platform = StandalonePlatform::new(platform_config)
+        .map_err(|error| {
+            self.running.store(false, Ordering::Release);
+            anyhow::anyhow!("failed to create standalone platform backend: {error}")
+        })?;
+
+        let script_handle = platform.script_handle();
+
+        let mut desktop = DesktopCompositor::new(launch_plan.width, launch_plan.height);
+        desktop.set_dev_mode(self.config.dev_mode);
+        desktop.set_fps_cap(launch_plan.effective_fps_cap);
 
         info!(
-            refresh_hz,
-            frame_interval_ms = loop_config.frame_interval.as_millis(),
-            "frame pacing configured"
+            width = launch_plan.width,
+            height = launch_plan.height,
+            refresh_hz = launch_plan.refresh_hz,
+            fps_cap = launch_plan.effective_fps_cap,
+            present_mode = ?launch_plan.present_mode,
+            "starting standalone desktop handoff"
         );
 
-        // ── Create event loop ───────────────────────────────────────
-        let (mut event_loop, running_flag) = EventLoop::new(loop_config)
-            .map_err(|e| anyhow::anyhow!("failed to create event loop: {e}"))?;
+        observer(launch_plan, script_handle);
 
-        // Store a reference so signal handlers / external code can stop us.
-        self.running = running_flag;
-
-        // ── Register fds ────────────────────────────────────────────
-        if let Some(ref drm) = self.drm {
-            if let Err(e) = event_loop.register_drm(drm.fd()) {
-                warn!(%e, "failed to register DRM fd — pageflip events unavailable");
-            }
-        }
-
-        // ── Run ─────────────────────────────────────────────────────
-        let result = event_loop.run(
-            // on_input: process input events
-            || {
-                debug!("processing input events");
-                // In a full implementation this would read from libinput and
-                // dispatch to the compositor input router. Return true if any
-                // input produced visual damage (e.g. cursor move, window focus).
-                false
-            },
-            // on_wayland: process Wayland client events
-            || {
-                debug!("processing Wayland client events");
-                // In a full implementation this would accept new clients and
-                // process protocol requests. Return true if surface content changed.
-                false
-            },
-            // on_render: render and present a frame
-            || {
-                // The actual rendering delegates to the compositor + renderer.
-                // Return true if a frame was successfully submitted for scanout.
-                debug!("rendering frame");
-                true
-            },
-        );
-
-        if let Err(e) = result {
-            anyhow::bail!("event loop error: {e}");
-        }
+        desktop.run(&mut platform);
 
         self.running.store(false, Ordering::Release);
+        info!(frames = desktop.frame_count(), "standalone desktop compositor exited");
         Ok(())
     }
 

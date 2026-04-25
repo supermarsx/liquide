@@ -2,10 +2,10 @@
 
 use anyhow::Result;
 use axum::{
+    Json, Router,
     extract::State,
     response::{Html, IntoResponse},
     routing::get,
-    Json, Router,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;

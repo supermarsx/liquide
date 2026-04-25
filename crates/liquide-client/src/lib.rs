@@ -4,20 +4,20 @@
 //! cursor prediction, frame decoding, audio, clipboard, and the
 //! main client runtime coordinator.
 
+pub mod audio;
+pub mod audit;
+pub mod clipboard;
+pub mod color;
 pub mod config;
 pub mod connection;
-pub mod display;
-pub mod input;
+pub mod crash_screen;
+pub mod credential;
 pub mod cursor;
 pub mod decoder;
-pub mod overlay;
+pub mod display;
+pub mod input;
 pub mod machine;
-pub mod clipboard;
-pub mod audio;
-pub mod crash_screen;
-pub mod color;
-pub mod credential;
-pub mod audit;
+pub mod overlay;
 pub mod runtime;
 
 use thiserror::Error;
@@ -87,20 +87,20 @@ pub enum ClientError {
 pub type Result<T> = std::result::Result<T, ClientError>;
 
 // Re-exports of key types.
-pub use config::ClientConfig;
-pub use connection::{ConnectionState, ConnectionQuality, ConnectionProfile, ConnectionManager};
-pub use display::{DisplayMode, MonitorStrategy, MonitorInfo, DisplayManager, SeamlessWindow};
-pub use input::{CaptureScope, ImeMode, InputManager};
-pub use cursor::{CursorMode, SmoothingStrategy, CursorPredictor};
-pub use decoder::{DecoderBackend, PixelFormat, FrameQueue, DecoderStats};
-pub use overlay::{OverlayMetrics, StreamOverlay};
-pub use machine::{MachineEntry, MachineGroup, MachineManager};
-pub use clipboard::{ClipboardMode, ClipboardSync};
-pub use audio::{AudioState, MicrophoneState, AudioManager};
-pub use crash_screen::{CrashScreenType, CrashData, CrashScreen};
-pub use color::{ColorMode, ToneMapper, ColorPipeline};
-pub use credential::{StorageMode, CredentialStore};
+pub use audio::{AudioManager, AudioState, MicrophoneState};
 pub use audit::{AuditLevel, ClientAuditEvent};
+pub use clipboard::{ClipboardMode, ClipboardSync};
+pub use color::{ColorMode, ColorPipeline, ToneMapper};
+pub use config::ClientConfig;
+pub use connection::{ConnectionManager, ConnectionProfile, ConnectionQuality, ConnectionState};
+pub use crash_screen::{CrashData, CrashScreen, CrashScreenType};
+pub use credential::{CredentialStore, StorageMode};
+pub use cursor::{CursorMode, CursorPredictor, SmoothingStrategy};
+pub use decoder::{DecoderBackend, DecoderStats, FrameQueue, PixelFormat};
+pub use display::{DisplayManager, DisplayMode, MonitorInfo, MonitorStrategy, SeamlessWindow};
+pub use input::{CaptureScope, ImeMode, InputManager};
+pub use machine::{MachineEntry, MachineGroup, MachineManager};
+pub use overlay::{OverlayMetrics, StreamOverlay};
 pub use runtime::ClientRuntime;
 
 #[cfg(test)]

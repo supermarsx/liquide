@@ -144,7 +144,10 @@ impl PolicyStore {
 
         // Check for modified or removed entries.
         for old in from_entries {
-            match to_entries.iter().find(|e| e.key == old.key && e.scope == old.scope && e.target == old.target) {
+            match to_entries
+                .iter()
+                .find(|e| e.key == old.key && e.scope == old.scope && e.target == old.target)
+            {
                 Some(new) if new.value != old.value => {
                     diffs.push(PolicyDiff {
                         key: old.key.clone(),
@@ -165,7 +168,10 @@ impl PolicyStore {
 
         // Check for added entries.
         for new in to_entries {
-            if !from_entries.iter().any(|e| e.key == new.key && e.scope == new.scope && e.target == new.target) {
+            if !from_entries
+                .iter()
+                .any(|e| e.key == new.key && e.scope == new.scope && e.target == new.target)
+            {
                 diffs.push(PolicyDiff {
                     key: new.key.clone(),
                     old_value: None,
@@ -178,10 +184,17 @@ impl PolicyStore {
     }
 
     /// Rollback to a previous version. Returns the new version number.
-    pub fn rollback(&mut self, target_version: u64, admin: String, timestamp: u64) -> crate::Result<u64> {
+    pub fn rollback(
+        &mut self,
+        target_version: u64,
+        admin: String,
+        timestamp: u64,
+    ) -> crate::Result<u64> {
         let entries = self
             .get_version(target_version)
-            .ok_or_else(|| crate::ManagerError::PolicyError(format!("version {target_version} not found")))?
+            .ok_or_else(|| {
+                crate::ManagerError::PolicyError(format!("version {target_version} not found"))
+            })?
             .entries
             .clone();
 

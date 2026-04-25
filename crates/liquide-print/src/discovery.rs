@@ -75,11 +75,7 @@ fn discover_cups() -> Vec<Printer> {
     for line in stdout.lines() {
         // Lines look like: "printer <name> is idle." or "printer <name> disabled since ..."
         if let Some(rest) = line.strip_prefix("printer ") {
-            let name = rest
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string();
+            let name = rest.split_whitespace().next().unwrap_or("").to_string();
             if name.is_empty() {
                 continue;
             }

@@ -42,8 +42,7 @@ fn clipboard_offer_none_size_not_serialized() {
         source: "client".into(),
     };
     let encoded = cbor_encode(&msg).expect("encode");
-    let value: ciborium::Value =
-        cbor_decode(&encoded).expect("decode as Value");
+    let value: ciborium::Value = cbor_decode(&encoded).expect("decode as Value");
     if let ciborium::Value::Map(entries) = &value {
         for (key, _) in entries {
             if let ciborium::Value::Text(k) = key {

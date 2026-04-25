@@ -23,9 +23,7 @@ impl NetworkManager {
         let output = Command::new(program)
             .args(args)
             .output()
-            .map_err(|e| {
-                NetworkError::PlatformError(format!("failed to run {program}: {e}"))
-            })?;
+            .map_err(|e| NetworkError::PlatformError(format!("failed to run {program}: {e}")))?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {

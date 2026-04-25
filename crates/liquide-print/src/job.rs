@@ -81,6 +81,7 @@ impl PrintJob {
     /// Returns the elapsed time in microseconds from creation to completion,
     /// or `None` if the job hasn't completed.
     pub fn duration_us(&self) -> Option<u64> {
-        self.completed_at.map(|end| end.saturating_sub(self.created_at))
+        self.completed_at
+            .map(|end| end.saturating_sub(self.created_at))
     }
 }

@@ -46,23 +46,33 @@ impl FilesRuntime {
 
     /// Get config.
     #[must_use]
-    pub fn config(&self) -> &FilesConfig { &self.config }
+    pub fn config(&self) -> &FilesConfig {
+        &self.config
+    }
 
     /// Get the sidebar.
     #[must_use]
-    pub fn sidebar(&self) -> &Sidebar { &self.sidebar }
+    pub fn sidebar(&self) -> &Sidebar {
+        &self.sidebar
+    }
 
     /// Get mutable sidebar.
-    pub fn sidebar_mut(&mut self) -> &mut Sidebar { &mut self.sidebar }
+    pub fn sidebar_mut(&mut self) -> &mut Sidebar {
+        &mut self.sidebar
+    }
 
     /// Get current directory listing.
     #[must_use]
-    pub fn current_listing(&self) -> &DirectoryListing { &self.current_listing }
+    pub fn current_listing(&self) -> &DirectoryListing {
+        &self.current_listing
+    }
 
     /// Navigate to a directory.
     pub fn navigate(&mut self, path: String, entries: Vec<FileEntry>) {
         // Push to history.
-        if self.navigation_history.is_empty() || self.navigation_history.last().map(|s| s.as_str()) != Some(&path) {
+        if self.navigation_history.is_empty()
+            || self.navigation_history.last().map(|s| s.as_str()) != Some(&path)
+        {
             // Truncate forward history.
             self.navigation_history.truncate(self.history_index + 1);
             self.navigation_history.push(path.clone());
@@ -85,11 +95,15 @@ impl FilesRuntime {
 
     /// Navigate back in history.
     #[must_use]
-    pub fn can_go_back(&self) -> bool { self.history_index > 0 }
+    pub fn can_go_back(&self) -> bool {
+        self.history_index > 0
+    }
 
     /// Navigate forward in history.
     #[must_use]
-    pub fn can_go_forward(&self) -> bool { self.history_index + 1 < self.navigation_history.len() }
+    pub fn can_go_forward(&self) -> bool {
+        self.history_index + 1 < self.navigation_history.len()
+    }
 
     /// Go back, returning the path.
     pub fn go_back(&mut self) -> Option<&str> {
@@ -113,31 +127,47 @@ impl FilesRuntime {
 
     /// Get the clipboard.
     #[must_use]
-    pub fn clipboard(&self) -> &FileClipboard { &self.clipboard }
+    pub fn clipboard(&self) -> &FileClipboard {
+        &self.clipboard
+    }
 
     /// Get mutable clipboard.
-    pub fn clipboard_mut(&mut self) -> &mut FileClipboard { &mut self.clipboard }
+    pub fn clipboard_mut(&mut self) -> &mut FileClipboard {
+        &mut self.clipboard
+    }
 
     /// Get the search state.
     #[must_use]
-    pub fn search(&self) -> &FileSearch { &self.search }
+    pub fn search(&self) -> &FileSearch {
+        &self.search
+    }
 
     /// Get mutable search state.
-    pub fn search_mut(&mut self) -> &mut FileSearch { &mut self.search }
+    pub fn search_mut(&mut self) -> &mut FileSearch {
+        &mut self.search
+    }
 
     /// Get the operation queue.
     #[must_use]
-    pub fn operations(&self) -> &OperationQueue { &self.operations }
+    pub fn operations(&self) -> &OperationQueue {
+        &self.operations
+    }
 
     /// Get mutable operation queue.
-    pub fn operations_mut(&mut self) -> &mut OperationQueue { &mut self.operations }
+    pub fn operations_mut(&mut self) -> &mut OperationQueue {
+        &mut self.operations
+    }
 
     /// Current selection indices.
     #[must_use]
-    pub fn selection(&self) -> &[usize] { &self.selection }
+    pub fn selection(&self) -> &[usize] {
+        &self.selection
+    }
 
     /// Set selection.
-    pub fn set_selection(&mut self, indices: Vec<usize>) { self.selection = indices; }
+    pub fn set_selection(&mut self, indices: Vec<usize>) {
+        self.selection = indices;
+    }
 
     /// Select all visible entries.
     pub fn select_all(&mut self) {
@@ -145,19 +175,24 @@ impl FilesRuntime {
     }
 
     /// Clear selection.
-    pub fn clear_selection(&mut self) { self.selection.clear(); }
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
 
     /// Get selected entries.
     #[must_use]
     pub fn selected_entries(&self) -> Vec<&FileEntry> {
-        self.selection.iter()
+        self.selection
+            .iter()
             .filter_map(|&i| self.current_listing.get(i))
             .collect()
     }
 
     /// Navigation history.
     #[must_use]
-    pub fn history(&self) -> &[String] { &self.navigation_history }
+    pub fn history(&self) -> &[String] {
+        &self.navigation_history
+    }
 
     // =========================================================================
     // Real filesystem navigation
@@ -188,7 +223,8 @@ impl FilesRuntime {
         }
         self.history_index -= 1;
         let path = self.navigation_history[self.history_index].clone();
-        self.current_listing.load_directory(std::path::Path::new(&path))?;
+        self.current_listing
+            .load_directory(std::path::Path::new(&path))?;
         self.selection.clear();
         Ok(true)
     }
@@ -200,7 +236,8 @@ impl FilesRuntime {
         }
         self.history_index += 1;
         let path = self.navigation_history[self.history_index].clone();
-        self.current_listing.load_directory(std::path::Path::new(&path))?;
+        self.current_listing
+            .load_directory(std::path::Path::new(&path))?;
         self.selection.clear();
         Ok(true)
     }
@@ -233,7 +270,8 @@ impl FilesRuntime {
     /// Reload the current directory from disk.
     pub fn refresh(&mut self) -> crate::Result<()> {
         let path = self.current_listing.path.clone();
-        self.current_listing.load_directory(std::path::Path::new(&path))?;
+        self.current_listing
+            .load_directory(std::path::Path::new(&path))?;
         self.selection.clear();
         Ok(())
     }

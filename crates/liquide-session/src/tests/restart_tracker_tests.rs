@@ -1,6 +1,4 @@
-use crate::crash::{
-    DisabledFeature, ResourceSnapshot, RestartAction, RestartTracker, SafeMode,
-};
+use crate::crash::{DisabledFeature, ResourceSnapshot, RestartAction, RestartTracker, SafeMode};
 
 fn make_restart_tracker(max: u32, safe_threshold: u32) -> RestartTracker {
     RestartTracker::new(max, 600, 100, safe_threshold)

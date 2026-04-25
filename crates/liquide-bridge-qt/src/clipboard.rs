@@ -34,7 +34,10 @@ impl QtClipboardData {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.text.is_none() && self.html.is_none() && self.image_data.is_none() && self.urls.is_empty()
+        self.text.is_none()
+            && self.html.is_none()
+            && self.image_data.is_none()
+            && self.urls.is_empty()
     }
 }
 

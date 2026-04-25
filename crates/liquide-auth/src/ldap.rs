@@ -7,8 +7,8 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use crate::provider::{AuthProvider, AuthResult, Credentials};
 use crate::AuthError;
+use crate::provider::{AuthProvider, AuthResult, Credentials};
 
 /// Escape a string for use in an LDAP Distinguished Name per RFC 4514.
 fn ldap_escape_dn(s: &str) -> String {
@@ -68,7 +68,11 @@ impl LdapProvider {
             // UPN format (Active Directory)
             username.to_string()
         } else {
-            format!("uid={},ou=People,{}", ldap_escape_dn(username), self.base_dn)
+            format!(
+                "uid={},ou=People,{}",
+                ldap_escape_dn(username),
+                self.base_dn
+            )
         }
     }
 
@@ -167,10 +171,14 @@ impl AuthProvider for LdapProvider {
                 reason: "invalid username".into(),
             });
         }
-        if username.contains('\0') || username.contains('\n')
-            || username.contains(',') || username.contains('+')
-            || username.contains('"') || username.contains('<')
-            || username.contains('>') || username.contains(';')
+        if username.contains('\0')
+            || username.contains('\n')
+            || username.contains(',')
+            || username.contains('+')
+            || username.contains('"')
+            || username.contains('<')
+            || username.contains('>')
+            || username.contains(';')
         {
             return Ok(AuthResult::Failure {
                 reason: "invalid username characters".into(),
@@ -221,18 +229,13 @@ mod tests {
         assert!(!p.supports(&Credentials::OidcToken {
             token: "tok".into(),
         }));
-        assert!(!p.supports(&Credentials::Certificate {
-            der: vec![0x30],
-        }));
+        assert!(!p.supports(&Credentials::Certificate { der: vec![0x30] }));
     }
 
     #[test]
     fn bind_dn_plain_username() {
         let p = LdapProvider::new("ldaps://ldap.example.com", "dc=example,dc=com");
-        assert_eq!(
-            p.bind_dn("alice"),
-            "uid=alice,ou=People,dc=example,dc=com"
-        );
+        assert_eq!(p.bind_dn("alice"), "uid=alice,ou=People,dc=example,dc=com");
     }
 
     #[test]

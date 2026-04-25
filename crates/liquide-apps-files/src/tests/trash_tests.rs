@@ -4,7 +4,12 @@ use crate::trash::{TrashEntry, TrashManager};
 
 #[test]
 fn test_trash_entry_original_name() {
-    let e = TrashEntry::new("/home/user/doc.txt".into(), "/trash/1_doc.txt".into(), 1000, 500);
+    let e = TrashEntry::new(
+        "/home/user/doc.txt".into(),
+        "/trash/1_doc.txt".into(),
+        1000,
+        500,
+    );
     assert_eq!(e.original_name(), "doc.txt");
 }
 
@@ -29,7 +34,11 @@ fn test_trash_manager_trash_file() {
     assert_eq!(entry.size, 1024);
     // Path separator varies by platform (\\ on Windows, / on Unix).
     let normalized = entry.trash_path.replace('\\', "/");
-    assert!(normalized.starts_with("/tmp/trash/files/"), "trash_path was: {}", entry.trash_path);
+    assert!(
+        normalized.starts_with("/tmp/trash/files/"),
+        "trash_path was: {}",
+        entry.trash_path
+    );
     assert_eq!(tm.count(), 1);
     assert_eq!(tm.total_size(), 1024);
 }

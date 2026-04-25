@@ -87,7 +87,9 @@ impl AppMenu {
     fn default_items(app_name: &str) -> Vec<AppMenuItem> {
         vec![
             AppMenuItem::new(format!("About {app_name}"), MenuAction::About).with_separator(),
-            AppMenuItem::new("Preferences…", MenuAction::Preferences).with_shortcut("⌘,").with_separator(),
+            AppMenuItem::new("Preferences…", MenuAction::Preferences)
+                .with_shortcut("⌘,")
+                .with_separator(),
             AppMenuItem::new(format!("Hide {app_name}"), MenuAction::Hide).with_shortcut("⌘H"),
             AppMenuItem::new("Lock Session", MenuAction::LockSession).with_shortcut("⌘⇧L"),
             AppMenuItem::new("Logout…", MenuAction::Logout).with_separator(),
@@ -124,8 +126,13 @@ impl AppMenu {
 
         // App name (bold)
         painter.draw_text(
-            &self.app_name, x + 6.0, text_y,
-            font_size, colors.text_primary, &theme.font_family, true,
+            &self.app_name,
+            x + 6.0,
+            text_y,
+            font_size,
+            colors.text_primary,
+            &theme.font_family,
+            true,
         );
 
         // Dropdown menu
@@ -138,11 +145,24 @@ impl AppMenu {
             let radius = theme.radius_md;
 
             // Shadow
-            painter.fill_rounded_rect(menu_x + 1.0, menu_y + 2.0, menu_w, menu_h, radius,
-                liquide_ui_core::UiColor::new(0, 0, 0, 50));
+            painter.fill_rounded_rect(
+                menu_x + 1.0,
+                menu_y + 2.0,
+                menu_w,
+                menu_h,
+                radius,
+                liquide_ui_core::UiColor::new(0, 0, 0, 50),
+            );
 
             // Background
-            painter.fill_rounded_rect(menu_x, menu_y, menu_w, menu_h, radius, colors.surface_elevated);
+            painter.fill_rounded_rect(
+                menu_x,
+                menu_y,
+                menu_w,
+                menu_h,
+                radius,
+                colors.surface_elevated,
+            );
             painter.stroke_rounded_rect(menu_x, menu_y, menu_w, menu_h, radius, colors.border, 1.0);
 
             // Items
@@ -152,8 +172,12 @@ impl AppMenu {
 
                 if is_hover && item.enabled {
                     painter.fill_rounded_rect(
-                        menu_x + 4.0, iy, menu_w - 8.0, item_h,
-                        radius * 0.5, colors.accent,
+                        menu_x + 4.0,
+                        iy,
+                        menu_w - 8.0,
+                        item_h,
+                        radius * 0.5,
+                        colors.accent,
                     );
                 }
 
@@ -166,17 +190,26 @@ impl AppMenu {
                 };
 
                 painter.draw_text(
-                    &item.label, menu_x + 16.0, iy + (item_h - font_size) / 2.0,
-                    font_size, tc, &theme.font_family, false,
+                    &item.label,
+                    menu_x + 16.0,
+                    iy + (item_h - font_size) / 2.0,
+                    font_size,
+                    tc,
+                    &theme.font_family,
+                    false,
                 );
 
                 // Shortcut on the right
                 if let Some(shortcut) = &item.shortcut {
                     let shortcut_w = shortcut.len() as f32 * font_size * 0.5;
                     painter.draw_text(
-                        shortcut, menu_x + menu_w - shortcut_w - 16.0,
+                        shortcut,
+                        menu_x + menu_w - shortcut_w - 16.0,
                         iy + (item_h - font_size) / 2.0,
-                        font_size * 0.9, colors.text_secondary, &theme.font_family, false,
+                        font_size * 0.9,
+                        colors.text_secondary,
+                        &theme.font_family,
+                        false,
                     );
                 }
 
@@ -184,8 +217,12 @@ impl AppMenu {
                 if item.separator_after {
                     let sep_y = iy + item_h - 1.0;
                     painter.draw_line(
-                        menu_x + 12.0, sep_y, menu_x + menu_w - 12.0, sep_y,
-                        colors.border_subtle, 1.0,
+                        menu_x + 12.0,
+                        sep_y,
+                        menu_x + menu_w - 12.0,
+                        sep_y,
+                        colors.border_subtle,
+                        1.0,
                     );
                 }
             }

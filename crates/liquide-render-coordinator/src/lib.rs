@@ -66,6 +66,13 @@ pub use error::{RenderError, Result};
 pub use render_task::{RenderOutput, RenderPriority, RenderTask, RenderTaskKind};
 pub use threaded::ThreadedRenderCoordinator;
 
+// Disambiguating re-export: `liquide-render-thread` also defines a type
+// named `RenderCoordinator` with a different role (per-thread worker-side
+// coordinator rather than this crate's multi-thread dispatcher). Expose it
+// here under an unambiguous alias so downstream code that needs both types
+// can name them without importing two identically-named items.
+pub use liquide_render_thread::RenderCoordinator as ThreadRenderCoordinator;
+
 /// Re-export commonly used types
 pub mod prelude {
     pub use crate::config::{RenderConfig, RenderConfigBuilder};

@@ -10,5 +10,6 @@ description = "Tile-based incremental rasterization with damage tracking and LRU
 liquide-paint = { path = "../liquide-paint" }
 liquide-layout = { path = "../liquide-layout" }
 liquide-compositor = { path = "../liquide-compositor" }
+liquide-common = { path = "../liquide-common" }
 
 [dev-dependencies]

@@ -10,7 +10,7 @@ pub mod ffi;
 pub mod input;
 
 use std::collections::{HashMap, VecDeque};
-use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::ptr;
 
 use liquide_compositor::geometry::Rect;
@@ -246,9 +246,7 @@ impl WaylandPlatform {
             );
             if registry.is_null() {
                 wl_display_disconnect(display);
-                return Err(PlatformError::Display(
-                    "failed to get wl_registry".into(),
-                ));
+                return Err(PlatformError::Display("failed to get wl_registry".into()));
             }
 
             // Set up registry listener.
@@ -266,17 +264,13 @@ impl WaylandPlatform {
             // First roundtrip — discover globals.
             if wl_display_roundtrip(display) < 0 {
                 wl_display_disconnect(display);
-                return Err(PlatformError::Display(
-                    "wl_display_roundtrip failed".into(),
-                ));
+                return Err(PlatformError::Display("wl_display_roundtrip failed".into()));
             }
 
             // Verify required globals.
             if state.compositor.is_null() {
                 wl_display_disconnect(display);
-                return Err(PlatformError::Display(
-                    "wl_compositor not available".into(),
-                ));
+                return Err(PlatformError::Display("wl_compositor not available".into()));
             }
             if state.shm.is_null() {
                 wl_display_disconnect(display);
@@ -284,9 +278,7 @@ impl WaylandPlatform {
             }
             if state.xdg_wm_base.is_null() {
                 wl_display_disconnect(display);
-                return Err(PlatformError::Display(
-                    "xdg_wm_base not available".into(),
-                ));
+                return Err(PlatformError::Display("xdg_wm_base not available".into()));
             }
 
             // Set up xdg_wm_base listener (for ping/pong).
@@ -405,11 +397,7 @@ impl WaylandPlatform {
     }
 
     /// Helper: create an SHM buffer of the given pixel dimensions.
-    fn create_shm_buffer(
-        shm: *mut wl_proxy,
-        width: u32,
-        height: u32,
-    ) -> PlatformResult<ShmBuffer> {
+    fn create_shm_buffer(shm: *mut wl_proxy, width: u32, height: u32) -> PlatformResult<ShmBuffer> {
         // SAFETY: POSIX calls (memfd_create, ftruncate, mmap) create an
         // anonymous shared memory region. Wayland SHM pool and buffer are
         // created via wl_proxy_marshal_flags. Error checks guard every step;
@@ -422,9 +410,7 @@ impl WaylandPlatform {
             let name = CString::new("liquide-shm").unwrap();
             let fd = memfd_create(name.as_ptr(), MFD_CLOEXEC);
             if fd < 0 {
-                return Err(PlatformError::Presentation(
-                    "memfd_create failed".into(),
-                ));
+                return Err(PlatformError::Presentation("memfd_create failed".into()));
             }
 
             // Size the file.
@@ -448,15 +434,8 @@ impl WaylandPlatform {
             }
 
             // Create a wl_shm_pool.
-            let pool = wl_proxy_marshal_flags(
-                shm,
-                WL_SHM_CREATE_POOL,
-                ptr::null(),
-                1,
-                0,
-                fd,
-                size as i32,
-            );
+            let pool =
+                wl_proxy_marshal_flags(shm, WL_SHM_CREATE_POOL, ptr::null(), 1, 0, fd, size as i32);
             if pool.is_null() {
                 munmap(data, size);
                 close(fd);
@@ -472,10 +451,10 @@ impl WaylandPlatform {
                 ptr::null(),
                 1,
                 0,
-                0i32,             // offset
-                width as i32,     // width
-                height as i32,    // height
-                stride as i32,    // stride
+                0i32,                   // offset
+                width as i32,           // width
+                height as i32,          // height
+                stride as i32,          // stride
                 WL_SHM_FORMAT_ARGB8888, // format
             );
             if buffer.is_null() {
@@ -684,9 +663,7 @@ impl PlatformBackend for WaylandPlatform {
             for row in 0..height as usize {
                 let src_offset = row * stride as usize;
                 let dst_offset = row * dst_stride as usize;
-                if src_offset + copy_bytes <= pixels.len()
-                    && dst_offset + copy_bytes <= buf.size
-                {
+                if src_offset + copy_bytes <= pixels.len() && dst_offset + copy_bytes <= buf.size {
                     memcpy(
                         buf.data.add(dst_offset) as *mut c_void,
                         pixels.as_ptr().add(src_offset) as *const c_void,
@@ -731,10 +708,7 @@ impl PlatformBackend for WaylandPlatform {
 // ── NativeWindowHost implementation ─────────────────────────────────────
 
 impl NativeWindowHost for WaylandPlatform {
-    fn create_window(
-        &mut self,
-        params: NativeWindowParams,
-    ) -> PlatformResult<NativeWindowHandle> {
+    fn create_window(&mut self, params: NativeWindowParams) -> PlatformResult<NativeWindowHandle> {
         // SAFETY: Wayland protocol calls to create wl_surface, xdg_surface,
         // and xdg_toplevel via wl_proxy_marshal_flags. Listeners are heap-
         // allocated (Box::into_raw) to ensure stable pointers for callbacks.
@@ -742,8 +716,7 @@ impl NativeWindowHost for WaylandPlatform {
         unsafe {
             let compositor = self.state.compositor;
             let xdg_wm_base = self.state.xdg_wm_base;
-            let state_ptr: *mut c_void =
-                &mut *self.state as *mut WaylandState as *mut c_void;
+            let state_ptr: *mut c_void = &mut *self.state as *mut WaylandState as *mut c_void;
 
             // 1. Create wl_surface.
             let wl_surface = wl_proxy_marshal_flags(
@@ -859,11 +832,13 @@ impl NativeWindowHost for WaylandPlatform {
             wl_display_flush(self.display);
 
             // Enqueue the creation event.
-            self.state.event_queue.push_back(PlatformEvent::WindowCreated {
-                handle,
-                width,
-                height,
-            });
+            self.state
+                .event_queue
+                .push_back(PlatformEvent::WindowCreated {
+                    handle,
+                    width,
+                    height,
+                });
 
             Ok(handle)
         }
@@ -896,70 +871,52 @@ impl NativeWindowHost for WaylandPlatform {
         Ok(())
     }
 
-    fn set_geometry(
-        &mut self,
-        _handle: NativeWindowHandle,
-        _geometry: Rect,
-    ) -> PlatformResult<()> {
+    fn set_geometry(&mut self, _handle: NativeWindowHandle, _geometry: Rect) -> PlatformResult<()> {
         // Wayland does not allow clients to set their own position.
         // Size changes are typically driven by the compositor via configure events.
         Ok(())
     }
 
-    fn set_title(
-        &mut self,
-        handle: NativeWindowHandle,
-        title: &str,
-    ) -> PlatformResult<()> {
+    fn set_title(&mut self, handle: NativeWindowHandle, title: &str) -> PlatformResult<()> {
         if let Some(win) = self.state.windows.get(&handle.0) {
             let title_c = CString::new(title).unwrap_or_default();
             // SAFETY: wl_proxy_marshal sends the title string to the compositor.
             // The CString ensures a valid null-terminated buffer.
             unsafe {
-                wl_proxy_marshal(
-                    win.xdg_toplevel,
-                    XDG_TOPLEVEL_SET_TITLE,
-                    title_c.as_ptr(),
-                );
+                wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_SET_TITLE, title_c.as_ptr());
                 wl_display_flush(self.display);
             }
         }
         Ok(())
     }
 
-    fn set_icon(
-        &mut self,
-        _handle: NativeWindowHandle,
-        _icon_data: &[u8],
-    ) -> PlatformResult<()> {
+    fn set_icon(&mut self, _handle: NativeWindowHandle, _icon_data: &[u8]) -> PlatformResult<()> {
         // Wayland has no standard protocol for window icons.
         Ok(())
     }
 
-    fn set_state(
-        &mut self,
-        handle: NativeWindowHandle,
-        state: &str,
-    ) -> PlatformResult<()> {
+    fn set_state(&mut self, handle: NativeWindowHandle, state: &str) -> PlatformResult<()> {
         if let Some(win) = self.state.windows.get(&handle.0) {
             // SAFETY: wl_proxy_marshal sends standard xdg_toplevel state
             // change requests. All opcodes are valid xdg_toplevel requests.
             unsafe {
+                match state {
+                    "maximized" => {
                         wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_SET_MAXIMIZED);
                     }
                     "minimized" => {
                         wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_SET_MINIMIZED);
                     }
-                    "fullscreen" => {
+                    "full_screen" => {
                         wl_proxy_marshal(
                             win.xdg_toplevel,
-                            XDG_TOPLEVEL_SET_FULLSCREEN,
+                            XDG_TOPLEVEL_SET_FULL_SCREEN,
                             ptr::null_mut::<c_void>(),
                         );
                     }
                     "normal" | "restored" => {
                         wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_UNSET_MAXIMIZED);
-                        wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_UNSET_FULLSCREEN);
+                        wl_proxy_marshal(win.xdg_toplevel, XDG_TOPLEVEL_UNSET_FULL_SCREEN);
                     }
                     _ => {}
                 }
@@ -969,11 +926,7 @@ impl NativeWindowHost for WaylandPlatform {
         Ok(())
     }
 
-    fn set_z_order(
-        &mut self,
-        _handle: NativeWindowHandle,
-        _z_order: i32,
-    ) -> PlatformResult<()> {
+    fn set_z_order(&mut self, _handle: NativeWindowHandle, _z_order: i32) -> PlatformResult<()> {
         // Wayland does not expose Z-order to clients.
         Ok(())
     }
@@ -1136,11 +1089,7 @@ unsafe extern "C" fn registry_global_handler(
                     done: output_done_handler,
                     scale: output_scale_handler,
                 });
-                wl_proxy_add_listener(
-                    proxy,
-                    Box::into_raw(listener) as *mut c_void,
-                    data,
-                );
+                wl_proxy_add_listener(proxy, Box::into_raw(listener) as *mut c_void, data);
             }
         }
         _ => {}
@@ -1445,10 +1394,7 @@ unsafe extern "C" fn pointer_axis_handler(
     });
 }
 
-unsafe extern "C" fn pointer_frame_handler(
-    _data: *mut c_void,
-    _pointer: *mut wl_proxy,
-) {
+unsafe extern "C" fn pointer_frame_handler(_data: *mut c_void, _pointer: *mut wl_proxy) {
     // Frame boundary — we emit events individually above.
 }
 
@@ -1490,22 +1436,14 @@ unsafe extern "C" fn output_geometry_handler(
     _transform: i32,
 ) {
     let state = &mut *(data as *mut WaylandState);
-    if let Some(info) = state
-        .outputs
-        .iter_mut()
-        .find(|o| o.proxy == output)
-    {
+    if let Some(info) = state.outputs.iter_mut().find(|o| o.proxy == output) {
         info.x = x;
         info.y = y;
         if !make.is_null() {
-            info.make = CStr::from_ptr(make)
-                .to_string_lossy()
-                .into_owned();
+            info.make = CStr::from_ptr(make).to_string_lossy().into_owned();
         }
         if !model.is_null() {
-            info.model = CStr::from_ptr(model)
-                .to_string_lossy()
-                .into_owned();
+            info.model = CStr::from_ptr(model).to_string_lossy().into_owned();
         }
     }
 }
@@ -1519,35 +1457,20 @@ unsafe extern "C" fn output_mode_handler(
     refresh: i32,
 ) {
     let state = &mut *(data as *mut WaylandState);
-    if let Some(info) = state
-        .outputs
-        .iter_mut()
-        .find(|o| o.proxy == output)
-    {
+    if let Some(info) = state.outputs.iter_mut().find(|o| o.proxy == output) {
         info.width = width;
         info.height = height;
         info.refresh_mhz = refresh;
     }
 }
 
-unsafe extern "C" fn output_done_handler(
-    _data: *mut c_void,
-    _output: *mut wl_proxy,
-) {
+unsafe extern "C" fn output_done_handler(_data: *mut c_void, _output: *mut wl_proxy) {
     // All output properties have been sent.
 }
 
-unsafe extern "C" fn output_scale_handler(
-    data: *mut c_void,
-    output: *mut wl_proxy,
-    factor: i32,
-) {
+unsafe extern "C" fn output_scale_handler(data: *mut c_void, output: *mut wl_proxy, factor: i32) {
     let state = &mut *(data as *mut WaylandState);
-    if let Some(info) = state
-        .outputs
-        .iter_mut()
-        .find(|o| o.proxy == output)
-    {
+    if let Some(info) = state.outputs.iter_mut().find(|o| o.proxy == output) {
         info.scale = factor;
     }
 }
@@ -1588,9 +1511,9 @@ unsafe extern "C" fn xdg_surface_configure_handler(
             // Commit the surface after the first configure.
             wl_proxy_marshal(win.wl_surface, WL_SURFACE_COMMIT);
 
-            state.event_queue.push_back(PlatformEvent::WindowRedraw {
-                handle: win.handle,
-            });
+            state
+                .event_queue
+                .push_back(PlatformEvent::WindowRedraw { handle: win.handle });
         }
     }
 
@@ -1632,20 +1555,11 @@ unsafe extern "C" fn xdg_toplevel_configure_handler(
 }
 
 /// `xdg_toplevel::close` — the user asked to close the window.
-unsafe extern "C" fn xdg_toplevel_close_handler(
-    data: *mut c_void,
-    toplevel: *mut wl_proxy,
-) {
+unsafe extern "C" fn xdg_toplevel_close_handler(data: *mut c_void, toplevel: *mut wl_proxy) {
     let state = &mut *(data as *mut WaylandState);
-    if let Some(win) = state
-        .windows
-        .values()
-        .find(|w| w.xdg_toplevel == toplevel)
-    {
+    if let Some(win) = state.windows.values().find(|w| w.xdg_toplevel == toplevel) {
         state
             .event_queue
-            .push_back(PlatformEvent::WindowCloseRequested {
-                handle: win.handle,
-            });
+            .push_back(PlatformEvent::WindowCloseRequested { handle: win.handle });
     }
 }

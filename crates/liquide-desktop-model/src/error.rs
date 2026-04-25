@@ -19,6 +19,11 @@ pub enum DesktopError {
     },
     /// The desktop is locked and cannot be switched away from.
     InputLocked(DesktopId),
+    /// Input can only be locked to the currently active secure desktop.
+    InputLockRequiresActiveSecureDesktop {
+        desktop: DesktopId,
+        active_desktop: Option<DesktopId>,
+    },
     /// Access denied for the requested operation.
     AccessDenied {
         desktop: DesktopId,
@@ -65,6 +70,14 @@ impl fmt::Display for DesktopError {
             Self::InputLocked(id) => {
                 write!(f, "input is locked to desktop {:?}", id)
             }
+            Self::InputLockRequiresActiveSecureDesktop {
+                desktop,
+                active_desktop,
+            } => write!(
+                f,
+                "input can only be locked to the active secure desktop {:?} (current active: {:?})",
+                desktop, active_desktop
+            ),
             Self::AccessDenied {
                 desktop,
                 thread_id,

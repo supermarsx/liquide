@@ -112,8 +112,7 @@ impl CachePolicy {
 
         // By default, skip caching for absolutely/fixed positioned elements
         // because their containing block changes with scroll/resize.
-        if !self.cache_absolute
-            && matches!(position, PositionType::Absolute | PositionType::Fixed)
+        if !self.cache_absolute && matches!(position, PositionType::Absolute | PositionType::Fixed)
         {
             return false;
         }

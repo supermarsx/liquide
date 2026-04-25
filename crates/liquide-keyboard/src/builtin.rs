@@ -431,7 +431,10 @@ pub fn layout_fr_azerty() -> KeyboardLayout {
     layout.insert(SC_O, KeyMapping::simple('o', 'O'));
     layout.insert(SC_P, KeyMapping::simple('p', 'P'));
     layout.insert(SC_LBRACKET, KeyMapping::dead('^', Some('\u{00a8}'), 1)); // dead ^, shift=dead ¨
-    layout.insert(SC_RBRACKET, KeyMapping::with_alt_gr('$', '\u{00a3}', '\u{00a4}')); // £, AltGr=¤
+    layout.insert(
+        SC_RBRACKET,
+        KeyMapping::with_alt_gr('$', '\u{00a3}', '\u{00a4}'),
+    ); // £, AltGr=¤
 
     // Home row (AZERTY: Q and M differ)
     layout.insert(SC_A, KeyMapping::simple('q', 'Q')); // Q on QWERTY-A

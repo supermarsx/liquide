@@ -3,8 +3,8 @@
 //! Uses a simple INI-like text format with `[section]` headers and `key=value`
 //! pairs. No external serialization crate required.
 
-use crate::state::{DisplayState, SessionState, WindowState, WindowVisualState, WorkspaceState};
 use crate::SessionError;
+use crate::state::{DisplayState, SessionState, WindowState, WindowVisualState, WorkspaceState};
 use std::fmt::Write as FmtWrite;
 
 /// Handles saving and loading session state.
@@ -121,10 +121,7 @@ impl SessionStore {
         #[cfg(target_os = "macos")]
         {
             if let Ok(home) = std::env::var("HOME") {
-                return format!(
-                    "{}/Library/Application Support/liquide/session.state",
-                    home
-                );
+                return format!("{}/Library/Application Support/liquide/session.state", home);
             }
             return "liquide-session.state".to_string();
         }
@@ -259,9 +256,7 @@ impl SessionStore {
         }
 
         if connector.is_empty() {
-            return Err(SessionError::Parse(
-                "display missing connector".to_string(),
-            ));
+            return Err(SessionError::Parse("display missing connector".to_string()));
         }
 
         Ok(DisplayState {
@@ -357,9 +352,8 @@ impl SessionStore {
                     })?;
                 }
                 "state" => {
-                    win_state = WindowVisualState::from_str(val).ok_or_else(|| {
-                        SessionError::Parse(format!("bad window state: {}", val))
-                    })?;
+                    win_state = WindowVisualState::from_str(val)
+                        .ok_or_else(|| SessionError::Parse(format!("bad window state: {}", val)))?;
                 }
                 "z_order" => {
                     z_order = val

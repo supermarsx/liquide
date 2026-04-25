@@ -26,6 +26,7 @@ pub(super) struct CursorState {
     /// Vector cursor set (loaded once on init, None if unavailable).
     cursor_set: Option<VectorCursorSet>,
     /// Per-shape RGBA pixel cache for software cursor rendering.
+    #[allow(dead_code)]
     cursor_cache: Option<VectorCursorCache<'static>>,
 }
 
@@ -34,10 +35,7 @@ impl CursorState {
         // Attempt to load the built-in vector cursor set.
         let (cursor_set, cursor_cache) = match VectorCursorSet::load_default() {
             Ok(set) => {
-                info!(
-                    shapes = set.shapes().len(),
-                    "loaded vector cursor set"
-                );
+                info!(shapes = set.shapes().len(), "loaded vector cursor set");
                 let cache = VectorCursorCache::new(64);
                 (Some(set), Some(cache))
             }
@@ -110,11 +108,14 @@ impl CursorState {
     /// Returns `None` if vector cursors aren't available or the shape
     /// isn't in the cursor set — caller should fall back to the basic
     /// `SceneNodeKind::Cursor` rectangle.
+    #[allow(dead_code)]
     pub(super) fn vector_cursor(&self, shape: CursorShape) -> Option<Arc<CachedCursor>> {
         let set = self.cursor_set.as_ref()?;
         let cache = self.cursor_cache.as_ref()?;
         let cursor = set.get(shape).ok()?;
-        cache.get_or_render(cursor, shape, CURSOR_SIZE as u32, 1.0).ok()
+        cache
+            .get_or_render(cursor, shape, CURSOR_SIZE as u32, 1.0)
+            .ok()
     }
 
     /// Whether vector cursors are available.

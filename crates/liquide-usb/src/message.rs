@@ -1,7 +1,7 @@
 //! USB protocol messages for device redirection.
 
-use serde::{Serialize, Deserialize};
 use crate::device::DeviceClass;
+use serde::{Deserialize, Serialize};
 
 /// Raw device redirection PDU.
 #[derive(Debug, Clone, Serialize, Deserialize)]

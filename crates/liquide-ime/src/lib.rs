@@ -17,15 +17,15 @@
 //! The application creates an `ImeContext` for each text input widget.
 //! Composition events flow through `ImeEvent` callbacks.
 
-pub mod composition;
 pub mod candidate;
+pub mod composition;
 pub mod context;
 
 use thiserror::Error;
 
-pub use composition::{CompositionState, CompositionUpdate, CompositionClause, ClauseStyle};
-pub use candidate::{CandidateList, CandidateItem, CandidatePageInfo};
-pub use context::{ImeContext, ImeEvent, ImeConfig, CursorRect};
+pub use candidate::{CandidateItem, CandidateList, CandidatePageInfo};
+pub use composition::{ClauseStyle, CompositionClause, CompositionState, CompositionUpdate};
+pub use context::{CursorRect, ImeConfig, ImeContext, ImeEvent};
 
 /// IME errors.
 #[derive(Debug, Error)]

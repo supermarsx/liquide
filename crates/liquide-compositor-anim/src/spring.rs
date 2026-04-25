@@ -278,7 +278,10 @@ mod tests {
     #[test]
     fn spring_config_stiff() {
         let cfg = SpringConfig::stiff();
-        assert!(cfg.stiffness > cfg.damping, "stiff should have high stiffness");
+        assert!(
+            cfg.stiffness > cfg.damping,
+            "stiff should have high stiffness"
+        );
     }
 
     #[test]
@@ -291,7 +294,10 @@ mod tests {
     fn spring_config_critical() {
         let cfg = SpringConfig::critical(400.0, 1.0);
         let zeta = cfg.damping_ratio();
-        assert!((zeta - 1.0).abs() < 0.001, "critical config should have zeta~1.0, got {zeta}");
+        assert!(
+            (zeta - 1.0).abs() < 0.001,
+            "critical config should have zeta~1.0, got {zeta}"
+        );
     }
 
     #[test]
@@ -327,7 +333,10 @@ mod tests {
         let frames = simulate_to_rest(&mut anim);
         assert!(frames < 10000, "should converge");
         let val = anim.current_value();
-        assert!((val - 100.0).abs() < REST_THRESHOLD, "should be near target: {val}");
+        assert!(
+            (val - 100.0).abs() < REST_THRESHOLD,
+            "should be near target: {val}"
+        );
     }
 
     #[test]
@@ -341,7 +350,10 @@ mod tests {
                 max_val = v;
             }
         }
-        assert!(max_val > 100.0, "bouncy spring should overshoot, max was {max_val}");
+        assert!(
+            max_val > 100.0,
+            "bouncy spring should overshoot, max was {max_val}"
+        );
     }
 
     #[test]
@@ -356,7 +368,10 @@ mod tests {
             }
         }
         // Critically damped may have tiny numerical overshoot due to Euler integration.
-        assert!(max_val < 102.0, "critical spring should barely overshoot, max was {max_val}");
+        assert!(
+            max_val < 102.0,
+            "critical spring should barely overshoot, max was {max_val}"
+        );
     }
 
     #[test]
@@ -389,10 +404,14 @@ mod tests {
 
         anim.retarget(200.0);
 
-        assert!((anim.current_value() - val_before).abs() < 0.001,
-            "retarget should preserve position");
-        assert!((anim.current_velocity() - vel_before).abs() < 0.001,
-            "retarget should preserve velocity");
+        assert!(
+            (anim.current_value() - val_before).abs() < 0.001,
+            "retarget should preserve position"
+        );
+        assert!(
+            (anim.current_velocity() - vel_before).abs() < 0.001,
+            "retarget should preserve velocity"
+        );
         assert!((anim.target - 200.0).abs() < 0.001);
     }
 
@@ -434,7 +453,11 @@ mod tests {
         let cfg = SpringConfig::stiff();
         let mut anim = SpringAnimation::new(cfg, 0.0, 100.0);
         simulate_to_rest(&mut anim);
-        assert!((anim.progress() - 1.0).abs() < 0.01, "progress={}", anim.progress());
+        assert!(
+            (anim.progress() - 1.0).abs() < 0.01,
+            "progress={}",
+            anim.progress()
+        );
     }
 
     #[test]
@@ -450,7 +473,10 @@ mod tests {
         let cfg = SpringConfig::new(300.0, 20.0, 0.0);
         let mut anim = SpringAnimation::new(cfg, 0.0, 100.0);
         let v = anim.tick(DT);
-        assert!((v - 100.0).abs() < 0.001, "zero mass should snap to target: {v}");
+        assert!(
+            (v - 100.0).abs() < 0.001,
+            "zero mass should snap to target: {v}"
+        );
     }
 
     #[test]
@@ -495,7 +521,9 @@ mod tests {
         let mut stiff_anim = SpringAnimation::new(SpringConfig::stiff(), 0.0, 100.0);
         let gentle_frames = simulate_to_rest(&mut gentle_anim);
         let stiff_frames = simulate_to_rest(&mut stiff_anim);
-        assert!(gentle_frames > stiff_frames,
-            "gentle ({gentle_frames}) should take more frames than stiff ({stiff_frames})");
+        assert!(
+            gentle_frames > stiff_frames,
+            "gentle ({gentle_frames}) should take more frames than stiff ({stiff_frames})"
+        );
     }
 }

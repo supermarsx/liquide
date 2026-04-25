@@ -23,7 +23,13 @@ fn test_place_item_bookmark() {
 
 #[test]
 fn test_place_item_device() {
-    let p = PlaceItem::device("USB Drive", "drive-removable", "file:///media/usb", true, Some(1_000_000));
+    let p = PlaceItem::device(
+        "USB Drive",
+        "drive-removable",
+        "file:///media/usb",
+        true,
+        Some(1_000_000),
+    );
     assert_eq!(p.place_type, PlaceType::Device);
     assert!(p.is_ejectable);
     assert_eq!(p.free_space, Some(1_000_000));
@@ -68,7 +74,13 @@ fn test_places_model_empty() {
 fn test_places_model_mount_device() {
     let mut model = PlacesModel::new();
     let before = model.len();
-    model.mount_device("USB", "drive-removable", "file:///media/usb", true, Some(500_000));
+    model.mount_device(
+        "USB",
+        "drive-removable",
+        "file:///media/usb",
+        true,
+        Some(500_000),
+    );
     assert_eq!(model.device_count(), 1);
     // Should have more items now (device + separator).
     assert!(model.len() > before);

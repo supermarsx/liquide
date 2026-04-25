@@ -351,8 +351,8 @@ fn escape_html(s: &str) -> String {
 
 /// Void elements that cannot have children.
 const VOID_ELEMENTS: &[&str] = &[
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
-    "source", "track", "wbr",
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
 ];
 
 fn is_void_element(tag: &str) -> bool {
@@ -416,12 +416,7 @@ impl<'a> HtmlToDom<'a> {
         self.parse_children_for(doc, parent, None);
     }
 
-    fn parse_children_for(
-        &mut self,
-        doc: &mut Document,
-        parent: NodeId,
-        parent_tag: Option<&str>,
-    ) {
+    fn parse_children_for(&mut self, doc: &mut Document, parent: NodeId, parent_tag: Option<&str>) {
         loop {
             // Don't skip whitespace here — we need to capture text nodes
             if self.rest().is_empty() {
@@ -1213,9 +1208,8 @@ mod tests {
 
     #[test]
     fn render_into_dom() {
-        let tpl = Template::compile(
-            r#"<div id="container"><span class="label">Hello</span></div>"#,
-        );
+        let tpl =
+            Template::compile(r#"<div id="container"><span class="label">Hello</span></div>"#);
         let mut doc = Document::new();
         let root = doc.root();
         let ctx = TemplateContext::new();
@@ -1291,8 +1285,14 @@ mod tests {
         let dock_children = doc.children(dock);
         assert_eq!(dock_children.len(), 2);
 
-        assert_eq!(doc.get_attribute(dock_children[0], "data-app-id"), Some("files".to_string()));
-        assert_eq!(doc.get_attribute(dock_children[1], "data-app-id"), Some("browser".to_string()));
+        assert_eq!(
+            doc.get_attribute(dock_children[0], "data-app-id"),
+            Some("files".to_string())
+        );
+        assert_eq!(
+            doc.get_attribute(dock_children[1], "data-app-id"),
+            Some("browser".to_string())
+        );
     }
 
     #[test]
@@ -1308,9 +1308,7 @@ mod tests {
 
     #[test]
     fn nested_if_blocks() {
-        let tpl = Template::compile(
-            "{{#if a}}A{{#if b}}B{{/if}}{{/if}}",
-        );
+        let tpl = Template::compile("{{#if a}}A{{#if b}}B{{/if}}{{/if}}");
         let mut ctx = TemplateContext::new();
         ctx.set_bool("a", true);
         ctx.set_bool("b", true);

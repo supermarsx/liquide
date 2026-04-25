@@ -14,9 +14,15 @@
 -->
 
 {{#each dock_items}}
-<dock-item data-app-id="{{app_id}}" data-icon="{{icon}}" data-label="{{label}}" data-index="{{index}}" {{#if is_running}}class="active{{#if is_pinned}} pinned{{/if}}"{{/if}}{{#unless is_running}}{{#if is_pinned}}class="pinned"{{/if}}{{/unless}}>
+<dock-item data-app-id="{{app_id}}" data-icon="{{icon}}" data-label="{{label}}" data-index="{{index}}" {{#if classes}}class="{{classes}}"{{/if}} {{#if is_focused}}data-focused="true"{{/if}} {{#if needs_attention}}data-needs-attention="true"{{/if}} {{#if has_badge}}data-badge="{{badge_count}}"{{/if}}>
   <dock-item-icon data-icon="{{icon}}" />
   <dock-item-label>{{label}}</dock-item-label>
+  {{#if has_badge}}
+  <dock-badge>{{badge_count}}</dock-badge>
+  {{/if}}
+  {{#if needs_attention}}
+  <dock-attention-indicator />
+  {{/if}}
   {{#if is_running}}
   <dock-indicator class="running" />
   {{/if}}

@@ -113,24 +113,23 @@ impl Reassembler {
                 if payload.len() < 4 {
                     return None;
                 }
-                
+
                 // Check if we've hit the max pending limit
                 if self.pending.len() >= MAX_PENDING_REASSEMBLIES {
                     // Reject new reassemblies when at capacity
                     return None;
                 }
-                
-                let total =
-                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                
+
+                let total = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+
                 // Reject messages with too many fragments
                 if total > MAX_FRAGMENTS_PER_MESSAGE || total == 0 {
                     return None;
                 }
-                
+
                 let data = payload.slice(4..);
                 let data_len = data.len();
-                
+
                 self.pending.insert(
                     ch,
                     ReassemblyState {
@@ -144,7 +143,7 @@ impl Reassembler {
                 // Middle fragment
                 let state = self.pending.get_mut(&ch).unwrap();
                 let payload_len = payload.len();
-                
+
                 // Check if we'd exceed max reassembled size
                 if state.accumulated_bytes + payload_len > MAX_REASSEMBLED_SIZE {
                     // Drop this reassembly - it's too large
@@ -152,7 +151,7 @@ impl Reassembler {
                     self.pending.remove(&ch);
                     return None;
                 }
-                
+
                 // Check fragment count
                 if state.fragments.len() >= state.total_fragments as usize {
                     // More fragments than expected - protocol error
@@ -160,7 +159,7 @@ impl Reassembler {
                     self.pending.remove(&ch);
                     return None;
                 }
-                
+
                 state.fragments.push(payload);
                 state.accumulated_bytes += payload_len;
                 self.current_bytes += payload_len;
@@ -169,16 +168,16 @@ impl Reassembler {
         } else if let Some(mut state) = self.pending.remove(&ch) {
             // Last fragment (no FRAGMENTED flag)
             let payload_len = payload.len();
-            
+
             // Final size check
             if state.accumulated_bytes + payload_len > MAX_REASSEMBLED_SIZE {
                 self.current_bytes -= state.accumulated_bytes;
                 return None;
             }
-            
+
             self.current_bytes -= state.accumulated_bytes;
             state.fragments.push(payload);
-            
+
             let total_len: usize = state.fragments.iter().map(|b| b.len()).sum();
             let mut buf = BytesMut::with_capacity(total_len);
             for chunk in state.fragments {
@@ -203,7 +202,7 @@ impl Reassembler {
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }
-    
+
     /// Current memory usage across all pending reassemblies.
     pub fn current_bytes(&self) -> usize {
         self.current_bytes

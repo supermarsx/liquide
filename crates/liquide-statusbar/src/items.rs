@@ -12,7 +12,10 @@ pub enum StatusBarItemKind {
     /// Unread-notification badge and do-not-disturb state.
     NotificationIndicator { unread_count: u32, dnd_active: bool },
     /// Network round-trip quality indicator.
-    ConnectionQuality { quality_percent: u8, latency_ms: u32 },
+    ConnectionQuality {
+        quality_percent: u8,
+        latency_ms: u32,
+    },
     /// System tray area for background services.
     TrayArea,
     /// Plugin-provided custom content.

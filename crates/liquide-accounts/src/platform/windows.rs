@@ -181,10 +181,8 @@ impl Netapi32 {
             let net_user_enum = Self::get_proc(module, b"NetUserEnum\0")?;
             let net_api_buffer_free = Self::get_proc(module, b"NetApiBufferFree\0")?;
             let net_local_group_enum = Self::get_proc(module, b"NetLocalGroupEnum\0")?;
-            let net_user_get_local_groups =
-                Self::get_proc(module, b"NetUserGetLocalGroups\0")?;
-            let net_local_group_get_members =
-                Self::get_proc(module, b"NetLocalGroupGetMembers\0")?;
+            let net_user_get_local_groups = Self::get_proc(module, b"NetUserGetLocalGroups\0")?;
+            let net_local_group_get_members = Self::get_proc(module, b"NetLocalGroupGetMembers\0")?;
 
             Ok(Self {
                 _module: module,
@@ -192,9 +190,7 @@ impl Netapi32 {
                 net_api_buffer_free: std::mem::transmute(net_api_buffer_free),
                 net_local_group_enum: std::mem::transmute(net_local_group_enum),
                 net_user_get_local_groups: std::mem::transmute(net_user_get_local_groups),
-                net_local_group_get_members: std::mem::transmute(
-                    net_local_group_get_members,
-                ),
+                net_local_group_get_members: std::mem::transmute(net_local_group_get_members),
             })
         }
     }
@@ -277,7 +273,9 @@ impl WindowsBackend {
             )
         };
 
-        if status != NERR_SUCCESS && status != 234 /* ERROR_MORE_DATA */ {
+        if status != NERR_SUCCESS && status != 234
+        /* ERROR_MORE_DATA */
+        {
             return Err(AccountError::PlatformError(format!(
                 "NetUserEnum failed with status {status}"
             )));
@@ -547,10 +545,7 @@ impl PlatformBackend for WindowsBackend {
         for raw in &raw_users {
             // Skip well-known system accounts.
             let lower = raw.username.to_lowercase();
-            if lower == "defaultaccount"
-                || lower == "wdagutilityaccount"
-                || lower == "guest"
-            {
+            if lower == "defaultaccount" || lower == "wdagutilityaccount" || lower == "guest" {
                 continue;
             }
             accounts.push(self.build_user_account(raw));
@@ -588,7 +583,13 @@ impl PlatformBackend for WindowsBackend {
         }
 
         let output = std::process::Command::new("net")
-            .args(["user", username, _password, "/add", &format!("/fullname:{_display_name}")])
+            .args([
+                "user",
+                username,
+                _password,
+                "/add",
+                &format!("/fullname:{_display_name}"),
+            ])
             .output()
             .map_err(|e| AccountError::PlatformError(format!("net user /add: {e}")))?;
 
@@ -671,7 +672,9 @@ impl PlatformBackend for WindowsBackend {
         // Verify old password by attempting a logon (rudimentary check).
         // TODO: Use LogonUser or NetUserChangePassword for proper verification.
         if old_password.is_empty() {
-            return Err(AccountError::PlatformError("old password must not be empty".into()));
+            return Err(AccountError::PlatformError(
+                "old password must not be empty".into(),
+            ));
         }
 
         let output = std::process::Command::new("net")
@@ -884,7 +887,10 @@ impl PlatformBackend for WindowsBackend {
 
     fn recent_logins(&self, uid: u32, _count: usize) -> Result<Vec<LoginEntry>, AccountError> {
         let users = self.enumerate_users()?;
-        let raw = users.iter().find(|u| u.uid == uid).ok_or(AccountError::NotFound)?;
+        let raw = users
+            .iter()
+            .find(|u| u.uid == uid)
+            .ok_or(AccountError::NotFound)?;
 
         // NetUserEnum level 3 gives us `last_logon` (seconds since 1970-01-01).
         // We can only report the single most recent logon from the SAM database.

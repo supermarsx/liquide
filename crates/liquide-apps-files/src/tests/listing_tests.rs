@@ -1,14 +1,14 @@
 //! Tests for directory listing and sort.
 
+use crate::clipboard::{ClipboardOp, FileClipboard};
 use crate::config::SortField;
 use crate::entry::FileEntry;
 use crate::listing::DirectoryListing;
-use crate::sort::{sort_entries, sort_natural};
-use crate::sidebar::Sidebar;
-use crate::clipboard::{FileClipboard, ClipboardOp};
-use crate::search::FileSearch;
 use crate::operations::{FileOperation, OperationKind, OperationState};
 use crate::preview::{Preview, is_text_mime};
+use crate::search::FileSearch;
+use crate::sidebar::Sidebar;
+use crate::sort::{sort_entries, sort_natural};
 
 fn sample_entries() -> Vec<FileEntry> {
     vec![
@@ -306,7 +306,12 @@ fn test_operation_kind_display() {
 fn test_preview_text() {
     let p = Preview::text("/a.txt".into(), "line1\nline2\nline3", 2);
     assert!(p.has_content());
-    if let crate::preview::PreviewContent::Text { lines, truncated, total_lines } = p.content {
+    if let crate::preview::PreviewContent::Text {
+        lines,
+        truncated,
+        total_lines,
+    } = p.content
+    {
         assert_eq!(lines.len(), 2);
         assert!(truncated);
         assert_eq!(total_lines, 3);

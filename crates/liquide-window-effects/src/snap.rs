@@ -264,7 +264,11 @@ mod tests {
     fn snap_to_screen_left_edge() {
         let cfg = SnapConfig::default();
         let results = EdgeSnapper::find_snap(3.0, 200.0, 400.0, 300.0, &[], screen(), &cfg);
-        assert!(results.iter().any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Left))));
+        assert!(
+            results
+                .iter()
+                .any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Left)))
+        );
     }
 
     #[test]
@@ -272,14 +276,22 @@ mod tests {
         let cfg = SnapConfig::default();
         // Window right edge at 1920-5 = 1915
         let results = EdgeSnapper::find_snap(1515.0, 200.0, 400.0, 300.0, &[], screen(), &cfg);
-        assert!(results.iter().any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Right))));
+        assert!(
+            results
+                .iter()
+                .any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Right)))
+        );
     }
 
     #[test]
     fn snap_to_screen_top_edge() {
         let cfg = SnapConfig::default();
         let results = EdgeSnapper::find_snap(200.0, 5.0, 400.0, 300.0, &[], screen(), &cfg);
-        assert!(results.iter().any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Top))));
+        assert!(
+            results
+                .iter()
+                .any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Top)))
+        );
     }
 
     #[test]
@@ -287,7 +299,11 @@ mod tests {
         let cfg = SnapConfig::default();
         // y + h = 775 + 300 = 1075, distance to 1080 = 5
         let results = EdgeSnapper::find_snap(200.0, 775.0, 400.0, 300.0, &[], screen(), &cfg);
-        assert!(results.iter().any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Bottom))));
+        assert!(
+            results
+                .iter()
+                .any(|r| matches!(r.edge, SnapEdge::ScreenEdge(Side::Bottom)))
+        );
     }
 
     #[test]
@@ -299,7 +315,10 @@ mod tests {
 
     #[test]
     fn snap_disabled_returns_empty() {
-        let cfg = SnapConfig { enabled: false, ..Default::default() };
+        let cfg = SnapConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let results = EdgeSnapper::find_snap(3.0, 3.0, 400.0, 300.0, &[], screen(), &cfg);
         assert!(results.is_empty());
     }
@@ -310,7 +329,11 @@ mod tests {
         let others = vec![(42, Rect::new(500.0, 100.0, 400.0, 300.0))];
         // Our right edge at 497, other left at 500 → distance 3
         let results = EdgeSnapper::find_snap(97.0, 150.0, 400.0, 300.0, &others, screen(), &cfg);
-        assert!(results.iter().any(|r| matches!(r.edge, SnapEdge::WindowEdge(42, _))));
+        assert!(
+            results
+                .iter()
+                .any(|r| matches!(r.edge, SnapEdge::WindowEdge(42, _)))
+        );
     }
 
     #[test]
@@ -320,7 +343,8 @@ mod tests {
         // Our left at 205, other left at 200 → distance 5
         let results = EdgeSnapper::find_snap(205.0, 500.0, 300.0, 200.0, &others, screen(), &cfg);
         let aligned = results.iter().any(|r| {
-            matches!(r.edge, SnapEdge::WindowEdge(10, Side::Left)) && (r.snap_pos - 200.0).abs() < 1e-3
+            matches!(r.edge, SnapEdge::WindowEdge(10, Side::Left))
+                && (r.snap_pos - 200.0).abs() < 1e-3
         });
         assert!(aligned);
     }
@@ -328,12 +352,27 @@ mod tests {
     #[test]
     fn apply_snap_picks_closest() {
         let snaps = vec![
-            SnapResult { edge: SnapEdge::ScreenEdge(Side::Left), snap_pos: 0.0, distance: 5.0 },
-            SnapResult { edge: SnapEdge::WindowEdge(1, Side::Right), snap_pos: 10.0, distance: 2.0 },
-            SnapResult { edge: SnapEdge::ScreenEdge(Side::Top), snap_pos: 0.0, distance: 3.0 },
+            SnapResult {
+                edge: SnapEdge::ScreenEdge(Side::Left),
+                snap_pos: 0.0,
+                distance: 5.0,
+            },
+            SnapResult {
+                edge: SnapEdge::WindowEdge(1, Side::Right),
+                snap_pos: 10.0,
+                distance: 2.0,
+            },
+            SnapResult {
+                edge: SnapEdge::ScreenEdge(Side::Top),
+                snap_pos: 0.0,
+                distance: 3.0,
+            },
         ];
         let (sx, sy) = EdgeSnapper::apply_snap(12.0, 3.0, 400.0, 300.0, &snaps);
-        assert!((sx - 10.0).abs() < 1e-5, "should pick window edge (distance 2)");
+        assert!(
+            (sx - 10.0).abs() < 1e-5,
+            "should pick window edge (distance 2)"
+        );
         assert!((sy - 0.0).abs() < 1e-5, "should pick screen top");
     }
 
@@ -382,7 +421,11 @@ mod tests {
         };
         let others = vec![(1, Rect::new(500.0, 100.0, 400.0, 300.0))];
         let results = EdgeSnapper::find_snap(497.0, 150.0, 400.0, 300.0, &others, screen(), &cfg);
-        assert!(!results.iter().any(|r| matches!(r.edge, SnapEdge::WindowEdge(_, _))));
+        assert!(
+            !results
+                .iter()
+                .any(|r| matches!(r.edge, SnapEdge::WindowEdge(_, _)))
+        );
     }
 
     #[test]

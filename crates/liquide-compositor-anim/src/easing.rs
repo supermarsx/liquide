@@ -52,12 +52,8 @@ pub fn evaluate(easing: &EasingFunction, t: f32) -> f32 {
             // cubic-bezier(0.42, 0, 0.58, 1)
             cubic_bezier_eval(0.42, 0.0, 0.58, 1.0, t)
         }
-        EasingFunction::CubicBezier(x1, y1, x2, y2) => {
-            cubic_bezier_eval(x1, y1, x2, y2, t)
-        }
-        EasingFunction::Steps(steps, position) => {
-            steps_eval(steps, position, t)
-        }
+        EasingFunction::CubicBezier(x1, y1, x2, y2) => cubic_bezier_eval(x1, y1, x2, y2, t),
+        EasingFunction::Steps(steps, position) => steps_eval(steps, position, t),
         EasingFunction::Spring(stiffness, damping, mass) => {
             spring_eval(stiffness, damping, mass, t)
         }
@@ -313,9 +309,15 @@ mod tests {
         // Low damping → overshoots past 1.0
         let e = EasingFunction::Spring(500.0, 5.0, 1.0);
         let v = evaluate(&e, 0.3);
-        assert!(v > 1.0 || v < 0.0 || true, "underdamped spring does oscillate");
+        assert!(
+            v > 1.0 || v < 0.0 || true,
+            "underdamped spring does oscillate"
+        );
         // Just check it returns a reasonable value
-        assert!(v > -2.0 && v < 3.0, "spring value out of reasonable range: {v}");
+        assert!(
+            v > -2.0 && v < 3.0,
+            "spring value out of reasonable range: {v}"
+        );
     }
 
     #[test]
@@ -350,7 +352,10 @@ mod tests {
         for i in 0..=20 {
             let t = i as f32 / 20.0;
             let v = evaluate(&e, t);
-            assert!(v >= prev - 1e-6, "ease-in not monotonic at t={t}: {v} < {prev}");
+            assert!(
+                v >= prev - 1e-6,
+                "ease-in not monotonic at t={t}: {v} < {prev}"
+            );
             prev = v;
         }
     }
@@ -362,7 +367,10 @@ mod tests {
         for i in 0..=20 {
             let t = i as f32 / 20.0;
             let v = evaluate(&e, t);
-            assert!(v >= prev - 1e-6, "ease-out not monotonic at t={t}: {v} < {prev}");
+            assert!(
+                v >= prev - 1e-6,
+                "ease-out not monotonic at t={t}: {v} < {prev}"
+            );
             prev = v;
         }
     }

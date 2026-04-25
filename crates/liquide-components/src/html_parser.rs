@@ -117,7 +117,11 @@ pub struct HtmlParseError {
 
 impl fmt::Display for HtmlParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HTML parse error at position {}: {}", self.position, self.message)
+        write!(
+            f,
+            "HTML parse error at position {}: {}",
+            self.position, self.message
+        )
     }
 }
 
@@ -127,8 +131,8 @@ impl std::error::Error for HtmlParseError {}
 
 /// Elements that cannot have children and do not require a closing tag.
 const VOID_ELEMENTS: &[&str] = &[
-    "area", "base", "br", "col", "embed", "hr", "img", "input",
-    "link", "meta", "param", "source", "track", "wbr",
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
 ];
 
 fn is_void_element(tag: &str) -> bool {
@@ -594,8 +598,7 @@ mod tests {
 
     #[test]
     fn parse_inline_styles() {
-        let node =
-            HtmlParser::parse(r#"<div style="width: 100px; color: red"></div>"#).unwrap();
+        let node = HtmlParser::parse(r#"<div style="width: 100px; color: red"></div>"#).unwrap();
         assert_eq!(
             node.inline_styles,
             vec![
@@ -613,7 +616,10 @@ mod tests {
 
         let node = HtmlParser::parse(r#"<img src="test.png"/>"#).unwrap();
         assert_eq!(node.tag, "img");
-        assert_eq!(node.attrs, vec![("src".to_string(), "test.png".to_string())]);
+        assert_eq!(
+            node.attrs,
+            vec![("src".to_string(), "test.png".to_string())]
+        );
     }
 
     #[test]
@@ -629,8 +635,7 @@ mod tests {
 
     #[test]
     fn parse_fragment_multiple_roots() {
-        let nodes =
-            HtmlParser::parse_fragment(r#"<span>A</span><span>B</span>"#).unwrap();
+        let nodes = HtmlParser::parse_fragment(r#"<span>A</span><span>B</span>"#).unwrap();
         assert_eq!(nodes.len(), 2);
         assert_eq!(nodes[0].tag, "span");
         assert_eq!(nodes[1].tag, "span");
@@ -646,8 +651,7 @@ mod tests {
 
     #[test]
     fn parse_skips_comments() {
-        let node =
-            HtmlParser::parse(r#"<!-- comment --><div>Text</div>"#).unwrap();
+        let node = HtmlParser::parse(r#"<!-- comment --><div>Text</div>"#).unwrap();
         assert_eq!(node.tag, "div");
         assert_eq!(node.children[0].text.as_deref(), Some("Text"));
     }
@@ -661,10 +665,13 @@ mod tests {
     #[test]
     fn parse_data_attributes() {
         let node =
-            HtmlParser::parse(r#"<button data-action="click" data-id="42"></button>"#)
-                .unwrap();
-        assert!(node.attrs.contains(&("data-action".to_string(), "click".to_string())));
-        assert!(node.attrs.contains(&("data-id".to_string(), "42".to_string())));
+            HtmlParser::parse(r#"<button data-action="click" data-id="42"></button>"#).unwrap();
+        assert!(node
+            .attrs
+            .contains(&("data-action".to_string(), "click".to_string())));
+        assert!(node
+            .attrs
+            .contains(&("data-id".to_string(), "42".to_string())));
     }
 
     #[test]
@@ -695,7 +702,9 @@ mod tests {
     #[test]
     fn parse_boolean_attribute() {
         let node = HtmlParser::parse(r#"<input disabled>"#).unwrap();
-        assert!(node.attrs.contains(&("disabled".to_string(), String::new())));
+        assert!(node
+            .attrs
+            .contains(&("disabled".to_string(), String::new())));
     }
 
     #[test]

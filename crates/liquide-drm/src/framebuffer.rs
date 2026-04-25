@@ -37,9 +37,7 @@ impl DrmFramebuffer {
     ) -> Result<Self> {
         // TODO: implement via DRM_IOCTL_MODE_CREATE_DUMB + DRM_IOCTL_MODE_ADDFB
         let _ = (device, width, height, bpp, depth);
-        Err(DrmError::BufferAlloc(
-            "not yet implemented".to_string(),
-        ))
+        Err(DrmError::BufferAlloc("not yet implemented".to_string()))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -58,9 +56,7 @@ impl DrmFramebuffer {
     pub fn map(&self, device: &DrmDevice) -> Result<*mut u8> {
         // TODO: implement via DRM_IOCTL_MODE_MAP_DUMB + mmap
         let _ = device;
-        Err(DrmError::BufferAlloc(
-            "map not yet implemented".to_string(),
-        ))
+        Err(DrmError::BufferAlloc("map not yet implemented".to_string()))
     }
 
     #[cfg(not(target_os = "linux"))]

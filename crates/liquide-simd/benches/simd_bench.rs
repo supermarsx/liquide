@@ -93,10 +93,12 @@ fn bench_blur_horizontal(c: &mut Criterion) {
     let src: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
     let mut dst = vec![0u8; size];
     let half = 5;
-    let weights: Vec<f32> = (0..11).map(|i| {
-        let x = (i as f32 - 5.0) / 3.0;
-        (-x * x / 2.0).exp()
-    }).collect();
+    let weights: Vec<f32> = (0..11)
+        .map(|i| {
+            let x = (i as f32 - 5.0) / 3.0;
+            (-x * x / 2.0).exp()
+        })
+        .collect();
     let sum: f32 = weights.iter().sum();
     let weights: Vec<f32> = weights.iter().map(|w| w / sum).collect();
 
@@ -154,10 +156,12 @@ fn bench_blur_horizontal_scalar(c: &mut Criterion) {
     let src: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
     let mut dst = vec![0u8; size];
     let half = 5;
-    let weights: Vec<f32> = (0..11).map(|i| {
-        let x = (i as f32 - 5.0) / 3.0;
-        (-x * x / 2.0).exp()
-    }).collect();
+    let weights: Vec<f32> = (0..11)
+        .map(|i| {
+            let x = (i as f32 - 5.0) / 3.0;
+            (-x * x / 2.0).exp()
+        })
+        .collect();
     let sum: f32 = weights.iter().sum();
     let weights: Vec<f32> = weights.iter().map(|w| w / sum).collect();
 

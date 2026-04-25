@@ -163,11 +163,7 @@ impl HealthMonitor {
 
     /// Record a health check result for a service. Returns any events
     /// triggered by the status change.
-    pub fn record_check(
-        &mut self,
-        id: &ServiceId,
-        status: HealthStatus,
-    ) -> Vec<HealthEvent> {
+    pub fn record_check(&mut self, id: &ServiceId, status: HealthStatus) -> Vec<HealthEvent> {
         let mut events = Vec::new();
 
         let Some(state) = self.states.get_mut(id) else {
@@ -223,10 +219,10 @@ impl HealthMonitor {
                     state.current_status = HealthStatus::Unhealthy(msg.clone());
                 } else {
                     // Not yet at threshold — mark degraded
-                    state.current_status =
-                        HealthStatus::Degraded(format!("failing ({}/{}): {msg}",
-                            state.consecutive_failures,
-                            state.config.failure_threshold));
+                    state.current_status = HealthStatus::Degraded(format!(
+                        "failing ({}/{}): {msg}",
+                        state.consecutive_failures, state.config.failure_threshold
+                    ));
                 }
             }
         }
@@ -422,10 +418,7 @@ mod tests {
         let mut mon = HealthMonitor::new();
         mon.register(sid("svc"), HealthConfig::default());
 
-        let events = mon.record_check(
-            &sid("svc"),
-            HealthStatus::Degraded("high latency".into()),
-        );
+        let events = mon.record_check(&sid("svc"), HealthStatus::Degraded("high latency".into()));
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], HealthEvent::BecameDegraded(_, _)));
     }

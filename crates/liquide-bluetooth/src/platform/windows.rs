@@ -79,8 +79,7 @@ struct BluetoothDeviceInfo {
 
 type BluetoothFindFirstRadioFn =
     unsafe extern "system" fn(*const BluetoothFindRadioParams, *mut *mut c_void) -> *mut c_void;
-type BluetoothFindNextRadioFn =
-    unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32;
+type BluetoothFindNextRadioFn = unsafe extern "system" fn(*mut c_void, *mut *mut c_void) -> i32;
 type BluetoothFindRadioCloseFn = unsafe extern "system" fn(*mut c_void) -> i32;
 type BluetoothGetRadioInfoFn =
     unsafe extern "system" fn(*mut c_void, *mut BluetoothRadioInfo) -> u32;
@@ -116,37 +115,32 @@ impl BtApi {
     /// if the DLL or any required export is unavailable.
     fn load() -> Option<&'static BtApi> {
         BT_API
-            .get_or_init(|| {
-                unsafe {
-                    let dll_name: Vec<u16> = "BluetoothAPIs.dll\0"
-                        .encode_utf16()
-                        .collect();
-                    let module = LoadLibraryW(dll_name.as_ptr());
-                    if module.is_null() {
-                        return None;
-                    }
-
-                    macro_rules! load_fn {
-                        ($name:expr) => {{
-                            let ptr =
-                                GetProcAddress(module, concat!($name, "\0").as_ptr());
-                            if ptr.is_null() {
-                                return None;
-                            }
-                            std::mem::transmute(ptr)
-                        }};
-                    }
-
-                    Some(BtApi {
-                        find_first_radio: load_fn!("BluetoothFindFirstRadio"),
-                        find_next_radio: load_fn!("BluetoothFindNextRadio"),
-                        find_radio_close: load_fn!("BluetoothFindRadioClose"),
-                        get_radio_info: load_fn!("BluetoothGetRadioInfo"),
-                        find_first_device: load_fn!("BluetoothFindFirstDevice"),
-                        find_next_device: load_fn!("BluetoothFindNextDevice"),
-                        find_device_close: load_fn!("BluetoothFindDeviceClose"),
-                    })
+            .get_or_init(|| unsafe {
+                let dll_name: Vec<u16> = "BluetoothAPIs.dll\0".encode_utf16().collect();
+                let module = LoadLibraryW(dll_name.as_ptr());
+                if module.is_null() {
+                    return None;
                 }
+
+                macro_rules! load_fn {
+                    ($name:expr) => {{
+                        let ptr = GetProcAddress(module, concat!($name, "\0").as_ptr());
+                        if ptr.is_null() {
+                            return None;
+                        }
+                        std::mem::transmute(ptr)
+                    }};
+                }
+
+                Some(BtApi {
+                    find_first_radio: load_fn!("BluetoothFindFirstRadio"),
+                    find_next_radio: load_fn!("BluetoothFindNextRadio"),
+                    find_radio_close: load_fn!("BluetoothFindRadioClose"),
+                    get_radio_info: load_fn!("BluetoothGetRadioInfo"),
+                    find_first_device: load_fn!("BluetoothFindFirstDevice"),
+                    find_next_device: load_fn!("BluetoothFindNextDevice"),
+                    find_device_close: load_fn!("BluetoothFindDeviceClose"),
+                })
             })
             .as_ref()
     }
@@ -170,10 +164,7 @@ fn format_bt_address(addr: u64) -> String {
 /// Parse a MAC address string ("AA:BB:CC:DD:EE:FF" or "AABBCCDDEEFF") into a
 /// packed `u64`.
 fn parse_bt_address(address: &str) -> Option<u64> {
-    let hex: String = address
-        .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .collect();
+    let hex: String = address.chars().filter(|c| c.is_ascii_hexdigit()).collect();
     if hex.len() != 12 {
         return None;
     }
@@ -228,8 +219,7 @@ impl BluetoothManager {
             dw_size: std::mem::size_of::<BluetoothFindRadioParams>() as u32,
         };
         let mut radio_handle: *mut c_void = std::ptr::null_mut();
-        let find_handle =
-            unsafe { (api.find_first_radio)(&params, &mut radio_handle) };
+        let find_handle = unsafe { (api.find_first_radio)(&params, &mut radio_handle) };
         if find_handle.is_null() {
             return results;
         }
@@ -261,8 +251,7 @@ impl BluetoothManager {
             }
 
             radio_handle = std::ptr::null_mut();
-            if unsafe { (api.find_next_radio)(find_handle, &mut radio_handle) } == 0
-            {
+            if unsafe { (api.find_next_radio)(find_handle, &mut radio_handle) } == 0 {
                 break;
             }
         }
@@ -295,8 +284,7 @@ impl BluetoothManager {
         let mut info: BluetoothDeviceInfo = unsafe { std::mem::zeroed() };
         info.dw_size = std::mem::size_of::<BluetoothDeviceInfo>() as u32;
 
-        let find =
-            unsafe { (api.find_first_device)(&params, &mut info) };
+        let find = unsafe { (api.find_first_device)(&params, &mut info) };
         if find.is_null() {
             return devices;
         }
@@ -446,10 +434,7 @@ impl BluetoothBackend for BluetoothManager {
         };
 
         let remove_fn: BluetoothRemoveDeviceFn = unsafe {
-            let ptr = GetProcAddress(
-                api_module,
-                b"BluetoothRemoveDevice\0".as_ptr(),
-            );
+            let ptr = GetProcAddress(api_module, b"BluetoothRemoveDevice\0".as_ptr());
             if ptr.is_null() {
                 return Err(BtError::PlatformError(
                     "BluetoothRemoveDevice not found".to_string(),
@@ -573,7 +558,10 @@ mod tests {
 
     #[test]
     fn icon_mapping() {
-        assert_eq!(icon_for_device_type(&DeviceType::Headphones), "audio-headphones");
+        assert_eq!(
+            icon_for_device_type(&DeviceType::Headphones),
+            "audio-headphones"
+        );
         assert_eq!(icon_for_device_type(&DeviceType::Mouse), "input-mouse");
         assert_eq!(
             icon_for_device_type(&DeviceType::Other("foo".to_string())),

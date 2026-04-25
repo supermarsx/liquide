@@ -108,7 +108,9 @@ impl FontWorker {
         {
             Ok(h) => Some(h),
             Err(e) => {
-                tracing::error!("failed to spawn font worker thread: {e}; glyph rasterization disabled");
+                tracing::error!(
+                    "failed to spawn font worker thread: {e}; glyph rasterization disabled"
+                );
                 None
             }
         };

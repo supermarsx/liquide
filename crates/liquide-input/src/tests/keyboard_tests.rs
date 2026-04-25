@@ -3,7 +3,13 @@ use crate::keyboard::*;
 #[test]
 fn key_code_variants_exist() {
     // Verify a sampling of key codes compile and are distinct
-    let keys = [KeyCode::A, KeyCode::Z, KeyCode::Digit0, KeyCode::F12, KeyCode::Escape];
+    let keys = [
+        KeyCode::A,
+        KeyCode::Z,
+        KeyCode::Digit0,
+        KeyCode::F12,
+        KeyCode::Escape,
+    ];
     for i in 0..keys.len() {
         for j in (i + 1)..keys.len() {
             assert_ne!(keys[i], keys[j]);
@@ -42,8 +48,12 @@ fn modifiers_contains() {
 #[test]
 fn modifiers_all() {
     let m = Modifiers::from_bits(
-        Modifiers::SHIFT | Modifiers::CTRL | Modifiers::ALT |
-        Modifiers::SUPER | Modifiers::CAPS_LOCK | Modifiers::NUM_LOCK,
+        Modifiers::SHIFT
+            | Modifiers::CTRL
+            | Modifiers::ALT
+            | Modifiers::SUPER
+            | Modifiers::CAPS_LOCK
+            | Modifiers::NUM_LOCK,
     );
     assert!(m.shift());
     assert!(m.ctrl());
@@ -55,7 +65,13 @@ fn modifiers_all() {
 
 #[test]
 fn key_event_create() {
-    let evt = KeyEvent::new(KeyCode::Enter, KeyState::Pressed, Modifiers::new(), 28, 1000);
+    let evt = KeyEvent::new(
+        KeyCode::Enter,
+        KeyState::Pressed,
+        Modifiers::new(),
+        28,
+        1000,
+    );
     assert_eq!(evt.key, KeyCode::Enter);
     assert_eq!(evt.state, KeyState::Pressed);
     assert_eq!(evt.scancode, 28);

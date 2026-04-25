@@ -26,16 +26,8 @@ pub struct Comparison {
 
 impl std::fmt::Display for Comparison {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let direction = if self.change_percent > 0.0 {
-            "+"
-        } else {
-            ""
-        };
-        let status = if self.regression {
-            "REGRESSION"
-        } else {
-            "ok"
-        };
+        let direction = if self.change_percent > 0.0 { "+" } else { "" };
+        let status = if self.regression { "REGRESSION" } else { "ok" };
         write!(
             f,
             "[{}] {}/{}: {:.2} -> {:.2} ({}{:.1}%)",
@@ -169,10 +161,7 @@ impl ComparisonReport {
                     0.0
                 };
 
-                let regression = self.is_regression(
-                    &baseline_metric.name,
-                    change_percent,
-                );
+                let regression = self.is_regression(&baseline_metric.name, change_percent);
 
                 comparisons.push(Comparison {
                     metric_name: baseline_metric.name.clone(),

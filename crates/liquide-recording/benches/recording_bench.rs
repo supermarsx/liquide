@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use liquide_recording::format::RecordingHeader;
 use liquide_recording::muxer::RecordingMuxer;

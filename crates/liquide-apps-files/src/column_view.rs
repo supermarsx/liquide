@@ -112,13 +112,21 @@ impl ColumnConfig {
     /// Create a new column config.
     #[must_use]
     pub fn new(field: SortField, width: f32) -> Self {
-        Self { field, width, visible: true }
+        Self {
+            field,
+            width,
+            visible: true,
+        }
     }
 
     /// Create a hidden column.
     #[must_use]
     pub fn hidden(field: SortField) -> Self {
-        Self { field, width: 100.0, visible: false }
+        Self {
+            field,
+            width: 100.0,
+            visible: false,
+        }
     }
 }
 
@@ -182,7 +190,11 @@ impl ColumnViewConfig {
     /// Total width of all visible columns.
     #[must_use]
     pub fn total_width(&self) -> f32 {
-        self.columns.iter().filter(|c| c.visible).map(|c| c.width).sum()
+        self.columns
+            .iter()
+            .filter(|c| c.visible)
+            .map(|c| c.width)
+            .sum()
     }
 }
 

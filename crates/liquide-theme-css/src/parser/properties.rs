@@ -7,6 +7,7 @@ use crate::property::PropertySet;
 use crate::value::{Color, LengthUnit, PropertyValue};
 
 use lightningcss::properties::Property;
+use lightningcss::stylesheet::PrinterOptions;
 use lightningcss::traits::ToCss;
 use lightningcss::values::color::CssColor;
 use lightningcss::values::length::LengthPercentageOrAuto;
@@ -27,86 +28,104 @@ impl ThemeParser {
                 }
             }
             Property::Background(backgrounds) => {
-                // Extract all background layer properties from the shorthand
-                if let Some(bg) = backgrounds.first() {
-                    // Color
-                    if let Some(v) = self.convert_color(&bg.color) {
-                        properties.insert("background".into(), v.clone());
-                        properties.insert("background-color".into(), v);
-                    }
+                let background_css = self.to_css_string(backgrounds);
+                let background_value = match self.parse_value_string(&background_css) {
+                    PropertyValue::Color(color) => PropertyValue::Color(color),
+                    _ => PropertyValue::Keyword(background_css),
+                };
+                properties.insert("background".into(), background_value.clone());
 
-                    // Image (URL or gradient)
-                    match &bg.image {
-                        lightningcss::values::image::Image::Url(url) => {
-                            properties.insert(
-                                "background-image".into(),
-                                PropertyValue::Keyword(format!("url({})", url.url)),
-                            );
-                        }
-                        lightningcss::values::image::Image::Gradient(grad) => {
-                            if let Some(our_grad) = self.convert_gradient(grad) {
-                                properties.insert(
-                                    "background-image".into(),
-                                    PropertyValue::Gradient(our_grad),
-                                );
-                            }
-                        }
-                        _ => {} // None or ImageSet — skip
-                    }
+                let layer_count = backgrounds.len();
+                let mut image_values = Vec::with_capacity(layer_count);
+                let mut position_values = Vec::with_capacity(layer_count);
+                let mut size_values = Vec::with_capacity(layer_count);
+                let mut repeat_values = Vec::with_capacity(layer_count);
+                let mut attachment_values = Vec::with_capacity(layer_count);
+                let mut origin_values = Vec::with_capacity(layer_count);
+                let mut clip_values = Vec::with_capacity(layer_count);
 
-                    // Position
-                    let pos_str = self.to_css_string(&bg.position);
-                    if pos_str != "0% 0%" && pos_str != "0 0" {
-                        properties.insert(
-                            "background-position".into(),
-                            PropertyValue::Keyword(pos_str),
-                        );
-                    }
+                for bg in backgrounds.iter() {
+                    image_values.push(self.to_css_string(&bg.image));
+                    position_values.push(self.to_css_string(&bg.position));
+                    size_values.push(self.to_css_string(&bg.size));
+                    repeat_values.push(self.to_css_string(&bg.repeat));
+                    attachment_values.push(self.to_css_string(&bg.attachment));
+                    origin_values.push(self.to_css_string(&bg.origin));
+                    clip_values.push(self.to_css_string(&bg.clip));
+                }
 
-                    // Size
-                    let size_str = self.to_css_string(&bg.size);
-                    if size_str != "auto" && size_str != "auto auto" {
-                        properties.insert(
-                            "background-size".into(),
-                            PropertyValue::Keyword(size_str),
-                        );
-                    }
+                if matches!(background_value, PropertyValue::Color(_)) {
+                    properties.insert("background-color".into(), background_value);
+                }
 
-                    // Repeat
-                    let repeat_str = self.to_css_string(&bg.repeat);
-                    if repeat_str != "repeat" && repeat_str != "repeat repeat" {
-                        properties.insert(
-                            "background-repeat".into(),
-                            PropertyValue::Keyword(repeat_str),
-                        );
+                if layer_count == 1 && image_values.first().map(|value| value.as_str()) == Some("none") {
+                    if let Some(color) = backgrounds
+                        .first()
+                        .and_then(|layer| self.convert_color(&layer.color))
+                    {
+                        properties.insert("background-color".into(), color);
                     }
+                }
 
-                    // Attachment
-                    let attach_str = self.to_css_string(&bg.attachment);
-                    if attach_str != "scroll" {
-                        properties.insert(
-                            "background-attachment".into(),
-                            PropertyValue::Keyword(attach_str),
-                        );
-                    }
+                if layer_count > 1 || image_values.iter().any(|value| value != "none") {
+                    properties.insert(
+                        "background-image".into(),
+                        PropertyValue::Keyword(image_values.join(", ")),
+                    );
+                }
 
-                    // Origin
-                    let origin_str = self.to_css_string(&bg.origin);
-                    if origin_str != "padding-box" {
-                        properties.insert(
-                            "background-origin".into(),
-                            PropertyValue::Keyword(origin_str),
-                        );
-                    }
+                if layer_count > 1
+                    || position_values
+                        .iter()
+                        .any(|value| value != "0% 0%" && value != "0 0")
+                {
+                    properties.insert(
+                        "background-position".into(),
+                        PropertyValue::Keyword(position_values.join(", ")),
+                    );
+                }
 
-                    // Clip
-                    let clip_str = self.to_css_string(&bg.clip);
-                    if clip_str != "border-box" {
-                        properties.insert(
-                            "background-clip".into(),
-                            PropertyValue::Keyword(clip_str),
-                        );
-                    }
+                if layer_count > 1
+                    || size_values
+                        .iter()
+                        .any(|value| value != "auto" && value != "auto auto")
+                {
+                    properties.insert(
+                        "background-size".into(),
+                        PropertyValue::Keyword(size_values.join(", ")),
+                    );
+                }
+
+                if layer_count > 1
+                    || repeat_values
+                        .iter()
+                        .any(|value| value != "repeat" && value != "repeat repeat")
+                {
+                    properties.insert(
+                        "background-repeat".into(),
+                        PropertyValue::Keyword(repeat_values.join(", ")),
+                    );
+                }
+
+                if layer_count > 1 || attachment_values.iter().any(|value| value != "scroll") {
+                    properties.insert(
+                        "background-attachment".into(),
+                        PropertyValue::Keyword(attachment_values.join(", ")),
+                    );
+                }
+
+                if layer_count > 1 || origin_values.iter().any(|value| value != "padding-box") {
+                    properties.insert(
+                        "background-origin".into(),
+                        PropertyValue::Keyword(origin_values.join(", ")),
+                    );
+                }
+
+                if layer_count > 1 || clip_values.iter().any(|value| value != "border-box") {
+                    properties.insert(
+                        "background-clip".into(),
+                        PropertyValue::Keyword(clip_values.join(", ")),
+                    );
                 }
             }
 
@@ -120,11 +139,7 @@ impl ThemeParser {
             // ── Border colors (longhand) ────────────────────────────────
             Property::BorderTopColor(color) => {
                 if let Some(v) = self.convert_color(color) {
-                    properties.insert("border-top-color".into(), v.clone());
-                    // Also set generic border-color if not set yet
-                    if !properties.has("border-color") {
-                        properties.insert("border-color".into(), v);
-                    }
+                    properties.insert("border-top-color".into(), v);
                 }
             }
             Property::BorderRightColor(color) => {
@@ -134,10 +149,7 @@ impl ThemeParser {
             }
             Property::BorderBottomColor(color) => {
                 if let Some(v) = self.convert_color(color) {
-                    properties.insert("border-bottom-color".into(), v.clone());
-                    if !properties.has("border-color") {
-                        properties.insert("border-color".into(), v);
-                    }
+                    properties.insert("border-bottom-color".into(), v);
                 }
             }
             Property::BorderLeftColor(color) => {
@@ -148,18 +160,30 @@ impl ThemeParser {
 
             // ── Border color shorthand ──────────────────────────────────
             Property::BorderColor(bc) => {
-                if let Some(v) = self.convert_color(&bc.top) {
-                    properties.insert("border-color".into(), v.clone());
-                    properties.insert("border-top-color".into(), v);
+                let top = self.convert_color(&bc.top);
+                let right = self.convert_color(&bc.right);
+                let bottom = self.convert_color(&bc.bottom);
+                let left = self.convert_color(&bc.left);
+
+                if let Some(v) = &top {
+                    properties.insert("border-top-color".into(), v.clone());
                 }
-                if let Some(v) = self.convert_color(&bc.right) {
-                    properties.insert("border-right-color".into(), v);
+                if let Some(v) = &right {
+                    properties.insert("border-right-color".into(), v.clone());
                 }
-                if let Some(v) = self.convert_color(&bc.bottom) {
-                    properties.insert("border-bottom-color".into(), v);
+                if let Some(v) = &bottom {
+                    properties.insert("border-bottom-color".into(), v.clone());
                 }
-                if let Some(v) = self.convert_color(&bc.left) {
-                    properties.insert("border-left-color".into(), v);
+                if let Some(v) = &left {
+                    properties.insert("border-left-color".into(), v.clone());
+                }
+
+                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                {
+                    properties.insert(
+                        "border-color".into(),
+                        compress_box_shorthand([top, right, bottom, left]),
+                    );
                 }
             }
 
@@ -183,6 +207,10 @@ impl ThemeParser {
                 if let Some(v) = self.convert_border_width(&border.width) {
                     properties.insert("border-top-width".into(), v);
                 }
+                properties.insert(
+                    "border-top-style".into(),
+                    self.convert_line_style(&border.style),
+                );
             }
             Property::BorderRight(border) => {
                 if let Some(v) = self.convert_color(&border.color) {
@@ -191,6 +219,10 @@ impl ThemeParser {
                 if let Some(v) = self.convert_border_width(&border.width) {
                     properties.insert("border-right-width".into(), v);
                 }
+                properties.insert(
+                    "border-right-style".into(),
+                    self.convert_line_style(&border.style),
+                );
             }
             Property::BorderBottom(border) => {
                 if let Some(v) = self.convert_color(&border.color) {
@@ -199,6 +231,10 @@ impl ThemeParser {
                 if let Some(v) = self.convert_border_width(&border.width) {
                     properties.insert("border-bottom-width".into(), v);
                 }
+                properties.insert(
+                    "border-bottom-style".into(),
+                    self.convert_line_style(&border.style),
+                );
             }
             Property::BorderLeft(border) => {
                 if let Some(v) = self.convert_color(&border.color) {
@@ -207,15 +243,16 @@ impl ThemeParser {
                 if let Some(v) = self.convert_border_width(&border.width) {
                     properties.insert("border-left-width".into(), v);
                 }
+                properties.insert(
+                    "border-left-style".into(),
+                    self.convert_line_style(&border.style),
+                );
             }
 
             // ── Border widths ───────────────────────────────────────────
             Property::BorderTopWidth(width) => {
                 if let Some(v) = self.convert_border_width(width) {
-                    properties.insert("border-top-width".into(), v.clone());
-                    if !properties.has("border-width") {
-                        properties.insert("border-width".into(), v);
-                    }
+                    properties.insert("border-top-width".into(), v);
                 }
             }
             Property::BorderRightWidth(width) => {
@@ -225,10 +262,7 @@ impl ThemeParser {
             }
             Property::BorderBottomWidth(width) => {
                 if let Some(v) = self.convert_border_width(width) {
-                    properties.insert("border-bottom-width".into(), v.clone());
-                    if !properties.has("border-width") {
-                        properties.insert("border-width".into(), v);
-                    }
+                    properties.insert("border-bottom-width".into(), v);
                 }
             }
             Property::BorderLeftWidth(width) => {
@@ -252,7 +286,10 @@ impl ThemeParser {
                     properties.insert("width".into(), v);
                 } else {
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
+                    if matches!(
+                        trimmed,
+                        "auto" | "min-content" | "max-content" | "fit-content"
+                    ) {
                         properties.insert("width".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
@@ -263,7 +300,10 @@ impl ThemeParser {
                     properties.insert("height".into(), v);
                 } else {
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
+                    if matches!(
+                        trimmed,
+                        "auto" | "min-content" | "max-content" | "fit-content"
+                    ) {
                         properties.insert("height".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
@@ -291,21 +331,30 @@ impl ThemeParser {
                 }
             }
             Property::Padding(padding) => {
-                if let Some(v) = self.convert_length_percentage_or_auto(&padding.top) {
-                    properties.insert("padding-top".into(), v);
+                let top = self.convert_length_percentage_or_auto(&padding.top);
+                let right = self.convert_length_percentage_or_auto(&padding.right);
+                let bottom = self.convert_length_percentage_or_auto(&padding.bottom);
+                let left = self.convert_length_percentage_or_auto(&padding.left);
+
+                if let Some(v) = &top {
+                    properties.insert("padding-top".into(), v.clone());
                 }
-                if let Some(v) = self.convert_length_percentage_or_auto(&padding.right) {
-                    properties.insert("padding-right".into(), v);
+                if let Some(v) = &right {
+                    properties.insert("padding-right".into(), v.clone());
                 }
-                if let Some(v) = self.convert_length_percentage_or_auto(&padding.bottom) {
-                    properties.insert("padding-bottom".into(), v);
+                if let Some(v) = &bottom {
+                    properties.insert("padding-bottom".into(), v.clone());
                 }
-                if let Some(v) = self.convert_length_percentage_or_auto(&padding.left) {
-                    properties.insert("padding-left".into(), v);
+                if let Some(v) = &left {
+                    properties.insert("padding-left".into(), v.clone());
                 }
-                // Also set shorthand "padding" to top value for simple cases
-                if let Some(v) = self.convert_length_percentage_or_auto(&padding.top) {
-                    properties.insert("padding".into(), v);
+
+                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                {
+                    properties.insert(
+                        "padding".into(),
+                        compress_box_shorthand([top, right, bottom, left]),
+                    );
                 }
             }
 
@@ -331,20 +380,30 @@ impl ThemeParser {
                 }
             }
             Property::Margin(margin) => {
-                if let Some(v) = self.convert_length_percentage_or_auto(&margin.top) {
-                    properties.insert("margin-top".into(), v);
+                let top = self.convert_length_percentage_or_auto(&margin.top);
+                let right = self.convert_length_percentage_or_auto(&margin.right);
+                let bottom = self.convert_length_percentage_or_auto(&margin.bottom);
+                let left = self.convert_length_percentage_or_auto(&margin.left);
+
+                if let Some(v) = &top {
+                    properties.insert("margin-top".into(), v.clone());
                 }
-                if let Some(v) = self.convert_length_percentage_or_auto(&margin.right) {
-                    properties.insert("margin-right".into(), v);
+                if let Some(v) = &right {
+                    properties.insert("margin-right".into(), v.clone());
                 }
-                if let Some(v) = self.convert_length_percentage_or_auto(&margin.bottom) {
-                    properties.insert("margin-bottom".into(), v);
+                if let Some(v) = &bottom {
+                    properties.insert("margin-bottom".into(), v.clone());
                 }
-                if let Some(v) = self.convert_length_percentage_or_auto(&margin.left) {
-                    properties.insert("margin-left".into(), v);
+                if let Some(v) = &left {
+                    properties.insert("margin-left".into(), v.clone());
                 }
-                if let Some(v) = self.convert_length_percentage_or_auto(&margin.top) {
-                    properties.insert("margin".into(), v);
+
+                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                {
+                    properties.insert(
+                        "margin".into(),
+                        compress_box_shorthand([top, right, bottom, left]),
+                    );
                 }
             }
 
@@ -444,8 +503,7 @@ impl ThemeParser {
                     properties.insert("box-shadow-color".into(), PropertyValue::Color(color));
                 }
                 if !shadow_values.is_empty() {
-                    properties
-                        .insert("box-shadow".into(), PropertyValue::BoxShadow(shadow_values));
+                    properties.insert("box-shadow".into(), PropertyValue::BoxShadow(shadow_values));
                 }
             }
 
@@ -480,8 +538,11 @@ impl ThemeParser {
                 let x = self.to_css_string(&overflow.x);
                 let y = self.to_css_string(&overflow.y);
                 properties.insert("overflow-x".into(), PropertyValue::Keyword(x.clone()));
-                properties.insert("overflow-y".into(), PropertyValue::Keyword(y));
-                properties.insert("overflow".into(), PropertyValue::Keyword(x));
+                properties.insert("overflow-y".into(), PropertyValue::Keyword(y.clone()));
+                properties.insert(
+                    "overflow".into(),
+                    compress_pair_shorthand(PropertyValue::Keyword(x), PropertyValue::Keyword(y)),
+                );
             }
             Property::OverflowX(kw) => {
                 let css_str = self.to_css_string(kw);
@@ -526,18 +587,30 @@ impl ThemeParser {
             Property::Gap(gap) => {
                 let row_str = self.to_css_string(&gap.row);
                 let col_str = self.to_css_string(&gap.column);
-                if let Some(v) = self.parse_length_value(&row_str) {
-                    properties.insert("row-gap".into(), v.clone());
-                    properties.insert("gap".into(), v);
+                let row = if let Some(v) = self.parse_length_value(&row_str) {
+                    Some(v)
                 } else if row_str.trim() == "normal" {
-                    let kw = PropertyValue::Keyword("normal".into());
-                    properties.insert("row-gap".into(), kw.clone());
-                    properties.insert("gap".into(), kw);
-                }
-                if let Some(v) = self.parse_length_value(&col_str) {
-                    properties.insert("column-gap".into(), v);
+                    Some(PropertyValue::Keyword("normal".into()))
+                } else {
+                    None
+                };
+                let column = if let Some(v) = self.parse_length_value(&col_str) {
+                    Some(v)
                 } else if col_str.trim() == "normal" {
-                    properties.insert("column-gap".into(), PropertyValue::Keyword("normal".into()));
+                    Some(PropertyValue::Keyword("normal".into()))
+                } else {
+                    None
+                };
+
+                if let Some(v) = &row {
+                    properties.insert("row-gap".into(), v.clone());
+                }
+                if let Some(v) = &column {
+                    properties.insert("column-gap".into(), v.clone());
+                }
+
+                if let (Some(row), Some(column)) = (row, column) {
+                    properties.insert("gap".into(), compress_pair_shorthand(row, column));
                 }
             }
             Property::RowGap(gap) => {
@@ -598,8 +671,12 @@ impl ThemeParser {
                     properties.insert("min-width".into(), v);
                 } else {
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
-                        properties.insert("min-width".into(), PropertyValue::Keyword(trimmed.into()));
+                    if matches!(
+                        trimmed,
+                        "auto" | "min-content" | "max-content" | "fit-content"
+                    ) {
+                        properties
+                            .insert("min-width".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
             }
@@ -609,8 +686,12 @@ impl ThemeParser {
                     properties.insert("max-width".into(), v);
                 } else {
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "none" | "min-content" | "max-content" | "fit-content") {
-                        properties.insert("max-width".into(), PropertyValue::Keyword(trimmed.into()));
+                    if matches!(
+                        trimmed,
+                        "none" | "min-content" | "max-content" | "fit-content"
+                    ) {
+                        properties
+                            .insert("max-width".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
             }
@@ -620,8 +701,12 @@ impl ThemeParser {
                     properties.insert("min-height".into(), v);
                 } else {
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "auto" | "min-content" | "max-content" | "fit-content") {
-                        properties.insert("min-height".into(), PropertyValue::Keyword(trimmed.into()));
+                    if matches!(
+                        trimmed,
+                        "auto" | "min-content" | "max-content" | "fit-content"
+                    ) {
+                        properties
+                            .insert("min-height".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
             }
@@ -631,8 +716,12 @@ impl ThemeParser {
                     properties.insert("max-height".into(), v);
                 } else {
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "none" | "min-content" | "max-content" | "fit-content") {
-                        properties.insert("max-height".into(), PropertyValue::Keyword(trimmed.into()));
+                    if matches!(
+                        trimmed,
+                        "none" | "min-content" | "max-content" | "fit-content"
+                    ) {
+                        properties
+                            .insert("max-height".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
             }
@@ -693,29 +782,25 @@ impl ThemeParser {
                 properties.insert("border-right-style".into(), self.convert_line_style(style));
             }
             Property::BorderBottomStyle(style) => {
-                properties.insert(
-                    "border-bottom-style".into(),
-                    self.convert_line_style(style),
-                );
+                properties.insert("border-bottom-style".into(), self.convert_line_style(style));
             }
             Property::BorderLeftStyle(style) => {
                 properties.insert("border-left-style".into(), self.convert_line_style(style));
             }
             Property::BorderStyle(bs) => {
-                properties.insert("border-top-style".into(), self.convert_line_style(&bs.top));
+                let top = self.convert_line_style(&bs.top);
+                let right = self.convert_line_style(&bs.right);
+                let bottom = self.convert_line_style(&bs.bottom);
+                let left = self.convert_line_style(&bs.left);
+
+                properties.insert("border-top-style".into(), top.clone());
+                properties.insert("border-right-style".into(), right.clone());
+                properties.insert("border-bottom-style".into(), bottom.clone());
+                properties.insert("border-left-style".into(), left.clone());
                 properties.insert(
-                    "border-right-style".into(),
-                    self.convert_line_style(&bs.right),
+                    "border-style".into(),
+                    compress_box_shorthand([top, right, bottom, left]),
                 );
-                properties.insert(
-                    "border-bottom-style".into(),
-                    self.convert_line_style(&bs.bottom),
-                );
-                properties.insert(
-                    "border-left-style".into(),
-                    self.convert_line_style(&bs.left),
-                );
-                properties.insert("border-style".into(), self.convert_line_style(&bs.top));
             }
 
             // ── Border radius per-corner ────────────────────────────────
@@ -746,20 +831,30 @@ impl ThemeParser {
 
             // ── Border width shorthand ──────────────────────────────────
             Property::BorderWidth(bw) => {
-                if let Some(v) = self.convert_border_width(&bw.top) {
-                    properties.insert("border-top-width".into(), v);
+                let top = self.convert_border_width(&bw.top);
+                let right = self.convert_border_width(&bw.right);
+                let bottom = self.convert_border_width(&bw.bottom);
+                let left = self.convert_border_width(&bw.left);
+
+                if let Some(v) = &top {
+                    properties.insert("border-top-width".into(), v.clone());
                 }
-                if let Some(v) = self.convert_border_width(&bw.right) {
-                    properties.insert("border-right-width".into(), v);
+                if let Some(v) = &right {
+                    properties.insert("border-right-width".into(), v.clone());
                 }
-                if let Some(v) = self.convert_border_width(&bw.bottom) {
-                    properties.insert("border-bottom-width".into(), v);
+                if let Some(v) = &bottom {
+                    properties.insert("border-bottom-width".into(), v.clone());
                 }
-                if let Some(v) = self.convert_border_width(&bw.left) {
-                    properties.insert("border-left-width".into(), v);
+                if let Some(v) = &left {
+                    properties.insert("border-left-width".into(), v.clone());
                 }
-                if let Some(v) = self.convert_border_width(&bw.top) {
-                    properties.insert("border-width".into(), v);
+
+                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                {
+                    properties.insert(
+                        "border-width".into(),
+                        compress_box_shorthand([top, right, bottom, left]),
+                    );
                 }
             }
 
@@ -771,8 +866,12 @@ impl ThemeParser {
                 } else {
                     // Keywords: auto, min-content, max-content, fit-content, content
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "auto" | "content" | "min-content" | "max-content" | "fit-content") {
-                        properties.insert("flex-basis".into(), PropertyValue::Keyword(trimmed.into()));
+                    if matches!(
+                        trimmed,
+                        "auto" | "content" | "min-content" | "max-content" | "fit-content"
+                    ) {
+                        properties
+                            .insert("flex-basis".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
             }
@@ -787,8 +886,12 @@ impl ThemeParser {
                     properties.insert("flex-basis".into(), v);
                 } else {
                     let trimmed = css_str.trim();
-                    if matches!(trimmed, "auto" | "content" | "min-content" | "max-content" | "fit-content") {
-                        properties.insert("flex-basis".into(), PropertyValue::Keyword(trimmed.into()));
+                    if matches!(
+                        trimmed,
+                        "auto" | "content" | "min-content" | "max-content" | "fit-content"
+                    ) {
+                        properties
+                            .insert("flex-basis".into(), PropertyValue::Keyword(trimmed.into()));
                     }
                 }
             }
@@ -803,10 +906,7 @@ impl ThemeParser {
             }
             Property::GridTemplateRows(tracks) => {
                 let css_str = self.to_css_string(tracks);
-                properties.insert(
-                    "grid-template-rows".into(),
-                    PropertyValue::Keyword(css_str),
-                );
+                properties.insert("grid-template-rows".into(), PropertyValue::Keyword(css_str));
             }
             Property::GridAutoFlow(flow) => {
                 let css_str = self.to_css_string(flow);
@@ -842,31 +942,27 @@ impl ThemeParser {
             // ── Custom properties (--var-name: value) ───────────────────
             Property::Custom(custom) => {
                 let name = self.to_css_string(&custom.name);
-                let value_str = self.to_css_string_from_token_list(&custom.value);
-                // Parse value as color, length, or string
-                let pv = self.parse_value_string(&value_str);
-                properties.insert(name, pv);
+                if let Some(value_str) = self.serialize_property_value(prop) {
+                    properties.insert(name, self.parse_value_string(&value_str));
+                }
             }
 
             // ── Unparsed properties (non-standard names like glass-tint) ─
             Property::Unparsed(unparsed) => {
                 let name = self.to_css_string(&unparsed.property_id);
-                let value_str = self.to_css_string_from_token_list(&unparsed.value);
-                let pv = self.parse_value_string(&value_str);
-                properties.insert(name, pv);
+                if let Some(value_str) = self.serialize_property_value(prop) {
+                    properties.insert(name, self.parse_value_string(&value_str));
+                }
             }
 
             // ── Catch-all: store property name so we know it was declared ──
             _ => {
-                // We can serialize the property_id but not the Property itself.
-                // Record the property name with a debug representation.
                 let prop_id = prop.property_id();
                 let name = self.to_css_string(&prop_id);
                 if !name.is_empty() {
-                    // Use Debug format as best-effort value
-                    let debug_val = format!("{:?}", prop);
-                    let pv = self.parse_value_string(&debug_val);
-                    properties.insert(name, pv);
+                    if let Some(value_str) = self.serialize_property_value(prop) {
+                        properties.insert(name, self.parse_value_string(&value_str));
+                    }
                 }
             }
         }
@@ -922,5 +1018,33 @@ impl ThemeParser {
             "thick" => Some(PropertyValue::Length(LengthUnit::Px(5.0))),
             _ => self.parse_length_value(&width_str),
         }
+    }
+
+    fn serialize_property_value(&self, prop: &Property<'_>) -> Option<String> {
+        prop.value_to_css_string(PrinterOptions::default())
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+}
+
+fn compress_box_shorthand(values: [PropertyValue; 4]) -> PropertyValue {
+    let [top, right, bottom, left] = values;
+    if top == right && top == bottom && top == left {
+        top
+    } else if top == bottom && right == left {
+        PropertyValue::List(vec![top, right])
+    } else if right == left {
+        PropertyValue::List(vec![top, right, bottom])
+    } else {
+        PropertyValue::List(vec![top, right, bottom, left])
+    }
+}
+
+fn compress_pair_shorthand(first: PropertyValue, second: PropertyValue) -> PropertyValue {
+    if first == second {
+        first
+    } else {
+        PropertyValue::List(vec![first, second])
     }
 }

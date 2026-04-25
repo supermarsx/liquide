@@ -2,10 +2,8 @@
 mod tests {
     use crate::arrangement::DisplayArrangement;
     use crate::display::{DisplayId, DisplayInfo, Resolution, Rotation};
-    use crate::night_light::{
-        color_temperature_matrix, NightLight, NightLightSchedule,
-    };
-    use crate::profile::{detect_matching_profile, DisplayConfig, DisplayProfile};
+    use crate::night_light::{NightLight, NightLightSchedule, color_temperature_matrix};
+    use crate::profile::{DisplayConfig, DisplayProfile, detect_matching_profile};
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -145,7 +143,8 @@ mod tests {
 
     #[test]
     fn arrangement_set_position() {
-        let mut arr = DisplayArrangement::new(vec![make_display(1, "DP-1", 1920, 1080, 0, 0, true)]);
+        let mut arr =
+            DisplayArrangement::new(vec![make_display(1, "DP-1", 1920, 1080, 0, 0, true)]);
         assert!(arr.set_position(1, 500, 300));
         assert_eq!(arr.get(1).unwrap().position, (500, 300));
     }
@@ -369,7 +368,10 @@ mod tests {
     fn night_light_default_disabled() {
         let nl = NightLight::default();
         assert!(!nl.enabled);
-        assert_eq!(nl.color_matrix(), [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            nl.color_matrix(),
+            [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        );
     }
 
     #[test]
@@ -515,9 +517,8 @@ mod tests {
     // ===================================================================
 
     use crate::arrangement::{
-        auto_arrange, auto_arrange_default, fix_gaps, primary_monitor,
-        snap_to_grid, ArrangementPolicy, MonitorArrangement,
-        MonitorPosition,
+        ArrangementPolicy, MonitorArrangement, MonitorPosition, auto_arrange, auto_arrange_default,
+        fix_gaps, primary_monitor, snap_to_grid,
     };
 
     #[test]
@@ -557,8 +558,16 @@ mod tests {
     #[test]
     fn auto_arrange_custom() {
         let policy = ArrangementPolicy::Custom(vec![
-            MonitorPosition { id: 1, x: 100, y: 200 },
-            MonitorPosition { id: 2, x: 300, y: 400 },
+            MonitorPosition {
+                id: 1,
+                x: 100,
+                y: 200,
+            },
+            MonitorPosition {
+                id: 2,
+                x: 300,
+                y: 400,
+            },
         ]);
         let monitors = vec![
             make_display(1, "DP-1", 1920, 1080, 0, 0, false),
@@ -692,8 +701,8 @@ mod tests {
     // ===================================================================
 
     use crate::wallpaper::{
-        compute_span_crop, compute_wallpaper_transform,
-        SlideshowOrder, WallpaperConfig, WallpaperMode,
+        SlideshowOrder, WallpaperConfig, WallpaperMode, compute_span_crop,
+        compute_wallpaper_transform,
     };
 
     #[test]
@@ -810,8 +819,7 @@ mod tests {
     // ===================================================================
 
     use crate::output_profile::{
-        builtin_docked, builtin_laptop_only, builtin_presentation,
-        OutputProfile, ProfileStore,
+        OutputProfile, ProfileStore, builtin_docked, builtin_laptop_only, builtin_presentation,
     };
 
     #[test]
@@ -874,7 +882,12 @@ mod tests {
     fn profile_store_detect_match() {
         let mut store = ProfileStore::new();
         store.add(builtin_laptop_only("eDP-1", Resolution::FHD));
-        store.add(builtin_docked("eDP-1", Resolution::FHD, "DP-1", Resolution::QHD));
+        store.add(builtin_docked(
+            "eDP-1",
+            Resolution::FHD,
+            "DP-1",
+            Resolution::QHD,
+        ));
 
         let connected = vec![
             make_display(1, "eDP-1", 1920, 1080, 0, 0, true),
@@ -910,7 +923,12 @@ mod tests {
     fn profile_store_json_roundtrip() {
         let mut store = ProfileStore::new();
         store.add(builtin_laptop_only("eDP-1", Resolution::FHD));
-        store.add(builtin_docked("eDP-1", Resolution::FHD, "DP-1", Resolution::QHD));
+        store.add(builtin_docked(
+            "eDP-1",
+            Resolution::FHD,
+            "DP-1",
+            Resolution::QHD,
+        ));
         let json = store.to_json().unwrap();
         let restored = ProfileStore::from_json(&json).unwrap();
         assert_eq!(restored.len(), 2);
@@ -920,7 +938,12 @@ mod tests {
     fn profile_store_names() {
         let mut store = ProfileStore::new();
         store.add(builtin_laptop_only("eDP-1", Resolution::FHD));
-        store.add(builtin_docked("eDP-1", Resolution::FHD, "DP-1", Resolution::QHD));
+        store.add(builtin_docked(
+            "eDP-1",
+            Resolution::FHD,
+            "DP-1",
+            Resolution::QHD,
+        ));
         let names = store.names();
         assert!(names.contains(&"laptop-only"));
         assert!(names.contains(&"docked"));

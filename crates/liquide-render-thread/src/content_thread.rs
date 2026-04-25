@@ -4,15 +4,15 @@
 //! Runs independently of the chrome thread, so a hang here doesn't
 //! freeze the window decorations.
 
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::time::Instant;
 
+use liquide_compositor::Renderer;
 use liquide_compositor::damage::DamageSet;
 use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
 use liquide_compositor::pixel::PixelFormat;
 use liquide_compositor::scene::FlatNode;
-use liquide_compositor::Renderer;
 
 use crate::message::{ContentMessage, DamageRect, FrameComplete, FrameId};
 
@@ -62,11 +62,22 @@ impl ContentThread {
     }
 
     /// Request a content frame render.
+    ///
+    /// Applies the same back-pressure behaviour as `ChromeThread::request_frame`
+    /// to keep the two streams in lockstep (see `RenderCoordinator` for why
+    /// this symmetry matters).
     pub fn request_frame(
         &mut self,
         damage: Vec<DamageRect>,
         nodes: Vec<FlatNode>,
     ) -> Result<FrameId, crate::RenderThreadError> {
+        if self.state == ContentThreadState::Rendering {
+            tracing::warn!(
+                "Content thread already rendering frame {}, skipping new request",
+                self.current_frame.0
+            );
+            return Ok(self.current_frame);
+        }
         self.current_frame = self.current_frame.next();
         self.state = ContentThreadState::Rendering;
 
@@ -314,15 +325,17 @@ mod tests {
         assert_eq!(handle.state(), ContentThreadState::Idle);
         handle.request_frame(vec![], vec![]).unwrap();
         assert_eq!(handle.state(), ContentThreadState::Rendering);
-        comp_tx.send(FrameComplete {
-            frame_id: FrameId(1),
-            render_time_us: 100,
-            dropped: false,
-            pixels: None,
-            width: 800,
-            height: 600,
-            stride: 3200,
-        }).unwrap();
+        comp_tx
+            .send(FrameComplete {
+                frame_id: FrameId(1),
+                render_time_us: 100,
+                dropped: false,
+                pixels: None,
+                width: 800,
+                height: 600,
+                stride: 3200,
+            })
+            .unwrap();
         let _ = handle.try_recv_completion();
         assert_eq!(handle.state(), ContentThreadState::Idle);
     }

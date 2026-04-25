@@ -150,12 +150,16 @@ impl SendBufferPool {
                     if current_reserved + alloc_size > self.config.reserved {
                         break false;
                     }
-                    if self.reserved_used.compare_exchange_weak(
-                        current_reserved,
-                        current_reserved + alloc_size,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ).is_ok() {
+                    if self
+                        .reserved_used
+                        .compare_exchange_weak(
+                            current_reserved,
+                            current_reserved + alloc_size,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
                         break true;
                     }
                 };
@@ -164,12 +168,16 @@ impl SendBufferPool {
                     // Also atomically claim from used
                     loop {
                         let current = self.used.load(Ordering::Acquire);
-                        if self.used.compare_exchange_weak(
-                            current,
-                            current + alloc_size,
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                        ).is_ok() {
+                        if self
+                            .used
+                            .compare_exchange_weak(
+                                current,
+                                current + alloc_size,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_ok()
+                        {
                             break;
                         }
                     }
@@ -190,12 +198,16 @@ impl SendBufferPool {
                         // Even for high priority, don't exceed total capacity
                         return None;
                     }
-                    if self.used.compare_exchange_weak(
-                        current,
-                        current + alloc_size,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ).is_ok() {
+                    if self
+                        .used
+                        .compare_exchange_weak(
+                            current,
+                            current + alloc_size,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
                         break;
                     }
                 }
@@ -215,12 +227,16 @@ impl SendBufferPool {
                     if current + alloc_size > threshold {
                         return None; // Backpressure
                     }
-                    if self.used.compare_exchange_weak(
-                        current,
-                        current + alloc_size,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ).is_ok() {
+                    if self
+                        .used
+                        .compare_exchange_weak(
+                            current,
+                            current + alloc_size,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
                         break;
                     }
                 }
@@ -240,12 +256,16 @@ impl SendBufferPool {
                     if current + alloc_size > threshold {
                         return None; // Suspended
                     }
-                    if self.used.compare_exchange_weak(
-                        current,
-                        current + alloc_size,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ).is_ok() {
+                    if self
+                        .used
+                        .compare_exchange_weak(
+                            current,
+                            current + alloc_size,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
                         break;
                     }
                 }
@@ -352,7 +372,8 @@ impl Drop for PoolBuffer {
         if self.size > 0 {
             self.pool_used.fetch_sub(self.size, Ordering::AcqRel);
             if self.from_reserved {
-                self.pool_reserved_used.fetch_sub(self.size, Ordering::AcqRel);
+                self.pool_reserved_used
+                    .fetch_sub(self.size, Ordering::AcqRel);
             }
         }
     }

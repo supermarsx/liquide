@@ -54,9 +54,9 @@ mod linux {
     /// Detected Linux audio backend, in order of preference.
     #[derive(Debug, Clone, Copy)]
     enum LinuxBackend {
-        PwPlay,  // PipeWire
-        PaPlay,  // PulseAudio
-        APlay,   // ALSA
+        PwPlay, // PipeWire
+        PaPlay, // PulseAudio
+        APlay,  // ALSA
     }
 
     fn detect_backend() -> Option<LinuxBackend> {
@@ -101,8 +101,7 @@ mod linux {
         } else {
             Err(PlayError::CommandFailed(format!(
                 "{} exited with {}",
-                cmd,
-                status
+                cmd, status
             )))
         }
     }
@@ -137,8 +136,7 @@ mod linux {
         } else {
             Err(PlayError::CommandFailed(format!(
                 "{} exited with {}",
-                cmd,
-                status
+                cmd, status
             )))
         }
     }

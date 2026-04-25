@@ -444,14 +444,7 @@ mod tests {
     #[test]
     fn chrome_trace_duration_event() {
         let mut tl = Timeline::new();
-        tl.record_full(
-            "layout",
-            TimelineCategory::Layout,
-            200,
-            5000,
-            1,
-            Vec::new(),
-        );
+        tl.record_full("layout", TimelineCategory::Layout, 200, 5000, 1, Vec::new());
         let json = tl.to_chrome_trace_json();
         assert!(json.contains("\"ph\":\"X\""));
         assert!(json.contains("\"dur\":5000"));

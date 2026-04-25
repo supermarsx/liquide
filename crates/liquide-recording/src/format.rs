@@ -1,7 +1,7 @@
 //! Recording container format — header, state, and chapter markers.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Magic bytes for the recording format.
 pub const RECORDING_MAGIC: [u8; 4] = *b"LQR\x01";
@@ -58,7 +58,11 @@ impl RecordingHeader {
     /// Serialized size estimate for the header (approximate).
     #[must_use]
     pub fn estimated_size(&self) -> usize {
-        4 + 4 + 8 + 4 + 4 + 4
+        4 + 4
+            + 8
+            + 4
+            + 4
+            + 4
             + self.pixel_format.len()
             + self.audio_format.as_ref().map_or(0, |s| s.len())
     }

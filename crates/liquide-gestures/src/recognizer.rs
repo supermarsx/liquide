@@ -37,7 +37,11 @@ pub enum GestureEvent {
     /// Long press at position
     LongPress { x: f32, y: f32, phase: GesturePhase },
     /// Two-finger scroll/pan
-    Scroll { dx: f32, dy: f32, phase: GesturePhase },
+    Scroll {
+        dx: f32,
+        dy: f32,
+        phase: GesturePhase,
+    },
     /// Pinch zoom
     Pinch {
         scale: f32,
@@ -190,10 +194,7 @@ impl GestureRecognizer {
 
                     match self.state {
                         RecognizerState::EdgeSwiping(edge) => {
-                            if let Some(start) = self
-                                .active_touches
-                                .get(&point.id)
-                                .map(|t| t.start)
+                            if let Some(start) = self.active_touches.get(&point.id).map(|t| t.start)
                             {
                                 let progress = match edge {
                                     Edge::Left => (point.x - start.x) / self.screen_width,
@@ -212,89 +213,82 @@ impl GestureRecognizer {
                         | RecognizerState::Scrolling
                         | RecognizerState::Pinching
                         | RecognizerState::Swiping { .. } => {
-                            if let Some(start) = self
-                                .active_touches
-                                .get(&point.id)
-                                .map(|t| t.start)
+                            if let Some(start) = self.active_touches.get(&point.id).map(|t| t.start)
                             {
-                            let total_dx = point.x - start.x;
-                            let total_dy = point.y - start.y;
-                            let distance =
-                                (total_dx * total_dx + total_dy * total_dy).sqrt();
+                                let total_dx = point.x - start.x;
+                                let total_dy = point.y - start.y;
+                                let distance = (total_dx * total_dx + total_dy * total_dy).sqrt();
 
-                            if distance > self.swipe_threshold
-                                || self.state != RecognizerState::Tracking
-                            {
-                                match finger_count {
-                                    1 => {
-                                        // Single-finger drag (not a gesture — pass through
-                                        // as scroll for touchpads)
-                                    }
-                                    2 => {
-                                        if self.state == RecognizerState::Tracking {
-                                            // Determine: scroll or pinch?
-                                            if let Some(pinch) = self.compute_pinch() {
-                                                if (pinch - 1.0).abs() > self.pinch_threshold {
-                                                    self.state = RecognizerState::Pinching;
+                                if distance > self.swipe_threshold
+                                    || self.state != RecognizerState::Tracking
+                                {
+                                    match finger_count {
+                                        1 => {
+                                            // Single-finger drag (not a gesture — pass through
+                                            // as scroll for touchpads)
+                                        }
+                                        2 => {
+                                            if self.state == RecognizerState::Tracking {
+                                                // Determine: scroll or pinch?
+                                                if let Some(pinch) = self.compute_pinch() {
+                                                    if (pinch - 1.0).abs() > self.pinch_threshold {
+                                                        self.state = RecognizerState::Pinching;
+                                                    } else {
+                                                        self.state = RecognizerState::Scrolling;
+                                                    }
                                                 } else {
                                                     self.state = RecognizerState::Scrolling;
                                                 }
-                                            } else {
-                                                self.state = RecognizerState::Scrolling;
                                             }
-                                        }
 
-                                        match self.state {
-                                            RecognizerState::Scrolling => {
-                                                let phase = GesturePhase::Changed;
-                                                events.push(GestureEvent::Scroll {
-                                                    dx,
-                                                    dy,
-                                                    phase,
-                                                });
-                                            }
-                                            RecognizerState::Pinching => {
-                                                if let Some(scale) = self.compute_pinch() {
-                                                    let (cx, cy) =
-                                                        self.center_of_touches();
-                                                    events.push(GestureEvent::Pinch {
-                                                        scale,
-                                                        center_x: cx,
-                                                        center_y: cy,
-                                                        phase: GesturePhase::Changed,
+                                            match self.state {
+                                                RecognizerState::Scrolling => {
+                                                    let phase = GesturePhase::Changed;
+                                                    events.push(GestureEvent::Scroll {
+                                                        dx,
+                                                        dy,
+                                                        phase,
                                                     });
                                                 }
+                                                RecognizerState::Pinching => {
+                                                    if let Some(scale) = self.compute_pinch() {
+                                                        let (cx, cy) = self.center_of_touches();
+                                                        events.push(GestureEvent::Pinch {
+                                                            scale,
+                                                            center_x: cx,
+                                                            center_y: cy,
+                                                            phase: GesturePhase::Changed,
+                                                        });
+                                                    }
+                                                }
+                                                _ => {}
                                             }
-                                            _ => {}
                                         }
+                                        3 => {
+                                            self.state = RecognizerState::Swiping { fingers: 3 };
+                                            let direction =
+                                                self.classify_direction(total_dx, total_dy);
+                                            events.push(GestureEvent::ThreeFingerSwipe {
+                                                direction,
+                                                dx: total_dx,
+                                                dy: total_dy,
+                                                phase: GesturePhase::Changed,
+                                            });
+                                        }
+                                        4 => {
+                                            self.state = RecognizerState::Swiping { fingers: 4 };
+                                            let direction =
+                                                self.classify_direction(total_dx, total_dy);
+                                            events.push(GestureEvent::FourFingerSwipe {
+                                                direction,
+                                                dx: total_dx,
+                                                dy: total_dy,
+                                                phase: GesturePhase::Changed,
+                                            });
+                                        }
+                                        _ => {}
                                     }
-                                    3 => {
-                                        self.state =
-                                            RecognizerState::Swiping { fingers: 3 };
-                                        let direction =
-                                            self.classify_direction(total_dx, total_dy);
-                                        events.push(GestureEvent::ThreeFingerSwipe {
-                                            direction,
-                                            dx: total_dx,
-                                            dy: total_dy,
-                                            phase: GesturePhase::Changed,
-                                        });
-                                    }
-                                    4 => {
-                                        self.state =
-                                            RecognizerState::Swiping { fingers: 4 };
-                                        let direction =
-                                            self.classify_direction(total_dx, total_dy);
-                                        events.push(GestureEvent::FourFingerSwipe {
-                                            direction,
-                                            dx: total_dx,
-                                            dy: total_dy,
-                                            phase: GesturePhase::Changed,
-                                        });
-                                    }
-                                    _ => {}
                                 }
-                            }
                             }
                         }
                         RecognizerState::Idle | RecognizerState::LongPressing => {}
@@ -310,25 +304,19 @@ impl GestureRecognizer {
                     if let Some(tracker) = tracker {
                         let total_dx = point.x - tracker.start.x;
                         let total_dy = point.y - tracker.start.y;
-                        let distance =
-                            (total_dx * total_dx + total_dy * total_dy).sqrt();
+                        let distance = (total_dx * total_dx + total_dy * total_dy).sqrt();
                         let elapsed = tracker.start_time.elapsed().as_millis() as u64;
 
                         match self.state {
                             RecognizerState::Tracking => {
-                                if distance < self.swipe_threshold
-                                    && elapsed < self.tap_timeout_ms
+                                if distance < self.swipe_threshold && elapsed < self.tap_timeout_ms
                                 {
                                     // Tap
-                                    self.tap_count = if let Some((lx, ly, lt)) =
-                                        self.last_tap
-                                    {
+                                    self.tap_count = if let Some((lx, ly, lt)) = self.last_tap {
                                         let tap_dist = ((point.x - lx).powi(2)
                                             + (point.y - ly).powi(2))
                                         .sqrt();
-                                        if tap_dist < 30.0
-                                            && lt.elapsed().as_millis() < 400
-                                        {
+                                        if tap_dist < 30.0 && lt.elapsed().as_millis() < 400 {
                                             self.tap_count + 1
                                         } else {
                                             1
@@ -336,8 +324,7 @@ impl GestureRecognizer {
                                     } else {
                                         1
                                     };
-                                    self.last_tap =
-                                        Some((point.x, point.y, Instant::now()));
+                                    self.last_tap = Some((point.x, point.y, Instant::now()));
                                     events.push(GestureEvent::Tap {
                                         x: point.x,
                                         y: point.y,
@@ -367,8 +354,7 @@ impl GestureRecognizer {
                                 });
                             }
                             RecognizerState::Swiping { fingers: 3 } => {
-                                let dir =
-                                    self.classify_direction(total_dx, total_dy);
+                                let dir = self.classify_direction(total_dx, total_dy);
                                 events.push(GestureEvent::ThreeFingerSwipe {
                                     direction: dir,
                                     dx: total_dx,
@@ -377,8 +363,7 @@ impl GestureRecognizer {
                                 });
                             }
                             RecognizerState::Swiping { fingers: 4 } => {
-                                let dir =
-                                    self.classify_direction(total_dx, total_dy);
+                                let dir = self.classify_direction(total_dx, total_dy);
                                 events.push(GestureEvent::FourFingerSwipe {
                                     direction: dir,
                                     dx: total_dx,
@@ -468,12 +453,10 @@ impl GestureRecognizer {
         let t0 = trackers[0];
         let t1 = trackers[1];
 
-        let start_dist = ((t0.start.x - t1.start.x).powi(2)
-            + (t0.start.y - t1.start.y).powi(2))
-        .sqrt();
-        let curr_dist = ((t0.current.x - t1.current.x).powi(2)
-            + (t0.current.y - t1.current.y).powi(2))
-        .sqrt();
+        let start_dist =
+            ((t0.start.x - t1.start.x).powi(2) + (t0.start.y - t1.start.y).powi(2)).sqrt();
+        let curr_dist =
+            ((t0.current.x - t1.current.x).powi(2) + (t0.current.y - t1.current.y).powi(2)).sqrt();
 
         if start_dist > 0.01 {
             Some(curr_dist / start_dist)
@@ -576,7 +559,9 @@ mod tests {
         let events = rec.process(TouchInput::Move(tp(2, 600.0, 515.0)));
 
         // Should get scroll event
-        let has_scroll = events.iter().any(|e| matches!(e, GestureEvent::Scroll { .. }));
+        let has_scroll = events
+            .iter()
+            .any(|e| matches!(e, GestureEvent::Scroll { .. }));
         assert!(has_scroll, "Expected Scroll event, got {:?}", events);
     }
 
@@ -594,10 +579,15 @@ mod tests {
 
         // The recognizer may have started as Scrolling and then we need Pinch
         // Since the fingers move in opposite directions, we should eventually get Pinch
-        let has_pinch = events.iter().any(|e| matches!(e, GestureEvent::Pinch { .. }));
+        let has_pinch = events
+            .iter()
+            .any(|e| matches!(e, GestureEvent::Pinch { .. }));
         // If not pinch on this move, at least we should get some event
         // The state might have been set to Scrolling first; check that we get events
-        assert!(!events.is_empty() || has_pinch, "Expected some gesture event");
+        assert!(
+            !events.is_empty() || has_pinch,
+            "Expected some gesture event"
+        );
     }
 
     #[test]
@@ -614,7 +604,9 @@ mod tests {
 
         assert!(!events.is_empty());
         match &events[0] {
-            GestureEvent::ThreeFingerSwipe { direction, phase, .. } => {
+            GestureEvent::ThreeFingerSwipe {
+                direction, phase, ..
+            } => {
                 assert_eq!(*direction, SwipeDirection::Left);
                 assert_eq!(*phase, GesturePhase::Changed);
             }

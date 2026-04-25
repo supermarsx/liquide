@@ -22,7 +22,12 @@ impl TrashEntry {
     /// Create a new trash entry.
     #[must_use]
     pub fn new(original_path: String, trash_path: String, deleted_at: u64, size: u64) -> Self {
-        Self { original_path, trash_path, deleted_at, size }
+        Self {
+            original_path,
+            trash_path,
+            deleted_at,
+            size,
+        }
     }
 
     /// Get the file name from the original path.
@@ -126,18 +131,16 @@ impl TrashManager {
 
         let trash_name = format!("{}_{}", self.counter, name);
         let trash_base = std::path::Path::new(&self.trash_dir);
-        let trash_path = trash_base.join("files").join(&trash_name)
-            .to_string_lossy().to_string();
+        let trash_path = trash_base
+            .join("files")
+            .join(&trash_name)
+            .to_string_lossy()
+            .to_string();
 
         // Attempt real filesystem trash (best-effort).
         let _ = self.try_physical_trash(path, &trash_name, now);
 
-        let entry = TrashEntry::new(
-            path.to_string(),
-            trash_path,
-            now,
-            size,
-        );
+        let entry = TrashEntry::new(path.to_string(), trash_path, now, size);
 
         self.entries.push(entry.clone());
         Ok(entry)
@@ -147,10 +150,18 @@ impl TrashManager {
     ///
     /// Returns `Ok(())` if the move succeeds, `Err` otherwise.
     /// The caller ([`trash`]) treats failure as non-fatal.
-    fn try_physical_trash(&self, original: &str, trash_name: &str, deleted_at: u64) -> std::io::Result<()> {
+    fn try_physical_trash(
+        &self,
+        original: &str,
+        trash_name: &str,
+        deleted_at: u64,
+    ) -> std::io::Result<()> {
         let src = std::path::Path::new(original);
         if !src.exists() {
-            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "source not found"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "source not found",
+            ));
         }
 
         let trash_base = std::path::Path::new(&self.trash_dir);
@@ -167,7 +178,10 @@ impl TrashManager {
                 original,
                 format_deletion_date(deleted_at),
             );
-            std::fs::write(info_dir.join(format!("{trash_name}.trashinfo")), info_content)?;
+            std::fs::write(
+                info_dir.join(format!("{trash_name}.trashinfo")),
+                info_content,
+            )?;
         }
         #[cfg(target_os = "windows")]
         {
@@ -185,7 +199,10 @@ impl TrashManager {
     /// Attempts to physically move the file back if the trash path exists on
     /// disk.  Always removes the entry from the in-memory list.
     pub fn restore(&mut self, entry: &TrashEntry) -> crate::Result<()> {
-        let idx = self.entries.iter().position(|e| e.trash_path == entry.trash_path);
+        let idx = self
+            .entries
+            .iter()
+            .position(|e| e.trash_path == entry.trash_path);
         match idx {
             Some(i) => {
                 // Try physical restore.
@@ -202,7 +219,8 @@ impl TrashManager {
                     // Remove .trashinfo file if it exists.
                     let trash_base = std::path::Path::new(&self.trash_dir);
                     let trash_name = trash_file.file_name().unwrap_or_default();
-                    let info_file = trash_base.join("info")
+                    let info_file = trash_base
+                        .join("info")
                         .join(format!("{}.trashinfo", trash_name.to_string_lossy()));
                     let _ = std::fs::remove_file(info_file);
                 }
@@ -232,7 +250,8 @@ impl TrashManager {
             // Also remove .trashinfo.
             let trash_base = std::path::Path::new(&self.trash_dir);
             if let Some(name) = trash_file.file_name() {
-                let info = trash_base.join("info")
+                let info = trash_base
+                    .join("info")
                     .join(format!("{}.trashinfo", name.to_string_lossy()));
                 let _ = std::fs::remove_file(info);
             }
@@ -261,7 +280,9 @@ impl TrashManager {
     /// Find a trash entry by original path.
     #[must_use]
     pub fn find_by_original(&self, original_path: &str) -> Option<&TrashEntry> {
-        self.entries.iter().find(|e| e.original_path == original_path)
+        self.entries
+            .iter()
+            .find(|e| e.original_path == original_path)
     }
 
     /// Scan the physical trash directory and populate the in-memory list.
@@ -305,12 +326,8 @@ impl TrashManager {
             }
 
             self.counter += 1;
-            self.entries.push(TrashEntry::new(
-                original_path,
-                trash_path,
-                deleted_at,
-                size,
-            ));
+            self.entries
+                .push(TrashEntry::new(original_path, trash_path, deleted_at, size));
         }
     }
 }
@@ -354,7 +371,16 @@ fn days_to_ymd(mut days: u64) -> (u64, u64, u64) {
     let month_days: [u64; 12] = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut month = 1u64;
     for &md in &month_days {

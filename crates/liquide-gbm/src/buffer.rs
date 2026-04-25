@@ -33,7 +33,12 @@ impl GbmBuffer {
         {
             // TODO: call gbm_bo_create via FFI
             let _ = (device, flags);
-            tracing::debug!(width, height, format = format.name(), "allocating GBM buffer");
+            tracing::debug!(
+                width,
+                height,
+                format = format.name(),
+                "allocating GBM buffer"
+            );
             Ok(Self {
                 handle: 0,
                 width,
@@ -55,9 +60,7 @@ impl GbmBuffer {
         #[cfg(target_os = "linux")]
         {
             // TODO: call gbm_bo_get_fd via FFI
-            Err(GbmError::DmaBufExport(
-                "FFI not yet implemented".into(),
-            ))
+            Err(GbmError::DmaBufExport("FFI not yet implemented".into()))
         }
         #[cfg(not(target_os = "linux"))]
         {

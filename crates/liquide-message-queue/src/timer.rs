@@ -39,13 +39,7 @@ impl TimerManager {
     /// If a timer with the same `(window_id, timer_id)` already exists, it is
     /// replaced.  `now_us` is the current timestamp used to compute the first
     /// fire time.
-    pub fn set_timer(
-        &mut self,
-        window_id: WindowId,
-        timer_id: u32,
-        interval_ms: u32,
-        now_us: u64,
-    ) {
+    pub fn set_timer(&mut self, window_id: WindowId, timer_id: u32, interval_ms: u32, now_us: u64) {
         let next_fire = now_us + (interval_ms as u64) * 1000;
         // Replace existing timer with same key
         if let Some(entry) = self
@@ -118,7 +112,8 @@ impl TimerManager {
         let mut msgs = Vec::new();
         for entry in &mut self.timers {
             if now_us >= entry.next_fire {
-                let mut msg = QueueMessage::new(entry.window_id, MessageType::Timer(entry.timer_id));
+                let mut msg =
+                    QueueMessage::new(entry.window_id, MessageType::Timer(entry.timer_id));
                 msg.time = now_us;
                 if let Some(cb) = entry.callback {
                     msg.lparam = cb as i64;

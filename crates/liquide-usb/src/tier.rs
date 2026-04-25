@@ -1,7 +1,7 @@
 //! USB tier negotiation and capability discovery.
 
-use serde::{Serialize, Deserialize};
 use crate::config::TierMode;
+use serde::{Deserialize, Serialize};
 
 /// USB capability tier levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

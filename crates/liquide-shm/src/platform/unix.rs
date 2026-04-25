@@ -1,4 +1,4 @@
-use crate::{ShmAccess, ShmHandle, SharedMemoryError, SharedMemoryOps};
+use crate::{SharedMemoryError, SharedMemoryOps, ShmAccess, ShmHandle};
 use std::ffi::CString;
 
 pub struct SharedMemory {

@@ -65,8 +65,7 @@ fn cursor_shape_none_fields_omitted() {
         format: None,
     };
     let encoded = cbor_encode(&msg).expect("encode");
-    let value: ciborium::Value =
-        cbor_decode(&encoded).expect("decode as Value");
+    let value: ciborium::Value = cbor_decode(&encoded).expect("decode as Value");
     if let ciborium::Value::Map(entries) = &value {
         for (key, _) in entries {
             if let ciborium::Value::Text(k) = key {

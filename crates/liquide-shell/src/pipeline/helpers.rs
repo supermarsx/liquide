@@ -64,7 +64,9 @@ pub(crate) fn intersect_rects(a: &CRect, b: &CRect) -> CRect {
 }
 
 /// Convert a paint FilterOp to a compositor FilterSpec.
-pub(crate) fn filter_op_to_spec(op: &liquide_compositor::property_tree::FilterOp) -> Option<liquide_compositor::scene::FilterSpec> {
+pub(crate) fn filter_op_to_spec(
+    op: &liquide_compositor::property_tree::FilterOp,
+) -> Option<liquide_compositor::scene::FilterSpec> {
     use liquide_compositor::property_tree::FilterOp;
     use liquide_compositor::scene::FilterSpec;
     match op {
@@ -77,7 +79,12 @@ pub(crate) fn filter_op_to_spec(op: &liquide_compositor::property_tree::FilterOp
         FilterOp::Sepia(v) => Some(FilterSpec::Sepia(*v)),
         FilterOp::Invert(v) => Some(FilterSpec::Invert(*v)),
         FilterOp::Opacity(v) => Some(FilterSpec::Opacity(*v)),
-        FilterOp::DropShadow { offset_x, offset_y, blur_radius, color } => Some(FilterSpec::DropShadow {
+        FilterOp::DropShadow {
+            offset_x,
+            offset_y,
+            blur_radius,
+            color,
+        } => Some(FilterSpec::DropShadow {
             offset_x: *offset_x,
             offset_y: *offset_y,
             blur: *blur_radius,
@@ -89,7 +96,9 @@ pub(crate) fn filter_op_to_spec(op: &liquide_compositor::property_tree::FilterOp
 }
 
 /// Convert a paint FilterOp to a compositor BackdropFilterSpec.
-pub(crate) fn filter_op_to_backdrop_spec(op: &liquide_compositor::property_tree::FilterOp) -> Option<liquide_compositor::scene::BackdropFilterSpec> {
+pub(crate) fn filter_op_to_backdrop_spec(
+    op: &liquide_compositor::property_tree::FilterOp,
+) -> Option<liquide_compositor::scene::BackdropFilterSpec> {
     use liquide_compositor::property_tree::FilterOp;
     use liquide_compositor::scene::BackdropFilterSpec;
     match op {

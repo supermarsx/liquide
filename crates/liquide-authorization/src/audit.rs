@@ -231,10 +231,12 @@ impl AuditLog {
             AuditPolicy::All => true,
             AuditPolicy::None => false,
             AuditPolicy::DeniedOnly => decision.is_deny(),
-            AuditPolicy::AdminOnly => matches!(
-                decision,
-                AuthDecision::AuthRequired(crate::policy_db::AuthType::AdminPassword)
-            ) || decision.is_deny(),
+            AuditPolicy::AdminOnly => {
+                matches!(
+                    decision,
+                    AuthDecision::AuthRequired(crate::policy_db::AuthType::AdminPassword)
+                ) || decision.is_deny()
+            }
         }
     }
 }
@@ -266,11 +268,7 @@ mod tests {
 
     #[test]
     fn entry_new() {
-        let entry = AuditEntry::new(
-            "org.liquide.test",
-            &test_subject(),
-            AuthDecision::Allow,
-        );
+        let entry = AuditEntry::new("org.liquide.test", &test_subject(), AuthDecision::Allow);
         assert_eq!(entry.action_id, "org.liquide.test");
         assert_eq!(entry.subject_uid, 1000);
         assert_eq!(entry.subject_pid, 42);
@@ -291,7 +289,10 @@ mod tests {
     fn entry_with_details() {
         let entry = AuditEntry::new("org.liquide.test", &test_subject(), AuthDecision::Deny)
             .with_details("matched catch-all deny rule");
-        assert_eq!(entry.details.as_deref(), Some("matched catch-all deny rule"));
+        assert_eq!(
+            entry.details.as_deref(),
+            Some("matched catch-all deny rule")
+        );
     }
 
     #[test]
@@ -401,10 +402,7 @@ mod tests {
             &AuthDecision::Allow,
             Some("rule #1 matched"),
         );
-        assert_eq!(
-            log.entries()[0].details.as_deref(),
-            Some("rule #1 matched")
-        );
+        assert_eq!(log.entries()[0].details.as_deref(), Some("rule #1 matched"));
     }
 
     #[test]
@@ -419,15 +417,9 @@ mod tests {
     #[test]
     fn log_query_by_time() {
         let mut log = AuditLog::new(AuditPolicy::All);
-        log.append(
-            AuditEntry::new("a", &test_subject(), AuthDecision::Allow).with_timestamp(100),
-        );
-        log.append(
-            AuditEntry::new("b", &test_subject(), AuthDecision::Deny).with_timestamp(200),
-        );
-        log.append(
-            AuditEntry::new("c", &test_subject(), AuthDecision::Allow).with_timestamp(300),
-        );
+        log.append(AuditEntry::new("a", &test_subject(), AuthDecision::Allow).with_timestamp(100));
+        log.append(AuditEntry::new("b", &test_subject(), AuthDecision::Deny).with_timestamp(200));
+        log.append(AuditEntry::new("c", &test_subject(), AuthDecision::Allow).with_timestamp(300));
 
         let results = log.query_by_time(150, 250);
         assert_eq!(results.len(), 1);
@@ -441,15 +433,9 @@ mod tests {
     fn log_query_by_action() {
         let mut log = AuditLog::new(AuditPolicy::All);
         let s = test_subject();
-        log.append(
-            AuditEntry::new("org.liquide.a", &s, AuthDecision::Allow).with_timestamp(1),
-        );
-        log.append(
-            AuditEntry::new("org.liquide.b", &s, AuthDecision::Deny).with_timestamp(2),
-        );
-        log.append(
-            AuditEntry::new("org.liquide.a", &s, AuthDecision::Deny).with_timestamp(3),
-        );
+        log.append(AuditEntry::new("org.liquide.a", &s, AuthDecision::Allow).with_timestamp(1));
+        log.append(AuditEntry::new("org.liquide.b", &s, AuthDecision::Deny).with_timestamp(2));
+        log.append(AuditEntry::new("org.liquide.a", &s, AuthDecision::Deny).with_timestamp(3));
 
         let results = log.query_by_action("org.liquide.a");
         assert_eq!(results.len(), 2);
@@ -458,12 +444,8 @@ mod tests {
     #[test]
     fn log_query_by_uid() {
         let mut log = AuditLog::new(AuditPolicy::All);
-        log.append(
-            AuditEntry::new("a", &test_subject(), AuthDecision::Allow).with_timestamp(1),
-        );
-        log.append(
-            AuditEntry::new("b", &admin_subject(), AuthDecision::Allow).with_timestamp(2),
-        );
+        log.append(AuditEntry::new("a", &test_subject(), AuthDecision::Allow).with_timestamp(1));
+        log.append(AuditEntry::new("b", &admin_subject(), AuthDecision::Allow).with_timestamp(2));
 
         let results = log.query_by_uid(1000);
         assert_eq!(results.len(), 1);

@@ -63,7 +63,13 @@ pub struct Thumbnail {
 
 impl Thumbnail {
     /// Create a new thumbnail with no pixel data.
-    pub fn new(id: ThumbnailId, source_window_id: u64, width: u32, height: u32, scale: f32) -> Self {
+    pub fn new(
+        id: ThumbnailId,
+        source_window_id: u64,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Self {
         Self {
             id,
             source_window_id,
@@ -93,6 +99,20 @@ impl Thumbnail {
         self.last_update_ms = now_ms;
         self.is_stale = false;
     }
+
+    /// Resize the thumbnail when the source window geometry changes.
+    pub fn resize(&mut self, width: u32, height: u32, scale: f32) {
+        if self.width == width && self.height == height && (self.scale - scale).abs() <= f32::EPSILON {
+            return;
+        }
+
+        self.width = width;
+        self.height = height;
+        self.scale = scale;
+        self.pixel_data = None;
+        self.last_update_ms = 0;
+        self.is_stale = true;
+    }
 }
 
 /// Compute the thumbnail dimensions that fit within `(max_w, max_h)` while
@@ -119,13 +139,7 @@ pub fn compute_thumbnail_size(source_w: u32, source_h: u32, max_w: u32, max_h: u
 ///
 /// `src` must contain exactly `src_w * src_h * 4` bytes in BGRA order.
 /// Returns a new buffer of `dst_w * dst_h * 4` bytes.
-pub fn downscale_bilinear(
-    src: &[u8],
-    src_w: u32,
-    src_h: u32,
-    dst_w: u32,
-    dst_h: u32,
-) -> Vec<u8> {
+pub fn downscale_bilinear(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
     let sw = src_w.max(1) as usize;
     let sh = src_h.max(1) as usize;
     let dw = dst_w.max(1) as usize;
@@ -135,8 +149,16 @@ pub fn downscale_bilinear(
 
     let mut dst = vec![0u8; dw * dh * 4];
 
-    let x_ratio = if dw > 1 { (sw - 1) as f64 / (dw - 1) as f64 } else { 0.0 };
-    let y_ratio = if dh > 1 { (sh - 1) as f64 / (dh - 1) as f64 } else { 0.0 };
+    let x_ratio = if dw > 1 {
+        (sw - 1) as f64 / (dw - 1) as f64
+    } else {
+        0.0
+    };
+    let y_ratio = if dh > 1 {
+        (sh - 1) as f64 / (dh - 1) as f64
+    } else {
+        0.0
+    };
 
     for dy in 0..dh {
         let src_y = dy as f64 * y_ratio;
@@ -168,6 +190,118 @@ pub fn downscale_bilinear(
     dst
 }
 
+fn downscale_nearest(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
+    let sw = src_w.max(1) as usize;
+    let sh = src_h.max(1) as usize;
+    let dw = dst_w.max(1) as usize;
+    let dh = dst_h.max(1) as usize;
+    let mut dst = vec![0u8; dw * dh * 4];
+
+    let scale_x = sw as f64 / dw as f64;
+    let scale_y = sh as f64 / dh as f64;
+
+    for dy in 0..dh {
+        let src_y = ((dy as f64 + 0.5) * scale_y - 0.5)
+            .round()
+            .clamp(0.0, (sh - 1) as f64) as usize;
+        for dx in 0..dw {
+            let src_x = ((dx as f64 + 0.5) * scale_x - 0.5)
+                .round()
+                .clamp(0.0, (sw - 1) as f64) as usize;
+            let src_i = (src_y * sw + src_x) * 4;
+            let dst_i = (dy * dw + dx) * 4;
+            dst[dst_i..dst_i + 4].copy_from_slice(&src[src_i..src_i + 4]);
+        }
+    }
+
+    dst
+}
+
+fn sample_bilinear(src: &[u8], sw: usize, sh: usize, x: f64, y: f64) -> [f64; 4] {
+    let x = x.clamp(0.0, (sw - 1) as f64);
+    let y = y.clamp(0.0, (sh - 1) as f64);
+    let x0 = x.floor() as usize;
+    let y0 = y.floor() as usize;
+    let x1 = (x0 + 1).min(sw - 1);
+    let y1 = (y0 + 1).min(sh - 1);
+    let fx = x - x0 as f64;
+    let fy = y - y0 as f64;
+
+    let i00 = (y0 * sw + x0) * 4;
+    let i10 = (y0 * sw + x1) * 4;
+    let i01 = (y1 * sw + x0) * 4;
+    let i11 = (y1 * sw + x1) * 4;
+
+    let mut sample = [0.0; 4];
+    for channel in 0..4 {
+        let top = src[i00 + channel] as f64 * (1.0 - fx) + src[i10 + channel] as f64 * fx;
+        let bottom = src[i01 + channel] as f64 * (1.0 - fx) + src[i11 + channel] as f64 * fx;
+        sample[channel] = top * (1.0 - fy) + bottom * fy;
+    }
+
+    sample
+}
+
+fn downscale_4tap(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<u8> {
+    let sw = src_w.max(1) as usize;
+    let sh = src_h.max(1) as usize;
+    let dw = dst_w.max(1) as usize;
+    let dh = dst_h.max(1) as usize;
+    let mut dst = vec![0u8; dw * dh * 4];
+
+    let scale_x = sw as f64 / dw as f64;
+    let scale_y = sh as f64 / dh as f64;
+    let tap_offset_x = (scale_x / 4.0).max(0.25);
+    let tap_offset_y = (scale_y / 4.0).max(0.25);
+
+    for dy in 0..dh {
+        let center_y = (dy as f64 + 0.5) * scale_y - 0.5;
+        for dx in 0..dw {
+            let center_x = (dx as f64 + 0.5) * scale_x - 0.5;
+            let taps = [
+                sample_bilinear(src, sw, sh, center_x - tap_offset_x, center_y - tap_offset_y),
+                sample_bilinear(src, sw, sh, center_x + tap_offset_x, center_y - tap_offset_y),
+                sample_bilinear(src, sw, sh, center_x - tap_offset_x, center_y + tap_offset_y),
+                sample_bilinear(src, sw, sh, center_x + tap_offset_x, center_y + tap_offset_y),
+            ];
+
+            let dst_i = (dy * dw + dx) * 4;
+            for channel in 0..4 {
+                let value = taps.iter().map(|tap| tap[channel]).sum::<f64>() / taps.len() as f64;
+                dst[dst_i + channel] = value.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+
+    dst
+}
+
+fn downscale_with_quality(
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    quality: ThumbnailQuality,
+) -> Vec<u8> {
+    match quality {
+        ThumbnailQuality::Low => downscale_nearest(src, src_w, src_h, dst_w, dst_h),
+        ThumbnailQuality::Medium => downscale_bilinear(src, src_w, src_h, dst_w, dst_h),
+        ThumbnailQuality::High => downscale_4tap(src, src_w, src_h, dst_w, dst_h),
+    }
+}
+
+fn compute_thumbnail_geometry(config: &ThumbnailConfig, source_w: u32, source_h: u32) -> (u32, u32, f32) {
+    let (thumb_w, thumb_h) = compute_thumbnail_size(
+        source_w,
+        source_h,
+        config.max_width,
+        config.max_height,
+    );
+    let scale = thumb_w as f32 / source_w.max(1) as f32;
+    (thumb_w, thumb_h, scale)
+}
+
 /// Registry managing all active thumbnails, keyed by source window ID.
 pub struct ThumbnailRegistry {
     thumbnails: Vec<Thumbnail>,
@@ -192,26 +326,24 @@ impl ThumbnailRegistry {
 
     /// Create a thumbnail entry for a window. Returns the `ThumbnailId`.
     ///
-    /// If a thumbnail already exists for this window, the existing one is
-    /// returned without modification.
+    /// If a thumbnail already exists for this window, the existing entry is
+    /// resized in place when the source geometry changed.
     pub fn create(&mut self, window_id: u64, source_w: u32, source_h: u32) -> ThumbnailId {
+        let (thumb_w, thumb_h, scale) = compute_thumbnail_geometry(&self.config, source_w, source_h);
+
         // Return existing if present.
-        if let Some(t) = self.thumbnails.iter().find(|t| t.source_window_id == window_id) {
+        if let Some(t) = self
+            .thumbnails
+            .iter_mut()
+            .find(|t| t.source_window_id == window_id)
+        {
+            t.resize(thumb_w, thumb_h, scale);
             return t.id;
         }
-
-        let (tw, th) = compute_thumbnail_size(
-            source_w,
-            source_h,
-            self.config.max_width,
-            self.config.max_height,
-        );
-
-        let scale = tw as f32 / source_w.max(1) as f32;
         let id = ThumbnailId(self.next_id);
         self.next_id += 1;
 
-        let thumb = Thumbnail::new(id, window_id, tw, th, scale);
+        let thumb = Thumbnail::new(id, window_id, thumb_w, thumb_h, scale);
         self.thumbnails.push(thumb);
         id
     }
@@ -225,12 +357,16 @@ impl ThumbnailRegistry {
 
     /// Get an immutable reference to a thumbnail by window ID.
     pub fn get(&self, window_id: u64) -> Option<&Thumbnail> {
-        self.thumbnails.iter().find(|t| t.source_window_id == window_id)
+        self.thumbnails
+            .iter()
+            .find(|t| t.source_window_id == window_id)
     }
 
     /// Get a mutable reference to a thumbnail by window ID.
     pub fn get_mut(&mut self, window_id: u64) -> Option<&mut Thumbnail> {
-        self.thumbnails.iter_mut().find(|t| t.source_window_id == window_id)
+        self.thumbnails
+            .iter_mut()
+            .find(|t| t.source_window_id == window_id)
     }
 
     /// Get a thumbnail by its `ThumbnailId`.
@@ -250,17 +386,32 @@ impl ThumbnailRegistry {
         source_h: u32,
         now_ms: u64,
     ) -> bool {
-        let thumb = match self.thumbnails.iter_mut().find(|t| t.source_window_id == window_id) {
+        let (thumb_w, thumb_h, scale) = compute_thumbnail_geometry(&self.config, source_w, source_h);
+        let quality = self.config.quality;
+        let thumb = match self
+            .thumbnails
+            .iter_mut()
+            .find(|t| t.source_window_id == window_id)
+        {
             Some(t) => t,
             None => return false,
         };
+
+        thumb.resize(thumb_w, thumb_h, scale);
 
         let expected = source_w as usize * source_h as usize * 4;
         if source_pixels.len() != expected {
             return false;
         }
 
-        let scaled = downscale_bilinear(source_pixels, source_w, source_h, thumb.width, thumb.height);
+        let scaled = downscale_with_quality(
+            source_pixels,
+            source_w,
+            source_h,
+            thumb.width,
+            thumb.height,
+            quality,
+        );
         thumb.update_pixels(scaled, now_ms);
         true
     }
@@ -274,7 +425,11 @@ impl ThumbnailRegistry {
 
     /// Mark a single window's thumbnail as stale.
     pub fn invalidate(&mut self, window_id: u64) {
-        if let Some(t) = self.thumbnails.iter_mut().find(|t| t.source_window_id == window_id) {
+        if let Some(t) = self
+            .thumbnails
+            .iter_mut()
+            .find(|t| t.source_window_id == window_id)
+        {
             t.invalidate();
         }
     }
@@ -283,7 +438,10 @@ impl ThumbnailRegistry {
     pub fn stale_windows(&self, now_ms: u64) -> Vec<u64> {
         self.thumbnails
             .iter()
-            .filter(|t| t.is_stale || now_ms.saturating_sub(t.last_update_ms) >= self.config.update_interval_ms)
+            .filter(|t| {
+                t.is_stale
+                    || now_ms.saturating_sub(t.last_update_ms) >= self.config.update_interval_ms
+            })
             .map(|t| t.source_window_id)
             .collect()
     }
@@ -382,8 +540,7 @@ mod tests {
     fn downscale_2x2_to_1x1() {
         // 2x2 image: all red (BGRA: 0, 0, 255, 255).
         let src = vec![
-            0, 0, 255, 255,  0, 0, 255, 255,
-            0, 0, 255, 255,  0, 0, 255, 255,
+            0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
         ];
         let dst = downscale_bilinear(&src, 2, 2, 1, 1);
         assert_eq!(dst.len(), 4);
@@ -407,7 +564,7 @@ mod tests {
         let mut src = vec![0u8; 4 * 1 * 4];
         for x in 0..4 {
             src[x * 4] = (x as u8) * 85; // blue
-            src[x * 4 + 3] = 255;        // alpha
+            src[x * 4 + 3] = 255; // alpha
         }
         let dst = downscale_bilinear(&src, 4, 1, 2, 1);
         assert_eq!(dst.len(), 8);
@@ -475,6 +632,22 @@ mod tests {
     }
 
     #[test]
+    fn registry_create_resizes_existing_thumbnail_when_source_changes() {
+        let mut reg = ThumbnailRegistry::new(default_config());
+        let id = reg.create(1, 640, 480);
+        let before = reg.get(1).unwrap().clone();
+
+        let same_id = reg.create(1, 1920, 1080);
+
+        let thumb = reg.get(1).unwrap();
+        assert_eq!(same_id, id);
+        assert_ne!((before.width, before.height), (thumb.width, thumb.height));
+        assert_eq!((thumb.width, thumb.height), (320, 180));
+        assert!(thumb.pixel_data.is_none());
+        assert!(thumb.is_stale);
+    }
+
+    #[test]
     fn registry_destroy() {
         let mut reg = ThumbnailRegistry::new(default_config());
         reg.create(1, 800, 600);
@@ -515,6 +688,22 @@ mod tests {
     fn registry_update_nonexistent_fails() {
         let mut reg = ThumbnailRegistry::new(default_config());
         assert!(!reg.update(99, &[], 4, 4, 500));
+    }
+
+    #[test]
+    fn registry_update_resizes_when_source_changes() {
+        let mut reg = ThumbnailRegistry::new(default_config());
+        reg.create(1, 640, 480);
+        let src_small = vec![128u8; 640 * 480 * 4];
+        assert!(reg.update(1, &src_small, 640, 480, 100));
+
+        let src_large = vec![64u8; 1920 * 1080 * 4];
+        assert!(reg.update(1, &src_large, 1920, 1080, 200));
+
+        let thumb = reg.get(1).unwrap();
+        assert_eq!((thumb.width, thumb.height), (320, 180));
+        assert_eq!(thumb.pixel_data.as_ref().unwrap().len(), thumb.byte_len());
+        assert_eq!(thumb.last_update_ms, 200);
     }
 
     #[test]
@@ -603,6 +792,25 @@ mod tests {
         let id1 = reg.create(1, 100, 100);
         let id2 = reg.create(2, 100, 100);
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn quality_levels_change_downscale_output() {
+        let mut src = vec![0u8; 5 * 5 * 4];
+        for y in 0..5 {
+            for x in 0..5 {
+                let idx = (y * 5 + x) * 4;
+                src[idx] = (x as u8) * 40 + (y as u8) * 10;
+                src[idx + 1] = (x as u8) * 10 + (y as u8) * 40;
+                src[idx + 2] = (x as u8) * 20 + (y as u8) * 15;
+                src[idx + 3] = 255;
+            }
+        }
+
+        let low = downscale_with_quality(&src, 5, 5, 2, 2, ThumbnailQuality::Low);
+        let high = downscale_with_quality(&src, 5, 5, 2, 2, ThumbnailQuality::High);
+
+        assert_ne!(low, high);
     }
 
     #[test]

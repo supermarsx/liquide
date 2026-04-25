@@ -228,12 +228,12 @@ mod tests {
     fn test_texture_cache_basic() {
         let mut cache = TextureCache::new();
         let data = vec![0u8; 1024];
-        
+
         cache.insert("texture1".to_string(), data.clone(), 32, 32);
-        
+
         let cached = cache.get("texture1");
         assert!(cached.is_some());
-        
+
         let cached = cached.unwrap();
         assert_eq!(cached.width, 32);
         assert_eq!(cached.height, 32);
@@ -242,12 +242,12 @@ mod tests {
     #[test]
     fn test_texture_cache_lru_eviction() {
         let mut cache = TextureCache::with_capacity(2048);
-        
+
         // Insert 3 textures of 1KB each
         cache.insert("tex1".to_string(), vec![0u8; 1024], 32, 32);
         cache.insert("tex2".to_string(), vec![0u8; 1024], 32, 32);
         cache.insert("tex3".to_string(), vec![0u8; 1024], 32, 32);
-        
+
         // Cache should have evicted tex1 (LRU)
         assert_eq!(cache.len(), 2);
         assert!(cache.get("tex1").is_none());
@@ -258,16 +258,16 @@ mod tests {
     #[test]
     fn test_texture_cache_access_updates_lru() {
         let mut cache = TextureCache::with_capacity(2048);
-        
+
         cache.insert("tex1".to_string(), vec![0u8; 1024], 32, 32);
         cache.insert("tex2".to_string(), vec![0u8; 1024], 32, 32);
-        
+
         // Access tex1 to make it more recent
         cache.get("tex1");
-        
+
         // Insert tex3, should evict tex2 (now the LRU)
         cache.insert("tex3".to_string(), vec![0u8; 1024], 32, 32);
-        
+
         assert!(cache.get("tex1").is_some());
         assert!(cache.get("tex2").is_none());
         assert!(cache.get("tex3").is_some());
@@ -276,10 +276,10 @@ mod tests {
     #[test]
     fn test_texture_cache_stats() {
         let mut cache = TextureCache::with_capacity(4096);
-        
+
         cache.insert("tex1".to_string(), vec![0u8; 1024], 32, 32);
         cache.insert("tex2".to_string(), vec![0u8; 1024], 32, 32);
-        
+
         let stats = cache.stats();
         assert_eq!(stats.entry_count, 2);
         assert_eq!(stats.size_bytes, 2048);

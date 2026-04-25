@@ -5,8 +5,8 @@ use std::collections::HashMap;
 
 use tracing::info;
 
-use crate::types::{Win32AppEvent, Win32AppInfo, Win32WindowState};
 use crate::Result;
+use crate::types::{Win32AppEvent, Win32AppInfo, Win32WindowState};
 
 /// Enumerates visible Win32 top-level windows and tracks changes.
 pub struct Win32WindowEnumerator {
@@ -133,10 +133,10 @@ impl Win32WindowEnumerator {
 
         use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, TRUE};
         use windows_sys::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect,
-            GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-            IsWindowVisible, IsZoomed, GWL_EXSTYLE, WS_EX_APPWINDOW,
-            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+            EnumWindows, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindowLongW,
+            GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+            IsIconic, IsWindowVisible, IsZoomed, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW,
         };
 
         struct EnumContext {
@@ -258,10 +258,7 @@ impl Win32WindowEnumerator {
         };
 
         unsafe {
-            EnumWindows(
-                Some(enum_callback),
-                &mut ctx as *mut EnumContext as LPARAM,
-            );
+            EnumWindows(Some(enum_callback), &mut ctx as *mut EnumContext as LPARAM);
         }
 
         info!(count = ctx.windows.len(), "enumerated Win32 windows");

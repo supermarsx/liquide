@@ -322,11 +322,19 @@ pub enum ValidationError {
     /// Key not found in schema.
     UnknownKey(String),
     /// Value type does not match schema.
-    TypeMismatch { key: String, expected: String, got: String },
+    TypeMismatch {
+        key: String,
+        expected: String,
+        got: String,
+    },
     /// Value is outside the allowed range.
     OutOfRange { key: String, message: String },
     /// Choice value is not in the allowed set.
-    InvalidChoice { key: String, value: String, allowed: Vec<String> },
+    InvalidChoice {
+        key: String,
+        value: String,
+        allowed: Vec<String>,
+    },
 }
 
 impl fmt::Display for ValidationError {
@@ -339,7 +347,11 @@ impl fmt::Display for ValidationError {
             Self::OutOfRange { key, message } => {
                 write!(f, "{}: {}", key, message)
             }
-            Self::InvalidChoice { key, value, allowed } => {
+            Self::InvalidChoice {
+                key,
+                value,
+                allowed,
+            } => {
                 write!(f, "{}: '{}' is not one of {:?}", key, value, allowed)
             }
         }
@@ -502,7 +514,12 @@ impl SettingsSchema {
             description: "The visual theme applied to all shell elements".into(),
             range_constraint: None,
             float_range: None,
-            enum_values: Some(vec!["liquid_glass".into(), "night".into(), "midday".into(), "sunset".into()]),
+            enum_values: Some(vec![
+                "liquid_glass".into(),
+                "night".into(),
+                "midday".into(),
+                "sunset".into(),
+            ]),
             category: "appearance".into(),
         });
         self.register(SchemaEntry {
@@ -511,7 +528,9 @@ impl SettingsSchema {
             default: SettingValue::String("Inter".into()),
             summary: "Default font family".into(),
             description: "The primary font family used for all UI text".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "appearance".into(),
         });
         self.register(SchemaEntry {
@@ -521,16 +540,24 @@ impl SettingsSchema {
             summary: "Base font size".into(),
             description: "Base font size in pixels for UI text".into(),
             range_constraint: Some((6, 72)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "appearance".into(),
         });
         self.register(SchemaEntry {
             key: "appearance.accent-color".into(),
             value_type: SchemaValueType::Color,
-            default: SettingValue::Color { r: 0, g: 122, b: 255, a: 255 },
+            default: SettingValue::Color {
+                r: 0,
+                g: 122,
+                b: 255,
+                a: 255,
+            },
             summary: "Accent color".into(),
             description: "System accent color for highlights, focus rings, and selection".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "appearance".into(),
         });
         self.register(SchemaEntry {
@@ -539,7 +566,9 @@ impl SettingsSchema {
             default: SettingValue::String("default".into()),
             summary: "Icon theme".into(),
             description: "Icon theme for system and application icons".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "appearance".into(),
         });
         self.register(SchemaEntry {
@@ -548,7 +577,9 @@ impl SettingsSchema {
             default: SettingValue::String("default".into()),
             summary: "Cursor theme".into(),
             description: "Mouse cursor theme".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "appearance".into(),
         });
         self.register(SchemaEntry {
@@ -558,7 +589,8 @@ impl SettingsSchema {
             summary: "Cursor size".into(),
             description: "Mouse cursor size in pixels".into(),
             range_constraint: Some((16, 96)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "appearance".into(),
         });
 
@@ -569,7 +601,9 @@ impl SettingsSchema {
             default: SettingValue::FilePath(String::new()),
             summary: "Wallpaper path".into(),
             description: "Path to the desktop wallpaper image file".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "desktop".into(),
         });
         self.register(SchemaEntry {
@@ -578,8 +612,15 @@ impl SettingsSchema {
             default: SettingValue::Choice("fill".into()),
             summary: "Wallpaper display mode".into(),
             description: "How the wallpaper is scaled and positioned".into(),
-            range_constraint: None, float_range: None,
-            enum_values: Some(vec!["fill".into(), "fit".into(), "stretch".into(), "tile".into(), "center".into()]),
+            range_constraint: None,
+            float_range: None,
+            enum_values: Some(vec![
+                "fill".into(),
+                "fit".into(),
+                "stretch".into(),
+                "tile".into(),
+                "center".into(),
+            ]),
             category: "desktop".into(),
         });
         self.register(SchemaEntry {
@@ -588,7 +629,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Show desktop icons".into(),
             description: "Display file and folder icons on the desktop surface".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "desktop".into(),
         });
         self.register(SchemaEntry {
@@ -597,7 +640,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Enable hot corners".into(),
             description: "Trigger actions when the cursor reaches screen corners".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "desktop".into(),
         });
 
@@ -608,7 +653,8 @@ impl SettingsSchema {
             default: SettingValue::Choice("bottom".into()),
             summary: "Dock position".into(),
             description: "Screen edge where the dock is placed".into(),
-            range_constraint: None, float_range: None,
+            range_constraint: None,
+            float_range: None,
             enum_values: Some(vec!["bottom".into(), "left".into(), "right".into()]),
             category: "dock".into(),
         });
@@ -618,7 +664,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Auto-hide dock".into(),
             description: "Automatically hide the dock when not in use".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "dock".into(),
         });
         self.register(SchemaEntry {
@@ -628,7 +676,8 @@ impl SettingsSchema {
             summary: "Dock icon size".into(),
             description: "Size of dock icons in pixels".into(),
             range_constraint: Some((24, 128)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "dock".into(),
         });
         self.register(SchemaEntry {
@@ -637,7 +686,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Dock magnification".into(),
             description: "Magnify dock icons when hovered".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "dock".into(),
         });
 
@@ -648,8 +699,13 @@ impl SettingsSchema {
             default: SettingValue::Choice("click".into()),
             summary: "Window focus policy".into(),
             description: "How windows receive keyboard focus".into(),
-            range_constraint: None, float_range: None,
-            enum_values: Some(vec!["click".into(), "sloppy".into(), "focus-follows-mouse".into()]),
+            range_constraint: None,
+            float_range: None,
+            enum_values: Some(vec![
+                "click".into(),
+                "sloppy".into(),
+                "focus-follows-mouse".into(),
+            ]),
             category: "wm".into(),
         });
         self.register(SchemaEntry {
@@ -659,7 +715,8 @@ impl SettingsSchema {
             summary: "Tiling gap".into(),
             description: "Gap in pixels between tiled windows".into(),
             range_constraint: Some((0, 64)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "wm".into(),
         });
         self.register(SchemaEntry {
@@ -668,7 +725,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Window snapping".into(),
             description: "Snap windows to screen edges when dragged".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "wm".into(),
         });
         self.register(SchemaEntry {
@@ -677,8 +736,14 @@ impl SettingsSchema {
             default: SettingValue::Choice("maximize".into()),
             summary: "Titlebar double-click action".into(),
             description: "Action when double-clicking a window titlebar".into(),
-            range_constraint: None, float_range: None,
-            enum_values: Some(vec!["maximize".into(), "minimize".into(), "shade".into(), "nothing".into()]),
+            range_constraint: None,
+            float_range: None,
+            enum_values: Some(vec![
+                "maximize".into(),
+                "minimize".into(),
+                "shade".into(),
+                "nothing".into(),
+            ]),
             category: "wm".into(),
         });
 
@@ -700,7 +765,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Natural scrolling".into(),
             description: "Reverse scroll direction so content follows finger movement".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "input".into(),
         });
         self.register(SchemaEntry {
@@ -710,7 +777,8 @@ impl SettingsSchema {
             summary: "Key repeat delay".into(),
             description: "Delay in milliseconds before key repeat begins".into(),
             range_constraint: Some((100, 2000)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "input".into(),
         });
         self.register(SchemaEntry {
@@ -720,7 +788,8 @@ impl SettingsSchema {
             summary: "Key repeat rate".into(),
             description: "Key repeats per second once repeat starts".into(),
             range_constraint: Some((1, 100)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "input".into(),
         });
         self.register(SchemaEntry {
@@ -729,7 +798,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Tap to click".into(),
             description: "Interpret touchpad taps as mouse clicks".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "input".into(),
         });
         self.register(SchemaEntry {
@@ -762,7 +833,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Night light".into(),
             description: "Reduce blue light emission in the evening".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "display".into(),
         });
         self.register(SchemaEntry {
@@ -772,7 +845,8 @@ impl SettingsSchema {
             summary: "Night light temperature".into(),
             description: "Color temperature in Kelvin when night light is active".into(),
             range_constraint: Some((1700, 6500)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "display".into(),
         });
 
@@ -784,7 +858,8 @@ impl SettingsSchema {
             summary: "Screen blank timeout".into(),
             description: "Minutes of inactivity before blanking the screen (0 = never)".into(),
             range_constraint: Some((0, 120)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "power".into(),
         });
         self.register(SchemaEntry {
@@ -794,7 +869,8 @@ impl SettingsSchema {
             summary: "Auto-suspend timeout".into(),
             description: "Minutes of inactivity before automatic suspend (0 = never)".into(),
             range_constraint: Some((0, 480)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "power".into(),
         });
         self.register(SchemaEntry {
@@ -803,8 +879,14 @@ impl SettingsSchema {
             default: SettingValue::Choice("suspend".into()),
             summary: "Lid close action".into(),
             description: "Action when the laptop lid is closed".into(),
-            range_constraint: None, float_range: None,
-            enum_values: Some(vec!["suspend".into(), "hibernate".into(), "shutdown".into(), "nothing".into()]),
+            range_constraint: None,
+            float_range: None,
+            enum_values: Some(vec![
+                "suspend".into(),
+                "hibernate".into(),
+                "shutdown".into(),
+                "nothing".into(),
+            ]),
             category: "power".into(),
         });
         self.register(SchemaEntry {
@@ -813,7 +895,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Show battery percentage".into(),
             description: "Display battery charge percentage in the status bar".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "power".into(),
         });
 
@@ -824,7 +908,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Do not disturb".into(),
             description: "Suppress all notification popups".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "notifications".into(),
         });
         self.register(SchemaEntry {
@@ -833,7 +919,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Show on lock screen".into(),
             description: "Display notifications on the lock screen".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "notifications".into(),
         });
         self.register(SchemaEntry {
@@ -842,7 +930,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Show previews".into(),
             description: "Show notification content in popup banners".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "notifications".into(),
         });
         self.register(SchemaEntry {
@@ -851,7 +941,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Notification sound".into(),
             description: "Play a sound when notifications arrive".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "notifications".into(),
         });
 
@@ -862,7 +954,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "High contrast".into(),
             description: "Increase contrast for better visibility".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "a11y".into(),
         });
         self.register(SchemaEntry {
@@ -871,7 +965,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Large text".into(),
             description: "Increase text size throughout the interface".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "a11y".into(),
         });
         self.register(SchemaEntry {
@@ -880,7 +976,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Reduce motion".into(),
             description: "Minimize animations and transitions".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "a11y".into(),
         });
         self.register(SchemaEntry {
@@ -889,7 +987,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Screen reader".into(),
             description: "Enable the built-in screen reader for accessibility".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "a11y".into(),
         });
         self.register(SchemaEntry {
@@ -898,7 +998,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Sticky keys".into(),
             description: "Modifier keys remain active after being pressed once".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "a11y".into(),
         });
         self.register(SchemaEntry {
@@ -907,7 +1009,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Slow keys".into(),
             description: "Keys must be held briefly before being accepted".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "a11y".into(),
         });
 
@@ -918,7 +1022,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Lock on suspend".into(),
             description: "Lock the screen when the system suspends".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "privacy".into(),
         });
         self.register(SchemaEntry {
@@ -928,7 +1034,8 @@ impl SettingsSchema {
             summary: "Auto-lock delay".into(),
             description: "Minutes of inactivity before the screen locks automatically".into(),
             range_constraint: Some((0, 120)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "privacy".into(),
         });
         self.register(SchemaEntry {
@@ -937,7 +1044,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Location services".into(),
             description: "Allow applications to access location information".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "privacy".into(),
         });
         self.register(SchemaEntry {
@@ -946,7 +1055,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Usage statistics".into(),
             description: "Collect anonymous usage statistics".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "privacy".into(),
         });
 
@@ -958,7 +1069,8 @@ impl SettingsSchema {
             summary: "Output volume".into(),
             description: "System audio output volume (0-100)".into(),
             range_constraint: Some((0, 100)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "sound".into(),
         });
         self.register(SchemaEntry {
@@ -968,7 +1080,8 @@ impl SettingsSchema {
             summary: "Input volume".into(),
             description: "Microphone input volume (0-100)".into(),
             range_constraint: Some((0, 100)),
-            float_range: None, enum_values: None,
+            float_range: None,
+            enum_values: None,
             category: "sound".into(),
         });
         self.register(SchemaEntry {
@@ -977,7 +1090,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(false),
             summary: "Mute".into(),
             description: "Mute all audio output".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "sound".into(),
         });
         self.register(SchemaEntry {
@@ -986,7 +1101,9 @@ impl SettingsSchema {
             default: SettingValue::Bool(true),
             summary: "Event sounds".into(),
             description: "Play sounds for system events (login, logout, etc.)".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "sound".into(),
         });
 
@@ -997,7 +1114,9 @@ impl SettingsSchema {
             default: SettingValue::String("en_US".into()),
             summary: "Language".into(),
             description: "System language and locale".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "region".into(),
         });
         self.register(SchemaEntry {
@@ -1006,7 +1125,9 @@ impl SettingsSchema {
             default: SettingValue::String("UTC".into()),
             summary: "Timezone".into(),
             description: "System timezone (IANA timezone identifier)".into(),
-            range_constraint: None, float_range: None, enum_values: None,
+            range_constraint: None,
+            float_range: None,
+            enum_values: None,
             category: "region".into(),
         });
         self.register(SchemaEntry {
@@ -1015,7 +1136,8 @@ impl SettingsSchema {
             default: SettingValue::Choice("24h".into()),
             summary: "Clock format".into(),
             description: "Time display format in the status bar".into(),
-            range_constraint: None, float_range: None,
+            range_constraint: None,
+            float_range: None,
             enum_values: Some(vec!["12h".into(), "24h".into()]),
             category: "region".into(),
         });

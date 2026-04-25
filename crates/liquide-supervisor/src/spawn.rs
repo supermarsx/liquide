@@ -1,7 +1,7 @@
 //! Session spawning for the supervisor daemon.
 
-use crate::session::ResourceBudget;
 use crate::Result;
+use crate::session::ResourceBudget;
 
 /// Request to spawn a new session process.
 #[derive(Debug, Clone)]

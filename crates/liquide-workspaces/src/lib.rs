@@ -19,17 +19,11 @@ pub mod persistent;
 pub mod policy;
 pub mod workspace;
 
-pub use layout::{
-    overview_grid, transition_offset, workspace_position, Rect, WorkspaceLayout,
-};
-pub use manager::{
-    WorkspaceConfig, WorkspaceCountMode, WorkspaceEvent, WorkspaceManager,
-};
-pub use persistent::{
-    WindowRule, WindowRuleEngine, WindowRuleResult, WorkspaceSnapshot,
-};
+pub use layout::{Rect, WorkspaceLayout, overview_grid, transition_offset, workspace_position};
+pub use manager::{WorkspaceConfig, WorkspaceCountMode, WorkspaceEvent, WorkspaceManager};
+pub use persistent::{WindowRule, WindowRuleEngine, WindowRuleResult, WorkspaceSnapshot};
 pub use policy::{
-    cascade_position, center_position, smart_placement, FocusPolicy,
-    WindowPlacementPolicy, WindowRect, WorkspacePolicy,
+    FocusPolicy, WindowPlacementPolicy, WindowRect, WorkspacePolicy, cascade_position,
+    center_position, smart_placement,
 };
 pub use workspace::{Workspace, WorkspaceId};

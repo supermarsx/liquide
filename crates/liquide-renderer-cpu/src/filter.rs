@@ -149,7 +149,11 @@ impl PixelFilter {
                 for y in y0..y1 {
                     for x in x0..x1 {
                         let c = fb.get_pixel(x, y);
-                        fb.set_pixel(x, y, Color::new(c.r, c.g, c.b, (c.a as f32 * factor + 0.5) as u8));
+                        fb.set_pixel(
+                            x,
+                            y,
+                            Color::new(c.r, c.g, c.b, (c.a as f32 * factor + 0.5) as u8),
+                        );
                     }
                 }
             }

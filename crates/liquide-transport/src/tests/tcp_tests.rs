@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use bytes::Bytes;
 
-use crate::tcp::{TcpTransport, TcpTuning, MIN_BUFFER_SIZE, MAX_BUFFER_SIZE};
-use crate::listener::TcpListener;
 use crate::Transport;
+use crate::listener::TcpListener;
+use crate::tcp::{MAX_BUFFER_SIZE, MIN_BUFFER_SIZE, TcpTransport, TcpTuning};
 
 #[tokio::test]
 async fn tcp_connect_send_recv() {
@@ -166,10 +166,7 @@ async fn tcp_bidirectional_interleaved() {
         for i in 0u32..5 {
             let msg = transport.recv().await.unwrap();
             assert_eq!(&msg[..], format!("c{i}").as_bytes());
-            transport
-                .send(Bytes::from(format!("s{i}")))
-                .await
-                .unwrap();
+            transport.send(Bytes::from(format!("s{i}"))).await.unwrap();
         }
     });
 

@@ -400,14 +400,35 @@ impl SceneNode {
             for i in 0..n {
                 indices[i] = i as u16;
             }
-            indices[..n].sort_by(|&a, &b| self.children[a as usize].properties.z_order.cmp(&self.children[b as usize].properties.z_order).then_with(|| self.children[a as usize].id.cmp(&self.children[b as usize].id)));
+            indices[..n].sort_by(|&a, &b| {
+                self.children[a as usize]
+                    .properties
+                    .z_order
+                    .cmp(&self.children[b as usize].properties.z_order)
+                    .then_with(|| {
+                        self.children[a as usize]
+                            .id
+                            .cmp(&self.children[b as usize].id)
+                    })
+            });
             for &i in &indices[..n] {
-                self.children[i as usize].walk_inner(&absolute, effective_opacity, visitor, depth + 1);
+                self.children[i as usize].walk_inner(
+                    &absolute,
+                    effective_opacity,
+                    visitor,
+                    depth + 1,
+                );
             }
         } else {
             // Fallback to heap-allocated sort for large child counts
             let mut sorted_indices: Vec<usize> = (0..n).collect();
-            sorted_indices.sort_by(|&a, &b| self.children[a].properties.z_order.cmp(&self.children[b].properties.z_order).then_with(|| self.children[a].id.cmp(&self.children[b].id)));
+            sorted_indices.sort_by(|&a, &b| {
+                self.children[a]
+                    .properties
+                    .z_order
+                    .cmp(&self.children[b].properties.z_order)
+                    .then_with(|| self.children[a].id.cmp(&self.children[b].id))
+            });
             for &i in &sorted_indices {
                 self.children[i].walk_inner(&absolute, effective_opacity, visitor, depth + 1);
             }
@@ -583,13 +604,29 @@ impl SceneNode {
             for i in 0..n {
                 indices[i] = i as u16;
             }
-            indices[..n].sort_by(|&a, &b| self.children[a as usize].properties.z_order.cmp(&self.children[b as usize].properties.z_order).then_with(|| self.children[a as usize].id.cmp(&self.children[b as usize].id)));
+            indices[..n].sort_by(|&a, &b| {
+                self.children[a as usize]
+                    .properties
+                    .z_order
+                    .cmp(&self.children[b as usize].properties.z_order)
+                    .then_with(|| {
+                        self.children[a as usize]
+                            .id
+                            .cmp(&self.children[b as usize].id)
+                    })
+            });
             for &i in &indices[..n] {
                 self.children[i as usize].walk_mut_inner(visitor, depth + 1);
             }
         } else {
             let mut sorted_indices: Vec<usize> = (0..n).collect();
-            sorted_indices.sort_by(|&a, &b| self.children[a].properties.z_order.cmp(&self.children[b].properties.z_order).then_with(|| self.children[a].id.cmp(&self.children[b].id)));
+            sorted_indices.sort_by(|&a, &b| {
+                self.children[a]
+                    .properties
+                    .z_order
+                    .cmp(&self.children[b].properties.z_order)
+                    .then_with(|| self.children[a].id.cmp(&self.children[b].id))
+            });
             for &i in &sorted_indices {
                 self.children[i].walk_mut_inner(visitor, depth + 1);
             }
@@ -705,7 +742,14 @@ impl SceneNode {
         let n = self.children.len();
         if n <= 1 {
             for child in &self.children {
-                child.flatten_walk(&abs_transform, effective_opacity, effective_clip, effective_clip_radius, output, depth + 1);
+                child.flatten_walk(
+                    &abs_transform,
+                    effective_opacity,
+                    effective_clip,
+                    effective_clip_radius,
+                    output,
+                    depth + 1,
+                );
             }
         } else if n <= 16 {
             let mut indices = [0u16; 16];
@@ -713,20 +757,44 @@ impl SceneNode {
                 indices[i] = i as u16;
             }
             indices[..n].sort_by(|&a, &b| {
-                self.children[a as usize].properties.z_order.cmp(&self.children[b as usize].properties.z_order)
-                    .then_with(|| self.children[a as usize].id.cmp(&self.children[b as usize].id))
+                self.children[a as usize]
+                    .properties
+                    .z_order
+                    .cmp(&self.children[b as usize].properties.z_order)
+                    .then_with(|| {
+                        self.children[a as usize]
+                            .id
+                            .cmp(&self.children[b as usize].id)
+                    })
             });
             for &i in &indices[..n] {
-                self.children[i as usize].flatten_walk(&abs_transform, effective_opacity, effective_clip, effective_clip_radius, output, depth + 1);
+                self.children[i as usize].flatten_walk(
+                    &abs_transform,
+                    effective_opacity,
+                    effective_clip,
+                    effective_clip_radius,
+                    output,
+                    depth + 1,
+                );
             }
         } else {
             let mut sorted_indices: Vec<usize> = (0..n).collect();
             sorted_indices.sort_by(|&a, &b| {
-                self.children[a].properties.z_order.cmp(&self.children[b].properties.z_order)
+                self.children[a]
+                    .properties
+                    .z_order
+                    .cmp(&self.children[b].properties.z_order)
                     .then_with(|| self.children[a].id.cmp(&self.children[b].id))
             });
             for &i in &sorted_indices {
-                self.children[i].flatten_walk(&abs_transform, effective_opacity, effective_clip, effective_clip_radius, output, depth + 1);
+                self.children[i].flatten_walk(
+                    &abs_transform,
+                    effective_opacity,
+                    effective_clip,
+                    effective_clip_radius,
+                    output,
+                    depth + 1,
+                );
             }
         }
     }

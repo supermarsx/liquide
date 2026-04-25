@@ -38,9 +38,19 @@ pub enum WindowOp {
     /// Move a window to a new position.
     Move { id: WindowId, x: f32, y: f32 },
     /// Resize a window.
-    Resize { id: WindowId, width: f32, height: f32 },
+    Resize {
+        id: WindowId,
+        width: f32,
+        height: f32,
+    },
     /// Move and resize a window in one operation.
-    MoveResize { id: WindowId, x: f32, y: f32, width: f32, height: f32 },
+    MoveResize {
+        id: WindowId,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    },
     /// Change a window's z-order.
     SetZOrder { id: WindowId, position: ZOrderOp },
     /// Minimize a window.
@@ -95,7 +105,9 @@ impl WindowBatch {
     /// Create an empty batch with pre-allocated capacity.
     #[must_use]
     pub fn with_capacity(cap: usize) -> Self {
-        Self { ops: Vec::with_capacity(cap) }
+        Self {
+            ops: Vec::with_capacity(cap),
+        }
     }
 
     /// Push a raw operation.
@@ -117,17 +129,29 @@ impl WindowBatch {
 
     /// Enqueue a combined move + resize.
     pub fn move_resize(&mut self, id: WindowId, x: f32, y: f32, width: f32, height: f32) {
-        self.ops.push(WindowOp::MoveResize { id, x, y, width, height });
+        self.ops.push(WindowOp::MoveResize {
+            id,
+            x,
+            y,
+            width,
+            height,
+        });
     }
 
     /// Enqueue a raise to top.
     pub fn raise(&mut self, id: WindowId) {
-        self.ops.push(WindowOp::SetZOrder { id, position: ZOrderOp::Top });
+        self.ops.push(WindowOp::SetZOrder {
+            id,
+            position: ZOrderOp::Top,
+        });
     }
 
     /// Enqueue a lower to bottom.
     pub fn lower(&mut self, id: WindowId) {
-        self.ops.push(WindowOp::SetZOrder { id, position: ZOrderOp::Bottom });
+        self.ops.push(WindowOp::SetZOrder {
+            id,
+            position: ZOrderOp::Bottom,
+        });
     }
 
     /// Enqueue minimize.
@@ -157,7 +181,10 @@ impl WindowBatch {
 
     /// Enqueue a title change.
     pub fn set_title(&mut self, id: WindowId, title: impl Into<String>) {
-        self.ops.push(WindowOp::SetTitle { id, title: title.into() });
+        self.ops.push(WindowOp::SetTitle {
+            id,
+            title: title.into(),
+        });
     }
 
     /// Enqueue close.
@@ -289,7 +316,13 @@ impl WindowBatch {
                         damage.push(Rect::new(old.x, old.y, *width, *height));
                     }
                 }
-                WindowOp::MoveResize { id, x, y, width, height } => {
+                WindowOp::MoveResize {
+                    id,
+                    x,
+                    y,
+                    width,
+                    height,
+                } => {
                     if let Some(&old) = current_bounds.get(id) {
                         damage.push(old);
                         damage.push(Rect::new(*x, *y, *width, *height));
@@ -336,7 +369,13 @@ impl WindowBatch {
                     let entry = last_pos.entry(id).or_insert((None, None));
                     entry.1 = Some((width, height));
                 }
-                WindowOp::MoveResize { id, x, y, width, height } => {
+                WindowOp::MoveResize {
+                    id,
+                    x,
+                    y,
+                    width,
+                    height,
+                } => {
                     let entry = last_pos.entry(id).or_insert((None, None));
                     entry.0 = Some((x, y));
                     entry.1 = Some((width, height));
@@ -352,13 +391,23 @@ impl WindowBatch {
             let (pos, size) = last_pos[&id];
             match (pos, size) {
                 (Some((x, y)), Some((w, h))) => {
-                    self.ops.push(WindowOp::MoveResize { id, x, y, width: w, height: h });
+                    self.ops.push(WindowOp::MoveResize {
+                        id,
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                    });
                 }
                 (Some((x, y)), None) => {
                     self.ops.push(WindowOp::Move { id, x, y });
                 }
                 (None, Some((w, h))) => {
-                    self.ops.push(WindowOp::Resize { id, width: w, height: h });
+                    self.ops.push(WindowOp::Resize {
+                        id,
+                        width: w,
+                        height: h,
+                    });
                 }
                 (None, None) => {}
             }
@@ -510,9 +559,13 @@ pub fn compute_valid_rects(
                     continue;
                 }
             }
-            WindowOp::MoveResize { id, x, y, width, height } => {
-                (*id, Rect::new(*x, *y, *width, *height))
-            }
+            WindowOp::MoveResize {
+                id,
+                x,
+                y,
+                width,
+                height,
+            } => (*id, Rect::new(*x, *y, *width, *height)),
             WindowOp::Resize { id, width, height } => {
                 if let Some(&old) = current_bounds.get(id) {
                     (*id, Rect::new(old.x, old.y, *width, *height))
@@ -696,7 +749,13 @@ impl Shell {
                         win.bounds.height = *height;
                     }
                 }
-                WindowOp::MoveResize { id, x, y, width, height } => {
+                WindowOp::MoveResize {
+                    id,
+                    x,
+                    y,
+                    width,
+                    height,
+                } => {
                     if let Some(win) = self.windows.get_mut(id) {
                         win.bounds.x = *x;
                         win.bounds.y = *y;
@@ -706,8 +765,12 @@ impl Shell {
                 }
                 WindowOp::SetZOrder { id, position } => {
                     match position {
-                        ZOrderOp::Top => { let _ = self.raise_window(*id); }
-                        ZOrderOp::Bottom => { let _ = self.lower_window(*id); }
+                        ZOrderOp::Top => {
+                            let _ = self.raise_window(*id);
+                        }
+                        ZOrderOp::Bottom => {
+                            let _ = self.lower_window(*id);
+                        }
                         ZOrderOp::Above(ref_id) => {
                             // Place `id` just above `ref_id`.
                             let ref_z = self.windows.get(ref_id).map(|w| w.z_order).unwrap_or(0);
@@ -726,9 +789,15 @@ impl Shell {
                         }
                     }
                 }
-                WindowOp::Minimize { id } => { let _ = self.minimize(*id); }
-                WindowOp::Maximize { id } => { let _ = self.maximize(*id); }
-                WindowOp::Restore { id } => { let _ = self.restore(*id); }
+                WindowOp::Minimize { id } => {
+                    let _ = self.minimize(*id);
+                }
+                WindowOp::Maximize { id } => {
+                    let _ = self.maximize(*id);
+                }
+                WindowOp::Restore { id } => {
+                    let _ = self.restore(*id);
+                }
                 WindowOp::Show { id } => {
                     if let Some(win) = self.windows.get_mut(id) {
                         win.visible = true;
@@ -744,7 +813,9 @@ impl Shell {
                         win.title.clone_from(title);
                     }
                 }
-                WindowOp::Close { id } => { let _ = self.close_window(*id); }
+                WindowOp::Close { id } => {
+                    let _ = self.close_window(*id);
+                }
             }
         }
 
@@ -760,7 +831,9 @@ impl Shell {
         let work = self.work_area();
 
         // Collect visible window IDs in deterministic order.
-        let mut visible_ids: Vec<WindowId> = self.windows.values()
+        let mut visible_ids: Vec<WindowId> = self
+            .windows
+            .values()
             .filter(|w| w.visible && w.state != WindowState::Minimized)
             .map(|w| w.id)
             .collect();

@@ -62,7 +62,10 @@ fn gpu_vendor_display() {
     assert_eq!(GpuVendor::Nvidia.to_string(), "NVIDIA");
     assert_eq!(GpuVendor::Amd.to_string(), "AMD");
     assert_eq!(GpuVendor::Arm.to_string(), "ARM");
-    assert_eq!(GpuVendor::Other("Qualcomm".to_string()).to_string(), "Qualcomm");
+    assert_eq!(
+        GpuVendor::Other("Qualcomm".to_string()).to_string(),
+        "Qualcomm"
+    );
 }
 
 #[test]

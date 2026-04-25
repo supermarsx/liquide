@@ -1027,12 +1027,7 @@ mod tests {
             priority: 1,
         };
         mgr.add_rule(rule).unwrap();
-        let assigned_id = mgr
-            .active_profile()
-            .rules
-            .last()
-            .unwrap()
-            .id;
+        let assigned_id = mgr.active_profile().rules.last().unwrap().id;
         assert!(assigned_id > 0);
         assert!(mgr.get_rule(assigned_id).is_some());
         assert!(mgr.remove_rule(assigned_id).is_ok());
@@ -1145,7 +1140,14 @@ mod tests {
     #[test]
     fn evaluate_with_timestamp() {
         let mut mgr = FirewallManager::new();
-        mgr.evaluate_at(12345, Direction::Outbound, Protocol::TCP, 80, "1.2.3.4", None);
+        mgr.evaluate_at(
+            12345,
+            Direction::Outbound,
+            Protocol::TCP,
+            80,
+            "1.2.3.4",
+            None,
+        );
         assert_eq!(mgr.connection_log[0].timestamp, 12345);
     }
 
@@ -1257,10 +1259,7 @@ mod tests {
             format!("{}", FirewallError::ProfileNotFound),
             "profile not found",
         );
-        assert_eq!(
-            format!("{}", FirewallError::RuleNotFound),
-            "rule not found",
-        );
+        assert_eq!(format!("{}", FirewallError::RuleNotFound), "rule not found",);
         assert_eq!(
             format!("{}", FirewallError::DuplicateRuleId),
             "duplicate rule id",
@@ -1398,7 +1397,10 @@ mod tests {
             application: None,
             priority: 1,
         };
-        assert!(matches!(fw.add_rule(&rule), Err(FirewallError::NotSupported)));
+        assert!(matches!(
+            fw.add_rule(&rule),
+            Err(FirewallError::NotSupported)
+        ));
         assert!(matches!(
             fw.remove_rule("test"),
             Err(FirewallError::NotSupported),

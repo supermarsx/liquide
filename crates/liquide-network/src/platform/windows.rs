@@ -237,10 +237,10 @@ const DOT11_AUTH_ALGO_80211_OPEN: u32 = 1;
 const DOT11_AUTH_ALGO_80211_SHARED_KEY: u32 = 2;
 const DOT11_AUTH_ALGO_WPA: u32 = 3;
 const DOT11_AUTH_ALGO_WPA_PSK: u32 = 4;
-const DOT11_AUTH_ALGO_RSNA: u32 = 6;       // WPA2-Enterprise
-const DOT11_AUTH_ALGO_RSNA_PSK: u32 = 7;   // WPA2-Personal
-const DOT11_AUTH_ALGO_WPA3: u32 = 8;       // WPA3-Enterprise (OWE in some SDKs)
-const DOT11_AUTH_ALGO_WPA3_SAE: u32 = 9;   // WPA3-Personal (SAE)
+const DOT11_AUTH_ALGO_RSNA: u32 = 6; // WPA2-Enterprise
+const DOT11_AUTH_ALGO_RSNA_PSK: u32 = 7; // WPA2-Personal
+const DOT11_AUTH_ALGO_WPA3: u32 = 8; // WPA3-Enterprise (OWE in some SDKs)
+const DOT11_AUTH_ALGO_WPA3_SAE: u32 = 9; // WPA3-Personal (SAE)
 
 // WLAN_CONNECTION_MODE
 const WLAN_CONNECTION_MODE_PROFILE: u32 = 0;
@@ -277,8 +277,7 @@ type WlanConnectFn = unsafe extern "system" fn(
     *const WlanConnectionParameters,
     *const c_void,
 ) -> u32;
-type WlanDisconnectFn =
-    unsafe extern "system" fn(*mut c_void, *const Guid, *const c_void) -> u32;
+type WlanDisconnectFn = unsafe extern "system" fn(*mut c_void, *const Guid, *const c_void) -> u32;
 type WlanFreeMemoryFn = unsafe extern "system" fn(*mut c_void);
 type WlanSetProfileFn = unsafe extern "system" fn(
     *mut c_void,
@@ -620,9 +619,7 @@ fn scan_wifi_networks() -> Result<Vec<AccessPoint>, NetworkError> {
     let handle = api.open_handle()?;
 
     let mut iface_list: *mut WlanInterfaceInfoList = std::ptr::null_mut();
-    let rc = unsafe {
-        (api.wlan_enum_interfaces)(handle, std::ptr::null(), &mut iface_list)
-    };
+    let rc = unsafe { (api.wlan_enum_interfaces)(handle, std::ptr::null(), &mut iface_list) };
     if rc != ERROR_SUCCESS || iface_list.is_null() {
         api.close_handle(handle);
         return Err(NetworkError::PlatformError(format!(
@@ -706,9 +703,7 @@ fn get_wifi_interface_guid() -> Result<Guid, NetworkError> {
     let handle = api.open_handle()?;
 
     let mut iface_list: *mut WlanInterfaceInfoList = std::ptr::null_mut();
-    let rc = unsafe {
-        (api.wlan_enum_interfaces)(handle, std::ptr::null(), &mut iface_list)
-    };
+    let rc = unsafe { (api.wlan_enum_interfaces)(handle, std::ptr::null(), &mut iface_list) };
     if rc != ERROR_SUCCESS || iface_list.is_null() {
         api.close_handle(handle);
         return Err(NetworkError::PlatformError(format!(
@@ -855,9 +850,9 @@ fn check_connectivity_tcp() -> ConnectivityState {
         Err(_) => {
             // Check if we have any interface up at all
             let ifaces = enumerate_adapters();
-            let any_up = ifaces
-                .iter()
-                .any(|i| i.state == ConnectionState::Connected && i.iface_type != InterfaceType::Loopback);
+            let any_up = ifaces.iter().any(|i| {
+                i.state == ConnectionState::Connected && i.iface_type != InterfaceType::Loopback
+            });
             if any_up {
                 ConnectivityState::Limited
             } else {
@@ -1166,10 +1161,16 @@ mod tests {
 
     #[test]
     fn map_if_type_variants() {
-        assert_eq!(map_if_type(IF_TYPE_ETHERNET_CSMACD), InterfaceType::Ethernet);
+        assert_eq!(
+            map_if_type(IF_TYPE_ETHERNET_CSMACD),
+            InterfaceType::Ethernet
+        );
         assert_eq!(map_if_type(IF_TYPE_IEEE80211), InterfaceType::WiFi);
         assert_eq!(map_if_type(IF_TYPE_TUNNEL), InterfaceType::VPN);
-        assert_eq!(map_if_type(IF_TYPE_SOFTWARE_LOOPBACK), InterfaceType::Loopback);
+        assert_eq!(
+            map_if_type(IF_TYPE_SOFTWARE_LOOPBACK),
+            InterfaceType::Loopback
+        );
         assert_eq!(map_if_type(IF_TYPE_PPP), InterfaceType::VPN);
         assert_eq!(map_if_type(999), InterfaceType::Unknown);
     }
@@ -1205,7 +1206,17 @@ mod tests {
     #[test]
     fn wide_string_encoding() {
         let w = wide("hello");
-        assert_eq!(w, vec![b'h' as u16, b'e' as u16, b'l' as u16, b'l' as u16, b'o' as u16, 0]);
+        assert_eq!(
+            w,
+            vec![
+                b'h' as u16,
+                b'e' as u16,
+                b'l' as u16,
+                b'l' as u16,
+                b'o' as u16,
+                0
+            ]
+        );
     }
 
     #[test]

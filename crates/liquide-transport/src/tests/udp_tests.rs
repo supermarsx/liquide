@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use tokio::net::UdpSocket;
 
-use crate::udp::UdpTransport;
 use crate::Transport;
+use crate::udp::UdpTransport;
 
 #[tokio::test]
 async fn udp_connect_send_recv() {

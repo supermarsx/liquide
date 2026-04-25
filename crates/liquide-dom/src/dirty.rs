@@ -136,6 +136,23 @@ impl DirtySet {
         self.paint.clear();
     }
 
+    /// Drop a node from every dirty set. Called by `Document::destroy_node`
+    /// so destroyed nodes do not leak into subsequent style/layout/paint passes.
+    pub fn remove(&mut self, node: NodeId) {
+        self.style.remove(&node);
+        self.layout.remove(&node);
+        self.paint.remove(&node);
+    }
+
+    /// Mark every node currently tracked (or newly added via `ids`) as needing
+    /// style recalculation. Used by `ThemeWatcher` after a cache clear so that
+    /// the next frame re-queries styles for every live element.
+    pub fn mark_style_for<I: IntoIterator<Item = NodeId>>(&mut self, ids: I) {
+        for id in ids {
+            self.mark_style(id);
+        }
+    }
+
     pub fn has_work(&self) -> bool {
         !self.style.is_empty() || !self.layout.is_empty() || !self.paint.is_empty()
     }

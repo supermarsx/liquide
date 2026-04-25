@@ -7,6 +7,8 @@
 //!
 //! The theme engine loads CSS and converts it to [`ShellTheme`] via property queries.
 
+#![allow(dead_code)]
+
 use liquide_compositor::pixel::Color;
 use liquide_theme_css::prelude::PropertyValue;
 use liquide_theme_css::{Result as CssResult, ThemeEngine, ThemeParser};
@@ -426,10 +428,10 @@ mod tests {
         let engine = ThemeEngine::new(stylesheet);
         let theme = css_to_shell_theme(&engine);
 
-        // Night desktop is true black: #000000
-        assert_eq!(theme.desktop_background.r, 0);
-        assert_eq!(theme.desktop_background.g, 0);
-        assert_eq!(theme.desktop_background.b, 0);
+        // Night desktop now uses a near-black terminal surface: #0A0A0A
+        assert_eq!(theme.desktop_background.r, 10);
+        assert_eq!(theme.desktop_background.g, 10);
+        assert_eq!(theme.desktop_background.b, 10);
     }
 
     #[test]
@@ -461,7 +463,7 @@ mod tests {
     #[test]
     fn test_theme_preset_from_id() {
         use crate::themes::ThemePreset;
-        
+
         assert!(ThemePreset::from_id("liquid-glass").is_some());
         assert!(ThemePreset::from_id("night").is_some());
         assert!(ThemePreset::from_id("sunset").is_some());

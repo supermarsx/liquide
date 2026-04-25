@@ -12,8 +12,8 @@
 //! This module detects color glyph availability in a font and provides
 //! rasterization paths that produce RGBA pixel data instead of grayscale.
 
-use ab_glyph::{Font, ScaleFont};
 use crate::database::{FontDatabase, FontFaceId};
+use ab_glyph::{Font, ScaleFont};
 
 /// Color glyph format detected in a font.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,10 +84,8 @@ pub fn detect_color_formats(raw_data: &[u8]) -> Vec<ColorGlyphFormat> {
                     raw_data.get(offset + 11).copied().unwrap_or(0),
                 ]) as usize;
                 if table_offset + 2 <= raw_data.len() {
-                    let version = u16::from_be_bytes([
-                        raw_data[table_offset],
-                        raw_data[table_offset + 1],
-                    ]);
+                    let version =
+                        u16::from_be_bytes([raw_data[table_offset], raw_data[table_offset + 1]]);
                     if version >= 1 {
                         formats.push(ColorGlyphFormat::ColrV1);
                     } else {
@@ -136,7 +134,8 @@ pub fn rasterize_colr_v0(
     let raw_data = &face.raw_data;
     let formats = detect_color_formats(raw_data);
 
-    if !formats.contains(&ColorGlyphFormat::ColrV0) && !formats.contains(&ColorGlyphFormat::ColrV1) {
+    if !formats.contains(&ColorGlyphFormat::ColrV0) && !formats.contains(&ColorGlyphFormat::ColrV1)
+    {
         return None;
     }
 
@@ -153,8 +152,10 @@ pub fn rasterize_colr_v0(
     }
 
     let num_base = u16::from_be_bytes([colr_data[2], colr_data[3]]) as usize;
-    let base_offset = u32::from_be_bytes([colr_data[4], colr_data[5], colr_data[6], colr_data[7]]) as usize;
-    let layer_offset = u32::from_be_bytes([colr_data[8], colr_data[9], colr_data[10], colr_data[11]]) as usize;
+    let base_offset =
+        u32::from_be_bytes([colr_data[4], colr_data[5], colr_data[6], colr_data[7]]) as usize;
+    let layer_offset =
+        u32::from_be_bytes([colr_data[8], colr_data[9], colr_data[10], colr_data[11]]) as usize;
     let _num_layers = u16::from_be_bytes([colr_data[12], colr_data[13]]);
 
     // Each BaseGlyphRecord: uint16 glyphID, uint16 firstLayerIndex, uint16 numLayers
@@ -164,7 +165,9 @@ pub fn rasterize_colr_v0(
 
     for i in 0..num_base {
         let off = base_offset + i * 6;
-        if off + 6 > colr_data.len() { break; }
+        if off + 6 > colr_data.len() {
+            break;
+        }
         let gid = u16::from_be_bytes([colr_data[off], colr_data[off + 1]]);
         if gid as u32 == glyph_id {
             first_layer = u16::from_be_bytes([colr_data[off + 2], colr_data[off + 3]]);
@@ -197,7 +200,9 @@ pub fn rasterize_colr_v0(
     let bounds = outline.px_bounds();
     let w = bounds.width().ceil() as u32;
     let h = bounds.height().ceil() as u32;
-    if w == 0 || h == 0 { return None; }
+    if w == 0 || h == 0 {
+        return None;
+    }
 
     let advance = scaled.h_advance(gid);
     let mut rgba = vec![0u8; (w * h * 4) as usize];
@@ -205,13 +210,19 @@ pub fn rasterize_colr_v0(
     // Composite each layer
     for li in 0..num_glyph_layers {
         let off = layer_offset + (first_layer + li) as usize * 4;
-        if off + 4 > colr_data.len() { break; }
+        if off + 4 > colr_data.len() {
+            break;
+        }
         let layer_gid = u16::from_be_bytes([colr_data[off], colr_data[off + 1]]);
         let palette_idx = u16::from_be_bytes([colr_data[off + 2], colr_data[off + 3]]);
 
-        let color = palette.get(palette_idx as usize).copied().unwrap_or([0, 0, 0, 255]);
+        let color = palette
+            .get(palette_idx as usize)
+            .copied()
+            .unwrap_or([0, 0, 0, 255]);
 
-        let layer_glyph = ab_glyph::GlyphId(layer_gid).with_scale_and_position(scale, ab_glyph::point(0.0, ascent));
+        let layer_glyph = ab_glyph::GlyphId(layer_gid)
+            .with_scale_and_position(scale, ab_glyph::point(0.0, ascent));
         if let Some(layer_outline) = face.font.outline_glyph(layer_glyph) {
             let layer_bounds = layer_outline.px_bounds();
             layer_outline.draw(|px, py, coverage| {
@@ -226,9 +237,15 @@ pub fn rasterize_colr_v0(
                         let dst_a = rgba[idx + 3] as f32 / 255.0;
                         let out_a = src_a + dst_a * (1.0 - src_a);
                         if out_a > 0.0 {
-                            rgba[idx]     = ((color[0] as f32 * src_a + rgba[idx]     as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
-                            rgba[idx + 1] = ((color[1] as f32 * src_a + rgba[idx + 1] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
-                            rgba[idx + 2] = ((color[2] as f32 * src_a + rgba[idx + 2] as f32 * dst_a * (1.0 - src_a)) / out_a) as u8;
+                            rgba[idx] = ((color[0] as f32 * src_a
+                                + rgba[idx] as f32 * dst_a * (1.0 - src_a))
+                                / out_a) as u8;
+                            rgba[idx + 1] = ((color[1] as f32 * src_a
+                                + rgba[idx + 1] as f32 * dst_a * (1.0 - src_a))
+                                / out_a) as u8;
+                            rgba[idx + 2] = ((color[2] as f32 * src_a
+                                + rgba[idx + 2] as f32 * dst_a * (1.0 - src_a))
+                                / out_a) as u8;
                             rgba[idx + 3] = (out_a * 255.0) as u8;
                         }
                     }
@@ -250,11 +267,7 @@ pub fn rasterize_colr_v0(
 }
 
 /// Rasterize an sbix embedded bitmap at the closest available strike size.
-pub fn rasterize_sbix(
-    raw_data: &[u8],
-    glyph_id: u32,
-    size_px: f32,
-) -> Option<ColorGlyph> {
+pub fn rasterize_sbix(raw_data: &[u8], glyph_id: u32, size_px: f32) -> Option<ColorGlyph> {
     let sbix_data = find_table_data(raw_data, b"sbix")?;
     if sbix_data.len() < 8 {
         return None;
@@ -265,7 +278,8 @@ pub fn rasterize_sbix(
     //   uint16 flags
     //   uint32 numStrikes
     //   offset32[] strikeOffsets
-    let num_strikes = u32::from_be_bytes([sbix_data[4], sbix_data[5], sbix_data[6], sbix_data[7]]) as usize;
+    let num_strikes =
+        u32::from_be_bytes([sbix_data[4], sbix_data[5], sbix_data[6], sbix_data[7]]) as usize;
 
     // Find the best strike (closest ppem to target size)
     let mut best_strike_off = 0usize;
@@ -275,12 +289,18 @@ pub fn rasterize_sbix(
 
     for i in 0..num_strikes {
         let so_offset = 8 + i * 4;
-        if so_offset + 4 > sbix_data.len() { break; }
+        if so_offset + 4 > sbix_data.len() {
+            break;
+        }
         let strike_offset = u32::from_be_bytes([
-            sbix_data[so_offset], sbix_data[so_offset + 1],
-            sbix_data[so_offset + 2], sbix_data[so_offset + 3],
+            sbix_data[so_offset],
+            sbix_data[so_offset + 1],
+            sbix_data[so_offset + 2],
+            sbix_data[so_offset + 3],
         ]) as usize;
-        if strike_offset + 4 > sbix_data.len() { continue; }
+        if strike_offset + 4 > sbix_data.len() {
+            continue;
+        }
         let ppem = u16::from_be_bytes([sbix_data[strike_offset], sbix_data[strike_offset + 1]]);
         let dist = (ppem as i32 - target_ppem as i32).unsigned_abs() as u16;
         if dist < best_dist {
@@ -366,8 +386,6 @@ pub fn is_emoji_codepoint(ch: char) -> bool {
         0x1FA70..=0x1FAFF |
         // Regional Indicator Symbols
         0x1F1E0..=0x1F1FF |
-        // Skin tone modifiers
-        0x1F3FB..=0x1F3FF |
         // ZWJ + variation selectors commonly used in emoji
         0xFE0E..=0xFE0F |
         0x200D
@@ -378,19 +396,27 @@ pub fn is_emoji_codepoint(ch: char) -> bool {
 
 /// Locate a table's raw data within the font file.
 fn find_table_data<'a>(raw_data: &'a [u8], tag: &[u8; 4]) -> Option<&'a [u8]> {
-    if raw_data.len() < 12 { return None; }
+    if raw_data.len() < 12 {
+        return None;
+    }
     let num_tables = u16::from_be_bytes([raw_data[4], raw_data[5]]) as usize;
     for i in 0..num_tables {
         let offset = 12 + i * 16;
-        if offset + 16 > raw_data.len() { break; }
+        if offset + 16 > raw_data.len() {
+            break;
+        }
         if &raw_data[offset..offset + 4] == tag {
             let table_offset = u32::from_be_bytes([
-                raw_data[offset + 8], raw_data[offset + 9],
-                raw_data[offset + 10], raw_data[offset + 11],
+                raw_data[offset + 8],
+                raw_data[offset + 9],
+                raw_data[offset + 10],
+                raw_data[offset + 11],
             ]) as usize;
             let table_length = u32::from_be_bytes([
-                raw_data[offset + 12], raw_data[offset + 13],
-                raw_data[offset + 14], raw_data[offset + 15],
+                raw_data[offset + 12],
+                raw_data[offset + 13],
+                raw_data[offset + 14],
+                raw_data[offset + 15],
             ]) as usize;
             if table_offset + table_length <= raw_data.len() {
                 return Some(&raw_data[table_offset..table_offset + table_length]);
@@ -405,7 +431,9 @@ fn parse_cpal_palette(raw_data: &[u8], palette_index: u16) -> Vec<[u8; 4]> {
     let Some(cpal) = find_table_data(raw_data, b"CPAL") else {
         return vec![[0, 0, 0, 255]];
     };
-    if cpal.len() < 12 { return vec![[0, 0, 0, 255]]; }
+    if cpal.len() < 12 {
+        return vec![[0, 0, 0, 255]];
+    }
 
     let _version = u16::from_be_bytes([cpal[0], cpal[1]]);
     let num_entries = u16::from_be_bytes([cpal[2], cpal[3]]) as usize;

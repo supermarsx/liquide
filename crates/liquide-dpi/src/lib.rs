@@ -11,27 +11,27 @@
 //! - [`PlatformDpi`] — platform-specific DPI detection (Windows/Linux/macOS)
 //! - [`snap_to_pixel`] / [`snap_to_pixel_with`] — pixel-perfect coordinate snapping
 
-pub mod scale;
+pub mod cursor_scale;
+pub mod fractional;
 pub mod geometry;
 pub mod monitor;
-pub mod platform;
-pub mod fractional;
 pub mod per_monitor;
-pub mod text_scaling;
-pub mod cursor_scale;
-pub mod xsettings;
+pub mod platform;
+pub mod scale;
 #[cfg(test)]
 mod tests;
+pub mod text_scaling;
+pub mod xsettings;
 
 // Re-export primary types at crate root.
+pub use cursor_scale::CursorScaleConfig;
+pub use fractional::{FractionalScale, ViewportTransform};
 pub use geometry::{
     LogicalPoint, LogicalRect, LogicalSize, PhysicalPoint, PhysicalRect, PhysicalSize,
 };
 pub use monitor::{DpiAware, MonitorDpi, MonitorId};
-pub use platform::PlatformDpi;
-pub use scale::{snap_to_pixel, snap_to_pixel_with, DpiScale, ScaleRounding, STANDARD_DPI};
-pub use fractional::{FractionalScale, ViewportTransform};
 pub use per_monitor::{MonitorScale, ScaleEvent, ScaleManager};
+pub use platform::PlatformDpi;
+pub use scale::{DpiScale, STANDARD_DPI, ScaleRounding, snap_to_pixel, snap_to_pixel_with};
 pub use text_scaling::{HintingMode, TextScaleFactor};
-pub use cursor_scale::CursorScaleConfig;
 pub use xsettings::XSettings;

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use liquide_interop::desktop_entry::DesktopEntry;
 use liquide_interop::mime::{MimeAssociation, MimeDatabase, MimeSource, MimeType};

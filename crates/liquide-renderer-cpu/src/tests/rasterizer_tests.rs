@@ -42,7 +42,9 @@ fn fill_rounded_rect_basic() {
 #[test]
 fn blit_opaque_basic() {
     let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
-    let src = [255u8, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255]; // 2x2 blue pixels (BGRA)
+    let src = [
+        255u8, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+    ]; // 2x2 blue pixels (BGRA)
     blit_opaque(&mut fb, &src, 2, 2, 5, 5);
     let c = fb.get_pixel(5, 5);
     assert_eq!(c.b, 255);
@@ -58,8 +60,8 @@ fn radial_gradient_center_vs_edge() {
         center: Point::new(32.0, 32.0),
         radius: 30.0,
         stops: vec![
-            (0.0, Color::new(255, 0, 0, 255)),  // red at center
-            (1.0, Color::new(0, 0, 255, 255)),  // blue at edge
+            (0.0, Color::new(255, 0, 0, 255)), // red at center
+            (1.0, Color::new(0, 0, 255, 255)), // blue at edge
         ],
     };
 
@@ -74,7 +76,11 @@ fn radial_gradient_center_vs_edge() {
     // Center pixel should be close to red
     let center = fb.get_pixel(32, 32);
     assert!(center.r > 200, "center should be red-ish: got {:?}", center);
-    assert!(center.b < 50, "center should have low blue: got {:?}", center);
+    assert!(
+        center.b < 50,
+        "center should have low blue: got {:?}",
+        center
+    );
 
     // Edge pixel (at radius distance from center) should be close to blue
     let edge = fb.get_pixel(62, 32);
@@ -90,10 +96,7 @@ fn radial_gradient_in_rounded_rect() {
     let gradient = Gradient::Radial {
         center: Point::new(32.0, 32.0),
         radius: 20.0,
-        stops: vec![
-            (0.0, Color::WHITE),
-            (1.0, Color::BLACK),
-        ],
+        stops: vec![(0.0, Color::WHITE), (1.0, Color::BLACK)],
     };
 
     fill_rounded_rect(
@@ -197,9 +200,17 @@ fn fill_rect_gradient_linear() {
     let left = fb.get_pixel(11, 30);
     let right = fb.get_pixel(49, 30);
     // Left side should be more red
-    assert!(left.r > left.b, "left side should be more red: got {:?}", left);
+    assert!(
+        left.r > left.b,
+        "left side should be more red: got {:?}",
+        left
+    );
     // Right side should be more blue
-    assert!(right.b > right.r, "right side should be more blue: got {:?}", right);
+    assert!(
+        right.b > right.r,
+        "right side should be more blue: got {:?}",
+        right
+    );
 }
 
 #[test]
@@ -219,7 +230,11 @@ fn fill_circle_basic() {
     // Center pixel should be green
     let center = fb.get_pixel(32, 32);
     assert_eq!(center.g, 200, "center should be green: got {:?}", center);
-    assert_eq!(center.a, 255, "center alpha should be 255: got {:?}", center);
+    assert_eq!(
+        center.a, 255,
+        "center alpha should be 255: got {:?}",
+        center
+    );
 
     // Corner pixel should be untouched (black/transparent)
     let corner = fb.get_pixel(0, 0);
@@ -234,8 +249,8 @@ fn blit_alpha_with_opacity() {
     // 4x4 red image in BGRA
     let mut src = vec![0u8; 4 * 4 * 4];
     for px in src.chunks_exact_mut(4) {
-        px[0] = 0;   // B
-        px[1] = 0;   // G
+        px[0] = 0; // B
+        px[1] = 0; // G
         px[2] = 255; // R
         px[3] = 255; // A
     }
@@ -244,8 +259,11 @@ fn blit_alpha_with_opacity() {
 
     // With 50% opacity on black bg: result red should be ~128
     let p = fb.get_pixel(6, 6);
-    assert!(p.r > 100 && p.r < 160,
-        "blended pixel should be ~128 red: got {:?}", p);
+    assert!(
+        p.r > 100 && p.r < 160,
+        "blended pixel should be ~128 red: got {:?}",
+        p
+    );
     assert_eq!(p.g, 0, "blended pixel green should be 0: got {:?}", p);
 }
 
@@ -261,21 +279,23 @@ fn blit_scaled_basic() {
     ];
 
     // Scale 2x2 up to 8x8 region at position (4, 4)
-    blit_scaled(
-        &mut fb,
-        &src,
-        2,
-        2,
-        Rect::new(4.0, 4.0, 8.0, 8.0),
-    );
+    blit_scaled(&mut fb, &src, 2, 2, Rect::new(4.0, 4.0, 8.0, 8.0));
 
     // Center of the scaled region should be red
     let center = fb.get_pixel(8, 8);
-    assert!(center.r > 200, "center of scaled blit should be red: got {:?}", center);
+    assert!(
+        center.r > 200,
+        "center of scaled blit should be red: got {:?}",
+        center
+    );
 
     // Outside the scaled region should be untouched
     let outside = fb.get_pixel(0, 0);
-    assert_eq!(outside.r, 0, "outside of scaled region should be untouched: got {:?}", outside);
+    assert_eq!(
+        outside.r, 0,
+        "outside of scaled region should be untouched: got {:?}",
+        outside
+    );
 }
 
 #[test]
@@ -292,7 +312,11 @@ fn stroke_rect_width() {
 
     // The top edge should have colored pixels
     let top_edge = fb.get_pixel(32, 10);
-    assert!(top_edge.b > 200, "top edge should be blue: got {:?}", top_edge);
+    assert!(
+        top_edge.b > 200,
+        "top edge should be blue: got {:?}",
+        top_edge
+    );
 
     // Center should be untouched
     let center = fb.get_pixel(32, 32);
@@ -316,7 +340,11 @@ fn stroke_rounded_rect_width() {
 
     // Top edge center should have colored pixels
     let top_edge = fb.get_pixel(32, 10);
-    assert!(top_edge.r > 200, "top border should be red: got {:?}", top_edge);
+    assert!(
+        top_edge.r > 200,
+        "top border should be red: got {:?}",
+        top_edge
+    );
 
     // Center should be untouched
     let center = fb.get_pixel(32, 32);

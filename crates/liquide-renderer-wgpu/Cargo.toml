@@ -9,6 +9,7 @@ description = "GPU-accelerated renderer for LiquiDE using wgpu (D3D12/Vulkan/Met
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 wgpu = "24"
 bytemuck = { version = "1", features = ["derive"] }
 log = "0.4"

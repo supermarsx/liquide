@@ -1,5 +1,5 @@
-use liquide_dock::*;
 use liquide_compositor::geometry::Rect;
+use liquide_dock::*;
 
 // ========== Dock::new ==========
 

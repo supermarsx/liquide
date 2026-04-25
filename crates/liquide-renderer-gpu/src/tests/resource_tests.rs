@@ -122,7 +122,13 @@ fn default_budget_is_256mb() {
 fn allocation_purpose_display() {
     assert_eq!(AllocationPurpose::TextureAtlas.to_string(), "texture-atlas");
     assert_eq!(AllocationPurpose::RenderTarget.to_string(), "render-target");
-    assert_eq!(AllocationPurpose::StagingBuffer.to_string(), "staging-buffer");
-    assert_eq!(AllocationPurpose::ComputeBuffer.to_string(), "compute-buffer");
+    assert_eq!(
+        AllocationPurpose::StagingBuffer.to_string(),
+        "staging-buffer"
+    );
+    assert_eq!(
+        AllocationPurpose::ComputeBuffer.to_string(),
+        "compute-buffer"
+    );
     assert_eq!(AllocationPurpose::GlyphCache.to_string(), "glyph-cache");
 }

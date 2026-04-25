@@ -38,7 +38,7 @@ mod win32_impl {
     use crate::keyboard::{KeyCode, KeyEvent, KeyState, Modifiers};
     use crate::mouse::{ButtonState, MouseButton, MouseEvent};
 
-    use super::{timestamp_us, InputDevice};
+    use super::{InputDevice, timestamp_us};
 
     // ── FFI declarations ────────────────────────────────────────────────
 
@@ -56,24 +56,60 @@ mod win32_impl {
     // ── VK -> KeyCode mapping ───────────────────────────────────────────
 
     const DIGITS: [KeyCode; 10] = [
-        KeyCode::Digit0, KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
-        KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7,
-        KeyCode::Digit8, KeyCode::Digit9,
+        KeyCode::Digit0,
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
     ];
 
     const LETTERS: [KeyCode; 26] = [
-        KeyCode::A, KeyCode::B, KeyCode::C, KeyCode::D, KeyCode::E,
-        KeyCode::F, KeyCode::G, KeyCode::H, KeyCode::I, KeyCode::J,
-        KeyCode::K, KeyCode::L, KeyCode::M, KeyCode::N, KeyCode::O,
-        KeyCode::P, KeyCode::Q, KeyCode::R, KeyCode::S, KeyCode::T,
-        KeyCode::U, KeyCode::V, KeyCode::W, KeyCode::X, KeyCode::Y,
+        KeyCode::A,
+        KeyCode::B,
+        KeyCode::C,
+        KeyCode::D,
+        KeyCode::E,
+        KeyCode::F,
+        KeyCode::G,
+        KeyCode::H,
+        KeyCode::I,
+        KeyCode::J,
+        KeyCode::K,
+        KeyCode::L,
+        KeyCode::M,
+        KeyCode::N,
+        KeyCode::O,
+        KeyCode::P,
+        KeyCode::Q,
+        KeyCode::R,
+        KeyCode::S,
+        KeyCode::T,
+        KeyCode::U,
+        KeyCode::V,
+        KeyCode::W,
+        KeyCode::X,
+        KeyCode::Y,
         KeyCode::Z,
     ];
 
     const FKEYS: [KeyCode; 12] = [
-        KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4,
-        KeyCode::F5, KeyCode::F6, KeyCode::F7, KeyCode::F8,
-        KeyCode::F9, KeyCode::F10, KeyCode::F11, KeyCode::F12,
+        KeyCode::F1,
+        KeyCode::F2,
+        KeyCode::F3,
+        KeyCode::F4,
+        KeyCode::F5,
+        KeyCode::F6,
+        KeyCode::F7,
+        KeyCode::F8,
+        KeyCode::F9,
+        KeyCode::F10,
+        KeyCode::F11,
+        KeyCode::F12,
     ];
 
     fn vk_to_keycode(vk: u32) -> Option<KeyCode> {
@@ -201,8 +237,7 @@ mod win32_impl {
                     Some(k) => k,
                     None => continue,
                 };
-                let is_down =
-                    (unsafe { GetAsyncKeyState(vk as i32) } as u16) & 0x8000 != 0;
+                let is_down = (unsafe { GetAsyncKeyState(vk as i32) } as u16) & 0x8000 != 0;
                 let was_down = self.prev_key_states[vk as usize];
                 if is_down != was_down {
                     self.prev_key_states[vk as usize] = is_down;
@@ -212,21 +247,15 @@ mod win32_impl {
                     } else {
                         KeyState::Released
                     };
-                    self.pending.push_back(InputEvent::Keyboard(
-                        KeyEvent::new(key, state, mods, vk, now),
-                    ));
+                    self.pending.push_back(InputEvent::Keyboard(KeyEvent::new(
+                        key, state, mods, vk, now,
+                    )));
                 }
             }
         }
 
-        fn poll_mouse_button(
-            &mut self,
-            vk: i32,
-            prev: &mut bool,
-            button: MouseButton,
-        ) {
-            let is_down =
-                (unsafe { GetAsyncKeyState(vk) } as u16) & 0x8000 != 0;
+        fn poll_mouse_button(&mut self, vk: i32, prev: &mut bool, button: MouseButton) {
+            let is_down = (unsafe { GetAsyncKeyState(vk) } as u16) & 0x8000 != 0;
             if is_down != *prev {
                 *prev = is_down;
                 let state = if is_down {
@@ -234,12 +263,13 @@ mod win32_impl {
                 } else {
                     ButtonState::Released
                 };
-                self.pending.push_back(InputEvent::Mouse(MouseEvent::Button {
-                    button,
-                    state,
-                    x: self.last_cursor_x as f32,
-                    y: self.last_cursor_y as f32,
-                }));
+                self.pending
+                    .push_back(InputEvent::Mouse(MouseEvent::Button {
+                        button,
+                        state,
+                        x: self.last_cursor_x as f32,
+                        y: self.last_cursor_y as f32,
+                    }));
             }
         }
 
@@ -247,8 +277,7 @@ mod win32_impl {
             // Cursor position
             let mut pt = POINT { x: 0, y: 0 };
             let ok = unsafe { GetCursorPos(&mut pt) };
-            if ok != 0 && (pt.x != self.last_cursor_x || pt.y != self.last_cursor_y)
-            {
+            if ok != 0 && (pt.x != self.last_cursor_x || pt.y != self.last_cursor_y) {
                 self.last_cursor_x = pt.x;
                 self.last_cursor_y = pt.y;
                 self.pending.push_back(InputEvent::Mouse(MouseEvent::Move {
@@ -509,13 +538,8 @@ mod evdev_impl {
             let buf_size = event_size * MAX_EVENTS;
             let mut buf = vec![0u8; buf_size];
 
-            let bytes_read = unsafe {
-                read(
-                    self.fd,
-                    buf.as_mut_ptr() as *mut std::ffi::c_void,
-                    buf_size,
-                )
-            };
+            let bytes_read =
+                unsafe { read(self.fd, buf.as_mut_ptr() as *mut std::ffi::c_void, buf_size) };
             if bytes_read <= 0 {
                 return;
             }
@@ -524,9 +548,7 @@ mod evdev_impl {
             for i in 0..count {
                 let offset = i * event_size;
                 let raw: LinuxInputEvent = unsafe {
-                    std::ptr::read_unaligned(
-                        buf.as_ptr().add(offset) as *const LinuxInputEvent,
-                    )
+                    std::ptr::read_unaligned(buf.as_ptr().add(offset) as *const LinuxInputEvent)
                 };
                 self.translate_event(&raw);
             }
@@ -591,12 +613,13 @@ mod evdev_impl {
                     } else {
                         ButtonState::Released
                     };
-                    self.pending.push_back(InputEvent::Mouse(MouseEvent::Button {
-                        button,
-                        state,
-                        x: self.cursor_x,
-                        y: self.cursor_y,
-                    }));
+                    self.pending
+                        .push_back(InputEvent::Mouse(MouseEvent::Button {
+                            button,
+                            state,
+                            x: self.cursor_x,
+                            y: self.cursor_y,
+                        }));
                 }
                 EV_KEY => {
                     // Keyboard key
@@ -647,24 +670,14 @@ mod evdev_impl {
                             // New touch
                             self.pending.push_back(InputEvent::Touch(TouchEvent::new(
                                 TouchPhase::Begin,
-                                TouchPoint::new(
-                                    slot as u32,
-                                    self.mt_x[slot],
-                                    self.mt_y[slot],
-                                    1.0,
-                                ),
+                                TouchPoint::new(slot as u32, self.mt_x[slot], self.mt_y[slot], 1.0),
                                 now_us,
                             )));
                         } else if raw.value < 0 && prev_id >= 0 {
                             // Touch ended
                             self.pending.push_back(InputEvent::Touch(TouchEvent::new(
                                 TouchPhase::End,
-                                TouchPoint::new(
-                                    slot as u32,
-                                    self.mt_x[slot],
-                                    self.mt_y[slot],
-                                    0.0,
-                                ),
+                                TouchPoint::new(slot as u32, self.mt_x[slot], self.mt_y[slot], 0.0),
                                 now_us,
                             )));
                         }
@@ -675,12 +688,7 @@ mod evdev_impl {
                         if self.mt_tracking_ids[slot] >= 0 {
                             self.pending.push_back(InputEvent::Touch(TouchEvent::new(
                                 TouchPhase::Move,
-                                TouchPoint::new(
-                                    slot as u32,
-                                    self.mt_x[slot],
-                                    self.mt_y[slot],
-                                    1.0,
-                                ),
+                                TouchPoint::new(slot as u32, self.mt_x[slot], self.mt_y[slot], 1.0),
                                 now_us,
                             )));
                         }
@@ -691,12 +699,7 @@ mod evdev_impl {
                         if self.mt_tracking_ids[slot] >= 0 {
                             self.pending.push_back(InputEvent::Touch(TouchEvent::new(
                                 TouchPhase::Move,
-                                TouchPoint::new(
-                                    slot as u32,
-                                    self.mt_x[slot],
-                                    self.mt_y[slot],
-                                    1.0,
-                                ),
+                                TouchPoint::new(slot as u32, self.mt_x[slot], self.mt_y[slot], 1.0),
                                 now_us,
                             )));
                         }
@@ -750,7 +753,7 @@ mod macos_impl {
     use crate::keyboard::{KeyCode, KeyEvent, KeyState, Modifiers};
     use crate::mouse::{ButtonState, MouseButton, MouseEvent};
 
-    use super::{timestamp_us, InputDevice};
+    use super::{InputDevice, timestamp_us};
 
     // ── FFI declarations ────────────────────────────────────────────────
 
@@ -768,9 +771,7 @@ mod macos_impl {
     unsafe extern "C" {
         fn CGEventSourceKeyState(source_state: i32, keycode: u16) -> bool;
         fn CGEventSourceButtonState(source_state: i32, button: u32) -> bool;
-        fn CGEventCreate(
-            source: *const std::ffi::c_void,
-        ) -> *mut std::ffi::c_void;
+        fn CGEventCreate(source: *const std::ffi::c_void) -> *mut std::ffi::c_void;
         fn CGEventGetLocation(event: *const std::ffi::c_void) -> CGPoint;
     }
 
@@ -937,9 +938,7 @@ mod macos_impl {
                     Some(k) => k,
                     None => continue,
                 };
-                let is_down = unsafe {
-                    CGEventSourceKeyState(COMBINED_SESSION_STATE, vk)
-                };
+                let is_down = unsafe { CGEventSourceKeyState(COMBINED_SESSION_STATE, vk) };
                 let was_down = self.prev_key_states[vk as usize];
                 if is_down != was_down {
                     self.prev_key_states[vk as usize] = is_down;
@@ -949,9 +948,9 @@ mod macos_impl {
                     } else {
                         KeyState::Released
                     };
-                    self.pending.push_back(InputEvent::Keyboard(
-                        KeyEvent::new(key, state, mods, vk as u32, now),
-                    ));
+                    self.pending.push_back(InputEvent::Keyboard(KeyEvent::new(
+                        key, state, mods, vk as u32, now,
+                    )));
                 }
             }
         }
@@ -977,57 +976,54 @@ mod macos_impl {
             }
 
             // Mouse buttons: 0=left, 1=right, 2=middle.
-            let lb = unsafe {
-                CGEventSourceButtonState(COMBINED_SESSION_STATE, 0)
-            };
-            let rb = unsafe {
-                CGEventSourceButtonState(COMBINED_SESSION_STATE, 1)
-            };
-            let mb = unsafe {
-                CGEventSourceButtonState(COMBINED_SESSION_STATE, 2)
-            };
+            let lb = unsafe { CGEventSourceButtonState(COMBINED_SESSION_STATE, 0) };
+            let rb = unsafe { CGEventSourceButtonState(COMBINED_SESSION_STATE, 1) };
+            let mb = unsafe { CGEventSourceButtonState(COMBINED_SESSION_STATE, 2) };
 
             let cx = self.last_cursor_x as f32;
             let cy = self.last_cursor_y as f32;
 
             if lb != self.prev_lbutton {
                 self.prev_lbutton = lb;
-                self.pending.push_back(InputEvent::Mouse(MouseEvent::Button {
-                    button: MouseButton::Left,
-                    state: if lb {
-                        ButtonState::Pressed
-                    } else {
-                        ButtonState::Released
-                    },
-                    x: cx,
-                    y: cy,
-                }));
+                self.pending
+                    .push_back(InputEvent::Mouse(MouseEvent::Button {
+                        button: MouseButton::Left,
+                        state: if lb {
+                            ButtonState::Pressed
+                        } else {
+                            ButtonState::Released
+                        },
+                        x: cx,
+                        y: cy,
+                    }));
             }
             if rb != self.prev_rbutton {
                 self.prev_rbutton = rb;
-                self.pending.push_back(InputEvent::Mouse(MouseEvent::Button {
-                    button: MouseButton::Right,
-                    state: if rb {
-                        ButtonState::Pressed
-                    } else {
-                        ButtonState::Released
-                    },
-                    x: cx,
-                    y: cy,
-                }));
+                self.pending
+                    .push_back(InputEvent::Mouse(MouseEvent::Button {
+                        button: MouseButton::Right,
+                        state: if rb {
+                            ButtonState::Pressed
+                        } else {
+                            ButtonState::Released
+                        },
+                        x: cx,
+                        y: cy,
+                    }));
             }
             if mb != self.prev_mbutton {
                 self.prev_mbutton = mb;
-                self.pending.push_back(InputEvent::Mouse(MouseEvent::Button {
-                    button: MouseButton::Middle,
-                    state: if mb {
-                        ButtonState::Pressed
-                    } else {
-                        ButtonState::Released
-                    },
-                    x: cx,
-                    y: cy,
-                }));
+                self.pending
+                    .push_back(InputEvent::Mouse(MouseEvent::Button {
+                        button: MouseButton::Middle,
+                        state: if mb {
+                            ButtonState::Pressed
+                        } else {
+                            ButtonState::Released
+                        },
+                        x: cx,
+                        y: cy,
+                    }));
             }
         }
     }

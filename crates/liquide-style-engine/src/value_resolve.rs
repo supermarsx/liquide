@@ -696,7 +696,10 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                     }
                     "translate3d" => {
                         let parts: Vec<&str> = args.split(',').collect();
-                        let x = parts.first().and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                        let x = parts
+                            .first()
+                            .and_then(|s| parse_px(s.trim()))
+                            .unwrap_or(0.0);
                         let y = parts.get(1).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
                         let z = parts.get(2).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
                         result.push(Transform::Translate3d(x, y, z));
@@ -708,10 +711,22 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                     }
                     "rotate3d" => {
                         let parts: Vec<&str> = args.split(',').collect();
-                        let x = parts.first().and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
-                        let y = parts.get(1).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
-                        let z = parts.get(2).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
-                        let angle = parts.get(3).and_then(|s| parse_degrees(s.trim())).unwrap_or(0.0);
+                        let x = parts
+                            .first()
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(0.0);
+                        let y = parts
+                            .get(1)
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(0.0);
+                        let z = parts
+                            .get(2)
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(0.0);
+                        let angle = parts
+                            .get(3)
+                            .and_then(|s| parse_degrees(s.trim()))
+                            .unwrap_or(0.0);
                         result.push(Transform::Rotate3d(x, y, z, angle));
                     }
                     "rotateX" => {
@@ -731,9 +746,18 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                     }
                     "scale3d" => {
                         let parts: Vec<&str> = args.split(',').collect();
-                        let x = parts.first().and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
-                        let y = parts.get(1).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
-                        let z = parts.get(2).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(1.0);
+                        let x = parts
+                            .first()
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(1.0);
+                        let y = parts
+                            .get(1)
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(1.0);
+                        let z = parts
+                            .get(2)
+                            .and_then(|s| s.trim().parse::<f32>().ok())
+                            .unwrap_or(1.0);
                         result.push(Transform::Scale3d(x, y, z));
                     }
                     "scaleZ" => {
@@ -816,26 +840,26 @@ fn parse_single_track(token: &str) -> Option<TrackSize> {
 /// Also handles repeat() functions: repeat(3, 100px), repeat(auto-fill, 100px), repeat(auto-fit, minmax(100px, 1fr))
 pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
     use crate::computed::RepeatMode;
-    
+
     let css = css.trim();
     if css.is_empty() {
         return Vec::new();
     }
-    
+
     let mut result = Vec::new();
     let mut i = 0;
     let chars: Vec<char> = css.chars().collect();
-    
+
     while i < chars.len() {
         // Skip whitespace
         while i < chars.len() && chars[i].is_whitespace() {
             i += 1;
         }
-        
+
         if i >= chars.len() {
             break;
         }
-        
+
         // Check for repeat() function
         if css[i..].to_lowercase().starts_with("repeat(") {
             // Find matching closing paren
@@ -852,20 +876,20 @@ pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
                     end += 1;
                 }
             }
-            
+
             if depth == 0 {
                 let inner: String = chars[start..end].iter().collect();
                 // Parse repeat() arguments: mode, tracks
                 if let Some(comma_idx) = find_first_comma(&inner) {
                     let mode_str = inner[..comma_idx].trim();
                     let tracks_str = inner[comma_idx + 1..].trim();
-                    
+
                     let mode = match mode_str.to_lowercase().as_str() {
                         "auto-fill" => Some(RepeatMode::AutoFill),
                         "auto-fit" => Some(RepeatMode::AutoFit),
                         _ => mode_str.parse::<u32>().ok().map(RepeatMode::Count),
                     };
-                    
+
                     if let Some(mode) = mode {
                         // Parse the tracks inside repeat()
                         let inner_tracks = if tracks_str.starts_with("minmax(") {
@@ -874,9 +898,12 @@ pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
                         } else {
                             parse_track_list_simple(tracks_str)
                         };
-                        
+
                         if !inner_tracks.is_empty() {
-                            result.push(TrackSize::Repeat { mode, tracks: inner_tracks });
+                            result.push(TrackSize::Repeat {
+                                mode,
+                                tracks: inner_tracks,
+                            });
                         }
                     }
                 }
@@ -884,7 +911,7 @@ pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
                 continue;
             }
         }
-        
+
         // Check for minmax() function
         if css[i..].to_lowercase().starts_with("minmax(") {
             let start = i + 7;
@@ -900,7 +927,7 @@ pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
                     end += 1;
                 }
             }
-            
+
             if depth == 0 {
                 let inner: String = chars[i..=end].iter().collect();
                 if let Some(track) = parse_minmax(&inner) {
@@ -910,13 +937,13 @@ pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
                 continue;
             }
         }
-        
+
         // Regular token - find end
         let start = i;
         while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' {
             i += 1;
         }
-        
+
         if i > start {
             let token: String = chars[start..i].iter().collect();
             if let Some(track) = parse_single_track(&token) {
@@ -924,7 +951,7 @@ pub fn parse_track_list(css: &str) -> Vec<TrackSize> {
             }
         }
     }
-    
+
     result
 }
 
@@ -948,23 +975,24 @@ fn parse_minmax(s: &str) -> Option<TrackSize> {
     if !s.to_lowercase().starts_with("minmax(") || !s.ends_with(')') {
         return None;
     }
-    
+
     let inner = &s[7..s.len() - 1];
     let comma_idx = find_first_comma(inner)?;
-    
+
     let min_str = inner[..comma_idx].trim();
     let max_str = inner[comma_idx + 1..].trim();
-    
+
     let min = parse_single_track(min_str)?;
     let max = parse_single_track(max_str)?;
-    
+
     Some(TrackSize::MinMax(Box::new(min), Box::new(max)))
 }
 
 /// Simple track list parser for space-separated tokens (no functions).
 fn parse_track_list_simple(css: &str) -> Vec<TrackSize> {
     css.split_whitespace()
-        .filter_map(|token| parse_single_track(token))        .collect()
+        .filter_map(|token| parse_single_track(token))
+        .collect()
 }
 
 #[cfg(test)]

@@ -43,7 +43,12 @@ fn test_catalog_load() {
 #[test]
 fn test_catalog_find() {
     let mut c = Catalog::new();
-    c.load(vec![make_package("a", "Alpha", AppCategory::Productivity, false)]);
+    c.load(vec![make_package(
+        "a",
+        "Alpha",
+        AppCategory::Productivity,
+        false,
+    )]);
     assert!(c.find("a").is_some());
     assert!(c.find("z").is_none());
 }

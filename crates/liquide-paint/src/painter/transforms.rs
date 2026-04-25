@@ -28,6 +28,7 @@ pub(crate) fn resolve_origin_dimension(dim: &Dimension, box_size: f32) -> f32 {
 ///
 /// When any 3D transform is present, delegates to `compose_transform_matrix_3d`
 /// and projects back to 2D when `TransformStyle::Flat`.
+#[allow(dead_code)]
 pub(crate) fn compose_transform_matrix(
     transforms: &[Transform],
     origin_x: f32,
@@ -50,11 +51,11 @@ pub(crate) fn compose_transform_matrix_ext(
     origin_x: f32,
     origin_y: f32,
     perspective: &Perspective,
-    transform_style: TransformStyle,
+    _transform_style: TransformStyle,
     backface_visibility: BackfaceVisibility,
 ) -> Affine2D {
-    let has_3d = transforms.iter().any(|t| t.is_3d())
-        || matches!(perspective, Perspective::Length(_));
+    let has_3d =
+        transforms.iter().any(|t| t.is_3d()) || matches!(perspective, Perspective::Length(_));
 
     if has_3d {
         let m4 = compose_transform_matrix_3d(transforms, origin_x, origin_y, perspective);
@@ -121,17 +122,12 @@ pub(crate) fn compose_transform_matrix_3d(
                 // 2D rotate = rotate around Z axis
                 mat4_rotate_z(deg.to_radians())
             }
-            Transform::Rotate3d(x, y, z, deg) => {
-                mat4_rotate_axis(*x, *y, *z, deg.to_radians())
-            }
+            Transform::Rotate3d(x, y, z, deg) => mat4_rotate_axis(*x, *y, *z, deg.to_radians()),
             Transform::Skew(ax, ay) => mat4_skew(ax.to_radians(), ay.to_radians()),
             Transform::Matrix(a, b, c, d, e, f) => {
                 // CSS matrix(a,b,c,d,e,f) → 4×4 (column-major)
                 [
-                    *a, *b, 0.0, 0.0,
-                    *c, *d, 0.0, 0.0,
-                    0.0, 0.0, 1.0, 0.0,
-                    *e, *f, 0.0, 1.0,
+                    *a, *b, 0.0, 0.0, *c, *d, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, *e, *f, 0.0, 1.0,
                 ]
             }
             Transform::Matrix3d(vals) => *vals,
@@ -175,28 +171,19 @@ fn project_4x4_to_affine2d(m: &[f32; 16]) -> Affine2D {
 
 fn mat4_identity() -> [f32; 16] {
     [
-        1.0, 0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        0.0, 0.0, 0.0, 1.0,
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ]
 }
 
 fn mat4_translate(tx: f32, ty: f32, tz: f32) -> [f32; 16] {
     [
-        1.0, 0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        tx,  ty,  tz,  1.0,
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, tx, ty, tz, 1.0,
     ]
 }
 
 fn mat4_scale(sx: f32, sy: f32, sz: f32) -> [f32; 16] {
     [
-        sx,  0.0, 0.0, 0.0,
-        0.0, sy,  0.0, 0.0,
-        0.0, 0.0, sz,  0.0,
-        0.0, 0.0, 0.0, 1.0,
+        sx, 0.0, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 0.0, sz, 0.0, 0.0, 0.0, 0.0, 1.0,
     ]
 }
 
@@ -204,10 +191,7 @@ fn mat4_rotate_z(rad: f32) -> [f32; 16] {
     let c = rad.cos();
     let s = rad.sin();
     [
-        c,   s,   0.0, 0.0,
-       -s,   c,   0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        0.0, 0.0, 0.0, 1.0,
+        c, s, 0.0, 0.0, -s, c, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ]
 }
 
@@ -221,29 +205,65 @@ fn mat4_rotate_axis(x: f32, y: f32, z: f32, rad: f32) -> [f32; 16] {
     let s = rad.sin();
     let t = 1.0 - c;
     [
-        t * nx * nx + c,       t * nx * ny + s * nz,  t * nx * nz - s * ny, 0.0,
-        t * nx * ny - s * nz,  t * ny * ny + c,       t * ny * nz + s * nx, 0.0,
-        t * nx * nz + s * ny,  t * ny * nz - s * nx,  t * nz * nz + c,      0.0,
-        0.0,                   0.0,                   0.0,                  1.0,
+        t * nx * nx + c,
+        t * nx * ny + s * nz,
+        t * nx * nz - s * ny,
+        0.0,
+        t * nx * ny - s * nz,
+        t * ny * ny + c,
+        t * ny * nz + s * nx,
+        0.0,
+        t * nx * nz + s * ny,
+        t * ny * nz - s * nx,
+        t * nz * nz + c,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
     ]
 }
 
 fn mat4_skew(ax: f32, ay: f32) -> [f32; 16] {
     [
-        1.0,      ay.tan(), 0.0, 0.0,
-        ax.tan(), 1.0,      0.0, 0.0,
-        0.0,      0.0,      1.0, 0.0,
-        0.0,      0.0,      0.0, 1.0,
+        1.0,
+        ay.tan(),
+        0.0,
+        0.0,
+        ax.tan(),
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
     ]
 }
 
 fn mat4_perspective(d: f32) -> [f32; 16] {
     // CSS perspective: perspective(d) = matrix where m[11] = -1/d
     [
-        1.0, 0.0, 0.0,         0.0,
-        0.0, 1.0, 0.0,         0.0,
-        0.0, 0.0, 1.0,        -1.0 / d,
-        0.0, 0.0, 0.0,         1.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        -1.0 / d,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
     ]
 }
 

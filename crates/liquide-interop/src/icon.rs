@@ -102,9 +102,7 @@ pub struct IconLookup {
 impl IconLookup {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            themes: Vec::new(),
-        }
+        Self { themes: Vec::new() }
     }
 
     /// Add a theme to the lookup.

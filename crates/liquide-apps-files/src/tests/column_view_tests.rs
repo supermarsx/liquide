@@ -103,6 +103,10 @@ fn test_column_view_total_width() {
 fn test_column_view_set_column_width() {
     let mut cfg = ColumnViewConfig::new();
     cfg.set_column_width(SortField::Name, 400.0);
-    let name_col = cfg.columns.iter().find(|c| c.field == SortField::Name).unwrap();
+    let name_col = cfg
+        .columns
+        .iter()
+        .find(|c| c.field == SortField::Name)
+        .unwrap();
     assert_eq!(name_col.width, 400.0);
 }

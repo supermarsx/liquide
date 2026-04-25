@@ -5,20 +5,20 @@
 //! with a real tree structure supporting z-order management, visibility
 //! propagation, and efficient hit testing.
 
+mod flags;
+mod hit_test;
+mod iterators;
+mod node;
 mod rect;
 mod region;
-mod flags;
-mod node;
-mod iterators;
-mod hit_test;
 mod tree;
 
+pub use flags::{WindowExStyle, WindowFlags, WindowStyle};
+pub use hit_test::{HitArea, HitTestResult, ResizeEdge};
+pub use iterators::*;
+pub use node::WindowNode;
 pub use rect::Rect;
 pub use region::Region;
-pub use flags::{WindowFlags, WindowStyle, WindowExStyle};
-pub use node::WindowNode;
-pub use iterators::*;
-pub use hit_test::{HitArea, HitTestResult, ResizeEdge};
 pub use tree::WindowTree;
 
 /// Unique identifier for a window in the tree.
@@ -46,8 +46,12 @@ mod tests {
     fn create_single_window() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Test",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Test",
         );
         assert_eq!(tree.len(), 2);
         assert!(tree.is_child(w, tree.desktop_id));
@@ -61,12 +65,20 @@ mod tests {
     fn create_child_window() {
         let mut tree = WindowTree::new(1920, 1080);
         let parent = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Parent",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Parent",
         );
         let child = tree.create_window(
-            Some(parent), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(110, 110, 200, 150), "Child",
+            Some(parent),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(110, 110, 200, 150),
+            "Child",
         );
         assert!(tree.is_child(child, parent));
         assert!(tree.is_descendant(child, parent));
@@ -78,16 +90,28 @@ mod tests {
     fn create_multiple_children_z_order() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
 
         // Most recently created is topmost.
@@ -99,8 +123,12 @@ mod tests {
     fn destroy_window_removes_node() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "Win",
         );
         assert_eq!(tree.len(), 2);
         tree.destroy_window(w);
@@ -112,20 +140,36 @@ mod tests {
     fn destroy_window_destroys_children() {
         let mut tree = WindowTree::new(1920, 1080);
         let parent = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Parent",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Parent",
         );
         let child1 = tree.create_window(
-            Some(parent), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(110, 110, 200, 150), "C1",
+            Some(parent),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(110, 110, 200, 150),
+            "C1",
         );
         let _grandchild = tree.create_window(
-            Some(child1), 3, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(120, 120, 50, 50), "GC",
+            Some(child1),
+            3,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(120, 120, 50, 50),
+            "GC",
         );
         let _child2 = tree.create_window(
-            Some(parent), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(110, 300, 200, 150), "C2",
+            Some(parent),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(110, 300, 200, 150),
+            "C2",
         );
         assert_eq!(tree.len(), 5);
         tree.destroy_window(parent);
@@ -137,16 +181,28 @@ mod tests {
     fn destroy_middle_sibling() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
 
         // Order: C, B, A — destroy B.
@@ -171,16 +227,28 @@ mod tests {
     fn bring_to_top() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         // Order: C, B, A
         tree.bring_to_top(a);
@@ -192,16 +260,28 @@ mod tests {
     fn send_to_bottom() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         // Order: C, B, A
         tree.send_to_bottom(c);
@@ -213,16 +293,28 @@ mod tests {
     fn insert_after_sibling() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         // Order: C, B, A — move A after C (i.e., between C and B).
         tree.insert_after(a, c);
@@ -234,16 +326,28 @@ mod tests {
     fn insert_before_sibling() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         // Order: C, B, A — move A before B.
         tree.insert_before(a, b);
@@ -255,12 +359,20 @@ mod tests {
     fn insert_before_first_child() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         // Order: B, A — move A before B (A becomes first).
         tree.insert_before(a, b);
@@ -276,16 +388,28 @@ mod tests {
     fn set_topmost_moves_to_front() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let _b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let _c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         // Order: C, B, A
         tree.set_topmost(a, true);
@@ -298,18 +422,28 @@ mod tests {
     fn topmost_windows_query() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW,
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
             WindowExStyle::TOPMOST,
-            Rect::new(0, 0, 100, 100), "A",
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let _b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW,
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
             WindowExStyle::TOPMOST,
-            Rect::new(0, 0, 100, 100), "C",
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         let topmost = tree.topmost_windows();
         assert!(topmost.contains(&a));
@@ -321,9 +455,12 @@ mod tests {
     fn create_with_ex_topmost() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW,
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
             WindowExStyle::TOPMOST,
-            Rect::new(0, 0, 100, 100), "Topmost",
+            Rect::new(0, 0, 100, 100),
+            "Topmost",
         );
         assert!(tree.get(w).unwrap().is_topmost());
     }
@@ -336,16 +473,28 @@ mod tests {
     fn reparent_window() {
         let mut tree = WindowTree::new(1920, 1080);
         let p1 = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 400, 300), "Parent1",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 400, 300),
+            "Parent1",
         );
         let p2 = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(500, 0, 400, 300), "Parent2",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(500, 0, 400, 300),
+            "Parent2",
         );
         let child = tree.create_window(
-            Some(p1), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(10, 10, 100, 80), "Child",
+            Some(p1),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(10, 10, 100, 80),
+            "Child",
         );
         assert!(tree.is_child(child, p1));
 
@@ -358,12 +507,20 @@ mod tests {
     fn reparent_prevents_cycle() {
         let mut tree = WindowTree::new(1920, 1080);
         let parent = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 400, 300), "Parent",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 400, 300),
+            "Parent",
         );
         let child = tree.create_window(
-            Some(parent), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(10, 10, 100, 80), "Child",
+            Some(parent),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(10, 10, 100, 80),
+            "Child",
         );
         // Try to make parent a child of its own child — should be rejected.
         tree.reparent(parent, child);
@@ -379,16 +536,28 @@ mod tests {
     fn children_back_iterator() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         // Front-to-back: C, B, A
         // Back-to-front: A, B, C
@@ -400,16 +569,28 @@ mod tests {
     fn ancestor_iterator() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 400, 300), "W",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 400, 300),
+            "W",
         );
         let child = tree.create_window(
-            Some(w), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(10, 10, 100, 80), "Child",
+            Some(w),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(10, 10, 100, 80),
+            "Child",
         );
         let grandchild = tree.create_window(
-            Some(child), 3, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(20, 20, 50, 50), "GC",
+            Some(child),
+            3,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(20, 20, 50, 50),
+            "GC",
         );
 
         let ancestors: Vec<_> = tree.ancestors(grandchild).collect();
@@ -420,20 +601,36 @@ mod tests {
     fn dfs_traversal() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 400, 300), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 400, 300),
+            "A",
         );
         let a1 = tree.create_window(
-            Some(a), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(10, 10, 100, 80), "A1",
+            Some(a),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(10, 10, 100, 80),
+            "A1",
         );
         let a2 = tree.create_window(
-            Some(a), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(10, 100, 100, 80), "A2",
+            Some(a),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(10, 100, 100, 80),
+            "A2",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(500, 0, 400, 300), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(500, 0, 400, 300),
+            "B",
         );
 
         // DFS from desktop: desktop, b (topmost), a, a2 (topmost child), a1
@@ -452,16 +649,28 @@ mod tests {
     fn sibling_iterator() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
 
         let sibs_of_b: Vec<_> = tree.siblings(b).collect();
@@ -476,12 +685,20 @@ mod tests {
     fn visible_windows_query() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         // Hide A.
         tree.get_mut(a).unwrap().flags.remove(WindowFlags::VISIBLE);
@@ -497,8 +714,12 @@ mod tests {
     fn hit_test_client_area() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Win",
         );
         let result = tree.hit_test((400, 400)).unwrap();
         assert_eq!(result.window_id, w);
@@ -509,8 +730,12 @@ mod tests {
     fn hit_test_caption() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Win",
         );
         // Caption is at top of window, below the border (4px) and above client.
         // Y = 100 + 10 = 110, which is in the caption region (border=4..caption=30+4=34).
@@ -523,8 +748,12 @@ mod tests {
     fn hit_test_resize_border() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Win",
         );
         // Left edge: x=100, y in the middle.
         let result = tree.hit_test((101, 400)).unwrap();
@@ -536,8 +765,12 @@ mod tests {
     fn hit_test_corner_resize() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Win",
         );
         // Bottom-right corner.
         let result = tree.hit_test((899, 699)).unwrap();
@@ -549,8 +782,12 @@ mod tests {
     fn hit_test_close_button() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Win",
         );
         // Close button is at the right side of the caption.
         // Window right edge = 900, button width = 46, so button starts at x=854 (local 754).
@@ -564,14 +801,20 @@ mod tests {
     fn hit_test_child_over_parent() {
         let mut tree = WindowTree::new(1920, 1080);
         let parent = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Parent",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Parent",
         );
         let child = tree.create_window(
-            Some(parent), 2,
+            Some(parent),
+            2,
             WindowStyle::CHILD | WindowStyle::BORDER,
             WindowExStyle::empty(),
-            Rect::new(200, 200, 200, 150), "Child",
+            Rect::new(200, 200, 200, 150),
+            "Child",
         );
         // Point inside child — should hit child, not parent.
         let result = tree.hit_test((300, 280)).unwrap();
@@ -582,12 +825,20 @@ mod tests {
     fn hit_test_z_order_topmost_wins() {
         let mut tree = WindowTree::new(1920, 1080);
         let _a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(200, 200, 400, 300), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(200, 200, 400, 300),
+            "B",
         );
         // B is on top (created after A). Point (300, 300) is in both.
         let result = tree.hit_test((300, 300)).unwrap();
@@ -598,12 +849,20 @@ mod tests {
     fn hit_test_invisible_window_skipped() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "B",
         );
         // Hide B (topmost).
         tree.get_mut(b).unwrap().flags.remove(WindowFlags::VISIBLE);
@@ -615,12 +874,20 @@ mod tests {
     fn hit_test_transparent_window() {
         let mut tree = WindowTree::new(1920, 1080);
         let _a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::TRANSPARENT,
-            Rect::new(100, 100, 400, 300), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::TRANSPARENT,
+            Rect::new(100, 100, 400, 300),
+            "B",
         );
         // B is transparent — hit test should return B with Transparent area,
         // but the real "interactable" is A (this is up to the caller to handle).
@@ -633,8 +900,12 @@ mod tests {
     fn hit_test_miss() {
         let mut tree = WindowTree::new(1920, 1080);
         let _w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 200, 200), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 200, 200),
+            "Win",
         );
         // Point outside all windows.
         let result = tree.hit_test((50, 50));
@@ -645,10 +916,12 @@ mod tests {
     fn hit_test_with_clip_region() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1,
+            None,
+            1,
             WindowStyle::OVERLAPPED_WINDOW,
             WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "Clipped",
+            Rect::new(100, 100, 400, 300),
+            "Clipped",
         );
         // Set a clip region that only covers the left half.
         tree.get_mut(w).unwrap().clip_region = Some(Region::Rect(Rect::new(100, 100, 200, 300)));
@@ -663,8 +936,12 @@ mod tests {
     fn window_at_point_simplified() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "Win",
         );
         assert_eq!(tree.window_at_point((200, 200)), Some(w));
         assert_eq!(tree.window_at_point((50, 50)), None);
@@ -678,29 +955,54 @@ mod tests {
     fn invalidate_and_validate() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "Win",
         );
 
         assert!(tree.update_region(w).is_none());
-        assert!(!tree.get(w).unwrap().flags.contains(WindowFlags::UPDATE_DIRTY));
+        assert!(
+            !tree
+                .get(w)
+                .unwrap()
+                .flags
+                .contains(WindowFlags::UPDATE_DIRTY)
+        );
 
         tree.invalidate(w, Some(Rect::new(150, 150, 50, 50)));
-        assert!(tree.get(w).unwrap().flags.contains(WindowFlags::UPDATE_DIRTY));
+        assert!(
+            tree.get(w)
+                .unwrap()
+                .flags
+                .contains(WindowFlags::UPDATE_DIRTY)
+        );
         assert_eq!(tree.update_region(w), Some(Rect::new(150, 150, 50, 50)));
 
         // Validate the entire region.
         tree.validate(w, None);
         assert!(tree.update_region(w).is_none());
-        assert!(!tree.get(w).unwrap().flags.contains(WindowFlags::UPDATE_DIRTY));
+        assert!(
+            !tree
+                .get(w)
+                .unwrap()
+                .flags
+                .contains(WindowFlags::UPDATE_DIRTY)
+        );
     }
 
     #[test]
     fn invalidate_whole_client() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "Win",
         );
         tree.invalidate(w, None);
         let rgn = tree.update_region(w).unwrap();
@@ -712,8 +1014,12 @@ mod tests {
     fn invalidate_accumulates() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "Win",
         );
         tree.invalidate(w, Some(Rect::new(110, 110, 20, 20)));
         tree.invalidate(w, Some(Rect::new(200, 200, 30, 30)));
@@ -730,8 +1036,12 @@ mod tests {
     fn client_rect_computed_for_captioned_window() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 400, 300), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 400, 300),
+            "Win",
         );
         let node = tree.get(w).unwrap();
         // Border = 1, Caption = 30 => client starts at (101, 131), size = (398, 268).
@@ -742,8 +1052,12 @@ mod tests {
     fn client_rect_no_caption() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::CHILD | WindowStyle::BORDER, WindowExStyle::empty(),
-            Rect::new(50, 50, 200, 150), "Borderless",
+            None,
+            1,
+            WindowStyle::CHILD | WindowStyle::BORDER,
+            WindowExStyle::empty(),
+            Rect::new(50, 50, 200, 150),
+            "Borderless",
         );
         let node = tree.get(w).unwrap();
         // Border = 1, no caption => client starts at (51, 51), size = (198, 148).
@@ -754,8 +1068,12 @@ mod tests {
     fn window_flags_and_styles() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::POPUP, WindowExStyle::TOOL_WINDOW | WindowExStyle::LAYERED,
-            Rect::new(100, 100, 200, 200), "Popup",
+            None,
+            1,
+            WindowStyle::POPUP,
+            WindowExStyle::TOOL_WINDOW | WindowExStyle::LAYERED,
+            Rect::new(100, 100, 200, 200),
+            "Popup",
         );
         let node = tree.get(w).unwrap();
         assert!(node.is_popup());
@@ -768,12 +1086,20 @@ mod tests {
     fn owner_window() {
         let mut tree = WindowTree::new(1920, 1080);
         let main_win = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Main",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Main",
         );
         let popup = tree.create_window(
-            None, 1, WindowStyle::POPUP, WindowExStyle::empty(),
-            Rect::new(200, 200, 300, 200), "Popup",
+            None,
+            1,
+            WindowStyle::POPUP,
+            WindowExStyle::empty(),
+            Rect::new(200, 200, 300, 200),
+            "Popup",
         );
         tree.get_mut(popup).unwrap().owner = Some(main_win);
         assert_eq!(tree.get(popup).unwrap().owner, Some(main_win));
@@ -787,12 +1113,20 @@ mod tests {
     fn bring_to_top_already_on_top() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         // B is already on top.
         tree.bring_to_top(b);
@@ -804,16 +1138,28 @@ mod tests {
     fn insert_after_last_sibling() {
         let mut tree = WindowTree::new(1920, 1080);
         let a = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "A",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "A",
         );
         let b = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "B",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "B",
         );
         let c = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "C",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "C",
         );
         // Order: C, B, A — insert C after A (move C to bottom).
         tree.insert_after(c, a);
@@ -825,20 +1171,36 @@ mod tests {
     fn deeply_nested_hit_test() {
         let mut tree = WindowTree::new(1920, 1080);
         let l1 = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 1000, 800), "L1",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 1000, 800),
+            "L1",
         );
         let l2 = tree.create_window(
-            Some(l1), 2, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(50, 50, 900, 700), "L2",
+            Some(l1),
+            2,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(50, 50, 900, 700),
+            "L2",
         );
         let l3 = tree.create_window(
-            Some(l2), 3, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "L3",
+            Some(l2),
+            3,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "L3",
         );
         let l4 = tree.create_window(
-            Some(l3), 4, WindowStyle::CHILD, WindowExStyle::empty(),
-            Rect::new(150, 150, 700, 500), "L4",
+            Some(l3),
+            4,
+            WindowStyle::CHILD,
+            WindowExStyle::empty(),
+            Rect::new(150, 150, 700, 500),
+            "L4",
         );
         // Point inside L4 — deepest wins.
         let result = tree.hit_test((400, 400)).unwrap();
@@ -849,13 +1211,21 @@ mod tests {
     fn destroy_and_rebuild() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 100, 100), "W",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 100, 100),
+            "W",
         );
         tree.destroy_window(w);
         let w2 = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(0, 0, 200, 200), "W2",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(0, 0, 200, 200),
+            "W2",
         );
         assert!(tree.get(w2).is_some());
         assert!(tree.get(w).is_none());
@@ -866,8 +1236,12 @@ mod tests {
     fn hit_test_sys_menu() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Win",
         );
         // Sys menu icon area: left side of caption (x < caption_height=30 from left).
         // Window at (100,100), border=4, so caption y: 104..134.
@@ -881,8 +1255,12 @@ mod tests {
     fn hit_test_min_max_buttons() {
         let mut tree = WindowTree::new(1920, 1080);
         let w = tree.create_window(
-            None, 1, WindowStyle::OVERLAPPED_WINDOW, WindowExStyle::empty(),
-            Rect::new(100, 100, 800, 600), "Win",
+            None,
+            1,
+            WindowStyle::OVERLAPPED_WINDOW,
+            WindowExStyle::empty(),
+            Rect::new(100, 100, 800, 600),
+            "Win",
         );
         // Button width = 46, from right edge (900):
         // Close: 854..900 (lx: 754..800)

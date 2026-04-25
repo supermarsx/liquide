@@ -68,9 +68,9 @@ pub struct DpmsPolicy {
 impl Default for DpmsPolicy {
     fn default() -> Self {
         Self {
-            standby_timeout_secs: 300,  // 5 minutes
-            suspend_timeout_secs: 600,  // 10 minutes
-            off_timeout_secs: 900,      // 15 minutes
+            standby_timeout_secs: 300, // 5 minutes
+            suspend_timeout_secs: 600, // 10 minutes
+            off_timeout_secs: 900,     // 15 minutes
             enabled: true,
         }
     }

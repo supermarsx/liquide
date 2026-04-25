@@ -133,9 +133,7 @@ impl ImpliedAuth {
             Self::AdminAuth | Self::AdminKeep => {
                 AuthDecision::AuthRequired(AuthType::AdminPassword)
             }
-            Self::UserAuth | Self::UserKeep => {
-                AuthDecision::AuthRequired(AuthType::UserPassword)
-            }
+            Self::UserAuth | Self::UserKeep => AuthDecision::AuthRequired(AuthType::UserPassword),
         }
     }
 
@@ -637,9 +635,18 @@ mod tests {
 
     #[test]
     fn auth_type_to_auth_level() {
-        assert_eq!(AuthType::UserPassword.to_auth_level(), AuthLevel::UserPassword);
-        assert_eq!(AuthType::AdminPassword.to_auth_level(), AuthLevel::AdminPassword);
-        assert_eq!(AuthType::Fingerprint.to_auth_level(), AuthLevel::Fingerprint);
+        assert_eq!(
+            AuthType::UserPassword.to_auth_level(),
+            AuthLevel::UserPassword
+        );
+        assert_eq!(
+            AuthType::AdminPassword.to_auth_level(),
+            AuthLevel::AdminPassword
+        );
+        assert_eq!(
+            AuthType::Fingerprint.to_auth_level(),
+            AuthLevel::Fingerprint
+        );
         assert_eq!(AuthType::SmartCard.to_auth_level(), AuthLevel::SmartCard);
     }
 
@@ -680,8 +687,7 @@ mod tests {
     #[test]
     fn policy_entry_serde_roundtrip() {
         let id = ActionId::new("org.liquide.test.action").unwrap();
-        let entry = PolicyEntry::new(id, "desc", "msg", ImpliedAuth::AdminKeep)
-            .with_icon("lock");
+        let entry = PolicyEntry::new(id, "desc", "msg", ImpliedAuth::AdminKeep).with_icon("lock");
         let json = serde_json::to_string(&entry).unwrap();
         let back: PolicyEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(entry, back);
@@ -722,7 +728,12 @@ mod tests {
     fn policy_db_remove() {
         let mut db = PolicyDatabase::new();
         let id = ActionId::new("org.liquide.test.action").unwrap();
-        db.insert(PolicyEntry::new(id.clone(), "desc", "msg", ImpliedAuth::Yes));
+        db.insert(PolicyEntry::new(
+            id.clone(),
+            "desc",
+            "msg",
+            ImpliedAuth::Yes,
+        ));
         assert_eq!(db.len(), 1);
 
         let removed = db.remove(&id);
@@ -734,8 +745,18 @@ mod tests {
     fn policy_db_replace_on_insert() {
         let mut db = PolicyDatabase::new();
         let id = ActionId::new("org.liquide.test.action").unwrap();
-        db.insert(PolicyEntry::new(id.clone(), "first", "msg", ImpliedAuth::Yes));
-        db.insert(PolicyEntry::new(id.clone(), "second", "msg", ImpliedAuth::No));
+        db.insert(PolicyEntry::new(
+            id.clone(),
+            "first",
+            "msg",
+            ImpliedAuth::Yes,
+        ));
+        db.insert(PolicyEntry::new(
+            id.clone(),
+            "second",
+            "msg",
+            ImpliedAuth::No,
+        ));
         assert_eq!(db.len(), 1);
         assert_eq!(db.lookup(&id).unwrap().description, "second");
     }
@@ -744,7 +765,10 @@ mod tests {
     fn policy_db_with_builtins() {
         let db = PolicyDatabase::with_builtins();
         assert!(!db.is_empty());
-        assert!(db.lookup_str("org.liquide.desktop.change-wallpaper").is_some());
+        assert!(
+            db.lookup_str("org.liquide.desktop.change-wallpaper")
+                .is_some()
+        );
         assert!(db.lookup_str("org.liquide.package.install").is_some());
         assert!(db.lookup_str("org.liquide.system.shutdown").is_some());
     }
@@ -826,9 +850,6 @@ mod tests {
         let user = Subject::new(1000, 7000, "s");
         let id = ActionId::new("org.liquide.system.shutdown").unwrap();
         let decision = db.evaluate(&id, &user);
-        assert_eq!(
-            decision,
-            AuthDecision::AuthRequired(AuthType::UserPassword)
-        );
+        assert_eq!(decision, AuthDecision::AuthRequired(AuthType::UserPassword));
     }
 }

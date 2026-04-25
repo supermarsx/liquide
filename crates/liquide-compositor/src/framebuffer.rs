@@ -102,7 +102,11 @@ impl FrameBuffer {
     /// Panics if `y >= self.height`.
     #[must_use]
     pub fn row(&self, y: u32) -> &[u8] {
-        assert!(y < self.height, "row({y}) out of bounds (height={})", self.height);
+        assert!(
+            y < self.height,
+            "row({y}) out of bounds (height={})",
+            self.height
+        );
         let start = (y * self.stride) as usize;
         let end = start + (self.width * self.format.bytes_per_pixel()) as usize;
         &self.pixels()[start..end]
@@ -204,29 +208,10 @@ impl FrameBuffer {
         }
         match self.format {
             PixelFormat::Bgra8 => {
-                Color::from_bgra_bytes([
-                    px[off],
-                    px[off + 1],
-                    px[off + 2],
-                    px[off + 3],
-                ])
+                Color::from_bgra_bytes([px[off], px[off + 1], px[off + 2], px[off + 3]])
             }
-            PixelFormat::Rgba8 => {
-                Color::new(
-                    px[off],
-                    px[off + 1],
-                    px[off + 2],
-                    px[off + 3],
-                )
-            }
-            PixelFormat::Rgb8 => {
-                Color::new(
-                    px[off],
-                    px[off + 1],
-                    px[off + 2],
-                    255,
-                )
-            }
+            PixelFormat::Rgba8 => Color::new(px[off], px[off + 1], px[off + 2], px[off + 3]),
+            PixelFormat::Rgb8 => Color::new(px[off], px[off + 1], px[off + 2], 255),
             _ => Color::TRANSPARENT,
         }
     }
@@ -262,7 +247,9 @@ impl FrameBuffer {
                 px[off + 1] = color.g;
                 px[off + 2] = color.b;
             }
-            _ => { debug_assert!(false, "unhandled pixel format: {:?}", fmt); }
+            _ => {
+                debug_assert!(false, "unhandled pixel format: {:?}", fmt);
+            }
         }
     }
 
@@ -345,5 +332,162 @@ impl std::fmt::Debug for DoubleBuffer {
             .field("front", &self.front)
             .field("back", &self.back)
             .finish()
+    }
+}
+
+// ----------------------------------------------------------------------------
+// FrameMemoryPool
+// ----------------------------------------------------------------------------
+
+/// Recycling pool for `FrameBuffer` backing memory.
+///
+/// At 4K BGRA8 each framebuffer is ~33 MB; allocating a fresh one per frame
+/// on each render thread was a measured hotspot (§3.6 t8 review).  Consumers
+/// should `acquire(w, h, format)` at frame start and `release(fb)` at frame
+/// end — the pool recycles the `Vec<u8>` behind the scenes.
+#[derive(Default)]
+pub struct FrameMemoryPool {
+    /// Buffers bucketed by (width, height, format) tuples.
+    buffers: std::collections::HashMap<(u32, u32, PixelFormat), Vec<Vec<u8>>>,
+    /// Soft cap on buffers retained per bucket.
+    max_per_bucket: usize,
+    /// Statistics: total allocations performed.
+    allocations: u64,
+    /// Statistics: total reuses satisfied from the pool.
+    reuses: u64,
+}
+
+impl FrameMemoryPool {
+    /// Create a new pool with a default retention cap of 4 buffers per bucket.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            buffers: std::collections::HashMap::new(),
+            max_per_bucket: 4,
+            allocations: 0,
+            reuses: 0,
+        }
+    }
+
+    /// Create a pool with an explicit retention cap.
+    #[must_use]
+    pub fn with_capacity(max_per_bucket: usize) -> Self {
+        Self {
+            buffers: std::collections::HashMap::new(),
+            max_per_bucket,
+            allocations: 0,
+            reuses: 0,
+        }
+    }
+
+    /// Acquire a framebuffer of the requested dimensions.
+    ///
+    /// Reuses a released buffer when the `(width, height, format)` triple
+    /// matches; otherwise allocates a fresh one.  The returned framebuffer's
+    /// pixel memory is not cleared — callers must call `clear()` if they
+    /// need a known starting state.
+    pub fn acquire(&mut self, width: u32, height: u32, format: PixelFormat) -> FrameBuffer {
+        let key = (width, height, format);
+        let stride = width * format.bytes_per_pixel();
+        if let Some(bucket) = self.buffers.get_mut(&key) {
+            if let Some(mem) = bucket.pop() {
+                self.reuses += 1;
+                return FrameBuffer {
+                    memory: FrameMemory::Cpu(mem),
+                    width,
+                    height,
+                    stride,
+                    format,
+                };
+            }
+        }
+        self.allocations += 1;
+        FrameBuffer::with_stride(width, height, stride, format)
+    }
+
+    /// Return a framebuffer to the pool for recycling.
+    ///
+    /// GPU-backed framebuffers are dropped (the GPU handle cannot be
+    /// reclaimed here).  CPU-backed buffers are retained up to
+    /// `max_per_bucket` per `(width, height, format)` key.
+    pub fn release(&mut self, fb: FrameBuffer) {
+        let key = (fb.width, fb.height, fb.format);
+        let FrameBuffer { memory, .. } = fb;
+        if let FrameMemory::Cpu(mem) = memory {
+            let bucket = self.buffers.entry(key).or_default();
+            if bucket.len() < self.max_per_bucket {
+                bucket.push(mem);
+            }
+            // else drop — bucket is full.
+        }
+    }
+
+    /// Total allocations performed by the pool.
+    #[must_use]
+    pub fn allocations(&self) -> u64 {
+        self.allocations
+    }
+
+    /// Total reuses satisfied by the pool.
+    #[must_use]
+    pub fn reuses(&self) -> u64 {
+        self.reuses
+    }
+
+    /// Drop all retained buffers.
+    pub fn clear(&mut self) {
+        self.buffers.clear();
+    }
+}
+
+impl std::fmt::Debug for FrameMemoryPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FrameMemoryPool")
+            .field("buckets", &self.buffers.len())
+            .field("allocations", &self.allocations)
+            .field("reuses", &self.reuses)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+
+    #[test]
+    fn pool_reuses_buffer() {
+        let mut pool = FrameMemoryPool::new();
+        let fb1 = pool.acquire(100, 100, PixelFormat::Bgra8);
+        assert_eq!(pool.allocations(), 1);
+        assert_eq!(pool.reuses(), 0);
+        pool.release(fb1);
+        let fb2 = pool.acquire(100, 100, PixelFormat::Bgra8);
+        assert_eq!(pool.allocations(), 1, "should have reused memory");
+        assert_eq!(pool.reuses(), 1);
+        pool.release(fb2);
+    }
+
+    #[test]
+    fn pool_distinguishes_dimensions() {
+        let mut pool = FrameMemoryPool::new();
+        let a = pool.acquire(100, 100, PixelFormat::Bgra8);
+        pool.release(a);
+        let _b = pool.acquire(200, 200, PixelFormat::Bgra8);
+        assert_eq!(pool.allocations(), 2);
+        assert_eq!(pool.reuses(), 0);
+    }
+
+    #[test]
+    fn pool_bucket_cap() {
+        let mut pool = FrameMemoryPool::with_capacity(2);
+        for _ in 0..4 {
+            let fb = pool.acquire(10, 10, PixelFormat::Bgra8);
+            pool.release(fb);
+        }
+        // Only 2 retained; the remaining releases are discarded.
+        let _fb = pool.acquire(10, 10, PixelFormat::Bgra8);
+        let _fb2 = pool.acquire(10, 10, PixelFormat::Bgra8);
+        // Two reuses from the cap-2 bucket.
+        assert_eq!(pool.reuses(), 2);
     }
 }

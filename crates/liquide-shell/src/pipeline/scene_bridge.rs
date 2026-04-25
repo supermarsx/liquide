@@ -4,14 +4,14 @@ use liquide_compositor::geometry::Rect as CRect;
 use liquide_compositor::scene::{ClipPathKind, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_paint::display_list::ClipPath as PaintClipPath;
 use liquide_paint::{DisplayItem, DisplayList};
-use std::sync::Arc;
 use liquide_style_engine::computed::BorderLineStyle;
+use std::sync::Arc;
 
-use super::helpers::{
-    filter_op_to_backdrop_spec, filter_op_to_spec, hash_string, intersect_rects,
-    to_border_side, to_compositor_rect,
-};
 use super::DesktopPipeline;
+use super::helpers::{
+    filter_op_to_backdrop_spec, filter_op_to_spec, hash_string, intersect_rects, to_border_side,
+    to_compositor_rect,
+};
 
 impl DesktopPipeline {
     /// Convert a display list to compositor scene nodes.
@@ -67,7 +67,7 @@ impl DesktopPipeline {
                 DisplayItem::PushClip { rect, radius } => {
                     stack.push(current.clone());
                     let clip_rect = to_compositor_rect(rect);
-                    let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                    let r = radius.as_f32_tuple();
                     // Intersect with existing clip
                     current.clip = Some(match current.clip {
                         Some(existing) => intersect_rects(&existing, &clip_rect),
@@ -97,8 +97,8 @@ impl DesktopPipeline {
                     }
                     // If we just left a clip-path scope, emit the ClipPath scene node
                     if let Some(paint_path) = had_clip_path {
-                        let bounds = clip_path_bounds
-                            .unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
+                        let bounds =
+                            clip_path_bounds.unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
                         if let Some((clip_kind, node_bounds)) =
                             convert_paint_clip_path(&paint_path, &bounds)
                         {
@@ -143,7 +143,9 @@ impl DesktopPipeline {
                     let is_non_default = !matches!(mode, BlendMode::SrcOver);
                     if is_non_default {
                         let id = self.alloc_id();
-                        let blend_bounds = current.clip.unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
+                        let blend_bounds = current
+                            .clip
+                            .unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
                         let node = SceneNode::new(
                             id,
                             SceneNodeKind::RenderLayer {
@@ -162,7 +164,10 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::PushStackingContext { z_index, isolation: _ } => {
+                DisplayItem::PushStackingContext {
+                    z_index,
+                    isolation: _,
+                } => {
                     stack.push(current.clone());
                     // z_index influences ordering — the painter already emits items
                     // in stacking context order, so we just preserve state here.
@@ -179,13 +184,20 @@ impl DesktopPipeline {
                     stack.push(current.clone());
                     // Emit a Filter scene node so the renderer can apply CSS filter effects
                     if !filters.is_empty() {
-                        let filter_specs = filters.iter().filter_map(|f| filter_op_to_spec(f)).collect::<Vec<_>>();
+                        let filter_specs = filters
+                            .iter()
+                            .filter_map(|f| filter_op_to_spec(f))
+                            .collect::<Vec<_>>();
                         if !filter_specs.is_empty() {
                             let id = self.alloc_id();
-                            let filter_bounds = current.clip.unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
+                            let filter_bounds = current
+                                .clip
+                                .unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
                             let node = SceneNode::new(
                                 id,
-                                SceneNodeKind::Filter { filters: filter_specs },
+                                SceneNodeKind::Filter {
+                                    filters: filter_specs,
+                                },
                                 NodeProperties::new(filter_bounds).with_z_order(z),
                             );
                             nodes.push(node);
@@ -203,13 +215,18 @@ impl DesktopPipeline {
                     stack.push(current.clone());
                     // Emit a BackdropFilter scene node so the renderer can apply CSS backdrop-filter
                     if !filters.is_empty() {
-                        let backdrop_specs = filters.iter().filter_map(|f| filter_op_to_backdrop_spec(f)).collect::<Vec<_>>();
+                        let backdrop_specs = filters
+                            .iter()
+                            .filter_map(|f| filter_op_to_backdrop_spec(f))
+                            .collect::<Vec<_>>();
                         if !backdrop_specs.is_empty() {
                             let id = self.alloc_id();
                             let b = to_compositor_rect(bounds);
                             let mut node = SceneNode::new(
                                 id,
-                                SceneNodeKind::BackdropFilter { filters: backdrop_specs },
+                                SceneNodeKind::BackdropFilter {
+                                    filters: backdrop_specs,
+                                },
                                 NodeProperties::new(b).with_z_order(z),
                             );
                             // Apply accumulated state
@@ -287,7 +304,12 @@ impl DesktopPipeline {
                     }
                 }
 
-                DisplayItem::Annotate { .. } | DisplayItem::Noop | DisplayItem::SetCursor { .. } | DisplayItem::ScrollContainerHints { .. } | DisplayItem::AnimationHints { .. } | DisplayItem::TimelineHints { .. } => {
+                DisplayItem::Annotate { .. }
+                | DisplayItem::Noop
+                | DisplayItem::SetCursor { .. }
+                | DisplayItem::ScrollContainerHints { .. }
+                | DisplayItem::AnimationHints { .. }
+                | DisplayItem::TimelineHints { .. } => {
                     // Non-renderable metadata — skip
                 }
 
@@ -325,16 +347,22 @@ impl DesktopPipeline {
         let id = self.alloc_id();
 
         match item {
-            DisplayItem::SolidColor { rect, color, radius } => {
+            DisplayItem::SolidColor {
+                rect,
+                color,
+                radius,
+            } => {
                 if color.a == 0 {
                     return None; // Skip fully transparent
                 }
                 let bounds = to_compositor_rect(rect);
-                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let r = radius.as_f32_tuple();
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Background { color: *color },
-                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
+                    NodeProperties::new(bounds)
+                        .with_z_order(z)
+                        .with_corner_radius(r),
                 );
                 Some(node)
             }
@@ -355,12 +383,7 @@ impl DesktopPipeline {
                     bottom: to_border_side(bottom),
                     left: to_border_side(left),
                 };
-                let r = (
-                    radius.top_left,
-                    radius.top_right,
-                    radius.bottom_right,
-                    radius.bottom_left,
-                );
+                let r = radius.as_f32_tuple();
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Border { sides, radius: r },
@@ -380,7 +403,7 @@ impl DesktopPipeline {
                 radius,
             } => {
                 let bounds = to_compositor_rect(rect);
-                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let r = radius.as_f32_tuple();
                 let shadow = liquide_compositor::scene::BoxShadowSpec {
                     offset_x: *offset_x,
                     offset_y: *offset_y,
@@ -394,7 +417,9 @@ impl DesktopPipeline {
                     SceneNodeKind::BoxShadows {
                         shadows: vec![shadow],
                     },
-                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
+                    NodeProperties::new(bounds)
+                        .with_z_order(z)
+                        .with_corner_radius(r),
                 );
                 Some(node)
             }
@@ -435,7 +460,10 @@ impl DesktopPipeline {
                         font_family: font_family.first().cloned().unwrap_or_default(),
                         font_size: *font_size,
                         font_weight: *font_weight,
-                        font_style_italic: matches!(font_style, FontStyle::Italic | FontStyle::Oblique),
+                        font_style_italic: matches!(
+                            font_style,
+                            FontStyle::Italic | FontStyle::Oblique
+                        ),
                         letter_spacing: *letter_spacing,
                         word_spacing: *word_spacing,
                         line_height: lh_px,
@@ -474,7 +502,7 @@ impl DesktopPipeline {
 
             DisplayItem::Image { rect, src, radius } => {
                 let bounds = to_compositor_rect(rect);
-                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let r = radius.as_f32_tuple();
                 let img_id = hash_string(src);
                 self.pending_images.push((img_id, src.clone()));
                 let node = SceneNode::new(
@@ -485,21 +513,38 @@ impl DesktopPipeline {
                         height: bounds.height as u32,
                         fit: liquide_compositor::scene::ImageFit::Cover,
                     },
-                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
+                    NodeProperties::new(bounds)
+                        .with_z_order(z)
+                        .with_corner_radius(r),
                 );
                 Some(node)
             }
 
-            DisplayItem::ImageRect { rect, src, fit, radius, .. } => {
+            DisplayItem::ImageRect {
+                rect,
+                src,
+                fit,
+                radius,
+                ..
+            } => {
                 let bounds = to_compositor_rect(rect);
-                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let r = radius.as_f32_tuple();
                 let img_id = hash_string(src);
                 self.pending_images.push((img_id, src.clone()));
                 let scene_fit = match fit {
-                    liquide_paint::display_list::ImageFit::Fill => liquide_compositor::scene::ImageFit::Fill,
-                    liquide_paint::display_list::ImageFit::Contain => liquide_compositor::scene::ImageFit::Contain,
-                    liquide_paint::display_list::ImageFit::Cover => liquide_compositor::scene::ImageFit::Cover,
-                    liquide_paint::display_list::ImageFit::ScaleDown | liquide_paint::display_list::ImageFit::None => liquide_compositor::scene::ImageFit::None,
+                    liquide_paint::display_list::ImageFit::Fill => {
+                        liquide_compositor::scene::ImageFit::Fill
+                    }
+                    liquide_paint::display_list::ImageFit::Contain => {
+                        liquide_compositor::scene::ImageFit::Contain
+                    }
+                    liquide_paint::display_list::ImageFit::Cover => {
+                        liquide_compositor::scene::ImageFit::Cover
+                    }
+                    liquide_paint::display_list::ImageFit::ScaleDown
+                    | liquide_paint::display_list::ImageFit::None => {
+                        liquide_compositor::scene::ImageFit::None
+                    }
                 };
                 let node = SceneNode::new(
                     id,
@@ -509,14 +554,21 @@ impl DesktopPipeline {
                         height: bounds.height as u32,
                         fit: scene_fit,
                     },
-                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
+                    NodeProperties::new(bounds)
+                        .with_z_order(z)
+                        .with_corner_radius(r),
                 );
                 Some(node)
             }
 
-            DisplayItem::LinearGradient { rect, angle_deg, stops, radius } => {
+            DisplayItem::LinearGradient {
+                rect,
+                angle_deg,
+                stops,
+                radius,
+            } => {
                 let bounds = to_compositor_rect(rect);
-                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let r = radius.as_f32_tuple();
                 // Convert angle to start/end points (normalized 0..1)
                 let angle_rad = angle_deg.to_radians();
                 let (start_x, start_y, end_x, end_y) = (
@@ -526,18 +578,31 @@ impl DesktopPipeline {
                     0.5 - 0.5 * angle_rad.cos(),
                 );
                 let gradient = liquide_compositor::scene::GradientSpec::Linear {
-                    start_x, start_y, end_x, end_y,
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
                     stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
                 };
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::GradientFill { gradient },
-                    NodeProperties::new(bounds).with_z_order(z).with_corner_radius(r),
+                    NodeProperties::new(bounds)
+                        .with_z_order(z)
+                        .with_corner_radius(r),
                 );
                 Some(node)
             }
 
-            DisplayItem::RadialGradient { rect, center_x, center_y, radius_x, radius_y, stops, .. } => {
+            DisplayItem::RadialGradient {
+                rect,
+                center_x,
+                center_y,
+                radius_x,
+                radius_y,
+                stops,
+                ..
+            } => {
                 let bounds = to_compositor_rect(rect);
                 let gradient = liquide_compositor::scene::GradientSpec::Radial {
                     center_x: *center_x,
@@ -554,7 +619,13 @@ impl DesktopPipeline {
                 Some(node)
             }
 
-            DisplayItem::ConicGradient { rect, center_x, center_y, angle_deg, stops } => {
+            DisplayItem::ConicGradient {
+                rect,
+                center_x,
+                center_y,
+                angle_deg,
+                stops,
+            } => {
                 let bounds = to_compositor_rect(rect);
                 let gradient = liquide_compositor::scene::GradientSpec::Conic {
                     center_x: *center_x,
@@ -570,7 +641,13 @@ impl DesktopPipeline {
                 Some(node)
             }
 
-            DisplayItem::Outline { rect, width, style, color, offset } => {
+            DisplayItem::Outline {
+                rect,
+                width,
+                style,
+                color,
+                offset,
+            } => {
                 let bounds = to_compositor_rect(rect);
                 let node = SceneNode::new(
                     id,
@@ -578,9 +655,15 @@ impl DesktopPipeline {
                         outline: liquide_compositor::scene::OutlineSpec {
                             width: *width,
                             style: match style {
-                                BorderLineStyle::Dotted => liquide_compositor::scene::OutlineStyle::Dotted,
-                                BorderLineStyle::Dashed => liquide_compositor::scene::OutlineStyle::Dashed,
-                                BorderLineStyle::Double => liquide_compositor::scene::OutlineStyle::Double,
+                                BorderLineStyle::Dotted => {
+                                    liquide_compositor::scene::OutlineStyle::Dotted
+                                }
+                                BorderLineStyle::Dashed => {
+                                    liquide_compositor::scene::OutlineStyle::Dashed
+                                }
+                                BorderLineStyle::Double => {
+                                    liquide_compositor::scene::OutlineStyle::Double
+                                }
                                 _ => liquide_compositor::scene::OutlineStyle::Solid,
                             },
                             color: *color,
@@ -604,9 +687,14 @@ impl DesktopPipeline {
                 ))
             }
 
-            DisplayItem::StrokeRoundedRect { rect, radius, color, width } => {
+            DisplayItem::StrokeRoundedRect {
+                rect,
+                radius,
+                color,
+                width,
+            } => {
                 let bounds = to_compositor_rect(rect);
-                let r = (radius.top_left, radius.top_right, radius.bottom_right, radius.bottom_left);
+                let r = radius.as_f32_tuple();
                 let side = liquide_compositor::scene::BorderSide {
                     width: *width,
                     style: liquide_compositor::scene::BorderSideStyle::Solid,
@@ -627,7 +715,14 @@ impl DesktopPipeline {
                 ))
             }
 
-            DisplayItem::Line { x1, y1, x2, y2, color, width } => {
+            DisplayItem::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                color,
+                width,
+            } => {
                 let min_x = x1.min(*x2);
                 let min_y = y1.min(*y2);
                 let w = (x1 - x2).abs().max(*width);
@@ -640,7 +735,15 @@ impl DesktopPipeline {
                 ))
             }
 
-            DisplayItem::TextRun { rect, text, color, font_size, font_family, font_weight, baseline: _ } => {
+            DisplayItem::TextRun {
+                rect,
+                text,
+                color,
+                font_size,
+                font_family,
+                font_weight,
+                baseline: _,
+            } => {
                 let bounds = to_compositor_rect(rect);
                 Some(SceneNode::new(
                     id,
@@ -667,15 +770,32 @@ impl DesktopPipeline {
                 ))
             }
 
-            DisplayItem::BorderImage { rect, source, slice, widths, outset, repeat_x, repeat_y: _, fill: _ } => {
+            DisplayItem::BorderImage {
+                rect,
+                source,
+                slice,
+                widths,
+                outset,
+                repeat_x,
+                repeat_y: _,
+                fill: _,
+            } => {
                 let bounds = to_compositor_rect(rect);
                 let img_id = hash_string(source);
                 self.pending_images.push((img_id, source.clone()));
                 let repeat = match repeat_x {
-                    liquide_paint::display_list::BorderImageRepeat::Stretch => liquide_compositor::scene::BorderImageRepeat::Stretch,
-                    liquide_paint::display_list::BorderImageRepeat::Repeat => liquide_compositor::scene::BorderImageRepeat::Repeat,
-                    liquide_paint::display_list::BorderImageRepeat::Round => liquide_compositor::scene::BorderImageRepeat::Round,
-                    liquide_paint::display_list::BorderImageRepeat::Space => liquide_compositor::scene::BorderImageRepeat::Space,
+                    liquide_paint::display_list::BorderImageRepeat::Stretch => {
+                        liquide_compositor::scene::BorderImageRepeat::Stretch
+                    }
+                    liquide_paint::display_list::BorderImageRepeat::Repeat => {
+                        liquide_compositor::scene::BorderImageRepeat::Repeat
+                    }
+                    liquide_paint::display_list::BorderImageRepeat::Round => {
+                        liquide_compositor::scene::BorderImageRepeat::Round
+                    }
+                    liquide_paint::display_list::BorderImageRepeat::Space => {
+                        liquide_compositor::scene::BorderImageRepeat::Space
+                    }
                 };
                 let spec = liquide_compositor::scene::BorderImageSpec {
                     source: liquide_compositor::scene::BackgroundImage::ImageId(img_id),
@@ -756,10 +876,7 @@ impl DesktopPipeline {
 
 /// Convert a paint-layer `ClipPath` (absolute coordinates) to a compositor
 /// `ClipPathKind` (coordinates relative to `bounds`) and optionally adjusted bounds.
-fn convert_paint_clip_path(
-    path: &PaintClipPath,
-    bounds: &CRect,
-) -> Option<(ClipPathKind, CRect)> {
+fn convert_paint_clip_path(path: &PaintClipPath, bounds: &CRect) -> Option<(ClipPathKind, CRect)> {
     let w = bounds.width.max(1.0);
     let h = bounds.height.max(1.0);
 
@@ -791,17 +908,32 @@ fn convert_paint_clip_path(
             *bounds,
         )),
         PaintClipPath::RoundedRect { radii, .. } => {
-            let max_r = radii.top_left
-                .max(radii.top_right)
-                .max(radii.bottom_right)
-                .max(radii.bottom_left);
-            Some((ClipPathKind::RoundedRect { corner_radius: max_r }, *bounds))
+            let max_r = radii
+                .top_left
+                .max_axis()
+                .max(radii.top_right.max_axis())
+                .max(radii.bottom_right.max_axis())
+                .max(radii.bottom_left.max_axis());
+            Some((
+                ClipPathKind::RoundedRect {
+                    corner_radius: max_r,
+                },
+                *bounds,
+            ))
         }
-        PaintClipPath::Inset { top, right, bottom, left, radius } => {
-            let max_r = radius.top_left
-                .max(radius.top_right)
-                .max(radius.bottom_right)
-                .max(radius.bottom_left);
+        PaintClipPath::Inset {
+            top,
+            right,
+            bottom,
+            left,
+            radius,
+        } => {
+            let max_r = radius
+                .top_left
+                .max_axis()
+                .max(radius.top_right.max_axis())
+                .max(radius.bottom_right.max_axis())
+                .max(radius.bottom_left.max_axis());
             // Compute the inset rect relative to the element bounds
             let inset_bounds = CRect::new(
                 bounds.x + left,
@@ -809,7 +941,12 @@ fn convert_paint_clip_path(
                 (bounds.width - left - right).max(0.0),
                 (bounds.height - top - bottom).max(0.0),
             );
-            Some((ClipPathKind::RoundedRect { corner_radius: max_r }, inset_bounds))
+            Some((
+                ClipPathKind::RoundedRect {
+                    corner_radius: max_r,
+                },
+                inset_bounds,
+            ))
         }
     }
 }

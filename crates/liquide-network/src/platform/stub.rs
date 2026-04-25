@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use crate::{
-    AccessPoint, ConnectivityState, InterfaceId, NetworkBackend, NetworkError,
-    NetworkEvent, NetworkInterface, VpnConnection,
+    AccessPoint, ConnectivityState, InterfaceId, NetworkBackend, NetworkError, NetworkEvent,
+    NetworkInterface, VpnConnection,
 };
 
 /// Stub network manager for unsupported platforms.

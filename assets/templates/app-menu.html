@@ -8,12 +8,12 @@
      Separators via <menu-separator>.
 -->
 
-<app-menu id="app-menu" style="left: {{pos_left}}; top: {{pos_top}}">
+<app-menu id="app-menu" role="menu" data-window-id="{{window_id}}" style="left: {{pos_left}}; top: {{pos_top}}">
   {{#each items}}
   {{#if is_separator}}
   <menu-separator />
   {{else}}
-  <menu-item data-action="{{action}}" data-index="{{index}}" {{#if icon}}data-icon="{{icon}}"{{/if}}>
+  <menu-item role="menuitem" tabindex="{{tab_index}}" aria-selected="{{aria_selected}}" data-action="{{action}}" data-index="{{index}}" {{#if icon}}data-icon="{{icon}}"{{/if}} {{#if selected_class}}class="{{selected_class}}"{{/if}}>
     {{#if icon}}
     <menu-item-icon data-icon="{{icon}}" />
     {{/if}}

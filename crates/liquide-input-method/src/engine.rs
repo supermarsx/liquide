@@ -6,7 +6,7 @@
 use crate::candidates::Candidate;
 use crate::compose::{ComposeResult, ComposeTable, default_compose_table};
 use crate::emoji::EmojiPicker;
-use crate::state::{InputMethodState, InputMode, PreeditString, PreeditSegment, SegmentStyle};
+use crate::state::{InputMethodState, InputMode, PreeditSegment, PreeditString, SegmentStyle};
 
 /// A key event from the platform.
 #[derive(Debug, Clone)]
@@ -424,7 +424,11 @@ impl InputMethodEngine {
         // Build segments: converted kana (thick underline) + pending romaji (thin underline).
         let mut segments = Vec::new();
         if kana_len > 0 {
-            segments.push(PreeditSegment::new(0, kana_len, SegmentStyle::ThickUnderline));
+            segments.push(PreeditSegment::new(
+                0,
+                kana_len,
+                SegmentStyle::ThickUnderline,
+            ));
         }
 
         // Temporarily append romaji to preedit for display.
@@ -548,17 +552,17 @@ fn convert_romaji(input: &str, katakana: bool) -> Option<(String, usize)> {
     let romaji_table: &[(&str, &str, &str)] = &[
         // (romaji, hiragana, katakana)
         // Vowels
-        ("a", "\u{3042}", "\u{30A2}"),   // あ ア
-        ("i", "\u{3044}", "\u{30A4}"),   // い イ
-        ("u", "\u{3046}", "\u{30A6}"),   // う ウ
-        ("e", "\u{3048}", "\u{30A8}"),   // え エ
-        ("o", "\u{304A}", "\u{30AA}"),   // お オ
+        ("a", "\u{3042}", "\u{30A2}"), // あ ア
+        ("i", "\u{3044}", "\u{30A4}"), // い イ
+        ("u", "\u{3046}", "\u{30A6}"), // う ウ
+        ("e", "\u{3048}", "\u{30A8}"), // え エ
+        ("o", "\u{304A}", "\u{30AA}"), // お オ
         // K-row
-        ("ka", "\u{304B}", "\u{30AB}"),  // か カ
-        ("ki", "\u{304D}", "\u{30AD}"),  // き キ
-        ("ku", "\u{304F}", "\u{30AF}"),  // く ク
-        ("ke", "\u{3051}", "\u{30B1}"),  // け ケ
-        ("ko", "\u{3053}", "\u{30B3}"),  // こ コ
+        ("ka", "\u{304B}", "\u{30AB}"), // か カ
+        ("ki", "\u{304D}", "\u{30AD}"), // き キ
+        ("ku", "\u{304F}", "\u{30AF}"), // く ク
+        ("ke", "\u{3051}", "\u{30B1}"), // け ケ
+        ("ko", "\u{3053}", "\u{30B3}"), // こ コ
         // S-row
         ("sa", "\u{3055}", "\u{30B5}"),  // さ サ
         ("si", "\u{3057}", "\u{30B7}"),  // し シ
@@ -575,71 +579,71 @@ fn convert_romaji(input: &str, katakana: bool) -> Option<(String, usize)> {
         ("te", "\u{3066}", "\u{30C6}"),  // て テ
         ("to", "\u{3068}", "\u{30C8}"),  // と ト
         // N-row
-        ("na", "\u{306A}", "\u{30CA}"),  // な ナ
-        ("ni", "\u{306B}", "\u{30CB}"),  // に ニ
-        ("nu", "\u{306C}", "\u{30CC}"),  // ぬ ヌ
-        ("ne", "\u{306D}", "\u{30CD}"),  // ね ネ
-        ("no", "\u{306E}", "\u{30CE}"),  // の ノ
+        ("na", "\u{306A}", "\u{30CA}"), // な ナ
+        ("ni", "\u{306B}", "\u{30CB}"), // に ニ
+        ("nu", "\u{306C}", "\u{30CC}"), // ぬ ヌ
+        ("ne", "\u{306D}", "\u{30CD}"), // ね ネ
+        ("no", "\u{306E}", "\u{30CE}"), // の ノ
         // H-row
-        ("ha", "\u{306F}", "\u{30CF}"),  // は ハ
-        ("hi", "\u{3072}", "\u{30D2}"),  // ひ ヒ
-        ("hu", "\u{3075}", "\u{30D5}"),  // ふ フ
-        ("fu", "\u{3075}", "\u{30D5}"),  // ふ フ
-        ("he", "\u{3078}", "\u{30D8}"),  // へ ヘ
-        ("ho", "\u{307B}", "\u{30DB}"),  // ほ ホ
+        ("ha", "\u{306F}", "\u{30CF}"), // は ハ
+        ("hi", "\u{3072}", "\u{30D2}"), // ひ ヒ
+        ("hu", "\u{3075}", "\u{30D5}"), // ふ フ
+        ("fu", "\u{3075}", "\u{30D5}"), // ふ フ
+        ("he", "\u{3078}", "\u{30D8}"), // へ ヘ
+        ("ho", "\u{307B}", "\u{30DB}"), // ほ ホ
         // M-row
-        ("ma", "\u{307E}", "\u{30DE}"),  // ま マ
-        ("mi", "\u{307F}", "\u{30DF}"),  // み ミ
-        ("mu", "\u{3080}", "\u{30E0}"),  // む ム
-        ("me", "\u{3081}", "\u{30E1}"),  // め メ
-        ("mo", "\u{3082}", "\u{30E2}"),  // も モ
+        ("ma", "\u{307E}", "\u{30DE}"), // ま マ
+        ("mi", "\u{307F}", "\u{30DF}"), // み ミ
+        ("mu", "\u{3080}", "\u{30E0}"), // む ム
+        ("me", "\u{3081}", "\u{30E1}"), // め メ
+        ("mo", "\u{3082}", "\u{30E2}"), // も モ
         // Y-row
-        ("ya", "\u{3084}", "\u{30E4}"),  // や ヤ
-        ("yu", "\u{3086}", "\u{30E6}"),  // ゆ ユ
-        ("yo", "\u{3088}", "\u{30E8}"),  // よ ヨ
+        ("ya", "\u{3084}", "\u{30E4}"), // や ヤ
+        ("yu", "\u{3086}", "\u{30E6}"), // ゆ ユ
+        ("yo", "\u{3088}", "\u{30E8}"), // よ ヨ
         // R-row
-        ("ra", "\u{3089}", "\u{30E9}"),  // ら ラ
-        ("ri", "\u{308A}", "\u{30EA}"),  // り リ
-        ("ru", "\u{308B}", "\u{30EB}"),  // る ル
-        ("re", "\u{308C}", "\u{30EC}"),  // れ レ
-        ("ro", "\u{308D}", "\u{30ED}"),  // ろ ロ
+        ("ra", "\u{3089}", "\u{30E9}"), // ら ラ
+        ("ri", "\u{308A}", "\u{30EA}"), // り リ
+        ("ru", "\u{308B}", "\u{30EB}"), // る ル
+        ("re", "\u{308C}", "\u{30EC}"), // れ レ
+        ("ro", "\u{308D}", "\u{30ED}"), // ろ ロ
         // W-row
-        ("wa", "\u{308F}", "\u{30EF}"),  // わ ワ
-        ("wo", "\u{3092}", "\u{30F2}"),  // を ヲ
+        ("wa", "\u{308F}", "\u{30EF}"), // わ ワ
+        ("wo", "\u{3092}", "\u{30F2}"), // を ヲ
         // N (standalone)
         ("nn", "\u{3093}", "\u{30F3}"), // ん ン
         ("n'", "\u{3093}", "\u{30F3}"), // ん ン
         // G-row (dakuten)
-        ("ga", "\u{304C}", "\u{30AC}"),  // が ガ
-        ("gi", "\u{304E}", "\u{30AE}"),  // ぎ ギ
-        ("gu", "\u{3050}", "\u{30B0}"),  // ぐ グ
-        ("ge", "\u{3052}", "\u{30B2}"),  // げ ゲ
-        ("go", "\u{3054}", "\u{30B4}"),  // ご ゴ
+        ("ga", "\u{304C}", "\u{30AC}"), // が ガ
+        ("gi", "\u{304E}", "\u{30AE}"), // ぎ ギ
+        ("gu", "\u{3050}", "\u{30B0}"), // ぐ グ
+        ("ge", "\u{3052}", "\u{30B2}"), // げ ゲ
+        ("go", "\u{3054}", "\u{30B4}"), // ご ゴ
         // Z-row
-        ("za", "\u{3056}", "\u{30B6}"),  // ざ ザ
-        ("zi", "\u{3058}", "\u{30B8}"),  // じ ジ
-        ("ji", "\u{3058}", "\u{30B8}"),  // じ ジ
-        ("zu", "\u{305A}", "\u{30BA}"),  // ず ズ
-        ("ze", "\u{305C}", "\u{30BC}"),  // ぜ ゼ
-        ("zo", "\u{305E}", "\u{30BE}"),  // ぞ ゾ
+        ("za", "\u{3056}", "\u{30B6}"), // ざ ザ
+        ("zi", "\u{3058}", "\u{30B8}"), // じ ジ
+        ("ji", "\u{3058}", "\u{30B8}"), // じ ジ
+        ("zu", "\u{305A}", "\u{30BA}"), // ず ズ
+        ("ze", "\u{305C}", "\u{30BC}"), // ぜ ゼ
+        ("zo", "\u{305E}", "\u{30BE}"), // ぞ ゾ
         // D-row
-        ("da", "\u{3060}", "\u{30C0}"),  // だ ダ
-        ("di", "\u{3062}", "\u{30C2}"),  // ぢ ヂ
-        ("du", "\u{3065}", "\u{30C5}"),  // づ ヅ
-        ("de", "\u{3067}", "\u{30C7}"),  // で デ
-        ("do", "\u{3069}", "\u{30C9}"),  // ど ド
+        ("da", "\u{3060}", "\u{30C0}"), // だ ダ
+        ("di", "\u{3062}", "\u{30C2}"), // ぢ ヂ
+        ("du", "\u{3065}", "\u{30C5}"), // づ ヅ
+        ("de", "\u{3067}", "\u{30C7}"), // で デ
+        ("do", "\u{3069}", "\u{30C9}"), // ど ド
         // B-row
-        ("ba", "\u{3070}", "\u{30D0}"),  // ば バ
-        ("bi", "\u{3073}", "\u{30D3}"),  // び ビ
-        ("bu", "\u{3076}", "\u{30D6}"),  // ぶ ブ
-        ("be", "\u{3079}", "\u{30D9}"),  // べ ベ
-        ("bo", "\u{307C}", "\u{30DC}"),  // ぼ ボ
+        ("ba", "\u{3070}", "\u{30D0}"), // ば バ
+        ("bi", "\u{3073}", "\u{30D3}"), // び ビ
+        ("bu", "\u{3076}", "\u{30D6}"), // ぶ ブ
+        ("be", "\u{3079}", "\u{30D9}"), // べ ベ
+        ("bo", "\u{307C}", "\u{30DC}"), // ぼ ボ
         // P-row (handakuten)
-        ("pa", "\u{3071}", "\u{30D1}"),  // ぱ パ
-        ("pi", "\u{3074}", "\u{30D4}"),  // ぴ ピ
-        ("pu", "\u{3077}", "\u{30D7}"),  // ぷ プ
-        ("pe", "\u{307A}", "\u{30DA}"),  // ぺ ペ
-        ("po", "\u{307D}", "\u{30DD}"),  // ぽ ポ
+        ("pa", "\u{3071}", "\u{30D1}"), // ぱ パ
+        ("pi", "\u{3074}", "\u{30D4}"), // ぴ ピ
+        ("pu", "\u{3077}", "\u{30D7}"), // ぷ プ
+        ("pe", "\u{307A}", "\u{30DA}"), // ぺ ペ
+        ("po", "\u{307D}", "\u{30DD}"), // ぽ ポ
     ];
 
     // Try longest match first.
@@ -649,15 +653,15 @@ fn convert_romaji(input: &str, katakana: bool) -> Option<(String, usize)> {
         for &(romaji, hiragana, kk) in romaji_table {
             if prefix == romaji {
                 // Check that a longer romaji doesn't also start with this prefix.
-                let could_be_longer = romaji_table.iter().any(|&(r, _, _)| {
-                    r.len() > len && r.starts_with(prefix) && input.len() > len
-                });
+                let could_be_longer = romaji_table
+                    .iter()
+                    .any(|&(r, _, _)| r.len() > len && r.starts_with(prefix) && input.len() > len);
                 if could_be_longer && len < input.len() {
                     // There might be a longer match possible, but let's
                     // check if the longer prefixes actually exist in input.
-                    let has_longer = romaji_table.iter().any(|&(r, _, _)| {
-                        r.len() > len && input.starts_with(r)
-                    });
+                    let has_longer = romaji_table
+                        .iter()
+                        .any(|&(r, _, _)| r.len() > len && input.starts_with(r));
                     if has_longer {
                         continue; // Skip shorter match, longer one will match.
                     }
@@ -690,9 +694,30 @@ fn lookup_pinyin(pinyin: &str) -> Vec<Candidate> {
         ("a", &[("\u{554A}", "ah"), ("\u{963F}", "prefix")]),
         ("ai", &[("\u{7231}", "love"), ("\u{54C0}", "sorrow")]),
         ("an", &[("\u{5B89}", "peace"), ("\u{6697}", "dark")]),
-        ("ba", &[("\u{5427}", "particle"), ("\u{516B}", "eight"), ("\u{628A}", "hold")]),
-        ("bei", &[("\u{5317}", "north"), ("\u{676F}", "cup"), ("\u{80CC}", "back")]),
-        ("bu", &[("\u{4E0D}", "not"), ("\u{6B65}", "step"), ("\u{90E8}", "section")]),
+        (
+            "ba",
+            &[
+                ("\u{5427}", "particle"),
+                ("\u{516B}", "eight"),
+                ("\u{628A}", "hold"),
+            ],
+        ),
+        (
+            "bei",
+            &[
+                ("\u{5317}", "north"),
+                ("\u{676F}", "cup"),
+                ("\u{80CC}", "back"),
+            ],
+        ),
+        (
+            "bu",
+            &[
+                ("\u{4E0D}", "not"),
+                ("\u{6B65}", "step"),
+                ("\u{90E8}", "section"),
+            ],
+        ),
         ("da", &[("\u{5927}", "big"), ("\u{6253}", "hit")]),
         ("de", &[("\u{7684}", "possessive"), ("\u{5F97}", "obtain")]),
         ("di", &[("\u{5730}", "earth"), ("\u{5E95}", "bottom")]),
@@ -702,25 +727,69 @@ fn lookup_pinyin(pinyin: &str) -> Vec<Candidate> {
         ("ge", &[("\u{4E2A}", "measure word"), ("\u{6B4C}", "song")]),
         ("guo", &[("\u{56FD}", "country"), ("\u{8FC7}", "pass")]),
         ("hao", &[("\u{597D}", "good"), ("\u{53F7}", "number")]),
-        ("he", &[("\u{548C}", "and"), ("\u{559D}", "drink"), ("\u{6CB3}", "river")]),
+        (
+            "he",
+            &[
+                ("\u{548C}", "and"),
+                ("\u{559D}", "drink"),
+                ("\u{6CB3}", "river"),
+            ],
+        ),
         ("hen", &[("\u{5F88}", "very")]),
-        ("hua", &[("\u{82B1}", "flower"), ("\u{8BDD}", "speech"), ("\u{5316}", "change")]),
+        (
+            "hua",
+            &[
+                ("\u{82B1}", "flower"),
+                ("\u{8BDD}", "speech"),
+                ("\u{5316}", "change"),
+            ],
+        ),
         ("hui", &[("\u{4F1A}", "will/can"), ("\u{56DE}", "return")]),
         ("huo", &[("\u{706B}", "fire"), ("\u{6216}", "or")]),
-        ("ji", &[("\u{51E0}", "how many"), ("\u{673A}", "machine"), ("\u{8BB0}", "remember")]),
+        (
+            "ji",
+            &[
+                ("\u{51E0}", "how many"),
+                ("\u{673A}", "machine"),
+                ("\u{8BB0}", "remember"),
+            ],
+        ),
         ("jia", &[("\u{5BB6}", "home"), ("\u{52A0}", "add")]),
         ("jian", &[("\u{89C1}", "see"), ("\u{95F4}", "between")]),
-        ("jing", &[("\u{4EAC}", "capital"), ("\u{7ECF}", "pass through")]),
+        (
+            "jing",
+            &[("\u{4EAC}", "capital"), ("\u{7ECF}", "pass through")],
+        ),
         ("jiu", &[("\u{4E5D}", "nine"), ("\u{5C31}", "then")]),
         ("kai", &[("\u{5F00}", "open")]),
         ("kan", &[("\u{770B}", "look"), ("\u{780D}", "chop")]),
         ("ke", &[("\u{53EF}", "can"), ("\u{8BFE}", "lesson")]),
         ("lai", &[("\u{6765}", "come")]),
         ("le", &[("\u{4E86}", "completed"), ("\u{4E50}", "happy")]),
-        ("li", &[("\u{91CC}", "inside"), ("\u{7406}", "reason"), ("\u{529B}", "power")]),
-        ("ma", &[("\u{5988}", "mom"), ("\u{9A6C}", "horse"), ("\u{5417}", "question")]),
-        ("mei", &[("\u{6CA1}", "not have"), ("\u{7F8E}", "beautiful")]),
-        ("men", &[("\u{4EEC}", "plural suffix"), ("\u{95E8}", "door")]),
+        (
+            "li",
+            &[
+                ("\u{91CC}", "inside"),
+                ("\u{7406}", "reason"),
+                ("\u{529B}", "power"),
+            ],
+        ),
+        (
+            "ma",
+            &[
+                ("\u{5988}", "mom"),
+                ("\u{9A6C}", "horse"),
+                ("\u{5417}", "question"),
+            ],
+        ),
+        (
+            "mei",
+            &[("\u{6CA1}", "not have"), ("\u{7F8E}", "beautiful")],
+        ),
+        (
+            "men",
+            &[("\u{4EEC}", "plural suffix"), ("\u{95E8}", "door")],
+        ),
         ("ming", &[("\u{660E}", "bright"), ("\u{540D}", "name")]),
         ("na", &[("\u{90A3}", "that"), ("\u{62FF}", "take")]),
         ("ni", &[("\u{4F60}", "you")]),
@@ -729,9 +798,20 @@ fn lookup_pinyin(pinyin: &str) -> Vec<Candidate> {
         ("ren", &[("\u{4EBA}", "person"), ("\u{8BA4}", "recognize")]),
         ("ri", &[("\u{65E5}", "day/sun")]),
         ("san", &[("\u{4E09}", "three")]),
-        ("shi", &[("\u{662F}", "is"), ("\u{5341}", "ten"), ("\u{4E16}", "world"), ("\u{4E8B}", "matter")]),
+        (
+            "shi",
+            &[
+                ("\u{662F}", "is"),
+                ("\u{5341}", "ten"),
+                ("\u{4E16}", "world"),
+                ("\u{4E8B}", "matter"),
+            ],
+        ),
         ("shui", &[("\u{6C34}", "water"), ("\u{8C01}", "who")]),
-        ("ta", &[("\u{4ED6}", "he"), ("\u{5979}", "she"), ("\u{5B83}", "it")]),
+        (
+            "ta",
+            &[("\u{4ED6}", "he"), ("\u{5979}", "she"), ("\u{5B83}", "it")],
+        ),
         ("tian", &[("\u{5929}", "sky/day"), ("\u{7530}", "field")]),
         ("ting", &[("\u{542C}", "listen")]),
         ("wo", &[("\u{6211}", "I/me")]),
@@ -746,13 +826,33 @@ fn lookup_pinyin(pinyin: &str) -> Vec<Candidate> {
         ("xing", &[("\u{884C}", "go/OK"), ("\u{59D3}", "surname")]),
         ("xue", &[("\u{5B66}", "study"), ("\u{96EA}", "snow")]),
         ("yi", &[("\u{4E00}", "one"), ("\u{5DF2}", "already")]),
-        ("you", &[("\u{6709}", "have"), ("\u{53F3}", "right"), ("\u{53CB}", "friend")]),
+        (
+            "you",
+            &[
+                ("\u{6709}", "have"),
+                ("\u{53F3}", "right"),
+                ("\u{53CB}", "friend"),
+            ],
+        ),
         ("yue", &[("\u{6708}", "month"), ("\u{8BF4}", "speak")]),
         ("zai", &[("\u{5728}", "at"), ("\u{518D}", "again")]),
-        ("zhe", &[("\u{8FD9}", "this"), ("\u{7740}", "verb particle")]),
-        ("zhong", &[("\u{4E2D}", "middle"), ("\u{79CD}", "kind/type")]),
+        (
+            "zhe",
+            &[("\u{8FD9}", "this"), ("\u{7740}", "verb particle")],
+        ),
+        (
+            "zhong",
+            &[("\u{4E2D}", "middle"), ("\u{79CD}", "kind/type")],
+        ),
         ("zi", &[("\u{5B57}", "character"), ("\u{5B50}", "child")]),
-        ("zuo", &[("\u{505A}", "do"), ("\u{5DE6}", "left"), ("\u{5750}", "sit")]),
+        (
+            "zuo",
+            &[
+                ("\u{505A}", "do"),
+                ("\u{5DE6}", "left"),
+                ("\u{5750}", "sit"),
+            ],
+        ),
     ];
 
     let mut results = Vec::new();

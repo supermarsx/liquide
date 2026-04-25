@@ -7,9 +7,9 @@ use crate::history::WindowEventKind;
 use crate::shortcuts::ShellAction;
 use crate::window::{WindowFlags, WindowId, WindowState};
 
-use super::hooks::ShellHookEvent;
 use super::Shell;
 use super::batch::WindowBatch;
+use super::hooks::ShellHookEvent;
 
 impl Shell {
     /// Periodic tick — update clock, expire notifications.
@@ -146,8 +146,9 @@ impl Shell {
         }
 
         // Maximized window present: reveal bar when cursor is within
-        // the top 2 px of the screen (edge hover), hide otherwise.
-        let at_top_edge = self.last_cursor_y <= self.screen_rect.y + 2.0;
+        // the configured edge-hover distance from the top of the screen.
+        let reveal_distance = self.status_bar.config().auto_hide_reveal_distance.max(0.0);
+        let at_top_edge = self.last_cursor_y <= self.screen_rect.y + reveal_distance;
         if at_top_edge && !self.status_bar_visible {
             self.status_bar_visible = true;
             true
@@ -245,10 +246,8 @@ impl Shell {
                     let from = active.0;
                     let next = crate::workspace::WorkspaceId(active.0 + 1);
                     let _ = self.workspaces.switch_to(next);
-                    self.hook_manager.dispatch(&ShellHookEvent::WorkspaceChanged {
-                        from,
-                        to: next.0,
-                    });
+                    self.hook_manager
+                        .dispatch(&ShellHookEvent::WorkspaceChanged { from, to: next.0 });
                 }
                 true
             }
@@ -258,10 +257,8 @@ impl Shell {
                     let from = active.0;
                     let prev = crate::workspace::WorkspaceId(active.0 - 1);
                     let _ = self.workspaces.switch_to(prev);
-                    self.hook_manager.dispatch(&ShellHookEvent::WorkspaceChanged {
-                        from,
-                        to: prev.0,
-                    });
+                    self.hook_manager
+                        .dispatch(&ShellHookEvent::WorkspaceChanged { from, to: prev.0 });
                 }
                 true
             }

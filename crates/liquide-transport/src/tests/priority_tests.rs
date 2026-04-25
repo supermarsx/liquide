@@ -1,7 +1,7 @@
 use liquide_protocol::channel::ChannelId;
 use liquide_protocol::frame::FrameFlags;
 
-use crate::priority::{Priority, PriorityMapper, NUM_PRIORITIES};
+use crate::priority::{NUM_PRIORITIES, Priority, PriorityMapper};
 
 #[test]
 fn priority_ordering() {
@@ -58,16 +58,10 @@ fn default_channel_mapping() {
         mapper.base_priority(ChannelId::CONTROL),
         Priority::P4Control
     );
-    assert_eq!(
-        mapper.base_priority(ChannelId::VIDEO),
-        Priority::P5Graphics
-    );
+    assert_eq!(mapper.base_priority(ChannelId::VIDEO), Priority::P5Graphics);
 
     // Bulk channels
-    assert_eq!(
-        mapper.base_priority(ChannelId::CLIPBOARD),
-        Priority::P6Bulk
-    );
+    assert_eq!(mapper.base_priority(ChannelId::CLIPBOARD), Priority::P6Bulk);
     assert_eq!(mapper.base_priority(ChannelId::USB), Priority::P6Bulk);
     assert_eq!(
         mapper.base_priority(ChannelId::FILE_TRANSFER),

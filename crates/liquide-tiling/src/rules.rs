@@ -51,16 +51,16 @@ impl TileRule {
     #[must_use]
     pub fn matches(&self, window_class: Option<&str>, app_id: Option<&str>) -> bool {
         let class_ok = match &self.window_class {
-            Some(pattern) => window_class.is_some_and(|c| {
-                c.to_lowercase().contains(&pattern.to_lowercase())
-            }),
+            Some(pattern) => {
+                window_class.is_some_and(|c| c.to_lowercase().contains(&pattern.to_lowercase()))
+            }
             None => true,
         };
 
         let app_ok = match &self.app_id {
-            Some(pattern) => app_id.is_some_and(|a| {
-                a.to_lowercase().contains(&pattern.to_lowercase())
-            }),
+            Some(pattern) => {
+                app_id.is_some_and(|a| a.to_lowercase().contains(&pattern.to_lowercase()))
+            }
             None => true,
         };
 
@@ -108,9 +108,7 @@ impl RuleEngine {
 
     /// Remove all rules matching the given app_id pattern.
     pub fn remove_rules_for_app(&mut self, app_id: &str) {
-        self.rules.retain(|r| {
-            r.app_id.as_deref() != Some(app_id)
-        });
+        self.rules.retain(|r| r.app_id.as_deref() != Some(app_id));
     }
 
     /// Evaluate rules for a window. Returns the first matching action,

@@ -1,8 +1,8 @@
 use bytes::Bytes;
 
+use crate::Transport;
 use crate::listener::{ListenerConfig, TcpListener};
 use crate::tcp::TcpTransport;
-use crate::Transport;
 
 // ---------------------------------------------------------------------------
 // TCP Listener
@@ -107,9 +107,9 @@ async fn tcp_listener_bind_config() {
 mod ws_listener_tests {
     use bytes::Bytes;
 
+    use crate::Transport;
     use crate::listener::ws::WebSocketListener;
     use crate::websocket::WebSocketTransport;
-    use crate::Transport;
 
     #[tokio::test]
     async fn ws_listener_bind_addr() {
@@ -188,9 +188,9 @@ mod ws_listener_tests {
 mod tls_listener_tests {
     use bytes::Bytes;
 
+    use crate::Transport;
     use crate::listener::tls::TlsListener;
     use crate::tls::TlsTcpTransport;
-    use crate::Transport;
 
     use crate::tests::test_helpers::{
         generate_self_signed, make_rustls_client_config, make_rustls_server_config,
@@ -231,8 +231,7 @@ mod tls_listener_tests {
         });
 
         for _ in 0u32..3 {
-            let mut client =
-                TlsTcpTransport::new(client_config.clone(), "localhost".into());
+            let mut client = TlsTcpTransport::new(client_config.clone(), "localhost".into());
             client.connect(addr).await.unwrap();
             let msg = client.recv().await.unwrap();
             assert_eq!(&msg[..], b"tls_accepted");
@@ -251,9 +250,9 @@ mod tls_listener_tests {
 mod quic_listener_tests {
     use bytes::Bytes;
 
+    use crate::Transport;
     use crate::listener::quic::QuicListener;
     use crate::quic::QuicTransport;
-    use crate::Transport;
 
     use crate::tests::test_helpers::{generate_self_signed, make_quinn_server_config};
 

@@ -24,8 +24,14 @@ pub async fn execute(client: &Client, output: &Output, args: &StatsArgs) -> Resu
     match resp.data {
         Some(stats) => {
             output.message("Aggregate Statistics");
-            output.message(&format!("  Sessions:       {} active", stats.sessions_active));
-            output.message(&format!("  Connections:    {} total", stats.connections_total));
+            output.message(&format!(
+                "  Sessions:       {} active",
+                stats.sessions_active
+            ));
+            output.message(&format!(
+                "  Connections:    {} total",
+                stats.connections_total
+            ));
             output.message(&format!("  Bytes In:       {}", stats.bytes_in));
             output.message(&format!("  Bytes Out:      {}", stats.bytes_out));
             output.message(&format!("  Uptime:         {}s", stats.uptime_seconds));

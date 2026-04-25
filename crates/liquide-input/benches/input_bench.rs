@@ -1,10 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
+use liquide_input::event::InputEvent;
 use liquide_input::keyboard::*;
 use liquide_input::mouse::*;
-use liquide_input::event::InputEvent;
-use liquide_input::state::InputState;
 use liquide_input::router::*;
+use liquide_input::state::InputState;
 
 use liquide_compositor::geometry::Rect;
 
@@ -14,8 +14,12 @@ struct BenchSurface {
 }
 
 impl InputTarget for BenchSurface {
-    fn id(&self) -> u64 { self.id }
-    fn bounds(&self) -> Rect { self.bounds }
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn bounds(&self) -> Rect {
+        self.bounds
+    }
 }
 
 fn bench_state_handle_1000_key_events(c: &mut Criterion) {
@@ -24,7 +28,11 @@ fn bench_state_handle_1000_key_events(c: &mut Criterion) {
             let mut state = InputState::new();
             for i in 0..1000u64 {
                 let key = if i % 2 == 0 { KeyCode::A } else { KeyCode::B };
-                let ks = if i % 2 == 0 { KeyState::Pressed } else { KeyState::Released };
+                let ks = if i % 2 == 0 {
+                    KeyState::Pressed
+                } else {
+                    KeyState::Released
+                };
                 let evt = InputEvent::Keyboard(KeyEvent::new(key, ks, Modifiers::new(), 30, i));
                 state.handle_event(black_box(&evt));
             }
@@ -38,10 +46,16 @@ fn bench_router_hit_test_100_surfaces(c: &mut Criterion) {
         let surfaces: Vec<BenchSurface> = (0..100)
             .map(|i| BenchSurface {
                 id: i as u64,
-                bounds: Rect::new((i % 10) as f32 * 100.0, (i / 10) as f32 * 100.0, 100.0, 100.0),
+                bounds: Rect::new(
+                    (i % 10) as f32 * 100.0,
+                    (i / 10) as f32 * 100.0,
+                    100.0,
+                    100.0,
+                ),
             })
             .collect();
-        let surface_refs: Vec<&dyn InputTarget> = surfaces.iter().map(|s| s as &dyn InputTarget).collect();
+        let surface_refs: Vec<&dyn InputTarget> =
+            surfaces.iter().map(|s| s as &dyn InputTarget).collect();
         let router = InputRouter::new();
 
         b.iter(|| {

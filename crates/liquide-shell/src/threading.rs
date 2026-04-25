@@ -4,9 +4,11 @@
 //! its own dedicated thread with its own DOM and rendering pipeline.
 //! The main thread coordinates updates and composites the final scene.
 
+#![allow(dead_code)]
+
 use crate::desktop_dom::DesktopDocument;
 use liquide_compositor::scene::SceneNode;
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
@@ -31,9 +33,7 @@ pub enum ElementUpdate {
         hover_index: Option<usize>,
     },
     /// Status bar items.
-    StatusBar {
-        items: Vec<StatusBarItemUpdate>,
-    },
+    StatusBar { items: Vec<StatusBarItemUpdate> },
     /// Launcher state.
     Launcher {
         visible: bool,
@@ -74,7 +74,7 @@ impl ElementThread {
     /// Create a new element thread.
     pub fn new(name: String, css: String, viewport_width: u32, viewport_height: u32) -> Self {
         let (tx, rx) = channel();
-        
+
         let thread_name = name.clone();
         let handle = thread::Builder::new()
             .name(name.clone())
@@ -82,21 +82,21 @@ impl ElementThread {
                 Self::thread_loop(thread_name, css, viewport_width, viewport_height, rx);
             })
             .expect("Failed to spawn element thread");
-        
+
         Self {
             name,
             tx,
             handle: Some(handle),
         }
     }
-    
+
     /// Send an update to the thread.
     pub fn update(&self, update: ElementUpdate) {
         if let Err(e) = self.tx.send(ElementMessage::Update(update)) {
             error!("Failed to send update to {}: {}", self.name, e);
         }
     }
-    
+
     /// Request a render from the thread (non-blocking).
     pub fn render(&self) -> Receiver<Vec<SceneNode>> {
         let (resp_tx, resp_rx) = channel();
@@ -105,7 +105,7 @@ impl ElementThread {
         }
         resp_rx
     }
-    
+
     /// Shutdown the thread.
     pub fn shutdown(mut self) {
         let _ = self.tx.send(ElementMessage::Shutdown);
@@ -113,7 +113,7 @@ impl ElementThread {
             let _ = handle.join();
         }
     }
-    
+
     /// The thread's main loop.
     fn thread_loop(
         name: String,
@@ -123,10 +123,10 @@ impl ElementThread {
         rx: Receiver<ElementMessage>,
     ) {
         info!("{} thread started", name);
-        
+
         // Each thread has its own DOM and pipeline.
         let mut document = DesktopDocument::new();
-        
+
         let config = crate::pipeline::PipelineConfig {
             width: viewport_width as f32,
             height: viewport_height as f32,
@@ -134,7 +134,7 @@ impl ElementThread {
         };
         let mut pipeline = crate::pipeline::DesktopPipeline::new(&config);
         pipeline.set_theme(&css);
-        
+
         loop {
             match rx.recv() {
                 Ok(ElementMessage::Update(update)) => {
@@ -143,7 +143,11 @@ impl ElementThread {
                 }
                 Ok(ElementMessage::Render { response }) => {
                     debug!("{} rendering", name);
-                    let (nodes, _animations_active) = pipeline.render_to_scene(&mut document.doc, 0, crate::DEFAULT_FRAME_DELTA_MS);
+                    let (nodes, _animations_active) = pipeline.render_to_scene(
+                        &mut document.doc,
+                        0,
+                        crate::DEFAULT_FRAME_DELTA_MS,
+                    );
                     let _ = response.send(nodes);
                 }
                 Ok(ElementMessage::Shutdown) => {
@@ -157,17 +161,25 @@ impl ElementThread {
             }
         }
     }
-    
+
     /// Apply an update to the document.
     fn apply_update(document: &mut DesktopDocument, update: ElementUpdate) {
         match update {
-            ElementUpdate::Dock { items: _, hover_index: _ } => {
+            ElementUpdate::Dock {
+                items: _,
+                hover_index: _,
+            } => {
                 // Dock rendering is handled by the template engine in dom_sync.rs.
             }
             ElementUpdate::StatusBar { items: _ } => {
                 // Statusbar rendering is handled by the template engine in dom_sync.rs.
             }
-            ElementUpdate::Launcher { visible, search_query: _, filtered_items, selected_index } => {
+            ElementUpdate::Launcher {
+                visible,
+                search_query: _,
+                filtered_items,
+                selected_index,
+            } => {
                 if visible {
                     document.show_launcher(&filtered_items);
                     if let Some(idx) = selected_index {
@@ -199,7 +211,7 @@ impl ShellThreadCoordinator {
     /// Create a new thread coordinator with all shell element threads.
     pub fn new(css: String, viewport_width: u32, viewport_height: u32) -> Self {
         info!("Initializing shell thread coordinator");
-        
+
         Self {
             dock_thread: ElementThread::new(
                 "dock-render".to_string(),
@@ -227,7 +239,7 @@ impl ShellThreadCoordinator {
             ),
         }
     }
-    
+
     /// Update the dock thread.
     pub fn update_dock(&self, items: Vec<crate::desktop_dom::DockItemInfo>, hover: Option<usize>) {
         self.dock_thread.update(ElementUpdate::Dock {
@@ -235,12 +247,13 @@ impl ShellThreadCoordinator {
             hover_index: hover,
         });
     }
-    
+
     /// Update the statusbar thread.
     pub fn update_statusbar(&self, items: Vec<StatusBarItemUpdate>) {
-        self.statusbar_thread.update(ElementUpdate::StatusBar { items });
+        self.statusbar_thread
+            .update(ElementUpdate::StatusBar { items });
     }
-    
+
     /// Update the launcher thread.
     pub fn update_launcher(
         &self,
@@ -256,12 +269,13 @@ impl ShellThreadCoordinator {
             selected_index: selected,
         });
     }
-    
+
     /// Update the notification thread.
     pub fn update_notifications(&self, notifications: Vec<NotificationData>) {
-        self.notification_thread.update(ElementUpdate::Notifications { notifications });
+        self.notification_thread
+            .update(ElementUpdate::Notifications { notifications });
     }
-    
+
     /// Render all elements and collect their scene nodes.
     pub fn render_all(&self) -> Vec<SceneNode> {
         let dock_rx = self.dock_thread.render();
@@ -289,7 +303,7 @@ impl ShellThreadCoordinator {
 
         nodes
     }
-    
+
     /// Shutdown all threads.
     pub fn shutdown(self) {
         info!("Shutting down shell thread coordinator");

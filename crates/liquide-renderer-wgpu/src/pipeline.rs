@@ -1,8 +1,8 @@
 //! Render pipeline management — creates and caches wgpu render/compute pipelines.
 
+use crate::Result;
 use crate::device::WgpuDevice;
 use crate::shader;
-use crate::Result;
 
 /// Holds all compiled render and compute pipelines.
 pub struct PipelineCache {
@@ -291,35 +291,34 @@ impl PipelineCache {
             bind_group_layouts: &[&quad_bind_group_layout, &gradient_bgl],
             push_constant_ranges: &[],
         });
-        let gradient_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("gradient_pipeline"),
-                layout: Some(&gradient_layout),
-                vertex: wgpu::VertexState {
-                    module: &quad_vert_module,
-                    entry_point: Some("vs_quad"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &gradient_frag,
-                    entry_point: Some("fs_gradient"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: target_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let gradient_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("gradient_pipeline"),
+            layout: Some(&gradient_layout),
+            vertex: wgpu::VertexState {
+                module: &quad_vert_module,
+                entry_point: Some("vs_quad"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &gradient_frag,
+                entry_point: Some("fs_gradient"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
         // ── Shadow ──────────────────────────────────────────────────────
         let shadow_frag = device.create_shader_module(wgpu::ShaderModuleDescriptor {

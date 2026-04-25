@@ -206,8 +206,7 @@ impl SettingsStore {
             .clone();
 
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| SettingsError::IoError(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| SettingsError::IoError(e.to_string()))?;
         }
 
         let mut lines = Vec::new();
@@ -308,7 +307,8 @@ impl SettingsStore {
 
     /// Register a single setting.
     fn register(&mut self, setting: Setting) {
-        self.settings.insert(setting.key.as_str().to_string(), setting);
+        self.settings
+            .insert(setting.key.as_str().to_string(), setting);
     }
 
     /// Register all built-in default settings.

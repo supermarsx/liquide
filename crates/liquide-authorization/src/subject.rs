@@ -261,7 +261,11 @@ mod tests {
 
     #[test]
     fn subject_kind_serde_roundtrip() {
-        for kind in [SubjectKind::User, SubjectKind::Process, SubjectKind::Session] {
+        for kind in [
+            SubjectKind::User,
+            SubjectKind::Process,
+            SubjectKind::Session,
+        ] {
             let json = serde_json::to_string(&kind).unwrap();
             let back: SubjectKind = serde_json::from_str(&json).unwrap();
             assert_eq!(kind, back);

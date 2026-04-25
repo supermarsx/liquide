@@ -150,10 +150,7 @@ mod tests {
 
         // Alt+W should now close window (was Alt+F4)
         let result = reg.lookup(MOD_ALT, &KeyCode::W, &[ShortcutContext::Global]);
-        assert_eq!(
-            result,
-            Some(&ShortcutAction::Window(WindowAction::Close))
-        );
+        assert_eq!(result, Some(&ShortcutAction::Window(WindowAction::Close)));
 
         // Alt+F4 should no longer close window
         let result = reg.lookup(MOD_ALT, &KeyCode::F4, &[ShortcutContext::Global]);
@@ -173,10 +170,7 @@ mod tests {
 
         // Super+W should close window
         let result = reg.lookup(MOD_SUPER, &KeyCode::W, &[ShortcutContext::Global]);
-        assert_eq!(
-            result,
-            Some(&ShortcutAction::Window(WindowAction::Close))
-        );
+        assert_eq!(result, Some(&ShortcutAction::Window(WindowAction::Close)));
     }
 
     #[test]

@@ -23,7 +23,7 @@ impl ClipboardPolicy {
     pub fn default_policy() -> Self {
         Self {
             max_payload_bytes: 16 * 1024 * 1024, // 16 MB
-            allowed_formats: None,                // all allowed
+            allowed_formats: None,               // all allowed
             bidirectional: true,
         }
     }

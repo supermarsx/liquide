@@ -138,16 +138,16 @@ impl InhibitorRegistry {
 
     /// Check if sleep/suspend is currently inhibited.
     pub fn is_sleep_inhibited(&self) -> bool {
-        self.inhibitors.iter().any(|i| {
-            matches!(i.what, InhibitWhat::Sleep | InhibitWhat::Both)
-        })
+        self.inhibitors
+            .iter()
+            .any(|i| matches!(i.what, InhibitWhat::Sleep | InhibitWhat::Both))
     }
 
     /// Check if idle (display dim/off) is currently inhibited.
     pub fn is_idle_inhibited(&self) -> bool {
-        self.inhibitors.iter().any(|i| {
-            matches!(i.what, InhibitWhat::Idle | InhibitWhat::Both)
-        })
+        self.inhibitors
+            .iter()
+            .any(|i| matches!(i.what, InhibitWhat::Idle | InhibitWhat::Both))
     }
 
     /// Convenience: check if *any* inhibitor is active.
@@ -167,7 +167,10 @@ impl InhibitorRegistry {
 
     /// Find inhibitors matching a specific reason.
     pub fn find_by_reason(&self, reason: InhibitReason) -> Vec<&Inhibitor> {
-        self.inhibitors.iter().filter(|i| i.reason == reason).collect()
+        self.inhibitors
+            .iter()
+            .filter(|i| i.reason == reason)
+            .collect()
     }
 }
 
@@ -197,7 +200,12 @@ mod tests {
     #[test]
     fn add_and_query() {
         let mut reg = InhibitorRegistry::new();
-        let id = reg.add("vlc", InhibitReason::VideoPlayback, "Playing movie", InhibitWhat::Both);
+        let id = reg.add(
+            "vlc",
+            InhibitReason::VideoPlayback,
+            "Playing movie",
+            InhibitWhat::Both,
+        );
         assert!(id > 0);
         assert!(reg.is_inhibited());
         assert!(reg.is_sleep_inhibited());
@@ -208,7 +216,12 @@ mod tests {
     #[test]
     fn sleep_only_inhibitor() {
         let mut reg = InhibitorRegistry::new();
-        reg.add("wget", InhibitReason::Download, "Downloading ISO", InhibitWhat::Sleep);
+        reg.add(
+            "wget",
+            InhibitReason::Download,
+            "Downloading ISO",
+            InhibitWhat::Sleep,
+        );
         assert!(reg.is_sleep_inhibited());
         assert!(!reg.is_idle_inhibited());
     }
@@ -216,7 +229,12 @@ mod tests {
     #[test]
     fn idle_only_inhibitor() {
         let mut reg = InhibitorRegistry::new();
-        reg.add("presentation", InhibitReason::Presentation, "Slideshow", InhibitWhat::Idle);
+        reg.add(
+            "presentation",
+            InhibitReason::Presentation,
+            "Slideshow",
+            InhibitWhat::Idle,
+        );
         assert!(!reg.is_sleep_inhibited());
         assert!(reg.is_idle_inhibited());
     }
@@ -224,7 +242,12 @@ mod tests {
     #[test]
     fn remove_by_id() {
         let mut reg = InhibitorRegistry::new();
-        let id = reg.add("app", InhibitReason::UserRequest, "keep awake", InhibitWhat::Sleep);
+        let id = reg.add(
+            "app",
+            InhibitReason::UserRequest,
+            "keep awake",
+            InhibitWhat::Sleep,
+        );
         assert!(reg.remove(id));
         assert!(!reg.is_inhibited());
         // Removing again returns false.
@@ -234,9 +257,24 @@ mod tests {
     #[test]
     fn remove_by_app() {
         let mut reg = InhibitorRegistry::new();
-        reg.add("firefox", InhibitReason::VideoPlayback, "YouTube", InhibitWhat::Both);
-        reg.add("firefox", InhibitReason::Download, "Update", InhibitWhat::Sleep);
-        reg.add("vlc", InhibitReason::AudioPlayback, "Music", InhibitWhat::Sleep);
+        reg.add(
+            "firefox",
+            InhibitReason::VideoPlayback,
+            "YouTube",
+            InhibitWhat::Both,
+        );
+        reg.add(
+            "firefox",
+            InhibitReason::Download,
+            "Update",
+            InhibitWhat::Sleep,
+        );
+        reg.add(
+            "vlc",
+            InhibitReason::AudioPlayback,
+            "Music",
+            InhibitWhat::Sleep,
+        );
         assert_eq!(reg.count(), 3);
 
         reg.remove_by_app("firefox");
@@ -258,7 +296,12 @@ mod tests {
     fn active_inhibitors_snapshot() {
         let mut reg = InhibitorRegistry::new();
         reg.add("app1", InhibitReason::Download, "file", InhibitWhat::Sleep);
-        reg.add("app2", InhibitReason::SystemUpdate, "apt", InhibitWhat::Both);
+        reg.add(
+            "app2",
+            InhibitReason::SystemUpdate,
+            "apt",
+            InhibitWhat::Both,
+        );
         let active = reg.active_inhibitors();
         assert_eq!(active.len(), 2);
         assert_eq!(active[0].app_id, "app1");

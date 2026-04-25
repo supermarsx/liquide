@@ -69,7 +69,14 @@ pub fn blur_horizontal(
     height: u32,
     kernel: &GaussianKernel,
 ) {
-    liquide_simd::blur::blur_horizontal(src, dst, width, height, kernel.half_width, &kernel.weights);
+    liquide_simd::blur::blur_horizontal(
+        src,
+        dst,
+        width,
+        height,
+        kernel.half_width,
+        &kernel.weights,
+    );
 }
 
 /// Apply a vertical Gaussian blur pass.

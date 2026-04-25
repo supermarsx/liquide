@@ -28,7 +28,10 @@ impl Default for RepeatConfig {
 impl RepeatConfig {
     /// Create a custom repeat configuration.
     pub fn new(delay_ms: u32, interval_ms: u32) -> Self {
-        Self { delay_ms, interval_ms }
+        Self {
+            delay_ms,
+            interval_ms,
+        }
     }
 
     /// Whether repeat is effectively disabled (zero interval).

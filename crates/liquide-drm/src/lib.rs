@@ -14,15 +14,19 @@ pub mod pageflip;
 
 pub use atomic::{AtomicFlags, AtomicRequest, PropertyChange};
 pub use connector::{
-    ConnectorId, ConnectorInfo, ConnectorStatus, ConnectorType, SubpixelOrder,
-    enumerate_connectors,
+    ConnectorId, ConnectorInfo, ConnectorStatus, ConnectorType, SubpixelOrder, enumerate_connectors,
 };
 pub use crtc::{CrtcId, CrtcInfo, enumerate_crtcs};
 pub use device::DrmDevice;
 pub use error::{DrmError, Result};
 pub use framebuffer::DrmFramebuffer;
 pub use mode::{DrmMode, ModeFlags, preferred_mode};
-pub use pageflip::{PageFlipEvent, PageFlipFlags, request_page_flip, wait_vblank};
+pub use pageflip::{
+    DrmEvent, PageFlipEvent, PageFlipFlags, UnknownDrmEvent, VblankEvent, parse_drm_events,
+    request_page_flip, wait_vblank,
+};
+#[cfg(target_os = "linux")]
+pub use pageflip::{drain_pending_events, drain_pending_events_from_fd};
 
 #[cfg(test)]
 mod tests;

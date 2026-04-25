@@ -10,10 +10,7 @@ pub async fn execute(_client: &Client, output: &Output, cmd: &MonitorsCommand) -
             output.message("  (not connected)");
         }
         MonitorsCommand::Add(args) => {
-            output.message(&format!(
-                "Adding monitor to session {}...",
-                args.session_id
-            ));
+            output.message(&format!("Adding monitor to session {}...", args.session_id));
         }
         MonitorsCommand::Remove(args) => {
             output.message(&format!(

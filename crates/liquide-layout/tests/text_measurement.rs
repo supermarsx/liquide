@@ -52,7 +52,10 @@ fn measure_empty_string() {
     let result = m.measure("", FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
     assert_eq!(result.width, 0.0, "empty string should have zero width");
     assert_eq!(result.line_count, 1, "empty string is still 1 line");
-    assert!(result.height > 0.0, "height should be positive (line height)");
+    assert!(
+        result.height > 0.0,
+        "height should be positive (line height)"
+    );
 }
 
 #[test]
@@ -66,8 +69,22 @@ fn measure_single_char() {
 #[test]
 fn measure_longer_text_wider() {
     let m = measurer();
-    let short = m.measure("ab", FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
-    let long = m.measure("abcdef", FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let short = m.measure(
+        "ab",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
+    let long = m.measure(
+        "abcdef",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
     assert!(
         long.width > short.width,
         "longer text should be wider: {} vs {}",
@@ -79,7 +96,14 @@ fn measure_longer_text_wider() {
 #[test]
 fn measure_baseline_is_positive() {
     let m = measurer();
-    let result = m.measure("Hello", FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let result = m.measure(
+        "Hello",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
     assert!(result.baseline > 0.0);
 }
 
@@ -88,7 +112,14 @@ fn measure_baseline_is_positive() {
 #[test]
 fn measure_default_line_height() {
     let m = measurer();
-    let result = m.measure("Hello", FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let result = m.measure(
+        "Hello",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
     // Default line-height: normal → font_size * 1.2 = 19.2
     let expected = FONT_SIZE * 1.2;
     assert!(
@@ -132,8 +163,18 @@ fn measure_line_height_number_multiplier() {
 #[test]
 fn measure_newline_in_pre_mode() {
     let m = measurer();
-    let result = m.measure("Hello\nWorld", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_props());
-    assert_eq!(result.line_count, 2, "\\n in pre mode should produce 2 lines");
+    let result = m.measure(
+        "Hello\nWorld",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_props(),
+    );
+    assert_eq!(
+        result.line_count, 2,
+        "\\n in pre mode should produce 2 lines"
+    );
     let line_h = FONT_SIZE * 1.2;
     assert!(
         (result.height - 2.0 * line_h).abs() < 0.1,
@@ -146,22 +187,46 @@ fn measure_newline_in_pre_mode() {
 #[test]
 fn measure_multiple_newlines_pre() {
     let m = measurer();
-    let result = m.measure("a\nb\nc\nd", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_props());
+    let result = m.measure(
+        "a\nb\nc\nd",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_props(),
+    );
     assert_eq!(result.line_count, 4, "3 \\n should produce 4 lines");
 }
 
 #[test]
 fn measure_trailing_newline_pre() {
     let m = measurer();
-    let result = m.measure("Hello\n", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_props());
+    let result = m.measure(
+        "Hello\n",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_props(),
+    );
     // "Hello\n" splits into ["Hello", ""] → 2 lines
-    assert_eq!(result.line_count, 2, "trailing \\n should add an extra line");
+    assert_eq!(
+        result.line_count, 2,
+        "trailing \\n should add an extra line"
+    );
 }
 
 #[test]
 fn measure_leading_newline_pre() {
     let m = measurer();
-    let result = m.measure("\nHello", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_props());
+    let result = m.measure(
+        "\nHello",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_props(),
+    );
     // "\nHello" → ["", "Hello"] → 2 lines
     assert_eq!(result.line_count, 2, "leading \\n should add a line");
 }
@@ -169,7 +234,14 @@ fn measure_leading_newline_pre() {
 #[test]
 fn measure_only_newlines_pre() {
     let m = measurer();
-    let result = m.measure("\n\n\n", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_props());
+    let result = m.measure(
+        "\n\n\n",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_props(),
+    );
     // "\n\n\n" → ["", "", "", ""] → 4 lines
     assert_eq!(result.line_count, 4);
 }
@@ -177,16 +249,28 @@ fn measure_only_newlines_pre() {
 #[test]
 fn measure_newline_in_pre_wrap() {
     let m = measurer();
-    let result =
-        m.measure("Hello\nWorld", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_wrap_props());
+    let result = m.measure(
+        "Hello\nWorld",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_wrap_props(),
+    );
     assert_eq!(result.line_count, 2);
 }
 
 #[test]
 fn measure_newline_in_pre_line() {
     let m = measurer();
-    let result =
-        m.measure("Hello\nWorld", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_line_props());
+    let result = m.measure(
+        "Hello\nWorld",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_line_props(),
+    );
     assert_eq!(result.line_count, 2);
 }
 
@@ -194,7 +278,14 @@ fn measure_newline_in_pre_line() {
 fn measure_newline_in_normal_mode_not_preserved() {
     let m = measurer();
     // In normal white-space mode, \n should be treated as a space, not a line break.
-    let result = m.measure("Hello\nWorld", FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let result = m.measure(
+        "Hello\nWorld",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
     // Should be single-line (newlines collapsed in normal mode)
     assert_eq!(
         result.line_count, 1,
@@ -205,8 +296,14 @@ fn measure_newline_in_normal_mode_not_preserved() {
 #[test]
 fn measure_newline_in_nowrap_not_preserved() {
     let m = measurer();
-    let result =
-        m.measure("Hello\nWorld", FONT_SIZE, NORMAL_FAMILIES, 400, None, &nowrap_props());
+    let result = m.measure(
+        "Hello\nWorld",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &nowrap_props(),
+    );
     assert_eq!(
         result.line_count, 1,
         "\\n in white-space:nowrap should not create line breaks"
@@ -227,10 +324,7 @@ fn measure_wraps_when_exceeds_max_width() {
         Some(100.0),
         &default_props(),
     );
-    assert!(
-        result.line_count > 1,
-        "long text should wrap within 100px"
-    );
+    assert!(result.line_count > 1, "long text should wrap within 100px");
 }
 
 #[test]
@@ -277,10 +371,7 @@ fn measure_pre_does_not_soft_wrap() {
         Some(50.0),
         &pre_props(),
     );
-    assert_eq!(
-        result.line_count, 1,
-        "white-space:pre should not soft-wrap"
-    );
+    assert_eq!(result.line_count, 1, "white-space:pre should not soft-wrap");
 }
 
 #[test]
@@ -344,7 +435,14 @@ fn measure_text_indent_with_newlines_pre() {
     let mut props = pre_props();
     props.text_indent = 40.0;
 
-    let result = m.measure("Hello\nWorld", FONT_SIZE, NORMAL_FAMILIES, 400, None, &props);
+    let result = m.measure(
+        "Hello\nWorld",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &props,
+    );
     assert_eq!(result.line_count, 2);
     // First line should be wider due to indent
     // We can't directly check line widths, but overall width should include indent
@@ -376,7 +474,14 @@ fn measure_letter_spacing_increases_width() {
     let m = measurer();
     let text = "Hello";
 
-    let no_spacing = m.measure(text, FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let no_spacing = m.measure(
+        text,
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
 
     let mut props = default_props();
     props.letter_spacing = 5.0;
@@ -397,7 +502,14 @@ fn measure_word_spacing_increases_width() {
     let m = measurer();
     let text = "Hello World";
 
-    let no_spacing = m.measure(text, FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let no_spacing = m.measure(
+        text,
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
 
     let mut props = default_props();
     props.word_spacing = 10.0;
@@ -414,7 +526,14 @@ fn measure_word_spacing_no_effect_without_spaces() {
     let m = measurer();
     let text = "HelloWorld"; // no spaces
 
-    let no_spacing = m.measure(text, FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let no_spacing = m.measure(
+        text,
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
 
     let mut props = default_props();
     props.word_spacing = 10.0;
@@ -455,8 +574,14 @@ fn measure_wrapped_height_is_lines_times_line_height() {
 #[test]
 fn measure_pre_newline_height_is_lines_times_line_height() {
     let m = measurer();
-    let result =
-        m.measure("A\nB\nC", FONT_SIZE, NORMAL_FAMILIES, 400, None, &pre_props());
+    let result = m.measure(
+        "A\nB\nC",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &pre_props(),
+    );
 
     let line_h = FONT_SIZE * 1.2;
     let expected = 3.0 * line_h;
@@ -474,7 +599,14 @@ fn measure_pre_newline_height_is_lines_times_line_height() {
 #[test]
 fn measure_whitespace_only() {
     let m = measurer();
-    let result = m.measure("   ", FONT_SIZE, NORMAL_FAMILIES, 400, None, &default_props());
+    let result = m.measure(
+        "   ",
+        FONT_SIZE,
+        NORMAL_FAMILIES,
+        400,
+        None,
+        &default_props(),
+    );
     assert!(result.width > 0.0, "spaces should have positive width");
     assert_eq!(result.line_count, 1);
 }

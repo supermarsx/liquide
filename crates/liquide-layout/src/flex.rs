@@ -46,15 +46,13 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let box_id = tree.alloc(node_id, BoxType::Flex);
 
     let font_size = style.font_size;
-    let explicit_width = style
-        .width
-        .resolve_px(
-            container_width,
-            base_font_size,
-            font_size,
-            viewport_w,
-            viewport_h,
-        );
+    let explicit_width = style.width.resolve_px(
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
     let width = explicit_width.unwrap_or(container_width);
 
     let pad_top = rdim(
@@ -185,7 +183,12 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
 
     // Collect effective children, flattening display:contents nodes
     let mut effective_children: Vec<NodeId> = Vec::new();
-    fn collect_flex_children(doc: &Document, children: &[NodeId], styles: &StyleMap, out: &mut Vec<NodeId>) {
+    fn collect_flex_children(
+        doc: &Document,
+        children: &[NodeId],
+        styles: &StyleMap,
+        out: &mut Vec<NodeId>,
+    ) {
         for &child_id in children {
             let child_style = styles.get(child_id).cloned().unwrap_or_default();
             if child_style.display == Display::None {
@@ -240,13 +243,21 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     tree.add_child(box_id, text_box);
 
                     let intrinsic = Rect::new(0.0, 0.0, metrics.width, metrics.height);
-                    let main_size = if is_row { intrinsic.width } else { intrinsic.height };
+                    let main_size = if is_row {
+                        intrinsic.width
+                    } else {
+                        intrinsic.height
+                    };
                     items.push(FlexItem {
                         node_id: child_id,
                         box_id: text_box,
                         main_size,
                         base_main_size: main_size,
-                        cross_size: if is_row { intrinsic.height } else { intrinsic.width },
+                        cross_size: if is_row {
+                            intrinsic.height
+                        } else {
+                            intrinsic.width
+                        },
                         flex_grow: 0.0,
                         flex_shrink: 0.0,
                         min_main: 0.0,
@@ -384,9 +395,8 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 )
                 .unwrap_or_else(|| {
                     // auto: use content min size, capped by specified size
-                    let content_min = crate::intrinsic::min_content_width(
-                        doc, child_id, styles, text_measurer,
-                    );
+                    let content_min =
+                        crate::intrinsic::min_content_width(doc, child_id, styles, text_measurer);
                     content_min.min(main_size)
                 })
         } else {
@@ -429,11 +439,16 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         // Calculate baseline for this item
         // For text items, use the baseline stored in the layout box
         // For other items, default to the bottom of the content box
-        let item_baseline = tree.get(child_box)
+        let item_baseline = tree
+            .get(child_box)
             .and_then(|b| b.baseline)
             .unwrap_or_else(|| {
                 // Default baseline: use content height for row layout, width for column
-                if is_row { intrinsic.height } else { intrinsic.width }
+                if is_row {
+                    intrinsic.height
+                } else {
+                    intrinsic.width
+                }
             });
 
         let is_collapsed = child_style.visibility == Visibility::Collapse;
@@ -501,7 +516,11 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     // Cross is auto and aspect-ratio is defined — compute
                     // cross from main_size.
                     (None, AspectRatio::Ratio(w, h)) if *w > 0.0 => {
-                        if is_row { main_size * (*h / *w) } else { main_size * (*w / *h) }
+                        if is_row {
+                            main_size * (*h / *w)
+                        } else {
+                            main_size * (*w / *h)
+                        }
                     }
                     // No explicit cross, no (valid) aspect-ratio — fall
                     // back to intrinsic cross size.
@@ -692,7 +711,13 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         // flex base size (e.g. flex-basis: auto on an empty element).
         let initial_box_main = tree
             .get(item.box_id)
-            .map(|b| if is_row { b.border_rect.width } else { b.border_rect.height })
+            .map(|b| {
+                if is_row {
+                    b.border_rect.width
+                } else {
+                    b.border_rect.height
+                }
+            })
             .unwrap_or(0.0);
 
         // Tolerance: skip re-layout when the difference is negligible
@@ -901,7 +926,7 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let mut _line_cross_y = 0.0f32;
     for (li, line) in lines.iter().enumerate() {
         let line_cross = line_cross_sizes[li];
-        
+
         // Calculate the maximum baseline among all baseline-aligned items in this line
         let mut max_baseline = 0.0f32;
         for idx in line.start..line.end {
@@ -918,7 +943,7 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 max_baseline = max_baseline.max(item.baseline);
             }
         }
-        
+
         for idx in line.start..line.end {
             let item = &items[idx];
             let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
@@ -961,31 +986,31 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                         0.0 // push to start
                     }
                 } else {
-                match align {
-                    AlignItems::FlexStart => 0.0,
-                    AlignItems::FlexEnd => line_cross - item_cross,
-                    AlignItems::Center => (line_cross - item_cross) / 2.0,
-                    AlignItems::Stretch => {
-                        // Stretch content to fill line: delta = line_cross - current_margin_box
-                        let stretch = (line_cross - item_cross).max(0.0);
-                        let dw = if !is_row { stretch } else { 0.0 };
-                        let dh = if is_row { stretch } else { 0.0 };
-                        b.content_rect.width += dw;
-                        b.content_rect.height += dh;
-                        b.padding_rect.width += dw;
-                        b.padding_rect.height += dh;
-                        b.border_rect.width += dw;
-                        b.border_rect.height += dh;
-                        b.margin_rect.width += dw;
-                        b.margin_rect.height += dh;
-                        0.0
+                    match align {
+                        AlignItems::FlexStart => 0.0,
+                        AlignItems::FlexEnd => line_cross - item_cross,
+                        AlignItems::Center => (line_cross - item_cross) / 2.0,
+                        AlignItems::Stretch => {
+                            // Stretch content to fill line: delta = line_cross - current_margin_box
+                            let stretch = (line_cross - item_cross).max(0.0);
+                            let dw = if !is_row { stretch } else { 0.0 };
+                            let dh = if is_row { stretch } else { 0.0 };
+                            b.content_rect.width += dw;
+                            b.content_rect.height += dh;
+                            b.padding_rect.width += dw;
+                            b.padding_rect.height += dh;
+                            b.border_rect.width += dw;
+                            b.border_rect.height += dh;
+                            b.margin_rect.width += dw;
+                            b.margin_rect.height += dh;
+                            0.0
+                        }
+                        AlignItems::Baseline => {
+                            // Align items so their baselines match
+                            // Move item down by (max_baseline - item_baseline)
+                            max_baseline - item.baseline
+                        }
                     }
-                    AlignItems::Baseline => {
-                        // Align items so their baselines match
-                        // Move item down by (max_baseline - item_baseline)
-                        max_baseline - item.baseline
-                    }
-                }
                 }; // close the if has_cross_auto / else
 
                 let (dx, dy) = if is_row {

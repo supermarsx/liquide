@@ -49,8 +49,7 @@ fn audio_config_none_bitrate_not_serialized() {
     };
     let encoded = cbor_encode(&msg).expect("encode");
     // Decode as a generic CBOR value and verify the key is absent.
-    let value: ciborium::Value =
-        cbor_decode(&encoded).expect("decode as Value");
+    let value: ciborium::Value = cbor_decode(&encoded).expect("decode as Value");
     if let ciborium::Value::Map(entries) = &value {
         for (key, _) in entries {
             if let ciborium::Value::Text(k) = key {

@@ -86,16 +86,18 @@ pub struct Bounds {
 impl Bounds {
     #[must_use]
     pub fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Check if a point is inside this bounding rectangle.
     #[must_use]
     pub fn contains(&self, px: f64, py: f64) -> bool {
-        px >= self.x
-            && px < self.x + self.width
-            && py >= self.y
-            && py < self.y + self.height
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
     }
 }
 
@@ -557,7 +559,12 @@ mod tests {
         tree.set_focused(btn_id);
         tree.clear_focused();
         assert!(tree.focused_node().is_none());
-        assert!(!tree.get(btn_id).unwrap().has_state(AccessibleState::Focused));
+        assert!(
+            !tree
+                .get(btn_id)
+                .unwrap()
+                .has_state(AccessibleState::Focused)
+        );
     }
 
     #[test]

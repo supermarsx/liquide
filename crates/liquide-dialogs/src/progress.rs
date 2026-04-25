@@ -1,4 +1,5 @@
 use crate::{Dialog, DialogId};
+use liquide_popups::DialogInfo;
 
 /// Progress mode — determinate (0.0-1.0) or indeterminate (spinner)
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -93,6 +94,17 @@ impl Dialog for ProgressDialog {
     }
 }
 
+impl DialogInfo for ProgressDialog {
+    fn preferred_size(&self) -> (f32, f32) {
+        let height = if self.cancellable { 170.0 } else { 150.0 };
+        (420.0, height)
+    }
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,7 +181,7 @@ mod tests {
     fn test_dialog_trait() {
         let dlg = ProgressDialog::new(DialogId(42), "Title", "Msg");
         assert_eq!(dlg.id(), DialogId(42));
-        assert_eq!(dlg.title(), "Title");
-        assert!(dlg.is_modal());
+        assert_eq!(Dialog::title(&dlg), "Title");
+        assert!(Dialog::is_modal(&dlg));
     }
 }

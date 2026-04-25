@@ -62,7 +62,8 @@ impl Region {
 
     /// Add a rectangle to the region.
     pub fn add(&mut self, x: i32, y: i32, width: i32, height: i32) {
-        self.rects.push(RegionOp::Add(DamageRect::new(x, y, width, height)));
+        self.rects
+            .push(RegionOp::Add(DamageRect::new(x, y, width, height)));
     }
 
     /// Subtract a rectangle from the region.
@@ -372,7 +373,9 @@ impl Surface {
     ///
     /// Damage is accumulated and applied on `commit()`.
     pub fn damage_rect(&mut self, x: i32, y: i32, width: i32, height: i32) {
-        self.pending.damage.push(DamageRect::new(x, y, width, height));
+        self.pending
+            .damage
+            .push(DamageRect::new(x, y, width, height));
     }
 
     /// Set the opaque region hint.

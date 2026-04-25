@@ -76,17 +76,13 @@ impl CertificateStore for FsCertificateStore {
 
         // Read certificate chain (PEM -> DER).
         let cert_pem = std::fs::read(&cert_path).map_err(|e| {
-            super::CryptoError::Certificate(format!(
-                "failed to read {}: {e}",
-                cert_path.display()
-            ))
+            super::CryptoError::Certificate(format!("failed to read {}: {e}", cert_path.display()))
         })?;
         let mut cursor = std::io::Cursor::new(&cert_pem);
         let mut chain = Vec::new();
         for cert in rustls_pemfile::certs(&mut cursor) {
-            let cert = cert.map_err(|e| {
-                super::CryptoError::Certificate(format!("PEM parse error: {e}"))
-            })?;
+            let cert =
+                cert.map_err(|e| super::CryptoError::Certificate(format!("PEM parse error: {e}")))?;
             chain.push(cert.to_vec());
         }
 
@@ -97,9 +93,7 @@ impl CertificateStore for FsCertificateStore {
         let mut key_cursor = std::io::Cursor::new(&key_pem);
         let key = rustls_pemfile::private_key(&mut key_cursor)
             .map_err(|e| super::CryptoError::Certificate(format!("key parse error: {e}")))?
-            .ok_or_else(|| {
-                super::CryptoError::Certificate("no private key in PEM".into())
-            })?;
+            .ok_or_else(|| super::CryptoError::Certificate("no private key in PEM".into()))?;
 
         Ok(CertificateBundle {
             chain,

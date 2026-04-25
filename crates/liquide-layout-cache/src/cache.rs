@@ -74,7 +74,11 @@ impl LayoutCache {
 
     /// Exact-match lookup: returns the cached result only if the
     /// constraints match exactly (bitwise equal floats).
-    pub fn lookup(&mut self, node_id: NodeId, constraints: &LayoutConstraints) -> Option<&LayoutResult> {
+    pub fn lookup(
+        &mut self,
+        node_id: NodeId,
+        constraints: &LayoutConstraints,
+    ) -> Option<&LayoutResult> {
         let entries = self.cache.get(&node_id)?;
         for entry in entries {
             if entry.constraints == *constraints {
@@ -113,16 +117,14 @@ impl LayoutCache {
     /// If the node already has an entry with the same constraints, it is
     /// replaced.  If the per-node limit is reached, the oldest entry is
     /// evicted.
-    pub fn store(
-        &mut self,
-        node_id: NodeId,
-        constraints: LayoutConstraints,
-        result: LayoutResult,
-    ) {
+    pub fn store(&mut self, node_id: NodeId, constraints: LayoutConstraints, result: LayoutResult) {
         let generation = self.generation;
         let max = self.max_entries_per_node;
 
-        let entries = self.cache.entry(node_id).or_insert_with(|| Vec::with_capacity(2));
+        let entries = self
+            .cache
+            .entry(node_id)
+            .or_insert_with(|| Vec::with_capacity(2));
 
         // Replace existing entry with same constraints.
         for entry in entries.iter_mut() {
@@ -228,7 +230,10 @@ impl LayoutCache {
 
     /// Get all cache entries for a node (for debugging / inspection).
     pub fn entries_for(&self, node_id: NodeId) -> &[CacheEntry] {
-        self.cache.get(&node_id).map(|v| v.as_slice()).unwrap_or(&[])
+        self.cache
+            .get(&node_id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 }
 

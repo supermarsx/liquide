@@ -263,21 +263,17 @@ unsafe fn premultiply_alpha_sse2(buf: &mut [u8]) {
         let prod_hi = _mm_mullo_epi16(hi, a_hi);
         let biased_lo = _mm_add_epi16(prod_lo, half);
         let biased_hi = _mm_add_epi16(prod_hi, half);
-        let mut result_lo = _mm_srli_epi16::<8>(_mm_add_epi16(biased_lo, _mm_srli_epi16::<8>(biased_lo)));
-        let mut result_hi = _mm_srli_epi16::<8>(_mm_add_epi16(biased_hi, _mm_srli_epi16::<8>(biased_hi)));
+        let mut result_lo =
+            _mm_srli_epi16::<8>(_mm_add_epi16(biased_lo, _mm_srli_epi16::<8>(biased_lo)));
+        let mut result_hi =
+            _mm_srli_epi16::<8>(_mm_add_epi16(biased_hi, _mm_srli_epi16::<8>(biased_hi)));
 
         // Restore original alpha (alpha * alpha / 255 ≠ alpha)
         // Alpha is in lanes 3 and 7 of the u16 vectors
         // Use blend: take alpha lanes from original
         // SSE2 doesn't have blend, so use AND/OR mask
-        let alpha_mask = _mm_set_epi16(
-            -1, 0, 0, 0,
-            -1, 0, 0, 0,
-        );
-        let inv_mask = _mm_set_epi16(
-            0, -1, -1, -1,
-            0, -1, -1, -1,
-        );
+        let alpha_mask = _mm_set_epi16(-1, 0, 0, 0, -1, 0, 0, 0);
+        let inv_mask = _mm_set_epi16(0, -1, -1, -1, 0, -1, -1, -1);
         result_lo = _mm_or_si128(
             _mm_and_si128(result_lo, inv_mask),
             _mm_and_si128(lo, alpha_mask),
@@ -367,7 +363,12 @@ mod tests {
 
         for i in 0..buf.len() {
             let diff = (buf[i] as i16 - buf_scalar[i] as i16).abs();
-            assert!(diff <= 1, "byte {i}: simd={} scalar={}", buf[i], buf_scalar[i]);
+            assert!(
+                diff <= 1,
+                "byte {i}: simd={} scalar={}",
+                buf[i],
+                buf_scalar[i]
+            );
         }
     }
 

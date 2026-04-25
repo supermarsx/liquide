@@ -69,7 +69,10 @@ mod tests {
     #[test]
     fn display() {
         assert_eq!(AuthLevel::NoAuth.to_string(), "No authentication");
-        assert_eq!(AuthLevel::AdminPassword.to_string(), "Administrator password");
+        assert_eq!(
+            AuthLevel::AdminPassword.to_string(),
+            "Administrator password"
+        );
     }
 
     #[test]

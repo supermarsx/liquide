@@ -26,7 +26,7 @@ impl SvgCursorBuilder {
             defs: Vec::new(),
         }
     }
-    
+
     /// Add a circle
     pub fn circle(mut self, cx: f32, cy: f32, r: f32, fill: &str) -> Self {
         self.elements.push(format!(
@@ -35,7 +35,7 @@ impl SvgCursorBuilder {
         ));
         self
     }
-    
+
     /// Add a rectangle
     pub fn rect(mut self, x: f32, y: f32, width: f32, height: f32, fill: &str) -> Self {
         self.elements.push(format!(
@@ -44,7 +44,7 @@ impl SvgCursorBuilder {
         ));
         self
     }
-    
+
     /// Add a line
     pub fn line(mut self, x1: f32, y1: f32, x2: f32, y2: f32, stroke: &str, width: f32) -> Self {
         self.elements.push(format!(
@@ -53,35 +53,35 @@ impl SvgCursorBuilder {
         ));
         self
     }
-    
+
     /// Add a path
     pub fn path(mut self, d: &str, fill: Option<&str>, stroke: Option<&str>) -> Self {
         let mut attrs = format!(r#"d="{}""#, d);
-        
+
         if let Some(fill) = fill {
             attrs.push_str(&format!(r#" fill="{}""#, fill));
         }
-        
+
         if let Some(stroke) = stroke {
             attrs.push_str(&format!(r#" stroke="{}""#, stroke));
         }
-        
+
         self.elements.push(format!(r#"<path {} />"#, attrs));
         self
     }
-    
+
     /// Add raw SVG element
     pub fn raw(mut self, svg: &str) -> Self {
         self.elements.push(svg.to_string());
         self
     }
-    
+
     /// Add a definition (for filters, gradients, etc.)
     pub fn def(mut self, def: &str) -> Self {
         self.defs.push(def.to_string());
         self
     }
-    
+
     /// Add a drop shadow filter
     pub fn drop_shadow(self, id: &str, dx: f32, dy: f32, blur: f32) -> Self {
         self.def(&format!(
@@ -91,7 +91,7 @@ impl SvgCursorBuilder {
             id, dx, dy, blur
         ))
     }
-    
+
     /// Build the SVG and create a VectorCursor
     pub fn build(self, hotspot_x: f32, hotspot_y: f32) -> VectorCursor {
         let defs_section = if !self.defs.is_empty() {
@@ -99,7 +99,7 @@ impl SvgCursorBuilder {
         } else {
             String::new()
         };
-        
+
         let svg = format!(
             r#"<svg width="{}" height="{}" viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">
 {}
@@ -112,7 +112,7 @@ impl SvgCursorBuilder {
             defs_section,
             self.elements.join("\n")
         );
-        
+
         VectorCursor::new(svg, hotspot_x, hotspot_y)
     }
 }
@@ -120,17 +120,17 @@ impl SvgCursorBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_builder_simple() {
         let cursor = SvgCursorBuilder::new(32, 32)
             .circle(16.0, 16.0, 8.0, "black")
             .build(0.5, 0.5);
-        
+
         assert!(cursor.svg_data.contains("circle"));
         assert!(cursor.svg_data.contains("cx=\"16\""));
     }
-    
+
     #[test]
     fn test_builder_complex() {
         let cursor = SvgCursorBuilder::new(32, 32)
@@ -138,7 +138,7 @@ mod tests {
             .rect(8.0, 8.0, 16.0, 16.0, "white")
             .circle(16.0, 16.0, 4.0, "black")
             .build(0.5, 0.5);
-        
+
         assert!(cursor.svg_data.contains("<defs>"));
         assert!(cursor.svg_data.contains("filter"));
         assert!(cursor.svg_data.contains("rect"));

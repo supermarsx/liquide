@@ -10,8 +10,7 @@ where
 {
     let mut buf = Vec::new();
     ciborium::into_writer(value, &mut buf).expect("CBOR serialize failed");
-    let decoded: T =
-        ciborium::from_reader(buf.as_slice()).expect("CBOR deserialize failed");
+    let decoded: T = ciborium::from_reader(buf.as_slice()).expect("CBOR deserialize failed");
     decoded
 }
 

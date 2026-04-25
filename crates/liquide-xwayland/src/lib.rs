@@ -17,17 +17,17 @@
 //! liquide-compositor scene graph
 //! ```
 
-pub mod error;
-pub mod process;
-pub mod window;
 pub mod atoms;
 pub mod clipboard;
 pub mod dnd;
+pub mod error;
+pub mod process;
+pub mod window;
 
-pub use error::{XWaylandError, Result};
-pub use process::{XWaylandProcess, XWaylandConfig, XWaylandState};
-pub use window::{X11Window, X11WindowId, X11WindowType, X11WindowState};
 pub use atoms::AtomCache;
+pub use error::{Result, XWaylandError};
+pub use process::{XWaylandConfig, XWaylandProcess, XWaylandState};
+pub use window::{X11Window, X11WindowId, X11WindowState, X11WindowType};
 
 #[cfg(test)]
 mod tests;

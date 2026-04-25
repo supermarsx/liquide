@@ -420,10 +420,14 @@ mod tests {
         assert!(layout.thumbnail_rect.x >= layout.bounds.x);
         assert!(layout.thumbnail_rect.y >= layout.bounds.y);
         // Title below thumbnail.
-        assert!(layout.title_rect.y >= layout.thumbnail_rect.y + layout.thumbnail_rect.height - 1.0);
+        assert!(
+            layout.title_rect.y >= layout.thumbnail_rect.y + layout.thumbnail_rect.height - 1.0
+        );
         // Close button inside bounds.
-        assert!(layout.close_button_rect.x + layout.close_button_rect.width
-                <= layout.bounds.x + layout.bounds.width + 1.0);
+        assert!(
+            layout.close_button_rect.x + layout.close_button_rect.width
+                <= layout.bounds.x + layout.bounds.width + 1.0
+        );
     }
 
     // ── hit testing ────────────────────────────────────────────

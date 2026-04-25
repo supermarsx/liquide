@@ -10,6 +10,15 @@ use super::ThemeParser;
 impl ThemeParser {
     /// Parse a length string like "10px", "1.5em", "50%", "12pt", "1rem".
     pub(crate) fn parse_length_value(&self, s: &str) -> Option<PropertyValue> {
+        self.parse_length_value_impl(s, true)
+    }
+
+    /// Parse a length string only when an explicit CSS unit is present.
+    pub(crate) fn parse_explicit_length_value(&self, s: &str) -> Option<PropertyValue> {
+        self.parse_length_value_impl(s, false)
+    }
+
+    fn parse_length_value_impl(&self, s: &str, allow_unitless_px: bool) -> Option<PropertyValue> {
         let s = s.trim();
         if let Some(v) = s.strip_suffix("px") {
             v.trim()
@@ -138,11 +147,12 @@ impl ThemeParser {
                 .parse::<f32>()
                 .ok()
                 .map(|n| PropertyValue::Length(LengthUnit::Percent(n)))
-        } else {
-            // Try as plain number → pixels
+        } else if allow_unitless_px {
             s.parse::<f32>()
                 .ok()
                 .map(|n| PropertyValue::Length(LengthUnit::Px(n)))
+        } else {
+            None
         }
     }
 
@@ -154,9 +164,50 @@ impl ThemeParser {
             .unwrap_or(0.0)
     }
 
+    fn parse_quoted_string(&self, s: &str) -> Option<String> {
+        let mut chars = s.chars();
+        let quote = chars.next()?;
+        if !matches!(quote, '"' | '\'') || !s.ends_with(quote) || s.len() < 2 {
+            return None;
+        }
+
+        let inner = &s[quote.len_utf8()..s.len() - quote.len_utf8()];
+        let mut unescaped = String::with_capacity(inner.len());
+        let mut escaped = false;
+
+        for ch in inner.chars() {
+            if escaped {
+                unescaped.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else {
+                unescaped.push(ch);
+            }
+        }
+
+        if escaped {
+            unescaped.push('\\');
+        }
+
+        Some(unescaped)
+    }
+
     /// Attempt to parse a raw value string as color, length, number, or keyword.
     pub(crate) fn parse_value_string(&self, s: &str) -> PropertyValue {
         let s = s.trim();
+
+        if let Some(value) = self.parse_quoted_string(s) {
+            return PropertyValue::String(value);
+        }
+
+        if let Some(inner) = Self::strip_function(s, "url") {
+            return PropertyValue::Url(inner.trim().to_string());
+        }
+
+        if let Some(inner) = Self::strip_function(s, "env") {
+            return PropertyValue::Env(inner.trim().to_string());
+        }
 
         // Try as color first (hex, rgb(), rgba(), named)
         if let Ok(color) = Color::from_hex(s) {
@@ -185,8 +236,8 @@ impl ThemeParser {
             }
         }
 
-        // Try as length
-        if let Some(v) = self.parse_length_value(s) {
+        // Try as length only when the raw text actually contains a length unit.
+        if let Some(v) = self.parse_explicit_length_value(s) {
             return v;
         }
 

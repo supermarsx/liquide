@@ -164,7 +164,9 @@ fn test_uri_scheme() {
 struct TestProvider;
 
 impl NamespaceProvider for TestProvider {
-    fn scheme(&self) -> &str { "test" }
+    fn scheme(&self) -> &str {
+        "test"
+    }
     fn resolve(&self, uri: &str) -> Option<StaticNode> {
         if uri == "test:///item" {
             Some(StaticNode {

@@ -13,6 +13,31 @@ use crate::tree::{LayoutBox, LayoutBoxId, LayoutTree};
 use crate::writing_mode::WritingModeContext;
 use crate::{ImageMeasurer, TextMeasurer};
 
+/// Map the 5-variant style-engine `WritingMode` to the cache's writing mode.
+fn map_writing_mode(
+    wm: liquide_style_engine::computed::WritingMode,
+) -> liquide_layout_cache::WritingMode {
+    use liquide_layout_cache::WritingMode as C;
+    use liquide_style_engine::computed::WritingMode as S;
+    match wm {
+        S::HorizontalTb => C::HorizontalTb,
+        S::VerticalRl => C::VerticalRl,
+        S::VerticalLr => C::VerticalLr,
+        S::SidewaysRl => C::SidewaysRl,
+        S::SidewaysLr => C::SidewaysLr,
+    }
+}
+
+/// Map style-engine `Direction` to the cache's direction enum.
+fn map_direction(d: liquide_style_engine::computed::Direction) -> liquide_layout_cache::Direction {
+    use liquide_layout_cache::Direction as C;
+    use liquide_style_engine::computed::Direction as S;
+    match d {
+        S::Ltr => C::LTR,
+        S::Rtl => C::RTL,
+    }
+}
+
 /// The layout engine. Computes geometry for all elements in the document.
 pub struct LayoutEngine {
     /// Viewport size.
@@ -25,10 +50,25 @@ pub struct LayoutEngine {
     dirty: DirtyPropagation,
     /// When `true`, skip all cache lookups (useful for debugging/testing).
     bypass_cache: bool,
+    /// Writing-mode context captured from the root element on each layout
+    /// pass. Populated by [`LayoutEngine::layout`] from the root element's
+    /// computed `writing-mode` + `direction`. Downstream consumers (paint,
+    /// scroll, selection) can read this to honour vertical writing modes
+    /// at the page root.
+    root_writing_mode: WritingModeContext,
+    /// Root layout constraints — the parent-pass input that would be used
+    /// for the root box. Carries writing-mode, direction, and root font
+    /// size so that incremental restyle against the root can participate
+    /// in the same cache-key scheme as nested boxes.
+    root_constraints: LayoutConstraints,
 }
 
 /// Bundled input for layout and relayout APIs.
-pub struct LayoutInput<'a, TM: TextMeasurer + ?Sized = dyn TextMeasurer, IM: ImageMeasurer + ?Sized = dyn ImageMeasurer> {
+pub struct LayoutInput<
+    'a,
+    TM: TextMeasurer + ?Sized = dyn TextMeasurer,
+    IM: ImageMeasurer + ?Sized = dyn ImageMeasurer,
+> {
     pub doc: &'a Document,
     pub styles: &'a StyleMap,
     pub text_measurer: &'a TM,
@@ -60,7 +100,22 @@ impl LayoutEngine {
             cache: LayoutCache::new(),
             dirty: DirtyPropagation::new(),
             bypass_cache: false,
+            root_writing_mode: WritingModeContext::default(),
+            root_constraints: LayoutConstraints::fixed(viewport.width, viewport.height)
+                .with_font_size(base_font_size),
         }
+    }
+
+    /// Writing-mode context captured from the root element on the most
+    /// recent layout pass. Default until [`Self::layout`] runs at least once.
+    pub fn root_writing_mode(&self) -> WritingModeContext {
+        self.root_writing_mode
+    }
+
+    /// Root layout constraints carrying the root writing-mode/direction
+    /// and font-size used for the most recent layout pass.
+    pub fn root_constraints(&self) -> &LayoutConstraints {
+        &self.root_constraints
     }
 
     /// Run layout on the entire document.
@@ -86,11 +141,24 @@ impl LayoutEngine {
         let root_style = styles.get(root).cloned().unwrap_or_default();
 
         // Read writing-mode and direction from the root element's computed style.
-        // These determine the document's inline/block axis mapping.
-        let _root_wm = WritingModeContext::with_direction(
-            root_style.writing_mode,
-            root_style.direction,
-        );
+        // These determine the document's inline/block axis mapping. The
+        // resolved context is stored on the engine so downstream consumers
+        // (paint / scroll / selection) can observe vertical writing modes
+        // at the page root, and so incremental relayouts re-key the cache
+        // correctly via `root_constraints`.
+        let root_wm =
+            WritingModeContext::with_direction(root_style.writing_mode, root_style.direction);
+        self.root_writing_mode = root_wm;
+        self.root_constraints = LayoutConstraints::fixed(self.viewport.width, self.viewport.height)
+            .with_writing_mode(
+                map_writing_mode(root_style.writing_mode),
+                map_direction(root_style.direction),
+            )
+            .with_font_size(if root_style.font_size > 0.0 {
+                root_style.font_size
+            } else {
+                self.base_font_size
+            });
 
         // Root layout starts as block
         // display: contents on root — treat as block (root must generate a box)
@@ -255,7 +323,9 @@ impl LayoutEngine {
         node_id: NodeId,
         previous_tree: &LayoutTree,
     ) -> LayoutTree {
-        if node_id == input.doc.root() || !self.supports_incremental_relayout(input.doc, input.styles, node_id) {
+        if node_id == input.doc.root()
+            || !self.supports_incremental_relayout(input.doc, input.styles, node_id)
+        {
             return self.layout_with_input(input);
         }
 
@@ -271,7 +341,8 @@ impl LayoutEngine {
         let Some(parent_box) = previous_tree.get(parent_box_id) else {
             return self.layout_with_input(input);
         };
-        let Some(replace_index) = parent_box.children.iter().position(|&id| id == old_box_id) else {
+        let Some(replace_index) = parent_box.children.iter().position(|&id| id == old_box_id)
+        else {
             return self.layout_with_input(input);
         };
 
@@ -317,7 +388,8 @@ impl LayoutEngine {
         Self::collect_subtree_box_ids(&result, old_box_id, &mut old_ids);
 
         if let Some(parent) = result.get_mut(parent_box_id) {
-            if replace_index < parent.children.len() && parent.children[replace_index] == old_box_id {
+            if replace_index < parent.children.len() && parent.children[replace_index] == old_box_id
+            {
                 parent.children.remove(replace_index);
             } else {
                 parent.children.retain(|&id| id != old_box_id);
@@ -332,8 +404,12 @@ impl LayoutEngine {
             }
         }
 
-        let new_root_id =
-            Self::clone_subtree_into(&relaid_subtree, relaid_root, &mut result, Some(parent_box_id));
+        let new_root_id = Self::clone_subtree_into(
+            &relaid_subtree,
+            relaid_root,
+            &mut result,
+            Some(parent_box_id),
+        );
         if let Some(parent) = result.get_mut(parent_box_id) {
             let insert_at = replace_index.min(parent.children.len());
             parent.children.insert(insert_at, new_root_id);
@@ -392,9 +468,13 @@ impl LayoutEngine {
         true
     }
 
-    fn is_simple_block_flow_container(style: &liquide_style_engine::computed::ComputedStyle) -> bool {
-        matches!(style.display, Display::Block | Display::FlowRoot | Display::ListItem)
-            && !style.is_flex_container()
+    fn is_simple_block_flow_container(
+        style: &liquide_style_engine::computed::ComputedStyle,
+    ) -> bool {
+        matches!(
+            style.display,
+            Display::Block | Display::FlowRoot | Display::ListItem
+        ) && !style.is_flex_container()
             && !style.is_grid_container()
             && !style.is_table()
             && !style.is_multicol()
@@ -426,18 +506,13 @@ impl LayoutEngine {
             if !needs_layout && !has_any_dirty {
                 let constraints = LayoutConstraints::fixed(container_width, container_height);
                 if let Some(cached) = self.cache.lookup(node_id, &constraints) {
-                    let cached = cached.clone();
+                    let cached: liquide_layout_cache::LayoutResult = cached.clone();
                     let box_id = tree.alloc(node_id, crate::tree::BoxType::Block);
                     if let Some(b) = tree.get_mut(box_id) {
                         let (w, h) = cached.size;
                         let (mt, mr, mb, ml) = cached.margins;
                         b.border_rect = Rect::new(offset_x + ml, offset_y + mt, w, h);
-                        b.margin_rect = Rect::new(
-                            offset_x,
-                            offset_y,
-                            ml + w + mr,
-                            mt + h + mb,
-                        );
+                        b.margin_rect = Rect::new(offset_x, offset_y, ml + w + mr, mt + h + mb);
                         b.padding_rect = b.border_rect;
                         b.content_rect = b.border_rect;
                         b.baseline = cached.baseline;
@@ -698,7 +773,10 @@ impl LayoutEngine {
                 Self::shift_subtree(tree, sibling_id, 0.0, outward_delta);
             }
 
-            let parent_style = styles.get(parent_snapshot.node).cloned().unwrap_or_default();
+            let parent_style = styles
+                .get(parent_snapshot.node)
+                .cloned()
+                .unwrap_or_default();
             if parent_style.height.is_definite() {
                 break;
             }
@@ -823,7 +901,12 @@ impl LayoutEngine {
     ///
     /// For each element with `position: sticky`, we clamp its position so it
     /// stays within the visible scrollport of the nearest scroll ancestor.
-    fn apply_sticky_offsets(tree: &mut LayoutTree, styles: &StyleMap, _doc: &Document, base_font_size: f32) {
+    fn apply_sticky_offsets(
+        tree: &mut LayoutTree,
+        styles: &StyleMap,
+        _doc: &Document,
+        base_font_size: f32,
+    ) {
         // Collect all box IDs first to avoid borrow issues.
         let all_ids: Vec<LayoutBoxId> = (0..tree.boxes.len()).collect();
 
@@ -850,7 +933,8 @@ impl LayoutEngine {
                 if let Some(ancestor) = tree.get(ancestor_id) {
                     if ancestor.scroll_size.is_some() {
                         scroll_offset = ancestor.scroll_offset;
-                        scroll_viewport = (ancestor.content_rect.width, ancestor.content_rect.height);
+                        scroll_viewport =
+                            (ancestor.content_rect.width, ancestor.content_rect.height);
                         break;
                     }
                     scroll_ancestor = ancestor.parent;
@@ -863,15 +947,22 @@ impl LayoutEngine {
             let vw = scroll_viewport.0.max(1.0);
             let vh = scroll_viewport.1.max(1.0);
             let top = style.top.resolve_px(vh, base_font_size, font_size, vw, vh);
-            let bottom = style.bottom.resolve_px(vh, base_font_size, font_size, vw, vh);
+            let bottom = style
+                .bottom
+                .resolve_px(vh, base_font_size, font_size, vw, vh);
             let left = style.left.resolve_px(vw, base_font_size, font_size, vw, vh);
-            let right = style.right.resolve_px(vw, base_font_size, font_size, vw, vh);
+            let right = style
+                .right
+                .resolve_px(vw, base_font_size, font_size, vw, vh);
 
             // The element's current (normal-flow) position is stored in its border_rect.
             let bx = tree.get(box_id).map(|b| b.border_rect.x).unwrap_or(0.0);
             let by = tree.get(box_id).map(|b| b.border_rect.y).unwrap_or(0.0);
             let bw = tree.get(box_id).map(|b| b.border_rect.width).unwrap_or(0.0);
-            let bh = tree.get(box_id).map(|b| b.border_rect.height).unwrap_or(0.0);
+            let bh = tree
+                .get(box_id)
+                .map(|b| b.border_rect.height)
+                .unwrap_or(0.0);
 
             // Compute clamped position based on scroll offset.
             // The sticky constraint is: the element must stay within the
@@ -967,7 +1058,13 @@ impl LayoutEngine {
     ) {
         let viewport_rect = Rect::new(0.0, 0.0, self.viewport.width, self.viewport.height);
         self.layout_positioned_recursive(
-            doc, node_id, styles, tree, text_measurer, image_measurer, viewport_rect,
+            doc,
+            node_id,
+            styles,
+            tree,
+            text_measurer,
+            image_measurer,
+            viewport_rect,
         );
     }
 
@@ -1069,7 +1166,8 @@ impl LayoutEngine {
 
     /// Invalidate a node and all its descendants in the cache.
     pub fn invalidate_subtree(&mut self, node_id: NodeId, doc: &Document) {
-        self.cache.invalidate_subtree(node_id, |id| doc.children(id).to_vec());
+        self.cache
+            .invalidate_subtree(node_id, |id| doc.children(id).to_vec());
     }
 
     /// Access the layout cache (read-only).
@@ -1100,8 +1198,14 @@ impl LayoutEngine {
     }
 
     /// Mark a node dirty and propagate `CHILD_NEEDS_LAYOUT` up through ancestors.
-    pub fn mark_dirty_and_propagate(&mut self, doc: &Document, node_id: NodeId, flags: LayoutDirtyFlags) {
-        self.dirty.mark_dirty_and_propagate(node_id, flags, |id| doc.parent(id));
+    pub fn mark_dirty_and_propagate(
+        &mut self,
+        doc: &Document,
+        node_id: NodeId,
+        flags: LayoutDirtyFlags,
+    ) {
+        self.dirty
+            .mark_dirty_and_propagate(node_id, flags, |id| doc.parent(id));
     }
 
     // ── Debug bypass ──────────────────────────────────────────────────

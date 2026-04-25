@@ -2,7 +2,7 @@
 //!
 //! Wraps liquide-libinput to provide input events to the compositor.
 
-use liquide_libinput::{DeviceInfo, DeviceClass};
+use liquide_libinput::{DeviceClass, DeviceInfo};
 
 /// Summary of discovered input devices.
 #[derive(Debug, Default)]
@@ -20,10 +20,24 @@ pub struct InputDeviceSummary {
 impl InputDeviceSummary {
     /// Create a summary from a list of device info.
     pub fn from_devices(devices: Vec<DeviceInfo>) -> Self {
-        let keyboard_count = devices.iter().filter(|d| d.device_class == DeviceClass::Keyboard).count();
-        let pointer_count = devices.iter().filter(|d| matches!(d.device_class, DeviceClass::Mouse | DeviceClass::Touchpad)).count();
-        let touch_count = devices.iter().filter(|d| d.device_class == DeviceClass::Touchscreen).count();
-        Self { devices, keyboard_count, pointer_count, touch_count }
+        let keyboard_count = devices
+            .iter()
+            .filter(|d| d.device_class == DeviceClass::Keyboard)
+            .count();
+        let pointer_count = devices
+            .iter()
+            .filter(|d| matches!(d.device_class, DeviceClass::Mouse | DeviceClass::Touchpad))
+            .count();
+        let touch_count = devices
+            .iter()
+            .filter(|d| d.device_class == DeviceClass::Touchscreen)
+            .count();
+        Self {
+            devices,
+            keyboard_count,
+            pointer_count,
+            touch_count,
+        }
     }
 
     /// Whether basic input is available (at least keyboard + pointer).

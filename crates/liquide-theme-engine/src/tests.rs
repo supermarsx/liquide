@@ -5,7 +5,7 @@ mod tests {
     use crate::definition::*;
     use crate::manager::{ThemeError, ThemeManager};
     use crate::palette::ColorPalette;
-    use crate::parser::{parse_theme, ParseError};
+    use crate::parser::{ParseError, parse_theme, parse_theme_source};
     use crate::transition::ThemeTransition;
 
     // ═══════════════════════════════════════════════════════
@@ -162,13 +162,22 @@ mod tests {
 
     #[test]
     fn theme_variant_parse() {
-        assert_eq!(ThemeVariant::from_str_loose("Light"), Some(ThemeVariant::Light));
-        assert_eq!(ThemeVariant::from_str_loose("DARK"), Some(ThemeVariant::Dark));
+        assert_eq!(
+            ThemeVariant::from_str_loose("Light"),
+            Some(ThemeVariant::Light)
+        );
+        assert_eq!(
+            ThemeVariant::from_str_loose("DARK"),
+            Some(ThemeVariant::Dark)
+        );
         assert_eq!(
             ThemeVariant::from_str_loose("high-contrast"),
             Some(ThemeVariant::HighContrast)
         );
-        assert_eq!(ThemeVariant::from_str_loose("auto"), Some(ThemeVariant::Auto));
+        assert_eq!(
+            ThemeVariant::from_str_loose("auto"),
+            Some(ThemeVariant::Auto)
+        );
         assert_eq!(ThemeVariant::from_str_loose("unknown"), None);
     }
 
@@ -271,18 +280,16 @@ mod tests {
         let mut mgr = ThemeManager::new();
         mgr.register_theme(builtin_night());
 
-        let mut child = ThemeDefinition::default();
-        child.metadata.id = "night-custom".into();
-        child.metadata.name = "Night Custom".into();
-        child.metadata.parent = Some("night".into());
-        child.dock.height = 70.0;
-        // Palette left at default — should inherit night's palette values
-        mgr.register_theme(child.clone());
+        let parsed = parse_theme_source(
+            "[metadata]\nid = \"night-custom\"\nparent = \"night\"\n[dock]\nheight = 70\n",
+        )
+        .unwrap();
+        let child = parsed.definition().clone();
+        mgr.register_parsed_theme(parsed);
 
         let resolved = mgr.resolve_inheritance(&child).unwrap();
         assert!(resolved.metadata.parent.is_none());
-        assert_eq!(resolved.dock.height, 70.0); // child's override
-        // Palette primary should come from night (not default) because child's matches default
+        assert_eq!(resolved.dock.height, 70.0);
         assert_eq!(resolved.palette.primary, builtin_night().palette.primary);
     }
 
@@ -305,6 +312,209 @@ mod tests {
         assert!(css.contains("--dock-height:"));
         assert!(css.contains("--glass-blur-radius:"));
         assert!(css.ends_with("}\n"));
+    }
+
+    #[test]
+    fn manager_register_theme_treats_materialized_defaults_as_explicit() {
+        let mut mgr = ThemeManager::new();
+        let mut parent = ThemeDefinition::default();
+        parent.metadata.id = "parent".into();
+        parent.metadata.name = "Parent".into();
+        parent.window.titlebar_height = 99.0;
+        mgr.register_theme(parent);
+
+        let mut child = ThemeDefinition::default();
+        child.metadata.id = "child".into();
+        child.metadata.name = "Child".into();
+        child.metadata.parent = Some("parent".into());
+        mgr.register_theme(child.clone());
+
+        let resolved = mgr.resolve_inheritance(&child).unwrap();
+        assert!(
+            (resolved.window.titlebar_height - WindowTheme::default().titlebar_height).abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn manager_parsed_theme_preserves_omitted_parent_metadata() {
+        let mut mgr = ThemeManager::new();
+        let mut parent = ThemeDefinition::default();
+        parent.metadata.id = "parent".into();
+        parent.metadata.name = "Parent".into();
+        parent.metadata.author = "Parent Author".into();
+        parent.metadata.version = "9.9.9".into();
+        parent.metadata.variant = ThemeVariant::Light;
+        parent.metadata.supports_glass = false;
+        parent.window.titlebar_height = 99.0;
+        mgr.register_theme(parent);
+
+        let parsed = parse_theme_source("[metadata]\nid = \"child\"\nparent = \"parent\"\n")
+            .unwrap();
+        let child = parsed.definition().clone();
+        mgr.register_parsed_theme(parsed);
+
+        let resolved = mgr.resolve_inheritance(&child).unwrap();
+        assert_eq!(resolved.metadata.name, "child");
+        assert_eq!(resolved.metadata.author, "Parent Author");
+        assert_eq!(resolved.metadata.version, "9.9.9");
+        assert_eq!(resolved.metadata.variant, ThemeVariant::Light);
+        assert!(!resolved.metadata.supports_glass);
+        assert!((resolved.window.titlebar_height - 99.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn manager_parsed_theme_can_reset_parent_values_to_defaults() {
+        let mut mgr = ThemeManager::new();
+        let mut parent = builtin_night();
+        parent.metadata.id = "parent".into();
+        parent.metadata.name = "Parent".into();
+        parent.metadata.supports_glass = false;
+        parent.dock.spacing = 12.0;
+        mgr.register_theme(parent);
+
+        let parsed = parse_theme_source(
+            "[metadata]\nid = \"child\"\nparent = \"parent\"\nsupports_glass = true\n[dock]\nspacing = 4\n",
+        )
+        .unwrap();
+        let child = parsed.definition().clone();
+        mgr.register_parsed_theme(parsed);
+
+        let resolved = mgr.resolve_inheritance(&child).unwrap();
+        assert_eq!(resolved.dock.spacing, DockTheme::default().spacing);
+        assert!(resolved.metadata.supports_glass);
+    }
+
+    #[test]
+    fn manager_on_theme_change_fires_on_set_active() {
+        use std::sync::{Arc, Mutex};
+        let mut mgr = ThemeManager::with_builtins();
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        mgr.on_theme_change(move |theme, css| {
+            assert!(css.starts_with(":root {"));
+            events_clone.lock().unwrap().push(theme.metadata.id.clone());
+        });
+        mgr.set_active("midday").unwrap();
+        mgr.set_active("sunset").unwrap();
+        let fired = events.lock().unwrap();
+        assert_eq!(&fired[..], &["midday".to_string(), "sunset".to_string()]);
+    }
+
+    #[test]
+    fn manager_set_active_uses_resolved_theme() {
+        use std::sync::{Arc, Mutex};
+
+        let mut mgr = ThemeManager::new();
+        let mut parent = builtin_night();
+        parent.metadata.id = "parent".into();
+        parent.metadata.name = "Parent".into();
+        parent.metadata.author = "Parent Author".into();
+        let parent_primary = parent.palette.primary;
+        mgr.register_theme(parent);
+
+        let parsed = parse_theme_source(
+            "[metadata]\nid = \"child\"\nparent = \"parent\"\n[dock]\nheight = 70\n",
+        )
+        .unwrap();
+        mgr.register_parsed_theme(parsed);
+
+        let events: Arc<Mutex<Vec<(String, f32, Color)>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        mgr.on_theme_change(move |theme, _css| {
+            events_clone.lock().unwrap().push((
+                theme.metadata.author.clone(),
+                theme.dock.height,
+                theme.palette.primary,
+            ));
+        });
+
+        mgr.set_active("child").unwrap();
+
+        let fired = events.lock().unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].0, "Parent Author");
+        assert_eq!(fired[0].1, 70.0);
+        assert_eq!(fired[0].2, parent_primary);
+    }
+
+    #[test]
+    fn manager_generate_active_css_emits_runtime_tokens_for_resolved_theme() {
+        let mut mgr = ThemeManager::new();
+        let mut parent = builtin_night();
+        parent.metadata.id = "parent".into();
+        parent.metadata.name = "Parent".into();
+        parent.window.border_width = 5.0;
+        parent.statusbar.padding_horizontal = 18.0;
+        parent.dock.spacing = 9.0;
+        parent.menu.disabled_color = Color::rgb(1, 2, 3);
+        parent.tooltip.padding_horizontal = 11.0;
+        parent.notification.action_bg = Color::rgb(4, 5, 6);
+        mgr.register_theme(parent);
+
+        let parsed = parse_theme_source(
+            "[metadata]\nid = \"child\"\nparent = \"parent\"\n[window]\nclose_button_bg = #010203\n[dock]\nitem_hover_bg = #112233\n",
+        )
+        .unwrap();
+        mgr.register_parsed_theme(parsed);
+        mgr.set_active("child").unwrap();
+
+        let css = mgr.generate_active_css().unwrap();
+        assert!(css.contains("--window-border-width: 5px"));
+        assert!(css.contains("--window-close-button-bg: rgb(1, 2, 3)"));
+        assert!(css.contains("--statusbar-padding-horizontal: 18px"));
+        assert!(css.contains("--dock-spacing: 9px"));
+        assert!(css.contains("--dock-item-hover-bg: rgb(17, 34, 51)"));
+        assert!(css.contains("--menu-disabled-color: rgb(1, 2, 3)"));
+        assert!(css.contains("--tooltip-padding-horizontal: 11px"));
+        assert!(css.contains("--notification-action-bg: rgb(4, 5, 6)"));
+    }
+
+    #[test]
+    fn manager_reregister_active_theme_refreshes_callbacks() {
+        use std::sync::{Arc, Mutex};
+
+        let mut mgr = ThemeManager::new();
+        mgr.register_theme(builtin_night());
+
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        mgr.on_theme_change(move |_theme, css| {
+            events_clone.lock().unwrap().push(css.to_string());
+        });
+
+        mgr.set_active("night").unwrap();
+
+        let mut updated = builtin_night();
+        updated.dock.height = 80.0;
+        mgr.register_theme(updated);
+
+        let fired = events.lock().unwrap();
+        assert_eq!(fired.len(), 2);
+        assert!(fired[1].contains("--dock-height: 80px"));
+    }
+
+    #[test]
+    fn manager_resolves_auto_variant_against_system_theme_preference() {
+        let mut mgr = ThemeManager::new();
+        let mut theme = builtin_night();
+        theme.metadata.id = "auto-night".into();
+        theme.metadata.name = "Auto Night".into();
+        theme.metadata.variant = ThemeVariant::Auto;
+        mgr.register_theme(theme);
+
+        mgr.set_system_theme_variant(ThemeVariant::Light);
+        mgr.set_active("auto-night").unwrap();
+        assert_eq!(
+            mgr.resolved_active_theme().unwrap().metadata.variant,
+            ThemeVariant::Light
+        );
+
+        mgr.set_system_theme_variant(ThemeVariant::HighContrast);
+        assert_eq!(
+            mgr.resolved_active_theme().unwrap().metadata.variant,
+            ThemeVariant::HighContrast
+        );
     }
 
     // ═══════════════════════════════════════════════════════
@@ -518,8 +728,8 @@ opacity = 0.75
     fn parse_and_use_full_roundtrip() {
         // Parse a theme file, register it, set active, generate CSS.
         let mut mgr = ThemeManager::with_builtins();
-        let custom = parse_theme(SAMPLE_THEME).unwrap();
-        mgr.register_theme(custom);
+        let custom = parse_theme_source(SAMPLE_THEME).unwrap();
+        mgr.register_parsed_theme(custom);
         mgr.set_active("my-dark").unwrap();
         let css = ThemeManager::generate_css(mgr.active_theme().unwrap());
         assert!(css.contains("--dock-height: 60px"));

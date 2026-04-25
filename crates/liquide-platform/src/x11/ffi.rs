@@ -4,7 +4,12 @@
 //! to interact with the X Window System via `libX11` and `libXrandr`.
 //! Only compiled on Linux (`#[cfg(target_os = "linux")]`).
 
-#![allow(non_camel_case_types, non_upper_case_globals, dead_code, clippy::upper_case_acronyms)]
+#![allow(
+    non_camel_case_types,
+    non_upper_case_globals,
+    dead_code,
+    clippy::upper_case_acronyms
+)]
 
 use std::ffi::c_void;
 use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong};
@@ -970,11 +975,7 @@ unsafe extern "C" {
     // Event handling
     pub fn XNextEvent(display: *mut Display, event: *mut XEvent) -> c_int;
     pub fn XPending(display: *mut Display) -> c_int;
-    pub fn XCheckMaskEvent(
-        display: *mut Display,
-        event_mask: c_long,
-        event: *mut XEvent,
-    ) -> Bool;
+    pub fn XCheckMaskEvent(display: *mut Display, event_mask: c_long, event: *mut XEvent) -> Bool;
     pub fn XSendEvent(
         display: *mut Display,
         window: Window,

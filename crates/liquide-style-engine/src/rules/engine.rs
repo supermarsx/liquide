@@ -259,10 +259,10 @@ impl RuleEngine {
                 }
 
                 PropertyRequirement::BorderRadiusPositive => {
-                    let has_radius = style.border_radius.top_left > 0.0
-                        || style.border_radius.top_right > 0.0
-                        || style.border_radius.bottom_left > 0.0
-                        || style.border_radius.bottom_right > 0.0;
+                    let has_radius = !style.border_radius.top_left.is_zero()
+                        || !style.border_radius.top_right.is_zero()
+                        || !style.border_radius.bottom_left.is_zero()
+                        || !style.border_radius.bottom_right.is_zero();
                     if !has_radius {
                         Some((
                             "border-radius".to_string(),
@@ -475,7 +475,13 @@ impl RuleEngine {
                 }
 
                 StructureRequirement::MustHaveId => {
-                    if node.element_id.is_none() || node.element_id.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                    if node.element_id.is_none()
+                        || node
+                            .element_id
+                            .as_ref()
+                            .map(|s| s.is_empty())
+                            .unwrap_or(true)
+                    {
                         Some((
                             "id-required".to_string(),
                             "element should have an id attribute".to_string(),
@@ -528,9 +534,18 @@ impl RuleEngine {
     pub fn validate_with_report(&self, doc: &Document, styles: &StyleMap) -> ValidationReport {
         let violations = self.validate(doc, styles);
 
-        let critical_count = violations.iter().filter(|v| v.severity == Severity::Critical).count();
-        let error_count = violations.iter().filter(|v| v.severity == Severity::Error).count();
-        let warning_count = violations.iter().filter(|v| v.severity == Severity::Warning).count();
+        let critical_count = violations
+            .iter()
+            .filter(|v| v.severity == Severity::Critical)
+            .count();
+        let error_count = violations
+            .iter()
+            .filter(|v| v.severity == Severity::Error)
+            .count();
+        let warning_count = violations
+            .iter()
+            .filter(|v| v.severity == Severity::Warning)
+            .count();
 
         ValidationReport {
             violations,

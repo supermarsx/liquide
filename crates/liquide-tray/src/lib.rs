@@ -24,14 +24,14 @@ pub mod watcher;
 pub use host::{TrayEvent, TrayHost};
 pub use item::{
     ItemCategory, ItemId, ItemStatus, Pixmap, StatusNotifierItem, StatusNotifierItemBuilder,
-    ToolTip,
+    ToolTip, UiThemeVariant, variant_icon_name,
 };
 pub use menu::{
-    build_menu_tree, FlatMenuItem, MenuItemId, MenuItemType, TrayMenu, TrayMenuItem,
-    ROOT_MENU_ID,
+    FlatMenuItem, MenuItemId, MenuItemType, MenuLayoutEntry, ROOT_MENU_ID, TrayMenu, TrayMenuItem,
+    build_menu_tree,
 };
 pub use renderer::{
-    compute_tray_bounds, item_at_point, ItemRect, TrayBounds, TrayLayout, TrayOrientation,
+    ItemRect, TrayBounds, TrayLayout, TrayOrientation, compute_tray_bounds, item_at_point,
 };
 pub use watcher::{StatusNotifierWatcherSignal, TrayWatcher};
 

@@ -27,7 +27,12 @@ impl Favorite {
     /// Create a new favorite.
     #[must_use]
     pub fn new(uri: String, display_name: String, icon: String, position: usize) -> Self {
-        Self { uri, display_name, icon, position }
+        Self {
+            uri,
+            display_name,
+            icon,
+            position,
+        }
     }
 }
 
@@ -169,10 +174,22 @@ impl FavoriteStore {
         let home = home_dir();
         let defaults = [
             ("Home", &format!("file://{home}"), "folder-home"),
-            ("Documents", &format!("file://{home}/Documents"), "folder-documents"),
-            ("Downloads", &format!("file://{home}/Downloads"), "folder-download"),
+            (
+                "Documents",
+                &format!("file://{home}/Documents"),
+                "folder-documents",
+            ),
+            (
+                "Downloads",
+                &format!("file://{home}/Downloads"),
+                "folder-download",
+            ),
             ("Music", &format!("file://{home}/Music"), "folder-music"),
-            ("Pictures", &format!("file://{home}/Pictures"), "folder-pictures"),
+            (
+                "Pictures",
+                &format!("file://{home}/Pictures"),
+                "folder-pictures",
+            ),
             ("Videos", &format!("file://{home}/Videos"), "folder-videos"),
         ];
         for (i, (name, uri, icon)) in defaults.iter().enumerate() {

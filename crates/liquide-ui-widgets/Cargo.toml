@@ -16,3 +16,4 @@ liquide-ui-core = { path = "../liquide-ui-core" }
 liquide-compositor = { path = "../liquide-compositor" }
 serde.workspace = true
 tracing.workspace = true
+unicode-segmentation = "1"

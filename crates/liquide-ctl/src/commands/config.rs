@@ -25,11 +25,7 @@ pub async fn execute(client: &Client, output: &Output, cmd: &ConfigCommand) -> R
     }
 }
 
-async fn show(
-    client: &Client,
-    output: &Output,
-    args: &crate::cli::ConfigShowArgs,
-) -> Result<()> {
+async fn show(client: &Client, output: &Output, args: &crate::cli::ConfigShowArgs) -> Result<()> {
     let path = match &args.section {
         Some(section) => format!("/api/v1/config?section={section}"),
         None => "/api/v1/config".to_string(),
@@ -51,8 +47,9 @@ async fn show(
 }
 
 async fn validate(client: &Client, output: &Output) -> Result<()> {
-    let resp: ApiResponse<ValidationResult> =
-        client.post("/api/v1/config/validate", &serde_json::json!({})).await?;
+    let resp: ApiResponse<ValidationResult> = client
+        .post("/api/v1/config/validate", &serde_json::json!({}))
+        .await?;
     match resp.data {
         Some(result) => {
             if result.valid {
@@ -75,11 +72,7 @@ async fn validate(client: &Client, output: &Output) -> Result<()> {
     Ok(())
 }
 
-async fn set(
-    client: &Client,
-    output: &Output,
-    args: &crate::cli::ConfigSetArgs,
-) -> Result<()> {
+async fn set(client: &Client, output: &Output, args: &crate::cli::ConfigSetArgs) -> Result<()> {
     let path = format!("/api/v1/config/{}", args.key);
     let body = serde_json::json!({ "value": args.value });
     let resp: ApiResponse<serde_json::Value> = client.put(&path, &body).await?;
@@ -113,7 +106,10 @@ async fn export(client: &Client, output: &Output) -> Result<()> {
     match resp.data {
         Some(config) => {
             // Raw JSON output for piping to file
-            println!("{}", serde_json::to_string_pretty(&config).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&config).unwrap_or_default()
+            );
         }
         None => {
             if let Some(err) = resp.error {
@@ -133,8 +129,7 @@ async fn import(
         .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", args.file))?;
     let body: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("Invalid config file {}: {e}", args.file))?;
-    let resp: ApiResponse<serde_json::Value> =
-        client.post("/api/v1/config/import", &body).await?;
+    let resp: ApiResponse<serde_json::Value> = client.post("/api/v1/config/import", &body).await?;
     if resp.success {
         output.success(&format!("Configuration imported from {}.", args.file));
     } else if let Some(err) = resp.error {

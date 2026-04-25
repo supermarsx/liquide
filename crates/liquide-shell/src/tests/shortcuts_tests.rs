@@ -107,7 +107,10 @@ fn shortcut_bind_new_key_returns_none() {
     let mut mgr = ShortcutManager::new();
     let binding = KeyBinding::new(KeyCode::F12, Modifiers::from_bits(Modifiers::CTRL));
     let prev = mgr.bind(binding.clone(), ShellAction::OpenLauncher);
-    assert!(prev.is_none(), "binding to a previously unbound key should return None");
+    assert!(
+        prev.is_none(),
+        "binding to a previously unbound key should return None"
+    );
     assert_eq!(mgr.lookup(&binding), Some(&ShellAction::OpenLauncher));
 }
 
@@ -295,10 +298,7 @@ fn shortcut_key_binding_display() {
         display.contains("Super"),
         "display should contain Super: {display}"
     );
-    assert!(
-        display.contains("L"),
-        "display should contain L: {display}"
-    );
+    assert!(display.contains("L"), "display should contain L: {display}");
 }
 
 #[test]

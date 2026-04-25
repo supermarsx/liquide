@@ -4,7 +4,12 @@ use crate::entry::{EntryKind, FileEntry, Permissions, guess_mime};
 
 #[test]
 fn test_file_entry() {
-    let e = FileEntry::file("readme.md".into(), "/home/user/readme.md".into(), 1024, 1000);
+    let e = FileEntry::file(
+        "readme.md".into(),
+        "/home/user/readme.md".into(),
+        1024,
+        1000,
+    );
     assert_eq!(e.kind, EntryKind::File);
     assert_eq!(e.extension, "md");
     assert!(!e.hidden);

@@ -1,7 +1,7 @@
 use bytes::BytesMut;
+use liquide_protocol::ProtocolError;
 use liquide_protocol::channel::ChannelId;
 use liquide_protocol::frame::*;
-use liquide_protocol::ProtocolError;
 
 #[test]
 fn header_roundtrip() {

@@ -317,8 +317,16 @@ mod tests {
     #[test]
     fn particle_age_at_birth() {
         let p = Particle {
-            x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, ax: 0.0, ay: 0.0,
-            lifetime: 1.0, initial_lifetime: 1.0, alpha: 1.0, size: 5.0,
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            ax: 0.0,
+            ay: 0.0,
+            lifetime: 1.0,
+            initial_lifetime: 1.0,
+            alpha: 1.0,
+            size: 5.0,
             color: 0xFFFFFFFF,
         };
         assert!((p.age() - 0.0).abs() < 0.001);
@@ -327,8 +335,16 @@ mod tests {
     #[test]
     fn particle_age_at_half() {
         let p = Particle {
-            x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, ax: 0.0, ay: 0.0,
-            lifetime: 0.5, initial_lifetime: 1.0, alpha: 1.0, size: 5.0,
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            ax: 0.0,
+            ay: 0.0,
+            lifetime: 0.5,
+            initial_lifetime: 1.0,
+            alpha: 1.0,
+            size: 5.0,
             color: 0xFFFFFFFF,
         };
         assert!((p.age() - 0.5).abs() < 0.001);
@@ -337,8 +353,16 @@ mod tests {
     #[test]
     fn particle_is_expired() {
         let p = Particle {
-            x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, ax: 0.0, ay: 0.0,
-            lifetime: 0.0, initial_lifetime: 1.0, alpha: 0.0, size: 5.0,
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            ax: 0.0,
+            ay: 0.0,
+            lifetime: 0.0,
+            initial_lifetime: 1.0,
+            alpha: 0.0,
+            size: 5.0,
             color: 0xFFFFFFFF,
         };
         assert!(p.is_expired());
@@ -347,8 +371,16 @@ mod tests {
     #[test]
     fn particle_tick_moves() {
         let mut p = Particle {
-            x: 0.0, y: 0.0, vx: 100.0, vy: 0.0, ax: 0.0, ay: 0.0,
-            lifetime: 1.0, initial_lifetime: 1.0, alpha: 1.0, size: 5.0,
+            x: 0.0,
+            y: 0.0,
+            vx: 100.0,
+            vy: 0.0,
+            ax: 0.0,
+            ay: 0.0,
+            lifetime: 1.0,
+            initial_lifetime: 1.0,
+            alpha: 1.0,
+            size: 5.0,
             color: 0xFFFFFFFF,
         };
         p.tick(0.1);
@@ -358,8 +390,16 @@ mod tests {
     #[test]
     fn particle_tick_applies_acceleration() {
         let mut p = Particle {
-            x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, ax: 0.0, ay: 100.0,
-            lifetime: 1.0, initial_lifetime: 1.0, alpha: 1.0, size: 5.0,
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            ax: 0.0,
+            ay: 100.0,
+            lifetime: 1.0,
+            initial_lifetime: 1.0,
+            alpha: 1.0,
+            size: 5.0,
             color: 0xFFFFFFFF,
         };
         p.tick(0.1);
@@ -370,8 +410,16 @@ mod tests {
     #[test]
     fn particle_tick_reduces_lifetime() {
         let mut p = Particle {
-            x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, ax: 0.0, ay: 0.0,
-            lifetime: 1.0, initial_lifetime: 1.0, alpha: 1.0, size: 5.0,
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            ax: 0.0,
+            ay: 0.0,
+            lifetime: 1.0,
+            initial_lifetime: 1.0,
+            alpha: 1.0,
+            size: 5.0,
             color: 0xFFFFFFFF,
         };
         p.tick(0.3);
@@ -381,8 +429,16 @@ mod tests {
     #[test]
     fn particle_alpha_fades_with_age() {
         let mut p = Particle {
-            x: 0.0, y: 0.0, vx: 0.0, vy: 0.0, ax: 0.0, ay: 0.0,
-            lifetime: 1.0, initial_lifetime: 1.0, alpha: 1.0, size: 5.0,
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            ax: 0.0,
+            ay: 0.0,
+            lifetime: 1.0,
+            initial_lifetime: 1.0,
+            alpha: 1.0,
+            size: 5.0,
             color: 0xFFFFFFFF,
         };
         p.tick(0.5);
@@ -439,11 +495,15 @@ mod tests {
         let config = EmitterConfig {
             spawn_rate: 10000.0, // very fast
             max_particles: 5,
-            vel_x_min: 0.0, vel_x_max: 0.0,
-            vel_y_min: 0.0, vel_y_max: 0.0,
-            lifetime_min: 10.0, lifetime_max: 10.0,
+            vel_x_min: 0.0,
+            vel_x_max: 0.0,
+            vel_y_min: 0.0,
+            vel_y_max: 0.0,
+            lifetime_min: 10.0,
+            lifetime_max: 10.0,
             gravity: 0.0,
-            size_min: 1.0, size_max: 1.0,
+            size_min: 1.0,
+            size_max: 1.0,
             color: 0xFFFFFFFF,
         };
         let mut emitter = ParticleEmitter::new(config, 0.0, 0.0);
@@ -457,11 +517,15 @@ mod tests {
         let config = EmitterConfig {
             spawn_rate: 100.0,
             max_particles: 50,
-            vel_x_min: 0.0, vel_x_max: 0.0,
-            vel_y_min: 0.0, vel_y_max: 0.0,
-            lifetime_min: 0.05, lifetime_max: 0.05, // very short
+            vel_x_min: 0.0,
+            vel_x_max: 0.0,
+            vel_y_min: 0.0,
+            vel_y_max: 0.0,
+            lifetime_min: 0.05,
+            lifetime_max: 0.05, // very short
             gravity: 0.0,
-            size_min: 1.0, size_max: 1.0,
+            size_min: 1.0,
+            size_max: 1.0,
             color: 0xFFFFFFFF,
         };
         let mut emitter = ParticleEmitter::new(config, 0.0, 0.0);
@@ -518,11 +582,15 @@ mod tests {
         let config = EmitterConfig {
             spawn_rate: 1000.0,
             max_particles: 10,
-            vel_x_min: 100.0, vel_x_max: 100.0,
-            vel_y_min: 0.0, vel_y_max: 0.0,
-            lifetime_min: 5.0, lifetime_max: 5.0,
+            vel_x_min: 100.0,
+            vel_x_max: 100.0,
+            vel_y_min: 0.0,
+            vel_y_max: 0.0,
+            lifetime_min: 5.0,
+            lifetime_max: 5.0,
             gravity: 0.0,
-            size_min: 1.0, size_max: 1.0,
+            size_min: 1.0,
+            size_max: 1.0,
             color: 0xFFFFFFFF,
         };
         let mut emitter = ParticleEmitter::new(config, 0.0, 0.0);
@@ -532,7 +600,10 @@ mod tests {
         let initial_x = emitter.active_particles()[0].x;
         emitter.tick(0.1);
         let after_x = emitter.active_particles()[0].x;
-        assert!(after_x > initial_x, "particle should move right: {initial_x} -> {after_x}");
+        assert!(
+            after_x > initial_x,
+            "particle should move right: {initial_x} -> {after_x}"
+        );
     }
 
     #[test]
@@ -545,7 +616,11 @@ mod tests {
         e1.tick(0.1);
         e2.tick(0.1);
         assert_eq!(e1.active_count(), e2.active_count());
-        for (p1, p2) in e1.active_particles().iter().zip(e2.active_particles().iter()) {
+        for (p1, p2) in e1
+            .active_particles()
+            .iter()
+            .zip(e2.active_particles().iter())
+        {
             assert!((p1.x - p2.x).abs() < 0.001);
             assert!((p1.y - p2.y).abs() < 0.001);
         }

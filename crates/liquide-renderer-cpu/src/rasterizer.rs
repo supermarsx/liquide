@@ -149,10 +149,14 @@ pub fn fill_rect_gradient(
                             pixels[off + 3] = pm.a;
                         } else if sa > 0 {
                             let inv_a = 255 - sa;
-                            pixels[off] = (pm.b as u16 + (pixels[off] as u16 * inv_a + 127) / 255) as u8;
-                            pixels[off + 1] = (pm.g as u16 + (pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
-                            pixels[off + 2] = (pm.r as u16 + (pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
-                            pixels[off + 3] = (pm.a as u16 + (pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off] =
+                                (pm.b as u16 + (pixels[off] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 1] =
+                                (pm.g as u16 + (pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 2] =
+                                (pm.r as u16 + (pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 3] =
+                                (pm.a as u16 + (pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
                         }
 
                         t += dt_dx;
@@ -216,10 +220,14 @@ pub fn fill_rect_gradient(
                             pixels[off + 3] = pm.a;
                         } else if sa > 0 {
                             let inv_a = 255 - sa;
-                            pixels[off] = (pm.b as u16 + (pixels[off] as u16 * inv_a + 127) / 255) as u8;
-                            pixels[off + 1] = (pm.g as u16 + (pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
-                            pixels[off + 2] = (pm.r as u16 + (pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
-                            pixels[off + 3] = (pm.a as u16 + (pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off] =
+                                (pm.b as u16 + (pixels[off] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 1] =
+                                (pm.g as u16 + (pixels[off + 1] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 2] =
+                                (pm.r as u16 + (pixels[off + 2] as u16 * inv_a + 127) / 255) as u8;
+                            pixels[off + 3] =
+                                (pm.a as u16 + (pixels[off + 3] as u16 * inv_a + 127) / 255) as u8;
                         }
                     }
                 }
@@ -377,12 +385,28 @@ pub fn fill_rounded_rect(
                 rect.width,
                 (corner_y_bot - corner_y_top) as f32,
             );
-            let c = Color { r: pm.r, g: pm.g, b: pm.b, a: pm.a };
+            let c = Color {
+                r: pm.r,
+                g: pm.g,
+                b: pm.b,
+                a: pm.a,
+            };
             fill_rect(fb, interior_rect, c, mode);
         } else {
             // Gradient interior — per-pixel but no SDF needed
             for y in corner_y_top..corner_y_bot {
-                fill_rounded_rect_scanline(fb, y, x0, x1, &rect, r, &[tl, tr, bl, br], fill, mode, lut);
+                fill_rounded_rect_scanline(
+                    fb,
+                    y,
+                    x0,
+                    x1,
+                    &rect,
+                    r,
+                    &[tl, tr, bl, br],
+                    fill,
+                    mode,
+                    lut,
+                );
             }
         }
     }
@@ -442,7 +466,12 @@ fn fill_rounded_rect_scanline(
                 (corner_x_right - corner_x_left) as f32,
                 1.0,
             );
-            let c = Color { r: pm.r, g: pm.g, b: pm.b, a: pm.a };
+            let c = Color {
+                r: pm.r,
+                g: pm.g,
+                b: pm.b,
+                a: pm.a,
+            };
             fill_rect(fb, span_rect, c, mode);
         } else {
             for x in corner_x_left..corner_x_right {
@@ -605,7 +634,15 @@ pub fn blit_opaque(
 ) {
     let bpp = 4usize;
     // Default stride = width * bpp (no row padding)
-    blit_opaque_stride(fb, src, src_width, src_height, src_width as usize * bpp, dst_x, dst_y);
+    blit_opaque_stride(
+        fb,
+        src,
+        src_width,
+        src_height,
+        src_width as usize * bpp,
+        dst_x,
+        dst_y,
+    );
 }
 
 /// Blit an opaque BGRA image with explicit stride (bytes per row).
@@ -638,7 +675,8 @@ pub fn blit_opaque_stride(
         if dst_off + bytes > fb.pixels_mut().expect("CPU framebuffer required").len() {
             break;
         }
-        fb.pixels_mut().expect("CPU framebuffer required")[dst_off..dst_off + bytes].copy_from_slice(&src[src_off..src_off + bytes]);
+        fb.pixels_mut().expect("CPU framebuffer required")[dst_off..dst_off + bytes]
+            .copy_from_slice(&src[src_off..src_off + bytes]);
     }
 }
 
@@ -654,7 +692,9 @@ pub fn blit_alpha(
 ) {
     let bpp = 4usize;
     let src_stride = src_width as usize * bpp;
-    blit_alpha_stride(fb, src, src_width, src_height, src_stride, dst_x, dst_y, opacity);
+    blit_alpha_stride(
+        fb, src, src_width, src_height, src_stride, dst_x, dst_y, opacity,
+    );
 }
 
 /// Blit a BGRA image with premultiplied alpha blending and explicit stride.
@@ -806,7 +846,12 @@ pub fn stroke_rect(fb: &mut FrameBuffer, rect: Rect, width: f32, color: Color, m
     // Left edge (between top and bottom)
     fill_rect(
         fb,
-        Rect::new(rect.x - half, rect.y + half, width, (rect.height - width).max(0.0)),
+        Rect::new(
+            rect.x - half,
+            rect.y + half,
+            width,
+            (rect.height - width).max(0.0),
+        ),
         color,
         mode,
     );
@@ -983,7 +1028,9 @@ pub fn draw_line(
     let dx = x2 - x1;
     let dy = y2 - y1;
     let len = (dx * dx + dy * dy).sqrt();
-    if len < 0.001 { return; }
+    if len < 0.001 {
+        return;
+    }
 
     let steps = (len * 2.0).ceil() as i32;
     let half_w = width * 0.5;
@@ -1016,16 +1063,37 @@ pub fn draw_line(
                     let coverage = (half_w + 0.5 - dist).clamp(0.0, 1.0);
                     let alpha = (color.a as f32 * coverage) as u8;
                     if alpha > 0 {
-                        let c = Color { r: color.r, g: color.g, b: color.b, a: alpha };
+                        let c = Color {
+                            r: color.r,
+                            g: color.g,
+                            b: color.b,
+                            a: alpha,
+                        };
                         let idx = py as usize * fb.stride as usize + px as usize * 4;
                         if idx + 3 < fb.pixels_mut().expect("CPU framebuffer required").len() {
                             let sa = c.a as f32 / 255.0;
                             let da = 1.0 - sa;
                             // BGRA layout in the framebuffer
-                            fb.pixels_mut().expect("CPU framebuffer required")[idx]     = (c.b as f32 * sa + fb.pixels_mut().expect("CPU framebuffer required")[idx]     as f32 * da) as u8;
-                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 1] = (c.g as f32 * sa + fb.pixels_mut().expect("CPU framebuffer required")[idx + 1] as f32 * da) as u8;
-                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 2] = (c.r as f32 * sa + fb.pixels_mut().expect("CPU framebuffer required")[idx + 2] as f32 * da) as u8;
-                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 3] = (c.a as f32 + fb.pixels_mut().expect("CPU framebuffer required")[idx + 3] as f32 * (1.0 - sa)) as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx] = (c.b as f32
+                                * sa
+                                + fb.pixels_mut().expect("CPU framebuffer required")[idx] as f32
+                                    * da)
+                                as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 1] =
+                                (c.g as f32 * sa
+                                    + fb.pixels_mut().expect("CPU framebuffer required")[idx + 1]
+                                        as f32
+                                        * da) as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 2] =
+                                (c.r as f32 * sa
+                                    + fb.pixels_mut().expect("CPU framebuffer required")[idx + 2]
+                                        as f32
+                                        * da) as u8;
+                            fb.pixels_mut().expect("CPU framebuffer required")[idx + 3] =
+                                (c.a as f32
+                                    + fb.pixels_mut().expect("CPU framebuffer required")[idx + 3]
+                                        as f32
+                                        * (1.0 - sa)) as u8;
                         }
                     }
                 }

@@ -1,9 +1,9 @@
-use liquide_compositor::geometry::Rect;
 use crate::app_history::AppHistory;
 use crate::history::*;
 use crate::shell::Shell;
 use crate::stats::*;
 use crate::window::*;
+use liquide_compositor::geometry::Rect;
 
 /// Helper: create a StatsCollector with a pre-populated window history.
 fn make_collector<'a>(wh: &'a WindowHistory, ah: &'a AppHistory) -> StatsCollector<'a> {
@@ -127,9 +127,21 @@ fn window_stats_resize_count() {
     let r1 = Rect::new(0.0, 0.0, 100.0, 100.0);
     let r2 = Rect::new(0.0, 0.0, 200.0, 200.0);
     wh.record_at(WindowId(1), WindowEventKind::Opened, 0);
-    wh.record_at(WindowId(1), WindowEventKind::Resized { from: r1, to: r2 }, 1);
-    wh.record_at(WindowId(1), WindowEventKind::Resized { from: r2, to: r1 }, 2);
-    wh.record_at(WindowId(1), WindowEventKind::Resized { from: r1, to: r2 }, 3);
+    wh.record_at(
+        WindowId(1),
+        WindowEventKind::Resized { from: r1, to: r2 },
+        1,
+    );
+    wh.record_at(
+        WindowId(1),
+        WindowEventKind::Resized { from: r2, to: r1 },
+        2,
+    );
+    wh.record_at(
+        WindowId(1),
+        WindowEventKind::Resized { from: r1, to: r2 },
+        3,
+    );
     let c = make_collector(&wh, &ah);
     let s = c.window_stats(WindowId(1));
     assert_eq!(s.resize_count, 3);
@@ -192,7 +204,11 @@ fn window_stats_z_order_change_count() {
     let mut wh = WindowHistory::new(100);
     let ah = AppHistory::new(100);
     wh.record_at(WindowId(1), WindowEventKind::Opened, 0);
-    wh.record_at(WindowId(1), WindowEventKind::ZOrderChanged { from: 0, to: 5 }, 1);
+    wh.record_at(
+        WindowId(1),
+        WindowEventKind::ZOrderChanged { from: 0, to: 5 },
+        1,
+    );
     let c = make_collector(&wh, &ah);
     let s = c.window_stats(WindowId(1));
     assert_eq!(s.z_order_change_count, 1);
@@ -205,12 +221,18 @@ fn window_stats_visibility_change_count() {
     wh.record_at(WindowId(1), WindowEventKind::Opened, 0);
     wh.record_at(
         WindowId(1),
-        WindowEventKind::VisibilityChanged { from: true, to: false },
+        WindowEventKind::VisibilityChanged {
+            from: true,
+            to: false,
+        },
         1,
     );
     wh.record_at(
         WindowId(1),
-        WindowEventKind::VisibilityChanged { from: false, to: true },
+        WindowEventKind::VisibilityChanged {
+            from: false,
+            to: true,
+        },
         2,
     );
     let c = make_collector(&wh, &ah);
@@ -853,13 +875,17 @@ fn stats_ring_buffer_partial_data() {
     // Ring buffer capacity 3, Opened event may be evicted
     let mut wh = WindowHistory::new(3);
     let ah = AppHistory::new(100);
-    wh.record_at(WindowId(1), WindowEventKind::Opened, 0);      // will be evicted
-    wh.record_at(WindowId(1), WindowEventKind::Focused, 10);     // will be evicted
-    wh.record_at(WindowId(1), WindowEventKind::Unfocused, 20);   // will be evicted
-    wh.record_at(WindowId(1), WindowEventKind::Moved {
-        from: Rect::new(0.0, 0.0, 100.0, 100.0),
-        to: Rect::new(50.0, 50.0, 100.0, 100.0),
-    }, 30);
+    wh.record_at(WindowId(1), WindowEventKind::Opened, 0); // will be evicted
+    wh.record_at(WindowId(1), WindowEventKind::Focused, 10); // will be evicted
+    wh.record_at(WindowId(1), WindowEventKind::Unfocused, 20); // will be evicted
+    wh.record_at(
+        WindowId(1),
+        WindowEventKind::Moved {
+            from: Rect::new(0.0, 0.0, 100.0, 100.0),
+            to: Rect::new(50.0, 50.0, 100.0, 100.0),
+        },
+        30,
+    );
     wh.record_at(WindowId(1), WindowEventKind::Focused, 40);
     wh.record_at(WindowId(1), WindowEventKind::Closed, 100);
 
@@ -1032,7 +1058,11 @@ fn shell_stats_empty_shell() {
 fn shell_stats_after_complex_lifecycle() {
     let mut shell = Shell::new(1920.0, 1080.0);
     let id1 = shell.open_window_with_app("Editor", Rect::new(0.0, 0.0, 800.0, 600.0), "com.editor");
-    let id2 = shell.open_window_with_app("Browser", Rect::new(100.0, 100.0, 1000.0, 700.0), "com.browser");
+    let id2 = shell.open_window_with_app(
+        "Browser",
+        Rect::new(100.0, 100.0, 1000.0, 700.0),
+        "com.browser",
+    );
 
     shell.set_focus(id1).unwrap();
     shell.move_window(id1, 50.0, 50.0).unwrap();

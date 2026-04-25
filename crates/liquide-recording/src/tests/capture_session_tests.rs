@@ -1,13 +1,13 @@
-use crate::capture::{OutputFormat, RecordingConfig, CaptureRegion};
+use crate::capture::{CaptureRegion, OutputFormat, RecordingConfig};
 use crate::capture_session::{CaptureSession, CaptureState};
 
 /// Helper: create a small 2x2 RGBA frame (16 bytes).
 fn make_frame_2x2() -> Vec<u8> {
     vec![
-        255, 0, 0, 255,   // red
-        0, 255, 0, 255,   // green
-        0, 0, 255, 255,   // blue
-        255, 255, 0, 255,  // yellow
+        255, 0, 0, 255, // red
+        0, 255, 0, 255, // green
+        0, 0, 255, 255, // blue
+        255, 255, 0, 255, // yellow
     ]
 }
 

@@ -42,12 +42,9 @@ mod css_dock_example;
 
 // Re-export the components from liquide-components
 pub use liquide_components::{
-    Component, TemplateNode, TemplateRenderer,
-    dock as components_dock,
-    statusbar as components_statusbar,
-    launcher as components_launcher,
-    notifications as components_notifications,
-    menus as components_menus,
+    Component, TemplateNode, TemplateRenderer, dock as components_dock,
+    launcher as components_launcher, menus as components_menus,
+    notifications as components_notifications, statusbar as components_statusbar,
 };
 
 #[cfg(test)]
@@ -140,19 +137,19 @@ pub use liquide_dock::{
     AutoHideState, Dock, DockClickBehavior, DockConfig, DockItem, DockItemKind, DockPosition,
     DockRenderConfig, DockThemeColors,
 };
+pub use liquide_statusbar::{
+    NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE, ShellBarConfig, ShellStatusBar, StatusBarColors,
+    StatusBarItem, StatusBarItemKind, StatusBarLayout, StatusBarSlot,
+};
 pub use notification::{
-    DndSchedule, NotificationConfig, NotificationEvent, NotificationManager,
-    NotificationPosition, NotifyOptions, ShellNotification, TrayIcon, TrayIconId, TrayMenuItem,
+    DndSchedule, NotificationConfig, NotificationEvent, NotificationManager, NotificationPosition,
+    NotifyOptions, ShellNotification, TrayIcon, TrayIconId, TrayMenuItem,
 };
 pub use seamless::{
     SeamlessConfig, SeamlessManager, SeamlessMessage, SeamlessMode, SeamlessWindow,
     SeamlessWindowType,
 };
 pub use shortcuts::{Direction, KeyBinding, ShellAction, ShortcutManager};
-pub use liquide_statusbar::{
-    ShellBarConfig, ShellStatusBar, StatusBarColors, StatusBarItem, StatusBarItemKind,
-    StatusBarLayout, StatusBarSlot, NODE_STATUS_BAR, NODE_STATUS_BAR_ITEM_BASE,
-};
 pub use theme::ShellTheme;
 pub use tiling::{SnapZone, TilingConfig, TilingEngine, TilingLayoutKind, TilingMode};
 

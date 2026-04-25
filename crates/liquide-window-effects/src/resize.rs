@@ -96,14 +96,20 @@ pub fn constrain_resize(
         let diff = constraints.min_width - w;
         w = constraints.min_width;
         // If left edge was moving, push it back
-        if matches!(handle, ResizeHandle::Left | ResizeHandle::TopLeft | ResizeHandle::BottomLeft) {
+        if matches!(
+            handle,
+            ResizeHandle::Left | ResizeHandle::TopLeft | ResizeHandle::BottomLeft
+        ) {
             x -= diff;
         }
     }
     if h < constraints.min_height {
         let diff = constraints.min_height - h;
         h = constraints.min_height;
-        if matches!(handle, ResizeHandle::Top | ResizeHandle::TopLeft | ResizeHandle::TopRight) {
+        if matches!(
+            handle,
+            ResizeHandle::Top | ResizeHandle::TopLeft | ResizeHandle::TopRight
+        ) {
             y -= diff;
         }
     }
@@ -237,34 +243,64 @@ mod tests {
 
     #[test]
     fn resize_right_increases_width() {
-        let r = constrain_resize(ResizeHandle::Right, 50.0, 0.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::Right,
+            50.0,
+            0.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.width - 850.0).abs() < 1e-3);
         assert!((r.x - 100.0).abs() < 1e-3); // x unchanged
     }
 
     #[test]
     fn resize_left_moves_x() {
-        let r = constrain_resize(ResizeHandle::Left, -30.0, 0.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::Left,
+            -30.0,
+            0.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.x - 70.0).abs() < 1e-3);
         assert!((r.width - 830.0).abs() < 1e-3);
     }
 
     #[test]
     fn resize_bottom_increases_height() {
-        let r = constrain_resize(ResizeHandle::Bottom, 0.0, 40.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::Bottom,
+            0.0,
+            40.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.height - 640.0).abs() < 1e-3);
     }
 
     #[test]
     fn resize_top_moves_y() {
-        let r = constrain_resize(ResizeHandle::Top, 0.0, -20.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::Top,
+            0.0,
+            -20.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.y - 80.0).abs() < 1e-3);
         assert!((r.height - 620.0).abs() < 1e-3);
     }
 
     #[test]
     fn resize_bottom_right() {
-        let r = constrain_resize(ResizeHandle::BottomRight, 50.0, 30.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::BottomRight,
+            50.0,
+            30.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.width - 850.0).abs() < 1e-3);
         assert!((r.height - 630.0).abs() < 1e-3);
         assert!((r.x - 100.0).abs() < 1e-3);
@@ -273,7 +309,13 @@ mod tests {
 
     #[test]
     fn resize_top_left() {
-        let r = constrain_resize(ResizeHandle::TopLeft, -20.0, -15.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::TopLeft,
+            -20.0,
+            -15.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.x - 80.0).abs() < 1e-3);
         assert!((r.y - 85.0).abs() < 1e-3);
         assert!((r.width - 820.0).abs() < 1e-3);
@@ -282,21 +324,30 @@ mod tests {
 
     #[test]
     fn resize_constrain_min_width() {
-        let c = ResizeConstraints { min_width: 300.0, ..Default::default() };
+        let c = ResizeConstraints {
+            min_width: 300.0,
+            ..Default::default()
+        };
         let r = constrain_resize(ResizeHandle::Right, -700.0, 0.0, base_rect(), &c);
         assert!((r.width - 300.0).abs() < 1e-3);
     }
 
     #[test]
     fn resize_constrain_min_height() {
-        let c = ResizeConstraints { min_height: 200.0, ..Default::default() };
+        let c = ResizeConstraints {
+            min_height: 200.0,
+            ..Default::default()
+        };
         let r = constrain_resize(ResizeHandle::Bottom, 0.0, -500.0, base_rect(), &c);
         assert!((r.height - 200.0).abs() < 1e-3);
     }
 
     #[test]
     fn resize_constrain_max_width() {
-        let c = ResizeConstraints { max_width: 1000.0, ..Default::default() };
+        let c = ResizeConstraints {
+            max_width: 1000.0,
+            ..Default::default()
+        };
         let r = constrain_resize(ResizeHandle::Right, 500.0, 0.0, base_rect(), &c);
         assert!((r.width - 1000.0).abs() < 1e-3);
     }
@@ -325,7 +376,13 @@ mod tests {
 
     #[test]
     fn resize_top_right_handle() {
-        let r = constrain_resize(ResizeHandle::TopRight, 40.0, -20.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::TopRight,
+            40.0,
+            -20.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.width - 840.0).abs() < 1e-3);
         assert!((r.y - 80.0).abs() < 1e-3);
         assert!((r.height - 620.0).abs() < 1e-3);
@@ -334,7 +391,13 @@ mod tests {
 
     #[test]
     fn resize_bottom_left_handle() {
-        let r = constrain_resize(ResizeHandle::BottomLeft, -25.0, 35.0, base_rect(), &ResizeConstraints::default());
+        let r = constrain_resize(
+            ResizeHandle::BottomLeft,
+            -25.0,
+            35.0,
+            base_rect(),
+            &ResizeConstraints::default(),
+        );
         assert!((r.x - 75.0).abs() < 1e-3);
         assert!((r.width - 825.0).abs() < 1e-3);
         assert!((r.height - 635.0).abs() < 1e-3);

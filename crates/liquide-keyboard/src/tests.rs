@@ -153,7 +153,11 @@ mod tests {
     #[test]
     fn manager_next_layout_cycles() {
         let mut mgr = KeyboardLayoutManager::new();
-        let ids: Vec<String> = mgr.available_layouts().iter().map(|l| l.id.clone()).collect();
+        let ids: Vec<String> = mgr
+            .available_layouts()
+            .iter()
+            .map(|l| l.id.clone())
+            .collect();
 
         for i in 0..ids.len() + 1 {
             assert_eq!(mgr.active_layout().id, ids[i % ids.len()]);

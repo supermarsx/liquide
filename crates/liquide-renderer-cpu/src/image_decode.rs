@@ -118,26 +118,10 @@ impl DecodedImage {
         let c01 = self.get_pixel_clamp(x0, y0 + 1);
         let c11 = self.get_pixel_clamp(x0 + 1, y0 + 1);
 
-        let r = lerp_u8(
-            lerp_u8(c00.r, c10.r, fx),
-            lerp_u8(c01.r, c11.r, fx),
-            fy,
-        );
-        let g = lerp_u8(
-            lerp_u8(c00.g, c10.g, fx),
-            lerp_u8(c01.g, c11.g, fx),
-            fy,
-        );
-        let b = lerp_u8(
-            lerp_u8(c00.b, c10.b, fx),
-            lerp_u8(c01.b, c11.b, fx),
-            fy,
-        );
-        let a = lerp_u8(
-            lerp_u8(c00.a, c10.a, fx),
-            lerp_u8(c01.a, c11.a, fx),
-            fy,
-        );
+        let r = lerp_u8(lerp_u8(c00.r, c10.r, fx), lerp_u8(c01.r, c11.r, fx), fy);
+        let g = lerp_u8(lerp_u8(c00.g, c10.g, fx), lerp_u8(c01.g, c11.g, fx), fy);
+        let b = lerp_u8(lerp_u8(c00.b, c10.b, fx), lerp_u8(c01.b, c11.b, fx), fy);
+        let a = lerp_u8(lerp_u8(c00.a, c10.a, fx), lerp_u8(c01.a, c11.a, fx), fy);
         Color::new(r, g, b, a)
     }
 
@@ -176,7 +160,8 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
     let mut idat_data = Vec::new();
 
     while pos + 8 <= data.len() {
-        let chunk_len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let chunk_len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let chunk_type = &data[pos + 4..pos + 8];
         let chunk_data_start = pos + 8;
         let chunk_data_end = chunk_data_start + chunk_len;
@@ -211,12 +196,14 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
     }
 
     if width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM {
-        return Err(ImageDecodeError::InvalidFormat(
-            format!("image dimensions {width}x{height} exceed maximum {MAX_IMAGE_DIM}"),
-        ));
+        return Err(ImageDecodeError::InvalidFormat(format!(
+            "image dimensions {width}x{height} exceed maximum {MAX_IMAGE_DIM}"
+        )));
     }
     if (width as u64) * (height as u64) * 4 > MAX_IMAGE_BYTES {
-        return Err(ImageDecodeError::InvalidFormat("decoded image would exceed 256 MiB".into()));
+        return Err(ImageDecodeError::InvalidFormat(
+            "decoded image would exceed 256 MiB".into(),
+        ));
     }
 
     let channels: usize = match color_type {
@@ -228,9 +215,9 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
     };
 
     if bit_depth != 8 {
-        return Err(ImageDecodeError::InvalidFormat(
-            format!("unsupported bit depth {bit_depth} (only 8-bit supported)"),
-        ));
+        return Err(ImageDecodeError::InvalidFormat(format!(
+            "unsupported bit depth {bit_depth} (only 8-bit supported)"
+        )));
     }
 
     // Decompress zlib-wrapped IDAT data
@@ -262,36 +249,70 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
             1 => {
                 // Sub: pixel[x] += pixel[x - bpp]
                 for i in 0..stride {
-                    let left = if i >= bpp { raw_pixels[dst_off + i - bpp] } else { 0 };
+                    let left = if i >= bpp {
+                        raw_pixels[dst_off + i - bpp]
+                    } else {
+                        0
+                    };
                     raw_pixels[dst_off + i] = src_row[i].wrapping_add(left);
                 }
             }
             2 => {
                 // Up: pixel[x] += pixel_prev_row[x]
                 for i in 0..stride {
-                    let up = if row > 0 { raw_pixels[dst_off - stride + i] } else { 0 };
+                    let up = if row > 0 {
+                        raw_pixels[dst_off - stride + i]
+                    } else {
+                        0
+                    };
                     raw_pixels[dst_off + i] = src_row[i].wrapping_add(up);
                 }
             }
             3 => {
                 // Average: pixel[x] += floor((left + up) / 2)
                 for i in 0..stride {
-                    let left = if i >= bpp { raw_pixels[dst_off + i - bpp] as u16 } else { 0 };
-                    let up = if row > 0 { raw_pixels[dst_off - stride + i] as u16 } else { 0 };
+                    let left = if i >= bpp {
+                        raw_pixels[dst_off + i - bpp] as u16
+                    } else {
+                        0
+                    };
+                    let up = if row > 0 {
+                        raw_pixels[dst_off - stride + i] as u16
+                    } else {
+                        0
+                    };
                     raw_pixels[dst_off + i] = src_row[i].wrapping_add(((left + up) / 2) as u8);
                 }
             }
             4 => {
                 // Paeth
                 for i in 0..stride {
-                    let a = if i >= bpp { raw_pixels[dst_off + i - bpp] as i32 } else { 0 };
-                    let b = if row > 0 { raw_pixels[dst_off - stride + i] as i32 } else { 0 };
-                    let c = if row > 0 && i >= bpp { raw_pixels[dst_off - stride + i - bpp] as i32 } else { 0 };
+                    let a = if i >= bpp {
+                        raw_pixels[dst_off + i - bpp] as i32
+                    } else {
+                        0
+                    };
+                    let b = if row > 0 {
+                        raw_pixels[dst_off - stride + i] as i32
+                    } else {
+                        0
+                    };
+                    let c = if row > 0 && i >= bpp {
+                        raw_pixels[dst_off - stride + i - bpp] as i32
+                    } else {
+                        0
+                    };
                     let p = a + b - c;
                     let pa = (p - a).abs();
                     let pb = (p - b).abs();
                     let pc = (p - c).abs();
-                    let pr = if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c };
+                    let pr = if pa <= pb && pa <= pc {
+                        a
+                    } else if pb <= pc {
+                        b
+                    } else {
+                        c
+                    };
                     raw_pixels[dst_off + i] = src_row[i].wrapping_add(pr as u8);
                 }
             }
@@ -303,9 +324,12 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
     }
 
     // Convert to RGBA
-    let alloc_size = (width as u64).checked_mul(height as u64)
+    let alloc_size = (width as u64)
+        .checked_mul(height as u64)
         .and_then(|n| n.checked_mul(4))
-        .ok_or(ImageDecodeError::InvalidFormat("pixel buffer overflow".into()))? as usize;
+        .ok_or(ImageDecodeError::InvalidFormat(
+            "pixel buffer overflow".into(),
+        ))? as usize;
     let pixel_count = (width as usize) * (height as usize);
     let mut pixels = vec![0u8; alloc_size];
 
@@ -315,7 +339,10 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
             for i in 0..pixel_count {
                 let v = raw_pixels[i];
                 let o = i * 4;
-                pixels[o] = v; pixels[o + 1] = v; pixels[o + 2] = v; pixels[o + 3] = 255;
+                pixels[o] = v;
+                pixels[o + 1] = v;
+                pixels[o + 2] = v;
+                pixels[o + 3] = 255;
             }
         }
         2 => {
@@ -323,7 +350,10 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
             for i in 0..pixel_count {
                 let s = i * 3;
                 let o = i * 4;
-                pixels[o] = raw_pixels[s]; pixels[o + 1] = raw_pixels[s + 1]; pixels[o + 2] = raw_pixels[s + 2]; pixels[o + 3] = 255;
+                pixels[o] = raw_pixels[s];
+                pixels[o + 1] = raw_pixels[s + 1];
+                pixels[o + 2] = raw_pixels[s + 2];
+                pixels[o + 3] = 255;
             }
         }
         4 => {
@@ -332,7 +362,10 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
                 let s = i * 2;
                 let o = i * 4;
                 let v = raw_pixels[s];
-                pixels[o] = v; pixels[o + 1] = v; pixels[o + 2] = v; pixels[o + 3] = raw_pixels[s + 1];
+                pixels[o] = v;
+                pixels[o + 1] = v;
+                pixels[o + 2] = v;
+                pixels[o + 3] = raw_pixels[s + 1];
             }
         }
         6 => {
@@ -371,12 +404,14 @@ pub fn decode_bmp(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
     let h = abs_height;
 
     if w > MAX_IMAGE_DIM || h > MAX_IMAGE_DIM {
-        return Err(ImageDecodeError::InvalidFormat(
-            format!("image dimensions {w}x{h} exceed maximum {MAX_IMAGE_DIM}"),
-        ));
+        return Err(ImageDecodeError::InvalidFormat(format!(
+            "image dimensions {w}x{h} exceed maximum {MAX_IMAGE_DIM}"
+        )));
     }
     if (w as u64) * (h as u64) * 4 > MAX_IMAGE_BYTES {
-        return Err(ImageDecodeError::InvalidFormat("decoded image would exceed 256 MiB".into()));
+        return Err(ImageDecodeError::InvalidFormat(
+            "decoded image would exceed 256 MiB".into(),
+        ));
     }
 
     let row_size = ((w * bpp as u32 + 31) / 32 * 4) as usize;
@@ -386,9 +421,12 @@ pub fn decode_bmp(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
         return Err(ImageDecodeError::TruncatedData);
     }
 
-    let alloc_size = (w as u64).checked_mul(h as u64)
+    let alloc_size = (w as u64)
+        .checked_mul(h as u64)
         .and_then(|n| n.checked_mul(4))
-        .ok_or(ImageDecodeError::InvalidFormat("pixel buffer overflow".into()))? as usize;
+        .ok_or(ImageDecodeError::InvalidFormat(
+            "pixel buffer overflow".into(),
+        ))? as usize;
     let mut pixels = vec![0u8; alloc_size];
 
     for row in 0..h {
@@ -402,18 +440,18 @@ pub fn decode_bmp(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
                 24 => {
                     let src_idx = src_start + col as usize * 3;
                     if src_idx + 2 < data.len() {
-                        pixels[dst_idx] = data[src_idx + 2];     // R (BMP is BGR)
+                        pixels[dst_idx] = data[src_idx + 2]; // R (BMP is BGR)
                         pixels[dst_idx + 1] = data[src_idx + 1]; // G
-                        pixels[dst_idx + 2] = data[src_idx];     // B
-                        pixels[dst_idx + 3] = 255;               // A
+                        pixels[dst_idx + 2] = data[src_idx]; // B
+                        pixels[dst_idx + 3] = 255; // A
                     }
                 }
                 32 => {
                     let src_idx = src_start + col as usize * 4;
                     if src_idx + 3 < data.len() {
-                        pixels[dst_idx] = data[src_idx + 2];     // R
+                        pixels[dst_idx] = data[src_idx + 2]; // R
                         pixels[dst_idx + 1] = data[src_idx + 1]; // G
-                        pixels[dst_idx + 2] = data[src_idx];     // B
+                        pixels[dst_idx + 2] = data[src_idx]; // B
                         pixels[dst_idx + 3] = data[src_idx + 3]; // A
                     }
                 }
@@ -531,9 +569,9 @@ mod tests {
         bmp.extend_from_slice(&54u32.to_le_bytes()); // data offset
         // Info header (BITMAPINFOHEADER = 40 bytes)
         bmp.extend_from_slice(&40u32.to_le_bytes()); // header size
-        bmp.extend_from_slice(&1i32.to_le_bytes());  // width
-        bmp.extend_from_slice(&1i32.to_le_bytes());  // height (bottom-up)
-        bmp.extend_from_slice(&1u16.to_le_bytes());  // planes
+        bmp.extend_from_slice(&1i32.to_le_bytes()); // width
+        bmp.extend_from_slice(&1i32.to_le_bytes()); // height (bottom-up)
+        bmp.extend_from_slice(&1u16.to_le_bytes()); // planes
         bmp.extend_from_slice(&24u16.to_le_bytes()); // bpp
         bmp.extend_from_slice(&[0u8; 24]); // rest of header
         // Pixel data: 1 pixel BGR + padding to 4 bytes
@@ -557,8 +595,8 @@ mod tests {
         png.extend_from_slice(b"IHDR");
         png.extend_from_slice(&100_000u32.to_be_bytes()); // width = 100000
         png.extend_from_slice(&100_000u32.to_be_bytes()); // height = 100000
-        png.push(8);  // bit depth
-        png.push(6);  // color type RGBA
+        png.push(8); // bit depth
+        png.push(6); // color type RGBA
         png.extend_from_slice(&[0u8; 3]); // compression, filter, interlace
         png.extend_from_slice(&[0u8; 4]); // CRC (ignored by decoder)
         // IEND chunk
@@ -575,7 +613,8 @@ mod tests {
     fn test_bmp_rejects_huge_dimensions() {
         // Construct a BMP header with absurdly large dimensions
         let mut bmp = vec![0u8; 54];
-        bmp[0] = b'B'; bmp[1] = b'M';
+        bmp[0] = b'B';
+        bmp[1] = b'M';
         bmp[10..14].copy_from_slice(&54u32.to_le_bytes()); // data offset
         bmp[14..18].copy_from_slice(&40u32.to_le_bytes()); // header size
         bmp[18..22].copy_from_slice(&100_000i32.to_le_bytes()); // width
@@ -591,7 +630,8 @@ mod tests {
     fn test_bmp_rejects_truncated_data() {
         // Construct a valid BMP header claiming 100x100 pixels but with no pixel data
         let mut bmp = vec![0u8; 54];
-        bmp[0] = b'B'; bmp[1] = b'M';
+        bmp[0] = b'B';
+        bmp[1] = b'M';
         bmp[10..14].copy_from_slice(&54u32.to_le_bytes()); // data offset
         bmp[14..18].copy_from_slice(&40u32.to_le_bytes()); // header size
         bmp[18..22].copy_from_slice(&100i32.to_le_bytes()); // width
@@ -599,6 +639,9 @@ mod tests {
         bmp[28..30].copy_from_slice(&24u16.to_le_bytes()); // bpp
 
         let err = decode_bmp(&bmp).unwrap_err();
-        assert!(matches!(err, ImageDecodeError::TruncatedData), "expected TruncatedData, got: {err}");
+        assert!(
+            matches!(err, ImageDecodeError::TruncatedData),
+            "expected TruncatedData, got: {err}"
+        );
     }
 }

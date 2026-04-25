@@ -49,27 +49,27 @@ impl DeviceType {
             0x04 => {
                 // Audio/Video
                 match minor {
-                    0x01 => DeviceType::Speaker,       // Wearable headset
-                    0x02 => DeviceType::Speaker,       // Hands-free
-                    0x04 => DeviceType::Speaker,       // Microphone
-                    0x05 => DeviceType::Speaker,       // Loudspeaker
-                    0x06 => DeviceType::Headphones,    // Headphones
-                    0x07 => DeviceType::Speaker,       // Portable audio
-                    0x08 => DeviceType::Speaker,       // Car audio
-                    0x09 => DeviceType::Speaker,       // Set-top box
-                    0x0A => DeviceType::Speaker,       // HiFi audio
-                    0x0B => DeviceType::Speaker,       // VCR
-                    0x0C => DeviceType::Camera,        // Video camera
-                    0x0D => DeviceType::Camera,        // Camcorder
-                    _ => DeviceType::Speaker,          // Generic audio
+                    0x01 => DeviceType::Speaker,    // Wearable headset
+                    0x02 => DeviceType::Speaker,    // Hands-free
+                    0x04 => DeviceType::Speaker,    // Microphone
+                    0x05 => DeviceType::Speaker,    // Loudspeaker
+                    0x06 => DeviceType::Headphones, // Headphones
+                    0x07 => DeviceType::Speaker,    // Portable audio
+                    0x08 => DeviceType::Speaker,    // Car audio
+                    0x09 => DeviceType::Speaker,    // Set-top box
+                    0x0A => DeviceType::Speaker,    // HiFi audio
+                    0x0B => DeviceType::Speaker,    // VCR
+                    0x0C => DeviceType::Camera,     // Video camera
+                    0x0D => DeviceType::Camera,     // Camcorder
+                    _ => DeviceType::Speaker,       // Generic audio
                 }
             }
             0x05 => {
                 // Peripheral (HID)
                 match minor & 0x0F {
-                    0x01 => DeviceType::Gamepad,       // Joystick
-                    0x02 => DeviceType::Gamepad,       // Gamepad
-                    0x03 => DeviceType::Mouse,         // Remote control (treated as mouse)
+                    0x01 => DeviceType::Gamepad, // Joystick
+                    0x02 => DeviceType::Gamepad, // Gamepad
+                    0x03 => DeviceType::Mouse,   // Remote control (treated as mouse)
                     _ => {
                         // Bits 5..4 of minor give keyboard/mouse type
                         let sub = (minor >> 4) & 0x03;
@@ -122,13 +122,22 @@ impl DeviceType {
             DeviceType::Speaker
         } else if lower.contains("keyboard") {
             DeviceType::Keyboard
-        } else if lower.contains("mouse") || lower.contains("trackpad") || lower.contains("pointing") {
+        } else if lower.contains("mouse")
+            || lower.contains("trackpad")
+            || lower.contains("pointing")
+        {
             DeviceType::Mouse
-        } else if lower.contains("gamepad") || lower.contains("joystick") || lower.contains("controller") {
+        } else if lower.contains("gamepad")
+            || lower.contains("joystick")
+            || lower.contains("controller")
+        {
             DeviceType::Gamepad
         } else if lower.contains("phone") || lower.contains("modem") {
             DeviceType::Phone
-        } else if lower.contains("computer") || lower.contains("laptop") || lower.contains("desktop") {
+        } else if lower.contains("computer")
+            || lower.contains("laptop")
+            || lower.contains("desktop")
+        {
             DeviceType::Computer
         } else if lower.contains("printer") {
             DeviceType::Printer
@@ -186,11 +195,24 @@ impl AudioProfile {
         let lower = s.to_lowercase();
         if lower.contains("a2dp") || lower.contains("110a") || lower.contains("110b") {
             Some(AudioProfile::A2DP)
-        } else if lower.contains("hfp") || lower.contains("111e") || lower.contains("111f") || lower.contains("hands-free") || lower.contains("handsfree") {
+        } else if lower.contains("hfp")
+            || lower.contains("111e")
+            || lower.contains("111f")
+            || lower.contains("hands-free")
+            || lower.contains("handsfree")
+        {
             Some(AudioProfile::HFP)
-        } else if lower.contains("hsp") || lower.contains("1108") || lower.contains("1112") || lower.contains("headset") {
+        } else if lower.contains("hsp")
+            || lower.contains("1108")
+            || lower.contains("1112")
+            || lower.contains("headset")
+        {
             Some(AudioProfile::HSP)
-        } else if lower.contains("avrcp") || lower.contains("110e") || lower.contains("110c") || lower.contains("remote control") {
+        } else if lower.contains("avrcp")
+            || lower.contains("110e")
+            || lower.contains("110c")
+            || lower.contains("remote control")
+        {
             Some(AudioProfile::AVRCP)
         } else {
             None
@@ -276,10 +298,7 @@ pub enum BluetoothEvent {
         pin: Option<String>,
     },
     /// A device's battery level changed.
-    BatteryChanged {
-        address: String,
-        level: u8,
-    },
+    BatteryChanged { address: String, level: u8 },
 }
 
 // ── Errors ─────────────────────────────────────────────────────────────
@@ -489,7 +508,10 @@ mod tests {
     #[test]
     fn from_class_heart_rate() {
         // Major class 0x09 (Health)
-        assert_eq!(DeviceType::from_class(0x00_09_00), DeviceType::HeartRateMonitor);
+        assert_eq!(
+            DeviceType::from_class(0x00_09_00),
+            DeviceType::HeartRateMonitor
+        );
     }
 
     #[test]
@@ -503,18 +525,30 @@ mod tests {
 
     #[test]
     fn from_icon_name_headphones() {
-        assert_eq!(DeviceType::from_icon_name("audio-headphones"), DeviceType::Headphones);
-        assert_eq!(DeviceType::from_icon_name("Headset"), DeviceType::Headphones);
+        assert_eq!(
+            DeviceType::from_icon_name("audio-headphones"),
+            DeviceType::Headphones
+        );
+        assert_eq!(
+            DeviceType::from_icon_name("Headset"),
+            DeviceType::Headphones
+        );
     }
 
     #[test]
     fn from_icon_name_speaker() {
-        assert_eq!(DeviceType::from_icon_name("audio-speakers"), DeviceType::Speaker);
+        assert_eq!(
+            DeviceType::from_icon_name("audio-speakers"),
+            DeviceType::Speaker
+        );
     }
 
     #[test]
     fn from_icon_name_keyboard() {
-        assert_eq!(DeviceType::from_icon_name("input-keyboard"), DeviceType::Keyboard);
+        assert_eq!(
+            DeviceType::from_icon_name("input-keyboard"),
+            DeviceType::Keyboard
+        );
     }
 
     #[test]
@@ -524,7 +558,10 @@ mod tests {
 
     #[test]
     fn from_icon_name_gamepad() {
-        assert_eq!(DeviceType::from_icon_name("input-gamepad"), DeviceType::Gamepad);
+        assert_eq!(
+            DeviceType::from_icon_name("input-gamepad"),
+            DeviceType::Gamepad
+        );
     }
 
     #[test]
@@ -539,7 +576,10 @@ mod tests {
 
     #[test]
     fn from_icon_name_empty() {
-        assert_eq!(DeviceType::from_icon_name(""), DeviceType::Other("unknown".to_string()));
+        assert_eq!(
+            DeviceType::from_icon_name(""),
+            DeviceType::Other("unknown".to_string())
+        );
     }
 
     // -- DeviceType Display --
@@ -556,7 +596,10 @@ mod tests {
         assert_eq!(DeviceType::Printer.to_string(), "Printer");
         assert_eq!(DeviceType::Camera.to_string(), "Camera");
         assert_eq!(DeviceType::Watch.to_string(), "Watch");
-        assert_eq!(DeviceType::HeartRateMonitor.to_string(), "Heart Rate Monitor");
+        assert_eq!(
+            DeviceType::HeartRateMonitor.to_string(),
+            "Heart Rate Monitor"
+        );
         assert_eq!(DeviceType::Other("widget".into()).to_string(), "widget");
     }
 
@@ -564,27 +607,54 @@ mod tests {
 
     #[test]
     fn audio_profile_from_uuid_a2dp() {
-        assert_eq!(AudioProfile::from_uuid_or_name("A2DP Sink"), Some(AudioProfile::A2DP));
-        assert_eq!(AudioProfile::from_uuid_or_name("0000110b-0000-1000-8000-00805f9b34fb"), Some(AudioProfile::A2DP));
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("A2DP Sink"),
+            Some(AudioProfile::A2DP)
+        );
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("0000110b-0000-1000-8000-00805f9b34fb"),
+            Some(AudioProfile::A2DP)
+        );
     }
 
     #[test]
     fn audio_profile_from_uuid_hfp() {
-        assert_eq!(AudioProfile::from_uuid_or_name("HFP AG"), Some(AudioProfile::HFP));
-        assert_eq!(AudioProfile::from_uuid_or_name("Hands-Free"), Some(AudioProfile::HFP));
-        assert_eq!(AudioProfile::from_uuid_or_name("0000111f-0000-1000-8000-00805f9b34fb"), Some(AudioProfile::HFP));
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("HFP AG"),
+            Some(AudioProfile::HFP)
+        );
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("Hands-Free"),
+            Some(AudioProfile::HFP)
+        );
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("0000111f-0000-1000-8000-00805f9b34fb"),
+            Some(AudioProfile::HFP)
+        );
     }
 
     #[test]
     fn audio_profile_from_uuid_hsp() {
-        assert_eq!(AudioProfile::from_uuid_or_name("HSP"), Some(AudioProfile::HSP));
-        assert_eq!(AudioProfile::from_uuid_or_name("Headset Gateway"), Some(AudioProfile::HSP));
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("HSP"),
+            Some(AudioProfile::HSP)
+        );
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("Headset Gateway"),
+            Some(AudioProfile::HSP)
+        );
     }
 
     #[test]
     fn audio_profile_from_uuid_avrcp() {
-        assert_eq!(AudioProfile::from_uuid_or_name("AVRCP Target"), Some(AudioProfile::AVRCP));
-        assert_eq!(AudioProfile::from_uuid_or_name("A/V Remote Control"), Some(AudioProfile::AVRCP));
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("AVRCP Target"),
+            Some(AudioProfile::AVRCP)
+        );
+        assert_eq!(
+            AudioProfile::from_uuid_or_name("A/V Remote Control"),
+            Some(AudioProfile::AVRCP)
+        );
     }
 
     #[test]
@@ -621,7 +691,10 @@ mod tests {
 
     #[test]
     fn bt_error_display() {
-        assert_eq!(BtError::AdapterNotFound.to_string(), "no bluetooth adapter found");
+        assert_eq!(
+            BtError::AdapterNotFound.to_string(),
+            "no bluetooth adapter found"
+        );
         assert_eq!(BtError::DeviceNotFound.to_string(), "device not found");
         assert_eq!(BtError::NotPaired.to_string(), "device not paired");
         assert_eq!(BtError::AlreadyConnected.to_string(), "already connected");
@@ -629,7 +702,10 @@ mod tests {
             BtError::ConnectionFailed("refused".into()).to_string(),
             "connection failed: refused"
         );
-        assert_eq!(BtError::AuthenticationFailed.to_string(), "authentication failed");
+        assert_eq!(
+            BtError::AuthenticationFailed.to_string(),
+            "authentication failed"
+        );
         assert_eq!(BtError::Timeout.to_string(), "operation timed out");
         assert_eq!(BtError::PlatformError("oops".into()).to_string(), "oops");
     }

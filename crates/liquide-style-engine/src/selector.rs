@@ -195,8 +195,7 @@ impl CompoundSelector {
     /// Calculate the specificity contribution of this compound.
     pub fn specificity(&self) -> Specificity {
         let id = if self.id.is_some() { 1 } else { 0 };
-        let mut class = self.classes.len() as u32
-            + self.attributes.len() as u32;
+        let mut class = self.classes.len() as u32 + self.attributes.len() as u32;
         let mut extra = Specificity::ZERO;
         for pc in &self.pseudo_classes {
             match pc {
@@ -281,9 +280,15 @@ impl CompoundSelector {
             PseudoClassSelector::Checked => node.has_pseudo_state(PseudoStateFlags::CHECKED),
             PseudoClassSelector::FirstChild => node.has_pseudo_state(PseudoStateFlags::FIRST_CHILD),
             PseudoClassSelector::LastChild => node.has_pseudo_state(PseudoStateFlags::LAST_CHILD),
-            PseudoClassSelector::FocusWithin => node.has_pseudo_state(PseudoStateFlags::FOCUS_WITHIN),
-            PseudoClassSelector::FocusVisible => node.has_pseudo_state(PseudoStateFlags::FOCUS_VISIBLE),
-            PseudoClassSelector::PlaceholderShown => node.has_pseudo_state(PseudoStateFlags::PLACEHOLDER_SHOWN),
+            PseudoClassSelector::FocusWithin => {
+                node.has_pseudo_state(PseudoStateFlags::FOCUS_WITHIN)
+            }
+            PseudoClassSelector::FocusVisible => {
+                node.has_pseudo_state(PseudoStateFlags::FOCUS_VISIBLE)
+            }
+            PseudoClassSelector::PlaceholderShown => {
+                node.has_pseudo_state(PseudoStateFlags::PLACEHOLDER_SHOWN)
+            }
             PseudoClassSelector::ReadOnly => node.has_pseudo_state(PseudoStateFlags::READ_ONLY),
             PseudoClassSelector::ReadWrite => node.has_pseudo_state(PseudoStateFlags::READ_WRITE),
             PseudoClassSelector::Root => node.has_pseudo_state(PseudoStateFlags::ROOT),
@@ -331,23 +336,9 @@ impl CompoundSelector {
                 selectors.iter().any(|s| s.matches(doc, node.id))
             }
             PseudoClassSelector::Has(selectors) => {
-                const MAX_HAS_DEPTH: u32 = 256;
-                fn check_descendants(doc: &Document, parent: NodeId, sel: &ComplexSelector, depth: u32) -> bool {
-                    if depth >= MAX_HAS_DEPTH {
-                        return false;
-                    }
-                    for &child_id in doc.children(parent) {
-                        if sel.matches(doc, child_id) {
-                            return true;
-                        }
-                        if check_descendants(doc, child_id, sel, depth + 1) {
-                            return true;
-                        }
-                    }
-                    false
-                }
-                // :has(S1, S2, ...) matches if ANY of the selectors match a descendant
-                selectors.iter().any(|s| check_descendants(doc, node.id, s, 0))
+                selectors
+                    .iter()
+                    .any(|selector| selector.matches_relative_to_anchor(doc, node.id))
             }
             PseudoClassSelector::NthOfType(anb) => {
                 if let Some(parent_id) = node.parent {
@@ -423,9 +414,10 @@ impl CompoundSelector {
                 if let Some(parent_id) = node.parent {
                     let my_tag = node.tag_name();
                     let children = doc.children(parent_id);
-                    let same_type_count = children.iter().filter(|&&c| {
-                        doc.get(c).map_or(false, |child| child.tag_name() == my_tag)
-                    }).count();
+                    let same_type_count = children
+                        .iter()
+                        .filter(|&&c| doc.get(c).map_or(false, |child| child.tag_name() == my_tag))
+                        .count();
                     return same_type_count == 1;
                 }
                 false
@@ -437,16 +429,14 @@ impl CompoundSelector {
                 let node_lang = node.attrs.get("lang");
                 if let Some(node_lang) = node_lang {
                     // Match if lang starts with the code (e.g., "en" matches "en-US")
-                    return node_lang == lang_code.as_str()
-                        || node_lang.starts_with(&format!("{}-", lang_code));
+                    return lang_matches(node_lang, lang_code);
                 }
                 // Check ancestors for inherited lang
                 let mut current = node.parent;
                 while let Some(pid) = current {
                     if let Some(parent) = doc.get(pid) {
                         if let Some(parent_lang) = parent.attrs.get("lang") {
-                            return parent_lang == lang_code.as_str()
-                                || parent_lang.starts_with(&format!("{}-", lang_code));
+                            return lang_matches(parent_lang, lang_code);
                         }
                         current = parent.parent;
                     } else {
@@ -471,13 +461,19 @@ impl CompoundSelector {
             }
             PseudoClassSelector::Enabled => !node.has_pseudo_state(PseudoStateFlags::DISABLED),
             PseudoClassSelector::Default => node.attrs.get("default").is_some(),
-            PseudoClassSelector::Indeterminate => {
-                node.attrs.get("indeterminate").map_or(false, |v| v == "true")
-            }
+            PseudoClassSelector::Indeterminate => node
+                .attrs
+                .get("indeterminate")
+                .map_or(false, |v| v == "true"),
             PseudoClassSelector::Required => node.attrs.get("required").is_some(),
             PseudoClassSelector::Optional => node.attrs.get("required").is_none(),
-            PseudoClassSelector::Valid => node.attrs.get("aria-invalid").map_or(true, |v| v != "true"),
-            PseudoClassSelector::Invalid => node.attrs.get("aria-invalid").map_or(false, |v| v == "true"),
+            PseudoClassSelector::Valid => {
+                node.attrs.get("aria-invalid").map_or(true, |v| v != "true")
+            }
+            PseudoClassSelector::Invalid => node
+                .attrs
+                .get("aria-invalid")
+                .map_or(false, |v| v == "true"),
             PseudoClassSelector::InRange => {
                 // Check if value is within min/max bounds
                 let value = node.attrs.get("value").and_then(|v| v.parse::<f64>().ok());
@@ -504,7 +500,9 @@ impl CompoundSelector {
             PseudoClassSelector::Link => {
                 // :link matches unvisited links — treat as any link that's not visited
                 let is_link_tag = node.tag_name() == "a" || node.tag_name() == "area";
-                is_link_tag && node.attrs.contains("href") && !node.has_pseudo_state(PseudoStateFlags::VISITED)
+                is_link_tag
+                    && node.attrs.contains("href")
+                    && !node.has_pseudo_state(PseudoStateFlags::VISITED)
             }
             PseudoClassSelector::AnyLink => {
                 let is_link_tag = node.tag_name() == "a" || node.tag_name() == "area";
@@ -512,28 +510,29 @@ impl CompoundSelector {
             }
             PseudoClassSelector::Dir(dir) => {
                 // Check direction attribute or inherited direction
-                if let Some(d) = node.attrs.get("dir") {
-                    d.eq_ignore_ascii_case(dir)
-                } else {
-                    // Default LTR
-                    dir.eq_ignore_ascii_case("ltr")
+                let mut current = Some(node.id);
+                while let Some(current_id) = current {
+                    if let Some(current_node) = doc.get(current_id) {
+                        if let Some(value) = current_node.attrs.get("dir") {
+                            return value.eq_ignore_ascii_case(dir);
+                        }
+                        current = current_node.parent;
+                    } else {
+                        break;
+                    }
                 }
+
+                dir.eq_ignore_ascii_case("ltr")
             }
-            PseudoClassSelector::Autofill => {
-                node.has_pseudo_state(PseudoStateFlags::AUTOFILL)
-            }
-            PseudoClassSelector::Modal => {
-                node.has_pseudo_state(PseudoStateFlags::MODAL)
-            }
-            PseudoClassSelector::Fullscreen => {
-                node.has_pseudo_state(PseudoStateFlags::FULLSCREEN)
-            }
+            PseudoClassSelector::Autofill => node.has_pseudo_state(PseudoStateFlags::AUTOFILL),
+            PseudoClassSelector::Modal => node.has_pseudo_state(PseudoStateFlags::MODAL),
+            PseudoClassSelector::Fullscreen => node.has_pseudo_state(PseudoStateFlags::FULLSCREEN),
         }
     }
 
     fn matches_attribute(&self, sel: &AttributeSelector, node: &Node) -> bool {
         let value = node.attrs.get(&sel.name);
-        
+
         // Helper for case-insensitive comparison
         let cmp_str = |a: &str, b: &str| -> bool {
             if sel.case_insensitive {
@@ -563,7 +562,7 @@ impl CompoundSelector {
                 a.contains(b)
             }
         };
-        
+
         match &sel.op {
             AttributeOp::Exists => value.is_some(),
             AttributeOp::Equals(v) => value.map_or(false, |a| cmp_str(a, v.as_str())),
@@ -598,6 +597,8 @@ pub struct ComplexSelector {
     pub compounds: Vec<CompoundSelector>,
     /// Combinators between compounds. `len() == compounds.len() - 1`.
     pub combinators: Vec<Combinator>,
+    /// A leading combinator for relative selectors such as `:has(> img)`.
+    pub leading_combinator: Option<Combinator>,
 }
 
 impl ComplexSelector {
@@ -606,6 +607,7 @@ impl ComplexSelector {
         Self {
             compounds: vec![compound],
             combinators: Vec::new(),
+            leading_combinator: None,
         }
     }
 
@@ -620,6 +622,19 @@ impl ComplexSelector {
 
     /// Check if this complex selector matches a node in the document.
     pub fn matches(&self, doc: &Document, node_id: NodeId) -> bool {
+        if self.leading_combinator.is_some() {
+            return false;
+        }
+
+        self.matches_with_anchor(doc, node_id, None)
+    }
+
+    fn matches_with_anchor(
+        &self,
+        doc: &Document,
+        node_id: NodeId,
+        anchor: Option<(NodeId, Combinator)>,
+    ) -> bool {
         if self.compounds.is_empty() {
             return false;
         }
@@ -635,7 +650,30 @@ impl ComplexSelector {
         }
 
         // Recursively match remaining combinators with backtracking
-        Self::match_rest(&self.compounds, &self.combinators, 0, node_id, doc)
+        Self::match_rest(&self.compounds, &self.combinators, 0, node_id, doc, anchor)
+    }
+
+    fn matches_relative_to_anchor(&self, doc: &Document, anchor_id: NodeId) -> bool {
+        let relation = self.leading_combinator.unwrap_or(Combinator::Descendant);
+        let mut predicate = |candidate| {
+            self.matches_with_anchor(doc, candidate, Some((anchor_id, relation)))
+        };
+
+        match relation {
+            Combinator::Descendant | Combinator::Child => {
+                any_descendant(doc, anchor_id, &mut predicate)
+            }
+            Combinator::NextSibling => immediate_next_element_sibling(doc, anchor_id)
+                .map_or(false, |sibling_id| any_in_subtree(doc, sibling_id, &mut predicate)),
+            Combinator::SubsequentSibling => {
+                for sibling_id in following_element_siblings(doc, anchor_id) {
+                    if any_in_subtree(doc, sibling_id, &mut predicate) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
     }
 
     /// Recursively match combinators starting at index `idx`, with `current` as
@@ -647,9 +685,12 @@ impl ComplexSelector {
         idx: usize,
         current: NodeId,
         doc: &Document,
+        anchor: Option<(NodeId, Combinator)>,
     ) -> bool {
         if idx >= combinators.len() {
-            return true; // all combinators matched
+            return anchor.map_or(true, |(anchor_id, relation)| {
+                anchor_relation_matches(doc, anchor_id, current, relation)
+            });
         }
 
         let combinator = combinators[idx];
@@ -668,7 +709,7 @@ impl ComplexSelector {
                 if !next_compound.matches_node(parent, doc) {
                     return false;
                 }
-                Self::match_rest(compounds, combinators, idx + 1, parent_id, doc)
+                Self::match_rest(compounds, combinators, idx + 1, parent_id, doc, anchor)
             }
             Combinator::Descendant => {
                 // Try each ancestor; backtrack if subsequent combinators fail
@@ -676,7 +717,7 @@ impl ComplexSelector {
                 while let Some(anc_id) = anc {
                     if let Some(anc_node) = doc.get(anc_id) {
                         if next_compound.matches_node(anc_node, doc)
-                            && Self::match_rest(compounds, combinators, idx + 1, anc_id, doc)
+                            && Self::match_rest(compounds, combinators, idx + 1, anc_id, doc, anchor)
                         {
                             return true;
                         }
@@ -716,7 +757,7 @@ impl ComplexSelector {
                 if !next_compound.matches_node(prev, doc) {
                     return false;
                 }
-                Self::match_rest(compounds, combinators, idx + 1, prev_id, doc)
+                Self::match_rest(compounds, combinators, idx + 1, prev_id, doc, anchor)
             }
             Combinator::SubsequentSibling => {
                 // Try each preceding element sibling; backtrack if needed
@@ -733,7 +774,7 @@ impl ComplexSelector {
                     if let Some(sib) = doc.get(sib_id) {
                         if sib.is_element()
                             && next_compound.matches_node(sib, doc)
-                            && Self::match_rest(compounds, combinators, idx + 1, sib_id, doc)
+                            && Self::match_rest(compounds, combinators, idx + 1, sib_id, doc, anchor)
                         {
                             return true;
                         }
@@ -753,70 +794,148 @@ impl ComplexSelector {
             return None;
         }
 
-        // Tokenize by splitting on combinator characters while preserving them
         let mut compounds = Vec::new();
         let mut combinators = Vec::new();
+        let mut leading_combinator = None;
         let mut current_segment = String::new();
+        let mut last_token = SelectorTokenKind::Start;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
 
         let chars: Vec<char> = input.chars().collect();
         let len = chars.len();
         let mut i = 0;
 
         while i < len {
-            match chars[i] {
-                '>' | '+' | '~' => {
-                    let seg = current_segment.trim().to_string();
-                    if !seg.is_empty() {
-                        compounds.push(parse_compound(&seg)?);
+            let ch = chars[i];
+
+            if let Some(active_quote) = quote {
+                current_segment.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active_quote {
+                    quote = None;
+                }
+                i += 1;
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => {
+                    quote = Some(ch);
+                    current_segment.push(ch);
+                    i += 1;
+                }
+                '(' => {
+                    paren_depth += 1;
+                    current_segment.push(ch);
+                    i += 1;
+                }
+                ')' => {
+                    if paren_depth == 0 {
+                        return None;
                     }
-                    let comb = match chars[i] {
+                    paren_depth -= 1;
+                    current_segment.push(ch);
+                    i += 1;
+                }
+                '[' => {
+                    bracket_depth += 1;
+                    current_segment.push(ch);
+                    i += 1;
+                }
+                ']' => {
+                    if bracket_depth == 0 {
+                        return None;
+                    }
+                    bracket_depth -= 1;
+                    current_segment.push(ch);
+                    i += 1;
+                }
+                '>' | '+' | '~' if paren_depth == 0 && bracket_depth == 0 => {
+                    let seg = current_segment.trim();
+                    if !seg.is_empty() {
+                        compounds.push(parse_compound(seg)?);
+                        current_segment.clear();
+                        last_token = SelectorTokenKind::Compound;
+                    }
+
+                    let combinator = match ch {
                         '>' => Combinator::Child,
                         '+' => Combinator::NextSibling,
                         '~' => Combinator::SubsequentSibling,
                         _ => unreachable!(),
                     };
-                    combinators.push(comb);
-                    current_segment.clear();
+
+                    match last_token {
+                        SelectorTokenKind::Start => {
+                            if leading_combinator.is_some() {
+                                return None;
+                            }
+                            leading_combinator = Some(combinator);
+                            last_token = SelectorTokenKind::Combinator;
+                        }
+                        SelectorTokenKind::Compound => {
+                            combinators.push(combinator);
+                            last_token = SelectorTokenKind::Combinator;
+                        }
+                        SelectorTokenKind::Combinator => return None,
+                    }
+
                     i += 1;
                 }
-                ' ' => {
-                    // Could be descendant combinator or just whitespace around > + ~
-                    let seg = current_segment.trim().to_string();
-                    // Skip whitespace
-                    while i < len && chars[i] == ' ' {
+                c if c.is_whitespace() && paren_depth == 0 && bracket_depth == 0 => {
+                    let seg = current_segment.trim();
+                    if !seg.is_empty() {
+                        compounds.push(parse_compound(seg)?);
+                        current_segment.clear();
+                        last_token = SelectorTokenKind::Compound;
+                    }
+
+                    while i < len && chars[i].is_whitespace() {
                         i += 1;
                     }
-                    // Check if next char is an explicit combinator
-                    if i < len && matches!(chars[i], '>' | '+' | '~') {
-                        // This space is just padding around an explicit combinator
-                        if !seg.is_empty() {
-                            compounds.push(parse_compound(&seg)?);
-                        }
-                        current_segment.clear();
-                        continue; // will be handled in next iteration
+
+                    if i >= len {
+                        break;
                     }
-                    // This space IS the descendant combinator
-                    if !seg.is_empty() {
-                        compounds.push(parse_compound(&seg)?);
+
+                    if matches!(chars[i], '>' | '+' | '~') {
+                        continue;
+                    }
+
+                    if matches!(last_token, SelectorTokenKind::Compound) {
                         combinators.push(Combinator::Descendant);
+                        last_token = SelectorTokenKind::Combinator;
                     }
-                    current_segment.clear();
-                    continue; // don't increment i — already advanced past spaces
                 }
-                c => {
-                    current_segment.push(c);
+                _ => {
+                    current_segment.push(ch);
                     i += 1;
                 }
             }
         }
 
-        // Last segment
-        let seg = current_segment.trim().to_string();
-        if !seg.is_empty() {
-            compounds.push(parse_compound(&seg)?);
+        if quote.is_some() || paren_depth != 0 || bracket_depth != 0 {
+            return None;
         }
 
-        if compounds.is_empty() {
+        // Last segment
+        let seg = current_segment.trim();
+        if !seg.is_empty() {
+            compounds.push(parse_compound(seg)?);
+            last_token = SelectorTokenKind::Compound;
+        }
+
+        if compounds.is_empty() || matches!(last_token, SelectorTokenKind::Combinator) {
+            return None;
+        }
+
+        if combinators.len() + 1 != compounds.len() {
             return None;
         }
 
@@ -824,68 +943,76 @@ impl ComplexSelector {
         compounds.reverse();
         combinators.reverse();
 
-        Some(ComplexSelector { compounds, combinators })
+        Some(ComplexSelector {
+            compounds,
+            combinators,
+            leading_combinator,
+        })
     }
 }
 
 /// Parse a single compound selector string like `div.foo#bar:hover[type="text"]`.
 fn parse_compound(input: &str) -> Option<CompoundSelector> {
     let mut sel = CompoundSelector::new();
-    let mut chars = input.chars().peekable();
-    let mut current = String::new();
-    let mut mode = 'T'; // T=tag, .=class, #=id, :=pseudo, [=attr
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
 
-    while let Some(&ch) = chars.peek() {
-        match ch {
-            '.' | '#' | ':' | '[' => {
-                flush_segment(&mut sel, mode, &current);
-                current.clear();
-                mode = ch;
-                chars.next();
-            }
-            ']' => {
-                chars.next();
-                // Parse attribute selector
-                parse_attribute_into(&mut sel, &current);
-                current.clear();
-                mode = 'T'; // Reset
-            }
+    if i < len {
+        match chars[i] {
+            '*' => i += 1,
+            '.' | '#' | ':' | '[' => {}
             _ => {
-                current.push(ch);
-                chars.next();
+                let tag = parse_identifier(&chars, &mut i)?;
+                if tag != "*" {
+                    sel.tag = Some(tag);
+                }
             }
         }
     }
-    flush_segment(&mut sel, mode, &current);
+
+    while i < len {
+        match chars[i] {
+            '.' => {
+                i += 1;
+                sel.classes.push(parse_identifier(&chars, &mut i)?);
+            }
+            '#' => {
+                i += 1;
+                sel.id = Some(parse_identifier(&chars, &mut i)?);
+            }
+            ':' => {
+                let is_pseudo_element = i + 1 < len && chars[i + 1] == ':';
+                i += if is_pseudo_element { 2 } else { 1 };
+
+                let mut name = parse_identifier(&chars, &mut i)?;
+                if i < len && chars[i] == '(' {
+                    let (inner, next_i) = extract_enclosed(&chars, i, '(', ')')?;
+                    name.push('(');
+                    name.push_str(&inner);
+                    name.push(')');
+                    i = next_i;
+                }
+
+                if is_pseudo_element {
+                    sel.pseudo_element = Some(parse_pseudo_element(&name)?);
+                } else {
+                    sel.pseudo_classes.push(parse_pseudo_class(&name)?);
+                }
+            }
+            '[' => {
+                let (attribute, next_i) = extract_enclosed(&chars, i, '[', ']')?;
+                parse_attribute_into(&mut sel, &attribute)?;
+                i = next_i;
+            }
+            c if c.is_whitespace() => {
+                i += 1;
+            }
+            _ => return None,
+        }
+    }
 
     Some(sel)
-}
-
-fn flush_segment(sel: &mut CompoundSelector, mode: char, value: &str) {
-    if value.is_empty() {
-        return;
-    }
-    match mode {
-        'T' => {
-            if value != "*" {
-                sel.tag = Some(value.to_string());
-            }
-        }
-        '.' => sel.classes.push(value.to_string()),
-        '#' => sel.id = Some(value.to_string()),
-        ':' => {
-            if let Some(stripped) = value.strip_prefix(':') {
-                // Pseudo-element (::before, ::after, etc.)
-                sel.pseudo_element = parse_pseudo_element(stripped);
-            } else if let Some(pc) = parse_pseudo_class(value) {
-                sel.pseudo_classes.push(pc);
-            }
-        }
-        '[' => {
-            parse_attribute_into(sel, value);
-        }
-        _ => {}
-    }
 }
 
 fn parse_pseudo_element(name: &str) -> Option<PseudoElement> {
@@ -902,6 +1029,13 @@ fn parse_pseudo_element(name: &str) -> Option<PseudoElement> {
 
 /// Maximum number of selectors in a `:is()`, `:not()`, `:where()`, or `:has()` list.
 const MAX_SELECTOR_LIST: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectorTokenKind {
+    Start,
+    Compound,
+    Combinator,
+}
 
 fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
     match name {
@@ -950,33 +1084,49 @@ fn parse_pseudo_class(name: &str) -> Option<PseudoClassSelector> {
         }
         _ if name.starts_with("is(") && name.ends_with(')') => {
             let inner = &name[3..name.len() - 1];
-            let selectors: Vec<ComplexSelector> = inner.split(',')
-                .filter_map(|s| ComplexSelector::parse(s.trim()))
+            let selectors: Vec<ComplexSelector> = split_selector_list(inner)
+                .into_iter()
+                .filter_map(|selector| ComplexSelector::parse(selector))
                 .take(MAX_SELECTOR_LIST)
                 .collect();
-            if selectors.is_empty() { None } else { Some(PseudoClassSelector::Is(selectors)) }
+            if selectors.is_empty() {
+                None
+            } else {
+                Some(PseudoClassSelector::Is(selectors))
+            }
         }
         _ if name.starts_with("where(") && name.ends_with(')') => {
             let inner = &name[6..name.len() - 1];
-            let selectors: Vec<ComplexSelector> = inner.split(',')
-                .filter_map(|s| ComplexSelector::parse(s.trim()))
+            let selectors: Vec<ComplexSelector> = split_selector_list(inner)
+                .into_iter()
+                .filter_map(|selector| ComplexSelector::parse(selector))
                 .take(MAX_SELECTOR_LIST)
                 .collect();
-            if selectors.is_empty() { None } else { Some(PseudoClassSelector::Where(selectors)) }
+            if selectors.is_empty() {
+                None
+            } else {
+                Some(PseudoClassSelector::Where(selectors))
+            }
         }
         _ if name.starts_with("has(") && name.ends_with(')') => {
             let inner = &name[4..name.len() - 1];
-            let selectors: Vec<ComplexSelector> = inner.split(',')
-                .filter_map(|s| ComplexSelector::parse(s.trim()))
+            let selectors: Vec<ComplexSelector> = split_selector_list(inner)
+                .into_iter()
+                .filter_map(|selector| ComplexSelector::parse(selector))
                 .take(MAX_SELECTOR_LIST)
                 .collect();
-            if selectors.is_empty() { None } else { Some(PseudoClassSelector::Has(selectors)) }
+            if selectors.is_empty() {
+                None
+            } else {
+                Some(PseudoClassSelector::Has(selectors))
+            }
         }
         _ if name.starts_with("not(") && name.ends_with(')') => {
             let inner = &name[4..name.len() - 1];
             // :not() takes a selector list per Selectors Level 4
-            let selectors: Vec<ComplexSelector> = inner.split(',')
-                .filter_map(|s| ComplexSelector::parse(s.trim()))
+            let selectors: Vec<ComplexSelector> = split_selector_list(inner)
+                .into_iter()
+                .filter_map(|selector| ComplexSelector::parse(selector))
                 .take(MAX_SELECTOR_LIST)
                 .collect();
             if selectors.is_empty() {
@@ -1042,46 +1192,353 @@ fn parse_anb(expr: &str) -> Option<AnB> {
     }
 }
 
-fn parse_attribute_into(sel: &mut CompoundSelector, input: &str) {
-    let input = input.trim();
-    
-    // Check for case-insensitivity flag at the end: [attr=value i] or [attr=value s]
-    let (input, case_insensitive) = if input.ends_with(" i") || input.ends_with(" I") {
-        (&input[..input.len() - 2], true)
-    } else if input.ends_with(" s") || input.ends_with(" S") {
-        // 's' flag means case-sensitive (the default)
-        (&input[..input.len() - 2], false)
-    } else {
-        (input, false)
-    };
-    
-    // Try various operators
-    for (op_str, make_op) in &[
-        ("~=", AttributeOp::Contains as fn(String) -> AttributeOp),
-        ("|=", AttributeOp::DashMatch as fn(String) -> AttributeOp),
-        ("^=", AttributeOp::Prefix as fn(String) -> AttributeOp),
-        ("$=", AttributeOp::Suffix as fn(String) -> AttributeOp),
-        ("*=", AttributeOp::Substring as fn(String) -> AttributeOp),
-        ("=", AttributeOp::Equals as fn(String) -> AttributeOp),
-    ] {
-        if let Some(pos) = input.find(op_str) {
-            let name = input[..pos].trim().to_string();
-            let val = input[pos + op_str.len()..].trim();
-            let val = val.trim_matches('"').trim_matches('\'').to_string();
-            sel.attributes.push(AttributeSelector {
-                name,
-                op: make_op(val),
-                case_insensitive,
-            });
-            return;
+fn split_selector_list(input: &str) -> Vec<&str> {
+    let mut selectors = Vec::new();
+    let mut start = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (idx, ch) in input.char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' => paren_depth += 1,
+            ')' => {
+                if paren_depth > 0 {
+                    paren_depth -= 1;
+                }
+            }
+            '[' => bracket_depth += 1,
+            ']' => {
+                if bracket_depth > 0 {
+                    bracket_depth -= 1;
+                }
+            }
+            ',' if paren_depth == 0 && bracket_depth == 0 => {
+                let selector = input[start..idx].trim();
+                if !selector.is_empty() {
+                    selectors.push(selector);
+                }
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
         }
     }
+
+    let tail = input[start..].trim();
+    if !tail.is_empty() {
+        selectors.push(tail);
+    }
+
+    selectors
+}
+
+fn parse_attribute_into(sel: &mut CompoundSelector, input: &str) -> Option<()> {
+    let input = input.trim();
+    if input.is_empty() {
+        return None;
+    }
+
+    // Check for case-insensitivity flag at the end: [attr=value i] or [attr=value s]
+    let (input, case_insensitive) = split_attribute_flag(input);
+
+    if let Some((pos, op_str)) = find_attribute_operator(input) {
+        let name = input[..pos].trim().to_string();
+        let value = unquote_attribute_value(input[pos + op_str.len()..].trim());
+        let op = match op_str {
+            "~=" => AttributeOp::Contains(value),
+            "|=" => AttributeOp::DashMatch(value),
+            "^=" => AttributeOp::Prefix(value),
+            "$=" => AttributeOp::Suffix(value),
+            "*=" => AttributeOp::Substring(value),
+            "=" => AttributeOp::Equals(value),
+            _ => return None,
+        };
+
+        sel.attributes.push(AttributeSelector {
+            name,
+            op,
+            case_insensitive,
+        });
+        return Some(());
+    }
+
     // No operator — just [attr]
     sel.attributes.push(AttributeSelector {
         name: input.to_string(),
         op: AttributeOp::Exists,
         case_insensitive: false,
     });
+
+    Some(())
+}
+
+fn parse_identifier(chars: &[char], index: &mut usize) -> Option<String> {
+    let start = *index;
+    while *index < chars.len() && is_identifier_char(chars[*index]) {
+        *index += 1;
+    }
+
+    if *index == start {
+        None
+    } else {
+        Some(chars[start..*index].iter().collect())
+    }
+}
+
+fn is_identifier_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '-' || ch == '_'
+}
+
+fn extract_enclosed(chars: &[char], start: usize, open: char, close: char) -> Option<(String, usize)> {
+    if chars.get(start).copied()? != open {
+        return None;
+    }
+
+    let mut inner = String::new();
+    let mut depth = 1usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut index = start + 1;
+
+    while index < chars.len() {
+        let ch = chars[index];
+
+        if let Some(active_quote) = quote {
+            inner.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                inner.push(ch);
+            }
+            c if c == open => {
+                depth += 1;
+                inner.push(ch);
+            }
+            c if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((inner, index + 1));
+                }
+                inner.push(ch);
+            }
+            _ => inner.push(ch),
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
+fn split_attribute_flag(input: &str) -> (&str, bool) {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut last_ws = None;
+
+    for (idx, ch) in input.char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            c if c.is_whitespace() => last_ws = Some(idx),
+            _ => {}
+        }
+    }
+
+    if let Some(idx) = last_ws {
+        let tail = input[idx..].trim();
+        if tail.eq_ignore_ascii_case("i") {
+            return (input[..idx].trim_end(), true);
+        }
+        if tail.eq_ignore_ascii_case("s") {
+            return (input[..idx].trim_end(), false);
+        }
+    }
+
+    (input, false)
+}
+
+fn find_attribute_operator(input: &str) -> Option<(usize, &'static str)> {
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut index = 0;
+
+    while index < chars.len() {
+        let (byte_idx, ch) = chars[index];
+
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '~' | '|' | '^' | '$' | '*' => {
+                if let Some((_, '=')) = chars.get(index + 1).copied() {
+                    return Some((byte_idx, match ch {
+                        '~' => "~=",
+                        '|' => "|=",
+                        '^' => "^=",
+                        '$' => "$=",
+                        '*' => "*=",
+                        _ => unreachable!(),
+                    }));
+                }
+            }
+            '=' => return Some((byte_idx, "=")),
+            _ => {}
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
+fn unquote_attribute_value(value: &str) -> String {
+    match (value.chars().next(), value.chars().last()) {
+        (Some('"'), Some('"')) | (Some('\''), Some('\'')) if value.len() >= 2 => {
+            value[1..value.len() - 1].to_string()
+        }
+        _ => value.to_string(),
+    }
+}
+
+fn lang_matches(value: &str, lang_code: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    let lang_code = lang_code.to_ascii_lowercase();
+    value == lang_code
+        || value
+            .strip_prefix(&lang_code)
+            .map_or(false, |suffix| suffix.starts_with('-'))
+}
+
+fn any_descendant<F>(doc: &Document, node_id: NodeId, predicate: &mut F) -> bool
+where
+    F: FnMut(NodeId) -> bool,
+{
+    for &child_id in doc.children(node_id) {
+        if any_in_subtree(doc, child_id, predicate) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn any_in_subtree<F>(doc: &Document, node_id: NodeId, predicate: &mut F) -> bool
+where
+    F: FnMut(NodeId) -> bool,
+{
+    if predicate(node_id) {
+        return true;
+    }
+
+    for &child_id in doc.children(node_id) {
+        if any_in_subtree(doc, child_id, predicate) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn anchor_relation_matches(
+    doc: &Document,
+    anchor_id: NodeId,
+    current_id: NodeId,
+    relation: Combinator,
+) -> bool {
+    match relation {
+        Combinator::Descendant => {
+            let mut ancestor = doc.parent(current_id);
+            while let Some(ancestor_id) = ancestor {
+                if ancestor_id == anchor_id {
+                    return true;
+                }
+                ancestor = doc.parent(ancestor_id);
+            }
+            false
+        }
+        Combinator::Child => doc.parent(current_id) == Some(anchor_id),
+        Combinator::NextSibling => immediate_next_element_sibling(doc, anchor_id) == Some(current_id),
+        Combinator::SubsequentSibling => following_element_siblings(doc, anchor_id)
+            .into_iter()
+            .any(|sibling_id| sibling_id == current_id),
+    }
+}
+
+fn immediate_next_element_sibling(doc: &Document, node_id: NodeId) -> Option<NodeId> {
+    let parent_id = doc.parent(node_id)?;
+    let children = doc.children(parent_id);
+    let position = children.iter().position(|&child_id| child_id == node_id)?;
+
+    for &sibling_id in &children[position + 1..] {
+        if doc.get(sibling_id).map_or(false, |node| node.is_element()) {
+            return Some(sibling_id);
+        }
+    }
+
+    None
+}
+
+fn following_element_siblings(doc: &Document, node_id: NodeId) -> Vec<NodeId> {
+    let parent_id = match doc.parent(node_id) {
+        Some(parent_id) => parent_id,
+        None => return Vec::new(),
+    };
+    let children = doc.children(parent_id);
+    let position = match children.iter().position(|&child_id| child_id == node_id) {
+        Some(position) => position,
+        None => return Vec::new(),
+    };
+
+    children[position + 1..]
+        .iter()
+        .copied()
+        .filter(|&sibling_id| doc.get(sibling_id).map_or(false, |node| node.is_element()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1135,6 +1592,7 @@ mod tests {
         assert_eq!(sel.compounds[0].tag, Some("li".into()));
         assert_eq!(sel.compounds[1].tag, Some("ul".into()));
         assert_eq!(sel.combinators, vec![Combinator::Child]);
+        assert_eq!(sel.leading_combinator, None);
     }
 
     #[test]
@@ -1225,5 +1683,93 @@ mod tests {
 
         let sel = ComplexSelector::parse("div em").unwrap();
         assert!(sel.matches(&doc, c));
+    }
+
+    #[test]
+    fn parse_relative_has_selector_without_panicking() {
+        let sel = ComplexSelector::parse("section:has(> img)").unwrap();
+        assert_eq!(sel.compounds[0].tag, Some("section".into()));
+        assert_eq!(sel.compounds[0].pseudo_classes.len(), 1);
+    }
+
+    #[test]
+    fn relative_has_child_matches_only_direct_children() {
+        let mut doc = Document::new();
+        let root = doc.root();
+
+        let section_with_child = doc.create_element("section");
+        let direct_img = doc.create_element("img");
+        doc.append_child(root, section_with_child);
+        doc.append_child(section_with_child, direct_img);
+
+        let section_with_nested = doc.create_element("section");
+        let wrapper = doc.create_element("div");
+        let nested_img = doc.create_element("img");
+        doc.append_child(root, section_with_nested);
+        doc.append_child(section_with_nested, wrapper);
+        doc.append_child(wrapper, nested_img);
+
+        let sel = ComplexSelector::parse("section:has(> img)").unwrap();
+        assert!(sel.matches(&doc, section_with_child));
+        assert!(!sel.matches(&doc, section_with_nested));
+    }
+
+    #[test]
+    fn nested_selector_lists_parse_without_splitting_inside_arguments() {
+        let sel = ComplexSelector::parse(
+            r#"button:not(:is(.active, [data-state="open,now"]))"#,
+        )
+        .unwrap();
+
+        match &sel.compounds[0].pseudo_classes[0] {
+            PseudoClassSelector::Not(selectors) => {
+                assert_eq!(selectors.len(), 1);
+                assert_eq!(selectors[0].compounds[0].pseudo_classes.len(), 1);
+            }
+            other => panic!("unexpected pseudo-class: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quoted_attribute_values_keep_delimiters_inside_quotes() {
+        let sel = ComplexSelector::parse(r#"a[href^="https://example.com?q=.foo"]"#).unwrap();
+        assert_eq!(sel.compounds[0].attributes.len(), 1);
+        assert_eq!(sel.compounds[0].attributes[0].name, "href");
+        assert_eq!(
+            sel.compounds[0].attributes[0].op,
+            AttributeOp::Prefix("https://example.com?q=.foo".to_string())
+        );
+    }
+
+    #[test]
+    fn unsupported_shadow_dom_pseudos_fail_closed() {
+        assert!(ComplexSelector::parse(":host").is_none());
+        assert!(ComplexSelector::parse("div::slotted(span)").is_none());
+    }
+
+    #[test]
+    fn lang_matching_is_case_insensitive() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let element = doc.create_element("div");
+        doc.append_child(root, element);
+        doc.set_attribute(element, "lang", "en-US");
+
+        let sel = ComplexSelector::parse(":lang(EN)").unwrap();
+        assert!(sel.matches(&doc, element));
+    }
+
+    #[test]
+    fn dir_matching_inherits_from_ancestors() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent = doc.create_element("div");
+        let child = doc.create_element("span");
+        doc.append_child(root, parent);
+        doc.append_child(parent, child);
+        doc.set_attribute(parent, "dir", "rtl");
+
+        let sel = ComplexSelector::parse(":dir(rtl)").unwrap();
+        assert!(sel.matches(&doc, child));
     }
 }

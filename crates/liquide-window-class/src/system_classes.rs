@@ -52,15 +52,18 @@ pub fn register_system_classes(registry: &mut ClassRegistry) {
             .with_style(ClassStyle::PARENTDC | ClassStyle::DBLCLKS)
             .with_cursor("arrow"),
         system_class("DialogWindow", handler::DIALOG_WINDOW)
-            .with_style(
-                ClassStyle::SAVEBITS | ClassStyle::DBLCLKS | ClassStyle::DROPSHADOW,
-            )
+            .with_style(ClassStyle::SAVEBITS | ClassStyle::DBLCLKS | ClassStyle::DROPSHADOW)
             .with_cursor("arrow")
             .with_background(0xFF_2D_2D_44)
             .with_extra_window_bytes(16), // DLGWINDOWEXTRA equivalent
         // ── Controls ──
         system_class("Button", handler::BUTTON)
-            .with_style(ClassStyle::HREDRAW | ClassStyle::VREDRAW | ClassStyle::DBLCLKS | ClassStyle::PARENTDC)
+            .with_style(
+                ClassStyle::HREDRAW
+                    | ClassStyle::VREDRAW
+                    | ClassStyle::DBLCLKS
+                    | ClassStyle::PARENTDC,
+            )
             .with_cursor("arrow")
             .with_extra_window_bytes(8),
         system_class("Label", handler::LABEL)
@@ -71,7 +74,12 @@ pub fn register_system_classes(registry: &mut ClassRegistry) {
             .with_cursor("text")
             .with_extra_window_bytes(8),
         system_class("TextArea", handler::TEXT_AREA)
-            .with_style(ClassStyle::DBLCLKS | ClassStyle::PARENTDC | ClassStyle::HREDRAW | ClassStyle::VREDRAW)
+            .with_style(
+                ClassStyle::DBLCLKS
+                    | ClassStyle::PARENTDC
+                    | ClassStyle::HREDRAW
+                    | ClassStyle::VREDRAW,
+            )
             .with_cursor("text")
             .with_extra_window_bytes(8),
         system_class("ScrollBar", handler::SCROLL_BAR)

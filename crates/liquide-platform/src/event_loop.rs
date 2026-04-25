@@ -92,9 +92,7 @@ pub enum PlatformEvent {
     },
 
     /// The system color scheme (light/dark mode) changed.
-    ColorSchemeChanged {
-        scheme: crate::ColorScheme,
-    },
+    ColorSchemeChanged { scheme: crate::ColorScheme },
 
     /// The application should quit.
     Quit,
@@ -219,7 +217,12 @@ mod tests {
             width: 800,
             height: 600,
         };
-        if let PlatformEvent::WindowCreated { handle: h, width, height } = event {
+        if let PlatformEvent::WindowCreated {
+            handle: h,
+            width,
+            height,
+        } = event
+        {
             assert_eq!(h.0, 42);
             assert_eq!(width, 800);
             assert_eq!(height, 600);
@@ -262,7 +265,12 @@ mod tests {
             height: 768,
         };
         let cloned = event.clone();
-        if let PlatformEvent::WindowResized { handle, width, height } = cloned {
+        if let PlatformEvent::WindowResized {
+            handle,
+            width,
+            height,
+        } = cloned
+        {
             assert_eq!(handle.0, 5);
             assert_eq!(width, 1024);
             assert_eq!(height, 768);

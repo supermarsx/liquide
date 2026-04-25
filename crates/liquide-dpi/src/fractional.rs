@@ -18,7 +18,11 @@ pub struct FractionalScale(f64);
 
 impl FractionalScale {
     /// Minimum allowed fractional scale.
-    pub const MIN: f64 = 1.0;
+    ///
+    /// Set to `0.5` to support sub-1x scaling (e.g. picture-in-picture
+    /// previews, thumbnails, or users on very high-density displays who
+    /// prefer smaller UI).
+    pub const MIN: f64 = 0.5;
     /// Maximum allowed fractional scale.
     pub const MAX: f64 = 4.0;
 
@@ -74,6 +78,10 @@ impl std::fmt::Display for FractionalScale {
 
 // ── Common presets ───────────────────────────────────────────────────
 
+/// 0.5x scale (48 DPI — sub-1x, e.g. thumbnail previews).
+pub const SCALE_0_5X: FractionalScale = FractionalScale(0.5);
+/// 0.75x scale (72 DPI — sub-1x).
+pub const SCALE_0_75X: FractionalScale = FractionalScale(0.75);
 /// 1x scale (96 DPI standard).
 pub const SCALE_1X: FractionalScale = FractionalScale(1.0);
 /// 1.25x scale (120 DPI).
@@ -90,7 +98,9 @@ pub const SCALE_2_5X: FractionalScale = FractionalScale(2.5);
 pub const SCALE_3X: FractionalScale = FractionalScale(3.0);
 
 /// All standard presets in ascending order.
-pub const PRESETS: [FractionalScale; 7] = [
+pub const PRESETS: [FractionalScale; 9] = [
+    SCALE_0_5X,
+    SCALE_0_75X,
     SCALE_1X,
     SCALE_1_25X,
     SCALE_1_5X,
@@ -102,13 +112,14 @@ pub const PRESETS: [FractionalScale; 7] = [
 
 // ── Snapping ─────────────────────────────────────────────────────────
 
-/// Snap a scale factor to the nearest 0.25 increment, clamped to `[1.0, 4.0]`.
+/// Snap a scale factor to the nearest 0.25 increment, clamped to `[0.5, 4.0]`.
 ///
 /// Examples:
 /// - `1.13` -> `1.25`
 /// - `1.37` -> `1.25`
 /// - `1.38` -> `1.50`
-/// - `0.5`  -> `1.0` (clamped)
+/// - `0.4`  -> `0.5` (clamped)
+/// - `0.6`  -> `0.5` (nearest quarter-step)
 #[inline]
 pub fn snap_to_nearest(scale: f64) -> FractionalScale {
     let clamped = scale.clamp(FractionalScale::MIN, FractionalScale::MAX);

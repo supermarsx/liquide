@@ -4,8 +4,8 @@
 //! every frame.  This component uses keyed reconciliation so only changed
 //! notifications are touched.
 
-use crate::types::element_ids;
 use crate::template::{Component, TemplateNode};
+use crate::types::element_ids;
 
 /// Minimal notification info for the component.
 ///
@@ -82,8 +82,7 @@ impl Component for NotificationsComponent<'_> {
                 // Icon (if present)
                 if !notif.icon.is_empty() {
                     node = node.child(
-                        TemplateNode::el("notification-icon")
-                            .attr("data-icon", &notif.icon),
+                        TemplateNode::el("notification-icon").attr("data-icon", &notif.icon),
                     );
                 }
 
@@ -102,15 +101,14 @@ impl Component for NotificationsComponent<'_> {
 
                 // Action buttons (if any)
                 if !notif.actions.is_empty() {
-                    node = node.child(
-                        TemplateNode::el("notification-actions")
-                            .children(notif.actions.iter().map(|action| {
-                                TemplateNode::el("notification-action")
-                                    .key(&action.id)
-                                    .attr("data-action-id", &action.id)
-                                    .child(TemplateNode::text(&action.label))
-                            })),
-                    );
+                    node = node.child(TemplateNode::el("notification-actions").children(
+                        notif.actions.iter().map(|action| {
+                            TemplateNode::el("notification-action")
+                                .key(&action.id)
+                                .attr("data-action-id", &action.id)
+                                .child(TemplateNode::text(&action.label))
+                        }),
+                    ));
                 }
 
                 node
@@ -196,8 +194,12 @@ mod tests {
         };
         let tree = comp.render();
 
-        assert!(tree.children[0].classes.contains(&"urgency-normal".to_string()));
-        assert!(tree.children[1].classes.contains(&"urgency-critical".to_string()));
+        assert!(tree.children[0]
+            .classes
+            .contains(&"urgency-normal".to_string()));
+        assert!(tree.children[1]
+            .classes
+            .contains(&"urgency-critical".to_string()));
     }
 
     #[test]
@@ -211,7 +213,10 @@ mod tests {
         let actions = &tree.children[0].children[2];
         assert_eq!(actions.children.len(), 2);
         assert_eq!(actions.children[0].tag, "notification-action");
-        assert!(actions.children[0].attrs.iter().any(|(k, v)| k == "data-action-id" && v == "read"));
+        assert!(actions.children[0]
+            .attrs
+            .iter()
+            .any(|(k, v)| k == "data-action-id" && v == "read"));
     }
 
     #[test]
@@ -250,9 +255,7 @@ mod tests {
 
     #[test]
     fn empty_notifications() {
-        let comp = NotificationsComponent {
-            notifications: &[],
-        };
+        let comp = NotificationsComponent { notifications: &[] };
         let tree = comp.render();
 
         assert_eq!(tree.tag, "notification-area");

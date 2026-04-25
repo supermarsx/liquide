@@ -86,10 +86,7 @@ impl Catalog {
             }
 
             let eq_pos = line.find('=').ok_or_else(|| {
-                LocaleError::ParseError(format!(
-                    "line {}: missing '=' separator",
-                    line_num + 1
-                ))
+                LocaleError::ParseError(format!("line {}: missing '=' separator", line_num + 1))
             })?;
 
             let key = line[..eq_pos].trim();

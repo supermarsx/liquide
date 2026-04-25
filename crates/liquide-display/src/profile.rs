@@ -64,7 +64,8 @@ impl DisplayProfile {
 
     /// The set of connector names in this profile.
     pub fn connector_set(&self) -> Vec<&str> {
-        let mut connectors: Vec<&str> = self.displays.iter().map(|d| d.connector.as_str()).collect();
+        let mut connectors: Vec<&str> =
+            self.displays.iter().map(|d| d.connector.as_str()).collect();
         connectors.sort();
         connectors
     }

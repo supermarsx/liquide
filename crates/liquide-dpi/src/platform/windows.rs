@@ -29,9 +29,12 @@ struct Point {
     y: i32,
 }
 
-type MonitorEnumProc =
-    unsafe extern "system" fn(hmonitor: HMONITOR, hdc: HDC, lprect: *mut i32, lparam: isize)
-        -> BOOL;
+type MonitorEnumProc = unsafe extern "system" fn(
+    hmonitor: HMONITOR,
+    hdc: HDC,
+    lprect: *mut i32,
+    lparam: isize,
+) -> BOOL;
 
 #[link(name = "user32")]
 unsafe extern "system" {
@@ -181,12 +184,8 @@ impl PlatformDpi {
 
                 let mut dpi_x: u32 = 0;
                 let mut dpi_y: u32 = 0;
-                let hr = shcore::GetDpiForMonitor(
-                    hmonitor,
-                    MDT_EFFECTIVE_DPI,
-                    &mut dpi_x,
-                    &mut dpi_y,
-                );
+                let hr =
+                    shcore::GetDpiForMonitor(hmonitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
 
                 let scale = if hr == 0 && dpi_x > 0 {
                     DpiScale::from_dpi(dpi_x as f32)

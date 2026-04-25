@@ -66,11 +66,9 @@ impl GpuAuditEvent {
             | Self::FallbackDeactivated
             | Self::FrameRendered { .. } => AuditLevel::Info,
 
-            Self::VramWarning { .. }
-            | Self::FallbackActivated { .. } => AuditLevel::Warn,
+            Self::VramWarning { .. } | Self::FallbackActivated { .. } => AuditLevel::Warn,
 
-            Self::DeviceLost { .. }
-            | Self::PipelineError { .. } => AuditLevel::Error,
+            Self::DeviceLost { .. } | Self::PipelineError { .. } => AuditLevel::Error,
         }
     }
 

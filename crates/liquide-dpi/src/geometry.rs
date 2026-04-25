@@ -301,10 +301,7 @@ impl LogicalRect {
     /// Whether a point is inside this rectangle.
     #[inline]
     pub fn contains_point(self, point: LogicalPoint) -> bool {
-        point.x >= self.x
-            && point.x < self.right()
-            && point.y >= self.y
-            && point.y < self.bottom()
+        point.x >= self.x && point.x < self.right() && point.y >= self.y && point.y < self.bottom()
     }
 
     /// Whether this rectangle intersects another.
@@ -413,10 +410,7 @@ impl PhysicalRect {
     /// Whether a physical point is inside this rectangle.
     #[inline]
     pub fn contains_point(self, point: PhysicalPoint) -> bool {
-        point.x >= self.x
-            && point.x < self.right()
-            && point.y >= self.y
-            && point.y < self.bottom()
+        point.x >= self.x && point.x < self.right() && point.y >= self.y && point.y < self.bottom()
     }
 
     /// Whether this rectangle intersects another.

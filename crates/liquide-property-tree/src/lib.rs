@@ -32,7 +32,7 @@ pub use effect_tree::{BlendMode, EffectNode, EffectTree, FilterOp};
 pub use property_set::{ElementId, NodeMapping, PropertyTreeSet};
 pub use scroll_tree::{ScrollNode, ScrollTree};
 pub use transform::Transform2D;
-pub use transform_tree::{NodeId, TransformNode, TransformTree, ROOT_ID};
+pub use transform_tree::{NodeId, ROOT_ID, TransformNode, TransformTree};
 
 /// A rectangle used throughout the property tree system.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -47,11 +47,21 @@ impl Rect {
     /// Create a new rectangle.
     #[must_use]
     pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// The zero rectangle.
-    pub const ZERO: Self = Self { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
+    pub const ZERO: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+    };
 
     /// Right edge.
     #[must_use]
@@ -108,6 +118,12 @@ impl Rect {
     #[must_use]
     pub fn area(&self) -> f32 {
         self.width * self.height
+    }
+
+    /// Whether the rectangle has no drawable area.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.width <= 0.0 || self.height <= 0.0
     }
 
     /// Expand by a uniform margin.

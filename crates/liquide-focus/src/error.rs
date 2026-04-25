@@ -27,11 +27,7 @@ impl std::fmt::Display for FocusError {
             Self::WindowDisabled(id) => write!(f, "window {} is disabled", id),
             Self::WindowMinimized(id) => write!(f, "window {} is minimised", id),
             Self::ForegroundLocked { flash_window } => {
-                write!(
-                    f,
-                    "foreground locked — flash {} instead",
-                    flash_window
-                )
+                write!(f, "foreground locked — flash {} instead", flash_window)
             }
             Self::ModalBlocked { modal_window } => {
                 write!(f, "blocked by modal window {}", modal_window)

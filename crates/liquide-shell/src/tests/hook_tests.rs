@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::shell::hooks::{HookManager, HookPriority, HookResult, ShellHookEvent};
 use crate::Shell;
+use crate::shell::hooks::{HookManager, HookPriority, HookResult, ShellHookEvent};
 use liquide_compositor::geometry::Rect;
 
 // ── HookManager unit tests ─────────────────────────────────────────
@@ -12,14 +12,8 @@ fn register_and_unregister() {
     let mut mgr = HookManager::new();
     assert_eq!(mgr.hook_count(), 0);
 
-    let id1 = mgr.register(
-        HookPriority::NORMAL,
-        Box::new(|_| HookResult::Continue),
-    );
-    let id2 = mgr.register(
-        HookPriority::NORMAL,
-        Box::new(|_| HookResult::Continue),
-    );
+    let id1 = mgr.register(HookPriority::NORMAL, Box::new(|_| HookResult::Continue));
+    let id2 = mgr.register(HookPriority::NORMAL, Box::new(|_| HookResult::Continue));
     assert_eq!(mgr.hook_count(), 2);
 
     assert!(mgr.unregister(id1));
@@ -69,7 +63,11 @@ fn priority_ordering() {
     mgr.dispatch(&event);
 
     let order = call_order.lock().unwrap();
-    assert_eq!(*order, vec![-100, 0, 200], "Hooks must fire in priority order (low number first)");
+    assert_eq!(
+        *order,
+        vec![-100, 0, 200],
+        "Hooks must fire in priority order (low number first)"
+    );
 }
 
 #[test]
@@ -80,12 +78,18 @@ fn dispatch_continue() {
     let c1 = Arc::clone(&counter);
     mgr.register(
         HookPriority::NORMAL,
-        Box::new(move |_| { c1.fetch_add(1, Ordering::SeqCst); HookResult::Continue }),
+        Box::new(move |_| {
+            c1.fetch_add(1, Ordering::SeqCst);
+            HookResult::Continue
+        }),
     );
     let c2 = Arc::clone(&counter);
     mgr.register(
         HookPriority::LOW,
-        Box::new(move |_| { c2.fetch_add(1, Ordering::SeqCst); HookResult::Continue }),
+        Box::new(move |_| {
+            c2.fetch_add(1, Ordering::SeqCst);
+            HookResult::Continue
+        }),
     );
 
     let result = mgr.dispatch(&ShellHookEvent::WindowClosed { window_id: 42 });
@@ -101,17 +105,27 @@ fn dispatch_handled_stops_propagation() {
     let c1 = Arc::clone(&counter);
     mgr.register(
         HookPriority::SYSTEM,
-        Box::new(move |_| { c1.fetch_add(1, Ordering::SeqCst); HookResult::Handled }),
+        Box::new(move |_| {
+            c1.fetch_add(1, Ordering::SeqCst);
+            HookResult::Handled
+        }),
     );
     let c2 = Arc::clone(&counter);
     mgr.register(
         HookPriority::NORMAL,
-        Box::new(move |_| { c2.fetch_add(1, Ordering::SeqCst); HookResult::Continue }),
+        Box::new(move |_| {
+            c2.fetch_add(1, Ordering::SeqCst);
+            HookResult::Continue
+        }),
     );
 
     let result = mgr.dispatch(&ShellHookEvent::WindowActivated { window_id: 7 });
     assert_eq!(result, HookResult::Handled);
-    assert_eq!(counter.load(Ordering::SeqCst), 1, "Second hook should not fire after Handled");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "Second hook should not fire after Handled"
+    );
 }
 
 #[test]
@@ -122,12 +136,18 @@ fn dispatch_modified_propagates() {
     let c1 = Arc::clone(&counter);
     mgr.register(
         HookPriority::SYSTEM,
-        Box::new(move |_| { c1.fetch_add(1, Ordering::SeqCst); HookResult::Modified }),
+        Box::new(move |_| {
+            c1.fetch_add(1, Ordering::SeqCst);
+            HookResult::Modified
+        }),
     );
     let c2 = Arc::clone(&counter);
     mgr.register(
         HookPriority::NORMAL,
-        Box::new(move |_| { c2.fetch_add(1, Ordering::SeqCst); HookResult::Continue }),
+        Box::new(move |_| {
+            c2.fetch_add(1, Ordering::SeqCst);
+            HookResult::Continue
+        }),
     );
 
     let result = mgr.dispatch(&ShellHookEvent::LauncherOpened);
@@ -143,7 +163,10 @@ fn enable_disable() {
     let c = Arc::clone(&counter);
     let id = mgr.register(
         HookPriority::NORMAL,
-        Box::new(move |_| { c.fetch_add(1, Ordering::SeqCst); HookResult::Continue }),
+        Box::new(move |_| {
+            c.fetch_add(1, Ordering::SeqCst);
+            HookResult::Continue
+        }),
     );
     assert_eq!(mgr.active_count(), 1);
 
@@ -153,14 +176,22 @@ fn enable_disable() {
     assert_eq!(mgr.hook_count(), 1, "Hook still registered, just inactive");
 
     mgr.dispatch(&ShellHookEvent::WindowClosed { window_id: 1 });
-    assert_eq!(counter.load(Ordering::SeqCst), 0, "Disabled hook should not fire");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "Disabled hook should not fire"
+    );
 
     // Re-enable.
     mgr.set_active(id, true);
     assert_eq!(mgr.active_count(), 1);
 
     mgr.dispatch(&ShellHookEvent::WindowClosed { window_id: 1 });
-    assert_eq!(counter.load(Ordering::SeqCst), 1, "Re-enabled hook should fire");
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "Re-enabled hook should fire"
+    );
 }
 
 #[test]
@@ -241,8 +272,16 @@ fn shell_hook_fires_on_window_open_close() {
 
     let log = events.lock().unwrap();
     assert_eq!(log.len(), 2);
-    assert!(log[0].starts_with("created:"), "Expected WindowCreated, got: {}", log[0]);
-    assert!(log[1].starts_with("closed:"), "Expected WindowClosed, got: {}", log[1]);
+    assert!(
+        log[0].starts_with("created:"),
+        "Expected WindowCreated, got: {}",
+        log[0]
+    );
+    assert!(
+        log[1].starts_with("closed:"),
+        "Expected WindowClosed, got: {}",
+        log[1]
+    );
 }
 
 #[test]
@@ -263,7 +302,9 @@ fn shell_hook_fires_on_focus_change() {
                     ev.lock().unwrap().push(format!("activated:{}", window_id));
                 }
                 ShellHookEvent::WindowDeactivated { window_id } => {
-                    ev.lock().unwrap().push(format!("deactivated:{}", window_id));
+                    ev.lock()
+                        .unwrap()
+                        .push(format!("deactivated:{}", window_id));
                 }
                 _ => {}
             }

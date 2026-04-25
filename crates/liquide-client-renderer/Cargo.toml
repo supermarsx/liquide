@@ -10,6 +10,7 @@ rust-version.workspace = true
 liquide-common.workspace = true
 liquide-compositor.workspace = true
 liquide-encoder.workspace = true
+liquide-encoder-hw.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
@@ -18,6 +19,15 @@ bytes.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+
+[features]
+default = []
+# Reserved for future real-codec integration (openh264 decode, HEVC, AV1).
+real-codecs = []
+# Reserved for platform-specific swap-chain presenters (Win32 D3D11 flip-model,
+# Wayland zwp_linux_dmabuf, X11 Present, DRM/KMS, Metal). Today only the
+# skeleton API surface is built; real integration is deferred.
+real-presenters = []
 
 [[bench]]
 name = "client_renderer_bench"

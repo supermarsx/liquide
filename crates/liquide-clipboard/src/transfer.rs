@@ -8,9 +8,16 @@ use crate::{ClipboardError, Result};
 #[derive(Debug, Clone)]
 pub enum TransferState {
     Idle,
-    Offered { offer: ClipboardOffer },
-    Requested { format: ClipboardFormat },
-    Transferring { received: usize, total: Option<usize> },
+    Offered {
+        offer: ClipboardOffer,
+    },
+    Requested {
+        format: ClipboardFormat,
+    },
+    Transferring {
+        received: usize,
+        total: Option<usize>,
+    },
     Complete,
     Failed(String),
 }
@@ -127,12 +134,10 @@ impl std::fmt::Display for TransferState {
             Self::Idle => write!(f, "Idle"),
             Self::Offered { offer } => write!(f, "Offered(formats={})", offer.formats.len()),
             Self::Requested { format } => write!(f, "Requested({format})"),
-            Self::Transferring { received, total } => {
-                match total {
-                    Some(t) => write!(f, "Transferring({received}/{t})"),
-                    None => write!(f, "Transferring({received}/?)"),
-                }
-            }
+            Self::Transferring { received, total } => match total {
+                Some(t) => write!(f, "Transferring({received}/{t})"),
+                None => write!(f, "Transferring({received}/?)"),
+            },
             Self::Complete => write!(f, "Complete"),
             Self::Failed(reason) => write!(f, "Failed({reason})"),
         }

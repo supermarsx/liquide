@@ -279,11 +279,7 @@ impl ServiceRegistry {
     }
 
     /// Dispatch a method call to the named service.
-    pub fn call(
-        &mut self,
-        service_name: &str,
-        call: &MethodCall,
-    ) -> Result<Response, BusError> {
+    pub fn call(&mut self, service_name: &str, call: &MethodCall) -> Result<Response, BusError> {
         let svc = self
             .services
             .get_mut(service_name)

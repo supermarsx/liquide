@@ -286,14 +286,29 @@ members = [
 
     # Standalone compositor (TTY launch)
     "crates/liquide-standalone",
+
+    # App bootstrap harness (shared app main())
+    "crates/liquide-app-harness",
+
+    # Workspace-level end-to-end scenarios
+    "crates/liquide-e2e",
 ]
+
+[package]
+name = "liquide-workspace-benches"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+autobenches = false
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/liquide/liquide"
-rust-version = "1.85"
+rust-version = "1.89"
 
 [workspace.dependencies]
 # Local crates
@@ -466,6 +481,21 @@ liquide-compositor-anim = { path = "crates/liquide-compositor-anim" }
 liquide-shortcut-manager = { path = "crates/liquide-shortcut-manager" }
 liquide-telemetry-viewer = { path = "crates/liquide-telemetry-viewer" }
 
+[dev-dependencies]
+bytes.workspace = true
+criterion.workspace = true
+liquide-compositor.workspace = true
+liquide-encoder.workspace = true
+liquide-protocol.workspace = true
+
+[[bench]]
+name = "tile_encode"
+harness = false
+
+[[bench]]
+name = "transport_throughput"
+harness = false
+
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
@@ -494,6 +524,3 @@ panic = "abort"
 inherits = "release"
 debug = true
 
-[[bench]]
-name = "layout_cache"
-harness = false

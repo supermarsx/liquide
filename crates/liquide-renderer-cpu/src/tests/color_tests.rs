@@ -43,7 +43,10 @@ fn lerp_endpoints() {
 fn srgb_linearize_black() {
     let lut = SrgbLut::new();
     let val = lut.linearize(0);
-    assert!((val - 0.0).abs() < 0.001, "linearize(0) should be ~0.0, got {val}");
+    assert!(
+        (val - 0.0).abs() < 0.001,
+        "linearize(0) should be ~0.0, got {val}"
+    );
 }
 
 #[test]
@@ -61,12 +64,21 @@ fn lerp_linear_midpoint() {
     let mid = lerp_linear(&lut, black, white, 0.5);
     // In linear space, midpoint of [0,1] is 0.5
     // sRGB delinearize(0.5) is around 188 due to gamma curve
-    assert!(mid.r > 170 && mid.r < 200,
-        "midpoint R should be ~188 (linear mid-gray in sRGB), got {}", mid.r);
-    assert!(mid.g > 170 && mid.g < 200,
-        "midpoint G should be ~188 (linear mid-gray in sRGB), got {}", mid.g);
-    assert!(mid.b > 170 && mid.b < 200,
-        "midpoint B should be ~188 (linear mid-gray in sRGB), got {}", mid.b);
+    assert!(
+        mid.r > 170 && mid.r < 200,
+        "midpoint R should be ~188 (linear mid-gray in sRGB), got {}",
+        mid.r
+    );
+    assert!(
+        mid.g > 170 && mid.g < 200,
+        "midpoint G should be ~188 (linear mid-gray in sRGB), got {}",
+        mid.g
+    );
+    assert!(
+        mid.b > 170 && mid.b < 200,
+        "midpoint B should be ~188 (linear mid-gray in sRGB), got {}",
+        mid.b
+    );
     assert_eq!(mid.a, 255, "midpoint alpha should be 255, got {}", mid.a);
 }
 
@@ -77,18 +89,42 @@ fn lerp_linear_endpoints_precise() {
     let b = Color::new(200, 50, 100, 250);
 
     let at_zero = lerp_linear(&lut, a, b, 0.0);
-    assert!((at_zero.r as i16 - a.r as i16).abs() <= 1,
-        "lerp at t=0 R: got {}, expected {}", at_zero.r, a.r);
-    assert!((at_zero.g as i16 - a.g as i16).abs() <= 1,
-        "lerp at t=0 G: got {}, expected {}", at_zero.g, a.g);
-    assert!((at_zero.b as i16 - a.b as i16).abs() <= 1,
-        "lerp at t=0 B: got {}, expected {}", at_zero.b, a.b);
+    assert!(
+        (at_zero.r as i16 - a.r as i16).abs() <= 1,
+        "lerp at t=0 R: got {}, expected {}",
+        at_zero.r,
+        a.r
+    );
+    assert!(
+        (at_zero.g as i16 - a.g as i16).abs() <= 1,
+        "lerp at t=0 G: got {}, expected {}",
+        at_zero.g,
+        a.g
+    );
+    assert!(
+        (at_zero.b as i16 - a.b as i16).abs() <= 1,
+        "lerp at t=0 B: got {}, expected {}",
+        at_zero.b,
+        a.b
+    );
 
     let at_one = lerp_linear(&lut, a, b, 1.0);
-    assert!((at_one.r as i16 - b.r as i16).abs() <= 1,
-        "lerp at t=1 R: got {}, expected {}", at_one.r, b.r);
-    assert!((at_one.g as i16 - b.g as i16).abs() <= 1,
-        "lerp at t=1 G: got {}, expected {}", at_one.g, b.g);
-    assert!((at_one.b as i16 - b.b as i16).abs() <= 1,
-        "lerp at t=1 B: got {}, expected {}", at_one.b, b.b);
+    assert!(
+        (at_one.r as i16 - b.r as i16).abs() <= 1,
+        "lerp at t=1 R: got {}, expected {}",
+        at_one.r,
+        b.r
+    );
+    assert!(
+        (at_one.g as i16 - b.g as i16).abs() <= 1,
+        "lerp at t=1 G: got {}, expected {}",
+        at_one.g,
+        b.g
+    );
+    assert!(
+        (at_one.b as i16 - b.b as i16).abs() <= 1,
+        "lerp at t=1 B: got {}, expected {}",
+        at_one.b,
+        b.b
+    );
 }

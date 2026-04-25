@@ -359,14 +359,18 @@ mod tests {
         let db = FontDatabase::new();
         let rasterizer = GlyphRasterizer::new(&db);
         let result = rasterizer.rasterize(FontFaceId(1), 'A', 501.0, &RasterConfig::default());
-        assert!(matches!(result, Err(FontRasterizerError::SizeOutOfRange { .. })));
+        assert!(matches!(
+            result,
+            Err(FontRasterizerError::SizeOutOfRange { .. })
+        ));
     }
 
     #[test]
     fn test_rasterize_string_no_font() {
         let db = FontDatabase::new();
         let rasterizer = GlyphRasterizer::new(&db);
-        let result = rasterizer.rasterize_string(FontFaceId(99), "Hi", 16.0, &RasterConfig::default());
+        let result =
+            rasterizer.rasterize_string(FontFaceId(99), "Hi", 16.0, &RasterConfig::default());
         assert!(result.is_err());
     }
 

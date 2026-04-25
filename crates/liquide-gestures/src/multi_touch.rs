@@ -93,9 +93,10 @@ impl MultiTouchState {
             return (0.0, 0.0);
         }
         let n = self.fingers.len() as f64;
-        let (sx, sy) = self.fingers.iter().fold((0.0, 0.0), |(ax, ay), f| {
-            (ax + f.cur_x, ay + f.cur_y)
-        });
+        let (sx, sy) = self
+            .fingers
+            .iter()
+            .fold((0.0, 0.0), |(ax, ay), f| (ax + f.cur_x, ay + f.cur_y));
         (sx / n, sy / n)
     }
 
@@ -106,11 +107,15 @@ impl MultiTouchState {
         }
         let (cx, cy) = self.centroid();
         let n = self.fingers.len() as f64;
-        let sum: f64 = self.fingers.iter().map(|f| {
-            let dx = f.cur_x - cx;
-            let dy = f.cur_y - cy;
-            (dx * dx + dy * dy).sqrt()
-        }).sum();
+        let sum: f64 = self
+            .fingers
+            .iter()
+            .map(|f| {
+                let dx = f.cur_x - cx;
+                let dy = f.cur_y - cy;
+                (dx * dx + dy * dy).sqrt()
+            })
+            .sum();
         sum / n
     }
 
@@ -134,22 +139,28 @@ impl MultiTouchState {
 
     /// Get a touch point by id.
     pub fn get(&self, id: u64) -> Option<TouchPoint> {
-        self.fingers.iter().find(|f| f.id == id).map(|f| TouchPoint {
-            id: f.id,
-            x: f.cur_x,
-            y: f.cur_y,
-            timestamp: f.timestamp,
-        })
+        self.fingers
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| TouchPoint {
+                id: f.id,
+                x: f.cur_x,
+                y: f.cur_y,
+                timestamp: f.timestamp,
+            })
     }
 
     /// Iterate active touch points.
     pub fn active_touches(&self) -> Vec<TouchPoint> {
-        self.fingers.iter().map(|f| TouchPoint {
-            id: f.id,
-            x: f.cur_x,
-            y: f.cur_y,
-            timestamp: f.timestamp,
-        }).collect()
+        self.fingers
+            .iter()
+            .map(|f| TouchPoint {
+                id: f.id,
+                x: f.cur_x,
+                y: f.cur_y,
+                timestamp: f.timestamp,
+            })
+            .collect()
     }
 
     /// Raw angle of first finger relative to centroid.
@@ -287,8 +298,12 @@ mod tests {
         mt.touch_move(2, 50.0, 50.0, 1);
         let angle = mt.rotation_angle();
         let expected = std::f64::consts::FRAC_PI_2; // 90 degrees
-        assert!((angle - expected).abs() < 0.1,
-            "Expected ~PI/2 ({}) got {}", expected, angle);
+        assert!(
+            (angle - expected).abs() < 0.1,
+            "Expected ~PI/2 ({}) got {}",
+            expected,
+            angle
+        );
     }
 
     #[test]

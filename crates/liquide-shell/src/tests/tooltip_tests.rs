@@ -146,7 +146,9 @@ fn tooltip_position_x_follows_mouse() {
     // Tooltip x should be centered on mouse, clamped to screen using approximate width.
     let label = shell.tooltip_text.as_ref().unwrap();
     let tip_w = (label.len() as f32 * 7.0 + 16.0).max(40.0_f32).min(300.0);
-    let expected_x = (mouse_x - tip_w / 2.0).max(4.0_f32).min(1920.0 - tip_w - 4.0);
+    let expected_x = (mouse_x - tip_w / 2.0)
+        .max(4.0_f32)
+        .min(1920.0 - tip_w - 4.0);
     assert!(
         (shell.tooltip_pos.x - expected_x).abs() < 0.01,
         "tooltip x should follow mouse position (expected={}, got={})",
@@ -278,11 +280,13 @@ fn tooltip_overlay_removed_from_dom_on_leave() {
     // Bypass the 400ms tooltip delay by backdating the timer.
     shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
     shell.sync_dom();
-    assert!(shell
-        .desktop_dom
-        .doc
-        .get_element_by_id("shell-tooltip")
-        .is_some());
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("shell-tooltip")
+            .is_some()
+    );
 
     // Leave dock
     shell.handle_platform_event(&make_mouse_move(500.0, 500.0));
@@ -310,20 +314,24 @@ fn tooltip_overlay_reappears_after_leave_and_rehover() {
     // Bypass the 400ms tooltip delay by backdating the timer.
     shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
     shell.sync_dom();
-    assert!(shell
-        .desktop_dom
-        .doc
-        .get_element_by_id("shell-tooltip")
-        .is_some());
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("shell-tooltip")
+            .is_some()
+    );
 
     // Leave dock
     shell.handle_platform_event(&make_mouse_move(500.0, 500.0));
     shell.sync_dom();
-    assert!(shell
-        .desktop_dom
-        .doc
-        .get_element_by_id("shell-tooltip")
-        .is_none());
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("shell-tooltip")
+            .is_none()
+    );
 
     // Re-hover the same item
     shell.handle_platform_event(&make_mouse_move(cx, cy));
@@ -506,10 +514,7 @@ fn tooltip_position_updates_for_different_items() {
     let pos2 = shell.tooltip_pos;
 
     // Positions should differ in x (items are side by side in the dock).
-    assert_ne!(
-        pos1.x, pos2.x,
-        "tooltip x should differ between dock items"
-    );
+    assert_ne!(pos1.x, pos2.x, "tooltip x should differ between dock items");
 }
 
 // ---------------------------------------------------------------------------

@@ -24,9 +24,7 @@ impl PlatformFirewall {
         let output = Command::new(program)
             .args(args)
             .output()
-            .map_err(|e| {
-                FirewallError::PlatformError(format!("failed to run {program}: {e}"))
-            })?;
+            .map_err(|e| FirewallError::PlatformError(format!("failed to run {program}: {e}")))?;
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
@@ -102,18 +100,16 @@ impl PlatformFirewall {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                FirewallError::PlatformError(format!("failed to spawn pfctl: {e}"))
-            })?;
+            .map_err(|e| FirewallError::PlatformError(format!("failed to spawn pfctl: {e}")))?;
 
         if let Some(ref mut stdin) = child.stdin {
             use std::io::Write;
             let _ = stdin.write_all(ruleset.as_bytes());
         }
 
-        let output = child.wait_with_output().map_err(|e| {
-            FirewallError::PlatformError(format!("pfctl wait failed: {e}"))
-        })?;
+        let output = child
+            .wait_with_output()
+            .map_err(|e| FirewallError::PlatformError(format!("pfctl wait failed: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -139,8 +135,7 @@ impl FirewallBackend for PlatformFirewall {
 
     fn add_rule(&mut self, rule: &FirewallRule) -> Result<(), FirewallError> {
         // Retrieve existing rules, append, reload.
-        let existing = Self::run("pfctl", &["-a", &self.anchor, "-sr"])
-            .unwrap_or_default();
+        let existing = Self::run("pfctl", &["-a", &self.anchor, "-sr"]).unwrap_or_default();
         let mut rules: Vec<String> = existing
             .lines()
             .map(|l| l.to_string())
@@ -151,8 +146,7 @@ impl FirewallBackend for PlatformFirewall {
     }
 
     fn remove_rule(&mut self, rule_name: &str) -> Result<(), FirewallError> {
-        let existing = Self::run("pfctl", &["-a", &self.anchor, "-sr"])
-            .unwrap_or_default();
+        let existing = Self::run("pfctl", &["-a", &self.anchor, "-sr"]).unwrap_or_default();
         let rules: Vec<String> = existing
             .lines()
             .filter(|l| !l.contains(&format!("# {rule_name}")))
@@ -166,9 +160,7 @@ impl FirewallBackend for PlatformFirewall {
         let output = Self::run("pfctl", &["-a", &self.anchor, "-sr"])?;
         let names: Vec<String> = output
             .lines()
-            .filter_map(|l| {
-                l.find("# ").map(|idx| l[idx + 2..].trim().to_string())
-            })
+            .filter_map(|l| l.find("# ").map(|idx| l[idx + 2..].trim().to_string()))
             .collect();
         Ok(names)
     }

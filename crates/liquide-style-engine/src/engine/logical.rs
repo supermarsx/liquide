@@ -261,46 +261,46 @@ impl StyleEngine {
         // start-start -> top-left  (in horizontal-tb LTR)
         if style.border_start_start_radius > 0.0 {
             if is_horizontal && is_ltr {
-                style.border_radius.top_left = style.border_start_start_radius;
+                style.border_radius.top_left = style.border_start_start_radius.into();
             } else if is_horizontal {
-                style.border_radius.top_right = style.border_start_start_radius;
+                style.border_radius.top_right = style.border_start_start_radius.into();
             } else if is_ltr {
-                style.border_radius.top_left = style.border_start_start_radius;
+                style.border_radius.top_left = style.border_start_start_radius.into();
             } else {
-                style.border_radius.bottom_left = style.border_start_start_radius;
+                style.border_radius.bottom_left = style.border_start_start_radius.into();
             }
         }
         if style.border_start_end_radius > 0.0 {
             if is_horizontal && is_ltr {
-                style.border_radius.top_right = style.border_start_end_radius;
+                style.border_radius.top_right = style.border_start_end_radius.into();
             } else if is_horizontal {
-                style.border_radius.top_left = style.border_start_end_radius;
+                style.border_radius.top_left = style.border_start_end_radius.into();
             } else if is_ltr {
-                style.border_radius.bottom_left = style.border_start_end_radius;
+                style.border_radius.bottom_left = style.border_start_end_radius.into();
             } else {
-                style.border_radius.top_left = style.border_start_end_radius;
+                style.border_radius.top_left = style.border_start_end_radius.into();
             }
         }
         if style.border_end_start_radius > 0.0 {
             if is_horizontal && is_ltr {
-                style.border_radius.bottom_left = style.border_end_start_radius;
+                style.border_radius.bottom_left = style.border_end_start_radius.into();
             } else if is_horizontal {
-                style.border_radius.bottom_right = style.border_end_start_radius;
+                style.border_radius.bottom_right = style.border_end_start_radius.into();
             } else if is_ltr {
-                style.border_radius.top_right = style.border_end_start_radius;
+                style.border_radius.top_right = style.border_end_start_radius.into();
             } else {
-                style.border_radius.bottom_right = style.border_end_start_radius;
+                style.border_radius.bottom_right = style.border_end_start_radius.into();
             }
         }
         if style.border_end_end_radius > 0.0 {
             if is_horizontal && is_ltr {
-                style.border_radius.bottom_right = style.border_end_end_radius;
+                style.border_radius.bottom_right = style.border_end_end_radius.into();
             } else if is_horizontal {
-                style.border_radius.bottom_left = style.border_end_end_radius;
+                style.border_radius.bottom_left = style.border_end_end_radius.into();
             } else if is_ltr {
-                style.border_radius.bottom_right = style.border_end_end_radius;
+                style.border_radius.bottom_right = style.border_end_end_radius.into();
             } else {
-                style.border_radius.top_right = style.border_end_end_radius;
+                style.border_radius.top_right = style.border_end_end_radius.into();
             }
         }
 

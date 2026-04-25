@@ -11,7 +11,12 @@ fn make_runtime() -> FilesRuntime {
 fn sample_entries() -> Vec<FileEntry> {
     vec![
         FileEntry::directory("docs".into(), "/home/user/docs".into(), 1000),
-        FileEntry::file("readme.md".into(), "/home/user/readme.md".into(), 2048, 1100),
+        FileEntry::file(
+            "readme.md".into(),
+            "/home/user/readme.md".into(),
+            2048,
+            1100,
+        ),
         FileEntry::file("main.rs".into(), "/home/user/main.rs".into(), 512, 1200),
     ]
 }
@@ -80,7 +85,8 @@ fn test_runtime_clear_selection() {
 #[test]
 fn test_runtime_sidebar_bookmark() {
     let mut rt = make_runtime();
-    rt.sidebar_mut().add_bookmark("Projects".into(), "~/Projects".into());
+    rt.sidebar_mut()
+        .add_bookmark("Projects".into(), "~/Projects".into());
     assert!(rt.sidebar().find("Projects").is_some());
 }
 

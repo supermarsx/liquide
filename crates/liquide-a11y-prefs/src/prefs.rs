@@ -1,11 +1,12 @@
 //! Accessibility preferences and cursor size types.
 
 /// System cursor size preference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum CursorSize {
     /// Smaller than default cursor.
     Small,
     /// Default system cursor size (typically 32px).
+    #[default]
     Normal,
     /// Enlarged cursor (typically 48px).
     Large,

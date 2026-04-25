@@ -29,10 +29,18 @@ impl Default for CalculatorProvider {
 }
 
 impl SearchProvider for CalculatorProvider {
-    fn id(&self) -> &str { "calculator" }
-    fn name(&self) -> &str { "Calculator" }
-    fn icon(&self) -> &str { "accessories-calculator" }
-    fn priority(&self) -> u32 { 95 }
+    fn id(&self) -> &str {
+        "calculator"
+    }
+    fn name(&self) -> &str {
+        "Calculator"
+    }
+    fn icon(&self) -> &str {
+        "accessories-calculator"
+    }
+    fn priority(&self) -> u32 {
+        95
+    }
 
     fn search(&self, query: &str, _max_results: usize) -> Vec<SearchResult> {
         let expr = query.trim();
@@ -84,9 +92,7 @@ fn looks_like_math(s: &str) -> bool {
     let first = s.chars().next().unwrap();
     if first.is_ascii_digit() || first == '(' || first == '.' {
         // Must also contain an operator or be a lone number with constants.
-        return s.chars().any(|c| "+-*/%^()".contains(c))
-            || s.contains("pi")
-            || s.contains("tau");
+        return s.chars().any(|c| "+-*/%^()".contains(c)) || s.contains("pi") || s.contains("tau");
     }
 
     // Starts with a known constant name.
@@ -167,15 +173,41 @@ fn tokenize(input: &str) -> Result<Vec<Token>, CalcError> {
 
     while i < chars.len() {
         match chars[i] {
-            ' ' | '\t' => { i += 1; }
-            '+' => { tokens.push(Token::Plus); i += 1; }
-            '-' => { tokens.push(Token::Minus); i += 1; }
-            '*' => { tokens.push(Token::Star); i += 1; }
-            '/' => { tokens.push(Token::Slash); i += 1; }
-            '%' => { tokens.push(Token::Percent); i += 1; }
-            '^' => { tokens.push(Token::Caret); i += 1; }
-            '(' => { tokens.push(Token::LParen); i += 1; }
-            ')' => { tokens.push(Token::RParen); i += 1; }
+            ' ' | '\t' => {
+                i += 1;
+            }
+            '+' => {
+                tokens.push(Token::Plus);
+                i += 1;
+            }
+            '-' => {
+                tokens.push(Token::Minus);
+                i += 1;
+            }
+            '*' => {
+                tokens.push(Token::Star);
+                i += 1;
+            }
+            '/' => {
+                tokens.push(Token::Slash);
+                i += 1;
+            }
+            '%' => {
+                tokens.push(Token::Percent);
+                i += 1;
+            }
+            '^' => {
+                tokens.push(Token::Caret);
+                i += 1;
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                i += 1;
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                i += 1;
+            }
             c if c.is_ascii_digit() || c == '.' => {
                 let start = i;
                 while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
@@ -213,8 +245,14 @@ fn parse_expr(tokens: &[Token], pos: &mut usize) -> Result<f64, CalcError> {
     let mut left = parse_term(tokens, pos)?;
     while *pos < tokens.len() {
         match tokens[*pos] {
-            Token::Plus => { *pos += 1; left += parse_term(tokens, pos)?; }
-            Token::Minus => { *pos += 1; left -= parse_term(tokens, pos)?; }
+            Token::Plus => {
+                *pos += 1;
+                left += parse_term(tokens, pos)?;
+            }
+            Token::Minus => {
+                *pos += 1;
+                left -= parse_term(tokens, pos)?;
+            }
             _ => break,
         }
     }
@@ -225,7 +263,10 @@ fn parse_term(tokens: &[Token], pos: &mut usize) -> Result<f64, CalcError> {
     let mut left = parse_power(tokens, pos)?;
     while *pos < tokens.len() {
         match tokens[*pos] {
-            Token::Star => { *pos += 1; left *= parse_power(tokens, pos)?; }
+            Token::Star => {
+                *pos += 1;
+                left *= parse_power(tokens, pos)?;
+            }
             Token::Slash => {
                 *pos += 1;
                 let right = parse_power(tokens, pos)?;

@@ -61,10 +61,7 @@ impl RoutingTable {
     /// Look up the transport for a channel.
     #[must_use]
     pub fn route(&self, channel: ChannelId) -> TransportKind {
-        self.routes
-            .get(&channel)
-            .copied()
-            .unwrap_or(self.fallback)
+        self.routes.get(&channel).copied().unwrap_or(self.fallback)
     }
 
     /// Override the transport for a channel.

@@ -77,16 +77,33 @@ impl RepoManager {
     pub fn new() -> Self {
         Self {
             repos: vec![
-                Repository::new("official", "LiquiDE Official", "https://packages.liquide.org/stable", RepoType::Official),
-                Repository::new("community", "LiquiDE Community", "https://packages.liquide.org/community", RepoType::Community),
-                Repository::new("flatpak", "Flathub", "https://flathub.org/repo", RepoType::Flatpak),
+                Repository::new(
+                    "official",
+                    "LiquiDE Official",
+                    "https://packages.liquide.org/stable",
+                    RepoType::Official,
+                ),
+                Repository::new(
+                    "community",
+                    "LiquiDE Community",
+                    "https://packages.liquide.org/community",
+                    RepoType::Community,
+                ),
+                Repository::new(
+                    "flatpak",
+                    "Flathub",
+                    "https://flathub.org/repo",
+                    RepoType::Flatpak,
+                ),
             ],
         }
     }
 
     /// Get all repositories.
     #[must_use]
-    pub fn repositories(&self) -> &[Repository] { &self.repos }
+    pub fn repositories(&self) -> &[Repository] {
+        &self.repos
+    }
 
     /// Get enabled repositories.
     #[must_use]
@@ -110,7 +127,10 @@ impl RepoManager {
 
     /// Remove a repository by ID.
     pub fn remove(&mut self, id: &str) -> crate::Result<()> {
-        let pos = self.repos.iter().position(|r| r.id == id)
+        let pos = self
+            .repos
+            .iter()
+            .position(|r| r.id == id)
             .ok_or_else(|| crate::SoftwareCenterError::RepositoryNotFound(id.into()))?;
         self.repos.remove(pos);
         Ok(())
@@ -118,7 +138,10 @@ impl RepoManager {
 
     /// Toggle a repository's enabled state.
     pub fn toggle(&mut self, id: &str) -> crate::Result<bool> {
-        let repo = self.repos.iter_mut().find(|r| r.id == id)
+        let repo = self
+            .repos
+            .iter_mut()
+            .find(|r| r.id == id)
             .ok_or_else(|| crate::SoftwareCenterError::RepositoryNotFound(id.into()))?;
         repo.enabled = !repo.enabled;
         Ok(repo.enabled)
@@ -126,9 +149,13 @@ impl RepoManager {
 
     /// Number of repositories.
     #[must_use]
-    pub fn count(&self) -> usize { self.repos.len() }
+    pub fn count(&self) -> usize {
+        self.repos.len()
+    }
 }
 
 impl Default for RepoManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

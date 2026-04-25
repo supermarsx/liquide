@@ -82,10 +82,16 @@ impl FileEntry {
     pub fn directory(name: String, path: String, modified: u64) -> Self {
         let hidden = name.starts_with('.');
         Self {
-            name, path, kind: EntryKind::Directory, size: 0,
-            modified, extension: String::new(), hidden,
+            name,
+            path,
+            kind: EntryKind::Directory,
+            size: 0,
+            modified,
+            extension: String::new(),
+            hidden,
             permissions: Permissions::from_mode(0o755),
-            symlink_target: None, mime_type: "inode/directory".into(),
+            symlink_target: None,
+            mime_type: "inode/directory".into(),
         }
     }
 
@@ -93,22 +99,32 @@ impl FileEntry {
     #[must_use]
     pub fn file(name: String, path: String, size: u64, modified: u64) -> Self {
         let hidden = name.starts_with('.');
-        let extension = name.rsplit('.').next()
+        let extension = name
+            .rsplit('.')
+            .next()
             .filter(|e| *e != name.as_str())
             .unwrap_or("")
             .to_string();
         let mime_type = guess_mime(&extension);
         Self {
-            name, path, kind: EntryKind::File, size,
-            modified, extension, hidden,
+            name,
+            path,
+            kind: EntryKind::File,
+            size,
+            modified,
+            extension,
+            hidden,
             permissions: Permissions::from_mode(0o644),
-            symlink_target: None, mime_type,
+            symlink_target: None,
+            mime_type,
         }
     }
 
     /// Whether this entry is a directory.
     #[must_use]
-    pub fn is_dir(&self) -> bool { self.kind == EntryKind::Directory }
+    pub fn is_dir(&self) -> bool {
+        self.kind == EntryKind::Directory
+    }
 
     /// Human-readable size string.
     #[must_use]
@@ -117,11 +133,17 @@ impl FileEntry {
             return "--".to_string();
         }
         let size = self.size;
-        if size < 1024 { return format!("{size} B"); }
+        if size < 1024 {
+            return format!("{size} B");
+        }
         let kb = size as f64 / 1024.0;
-        if kb < 1024.0 { return format!("{kb:.1} KB"); }
+        if kb < 1024.0 {
+            return format!("{kb:.1} KB");
+        }
         let mb = kb / 1024.0;
-        if mb < 1024.0 { return format!("{mb:.1} MB"); }
+        if mb < 1024.0 {
+            return format!("{mb:.1} MB");
+        }
         let gb = mb / 1024.0;
         format!("{gb:.1} GB")
     }

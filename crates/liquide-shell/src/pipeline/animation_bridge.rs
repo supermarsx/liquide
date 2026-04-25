@@ -4,17 +4,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use liquide_animation::scheduler::{AnimationState, Direction, FillMode, IterationCount};
 use liquide_animation::{CubicBezier, EasingFunction, RunningAnimation};
-use liquide_animation::scheduler::{
-    AnimationState, Direction, FillMode, IterationCount,
-};
 use liquide_dom::NodeId;
-use liquide_style_engine::computed::{
-    AnimationDirection, AnimationFillMode, AnimationIterationCount,
-    AnimationPlayState, ComputedStyle, LineHeight,
-};
 use liquide_style_engine::Dimension;
 use liquide_style_engine::StyleMap;
+use liquide_style_engine::computed::{
+    AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
+    ComputedStyle, LineHeight,
+};
 
 use super::DesktopPipeline;
 
@@ -113,27 +111,56 @@ const TRANSITIONABLE_PROPERTIES: &[&str] = &[
     // Opacity
     "opacity",
     // Dimensions
-    "width", "height", "min-width", "min-height", "max-width", "max-height",
+    "width",
+    "height",
+    "min-width",
+    "min-height",
+    "max-width",
+    "max-height",
     // Spacing
-    "margin-top", "margin-right", "margin-bottom", "margin-left",
-    "padding-top", "padding-right", "padding-bottom", "padding-left",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
     // Position
-    "top", "right", "bottom", "left",
+    "top",
+    "right",
+    "bottom",
+    "left",
     // Border widths
-    "border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
     // Border radius
-    "border-top-left-radius", "border-top-right-radius",
-    "border-bottom-left-radius", "border-bottom-right-radius",
+    "border-top-left-radius",
+    "border-top-right-radius",
+    "border-bottom-left-radius",
+    "border-bottom-right-radius",
     // Typography
-    "font-size", "letter-spacing", "word-spacing", "text-indent", "line-height",
+    "font-size",
+    "letter-spacing",
+    "word-spacing",
+    "text-indent",
+    "line-height",
     // Flex
-    "flex-grow", "flex-shrink", "flex-basis",
+    "flex-grow",
+    "flex-shrink",
+    "flex-basis",
     // Grid/gap
-    "row-gap", "column-gap", "gap",
+    "row-gap",
+    "column-gap",
+    "gap",
     // Outline
-    "outline-width", "outline-offset",
+    "outline-width",
+    "outline-offset",
     // Other numeric
-    "z-index", "order",
+    "z-index",
+    "order",
 ];
 
 /// Extract a float value for a known transitionable property from a computed style.
@@ -154,10 +181,10 @@ fn get_float_property(style: &ComputedStyle, property: &str) -> Option<f32> {
         "order" => Some(style.order as f32),
         "z-index" => style.z_index.map(|z| z as f32),
         // Border radius
-        "border-top-left-radius" => Some(style.border_radius.top_left),
-        "border-top-right-radius" => Some(style.border_radius.top_right),
-        "border-bottom-left-radius" => Some(style.border_radius.bottom_left),
-        "border-bottom-right-radius" => Some(style.border_radius.bottom_right),
+        "border-top-left-radius" => Some(style.border_radius.top_left.max_axis()),
+        "border-top-right-radius" => Some(style.border_radius.top_right.max_axis()),
+        "border-bottom-left-radius" => Some(style.border_radius.bottom_left.max_axis()),
+        "border-bottom-right-radius" => Some(style.border_radius.bottom_right.max_axis()),
         // Line-height
         "line-height" => match &style.line_height {
             LineHeight::Px(v) => Some(*v),
@@ -211,10 +238,22 @@ fn set_float_property(style: &mut ComputedStyle, property: &str, value: f32) {
         "order" => style.order = value as i32,
         "z-index" => style.z_index = Some(value as i32),
         // Border radius
-        "border-top-left-radius" => style.border_radius.top_left = value,
-        "border-top-right-radius" => style.border_radius.top_right = value,
-        "border-bottom-left-radius" => style.border_radius.bottom_left = value,
-        "border-bottom-right-radius" => style.border_radius.bottom_right = value,
+        "border-top-left-radius" => {
+            style.border_radius.top_left =
+                liquide_style_engine::dimension::EllipticalRadius::from(value)
+        }
+        "border-top-right-radius" => {
+            style.border_radius.top_right =
+                liquide_style_engine::dimension::EllipticalRadius::from(value)
+        }
+        "border-bottom-left-radius" => {
+            style.border_radius.bottom_left =
+                liquide_style_engine::dimension::EllipticalRadius::from(value)
+        }
+        "border-bottom-right-radius" => {
+            style.border_radius.bottom_right =
+                liquide_style_engine::dimension::EllipticalRadius::from(value)
+        }
         // Line-height
         "line-height" => style.line_height = LineHeight::Px(value),
         // Outline
@@ -282,7 +321,10 @@ fn get_color_property(style: &ComputedStyle, property: &str) -> Option<[u8; 4]> 
             let c = &style.border_color.left;
             Some([c.r, c.g, c.b, c.a])
         }
-        "outline-color" => style.outline.as_ref().map(|o| [o.color.r, o.color.g, o.color.b, o.color.a]),
+        "outline-color" => style
+            .outline
+            .as_ref()
+            .map(|o| [o.color.r, o.color.g, o.color.b, o.color.a]),
         _ => None,
     }
 }
@@ -335,7 +377,9 @@ impl DesktopPipeline {
             };
 
             let duration_ms = match new_style.transition_duration.as_deref() {
-                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                Some(s) => *dur_cache
+                    .entry(s.to_owned())
+                    .or_insert_with(|| parse_duration_ms(s)),
                 None => 0.0,
             };
 
@@ -344,12 +388,16 @@ impl DesktopPipeline {
             }
 
             let delay_ms = match new_style.transition_delay.as_deref() {
-                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                Some(s) => *dur_cache
+                    .entry(s.to_owned())
+                    .or_insert_with(|| parse_duration_ms(s)),
                 None => 0.0,
             };
 
             let easing = match new_style.transition_timing_function.as_deref() {
-                Some(s) => *timing_cache.entry(s.to_owned()).or_insert_with(|| parse_timing_function(s)),
+                Some(s) => *timing_cache
+                    .entry(s.to_owned())
+                    .or_insert_with(|| parse_timing_function(s)),
                 None => EasingFunction::Ease,
             };
 
@@ -380,10 +428,7 @@ impl DesktopPipeline {
 
                 // If already transitioning, retarget from current value if
                 // the destination changed; skip if same target.
-                if self
-                    .transition_engine
-                    .is_transitioning(*node_id, prop)
-                {
+                if self.transition_engine.is_transitioning(*node_id, prop) {
                     let same_target = self
                         .transition_engine
                         .get_target(*node_id, prop)
@@ -397,13 +442,25 @@ impl DesktopPipeline {
                         .get(*node_id, prop)
                         .unwrap_or(old_val);
                     self.transition_engine.start(
-                        *node_id, prop, from, new_val, duration_ms, delay_ms, easing,
+                        *node_id,
+                        prop,
+                        from,
+                        new_val,
+                        duration_ms,
+                        delay_ms,
+                        easing,
                     );
                     continue;
                 }
 
                 self.transition_engine.start(
-                    *node_id, prop, old_val, new_val, duration_ms, delay_ms, easing,
+                    *node_id,
+                    prop,
+                    old_val,
+                    new_val,
+                    duration_ms,
+                    delay_ms,
+                    easing,
                 );
             }
 
@@ -433,7 +490,13 @@ impl DesktopPipeline {
                         continue;
                     }
                     self.transition_engine.start(
-                        *node_id, &key, from, to, duration_ms, delay_ms, easing,
+                        *node_id,
+                        &key,
+                        from,
+                        to,
+                        duration_ms,
+                        delay_ms,
+                        easing,
                     );
                 }
             }
@@ -456,15 +519,15 @@ impl DesktopPipeline {
                 .animation_scheduler
                 .animations_for(*node_id)
                 .iter()
-                .any(|a| {
-                    a.keyframes_name == anim_name && a.state != AnimationState::Finished
-                });
+                .any(|a| a.keyframes_name == anim_name && a.state != AnimationState::Finished);
             if already_running {
                 continue;
             }
 
             let duration_ms = match style.animation_duration.as_deref() {
-                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                Some(s) => *dur_cache
+                    .entry(s.to_owned())
+                    .or_insert_with(|| parse_duration_ms(s)),
                 None => 0.0,
             };
 
@@ -474,12 +537,16 @@ impl DesktopPipeline {
             }
 
             let delay_ms = match style.animation_delay.as_deref() {
-                Some(s) => *dur_cache.entry(s.to_owned()).or_insert_with(|| parse_duration_ms(s)),
+                Some(s) => *dur_cache
+                    .entry(s.to_owned())
+                    .or_insert_with(|| parse_duration_ms(s)),
                 None => 0.0,
             };
 
             let easing = match style.animation_timing_function.as_deref() {
-                Some(s) => *timing_cache.entry(s.to_owned()).or_insert_with(|| parse_timing_function(s)),
+                Some(s) => *timing_cache
+                    .entry(s.to_owned())
+                    .or_insert_with(|| parse_timing_function(s)),
                 None => EasingFunction::Ease,
             };
 
@@ -559,12 +626,21 @@ impl DesktopPipeline {
                 }
                 // Apply color channel overrides
                 for color_prop in COLOR_PROPERTIES {
-                    let r = self.transition_engine.get(*node_id, &format!("{}_r", color_prop));
-                    let g = self.transition_engine.get(*node_id, &format!("{}_g", color_prop));
-                    let b = self.transition_engine.get(*node_id, &format!("{}_b", color_prop));
-                    let a = self.transition_engine.get(*node_id, &format!("{}_a", color_prop));
+                    let r = self
+                        .transition_engine
+                        .get(*node_id, &format!("{}_r", color_prop));
+                    let g = self
+                        .transition_engine
+                        .get(*node_id, &format!("{}_g", color_prop));
+                    let b = self
+                        .transition_engine
+                        .get(*node_id, &format!("{}_b", color_prop));
+                    let a = self
+                        .transition_engine
+                        .get(*node_id, &format!("{}_a", color_prop));
                     if r.is_some() || g.is_some() || b.is_some() || a.is_some() {
-                        let base = get_color_property(&patched, color_prop).unwrap_or([0, 0, 0, 255]);
+                        let base =
+                            get_color_property(&patched, color_prop).unwrap_or([0, 0, 0, 255]);
                         let rgba = [
                             r.map(|v| v.clamp(0.0, 255.0) as u8).unwrap_or(base[0]),
                             g.map(|v| v.clamp(0.0, 255.0) as u8).unwrap_or(base[1]),
@@ -597,9 +673,7 @@ impl DesktopPipeline {
                 if anim.state != AnimationState::Running {
                     continue;
                 }
-                for prop in TRANSITIONABLE_PROPERTIES
-                    .iter()
-                {
+                for prop in TRANSITIONABLE_PROPERTIES.iter() {
                     if let Some(pv) = self.animation_scheduler.resolve_property(anim, prop) {
                         let vw = self.style_engine.viewport.width;
                         let vh = self.style_engine.viewport.height;
@@ -615,7 +689,10 @@ impl DesktopPipeline {
         // Group overrides by node to avoid repeated clone+insert per property
         let mut grouped: HashMap<NodeId, Vec<(&str, f32)>> = HashMap::new();
         for (node_id, prop, val) in &animation_overrides {
-            grouped.entry(*node_id).or_default().push((prop.as_str(), *val));
+            grouped
+                .entry(*node_id)
+                .or_default()
+                .push((prop.as_str(), *val));
         }
         for (node_id, props) in &grouped {
             if let Some(existing) = styles.get(*node_id) {
@@ -644,7 +721,7 @@ fn property_value_to_float(
     viewport_height: f32,
     base_font_size: f32,
 ) -> Option<f32> {
-    use liquide_theme_css::value::{PropertyValue, LengthUnit};
+    use liquide_theme_css::value::{LengthUnit, PropertyValue};
     match pv {
         PropertyValue::Length(lu) => match lu {
             LengthUnit::Px(v) => Some(*v),

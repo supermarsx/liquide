@@ -1,6 +1,6 @@
 //! Tests for the recent module.
 
-use crate::recent::{RecentEntry, RecentStore, DEFAULT_MAX_ENTRIES};
+use crate::recent::{DEFAULT_MAX_ENTRIES, RecentEntry, RecentStore};
 
 #[test]
 fn test_recent_entry_new() {
@@ -19,7 +19,11 @@ fn test_recent_entry_new() {
 #[test]
 fn test_recent_entry_touch() {
     let mut e = RecentEntry::new(
-        "file:///a.txt".into(), "a.txt".into(), "text/plain".into(), 100, "app1".into(),
+        "file:///a.txt".into(),
+        "a.txt".into(),
+        "text/plain".into(),
+        100,
+        "app1".into(),
     );
     e.touch(200, "app2");
     assert_eq!(e.access_count, 2);

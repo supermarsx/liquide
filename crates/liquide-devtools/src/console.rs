@@ -177,7 +177,8 @@ impl DebugConsole {
                 .next()
                 .map(|c| c.len_utf8())
                 .unwrap_or(0);
-            self.input_buffer.drain(self.cursor_pos..self.cursor_pos + next);
+            self.input_buffer
+                .drain(self.cursor_pos..self.cursor_pos + next);
         }
     }
 
@@ -248,12 +249,7 @@ impl DebugConsole {
     }
 
     /// Submit the current input, execute the command, return true if handled.
-    pub fn submit(
-        &mut self,
-        doc: &Document,
-        layout: &LayoutTree,
-        styles: &StyleMap,
-    ) -> bool {
+    pub fn submit(&mut self, doc: &Document, layout: &LayoutTree, styles: &StyleMap) -> bool {
         let input = self.input_buffer.trim().to_string();
         if input.is_empty() {
             return false;
@@ -277,13 +273,7 @@ impl DebugConsole {
     }
 
     /// Execute a console command.
-    fn execute(
-        &mut self,
-        cmd: &str,
-        doc: &Document,
-        layout: &LayoutTree,
-        styles: &StyleMap,
-    ) {
+    fn execute(&mut self, cmd: &str, doc: &Document, layout: &LayoutTree, styles: &StyleMap) {
         // Expand $0 to the currently selected node ID.
         let expanded = if cmd.contains("$0") {
             if let Some(sel) = self.selected_node {
@@ -307,10 +297,14 @@ impl DebugConsole {
                 self.push_output("  dom.children <id>     — List children".into());
                 self.push_output("  dom.parent <id>       — Show ancestor chain".into());
                 self.push_output("  dom.text <id>         — Get text content".into());
-                self.push_output("  dom.tree [id] [depth] — Print subtree (default root, depth 3)".into());
+                self.push_output(
+                    "  dom.tree [id] [depth] — Print subtree (default root, depth 3)".into(),
+                );
                 self.push_output("  dom.attrs <id>        — Show all attributes".into());
                 self.push_output("  dom.classes <id>      — Show CSS classes".into());
-                self.push_output("  dom.find <text>       — Search text content across all nodes".into());
+                self.push_output(
+                    "  dom.find <text>       — Search text content across all nodes".into(),
+                );
                 self.push_output("─── Layout ───".into());
                 self.push_output("  layout.box <id>       — Show layout box".into());
                 self.push_output("  layout.stats          — Layout tree statistics".into());
@@ -318,7 +312,9 @@ impl DebugConsole {
                 self.push_output("─── Style ───".into());
                 self.push_output("  style.get <id>        — Show computed styles".into());
                 self.push_output("  style.prop <id> <p>   — Single property value".into());
-                self.push_output("  style.search <value>  — Find nodes with a property value".into());
+                self.push_output(
+                    "  style.search <value>  — Find nodes with a property value".into(),
+                );
                 self.push_output("─── Actions ───".into());
                 self.push_output("  inspect <id>          — Select node in Elements panel".into());
                 self.push_output("  reload                — Reload stylesheets & re-render".into());
@@ -378,10 +374,12 @@ impl DebugConsole {
             }
 
             Some("dom.tree") => {
-                let node_id = parts.get(1)
+                let node_id = parts
+                    .get(1)
                     .and_then(|s| s.parse::<NodeId>().ok())
                     .unwrap_or_else(|| doc.root());
-                let depth = parts.get(2)
+                let depth = parts
+                    .get(2)
                     .and_then(|s| s.parse::<usize>().ok())
                     .unwrap_or(3);
                 self.cmd_dom_tree(doc, node_id, depth);
@@ -494,7 +492,10 @@ impl DebugConsole {
                     self.push_output("No command history.".into());
                 } else {
                     let count = self.history.len();
-                    let lines: Vec<String> = self.history.iter().enumerate()
+                    let lines: Vec<String> = self
+                        .history
+                        .iter()
+                        .enumerate()
                         .map(|(i, h)| format!("  [{}] {}", i, h))
                         .collect();
                     self.push_output(format!("History ({} entries):", count));
@@ -679,7 +680,11 @@ impl DebugConsole {
         if props.is_empty() {
             self.push_error(format!("No computed styles for node #{}", node_id));
         } else {
-            self.push_output(format!("Computed styles for #{} ({} props):", node_id, props.len()));
+            self.push_output(format!(
+                "Computed styles for #{} ({} props):",
+                node_id,
+                props.len()
+            ));
             for p in props.iter().take(40) {
                 let inh = if p.inherited { " (inherited)" } else { "" };
                 self.push_output(format!("  {}: {}{}", p.name, p.value, inh));
@@ -698,7 +703,10 @@ impl DebugConsole {
         if let Some(p) = props.iter().find(|p| p.name == prop_name) {
             self.push_output(format!("{}: {}", p.name, p.value));
         } else {
-            self.push_error(format!("Property '{}' not found for node #{}", prop_name, node_id));
+            self.push_error(format!(
+                "Property '{}' not found for node #{}",
+                prop_name, node_id
+            ));
         }
     }
 
@@ -722,13 +730,7 @@ impl DebugConsole {
                         .as_deref()
                         .map(|e| format!(" id=\"{}\"", e))
                         .unwrap_or_default();
-                    self.push_output(format!(
-                        "  {}<{}{}> #{}",
-                        "  ".repeat(depth),
-                        tag,
-                        eid,
-                        anc
-                    ));
+                    self.push_output(format!("  {}<{}{}> #{}", "  ".repeat(depth), tag, eid, anc));
                 }
             }
         }
@@ -783,7 +785,11 @@ impl DebugConsole {
             if node.attrs.is_empty() {
                 self.push_output(format!("Node #{} has no attributes", node_id));
             } else {
-                self.push_output(format!("Attributes of #{} ({}):", node_id, node.attrs.len()));
+                self.push_output(format!(
+                    "Attributes of #{} ({}):",
+                    node_id,
+                    node.attrs.len()
+                ));
                 for (k, v) in node.attrs.iter() {
                     self.push_output(format!("  {}=\"{}\"", k, v));
                 }
@@ -830,7 +836,11 @@ impl DebugConsole {
         if found.is_empty() {
             self.push_output(format!("No text nodes containing '{}'", needle));
         } else {
-            self.push_output(format!("Found {} node(s) containing '{}':", found.len(), needle));
+            self.push_output(format!(
+                "Found {} node(s) containing '{}':",
+                found.len(),
+                needle
+            ));
             for (id, tag, preview) in found.iter().take(20) {
                 self.push_output(format!("  #{} <{}> \"{}\"", id, tag, preview));
             }

@@ -4,11 +4,11 @@
 //! and host-function routing for the LiquiDE remote desktop platform.
 
 pub mod config;
+pub mod dispatcher;
+pub mod host;
 pub mod plugin;
 pub mod resources;
 pub mod runtime;
-pub mod dispatcher;
-pub mod host;
 
 use std::fmt;
 
@@ -72,10 +72,10 @@ pub use plugin::{LoadedPlugin, PluginId, PluginState};
 
 /// Result type for the plugin host subsystem.
 pub type Result<T> = std::result::Result<T, PluginHostError>;
-pub use resources::{ResourceAllocation, ResourcePool};
-pub use runtime::PluginRuntime;
 pub use dispatcher::Dispatcher;
 pub use host::PluginHost;
+pub use resources::{ResourceAllocation, ResourcePool};
+pub use runtime::PluginRuntime;
 
 #[cfg(test)]
 mod tests;

@@ -85,11 +85,12 @@ impl SentMessage {
                 tracing::error!("wait_for_reply timed out after {:?}", REPLY_TIMEOUT);
                 return None;
             }
-            let (new_state, timeout_result) = cvar.wait_timeout(state, remaining)
-                .unwrap_or_else(|poisoned| {
-                    tracing::warn!("recovering from poisoned condvar mutex");
-                    poisoned.into_inner()
-                });
+            let (new_state, timeout_result) =
+                cvar.wait_timeout(state, remaining)
+                    .unwrap_or_else(|poisoned| {
+                        tracing::warn!("recovering from poisoned condvar mutex");
+                        poisoned.into_inner()
+                    });
             state = new_state;
             if timeout_result.timed_out() && !state.replied {
                 tracing::error!("wait_for_reply timed out after {:?}", REPLY_TIMEOUT);
@@ -103,10 +104,6 @@ impl SentMessage {
     #[must_use]
     pub fn try_get_result(&self) -> Option<MessageResult> {
         let state = liquide_common::sync::lock_or_recover(&self.inner.0);
-        if state.replied {
-            state.result
-        } else {
-            None
-        }
+        if state.replied { state.result } else { None }
     }
 }

@@ -75,7 +75,11 @@ pub fn detect_shake_gesture(positions: &[(f32, f32, f32)], threshold_px: f32) ->
 /// Check for reversals along a single axis.
 fn detect_axis_shake(positions: &[(f32, f32, f32)], threshold_px: f32, use_x: bool) -> bool {
     let coord = |i: usize| -> f32 {
-        if use_x { positions[i].0 } else { positions[i].1 }
+        if use_x {
+            positions[i].0
+        } else {
+            positions[i].1
+        }
     };
 
     let mut reversals = 0u32;
@@ -143,9 +147,9 @@ mod tests {
         let mut det = ShakeDetector::new(15.0, 600.0);
         // Right, left, right, left — 3 reversals + final segment = detected
         assert!(!det.on_window_move(100.0, 200.0, 0.0));
-        assert!(!det.on_window_move(130.0, 200.0, 50.0));   // +30 right (seg 1)
-        assert!(!det.on_window_move(100.0, 200.0, 100.0));  // -30 left  (rev 1)
-        assert!(det.on_window_move(130.0, 200.0, 150.0));   // +30 right (rev 2 + final seg = rev 3) → shake!
+        assert!(!det.on_window_move(130.0, 200.0, 50.0)); // +30 right (seg 1)
+        assert!(!det.on_window_move(100.0, 200.0, 100.0)); // -30 left  (rev 1)
+        assert!(det.on_window_move(130.0, 200.0, 150.0)); // +30 right (rev 2 + final seg = rev 3) → shake!
     }
 
     #[test]
@@ -154,7 +158,7 @@ mod tests {
         // Direction changes but spread over a long time (outside time window)
         assert!(!det.on_window_move(100.0, 200.0, 0.0));
         assert!(!det.on_window_move(130.0, 200.0, 200.0));
-        assert!(!det.on_window_move(100.0, 200.0, 500.0));   // first sample expired
+        assert!(!det.on_window_move(100.0, 200.0, 500.0)); // first sample expired
         assert!(!det.on_window_move(130.0, 200.0, 700.0));
         assert!(!det.on_window_move(100.0, 200.0, 900.0));
     }
@@ -184,10 +188,7 @@ mod tests {
 
     #[test]
     fn detect_shake_gesture_too_few_samples() {
-        let positions = vec![
-            (100.0, 200.0, 0.0),
-            (130.0, 200.0, 50.0),
-        ];
+        let positions = vec![(100.0, 200.0, 0.0), (130.0, 200.0, 50.0)];
         assert!(!detect_shake_gesture(&positions, 15.0));
     }
 
@@ -205,6 +206,6 @@ mod tests {
         assert!(!det.on_window_move(200.0, 100.0, 0.0));
         assert!(!det.on_window_move(200.0, 130.0, 50.0));
         assert!(!det.on_window_move(200.0, 100.0, 100.0));
-        assert!(det.on_window_move(200.0, 130.0, 150.0));  // 3 reversals (incl. final seg)
+        assert!(det.on_window_move(200.0, 130.0, 150.0)); // 3 reversals (incl. final seg)
     }
 }

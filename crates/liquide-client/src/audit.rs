@@ -56,8 +56,7 @@ impl ClientAuditEvent {
             | Self::ProfileLoaded { .. }
             | Self::CredentialStored { .. } => AuditLevel::Info,
 
-            Self::Disconnected { .. }
-            | Self::ReconnectAttempt { .. } => AuditLevel::Warn,
+            Self::Disconnected { .. } | Self::ReconnectAttempt { .. } => AuditLevel::Warn,
 
             Self::CrashScreenShown { .. } => AuditLevel::Error,
         }

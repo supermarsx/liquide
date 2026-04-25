@@ -6,8 +6,8 @@
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use crate::frame::{Frame, FrameHeader, CRC_SIZE};
 use crate::ProtocolError;
+use crate::frame::{CRC_SIZE, Frame, FrameHeader};
 
 /// A stateful frame codec that can be layered on top of a byte stream.
 ///
@@ -46,7 +46,7 @@ impl FrameCodec {
                     // Peek at the header without consuming yet
                     let mut peek = buf.clone();
                     let header = FrameHeader::decode(&mut peek)?;
-                    
+
                     // Validate payload size against maximum allowed
                     if header.payload_len as u32 > crate::MAX_FRAME_PAYLOAD {
                         return Err(ProtocolError::PayloadTooLarge {
@@ -54,7 +54,7 @@ impl FrameCodec {
                             max: crate::MAX_FRAME_PAYLOAD,
                         });
                     }
-                    
+
                     // We successfully parsed the header, now check if we have enough for payload + CRC
                     let total_needed = FrameHeader::WIRE_SIZE
                         + header.payload_len as usize
@@ -138,8 +138,7 @@ impl FrameCodec {
 /// Encode a serde-serializable value as a CBOR payload.
 pub fn cbor_encode<T: serde::Serialize>(value: &T) -> crate::Result<Bytes> {
     let mut buf = Vec::new();
-    ciborium::into_writer(value, &mut buf)
-        .map_err(|e| ProtocolError::Cbor(e.to_string()))?;
+    ciborium::into_writer(value, &mut buf).map_err(|e| ProtocolError::Cbor(e.to_string()))?;
     Ok(Bytes::from(buf))
 }
 
@@ -166,4 +165,3 @@ pub fn cbor_decode<T: serde::de::DeserializeOwned>(data: &[u8]) -> crate::Result
     }
     ciborium::from_reader(data).map_err(|e| ProtocolError::Cbor(e.to_string()))
 }
-

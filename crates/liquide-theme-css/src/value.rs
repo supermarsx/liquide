@@ -443,6 +443,27 @@ fn linear_to_srgb_u8(c: f32) -> u8 {
     (s * 255.0).round() as u8
 }
 
+fn format_css_number(value: f32) -> String {
+    if value == 0.0 {
+        return "0".to_string();
+    }
+
+    let mut text = value.to_string();
+    if text.contains('.') {
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    text
+}
+
+fn escape_css_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 impl fmt::Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_hex())
@@ -536,6 +557,38 @@ impl LengthUnit {
     }
 }
 
+impl fmt::Display for LengthUnit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LengthUnit::Px(v) => write!(f, "{}px", format_css_number(*v)),
+            LengthUnit::Pt(v) => write!(f, "{}pt", format_css_number(*v)),
+            LengthUnit::Em(v) => write!(f, "{}em", format_css_number(*v)),
+            LengthUnit::Rem(v) => write!(f, "{}rem", format_css_number(*v)),
+            LengthUnit::Percent(v) => write!(f, "{}%", format_css_number(*v)),
+            LengthUnit::Vw(v) => write!(f, "{}vw", format_css_number(*v)),
+            LengthUnit::Vh(v) => write!(f, "{}vh", format_css_number(*v)),
+            LengthUnit::Vmin(v) => write!(f, "{}vmin", format_css_number(*v)),
+            LengthUnit::Vmax(v) => write!(f, "{}vmax", format_css_number(*v)),
+            LengthUnit::Ch(v) => write!(f, "{}ch", format_css_number(*v)),
+            LengthUnit::Ex(v) => write!(f, "{}ex", format_css_number(*v)),
+            LengthUnit::Dvw(v) => write!(f, "{}dvw", format_css_number(*v)),
+            LengthUnit::Dvh(v) => write!(f, "{}dvh", format_css_number(*v)),
+            LengthUnit::Svw(v) => write!(f, "{}svw", format_css_number(*v)),
+            LengthUnit::Svh(v) => write!(f, "{}svh", format_css_number(*v)),
+            LengthUnit::Lvw(v) => write!(f, "{}lvw", format_css_number(*v)),
+            LengthUnit::Lvh(v) => write!(f, "{}lvh", format_css_number(*v)),
+            LengthUnit::Lh(v) => write!(f, "{}lh", format_css_number(*v)),
+            LengthUnit::Rlh(v) => write!(f, "{}rlh", format_css_number(*v)),
+            LengthUnit::Cqw(v) => write!(f, "{}cqw", format_css_number(*v)),
+            LengthUnit::Cqh(v) => write!(f, "{}cqh", format_css_number(*v)),
+            LengthUnit::Cqi(v) => write!(f, "{}cqi", format_css_number(*v)),
+            LengthUnit::Cqb(v) => write!(f, "{}cqb", format_css_number(*v)),
+            LengthUnit::Cqmin(v) => write!(f, "{}cqmin", format_css_number(*v)),
+            LengthUnit::Cqmax(v) => write!(f, "{}cqmax", format_css_number(*v)),
+        }
+    }
+}
+
 /// CSS math expression — `calc()`, `min()`, `max()`, `clamp()`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CssMathExpr {
@@ -580,14 +633,20 @@ impl CssMathExpr {
                     a.resolve(base_px, vw, vh) / divisor
                 }
             }
-            CssMathExpr::Min(exprs) => exprs
-                .iter()
-                .map(|e| e.resolve(base_px, vw, vh))
-                .fold(f32::INFINITY, f32::min),
-            CssMathExpr::Max(exprs) => exprs
-                .iter()
-                .map(|e| e.resolve(base_px, vw, vh))
-                .fold(f32::NEG_INFINITY, f32::max),
+            CssMathExpr::Min(exprs) => {
+                let mut values = exprs.iter().map(|expr| expr.resolve(base_px, vw, vh));
+                values
+                    .next()
+                    .map(|first| values.fold(first, f32::min))
+                    .unwrap_or(0.0)
+            }
+            CssMathExpr::Max(exprs) => {
+                let mut values = exprs.iter().map(|expr| expr.resolve(base_px, vw, vh));
+                values
+                    .next()
+                    .map(|first| values.fold(first, f32::max))
+                    .unwrap_or(0.0)
+            }
             CssMathExpr::Clamp {
                 min,
                 preferred,
@@ -600,9 +659,207 @@ impl CssMathExpr {
             }
         }
     }
+
+    fn precedence(&self) -> u8 {
+        match self {
+            CssMathExpr::Add(_, _) | CssMathExpr::Sub(_, _) => 1,
+            CssMathExpr::Mul(_, _) | CssMathExpr::Div(_, _) => 2,
+            _ => 3,
+        }
+    }
+
+    fn is_top_level_function(&self) -> bool {
+        matches!(
+            self,
+            CssMathExpr::Min(_) | CssMathExpr::Max(_) | CssMathExpr::Clamp { .. }
+        )
+    }
+
+    fn fmt_with_precedence(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        parent_precedence: u8,
+        wrap_same_precedence: bool,
+    ) -> fmt::Result {
+        let precedence = self.precedence();
+        let needs_parens = precedence < parent_precedence
+            || (wrap_same_precedence && precedence == parent_precedence);
+
+        if needs_parens {
+            write!(f, "(")?;
+        }
+
+        match self {
+            CssMathExpr::Value(unit) => write!(f, "{}", unit)?,
+            CssMathExpr::Number(value) => write!(f, "{}", format_css_number(*value))?,
+            CssMathExpr::Add(left, right) => {
+                left.fmt_with_precedence(f, precedence, false)?;
+                write!(f, " + ")?;
+                right.fmt_with_precedence(f, precedence, false)?;
+            }
+            CssMathExpr::Sub(left, right) => {
+                left.fmt_with_precedence(f, precedence, false)?;
+                write!(f, " - ")?;
+                right.fmt_with_precedence(f, precedence, true)?;
+            }
+            CssMathExpr::Mul(left, right) => {
+                left.fmt_with_precedence(f, precedence, false)?;
+                write!(f, " * ")?;
+                right.fmt_with_precedence(f, precedence, false)?;
+            }
+            CssMathExpr::Div(left, right) => {
+                left.fmt_with_precedence(f, precedence, false)?;
+                write!(f, " / ")?;
+                right.fmt_with_precedence(f, precedence, true)?;
+            }
+            CssMathExpr::Min(exprs) => {
+                write!(f, "min(")?;
+                for (index, expr) in exprs.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    expr.fmt_with_precedence(f, 0, false)?;
+                }
+                write!(f, ")")?;
+            }
+            CssMathExpr::Max(exprs) => {
+                write!(f, "max(")?;
+                for (index, expr) in exprs.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    expr.fmt_with_precedence(f, 0, false)?;
+                }
+                write!(f, ")")?;
+            }
+            CssMathExpr::Clamp {
+                min,
+                preferred,
+                max,
+            } => {
+                write!(f, "clamp(")?;
+                min.fmt_with_precedence(f, 0, false)?;
+                write!(f, ", ")?;
+                preferred.fmt_with_precedence(f, 0, false)?;
+                write!(f, ", ")?;
+                max.fmt_with_precedence(f, 0, false)?;
+                write!(f, ")")?;
+            }
+        }
+
+        if needs_parens {
+            write!(f, ")")?;
+        }
+
+        Ok(())
+    }
 }
 
-/// CSS gradient
+impl fmt::Display for CssMathExpr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_with_precedence(f, 0, false)
+    }
+}
+
+/// CSS gradient stop position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum GradientStopPosition {
+    Length(LengthUnit),
+    Angle(f32),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum HorizontalGradientSide {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum VerticalGradientSide {
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum GradientPositionComponent<S> {
+    Center,
+    Value(LengthUnit),
+    Side { side: S, offset: Option<LengthUnit> },
+}
+
+impl<S> GradientPositionComponent<S> {
+    fn is_center(&self) -> bool {
+        matches!(self, GradientPositionComponent::Center)
+    }
+}
+
+pub type GradientPositionX = GradientPositionComponent<HorizontalGradientSide>;
+pub type GradientPositionY = GradientPositionComponent<VerticalGradientSide>;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GradientPosition {
+    pub x: GradientPositionX,
+    pub y: GradientPositionY,
+}
+
+impl GradientPosition {
+    pub fn center() -> Self {
+        Self {
+            x: GradientPositionComponent::Center,
+            y: GradientPositionComponent::Center,
+        }
+    }
+
+    fn is_center(&self) -> bool {
+        self.x.is_center() && self.y.is_center()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RadialGradientExtent {
+    ClosestSide,
+    FarthestSide,
+    ClosestCorner,
+    FarthestCorner,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RadialGradientShape {
+    Circle {
+        radius: Option<LengthUnit>,
+        extent: Option<RadialGradientExtent>,
+    },
+    Ellipse {
+        radius_x: Option<LengthUnit>,
+        radius_y: Option<LengthUnit>,
+        extent: Option<RadialGradientExtent>,
+    },
+}
+
+impl Default for RadialGradientShape {
+    fn default() -> Self {
+        Self::Ellipse {
+            radius_x: None,
+            radius_y: None,
+            extent: Some(RadialGradientExtent::FarthestCorner),
+        }
+    }
+}
+
+impl RadialGradientShape {
+    fn is_default(&self) -> bool {
+        matches!(
+            self,
+            RadialGradientShape::Ellipse {
+                radius_x: None,
+                radius_y: None,
+                extent: None | Some(RadialGradientExtent::FarthestCorner),
+            }
+        )
+    }
+}
+
+/// CSS gradient.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Gradient {
     Linear {
@@ -610,12 +867,13 @@ pub enum Gradient {
         stops: Vec<ColorStop>,
     },
     Radial {
+        shape: RadialGradientShape,
+        position: GradientPosition,
         stops: Vec<ColorStop>,
     },
     Conic {
         from_angle: f32,
-        at_x: f32,
-        at_y: f32,
+        position: GradientPosition,
         stops: Vec<ColorStop>,
     },
     RepeatingLinear {
@@ -623,12 +881,13 @@ pub enum Gradient {
         stops: Vec<ColorStop>,
     },
     RepeatingRadial {
+        shape: RadialGradientShape,
+        position: GradientPosition,
         stops: Vec<ColorStop>,
     },
     RepeatingConic {
         from_angle: f32,
-        at_x: f32,
-        at_y: f32,
+        position: GradientPosition,
         stops: Vec<ColorStop>,
     },
 }
@@ -636,7 +895,7 @@ pub enum Gradient {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ColorStop {
     pub color: Color,
-    pub position: Option<f32>, // 0.0 - 1.0
+    pub position: Option<GradientStopPosition>,
 }
 
 /// Border style
@@ -786,33 +1045,360 @@ impl PropertyValue {
             _ => None,
         }
     }
+
+    pub fn to_css_string(&self) -> String {
+        match self {
+            PropertyValue::Color(color) => color.to_string(),
+            PropertyValue::Length(length) => length.to_string(),
+            PropertyValue::Number(number) => format_css_number(*number),
+            PropertyValue::String(value) => format!("\"{}\"", escape_css_string(value)),
+            PropertyValue::Gradient(gradient) => gradient.to_string(),
+            PropertyValue::BoxShadow(shadows) => shadows
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            PropertyValue::BorderStyle(style) => style.to_string(),
+            PropertyValue::Keyword(keyword) => keyword.clone(),
+            PropertyValue::MathExpr(expr) => {
+                if expr.is_top_level_function() {
+                    expr.to_string()
+                } else {
+                    format!("calc({})", expr)
+                }
+            }
+            PropertyValue::Env(name) => format!("env({})", name),
+            PropertyValue::Url(url) => format!("url({})", url),
+            PropertyValue::List(items) => items
+                .iter()
+                .map(PropertyValue::to_css_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            PropertyValue::TimingFunction(function) => function.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for GradientStopPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GradientStopPosition::Length(length) => write!(f, "{}", length),
+            GradientStopPosition::Angle(angle) => {
+                write!(f, "{}deg", format_css_number(angle.rem_euclid(360.0)))
+            }
+        }
+    }
+}
+
+impl fmt::Display for HorizontalGradientSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HorizontalGradientSide::Left => write!(f, "left"),
+            HorizontalGradientSide::Right => write!(f, "right"),
+        }
+    }
+}
+
+impl fmt::Display for VerticalGradientSide {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VerticalGradientSide::Top => write!(f, "top"),
+            VerticalGradientSide::Bottom => write!(f, "bottom"),
+        }
+    }
+}
+
+impl<S: fmt::Display> fmt::Display for GradientPositionComponent<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GradientPositionComponent::Center => write!(f, "center"),
+            GradientPositionComponent::Value(value) => write!(f, "{}", value),
+            GradientPositionComponent::Side { side, offset } => {
+                write!(f, "{}", side)?;
+                if let Some(offset) = offset {
+                    write!(f, " {}", offset)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl fmt::Display for GradientPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_center() {
+            write!(f, "center")
+        } else {
+            write!(f, "{} {}", self.x, self.y)
+        }
+    }
+}
+
+impl fmt::Display for RadialGradientExtent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RadialGradientExtent::ClosestSide => write!(f, "closest-side"),
+            RadialGradientExtent::FarthestSide => write!(f, "farthest-side"),
+            RadialGradientExtent::ClosestCorner => write!(f, "closest-corner"),
+            RadialGradientExtent::FarthestCorner => write!(f, "farthest-corner"),
+        }
+    }
+}
+
+impl fmt::Display for RadialGradientShape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RadialGradientShape::Circle {
+                radius: Some(radius),
+                ..
+            } => write!(f, "circle {}", radius),
+            RadialGradientShape::Circle { extent, .. } => {
+                write!(f, "circle")?;
+                if let Some(extent) = extent {
+                    if *extent != RadialGradientExtent::FarthestCorner {
+                        write!(f, " {}", extent)?;
+                    }
+                }
+                Ok(())
+            }
+            RadialGradientShape::Ellipse {
+                radius_x: Some(radius_x),
+                radius_y: Some(radius_y),
+                ..
+            } => write!(f, "ellipse {} {}", radius_x, radius_y),
+            RadialGradientShape::Ellipse { extent, .. } => {
+                write!(f, "ellipse")?;
+                if let Some(extent) = extent {
+                    if *extent != RadialGradientExtent::FarthestCorner {
+                        write!(f, " {}", extent)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl fmt::Display for ColorStop {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.color)?;
+        if let Some(position) = &self.position {
+            write!(f, " {}", position)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Gradient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let write_stops = |f: &mut fmt::Formatter<'_>, stops: &[ColorStop]| -> fmt::Result {
+            for (index, stop) in stops.iter().enumerate() {
+                if index > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", stop)?;
+            }
+            Ok(())
+        };
+
+        match self {
+            Gradient::Linear { angle, stops } => {
+                write!(f, "linear-gradient(")?;
+                let angle = angle.rem_euclid(360.0);
+                if angle != 180.0 {
+                    write!(f, "{}deg", format_css_number(angle))?;
+                    if !stops.is_empty() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write_stops(f, stops)?;
+                write!(f, ")")
+            }
+            Gradient::RepeatingLinear { angle, stops } => {
+                write!(f, "repeating-linear-gradient(")?;
+                let angle = angle.rem_euclid(360.0);
+                if angle != 180.0 {
+                    write!(f, "{}deg", format_css_number(angle))?;
+                    if !stops.is_empty() {
+                        write!(f, ", ")?;
+                    }
+                }
+                write_stops(f, stops)?;
+                write!(f, ")")
+            }
+            Gradient::Radial {
+                shape,
+                position,
+                stops,
+            } => {
+                write!(f, "radial-gradient(")?;
+                let mut wrote_prelude = false;
+                if !shape.is_default() {
+                    write!(f, "{}", shape)?;
+                    wrote_prelude = true;
+                }
+                if !position.is_center() {
+                    if wrote_prelude {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "at {}", position)?;
+                    wrote_prelude = true;
+                }
+                if wrote_prelude && !stops.is_empty() {
+                    write!(f, ", ")?;
+                }
+                write_stops(f, stops)?;
+                write!(f, ")")
+            }
+            Gradient::RepeatingRadial {
+                shape,
+                position,
+                stops,
+            } => {
+                write!(f, "repeating-radial-gradient(")?;
+                let mut wrote_prelude = false;
+                if !shape.is_default() {
+                    write!(f, "{}", shape)?;
+                    wrote_prelude = true;
+                }
+                if !position.is_center() {
+                    if wrote_prelude {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "at {}", position)?;
+                    wrote_prelude = true;
+                }
+                if wrote_prelude && !stops.is_empty() {
+                    write!(f, ", ")?;
+                }
+                write_stops(f, stops)?;
+                write!(f, ")")
+            }
+            Gradient::Conic {
+                from_angle,
+                position,
+                stops,
+            } => {
+                write!(f, "conic-gradient(")?;
+                let mut wrote_prelude = false;
+                let angle = from_angle.rem_euclid(360.0);
+                if angle != 0.0 {
+                    write!(f, "from {}deg", format_css_number(angle))?;
+                    wrote_prelude = true;
+                }
+                if !position.is_center() {
+                    if wrote_prelude {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "at {}", position)?;
+                    wrote_prelude = true;
+                }
+                if wrote_prelude && !stops.is_empty() {
+                    write!(f, ", ")?;
+                }
+                write_stops(f, stops)?;
+                write!(f, ")")
+            }
+            Gradient::RepeatingConic {
+                from_angle,
+                position,
+                stops,
+            } => {
+                write!(f, "repeating-conic-gradient(")?;
+                let mut wrote_prelude = false;
+                let angle = from_angle.rem_euclid(360.0);
+                if angle != 0.0 {
+                    write!(f, "from {}deg", format_css_number(angle))?;
+                    wrote_prelude = true;
+                }
+                if !position.is_center() {
+                    if wrote_prelude {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "at {}", position)?;
+                    wrote_prelude = true;
+                }
+                if wrote_prelude && !stops.is_empty() {
+                    write!(f, ", ")?;
+                }
+                write_stops(f, stops)?;
+                write!(f, ")")
+            }
+        }
+    }
+}
+
+impl fmt::Display for BorderStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BorderStyle::None => write!(f, "none"),
+            BorderStyle::Solid => write!(f, "solid"),
+            BorderStyle::Dashed => write!(f, "dashed"),
+            BorderStyle::Dotted => write!(f, "dotted"),
+            BorderStyle::Double => write!(f, "double"),
+            BorderStyle::Groove => write!(f, "groove"),
+            BorderStyle::Ridge => write!(f, "ridge"),
+            BorderStyle::Inset => write!(f, "inset"),
+            BorderStyle::Outset => write!(f, "outset"),
+            BorderStyle::Hidden => write!(f, "hidden"),
+        }
+    }
+}
+
+impl fmt::Display for BoxShadow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.inset {
+            write!(f, "inset ")?;
+        }
+        write!(
+            f,
+            "{}px {}px {}px {}px {}",
+            format_css_number(self.offset_x),
+            format_css_number(self.offset_y),
+            format_css_number(self.blur_radius),
+            format_css_number(self.spread_radius),
+            self.color
+        )
+    }
+}
+
+impl fmt::Display for StepPosition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StepPosition::JumpStart => write!(f, "jump-start"),
+            StepPosition::JumpEnd => write!(f, "jump-end"),
+            StepPosition::JumpNone => write!(f, "jump-none"),
+            StepPosition::JumpBoth => write!(f, "jump-both"),
+        }
+    }
+}
+
+impl fmt::Display for TimingFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TimingFunction::Linear => write!(f, "linear"),
+            TimingFunction::Ease => write!(f, "ease"),
+            TimingFunction::EaseIn => write!(f, "ease-in"),
+            TimingFunction::EaseOut => write!(f, "ease-out"),
+            TimingFunction::EaseInOut => write!(f, "ease-in-out"),
+            TimingFunction::CubicBezier(x1, y1, x2, y2) => write!(
+                f,
+                "cubic-bezier({}, {}, {}, {})",
+                format_css_number(*x1),
+                format_css_number(*y1),
+                format_css_number(*x2),
+                format_css_number(*y2)
+            ),
+            TimingFunction::Steps(count, position) => {
+                write!(f, "steps({}, {})", count, position)
+            }
+        }
+    }
 }
 
 impl fmt::Display for PropertyValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PropertyValue::Color(c) => write!(f, "{}", c),
-            PropertyValue::Length(l) => write!(f, "{:?}", l),
-            PropertyValue::Number(n) => write!(f, "{}", n),
-            PropertyValue::String(s) => write!(f, "\"{}\"", s),
-            PropertyValue::Gradient(_) => write!(f, "gradient(...)"),
-            PropertyValue::BoxShadow(_) => write!(f, "box-shadow(...)"),
-            PropertyValue::BorderStyle(s) => write!(f, "{:?}", s),
-            PropertyValue::Keyword(k) => write!(f, "{}", k),
-            PropertyValue::MathExpr(_) => write!(f, "calc(...)"),
-            PropertyValue::Env(name) => write!(f, "env({})", name),
-            PropertyValue::Url(url) => write!(f, "url({})", url),
-            PropertyValue::List(items) => {
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", item)?;
-                }
-                Ok(())
-            }
-            PropertyValue::TimingFunction(tf) => write!(f, "{:?}", tf),
-        }
+        f.write_str(&self.to_css_string())
     }
 }
 

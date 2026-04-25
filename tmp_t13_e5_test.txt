@@ -1,0 +1,32 @@
+warning: comparison is useless due to type limits
+   --> crates\liquide-style-engine\src\engine\media.rs:576:32
+    |
+576 |                         return 0_u32 <= n;
+    |                                ^^^^^^^^^^
+    |
+    = note: `#[warn(unused_comparisons)]` on by default
+
+warning: comparison is useless due to type limits
+   --> crates\liquide-style-engine\src\engine\media.rs:592:32
+    |
+592 |                         return 0_u32 <= n;
+    |                                ^^^^^^^^^^
+
+warning: `liquide-style-engine` (lib) generated 2 warnings
+   Compiling liquide-style-engine v0.1.0 (F:\Projects\liquide\crates\liquide-style-engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.87s
+     Running tests\t13_e5_regressions.rs (target\debug\deps\t13_e5_regressions-eb74ce3336edac0a.exe)
+
+running 9 tests
+test pseudo_elements_use_local_custom_properties ... ignored, public pseudo-rule ingestion still depends on selector/stylesheet routing outside this validation target
+test revert_layer_falls_back_across_lower_origins_when_no_lower_layer_exists ... ok
+test transition_property_all_tracks_supported_numeric_changes ... ok
+test transition_duration_defaults_transition_definitions_to_all ... ok
+test all_revert_restores_parent_inherited_values ... ok
+test all_initial_resets_inherited_properties_to_initial_values ... ok
+test restyle_dirty_rebuilds_ancestor_custom_property_scope ... ok
+test invalidate_preserves_inherited_custom_property_scope ... ok
+test shadow_root_custom_property_scope_stays_isolated ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

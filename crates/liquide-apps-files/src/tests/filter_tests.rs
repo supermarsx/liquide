@@ -59,7 +59,11 @@ fn test_filter_by_type() {
     let entries = sample_entries();
     let visible = f.apply(&entries);
     // Should include: main.rs + all directories (dirs pass type filter)
-    let file_names: Vec<&str> = visible.iter().filter(|e| !e.is_dir()).map(|e| e.name.as_str()).collect();
+    let file_names: Vec<&str> = visible
+        .iter()
+        .filter(|e| !e.is_dir())
+        .map(|e| e.name.as_str())
+        .collect();
     assert_eq!(file_names, vec!["main.rs"]);
 }
 
@@ -71,7 +75,11 @@ fn test_filter_by_multiple_types() {
     f.add_type("md");
     let entries = sample_entries();
     let visible = f.apply(&entries);
-    let file_names: Vec<&str> = visible.iter().filter(|e| !e.is_dir()).map(|e| e.name.as_str()).collect();
+    let file_names: Vec<&str> = visible
+        .iter()
+        .filter(|e| !e.is_dir())
+        .map(|e| e.name.as_str())
+        .collect();
     assert!(file_names.contains(&"main.rs"));
     assert!(file_names.contains(&"readme.md"));
 }
@@ -127,6 +135,10 @@ fn test_filter_directories_always_pass_type_filter() {
     f.add_type("rs");
     let entries = sample_entries();
     let visible = f.apply(&entries);
-    let dirs: Vec<&str> = visible.iter().filter(|e| e.is_dir()).map(|e| e.name.as_str()).collect();
+    let dirs: Vec<&str> = visible
+        .iter()
+        .filter(|e| e.is_dir())
+        .map(|e| e.name.as_str())
+        .collect();
     assert_eq!(dirs.len(), 2); // both dirs should pass.
 }

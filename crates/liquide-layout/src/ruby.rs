@@ -124,9 +124,7 @@ pub fn layout_ruby_container(config: &RubyConfig, pairs: &[RubyInput]) -> (Vec<R
         // Center the narrower one within the advance.
         let base_offset_x = (advance - input.base_width) / 2.0;
         let ann_offset_x = match config.align {
-            RubyAlign::Center | RubyAlign::SpaceAround => {
-                (advance - input.annotation_width) / 2.0
-            }
+            RubyAlign::Center | RubyAlign::SpaceAround => (advance - input.annotation_width) / 2.0,
             RubyAlign::Start => 0.0,
             RubyAlign::SpaceBetween => {
                 // If annotation has multiple glyphs this would distribute,
@@ -255,9 +253,7 @@ impl RubyContainerResult {
     /// Returns 0 if the annotation is below.
     pub fn annotation_overhead(&self) -> f32 {
         match self.position {
-            RubyPosition::Over | RubyPosition::InterCharacter => {
-                self.annotation_height + self.gap
-            }
+            RubyPosition::Over | RubyPosition::InterCharacter => self.annotation_height + self.gap,
             RubyPosition::Under => 0.0,
         }
     }

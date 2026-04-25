@@ -2,25 +2,28 @@
 //! tree to native accessibility APIs (AT-SPI on Linux, UI Automation on
 //! Windows, NSAccessibility on macOS).
 
-mod platform;
-pub mod tree;
-pub mod events;
-pub mod text;
 pub mod actions;
-pub mod screen_reader;
+pub mod events;
 pub mod magnifier;
+mod platform;
+pub mod screen_reader;
+pub mod text;
+pub mod tree;
 
+pub use actions::{AccessibleAction, ActionHandler, ActionSet};
+pub use events::{A11yEvent, A11yEventQueue, A11yEventTarget};
+pub use magnifier::{MagnifierConfig, MagnifierLens, MagnifierState, Rect};
 pub use platform::AccessibilityBridge;
-pub use tree::{AccessibleNode as BridgeAccessibleNode, AccessibleRole, AccessibleState, AccessibleTree, Bounds};
-pub use events::{A11yEvent, A11yEventTarget, A11yEventQueue};
-pub use text::{AccessibleText, TextBoundary, TextAttribute, SimpleAccessibleText, get_text_at_offset};
-pub use actions::{AccessibleAction, ActionSet, ActionHandler};
 pub use screen_reader::{
-    ScreenReaderBridge, LoggingScreenReader, LiveRegion, LiveRegionMonitor,
-    NavigationHint, ScreenReaderMode,
-    AnnouncePriority as BridgeAnnouncePriority,
+    AnnouncePriority as BridgeAnnouncePriority, LiveRegion, LiveRegionMonitor, LoggingScreenReader,
+    NavigationHint, ScreenReaderBridge, ScreenReaderMode,
 };
-pub use magnifier::{MagnifierConfig, MagnifierState, MagnifierLens, Rect};
+pub use text::{
+    AccessibleText, SimpleAccessibleText, TextAttribute, TextBoundary, get_text_at_offset,
+};
+pub use tree::{
+    AccessibleNode as BridgeAccessibleNode, AccessibleRole, AccessibleState, AccessibleTree, Bounds,
+};
 
 use liquide_a11y::AccessibilityTree;
 

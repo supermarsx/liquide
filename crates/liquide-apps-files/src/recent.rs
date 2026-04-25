@@ -35,7 +35,13 @@ pub struct RecentEntry {
 impl RecentEntry {
     /// Create a new recent entry with an initial access count of 1.
     #[must_use]
-    pub fn new(uri: String, display_name: String, mime_type: String, timestamp_ms: u64, app_id: String) -> Self {
+    pub fn new(
+        uri: String,
+        display_name: String,
+        mime_type: String,
+        timestamp_ms: u64,
+        app_id: String,
+    ) -> Self {
         Self {
             uri,
             display_name,
@@ -88,7 +94,14 @@ impl RecentStore {
     /// If the URI already exists the access count is incremented and the
     /// timestamp updated.  Otherwise a new entry is appended.  If the store
     /// exceeds `max_entries` the oldest entry is evicted.
-    pub fn add(&mut self, uri: &str, display_name: &str, mime_type: &str, timestamp_ms: u64, app_id: &str) {
+    pub fn add(
+        &mut self,
+        uri: &str,
+        display_name: &str,
+        mime_type: &str,
+        timestamp_ms: u64,
+        app_id: &str,
+    ) {
         if let Some(existing) = self.entries.iter_mut().find(|e| e.uri == uri) {
             existing.touch(timestamp_ms, app_id);
         } else {

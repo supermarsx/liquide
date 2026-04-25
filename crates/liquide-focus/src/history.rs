@@ -79,12 +79,7 @@ impl ActivationHistory {
     /// Check if `window_id` was activated within the last `within_ms`
     /// milliseconds relative to `now_ms`.
     #[must_use]
-    pub fn was_recently_active(
-        &self,
-        window_id: WindowId,
-        within_ms: u64,
-        now_ms: u64,
-    ) -> bool {
+    pub fn was_recently_active(&self, window_id: WindowId, within_ms: u64, now_ms: u64) -> bool {
         let cutoff = now_ms.saturating_sub(within_ms);
         for i in 0..self.len {
             let idx = if self.head == 0 {

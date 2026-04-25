@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::tiling::{TilingLayoutKind, TilingMode};
 use crate::window::WindowId;
-use crate::{ShellError, Result};
+use crate::{Result, ShellError};
 
 /// Unique workspace identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

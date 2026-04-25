@@ -178,10 +178,7 @@ impl<'a> StatsCollector<'a> {
                     // Accumulate final state duration
                     if let (Some(state), Some(ts)) = (current_state, last_state_ts) {
                         let dur = event.timestamp_us.saturating_sub(ts);
-                        *stats
-                            .time_in_state
-                            .entry(format!("{state}"))
-                            .or_insert(0) += dur;
+                        *stats.time_in_state.entry(format!("{state}")).or_insert(0) += dur;
                     }
                     last_state_ts = None;
                     current_state = None;
@@ -209,10 +206,7 @@ impl<'a> StatsCollector<'a> {
                     // Accumulate duration in the previous state
                     if let Some(ts) = last_state_ts {
                         let dur = event.timestamp_us.saturating_sub(ts);
-                        *stats
-                            .time_in_state
-                            .entry(format!("{from}"))
-                            .or_insert(0) += dur;
+                        *stats.time_in_state.entry(format!("{from}")).or_insert(0) += dur;
                     }
                     current_state = Some(*to);
                     last_state_ts = Some(event.timestamp_us);
@@ -408,7 +402,9 @@ impl<'a> StatsCollector<'a> {
         let mut most_active_app: Option<(String, u64)> = None;
 
         // Collect app_ids from app_history's most_frequent (use a large N)
-        let app_infos = self.app_history.most_frequent(self.app_history.tracked_count());
+        let app_infos = self
+            .app_history
+            .most_frequent(self.app_history.tracked_count());
         for info in &app_infos {
             app_ids.insert(info.app_id.clone());
             if let Some(app_st) = self.app_stats(&info.app_id) {
@@ -488,7 +484,9 @@ impl<'a> StatsCollector<'a> {
     /// Top N apps by total runtime (descending).
     #[must_use]
     pub fn top_apps_by_runtime(&self, n: usize) -> Vec<AppStats> {
-        let app_infos = self.app_history.most_frequent(self.app_history.tracked_count());
+        let app_infos = self
+            .app_history
+            .most_frequent(self.app_history.tracked_count());
         let mut all: Vec<AppStats> = app_infos
             .iter()
             .filter_map(|info| self.app_stats(&info.app_id))
@@ -503,10 +501,7 @@ impl<'a> StatsCollector<'a> {
     pub fn idle_windows(&self, threshold_us: u64) -> Vec<WindowId> {
         self.all_window_stats()
             .into_iter()
-            .filter(|s| {
-                s.focus_time_us == 0
-                    && s.runtime_us.is_some_and(|rt| rt > threshold_us)
-            })
+            .filter(|s| s.focus_time_us == 0 && s.runtime_us.is_some_and(|rt| rt > threshold_us))
             .map(|s| s.window_id)
             .collect()
     }

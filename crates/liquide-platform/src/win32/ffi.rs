@@ -690,7 +690,12 @@ unsafe extern "system" {
     pub fn GetWindowRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
     pub fn GetClientRect(hWnd: HWND, lpRect: *mut RECT) -> BOOL;
 
-    pub fn SetTimer(hWnd: HWND, nIDEvent: UINT_PTR, uElapse: UINT, lpTimerFunc: *const c_void) -> UINT_PTR;
+    pub fn SetTimer(
+        hWnd: HWND,
+        nIDEvent: UINT_PTR,
+        uElapse: UINT,
+        lpTimerFunc: *const c_void,
+    ) -> UINT_PTR;
     pub fn KillTimer(hWnd: HWND, uIDEvent: UINT_PTR) -> BOOL;
 
     pub fn GetSystemMetrics(nIndex: i32) -> i32;

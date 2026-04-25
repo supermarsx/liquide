@@ -5,7 +5,7 @@
 //! can be flagged as secure (for lock screens, UAC prompts) which prevents
 //! input from reaching other desktops.
 
-use crate::heap::{DesktopHeap, DEFAULT_INTERACTIVE_HEAP_BUDGET};
+use crate::heap::{DEFAULT_INTERACTIVE_HEAP_BUDGET, DesktopHeap};
 use crate::security::DesktopFlags;
 use crate::types::{DesktopId, WindowId, WindowStationId};
 
@@ -58,7 +58,13 @@ impl Desktop {
         station_id: WindowStationId,
         root_window: WindowId,
     ) -> Self {
-        Self::new(id, name, station_id, root_window, DEFAULT_INTERACTIVE_HEAP_BUDGET)
+        Self::new(
+            id,
+            name,
+            station_id,
+            root_window,
+            DEFAULT_INTERACTIVE_HEAP_BUDGET,
+        )
     }
 
     /// Returns `true` if this desktop is currently active (visible).

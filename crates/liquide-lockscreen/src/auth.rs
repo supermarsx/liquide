@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 
 /// Credentials submitted by the user
@@ -668,7 +669,10 @@ mod tests {
         let f1 = AuthResult::Failed("a".into());
         let f2 = AuthResult::Failed("a".into());
         assert_eq!(f1, f2);
-        assert_ne!(AuthResult::Failed("a".into()), AuthResult::Failed("b".into()));
+        assert_ne!(
+            AuthResult::Failed("a".into()),
+            AuthResult::Failed("b".into())
+        );
         assert_eq!(AuthResult::Locked(100), AuthResult::Locked(100));
         assert_ne!(AuthResult::Locked(100), AuthResult::Locked(200));
     }

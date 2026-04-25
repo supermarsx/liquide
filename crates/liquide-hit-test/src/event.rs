@@ -54,17 +54,17 @@ impl DomEvent {
             default_prevented: false,
         }
     }
-    
+
     /// Stop event propagation.
     pub fn stop_propagation(&mut self) {
         self.propagation = Propagation::StopPropagation;
     }
-    
+
     /// Stop immediate propagation (including other handlers on same target).
     pub fn stop_immediate_propagation(&mut self) {
         self.propagation = Propagation::StopImmediate;
     }
-    
+
     /// Prevent the default action if the event is cancelable.
     pub fn prevent_default(&mut self) {
         if self.cancelable {
@@ -245,7 +245,7 @@ impl DomEventKind {
             _ => true,
         }
     }
-    
+
     /// Whether this event can be cancelled with preventDefault.
     pub fn cancelable(&self) -> bool {
         match self {

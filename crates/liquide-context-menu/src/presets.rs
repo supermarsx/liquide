@@ -62,21 +62,9 @@ pub fn desktop_menu() -> Vec<MenuItem> {
             "preferences-system",
             ACTION_DISPLAY_SETTINGS,
         ),
-        MenuItem::action_with_icon(
-            "Change Wallpaper",
-            "camera",
-            ACTION_CHANGE_WALLPAPER,
-        ),
-        MenuItem::action_with_icon(
-            "Open Terminal Here",
-            "terminal",
-            ACTION_OPEN_TERMINAL_HERE,
-        ),
-        MenuItem::action_with_icon(
-            "Open File Manager",
-            "folder",
-            ACTION_OPEN_FILE_MANAGER,
-        ),
+        MenuItem::action_with_icon("Change Wallpaper", "camera", ACTION_CHANGE_WALLPAPER),
+        MenuItem::action_with_icon("Open Terminal Here", "terminal", ACTION_OPEN_TERMINAL_HERE),
+        MenuItem::action_with_icon("Open File Manager", "folder", ACTION_OPEN_FILE_MANAGER),
         MenuItem::action("Refresh Desktop", ACTION_REFRESH_DESKTOP),
     ]
 }
@@ -84,21 +72,15 @@ pub fn desktop_menu() -> Vec<MenuItem> {
 /// Window title bar right-click context menu.
 pub fn window_menu() -> Vec<MenuItem> {
     vec![
-        MenuItem::action("Minimize", ACTION_MINIMIZE_WINDOW)
-            .with_shortcut("Super+H"),
-        MenuItem::action("Maximize", ACTION_MAXIMIZE_WINDOW)
-            .with_shortcut("Super+Up"),
+        MenuItem::action("Minimize", ACTION_MINIMIZE_WINDOW).with_shortcut("Super+H"),
+        MenuItem::action("Maximize", ACTION_MAXIMIZE_WINDOW).with_shortcut("Super+Up"),
         MenuItem::action("Restore", ACTION_RESTORE_WINDOW),
-        MenuItem::action("Tile Left", ACTION_TILE_LEFT)
-            .with_shortcut("Super+Left"),
-        MenuItem::action("Tile Right", ACTION_TILE_RIGHT)
-            .with_shortcut("Super+Right"),
-        MenuItem::action("Fullscreen", ACTION_FULLSCREEN_TOGGLE)
-            .with_shortcut("F11"),
+        MenuItem::action("Tile Left", ACTION_TILE_LEFT).with_shortcut("Super+Left"),
+        MenuItem::action("Tile Right", ACTION_TILE_RIGHT).with_shortcut("Super+Right"),
+        MenuItem::action("Fullscreen", ACTION_FULLSCREEN_TOGGLE).with_shortcut("F11"),
         MenuItem::action("Always on Top", ACTION_ALWAYS_ON_TOP),
         MenuItem::action("Move to Workspace…", ACTION_MOVE_TO_WORKSPACE),
-        MenuItem::action("Close", ACTION_CLOSE_WINDOW)
-            .with_shortcut("Alt+F4"),
+        MenuItem::action("Close", ACTION_CLOSE_WINDOW).with_shortcut("Alt+F4"),
     ]
 }
 
@@ -189,39 +171,30 @@ pub const ACTION_OPEN_WITH_OTHER: MenuAction = MenuAction(523);
 /// Paste, New Folder, Open Terminal, Settings.
 pub fn desktop_context_menu() -> Vec<MenuItem> {
     vec![
-        MenuItem::action_with_icon(
-            "Change Wallpaper",
-            "camera",
-            ACTION_CHANGE_WALLPAPER,
-        ),
+        MenuItem::action_with_icon("Change Wallpaper", "camera", ACTION_CHANGE_WALLPAPER),
         MenuItem::action_with_icon(
             "Display Settings",
             "preferences-system",
             ACTION_DISPLAY_SETTINGS,
         ),
         MenuItem::separator(),
-        MenuItem::submenu("Sort By", vec![
-            MenuItem::radio("Name", ACTION_SORT_BY_NAME, 1, true),
-            MenuItem::radio("Date Modified", ACTION_SORT_BY_DATE, 1, false),
-            MenuItem::radio("Size", ACTION_SORT_BY_SIZE, 1, false),
-            MenuItem::radio("Type", ACTION_SORT_BY_TYPE, 1, false),
-        ]),
+        MenuItem::submenu(
+            "Sort By",
+            vec![
+                MenuItem::radio("Name", ACTION_SORT_BY_NAME, 1, true),
+                MenuItem::radio("Date Modified", ACTION_SORT_BY_DATE, 1, false),
+                MenuItem::radio("Size", ACTION_SORT_BY_SIZE, 1, false),
+                MenuItem::radio("Type", ACTION_SORT_BY_TYPE, 1, false),
+            ],
+        ),
         MenuItem::separator(),
         MenuItem::action_with_icon("Paste", "edit-paste", ACTION_PASTE_ON_DESKTOP)
             .with_shortcut("Ctrl+V"),
         MenuItem::action_with_icon("New Folder", "folder-new", ACTION_NEW_FOLDER)
             .with_shortcut("Ctrl+Shift+N"),
         MenuItem::separator(),
-        MenuItem::action_with_icon(
-            "Open Terminal Here",
-            "terminal",
-            ACTION_OPEN_TERMINAL_HERE,
-        ),
-        MenuItem::action_with_icon(
-            "Settings",
-            "preferences-system",
-            ACTION_OPEN_SETTINGS,
-        ),
+        MenuItem::action_with_icon("Open Terminal Here", "terminal", ACTION_OPEN_TERMINAL_HERE),
+        MenuItem::action_with_icon("Settings", "preferences-system", ACTION_OPEN_SETTINGS),
     ]
 }
 
@@ -238,13 +211,16 @@ pub fn file_context_menu(is_dir: bool, selection_count: u32) -> Vec<MenuItem> {
         "Move to Trash".to_string()
     };
 
-    let mut items = vec![
-        MenuItem::action_with_icon(open_label, "document-open", ACTION_OPEN_FILE),
-    ];
+    let mut items = vec![MenuItem::action_with_icon(
+        open_label,
+        "document-open",
+        ACTION_OPEN_FILE,
+    )];
 
     if !is_dir {
-        items.push(
-            MenuItem::submenu("Open With", vec![
+        items.push(MenuItem::submenu(
+            "Open With",
+            vec![
                 MenuItem::action_with_icon(
                     "Text Editor",
                     "text-editor",
@@ -255,23 +231,17 @@ pub fn file_context_menu(is_dir: bool, selection_count: u32) -> Vec<MenuItem> {
                     "image-viewer",
                     ACTION_OPEN_WITH_IMAGE_VIEWER,
                 ),
-                MenuItem::action_with_icon(
-                    "Web Browser",
-                    "web-browser",
-                    ACTION_OPEN_WITH_BROWSER,
-                ),
+                MenuItem::action_with_icon("Web Browser", "web-browser", ACTION_OPEN_WITH_BROWSER),
                 MenuItem::separator(),
                 MenuItem::action("Other Application...", ACTION_OPEN_WITH_OTHER),
-            ]),
-        );
+            ],
+        ));
     }
 
     items.extend([
         MenuItem::separator(),
-        MenuItem::action_with_icon("Cut", "edit-cut", ACTION_CUT_FILE)
-            .with_shortcut("Ctrl+X"),
-        MenuItem::action_with_icon("Copy", "edit-copy", ACTION_COPY_FILE)
-            .with_shortcut("Ctrl+C"),
+        MenuItem::action_with_icon("Cut", "edit-cut", ACTION_CUT_FILE).with_shortcut("Ctrl+X"),
+        MenuItem::action_with_icon("Copy", "edit-copy", ACTION_COPY_FILE).with_shortcut("Ctrl+C"),
         MenuItem::action_with_icon("Paste", "edit-paste", ACTION_PASTE_FILE)
             .with_shortcut("Ctrl+V"),
         MenuItem::separator(),
@@ -285,13 +255,11 @@ pub fn file_context_menu(is_dir: bool, selection_count: u32) -> Vec<MenuItem> {
     ]);
 
     if is_dir {
-        items.push(
-            MenuItem::action_with_icon(
-                "Open in Terminal",
-                "terminal",
-                ACTION_OPEN_IN_TERMINAL,
-            ),
-        );
+        items.push(MenuItem::action_with_icon(
+            "Open in Terminal",
+            "terminal",
+            ACTION_OPEN_IN_TERMINAL,
+        ));
     }
 
     items.push(MenuItem::separator());
@@ -313,12 +281,10 @@ pub fn text_context_menu(has_selection: bool, is_editable: bool) -> Vec<MenuItem
 
     if is_editable {
         items.push(
-            MenuItem::action_with_icon("Undo", "edit-undo", ACTION_UNDO)
-                .with_shortcut("Ctrl+Z"),
+            MenuItem::action_with_icon("Undo", "edit-undo", ACTION_UNDO).with_shortcut("Ctrl+Z"),
         );
         items.push(
-            MenuItem::action_with_icon("Redo", "edit-redo", ACTION_REDO)
-                .with_shortcut("Ctrl+Y"),
+            MenuItem::action_with_icon("Redo", "edit-redo", ACTION_REDO).with_shortcut("Ctrl+Y"),
         );
         items.push(MenuItem::separator());
     }
@@ -353,10 +319,7 @@ pub fn text_context_menu(has_selection: bool, is_editable: bool) -> Vec<MenuItem
     }
 
     items.push(MenuItem::separator());
-    items.push(
-        MenuItem::action("Select All", ACTION_SELECT_ALL)
-            .with_shortcut("Ctrl+A"),
-    );
+    items.push(MenuItem::action("Select All", ACTION_SELECT_ALL).with_shortcut("Ctrl+A"));
 
     items
 }
@@ -375,12 +338,9 @@ pub fn window_titlebar_menu() -> Vec<MenuItem> {
         MenuItem::action("Move", ACTION_MOVE_WINDOW),
         MenuItem::action("Resize", ACTION_RESIZE_WINDOW),
         MenuItem::separator(),
-        MenuItem::action("Tile Left", ACTION_TILE_LEFT)
-            .with_shortcut("Super+Left"),
-        MenuItem::action("Tile Right", ACTION_TILE_RIGHT)
-            .with_shortcut("Super+Right"),
-        MenuItem::action("Fullscreen", ACTION_FULLSCREEN_TOGGLE)
-            .with_shortcut("F11"),
+        MenuItem::action("Tile Left", ACTION_TILE_LEFT).with_shortcut("Super+Left"),
+        MenuItem::action("Tile Right", ACTION_TILE_RIGHT).with_shortcut("Super+Right"),
+        MenuItem::action("Fullscreen", ACTION_FULLSCREEN_TOGGLE).with_shortcut("F11"),
         MenuItem::separator(),
         MenuItem::checkbox("Always on Top", ACTION_ALWAYS_ON_TOP, false),
         MenuItem::separator(),

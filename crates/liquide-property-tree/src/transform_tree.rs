@@ -3,8 +3,8 @@
 //! Each node stores a local transform relative to its parent. World (root-space)
 //! transforms are cached and lazily recomputed when nodes are marked dirty.
 
-use crate::transform::Transform2D;
 use crate::Rect;
+use crate::transform::Transform2D;
 
 /// Unique identifier for a node in a property tree.
 pub type NodeId = u32;
@@ -49,6 +49,34 @@ pub struct TransformTree {
 }
 
 impl TransformTree {
+    fn normalize_parents_and_rebuild_children(&mut self) {
+        let len = self.nodes.len();
+        if self.children.len() < len {
+            self.children.resize_with(len, Vec::new);
+        } else {
+            self.children.truncate(len);
+        }
+        for children in &mut self.children {
+            children.clear();
+        }
+
+        if let Some(root) = self.nodes.get_mut(ROOT_ID as usize) {
+            root.parent = None;
+        }
+
+        for idx in 1..len {
+            let node_id = idx as NodeId;
+            let normalized_parent = match self.nodes[idx].parent {
+                Some(pid) if (pid as usize) < len && pid != node_id => pid,
+                _ => ROOT_ID,
+            };
+            if self.nodes[idx].parent != Some(normalized_parent) {
+                self.nodes[idx].parent = Some(normalized_parent);
+            }
+            self.children[normalized_parent as usize].push(node_id);
+        }
+    }
+
     /// Create a new transform tree with just the root node.
     pub fn new() -> Self {
         let root = TransformNode::default();
@@ -61,9 +89,17 @@ impl TransformTree {
     }
 
     /// Add a new transform node. Returns its `NodeId`.
-    pub fn add(&mut self, parent: Option<NodeId>, local_transform: Transform2D, flattens_inherited: bool) -> NodeId {
+    pub fn add(
+        &mut self,
+        parent: Option<NodeId>,
+        local_transform: Transform2D,
+        flattens_inherited: bool,
+    ) -> NodeId {
         let id = self.nodes.len() as NodeId;
-        let parent_id = parent.unwrap_or(ROOT_ID);
+        let parent_id = match parent.unwrap_or(ROOT_ID) {
+            pid if (pid as usize) < self.nodes.len() => pid,
+            _ => ROOT_ID,
+        };
         self.nodes.push(TransformNode {
             id,
             parent: Some(parent_id),
@@ -87,6 +123,9 @@ impl TransformTree {
 
     /// Get a mutable reference to a node.
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut TransformNode> {
+        if (id as usize) < self.nodes.len() {
+            self.mark_dirty(id);
+        }
         self.nodes.get_mut(id as usize)
     }
 
@@ -120,6 +159,8 @@ impl TransformTree {
 
     /// Recompute world transforms for all dirty nodes (top-down walk).
     pub fn update(&mut self) {
+        self.normalize_parents_and_rebuild_children();
+
         // Process nodes in insertion order (parent always before child).
         let len = self.nodes.len();
         for i in 0..len {
@@ -140,7 +181,10 @@ impl TransformTree {
     ///
     /// Call `update()` first to ensure dirty nodes are recomputed.
     pub fn world_transform(&self, id: NodeId) -> Transform2D {
-        self.world_cache.get(id as usize).copied().unwrap_or_default()
+        self.world_cache
+            .get(id as usize)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Number of nodes (including root).

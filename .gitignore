@@ -22,3 +22,10 @@ test_session.txt
 test_shell.txt
 test_shell2.txt
 review_test_output.txt
+/.tmp
+*.log
+my_check.txt
+tmp_check.txt
+chk.txt
+ci_out.txt
+ci_err.txt

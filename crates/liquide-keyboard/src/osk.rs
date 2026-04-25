@@ -125,7 +125,7 @@ fn standard_rows() -> Vec<Vec<KeyDef>> {
     vec![
         // Row 0: number row (14 keys)
         vec![
-            KeyDef::normal(0x29, "`"),    // grave
+            KeyDef::normal(0x29, "`"), // grave
             KeyDef::normal(0x02, "1"),
             KeyDef::normal(0x03, "2"),
             KeyDef::normal(0x04, "3"),
@@ -159,7 +159,12 @@ fn standard_rows() -> Vec<Vec<KeyDef>> {
         ],
         // Row 2: home row (13 keys)
         vec![
-            KeyDef::wide(0x3A, "Caps", 1.75, OskKeyType::Modifier(ModifierKind::CapsLock)),
+            KeyDef::wide(
+                0x3A,
+                "Caps",
+                1.75,
+                OskKeyType::Modifier(ModifierKind::CapsLock),
+            ),
             KeyDef::normal(0x1E, "A"),
             KeyDef::normal(0x1F, "S"),
             KeyDef::normal(0x20, "D"),
@@ -175,7 +180,12 @@ fn standard_rows() -> Vec<Vec<KeyDef>> {
         ],
         // Row 3: bottom alpha row (12 keys)
         vec![
-            KeyDef::wide(0x2A, "Shift", 2.25, OskKeyType::Modifier(ModifierKind::Shift)),
+            KeyDef::wide(
+                0x2A,
+                "Shift",
+                2.25,
+                OskKeyType::Modifier(ModifierKind::Shift),
+            ),
             KeyDef::normal(0x2C, "Z"),
             KeyDef::normal(0x2D, "X"),
             KeyDef::normal(0x2E, "C"),
@@ -186,17 +196,42 @@ fn standard_rows() -> Vec<Vec<KeyDef>> {
             KeyDef::normal(0x33, ","),
             KeyDef::normal(0x34, "."),
             KeyDef::normal(0x35, "/"),
-            KeyDef::wide(0x36, "Shift", 2.75, OskKeyType::Modifier(ModifierKind::Shift)),
+            KeyDef::wide(
+                0x36,
+                "Shift",
+                2.75,
+                OskKeyType::Modifier(ModifierKind::Shift),
+            ),
         ],
         // Row 4: spacebar row (7 keys)
         vec![
             KeyDef::wide(0x1D, "Ctrl", 1.5, OskKeyType::Modifier(ModifierKind::Ctrl)),
-            KeyDef::wide(0x5B, "Super", 1.0, OskKeyType::Modifier(ModifierKind::Super)),
+            KeyDef::wide(
+                0x5B,
+                "Super",
+                1.0,
+                OskKeyType::Modifier(ModifierKind::Super),
+            ),
             KeyDef::wide(0x38, "Alt", 1.5, OskKeyType::Modifier(ModifierKind::Alt)),
             KeyDef::wide(0x39, " ", 6.0, OskKeyType::Space),
-            KeyDef::wide(0xE038, "AltGr", 1.5, OskKeyType::Modifier(ModifierKind::AltGr)),
-            KeyDef::wide(0x5C, "Super", 1.0, OskKeyType::Modifier(ModifierKind::Super)),
-            KeyDef::wide(0xE01D, "Ctrl", 1.5, OskKeyType::Modifier(ModifierKind::Ctrl)),
+            KeyDef::wide(
+                0xE038,
+                "AltGr",
+                1.5,
+                OskKeyType::Modifier(ModifierKind::AltGr),
+            ),
+            KeyDef::wide(
+                0x5C,
+                "Super",
+                1.0,
+                OskKeyType::Modifier(ModifierKind::Super),
+            ),
+            KeyDef::wide(
+                0xE01D,
+                "Ctrl",
+                1.5,
+                OskKeyType::Modifier(ModifierKind::Ctrl),
+            ),
         ],
     ]
 }
@@ -205,7 +240,12 @@ fn standard_rows() -> Vec<Vec<KeyDef>> {
 ///
 /// For normal keys mapped in the layout, uses the uppercase normal character.
 /// For unmapped or special keys, falls back to the default label.
-fn resolve_label(layout: &KeyboardLayout, scancode: u32, default: &str, key_type: &OskKeyType) -> String {
+fn resolve_label(
+    layout: &KeyboardLayout,
+    scancode: u32,
+    default: &str,
+    key_type: &OskKeyType,
+) -> String {
     match key_type {
         OskKeyType::Normal => {
             if let Some(mapping) = layout.get(scancode) {

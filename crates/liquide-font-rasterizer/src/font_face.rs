@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::database::{FontDatabase, FontFaceId};
@@ -180,7 +180,12 @@ impl FontFaceLoader {
 
                             if path.exists() {
                                 let italic = matches!(face.rule.style, FontFaceStyle::Italic);
-                                match db.load_file(&path, &face.rule.family, face.rule.weight_range.0, italic) {
+                                match db.load_file(
+                                    &path,
+                                    &face.rule.family,
+                                    face.rule.weight_range.0,
+                                    italic,
+                                ) {
                                     Ok(id) => {
                                         face.face_id = Some(id);
                                         face.state = FontLoadState::Loaded;
@@ -194,7 +199,12 @@ impl FontFaceLoader {
                         }
                         FontSource::DataUri(data) => {
                             let italic = matches!(face.rule.style, FontFaceStyle::Italic);
-                            match db.load_bytes(data.clone(), &face.rule.family, face.rule.weight_range.0, italic) {
+                            match db.load_bytes(
+                                data.clone(),
+                                &face.rule.family,
+                                face.rule.weight_range.0,
+                                italic,
+                            ) {
                                 Ok(id) => {
                                     face.face_id = Some(id);
                                     face.state = FontLoadState::Loaded;
@@ -224,7 +234,14 @@ impl FontFaceLoader {
     }
 
     /// Supply font data that was fetched asynchronously (e.g., from a network request).
-    pub fn complete_load(&self, db: &mut FontDatabase, family: &str, weight: u16, italic: bool, data: Vec<u8>) -> Option<FontFaceId> {
+    pub fn complete_load(
+        &self,
+        db: &mut FontDatabase,
+        family: &str,
+        weight: u16,
+        italic: bool,
+        data: Vec<u8>,
+    ) -> Option<FontFaceId> {
         let key = family.to_lowercase();
         let mut loading = liquide_common::sync::lock_or_recover(&self.loading);
         if let Some(faces) = loading.get_mut(&key) {
@@ -268,7 +285,9 @@ impl FontFaceLoader {
                     FontFaceStyle::Italic => italic,
                     FontFaceStyle::Oblique(_, _) => italic,
                 };
-                if !style_match { continue; }
+                if !style_match {
+                    continue;
+                }
 
                 match face.state {
                     FontLoadState::Loaded => {
@@ -277,9 +296,7 @@ impl FontFaceLoader {
                         }
                     }
                     FontLoadState::Loading => {
-                        let elapsed = face.started_at
-                            .map(|t| t.elapsed())
-                            .unwrap_or_default();
+                        let elapsed = face.started_at.map(|t| t.elapsed()).unwrap_or_default();
 
                         let block_period = face.rule.display.block_period();
                         if elapsed < block_period {
@@ -447,7 +464,8 @@ mod tests {
 
     #[test]
     fn test_parse_font_face_src() {
-        let sources = parse_font_face_src(r#"local("Inter"), url("fonts/Inter.woff2") format("woff2")"#);
+        let sources =
+            parse_font_face_src(r#"local("Inter"), url("fonts/Inter.woff2") format("woff2")"#);
         assert_eq!(sources.len(), 2);
         assert!(matches!(&sources[0], FontSource::Local(n) if n == "Inter"));
         assert!(matches!(&sources[1], FontSource::Url(u) if u == "fonts/Inter.woff2"));
@@ -483,7 +501,10 @@ mod tests {
 
     #[test]
     fn test_font_display_fallback_swap_period() {
-        assert_eq!(FontDisplay::Fallback.swap_period(), Some(Duration::from_secs(3)));
+        assert_eq!(
+            FontDisplay::Fallback.swap_period(),
+            Some(Duration::from_secs(3))
+        );
     }
 
     #[test]

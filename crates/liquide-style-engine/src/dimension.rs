@@ -387,12 +387,9 @@ impl Dimension {
             Dimension::Lvh(v) => Some(vp.large_height * v / 100.0),
             Dimension::Ch(v) => Some(font_size * 0.5 * v),
             Dimension::Zero => Some(0.0),
-            Dimension::Calc(expr) => Some(expr.resolve_viewport(
-                parent_px,
-                root_font_size,
-                font_size,
-                vp,
-            )),
+            Dimension::Calc(expr) => {
+                Some(expr.resolve_viewport(parent_px, root_font_size, font_size, vp))
+            }
             Dimension::Auto
             | Dimension::None
             | Dimension::MinContent
@@ -483,6 +480,38 @@ impl Default for EllipticalRadius {
 impl From<f32> for EllipticalRadius {
     fn from(v: f32) -> Self {
         Self { x: v, y: v }
+    }
+}
+
+impl EllipticalRadius {
+    /// Returns true if both axes are zero.
+    pub fn is_zero(&self) -> bool {
+        self.x == 0.0 && self.y == 0.0
+    }
+
+    /// Returns the larger of the two axes as an `f32`.
+    ///
+    /// Useful for consumers that still model corner radii as a single scalar
+    /// (e.g. the legacy compositor scene tuple representation).
+    pub fn max_axis(&self) -> f32 {
+        self.x.max(self.y)
+    }
+}
+
+impl Corners<EllipticalRadius> {
+    /// Project each elliptical corner to a single `f32` (max of the two
+    /// axes) and return the four corners as a flat tuple in
+    /// `(top_left, top_right, bottom_right, bottom_left)` order.
+    ///
+    /// TODO(t9 Phase 2): downstream consumers should migrate to the full
+    /// `Corners<EllipticalRadius>` representation.
+    pub fn as_f32_tuple(&self) -> (f32, f32, f32, f32) {
+        (
+            self.top_left.max_axis(),
+            self.top_right.max_axis(),
+            self.bottom_right.max_axis(),
+            self.bottom_left.max_axis(),
+        )
     }
 }
 
@@ -651,10 +680,7 @@ mod tests {
             large_height: 900.0,
         };
 
-        let expr = CalcExpr::Add(
-            Box::new(CalcExpr::Dvh(50.0)),
-            Box::new(CalcExpr::Px(10.0)),
-        );
+        let expr = CalcExpr::Add(Box::new(CalcExpr::Dvh(50.0)), Box::new(CalcExpr::Px(10.0)));
         // 50% of dynamic_height(700) + 10 = 360
         assert_eq!(expr.resolve_viewport(0.0, 16.0, 16.0, &vp), 360.0);
 

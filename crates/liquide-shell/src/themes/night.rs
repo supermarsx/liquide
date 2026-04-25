@@ -1,17 +1,17 @@
 //! Create the Night OLED-optimized theme CSS (spec-theme-night.md)
 //!
-//! True black backgrounds, restrained glass (10px blur), no noise/specular.
-//! Optimized for OLED displays and bandwidth-constrained connections.
+//! Reworked toward a terminal-inspired desktop: monochrome shell chrome,
+//! sharper borders, monospace typography, and restrained glass surfaces.
 
 pub const CSS: &str = r#"
 /* ═══════════════════════════════════════════════════════
-   LiquiDE Theme: Night — OLED Dark
+   LiquiDE Theme: Night — Terminal Mono
    Preset: night
    Spec: spec-theme-night.md
    ═══════════════════════════════════════════════════════ */
 
 desktop-background {
-    background: rgb(0, 0, 0);
+    background: rgb(10, 10, 10);
     position: fixed;
     top: 0;
     left: 0;
@@ -28,19 +28,20 @@ statusbar {
     left: 0;
     right: 0;
     height: 34;
-    padding-left: 12;
-    padding-right: 12;
+    padding-left: 10;
+    padding-right: 10;
     align-items: center;
     justify-content: space-between;
     z-index: 10;
-    background: linear-gradient(180deg, rgba(8, 8, 12, 0.88), rgba(4, 4, 8, 0.82));
-    border-bottom-color: rgba(255, 255, 255, 0.06);
+    background: rgba(18, 18, 18, 0.84);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
     border-bottom-width: 1;
-    color: rgba(255, 255, 255, 1.0);
+    color: rgba(236, 236, 236, 0.94);
     font-size: 13;
     font-weight: 500;
-    blur-radius: 24;
-    glass-tint: rgba(6, 6, 10, 0.80);
+    font-family: monospace;
+    blur-radius: 18;
+    glass-tint: rgba(16, 16, 16, 0.80);
 }
 
 statusbar-slot {
@@ -49,7 +50,7 @@ statusbar-slot {
     flex-grow: 1;
     flex-shrink: 1;
     flex-basis: 0;
-    gap: 8;
+    gap: 10;
 }
 
 statusbar-slot.left { justify-content: flex-start; }
@@ -59,11 +60,31 @@ statusbar-slot.right { justify-content: flex-end; }
 statusbar-item {
     display: flex;
     align-items: center;
-    padding-left: 4;
-    padding-right: 4;
+    height: 22;
+    padding-left: 6;
+    padding-right: 6;
+    border-radius: 4;
+    color: rgba(214, 214, 214, 0.86);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+statusbar-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(245, 245, 245, 1.0);
+}
+
+statusbar-item#clock {
+    padding-left: 14;
+    padding-right: 14;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.14);
+    border-width: 1;
+    border-radius: 6;
+    color: rgba(245, 245, 245, 1.0);
+    font-weight: 600;
+    letter-spacing: 0.4;
 }
 
 /* ── Logo / brand area ── */
@@ -72,18 +93,22 @@ statusbar-logo {
     display: flex;
     align-items: center;
     gap: 6;
-    padding-left: 6;
+    padding-left: 8;
     padding-right: 10;
     height: 24;
-    border-radius: 7;
-    font-weight: 700;
+    border-radius: 4;
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    font-weight: 600;
     font-size: 13;
-    color: rgba(10, 132, 255, 1.0);
+    letter-spacing: 0.4;
+    color: rgba(245, 245, 245, 0.96);
 }
 
 statusbar-logo:hover {
-    background: rgba(10, 132, 255, 0.15);
-    color: rgba(64, 156, 255, 1.0);
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 1.0);
 }
 
 /* ── Status indicators ── */
@@ -95,19 +120,19 @@ status-indicator {
     padding-left: 8;
     padding-right: 8;
     height: 22;
-    border-radius: 6;
+    border-radius: 4;
     font-size: 12;
-    color: rgba(255, 255, 255, 0.60);
+    color: rgba(182, 182, 182, 0.72);
 }
 
 status-indicator:hover {
     background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.85);
+    color: rgba(230, 230, 230, 0.94);
 }
 
 status-indicator.connected { color: rgb(48, 209, 88); }
 status-indicator.degraded { color: rgb(255, 214, 10); }
-status-indicator.disconnected { color: rgb(142, 142, 147); }
+status-indicator.disconnected { color: rgba(160, 160, 160, 0.74); }
 
 /* ── Notification indicator ── */
 
@@ -119,21 +144,22 @@ notification-indicator {
     height: 22;
     padding-left: 6;
     padding-right: 6;
-    border-radius: 11;
-    font-size: 11;
-    font-weight: 600;
-    color: rgba(100, 210, 255, 0.55);
+    border-radius: 4;
+    color: rgba(170, 170, 170, 0.70);
 }
 
 notification-indicator:hover {
     background: rgba(255, 255, 255, 0.08);
 }
 
-notification-indicator.active { color: rgb(255, 69, 58); }
+notification-indicator.active {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(245, 245, 245, 1.0);
+}
 
 notification-indicator.dnd {
-    background: rgba(255, 149, 0, 0.15);
-    color: rgb(255, 179, 64);
+    background: rgba(255, 180, 84, 0.15);
+    color: rgb(255, 180, 84);
 }
 
 /* ── Session / user button ── */
@@ -145,23 +171,30 @@ session-button {
     padding-left: 8;
     padding-right: 10;
     height: 24;
-    border-radius: 12;
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.08);
+    border-radius: 4;
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.10);
     border-width: 1;
     font-size: 12;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.90);
+    color: rgba(230, 230, 230, 0.90);
 }
 
 session-button:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 status-tray {
-    background: rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    gap: 4;
+    height: 22;
+    padding-left: 6;
+    padding-right: 6;
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+    border-width: 1;
     border-radius: 4;
-    padding: 2;
 }
 
 /* ── Windows ── */
@@ -170,18 +203,18 @@ window {
     position: absolute;
     display: flex;
     flex-direction: column;
-    background: rgba(10, 10, 10, 0.92);
-    border-color: rgba(255, 255, 255, 0.10);
+    background: rgba(13, 13, 13, 0.94);
+    border-color: rgba(255, 255, 255, 0.12);
     border-width: 1;
-    border-radius: 16;
-    box-shadow-color: rgba(0, 0, 0, 0.70);
-    glass-tint: rgba(10, 10, 10, 0.88);
+    border-radius: 8;
+    box-shadow-color: rgba(0, 0, 0, 0.72);
+    glass-tint: rgba(16, 16, 16, 0.88);
     overflow: hidden;
 }
 
 window.focused {
     border-color: rgba(255, 255, 255, 0.18);
-    titlebar-background: rgba(12, 12, 12, 0.98);
+    titlebar-background: rgba(18, 18, 18, 0.98);
 }
 
 window-titlebar {
@@ -190,16 +223,19 @@ window-titlebar {
     height: 36;
     padding-left: 12;
     padding-right: 8;
-    background: rgba(12, 12, 12, 0.98);
-    color: rgba(255, 255, 255, 1.0);
+    background: rgba(18, 18, 18, 0.94);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    border-bottom-width: 1;
+    color: rgba(236, 236, 236, 0.94);
     font-size: 13;
     font-weight: 500;
+    font-family: monospace;
 }
 
 window-title {
     flex-grow: 1;
-    text-align: center;
-    color: rgba(255, 255, 255, 1.0);
+    text-align: left;
+    color: rgba(236, 236, 236, 0.94);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -217,13 +253,17 @@ close-button {
     justify-content: center;
     width: 14;
     height: 14;
-    border-radius: 7;
-    background: rgba(255, 69, 58, 0.70);
-    color: rgba(255, 255, 255, 0.94);
+    border-radius: 3;
+    border-color: rgba(255, 255, 255, 0.18);
+    border-width: 1;
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(210, 210, 210, 0.78);
 }
 
 close-button:hover {
-    background: rgba(255, 69, 58, 0.85);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.30);
+    color: rgba(255, 255, 255, 1.0);
 }
 
 maximize-button {
@@ -232,13 +272,17 @@ maximize-button {
     justify-content: center;
     width: 14;
     height: 14;
-    border-radius: 7;
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.80);
+    border-radius: 3;
+    border-color: rgba(255, 255, 255, 0.18);
+    border-width: 1;
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(210, 210, 210, 0.78);
 }
 
 maximize-button:hover {
-    background: rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.30);
+    color: rgba(255, 255, 255, 1.0);
 }
 
 minimize-button {
@@ -247,18 +291,22 @@ minimize-button {
     justify-content: center;
     width: 14;
     height: 14;
-    border-radius: 7;
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.80);
+    border-radius: 3;
+    border-color: rgba(255, 255, 255, 0.18);
+    border-width: 1;
+    background: rgba(255, 255, 255, 0.02);
+    color: rgba(210, 210, 210, 0.78);
 }
 
 minimize-button:hover {
-    background: rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.30);
+    color: rgba(255, 255, 255, 1.0);
 }
 
 window-content {
     flex-grow: 1;
-    background: rgba(10, 10, 10, 0.95);
+    background: rgba(10, 10, 10, 0.96);
 }
 
 /* ── Dock ── */
@@ -267,19 +315,24 @@ dock {
     display: flex;
     position: fixed;
     bottom: 0;
-    left: 0;
-    right: 0;
+    left: 50%;
     height: 56;
     justify-content: center;
     align-items: center;
-    gap: 4;
-    padding-left: 12;
-    padding-right: 12;
-    background: linear-gradient(0deg, rgba(4, 4, 8, 0.85), rgba(8, 8, 12, 0.78));
-    border-top-color: rgba(255, 255, 255, 0.06);
-    border-top-width: 1;
-    blur-radius: 24;
-    glass-tint: rgba(6, 6, 10, 0.78);
+    gap: 6;
+    padding-left: 6;
+    padding-right: 6;
+    padding-top: 6;
+    padding-bottom: 6;
+    transform: translateX(-50%);
+    background: rgba(20, 20, 20, 0.78);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-top-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    border-radius: 8;
+    blur-radius: 18;
+    glass-tint: rgba(18, 18, 18, 0.76);
+    box-shadow-color: rgba(0, 0, 0, 0.60);
 }
 
 dock-item {
@@ -288,12 +341,22 @@ dock-item {
     justify-content: center;
     width: 44;
     height: 44;
-    border-radius: 12;
-    color: rgba(255, 255, 255, 0.80);
+    border-radius: 5;
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    background: rgba(0, 0, 0, 0.22);
+    color: rgba(224, 224, 224, 0.82);
 }
 
-dock-item.active { color: rgba(255, 255, 255, 1.0); }
-dock-item:hover { background: rgba(255, 255, 255, 0.10); }
+dock-item.active {
+    color: rgba(245, 245, 245, 1.0);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+dock-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    transform: translateY(-2px);
+}
 
 dock-item-icon {
     display: flex;
@@ -308,10 +371,12 @@ dock-item-label {
 
 dock-indicator {
     display: flex;
+    position: absolute;
+    bottom: 4;
     width: 4;
     height: 4;
     border-radius: 2;
-    background: rgba(10, 132, 255, 0.80);
+    background: rgba(245, 245, 245, 0.92);
 }
 
 /* ── Workspace container ── */
@@ -331,7 +396,7 @@ notification-area {
     display: flex;
     flex-direction: column;
     position: fixed;
-    top: 36;
+    top: 44;
     right: 12;
     z-index: 20;
     gap: 8;
@@ -339,54 +404,74 @@ notification-area {
 
 notification {
     display: flex;
-    flex-direction: column;
-    width: 320;
+    flex-direction: row;
+    width: 304;
     padding: 12;
-    border-radius: 12;
-    background: rgba(14, 14, 14, 0.96);
-    blur-radius: 10;
+    border-radius: 6;
+    background: rgba(20, 20, 20, 0.96);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    blur-radius: 14;
+    glass-tint: rgba(20, 20, 20, 0.92);
+    box-shadow-color: rgba(0, 0, 0, 0.55);
+    font-family: monospace;
 }
 
-notification-title {
-    font-weight: 600;
-    font-size: 13;
-    color: rgba(255, 255, 255, 1.0);
-    margin-bottom: 4;
-}
-
-notification-body {
-    font-size: 12;
-    color: rgba(255, 255, 255, 0.70);
+notification.urgency-critical {
+    border-left-width: 2;
+    border-left-color: rgba(255, 105, 97, 0.95);
 }
 
 notification-icon {
     display: flex;
-    width: 32;
-    height: 32;
+    width: 20;
+    height: 20;
     margin-right: 10;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(180, 180, 180, 0.55);
 }
 
 notification-content {
     flex-grow: 1;
 }
 
+notification-title {
+    font-weight: 600;
+    font-size: 12;
+    color: rgba(245, 245, 245, 0.96);
+    margin-bottom: 4;
+}
+
+notification-body {
+    font-size: 12;
+    color: rgba(186, 186, 186, 0.78);
+}
+
 notification-actions {
     display: flex;
     gap: 6;
     margin-top: 8;
+    padding-top: 8;
+    border-top-color: rgba(255, 255, 255, 0.08);
+    border-top-width: 1;
 }
 
 notification-action {
     display: flex;
+    align-items: center;
     padding-left: 8;
     padding-right: 8;
     height: 24;
-    border-radius: 6;
+    border-radius: 4;
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
     font-size: 12;
-    align-items: center;
-    background: rgba(255, 255, 255, 0.08);
-    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(236, 236, 236, 0.90);
+}
+
+notification-action:hover {
+    background: rgba(245, 245, 245, 0.92);
+    color: rgba(10, 10, 10, 1.0);
 }
 
 /* ── Launcher ── */
@@ -401,58 +486,69 @@ launcher-overlay {
     align-items: center;
     justify-content: center;
     z-index: 30;
-    background: rgba(0, 0, 0, 0.60);
+    background: rgba(0, 0, 0, 0.52);
+    blur-radius: 4;
 }
 
 launcher {
     display: flex;
     flex-direction: column;
-    width: 480;
+    width: 560;
     max-height: 600;
-    padding: 16;
-    border-radius: 16;
-    background: rgba(4, 4, 4, 0.98);
-    blur-radius: 20;
+    border-radius: 8;
+    background: rgba(20, 20, 20, 0.96);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+    blur-radius: 18;
+    glass-tint: rgba(20, 20, 20, 0.92);
+    box-shadow-color: rgba(0, 0, 0, 0.72);
+    overflow: hidden;
+    font-family: monospace;
 }
 
 launcher-search {
-    height: 36;
-    padding-left: 12;
-    padding-right: 12;
-    border-radius: 8;
-    background: rgba(255, 255, 255, 0.05);
-    color: rgba(255, 255, 255, 1.0);
+    display: flex;
+    align-items: center;
+    height: 40;
+    padding-left: 14;
+    padding-right: 14;
+    background: rgba(12, 12, 12, 0.94);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    border-bottom-width: 1;
+    color: rgba(245, 245, 245, 0.96);
     font-size: 14;
-    margin-bottom: 8;
+    font-weight: 500;
 }
 
 launcher-results {
     display: flex;
     flex-direction: column;
     gap: 2;
+    padding: 4;
     overflow: hidden;
 }
 
 launcher-item {
     display: flex;
     align-items: center;
-    height: 40;
+    height: 38;
     padding-left: 12;
     padding-right: 12;
-    border-radius: 8;
+    border-radius: 4;
     background: transparent;
-    color: rgba(255, 255, 255, 1.0);
-    font-size: 14;
+    color: rgba(236, 236, 236, 0.92);
+    font-size: 13;
 }
 
-launcher-item:hover { background: rgba(255, 255, 255, 0.06); }
-launcher-item.selected { background: rgba(10, 132, 255, 0.25); }
+launcher-item:hover { background: rgba(255, 255, 255, 0.05); }
+launcher-item.selected { background: rgba(255, 255, 255, 0.08); }
 
 launcher-item-icon {
     display: flex;
-    width: 24;
-    height: 24;
+    width: 18;
+    height: 18;
     margin-right: 10;
+    color: rgba(180, 180, 180, 0.72);
 }
 
 launcher-item-label {
@@ -467,14 +563,17 @@ context-menu {
     position: fixed;
     z-index: 25;
     padding: 4;
-    border-radius: 10;
-    background: rgba(10, 10, 10, 0.95);
-    border-color: rgba(255, 255, 255, 0.08);
+    border-radius: 6;
+    background: rgba(20, 20, 20, 0.97);
+    border-color: rgba(255, 255, 255, 0.10);
     border-width: 1;
-    blur-radius: 10;
+    blur-radius: 14;
+    glass-tint: rgba(20, 20, 20, 0.92);
+    box-shadow-color: rgba(0, 0, 0, 0.68);
     min-width: 180;
     max-height: 480;
     overflow: hidden;
+    font-family: monospace;
 }
 
 session-menu {
@@ -483,14 +582,17 @@ session-menu {
     position: fixed;
     z-index: 25;
     padding: 4;
-    border-radius: 10;
-    background: rgba(10, 10, 10, 0.95);
-    border-color: rgba(255, 255, 255, 0.08);
+    border-radius: 6;
+    background: rgba(20, 20, 20, 0.97);
+    border-color: rgba(255, 255, 255, 0.10);
     border-width: 1;
-    blur-radius: 10;
+    blur-radius: 14;
+    glass-tint: rgba(20, 20, 20, 0.92);
+    box-shadow-color: rgba(0, 0, 0, 0.68);
     min-width: 200;
     max-height: 480;
     overflow: hidden;
+    font-family: monospace;
 }
 
 app-menu {
@@ -499,14 +601,17 @@ app-menu {
     position: fixed;
     z-index: 25;
     padding: 4;
-    border-radius: 10;
-    background: rgba(10, 10, 10, 0.95);
-    border-color: rgba(255, 255, 255, 0.08);
+    border-radius: 6;
+    background: rgba(20, 20, 20, 0.97);
+    border-color: rgba(255, 255, 255, 0.10);
     border-width: 1;
-    blur-radius: 10;
+    blur-radius: 14;
+    glass-tint: rgba(20, 20, 20, 0.92);
+    box-shadow-color: rgba(0, 0, 0, 0.68);
     min-width: 180;
     max-height: 480;
     overflow: hidden;
+    font-family: monospace;
 }
 
 menu-item {
@@ -515,16 +620,20 @@ menu-item {
     height: 28;
     padding-left: 12;
     padding-right: 12;
-    border-radius: 6;
-    color: rgba(255, 255, 255, 1.0);
-    font-size: 13;
+    border-radius: 4;
+    color: rgba(245, 245, 245, 0.95);
+    font-size: 12;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-menu-item:hover { background: rgba(10, 132, 255, 0.25); }
-menu-item.disabled { color: rgba(255, 255, 255, 0.30); }
+menu-item:hover {
+    background: rgba(245, 245, 245, 0.92);
+    color: rgba(10, 10, 10, 1.0);
+}
+
+menu-item.disabled { color: rgba(160, 160, 160, 0.44); }
 
 menu-item-icon {
     display: flex;
@@ -538,31 +647,12 @@ menu-item-label {
 }
 
 menu-item-shortcut {
-    color: rgba(255, 255, 255, 0.40);
+    color: rgba(170, 170, 170, 0.72);
     font-size: 11;
-    margin-left: 12;
 }
 
-/* ── Tooltip ── */
-
-tooltip {
-    position: fixed;
-    z-index: 6000;
-    pointer-events: none;
-    max-width: 300;
-}
-
-tooltip-content {
-    background: rgba(30, 30, 30, 0.95);
-    color: rgba(255, 255, 255, 0.9);
-    padding: 4 8;
-    border-radius: 6;
-    font-size: 12;
-    white-space: nowrap;
-}
-
-tooltip-arrow {
-    display: none;
+menu-item:hover > menu-item-shortcut {
+    color: rgba(10, 10, 10, 0.72);
 }
 
 menu-separator {
@@ -581,27 +671,42 @@ loading-overlay {
     position: fixed;
     top: 0;
     left: 0;
-    right: 0;
-    bottom: 0;
+    width: 100%;
+    height: 100%;
     align-items: center;
     justify-content: center;
     z-index: 50;
-    background: rgba(0, 0, 0, 0.90);
+    background: rgba(0, 0, 0, 0.82);
 }
 
 loading-panel {
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 32;
-    border-radius: 16;
-    background: rgba(14, 14, 14, 0.96);
-    color: rgba(255, 255, 255, 1.0);
+    padding: 28;
+    border-radius: 8;
+    background: rgba(20, 20, 20, 0.96);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    blur-radius: 14;
+    glass-tint: rgba(20, 20, 20, 0.92);
+    color: rgba(245, 245, 245, 0.96);
+    font-family: monospace;
 }
 
-cursor { color: rgba(255, 255, 255, 1.0); }
+cursor { color: rgba(245, 245, 245, 0.96); }
 
-app-settings.sidebar-item { background: rgba(255, 255, 255, 0.06); }
-app-terminal { background: rgb(0, 0, 0); color: rgb(80, 220, 80); }
-app-browser.urlbar { background: rgba(255, 255, 255, 0.08); }
+app-settings.sidebar-item { background: rgba(255, 255, 255, 0.04); }
+
+app-terminal {
+    background: rgb(10, 10, 10);
+    color: rgb(234, 234, 234);
+    font-family: monospace;
+}
+
+app-browser.urlbar {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.08);
+    border-width: 1;
+}
 "#;

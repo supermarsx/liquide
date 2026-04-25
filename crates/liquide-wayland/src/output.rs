@@ -56,10 +56,7 @@ impl OutputTransform {
     pub fn is_transposed(self) -> bool {
         matches!(
             self,
-            Self::Rotate90
-                | Self::Rotate270
-                | Self::FlippedRotate90
-                | Self::FlippedRotate270
+            Self::Rotate90 | Self::Rotate270 | Self::FlippedRotate90 | Self::FlippedRotate270
         )
     }
 
@@ -67,10 +64,7 @@ impl OutputTransform {
     pub fn is_flipped(self) -> bool {
         matches!(
             self,
-            Self::Flipped
-                | Self::FlippedRotate90
-                | Self::FlippedRotate180
-                | Self::FlippedRotate270
+            Self::Flipped | Self::FlippedRotate90 | Self::FlippedRotate180 | Self::FlippedRotate270
         )
     }
 }
@@ -311,12 +305,7 @@ mod tests {
             60000,
             OutputModeFlags::CURRENT | OutputModeFlags::PREFERRED,
         ));
-        output.add_mode(OutputMode::new(
-            2560,
-            1080,
-            75000,
-            OutputModeFlags::empty(),
-        ));
+        output.add_mode(OutputMode::new(2560, 1080, 75000, OutputModeFlags::empty()));
         output
     }
 
@@ -387,12 +376,7 @@ mod tests {
         let mut geo = sample_geometry();
         geo.transform = OutputTransform::Rotate90;
         let mut o = Output::new(ObjectId(5), geo, "DP-1", "Vertical");
-        o.add_mode(OutputMode::new(
-            1920,
-            1080,
-            60000,
-            OutputModeFlags::CURRENT,
-        ));
+        o.add_mode(OutputMode::new(1920, 1080, 60000, OutputModeFlags::CURRENT));
         // Transposed: width=1080, height=1920
         assert_eq!(o.logical_size(), Some((1080, 1920)));
     }
@@ -419,12 +403,7 @@ mod tests {
             transform: OutputTransform::Normal,
         };
         let mut o = Output::new(ObjectId(1), geo, "VIRTUAL-1", "Virtual output");
-        o.add_mode(OutputMode::new(
-            1920,
-            1080,
-            60000,
-            OutputModeFlags::CURRENT,
-        ));
+        o.add_mode(OutputMode::new(1920, 1080, 60000, OutputModeFlags::CURRENT));
         assert!(o.dpi().is_none());
     }
 

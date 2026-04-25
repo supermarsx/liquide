@@ -17,4 +17,6 @@ pub use display_list::{DisplayItem, DisplayList};
 pub use image_cache::{ImageCache, ImageCacheEntry};
 pub use paint_filter::{PaintFilter, PixelBuffer};
 pub use painter::Painter;
-pub use svg_path::{paint_svg_path, parse_svg_path, flatten_path, flatten_path_cached, PathCommand, PathSegment};
+pub use svg_path::{
+    PathCommand, PathSegment, flatten_path, flatten_path_cached, paint_svg_path, parse_svg_path,
+};

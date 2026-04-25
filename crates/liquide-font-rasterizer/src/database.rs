@@ -350,15 +350,21 @@ impl FontDatabase {
 
         for i in 0..num_tables {
             let rec = table_dir_start + i * 16;
-            if rec + 16 > raw_data.len() { break; }
+            if rec + 16 > raw_data.len() {
+                break;
+            }
             if &raw_data[rec..rec + 4] == b"fvar" {
                 fvar_offset = u32::from_be_bytes([
-                    raw_data[rec + 8], raw_data[rec + 9],
-                    raw_data[rec + 10], raw_data[rec + 11],
+                    raw_data[rec + 8],
+                    raw_data[rec + 9],
+                    raw_data[rec + 10],
+                    raw_data[rec + 11],
                 ]) as usize;
                 fvar_length = u32::from_be_bytes([
-                    raw_data[rec + 12], raw_data[rec + 13],
-                    raw_data[rec + 14], raw_data[rec + 15],
+                    raw_data[rec + 12],
+                    raw_data[rec + 13],
+                    raw_data[rec + 14],
+                    raw_data[rec + 15],
                 ]) as usize;
                 break;
             }
@@ -378,21 +384,39 @@ impl FontDatabase {
         //   axesArrayOffset (u16), reserved (u16),
         //   axisCount (u16), axisSize (u16),
         //   instanceCount (u16), instanceSize (u16)
-        if fvar.len() < 16 { return Vec::new(); }
+        if fvar.len() < 16 {
+            return Vec::new();
+        }
         let axes_offset = u16::from_be_bytes([fvar[4], fvar[5]]) as usize;
         let axis_count = u16::from_be_bytes([fvar[8], fvar[9]]) as usize;
         let axis_size = u16::from_be_bytes([fvar[10], fvar[11]]) as usize;
-        if axis_size < 20 { return Vec::new(); }
+        if axis_size < 20 {
+            return Vec::new();
+        }
 
         let mut axes = Vec::with_capacity(axis_count);
         for i in 0..axis_count {
             let off = axes_offset + i * axis_size;
-            if off + 20 > fvar.len() { break; }
+            if off + 20 > fvar.len() {
+                break;
+            }
 
             let tag = [fvar[off], fvar[off + 1], fvar[off + 2], fvar[off + 3]];
-            let min_val = i32::from_be_bytes([fvar[off + 4], fvar[off + 5], fvar[off + 6], fvar[off + 7]]) as f32 / 65536.0;
-            let def_val = i32::from_be_bytes([fvar[off + 8], fvar[off + 9], fvar[off + 10], fvar[off + 11]]) as f32 / 65536.0;
-            let max_val = i32::from_be_bytes([fvar[off + 12], fvar[off + 13], fvar[off + 14], fvar[off + 15]]) as f32 / 65536.0;
+            let min_val =
+                i32::from_be_bytes([fvar[off + 4], fvar[off + 5], fvar[off + 6], fvar[off + 7]])
+                    as f32
+                    / 65536.0;
+            let def_val =
+                i32::from_be_bytes([fvar[off + 8], fvar[off + 9], fvar[off + 10], fvar[off + 11]])
+                    as f32
+                    / 65536.0;
+            let max_val = i32::from_be_bytes([
+                fvar[off + 12],
+                fvar[off + 13],
+                fvar[off + 14],
+                fvar[off + 15],
+            ]) as f32
+                / 65536.0;
             // fvar[off+16..off+18] = flags, fvar[off+18..off+20] = axisNameID
 
             let name = match &tag {
@@ -428,7 +452,9 @@ impl FontDatabase {
     /// Get the variation axes for a font face.
     #[must_use]
     pub fn get_variation_axes(&self, face_id: FontFaceId) -> Option<&[VariationAxis]> {
-        self.faces.get(&face_id).map(|f| f.variation_axes.as_slice())
+        self.faces
+            .get(&face_id)
+            .map(|f| f.variation_axes.as_slice())
     }
 
     /// Resolve a font face by family name and weight (closest match).
@@ -444,9 +470,7 @@ impl FontDatabase {
 
         // Map CSS generic family names to concrete loaded fonts.
         let concrete_families: &[&str] = match key.as_str() {
-            "sans-serif" | "system-ui" | "ui-sans-serif" => {
-                &["inter", "manrope", "noto sans"]
-            }
+            "sans-serif" | "system-ui" | "ui-sans-serif" => &["inter", "manrope", "noto sans"],
             "monospace" | "ui-monospace" => &["jetbrains mono"],
             "serif" | "ui-serif" => &["noto sans"],
             "cursive" | "fantasy" => &["manrope", "inter"],
@@ -800,8 +824,11 @@ mod tests {
     #[test]
     fn test_variation_axis_predicates() {
         let weight = VariationAxis {
-            tag: *b"wght", name: "Weight".into(),
-            min_value: 100.0, default_value: 400.0, max_value: 900.0,
+            tag: *b"wght",
+            name: "Weight".into(),
+            min_value: 100.0,
+            default_value: 400.0,
+            max_value: 900.0,
         };
         assert!(weight.is_weight());
         assert!(!weight.is_width());

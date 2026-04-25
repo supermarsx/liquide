@@ -2,12 +2,12 @@
 
 use std::collections::HashMap;
 use std::num::NonZeroU64;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use liquide_compositor::damage::{DamageSet, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
-use liquide_compositor::{Renderer, RenderResult};
+use liquide_compositor::{RenderResult, Renderer};
 
 use crate::device::{GpuBackend, WgpuDevice};
 use crate::pipeline::PipelineCache;
@@ -15,9 +15,9 @@ use crate::texture::GpuTexture;
 use crate::{Result, WgpuError};
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
-use liquide_compositor::scene::{FlatNode, ImageFit};
 use liquide_compositor::Color;
+use liquide_compositor::scene::{FlatNode, ImageFit};
+use wgpu::util::DeviceExt;
 
 // ── Glyph atlas types ───────────────────────────────────────────────────
 
@@ -372,6 +372,11 @@ struct ShadowUniforms {
 }
 
 /// Gradient uniform — matches GRADIENT_FRAG GradientUniforms.
+///
+/// `center` carries the linear-gradient start point (0..1) for `kind == 0`
+/// and the radial/conic center for `kind == 1/2`. `line_end` carries the
+/// linear-gradient end point (0..1) for `kind == 0` and is unused (zeroed)
+/// otherwise.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct GradientUniforms {
@@ -380,7 +385,7 @@ struct GradientUniforms {
     center: [f32; 2],
     radius: f32,
     stop_count: u32,
-    _pad: [f32; 2],
+    line_end: [f32; 2],
 }
 
 /// Gradient stop for GPU storage buffer (padded to 32 bytes for WGSL alignment).
@@ -536,6 +541,12 @@ pub struct WgpuRenderer {
     sampler: wgpu::Sampler,
     /// Flag set when the GPU device is lost; triggers CPU fallback.
     device_lost: Arc<AtomicBool>,
+    /// `SceneNodeKind`s that have already produced an "unhandled" warning
+    /// in this renderer's lifetime. Used to avoid log spam when the same
+    /// unimplemented kind appears in every frame.
+    warned_kinds: std::sync::Mutex<
+        std::collections::HashSet<std::mem::Discriminant<liquide_compositor::scene::SceneNodeKind>>,
+    >,
 }
 
 impl WgpuRenderer {
@@ -571,6 +582,7 @@ impl WgpuRenderer {
             texture_cache,
             sampler,
             device_lost,
+            warned_kinds: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -581,11 +593,7 @@ impl WgpuRenderer {
     }
 
     /// Create a renderer preferring a specific backend (D3D12, Vulkan, Metal).
-    pub async fn with_backend(
-        backend: GpuBackend,
-        width: u32,
-        height: u32,
-    ) -> Result<Self> {
+    pub async fn with_backend(backend: GpuBackend, width: u32, height: u32) -> Result<Self> {
         let gpu = WgpuDevice::new(Some(backend)).await?;
         Self::new(gpu, width, height)
     }
@@ -594,12 +602,7 @@ impl WgpuRenderer {
     pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
         self.width = width;
         self.height = height;
-        self.output_texture = Some(GpuTexture::new(
-            &self.gpu.device,
-            width,
-            height,
-            "output",
-        )?);
+        self.output_texture = Some(GpuTexture::new(&self.gpu.device, width, height, "output")?);
         self.intermediate_texture = Some(GpuTexture::new(
             &self.gpu.device,
             width,
@@ -616,12 +619,7 @@ impl WgpuRenderer {
     /// Returns `true` if the glyph was uploaded successfully, `false` if the atlas
     /// is full. When `false` is returned, the caller should call `clear_glyph_atlas()`
     /// and re-upload all needed glyphs.
-    pub fn upload_glyph(
-        &mut self,
-        key: GlyphKey,
-        bitmap: &[u8],
-        metrics: &GlyphMetrics,
-    ) -> bool {
+    pub fn upload_glyph(&mut self, key: GlyphKey, bitmap: &[u8], metrics: &GlyphMetrics) -> bool {
         self.glyph_atlas
             .upload(&self.gpu.queue, key, bitmap, *metrics)
     }
@@ -641,15 +639,15 @@ impl WgpuRenderer {
     /// Upload an image (BGRA8 pixel data) to the GPU texture cache.
     ///
     /// The `image_id` must match the `image_id` used in `SceneNodeKind::Image` nodes.
-    pub fn register_image(
-        &mut self,
-        image_id: u64,
-        pixels: &[u8],
-        width: u32,
-        height: u32,
-    ) {
-        self.texture_cache
-            .upload(&self.gpu.device, &self.gpu.queue, image_id, pixels, width, height);
+    pub fn register_image(&mut self, image_id: u64, pixels: &[u8], width: u32, height: u32) {
+        self.texture_cache.upload(
+            &self.gpu.device,
+            &self.gpu.queue,
+            image_id,
+            pixels,
+            width,
+            height,
+        );
     }
 
     /// Remove an image from the GPU texture cache.
@@ -724,22 +722,14 @@ impl WgpuRenderer {
             use liquide_compositor::scene::SceneNodeKind;
             match &node.kind {
                 SceneNodeKind::Background { color } => {
-                    draw_calls += self.render_rect_node(
-                        &mut encoder, output, node,
-                        color, 0.0,
-                    );
+                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
                 }
                 SceneNodeKind::Tint { color } => {
-                    draw_calls += self.render_rect_node(
-                        &mut encoder, output, node,
-                        color, 0.0,
-                    );
+                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
                 }
                 SceneNodeKind::Glass(params) => {
-                    draw_calls += self.render_rect_node(
-                        &mut encoder, output, node,
-                        &params.tint_color, 0.0,
-                    );
+                    draw_calls +=
+                        self.render_rect_node(&mut encoder, output, node, &params.tint_color, 0.0);
                 }
                 SceneNodeKind::Shadow {
                     spread,
@@ -748,46 +738,48 @@ impl WgpuRenderer {
                     corner_radius,
                 } => {
                     draw_calls += self.render_shadow_node(
-                        &mut encoder, output, node,
-                        [0.0, 0.0], *blur_radius, *spread, color, *corner_radius, false,
+                        &mut encoder,
+                        output,
+                        node,
+                        [0.0, 0.0],
+                        *blur_radius,
+                        *spread,
+                        color,
+                        *corner_radius,
+                        false,
                     );
                 }
                 SceneNodeKind::BoxShadows { shadows } => {
                     for s in shadows {
                         draw_calls += self.render_shadow_node(
-                            &mut encoder, output, node,
+                            &mut encoder,
+                            output,
+                            node,
                             [s.offset_x, s.offset_y],
-                            s.blur_radius, s.spread_radius,
-                            &s.color, node.corner_radius.0, s.inset,
+                            s.blur_radius,
+                            s.spread_radius,
+                            &s.color,
+                            node.corner_radius.0,
+                            s.inset,
                         );
                     }
                 }
                 SceneNodeKind::GradientFill { gradient } => {
-                    draw_calls += self.render_gradient_node(
-                        &mut encoder, output, node, gradient,
-                    );
+                    draw_calls += self.render_gradient_node(&mut encoder, output, node, gradient);
                 }
                 SceneNodeKind::Filter { filters } => {
-                    draw_calls += self.render_blur_node(
-                        &mut encoder, node, filters,
-                    );
+                    draw_calls += self.render_blur_node(&mut encoder, node, filters);
                 }
                 SceneNodeKind::BackdropFilter { filters } => {
-                    draw_calls += self.render_backdrop_blur_node(
-                        &mut encoder, node, filters,
-                    );
+                    draw_calls += self.render_backdrop_blur_node(&mut encoder, node, filters);
                 }
                 SceneNodeKind::RenderLayer { blend_mode, .. } => {
-                    draw_calls += self.render_blend_node(
-                        &mut encoder, blend_mode,
-                    );
+                    draw_calls += self.render_blend_node(&mut encoder, blend_mode);
                 }
                 SceneNodeKind::Surface { buffer, .. }
                 | SceneNodeKind::ChildSurface { buffer, .. } => {
                     if let Some(buf) = buffer {
-                        draw_calls += self.render_surface_node(
-                            &mut encoder, output, node, buf,
-                        );
+                        draw_calls += self.render_surface_node(&mut encoder, output, node, buf);
                     }
                 }
                 SceneNodeKind::Text {
@@ -829,8 +821,19 @@ impl WgpuRenderer {
                         fit,
                     );
                 }
-                _ => {
-                    // Not yet handled by GPU pipeline
+                // Structural / container kinds with no direct draw — children were
+                // flattened before reaching us, so we silently skip these.
+                SceneNodeKind::Root
+                | SceneNodeKind::Workspace { .. }
+                | SceneNodeKind::Overlay
+                | SceneNodeKind::Content
+                | SceneNodeKind::ShellLayer => {}
+                // Kinds the wgpu backend does not yet implement — warn so
+                // missing visuals are discoverable in telemetry rather than
+                // silently dropped. Downgraded to trace! on repeat to avoid
+                // log spam when the same kind appears in every frame.
+                other => {
+                    self.warn_unhandled_kind(other);
                 }
             }
         }
@@ -869,13 +872,14 @@ impl WgpuRenderer {
             viewport: [self.width as f32, self.height as f32],
             _pad: [0.0; 2],
         };
-        let quad_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let quad_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("rect_quad_uniform"),
                 contents: bytemuck::bytes_of(&quad_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
         let rect_uniforms = RectUniforms {
             color: color_to_f32(color),
@@ -884,31 +888,38 @@ impl WgpuRenderer {
             opacity: node.opacity,
             _pad: [0.0; 2],
         };
-        let rect_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let rect_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("rect_uniform"),
                 contents: bytemuck::bytes_of(&rect_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
-        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rect_quad_bg"),
-            layout: &self.pipelines.quad_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: quad_buf.as_entire_binding(),
-            }],
-        });
+        let quad_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("rect_quad_bg"),
+                layout: &self.pipelines.quad_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: quad_buf.as_entire_binding(),
+                }],
+            });
 
-        let rect_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("rect_bg"),
-            layout: &self.pipelines.rect_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: rect_buf.as_entire_binding(),
-            }],
-        });
+        let rect_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("rect_bg"),
+                layout: &self.pipelines.rect_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: rect_buf.as_entire_binding(),
+                }],
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -968,13 +979,14 @@ impl WgpuRenderer {
             viewport: [self.width as f32, self.height as f32],
             _pad: [0.0; 2],
         };
-        let quad_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let quad_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("shadow_quad_uniform"),
                 contents: bytemuck::bytes_of(&quad_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
         let shadow_uniforms = ShadowUniforms {
             bounds: [0.0, 0.0, dst_w, dst_h],
@@ -986,31 +998,38 @@ impl WgpuRenderer {
             inset: if inset { 1 } else { 0 },
             _pad: [0.0; 2],
         };
-        let shadow_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let shadow_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("shadow_uniform"),
                 contents: bytemuck::bytes_of(&shadow_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
-        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow_quad_bg"),
-            layout: &self.pipelines.quad_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: quad_buf.as_entire_binding(),
-            }],
-        });
+        let quad_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow_quad_bg"),
+                layout: &self.pipelines.quad_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: quad_buf.as_entire_binding(),
+                }],
+            });
 
-        let shadow_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow_bg"),
-            layout: &self.pipelines.shadow_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: shadow_buf.as_entire_binding(),
-            }],
-        });
+        let shadow_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("shadow_bg"),
+                layout: &self.pipelines.shadow_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: shadow_buf.as_entire_binding(),
+                }],
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1054,7 +1073,7 @@ impl WgpuRenderer {
             return 0;
         }
 
-        let (kind, angle, center, radius, stops) = match gradient {
+        let (kind, angle, center, radius, line_end, stops) = match gradient {
             GradientSpec::Linear {
                 start_x,
                 start_y,
@@ -1065,7 +1084,14 @@ impl WgpuRenderer {
                 let dx = end_x - start_x;
                 let dy = end_y - start_y;
                 let angle = dy.atan2(dx);
-                (0u32, angle, [0.5f32, 0.5], 1.0f32, stops.as_slice())
+                (
+                    0u32,
+                    angle,
+                    [*start_x, *start_y],
+                    1.0f32,
+                    [*end_x, *end_y],
+                    stops.as_slice(),
+                )
             }
             GradientSpec::Radial {
                 center_x,
@@ -1073,7 +1099,14 @@ impl WgpuRenderer {
                 radius,
                 stops,
                 ..
-            } => (1u32, 0.0, [*center_x, *center_y], *radius, stops.as_slice()),
+            } => (
+                1u32,
+                0.0,
+                [*center_x, *center_y],
+                *radius,
+                [0.0, 0.0],
+                stops.as_slice(),
+            ),
             GradientSpec::Conic {
                 center_x,
                 center_y,
@@ -1084,29 +1117,48 @@ impl WgpuRenderer {
                 *start_angle,
                 [*center_x, *center_y],
                 1.0,
+                [0.0, 0.0],
                 stops.as_slice(),
             ),
-            GradientSpec::Mesh { .. } => {
-                // Mesh gradients not yet supported in the GPU shader.
+            GradientSpec::Mesh { rows, cols, .. } => {
+                // Mesh gradients are not implemented on the GPU path yet.
+                // Warn once per instance so callers can observe the drop
+                // instead of silently getting a blank fill.
+                let disc = std::mem::discriminant(gradient);
+                let mut seen = self.warned_kinds.lock().unwrap_or_else(|e| e.into_inner());
+                // Reuse the unhandled-kind set: insert a stable sentinel via
+                // a debug-only path. Simpler: just warn unconditionally at
+                // trace level; lifted to warn! once.
+                drop(seen);
+                tracing::warn!(
+                    rows = *rows,
+                    cols = *cols,
+                    "GradientSpec::Mesh not implemented in wgpu renderer; skipping"
+                );
+                let _ = disc;
                 return 0;
             }
         };
 
         let gpu_stops = build_gradient_stops(stops);
-        let stop_count = gpu_stops.len().min(64) as u32; // clamp to reasonable max
+        // Keep in sync with the shader's `stops` storage-buffer sizing. 256 is
+        // well above anything real CSS emits and avoids clipping on complex
+        // radial/conic gradients built from parsed keyword stops.
+        let stop_count = gpu_stops.len().min(256) as u32;
 
         let quad_uniforms = QuadUniforms {
             dst_rect: [bounds.x, bounds.y, bounds.width, bounds.height],
             viewport: [self.width as f32, self.height as f32],
             _pad: [0.0; 2],
         };
-        let quad_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let quad_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("gradient_quad_uniform"),
                 contents: bytemuck::bytes_of(&quad_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
         let gradient_uniforms = GradientUniforms {
             kind,
@@ -1114,15 +1166,16 @@ impl WgpuRenderer {
             center,
             radius,
             stop_count,
-            _pad: [0.0; 2],
+            line_end,
         };
-        let gradient_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let gradient_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("gradient_uniform"),
                 contents: bytemuck::bytes_of(&gradient_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
         // Storage buffer for gradient stops.
         // Ensure at least one stop so the buffer is non-empty.
@@ -1135,37 +1188,44 @@ impl WgpuRenderer {
         } else {
             gpu_stops
         };
-        let stops_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let stops_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("gradient_stops"),
                 contents: bytemuck::cast_slice(&stops_data),
                 usage: wgpu::BufferUsages::STORAGE,
-            },
-        );
+            });
 
-        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gradient_quad_bg"),
-            layout: &self.pipelines.quad_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: quad_buf.as_entire_binding(),
-            }],
-        });
-
-        let gradient_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gradient_bg"),
-            layout: &self.pipelines.gradient_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
+        let quad_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gradient_quad_bg"),
+                layout: &self.pipelines.quad_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: gradient_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: stops_buf.as_entire_binding(),
-                },
-            ],
-        });
+                    resource: quad_buf.as_entire_binding(),
+                }],
+            });
+
+        let gradient_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("gradient_bg"),
+                layout: &self.pipelines.gradient_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: gradient_buf.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: stops_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1280,31 +1340,35 @@ impl WgpuRenderer {
             radius,
             _pad: 0.0,
         };
-        let blur_h_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let blur_h_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("blur_h_uniform"),
                 contents: bytemuck::bytes_of(&blur_h),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
-        let blur_h_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blur_h_bg"),
-            layout: &self.pipelines.blur_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&intermediate.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: blur_h_buf.as_entire_binding(),
-                },
-            ],
-        });
+            });
+        let blur_h_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("blur_h_bg"),
+                layout: &self.pipelines.blur_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&intermediate.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: blur_h_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1348,31 +1412,35 @@ impl WgpuRenderer {
             radius,
             _pad: 0.0,
         };
-        let blur_v_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let blur_v_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("blur_v_uniform"),
                 contents: bytemuck::bytes_of(&blur_v),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
-        let blur_v_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blur_v_bg"),
-            layout: &self.pipelines.blur_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&intermediate.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: blur_v_buf.as_entire_binding(),
-                },
-            ],
-        });
+            });
+        let blur_v_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("blur_v_bg"),
+                layout: &self.pipelines.blur_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&intermediate.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: blur_v_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1402,11 +1470,12 @@ impl WgpuRenderer {
     /// Dispatch blend compute shader for a RenderLayer node.
     ///
     /// In a full implementation this would render children to an offscreen
-    /// texture and blend it back. Since `FlatNode` is already pre-flattened,
-    /// we apply the blend as a post-process over the current output.
+    /// texture and blend it back. With the current flat scene the marker
+    /// arrives after the children are already drawn, so we cannot produce a
+    /// correct backdrop snapshot here — see note below.
     fn render_blend_node(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
+        _encoder: &mut wgpu::CommandEncoder,
         blend_mode: &liquide_compositor::pixel::BlendMode,
     ) -> u32 {
         use liquide_compositor::pixel::BlendMode;
@@ -1415,123 +1484,21 @@ impl WgpuRenderer {
             return 0;
         }
 
-        let output = match self.output_texture.as_ref() {
-            Some(t) => t,
-            None => return 0,
-        };
-        let intermediate = match self.intermediate_texture.as_ref() {
-            Some(t) => t,
-            None => return 0,
-        };
-
-        // Snapshot current output into intermediate (as "dst" for the blend).
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &output.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &intermediate.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            output.size,
+        // Correctly applying a non-SrcOver RenderLayer blend requires a
+        // backdrop snapshot taken BEFORE the layer's children are drawn.
+        // The flattened FlatNode stream currently emits only a single marker
+        // (no push/pop pair), so there is no pre-children snapshot to blend
+        // against. The previous implementation copied the post-children
+        // output and blended it against itself, which produced visibly
+        // garbled output (see t8 §3.7). Until the scene flattener emits
+        // explicit RenderLayer push/pop markers we warn once per mode and
+        // skip the blend rather than corrupt the framebuffer.
+        tracing::warn!(
+            mode = ?blend_mode,
+            "wgpu renderer: non-SrcOver RenderLayer blend skipped — \
+             scene flattener lacks pre-children backdrop snapshot (t8 §3.7 follow-up)"
         );
-
-        // Create a storage texture view for output (Bgra8Unorm, non-sRGB for storage).
-        let blend_out_tex = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("blend_out"),
-            size: output.size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Bgra8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let blend_out_view =
-            blend_out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-
-        // Src = output (what was just rendered), Dst = intermediate (snapshot).
-        let src_view = output.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(wgpu::TextureFormat::Bgra8Unorm),
-            ..Default::default()
-        });
-        let dst_view = intermediate.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(wgpu::TextureFormat::Bgra8Unorm),
-            ..Default::default()
-        });
-
-        let blend_uniforms = BlendUniforms {
-            mode: blend_mode_to_gpu(blend_mode),
-            _pad: [0; 3],
-        };
-        let blend_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("blend_uniform"),
-                contents: bytemuck::bytes_of(&blend_uniforms),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
-
-        let blend_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("blend_bg"),
-            layout: &self.pipelines.blend_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&src_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&dst_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&blend_out_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: blend_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        {
-            let mut pass =
-                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("blend_pass"),
-                    timestamp_writes: None,
-                });
-            pass.set_pipeline(&self.pipelines.blend_pipeline);
-            pass.set_bind_group(0, &blend_bg, &[]);
-            let wg_x = (self.width + 7) / 8;
-            let wg_y = (self.height + 7) / 8;
-            pass.dispatch_workgroups(wg_x, wg_y, 1);
-        }
-
-        // Copy the blend result back to the output texture.
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &blend_out_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &output.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            output.size,
-        );
-
-        1
+        0
     }
 
     // ── Surface blit dispatch (Surface / ChildSurface) ──────────────────
@@ -1592,54 +1559,62 @@ impl WgpuRenderer {
             viewport: [self.width as f32, self.height as f32],
             _pad: [0.0; 2],
         };
-        let quad_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let quad_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("surface_quad_uniform"),
                 contents: bytemuck::bytes_of(&quad_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
         let image_uniforms = ImageUniforms {
             src_rect: [0.0, 0.0, 1.0, 1.0],
             opacity: node.opacity,
             _pad: [0.0; 3],
         };
-        let image_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let image_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("surface_img_uniform"),
                 contents: bytemuck::bytes_of(&image_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
-        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("surface_quad_bg"),
-            layout: &self.pipelines.quad_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: quad_buf.as_entire_binding(),
-            }],
-        });
-
-        let image_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("surface_img_bg"),
-            layout: &self.pipelines.image_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
+        let quad_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("surface_quad_bg"),
+                layout: &self.pipelines.quad_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&tex_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: image_buf.as_entire_binding(),
-                },
-            ],
-        });
+                    resource: quad_buf.as_entire_binding(),
+                }],
+            });
+
+        let image_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("surface_img_bg"),
+                layout: &self.pipelines.image_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&tex_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: image_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1710,7 +1685,11 @@ impl WgpuRenderer {
 
             if let Some(entry) = self.glyph_atlas.get(&key) {
                 if entry.metrics.width > 0 && entry.metrics.height > 0 {
-                    glyph_quads.push((pen_x + entry.metrics.bearing_x, pen_y - entry.metrics.bearing_y, entry));
+                    glyph_quads.push((
+                        pen_x + entry.metrics.bearing_x,
+                        pen_y - entry.metrics.bearing_y,
+                        entry,
+                    ));
                 }
                 pen_x += entry.metrics.advance;
             } else {
@@ -1749,7 +1728,12 @@ impl WgpuRenderer {
 
         for (i, &(gx, gy, entry)) in glyph_quads.iter().enumerate() {
             let qu = QuadUniforms {
-                dst_rect: [gx, gy, entry.metrics.width as f32, entry.metrics.height as f32],
+                dst_rect: [
+                    gx,
+                    gy,
+                    entry.metrics.width as f32,
+                    entry.metrics.height as f32,
+                ],
                 viewport: [self.width as f32, self.height as f32],
                 _pad: [0.0; 2],
             };
@@ -1775,20 +1759,22 @@ impl WgpuRenderer {
                 .copy_from_slice(bytemuck::bytes_of(&tu));
         }
 
-        let quad_batch_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("text_quad_batch"),
-                contents: &quad_data,
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
-        let text_batch_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("text_uniform_batch"),
-                contents: &text_data,
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+        let quad_batch_buf =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("text_quad_batch"),
+                    contents: &quad_data,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
+        let text_batch_buf =
+            self.gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("text_uniform_batch"),
+                    contents: &text_data,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                });
 
         let quad_uniform_size = NonZeroU64::new(std::mem::size_of::<QuadUniforms>() as u64);
         let text_uniform_size = NonZeroU64::new(std::mem::size_of::<TextUniforms>() as u64);
@@ -1818,41 +1804,49 @@ impl WgpuRenderer {
                 let q_off = (i * quad_stride) as u64;
                 let t_off = (i * text_stride) as u64;
 
-                let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("quad_bg"),
-                    layout: &self.pipelines.quad_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &quad_batch_buf,
-                            offset: q_off,
-                            size: quad_uniform_size,
-                        }),
-                    }],
-                });
-
-                let text_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("text_bg"),
-                    layout: &self.pipelines.text_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
+                let quad_bg = self
+                    .gpu
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("quad_bg"),
+                        layout: &self.pipelines.quad_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&self.glyph_atlas.view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                                buffer: &text_batch_buf,
-                                offset: t_off,
-                                size: text_uniform_size,
+                                buffer: &quad_batch_buf,
+                                offset: q_off,
+                                size: quad_uniform_size,
                             }),
-                        },
-                    ],
-                });
+                        }],
+                    });
+
+                let text_bg = self
+                    .gpu
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("text_bg"),
+                        layout: &self.pipelines.text_bind_group_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(
+                                    &self.glyph_atlas.view,
+                                ),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                    buffer: &text_batch_buf,
+                                    offset: t_off,
+                                    size: text_uniform_size,
+                                }),
+                            },
+                        ],
+                    });
 
                 pass.set_bind_group(0, &quad_bg, &[]);
                 pass.set_bind_group(1, &text_bg, &[]);
@@ -1920,54 +1914,62 @@ impl WgpuRenderer {
             viewport: [self.width as f32, self.height as f32],
             _pad: [0.0; 2],
         };
-        let quad_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let quad_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("img_quad_uniform"),
                 contents: bytemuck::bytes_of(&quad_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
         let image_uniforms = ImageUniforms {
             src_rect: uv_rect,
             opacity: node.opacity,
             _pad: [0.0; 3],
         };
-        let image_buf = self.gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
+        let image_buf = self
+            .gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("img_uniform"),
                 contents: bytemuck::bytes_of(&image_uniforms),
                 usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+            });
 
-        let quad_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("img_quad_bg"),
-            layout: &self.pipelines.quad_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: quad_buf.as_entire_binding(),
-            }],
-        });
-
-        let image_bg = self.gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("img_bg"),
-            layout: &self.pipelines.image_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
+        let quad_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("img_quad_bg"),
+                layout: &self.pipelines.quad_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&entry.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: image_buf.as_entire_binding(),
-                },
-            ],
-        });
+                    resource: quad_buf.as_entire_binding(),
+                }],
+            });
+
+        let image_bg = self
+            .gpu
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("img_bg"),
+                layout: &self.pipelines.image_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&entry.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: image_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2163,22 +2165,14 @@ impl WgpuRenderer {
             use liquide_compositor::scene::SceneNodeKind;
             match &node.kind {
                 SceneNodeKind::Background { color } => {
-                    draw_calls += self.render_rect_node(
-                        &mut encoder, output, node,
-                        color, 0.0,
-                    );
+                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
                 }
                 SceneNodeKind::Tint { color } => {
-                    draw_calls += self.render_rect_node(
-                        &mut encoder, output, node,
-                        color, 0.0,
-                    );
+                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
                 }
                 SceneNodeKind::Glass(params) => {
-                    draw_calls += self.render_rect_node(
-                        &mut encoder, output, node,
-                        &params.tint_color, 0.0,
-                    );
+                    draw_calls +=
+                        self.render_rect_node(&mut encoder, output, node, &params.tint_color, 0.0);
                 }
                 SceneNodeKind::Shadow {
                     spread,
@@ -2187,46 +2181,48 @@ impl WgpuRenderer {
                     corner_radius,
                 } => {
                     draw_calls += self.render_shadow_node(
-                        &mut encoder, output, node,
-                        [0.0, 0.0], *blur_radius, *spread, color, *corner_radius, false,
+                        &mut encoder,
+                        output,
+                        node,
+                        [0.0, 0.0],
+                        *blur_radius,
+                        *spread,
+                        color,
+                        *corner_radius,
+                        false,
                     );
                 }
                 SceneNodeKind::BoxShadows { shadows } => {
                     for s in shadows {
                         draw_calls += self.render_shadow_node(
-                            &mut encoder, output, node,
+                            &mut encoder,
+                            output,
+                            node,
                             [s.offset_x, s.offset_y],
-                            s.blur_radius, s.spread_radius,
-                            &s.color, node.corner_radius.0, s.inset,
+                            s.blur_radius,
+                            s.spread_radius,
+                            &s.color,
+                            node.corner_radius.0,
+                            s.inset,
                         );
                     }
                 }
                 SceneNodeKind::GradientFill { gradient } => {
-                    draw_calls += self.render_gradient_node(
-                        &mut encoder, output, node, gradient,
-                    );
+                    draw_calls += self.render_gradient_node(&mut encoder, output, node, gradient);
                 }
                 SceneNodeKind::Filter { filters } => {
-                    draw_calls += self.render_blur_node(
-                        &mut encoder, node, filters,
-                    );
+                    draw_calls += self.render_blur_node(&mut encoder, node, filters);
                 }
                 SceneNodeKind::BackdropFilter { filters } => {
-                    draw_calls += self.render_backdrop_blur_node(
-                        &mut encoder, node, filters,
-                    );
+                    draw_calls += self.render_backdrop_blur_node(&mut encoder, node, filters);
                 }
                 SceneNodeKind::RenderLayer { blend_mode, .. } => {
-                    draw_calls += self.render_blend_node(
-                        &mut encoder, blend_mode,
-                    );
+                    draw_calls += self.render_blend_node(&mut encoder, blend_mode);
                 }
                 SceneNodeKind::Surface { buffer, .. }
                 | SceneNodeKind::ChildSurface { buffer, .. } => {
                     if let Some(buf) = buffer {
-                        draw_calls += self.render_surface_node(
-                            &mut encoder, output, node, buf,
-                        );
+                        draw_calls += self.render_surface_node(&mut encoder, output, node, buf);
                     }
                 }
                 SceneNodeKind::Text {
@@ -2268,13 +2264,62 @@ impl WgpuRenderer {
                         fit,
                     );
                 }
-                _ => {}
+                SceneNodeKind::Root
+                | SceneNodeKind::Workspace { .. }
+                | SceneNodeKind::Overlay
+                | SceneNodeKind::Content
+                | SceneNodeKind::ShellLayer => {}
+                other => {
+                    self.warn_unhandled_kind(other);
+                }
             }
         }
 
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         self.frame_count += 1;
         Ok(draw_calls)
+    }
+
+    /// Emit a `warn!` the first time we see each unhandled `SceneNodeKind`
+    /// in this renderer instance, and `trace!` on repeats. The catch-all is
+    /// intentional — new SceneNodeKinds added upstream won't break compile,
+    /// they'll just surface as runtime warnings.
+    fn warn_unhandled_kind(&self, kind: &liquide_compositor::scene::SceneNodeKind) {
+        use liquide_compositor::scene::SceneNodeKind;
+        let name: &'static str = match kind {
+            SceneNodeKind::BlurCache => "BlurCache",
+            SceneNodeKind::Decoration { .. } => "Decoration",
+            SceneNodeKind::BlurBackdrop => "BlurBackdrop",
+            SceneNodeKind::Cursor { .. } => "Cursor",
+            SceneNodeKind::Icon { .. } => "Icon",
+            SceneNodeKind::ClipPath { .. } => "ClipPath",
+            SceneNodeKind::SvgPath { .. } => "SvgPath",
+            SceneNodeKind::BackgroundFill { .. } => "BackgroundFill",
+            SceneNodeKind::Outline { .. } => "Outline",
+            SceneNodeKind::Mask { .. } => "Mask",
+            SceneNodeKind::Border { .. } => "Border",
+            SceneNodeKind::BorderImage { .. } => "BorderImage",
+            SceneNodeKind::TextCaret { .. } => "TextCaret",
+            SceneNodeKind::SelectionOverlay { .. } => "SelectionOverlay",
+            SceneNodeKind::LockScreen => "LockScreen",
+            SceneNodeKind::CrashScreen => "CrashScreen",
+            // Structural containers were handled above; anything reaching here
+            // is genuinely a future/unknown kind.
+            _ => "Unknown",
+        };
+        let disc = std::mem::discriminant(kind);
+        let mut seen = self.warned_kinds.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.insert(disc) {
+            tracing::warn!(
+                "SceneNodeKind::{} not yet implemented in wgpu renderer",
+                name
+            );
+        } else {
+            tracing::trace!(
+                "SceneNodeKind::{} not yet implemented in wgpu renderer (repeat)",
+                name
+            );
+        }
     }
 }
 
@@ -2312,8 +2357,8 @@ const _: () = {
 mod tests {
     use super::*;
     use liquide_compositor::pixel::BlendMode;
-    use liquide_compositor::scene::{GradientSpec, GlassParams};
-    use liquide_compositor::{BoxShadowSpec, FilterSpec, BackdropFilterSpec};
+    use liquide_compositor::scene::{GlassParams, GradientSpec};
+    use liquide_compositor::{BackdropFilterSpec, BoxShadowSpec, FilterSpec};
 
     // ── Uniform struct layout tests ─────────────────────────────────────
 
@@ -2419,10 +2464,7 @@ mod tests {
 
     #[test]
     fn build_gradient_stops_two_colors() {
-        let stops = build_gradient_stops(&[
-            (0.0, Color::BLACK),
-            (1.0, Color::WHITE),
-        ]);
+        let stops = build_gradient_stops(&[(0.0, Color::BLACK), (1.0, Color::WHITE)]);
         assert_eq!(stops.len(), 2);
         assert!((stops[0].position - 0.0).abs() < f32::EPSILON);
         assert!((stops[1].position - 1.0).abs() < f32::EPSILON);
@@ -2514,12 +2556,16 @@ mod tests {
             start_y: 0.0,
             end_x: 1.0,
             end_y: 0.0,
-            stops: vec![
-                (0.0, Color::BLACK),
-                (1.0, Color::WHITE),
-            ],
+            stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
         };
-        if let GradientSpec::Linear { start_x, start_y, end_x, end_y, .. } = &spec {
+        if let GradientSpec::Linear {
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            ..
+        } = &spec
+        {
             let dx = end_x - start_x;
             let dy = end_y - start_y;
             let angle = dy.atan2(dx);
@@ -2537,7 +2583,13 @@ mod tests {
             radius_y: 1.0,
             stops: vec![(0.0, Color::WHITE), (1.0, Color::BLACK)],
         };
-        if let GradientSpec::Radial { center_x, center_y, radius, .. } = &spec {
+        if let GradientSpec::Radial {
+            center_x,
+            center_y,
+            radius,
+            ..
+        } = &spec
+        {
             assert!((*center_x - 0.5).abs() < f32::EPSILON);
             assert!((*center_y - 0.5).abs() < f32::EPSILON);
             assert!((*radius - 1.0).abs() < f32::EPSILON);

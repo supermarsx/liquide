@@ -1,8 +1,8 @@
 //! Extended grouping functionality: events and tab navigation.
 
+use crate::group::GroupId;
 use crate::group::WindowId;
 use crate::tabs::TabGroupId;
-use crate::group::GroupId;
 
 /// Events emitted by group operations.
 #[derive(Debug, Clone, PartialEq)]

@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use crate::provider::{
-    SearchCategory, SearchProvider, SearchResult, SearchResultAction, fuzzy_score, clamp_score,
+    SearchCategory, SearchProvider, SearchResult, SearchResultAction, clamp_score, fuzzy_score,
 };
 
 // ---------------------------------------------------------------------------
@@ -105,10 +105,18 @@ impl Default for AppSearchProvider {
 }
 
 impl SearchProvider for AppSearchProvider {
-    fn id(&self) -> &str { "apps" }
-    fn name(&self) -> &str { "Applications" }
-    fn icon(&self) -> &str { "system-run" }
-    fn priority(&self) -> u32 { 90 }
+    fn id(&self) -> &str {
+        "apps"
+    }
+    fn name(&self) -> &str {
+        "Applications"
+    }
+    fn icon(&self) -> &str {
+        "system-run"
+    }
+    fn priority(&self) -> u32 {
+        90
+    }
 
     fn search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
         let mut scored: Vec<(f32, &AppEntry)> = self
@@ -332,7 +340,11 @@ mod tests {
     #[test]
     fn search_exec_match() {
         let mut p = AppSearchProvider::new();
-        p.add(AppEntry::new("term", "GNOME Terminal", "/usr/bin/gnome-terminal"));
+        p.add(AppEntry::new(
+            "term",
+            "GNOME Terminal",
+            "/usr/bin/gnome-terminal",
+        ));
         let r = p.search("gnome-terminal", 10);
         assert_eq!(r.len(), 1);
     }

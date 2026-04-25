@@ -280,7 +280,11 @@ fn test_build_scene_text_has_real_font_values() {
     let mut text_families = Vec::new();
     let mut text_sizes = Vec::new();
 
-    fn collect_text(node: &liquide_compositor::scene::SceneNode, families: &mut Vec<String>, sizes: &mut Vec<f32>) {
+    fn collect_text(
+        node: &liquide_compositor::scene::SceneNode,
+        families: &mut Vec<String>,
+        sizes: &mut Vec<f32>,
+    ) {
         if let SceneNodeKind::Text {
             font_family,
             font_size,
@@ -399,20 +403,14 @@ fn test_build_scene_clamped_items_count() {
     }
     count_labels(&panel, &mut label_count);
 
-    println!(
-        "Rendered labels on small screen: {} out of 50",
-        label_count
-    );
+    println!("Rendered labels on small screen: {} out of 50", label_count);
 
     assert!(
         label_count < 50,
         "Should not render all 50 items on 600px screen, rendered {}",
         label_count
     );
-    assert!(
-        label_count > 0,
-        "Should render at least some items"
-    );
+    assert!(label_count > 0, "Should render at least some items");
 }
 
 // ---------------------------------------------------------------------------
@@ -428,14 +426,19 @@ fn test_hover_update_changes_index() {
     let config = default_config();
 
     // Hover over second item
-    let pt = Point::new(bounds.x + 20.0, bounds.y + config.padding + config.item_height + 5.0);
+    let pt = Point::new(
+        bounds.x + 20.0,
+        bounds.y + config.padding + config.item_height + 5.0,
+    );
     let changed = menu.update_hover(screen(), pt);
     assert!(changed, "Hover should change on first move");
     assert_eq!(menu.hover_index(), Some(1));
 
     // Move to third item
-    let pt2 =
-        Point::new(bounds.x + 20.0, bounds.y + config.padding + 2.0 * config.item_height + 5.0);
+    let pt2 = Point::new(
+        bounds.x + 20.0,
+        bounds.y + config.padding + 2.0 * config.item_height + 5.0,
+    );
     let changed2 = menu.update_hover(screen(), pt2);
     assert!(changed2, "Hover should change to new item");
     assert_eq!(menu.hover_index(), Some(2));
@@ -480,7 +483,10 @@ fn test_activate_disabled_item_returns_none() {
     let config = default_config();
 
     // Hover disabled item (index 1)
-    let pt = Point::new(bounds.x + 20.0, bounds.y + config.padding + config.item_height + 5.0);
+    let pt = Point::new(
+        bounds.x + 20.0,
+        bounds.y + config.padding + config.item_height + 5.0,
+    );
     menu.update_hover(screen(), pt);
     assert_eq!(menu.hover_index(), Some(1));
 

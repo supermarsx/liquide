@@ -41,7 +41,12 @@ fn touch_point_pressure() {
 
 #[test]
 fn touch_phase_variants() {
-    let phases = [TouchPhase::Begin, TouchPhase::Move, TouchPhase::End, TouchPhase::Cancel];
+    let phases = [
+        TouchPhase::Begin,
+        TouchPhase::Move,
+        TouchPhase::End,
+        TouchPhase::Cancel,
+    ];
     for i in 0..phases.len() {
         for j in (i + 1)..phases.len() {
             assert_ne!(phases[i], phases[j]);

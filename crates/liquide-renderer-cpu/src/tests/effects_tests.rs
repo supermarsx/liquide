@@ -10,7 +10,11 @@ fn backdrop_blur_modifies_pixels() {
     let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
     // Create a stripe pattern
     for y in 0..64 {
-        let c = if y % 2 == 0 { Color::WHITE } else { Color::BLACK };
+        let c = if y % 2 == 0 {
+            Color::WHITE
+        } else {
+            Color::BLACK
+        };
         for x in 0..64 {
             fb.set_pixel(x, y, c);
         }
@@ -21,7 +25,11 @@ fn backdrop_blur_modifies_pixels() {
     let effect = BackdropBlur;
     effect.render(&mut fb, Rect::new(0.0, 0.0, 64.0, 64.0), &params);
 
-    assert_ne!(fb.pixels(), &before[..], "backdrop blur should modify pixels");
+    assert_ne!(
+        fb.pixels(),
+        &before[..],
+        "backdrop blur should modify pixels"
+    );
 }
 
 #[test]
@@ -41,7 +49,11 @@ fn backdrop_blur_zero_radius_only_tints() {
 
     // The tint should have been applied, so pixels should change slightly
     // (default tint is white@40 alpha)
-    assert_ne!(fb.pixels(), &before[..], "tint should modify pixels even with radius=0");
+    assert_ne!(
+        fb.pixels(),
+        &before[..],
+        "tint should modify pixels even with radius=0"
+    );
 }
 
 #[test]
@@ -76,7 +88,10 @@ fn box_shadow_extends_beyond_surface() {
             break;
         }
     }
-    assert!(found_shadow, "shadow should extend beyond the surface bounds");
+    assert!(
+        found_shadow,
+        "shadow should extend beyond the surface bounds"
+    );
 }
 
 #[test]
@@ -173,7 +188,11 @@ fn box_shadow_produces_pixels() {
         },
     );
 
-    assert_ne!(fb.pixels(), &before[..], "box shadow should produce visible pixels");
+    assert_ne!(
+        fb.pixels(),
+        &before[..],
+        "box shadow should produce visible pixels"
+    );
 }
 
 #[test]
@@ -192,7 +211,10 @@ fn inner_glow_width_affects_coverage() {
         0.0,
         Color::new(255, 255, 255, 100),
     );
-    let changed_zero: usize = fb_zero.pixels().iter().zip(before_zero.iter())
+    let changed_zero: usize = fb_zero
+        .pixels()
+        .iter()
+        .zip(before_zero.iter())
         .filter(|&(&a, &b)| a != b)
         .count();
 
@@ -208,13 +230,19 @@ fn inner_glow_width_affects_coverage() {
         5.0,
         Color::new(255, 255, 255, 100),
     );
-    let changed_five: usize = fb_five.pixels().iter().zip(before_five.iter())
+    let changed_five: usize = fb_five
+        .pixels()
+        .iter()
+        .zip(before_five.iter())
         .filter(|&(&a, &b)| a != b)
         .count();
 
     assert_eq!(changed_zero, 0, "width=0 should change no pixels");
     assert!(changed_five > 0, "width=5 should change some pixels");
-    assert!(changed_five > changed_zero, "width=5 should affect more pixels than width=0");
+    assert!(
+        changed_five > changed_zero,
+        "width=5 should affect more pixels than width=0"
+    );
 }
 
 #[test]
@@ -222,7 +250,11 @@ fn backdrop_blur_large_radius() {
     let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
     // Create a striped pattern
     for y in 0..64 {
-        let c = if y % 4 == 0 { Color::WHITE } else { Color::BLACK };
+        let c = if y % 4 == 0 {
+            Color::WHITE
+        } else {
+            Color::BLACK
+        };
         for x in 0..64 {
             fb.set_pixel(x, y, c);
         }
@@ -238,7 +270,11 @@ fn backdrop_blur_large_radius() {
         Color::TRANSPARENT,
     );
 
-    assert_ne!(fb.pixels(), &before[..], "backdrop blur with large radius should modify pixels");
+    assert_ne!(
+        fb.pixels(),
+        &before[..],
+        "backdrop blur with large radius should modify pixels"
+    );
 }
 
 #[test]
@@ -249,17 +285,20 @@ fn backdrop_blur_with_colored_tint() {
 
     let params = EffectParams::for_profile(QualityProfile::Balanced);
     let tint = Color::new(255, 0, 0, 80); // red tint with alpha
-    BackdropBlur::render_with_tint(
-        &mut fb,
-        Rect::new(0.0, 0.0, 32.0, 32.0),
-        &params,
-        tint,
-    );
+    BackdropBlur::render_with_tint(&mut fb, Rect::new(0.0, 0.0, 32.0, 32.0), &params, tint);
 
-    assert_ne!(fb.pixels(), &before[..], "backdrop blur with colored tint should modify pixels");
+    assert_ne!(
+        fb.pixels(),
+        &before[..],
+        "backdrop blur with colored tint should modify pixels"
+    );
     // The tint should shift the red channel up
     let p = fb.get_pixel(16, 16);
-    assert!(p.r > 100, "red tint should increase the red channel: got {:?}", p);
+    assert!(
+        p.r > 100,
+        "red tint should increase the red channel: got {:?}",
+        p
+    );
 }
 
 #[test]
@@ -295,13 +334,24 @@ fn box_shadow_offset() {
     );
 
     // The two renders should produce different framebuffers
-    assert_ne!(fb_no_offset.pixels(), fb_offset.pixels(),
-        "offset shadow should differ from non-offset shadow");
+    assert_ne!(
+        fb_no_offset.pixels(),
+        fb_offset.pixels(),
+        "offset shadow should differ from non-offset shadow"
+    );
 
     // Pixel (90, 90): inside offset shadow region but outside no-offset shadow region
     let p_no_offset = fb_no_offset.get_pixel(90, 90);
     let p_offset = fb_offset.get_pixel(90, 90);
-    assert_eq!(p_no_offset, Color::WHITE, "no-offset shadow should not reach (90, 90)");
-    assert_ne!(p_offset, Color::WHITE,
-        "offset shadow should affect (90, 90): got {:?}", p_offset);
+    assert_eq!(
+        p_no_offset,
+        Color::WHITE,
+        "no-offset shadow should not reach (90, 90)"
+    );
+    assert_ne!(
+        p_offset,
+        Color::WHITE,
+        "offset shadow should affect (90, 90): got {:?}",
+        p_offset
+    );
 }

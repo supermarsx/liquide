@@ -90,20 +90,16 @@ impl KeyframeTrack {
 /// unchanged.
 pub fn lerp_value(a: &AnimValue, b: &AnimValue, t: f32) -> AnimValue {
     match (a, b) {
-        (AnimValue::Float(a), AnimValue::Float(b)) => {
-            AnimValue::Float(a + (b - a) * t)
-        }
+        (AnimValue::Float(a), AnimValue::Float(b)) => AnimValue::Float(a + (b - a) * t),
         (AnimValue::Pair(ax, ay), AnimValue::Pair(bx, by)) => {
             AnimValue::Pair(ax + (bx - ax) * t, ay + (by - ay) * t)
         }
-        (AnimValue::Color(ar, ag, ab, aa), AnimValue::Color(br, bg, bb, ba)) => {
-            AnimValue::Color(
-                lerp_u8(*ar, *br, t),
-                lerp_u8(*ag, *bg, t),
-                lerp_u8(*ab, *bb, t),
-                lerp_u8(*aa, *ba, t),
-            )
-        }
+        (AnimValue::Color(ar, ag, ab, aa), AnimValue::Color(br, bg, bb, ba)) => AnimValue::Color(
+            lerp_u8(*ar, *br, t),
+            lerp_u8(*ag, *bg, t),
+            lerp_u8(*ab, *bb, t),
+            lerp_u8(*aa, *ba, t),
+        ),
         (AnimValue::Transform(a), AnimValue::Transform(b)) => {
             AnimValue::Transform(lerp_transform(a, b, t))
         }
@@ -147,14 +143,7 @@ fn decompose(m: &[f32; 6]) -> (f32, f32, f32, f32, f32) {
 fn recompose(tx: f32, ty: f32, sx: f32, sy: f32, rotation: f32) -> [f32; 6] {
     let cos = rotation.cos();
     let sin = rotation.sin();
-    [
-        cos * sx,
-        sin * sx,
-        -sin * sy,
-        cos * sy,
-        tx,
-        ty,
-    ]
+    [cos * sx, sin * sx, -sin * sy, cos * sy, tx, ty]
 }
 
 /// Lerp between two angles (in radians), taking the shortest path.
@@ -240,7 +229,12 @@ mod tests {
         let identity = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
         let result = lerp_transform(&identity, &identity, 0.5);
         for i in 0..6 {
-            assert!(approx(result[i], identity[i]), "mismatch at {i}: {} vs {}", result[i], identity[i]);
+            assert!(
+                approx(result[i], identity[i]),
+                "mismatch at {i}: {} vs {}",
+                result[i],
+                identity[i]
+            );
         }
     }
 
@@ -255,9 +249,11 @@ mod tests {
 
     #[test]
     fn keyframe_track_single() {
-        let track = KeyframeTrack::new(vec![
-            Keyframe { offset: 0.0, value: AnimValue::Float(5.0), easing: EasingFunction::Linear },
-        ]);
+        let track = KeyframeTrack::new(vec![Keyframe {
+            offset: 0.0,
+            value: AnimValue::Float(5.0),
+            easing: EasingFunction::Linear,
+        }]);
         match track.sample(0.5) {
             AnimValue::Float(v) => assert!(approx(v, 5.0)),
             _ => panic!("expected Float"),
@@ -267,8 +263,16 @@ mod tests {
     #[test]
     fn keyframe_track_two_points() {
         let track = KeyframeTrack::new(vec![
-            Keyframe { offset: 0.0, value: AnimValue::Float(0.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 1.0, value: AnimValue::Float(100.0), easing: EasingFunction::Linear },
+            Keyframe {
+                offset: 0.0,
+                value: AnimValue::Float(0.0),
+                easing: EasingFunction::Linear,
+            },
+            Keyframe {
+                offset: 1.0,
+                value: AnimValue::Float(100.0),
+                easing: EasingFunction::Linear,
+            },
         ]);
         match track.sample(0.25) {
             AnimValue::Float(v) => assert!(approx(v, 25.0)),
@@ -283,9 +287,21 @@ mod tests {
     #[test]
     fn keyframe_track_three_points() {
         let track = KeyframeTrack::new(vec![
-            Keyframe { offset: 0.0, value: AnimValue::Float(0.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 0.5, value: AnimValue::Float(100.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 1.0, value: AnimValue::Float(50.0), easing: EasingFunction::Linear },
+            Keyframe {
+                offset: 0.0,
+                value: AnimValue::Float(0.0),
+                easing: EasingFunction::Linear,
+            },
+            Keyframe {
+                offset: 0.5,
+                value: AnimValue::Float(100.0),
+                easing: EasingFunction::Linear,
+            },
+            Keyframe {
+                offset: 1.0,
+                value: AnimValue::Float(50.0),
+                easing: EasingFunction::Linear,
+            },
         ]);
         // At 0.25 → halfway between 0 and 100 = 50
         match track.sample(0.25) {
@@ -302,8 +318,16 @@ mod tests {
     #[test]
     fn keyframe_track_before_first() {
         let track = KeyframeTrack::new(vec![
-            Keyframe { offset: 0.2, value: AnimValue::Float(10.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 0.8, value: AnimValue::Float(90.0), easing: EasingFunction::Linear },
+            Keyframe {
+                offset: 0.2,
+                value: AnimValue::Float(10.0),
+                easing: EasingFunction::Linear,
+            },
+            Keyframe {
+                offset: 0.8,
+                value: AnimValue::Float(90.0),
+                easing: EasingFunction::Linear,
+            },
         ]);
         match track.sample(0.0) {
             AnimValue::Float(v) => assert!(approx(v, 10.0)),
@@ -314,8 +338,16 @@ mod tests {
     #[test]
     fn keyframe_track_after_last() {
         let track = KeyframeTrack::new(vec![
-            Keyframe { offset: 0.2, value: AnimValue::Float(10.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 0.8, value: AnimValue::Float(90.0), easing: EasingFunction::Linear },
+            Keyframe {
+                offset: 0.2,
+                value: AnimValue::Float(10.0),
+                easing: EasingFunction::Linear,
+            },
+            Keyframe {
+                offset: 0.8,
+                value: AnimValue::Float(90.0),
+                easing: EasingFunction::Linear,
+            },
         ]);
         match track.sample(1.0) {
             AnimValue::Float(v) => assert!(approx(v, 90.0)),
@@ -335,8 +367,16 @@ mod tests {
     fn keyframe_track_sorted() {
         // Pass keyframes out of order; track should sort them.
         let track = KeyframeTrack::new(vec![
-            Keyframe { offset: 1.0, value: AnimValue::Float(100.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 0.0, value: AnimValue::Float(0.0), easing: EasingFunction::Linear },
+            Keyframe {
+                offset: 1.0,
+                value: AnimValue::Float(100.0),
+                easing: EasingFunction::Linear,
+            },
+            Keyframe {
+                offset: 0.0,
+                value: AnimValue::Float(0.0),
+                easing: EasingFunction::Linear,
+            },
         ]);
         match track.sample(0.5) {
             AnimValue::Float(v) => assert!(approx(v, 50.0)),
@@ -350,8 +390,12 @@ mod tests {
         let (tx, ty, sx, sy, r) = decompose(&original);
         let rebuilt = recompose(tx, ty, sx, sy, r);
         for i in 0..6 {
-            assert!(approx(original[i], rebuilt[i]),
-                "roundtrip mismatch at {i}: {} vs {}", original[i], rebuilt[i]);
+            assert!(
+                approx(original[i], rebuilt[i]),
+                "roundtrip mismatch at {i}: {} vs {}",
+                original[i],
+                rebuilt[i]
+            );
         }
     }
 }

@@ -80,11 +80,7 @@ impl LoginHistory {
             self.entries.iter().filter(|e| e.uid == uid).collect();
         // Sort descending by timestamp.
         user_entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        user_entries
-            .into_iter()
-            .take(count)
-            .cloned()
-            .collect()
+        user_entries.into_iter().take(count).cloned().collect()
     }
 
     /// Return all entries (newest-first).

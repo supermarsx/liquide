@@ -4,7 +4,11 @@ use std::path::Path;
 #[derive(Debug, Clone)]
 pub enum PreviewContent {
     Text(String),
-    Image { width: u32, height: u32, data: Vec<u8> },
+    Image {
+        width: u32,
+        height: u32,
+        data: Vec<u8>,
+    },
     Html(String),
     Metadata(Vec<(String, String)>),
     Unsupported,
@@ -35,7 +39,11 @@ mod tests {
             data: vec![0u8; 100 * 50 * 4],
         };
         match &content {
-            PreviewContent::Image { width, height, data } => {
+            PreviewContent::Image {
+                width,
+                height,
+                data,
+            } => {
                 assert_eq!(*width, 100);
                 assert_eq!(*height, 50);
                 assert_eq!(data.len(), 20000);

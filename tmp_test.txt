@@ -1,0 +1,75 @@
+warning: constant `HYPHEN_PENALTY` is never used
+   --> crates\liquide-text-engine\src\paragraph.rs:435:15
+    |
+435 | ...   const HYPHEN_PENALTY: f64 = 50.0; // Would be used for hyphenation
+    |             ^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `liquide-text-engine` (lib) generated 1 warning
+warning: unused import: `Arc`
+  --> crates\liquide-font-rasterizer\src\font_face.rs:16:17
+   |
+16 | use std::sync::{Arc, Mutex};
+   |                 ^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+   --> crates\liquide-font-rasterizer\src\color_fonts.rs:390:9
+    |
+376 |         0x1F300..=0x1F5FF |
+    |         ----------------- matches all the relevant values
+...
+390 |         0x1F3FB..=0x1F3FF |
+    |         ^^^^^^^^^^^^^^^^^ no value can reach this
+    |
+    = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `tag_u32`
+   --> crates\liquide-font-rasterizer\src\shaper.rs:154:13
+    |
+154 |         let tag_u32 = u32::from_be_bytes(self.tag);
+    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tag_u32`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `len` is never used
+   --> crates\liquide-font-rasterizer\src\backend.rs:136:8
+    |
+ 54 | impl LruShapeCache {
+    | ------------------ method in this implementation
+...
+136 |     fn len(&self) -> usize {
+    |        ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `cache` is never read
+   --> crates\liquide-font-rasterizer\src\backend.rs:145:5
+    |
+143 | pub struct RustybuzzShaperBackend {
+    |            ---------------------- field in this struct
+144 |     db: Arc<FontDatabase>,
+145 |     cache: Arc<GlyphCache>,
+    |     ^^^^^
+
+warning: unused import: `std::ffi::c_void`
+   --> crates\liquide-platform\src\lib.rs:115:9
+    |
+115 |     use std::ffi::c_void;
+    |         ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `liquide-font-rasterizer` (lib) generated 5 warnings (run `cargo fix --lib -p liquide-font-rasterizer` to apply 2 suggestions)
+warning: `liquide-platform` (lib) generated 1 warning (run `cargo fix --lib -p liquide-platform` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.78s
+     Running unittests src\lib.rs (target\debug\deps\liquide_app_harness-3950ca471e409603.exe)
+
+running 6 tests
+error: test failed, to rerun pass `-p liquide-app-harness --lib`
+
+Caused by:
+  process didn't exit successfully: `F:\Projects\liquide\target\debug\deps\liquide_app_harness-3950ca471e409603.exe --nocapture --test-threads=1` (exit code: 0xc000013a, STATUS_CONTROL_C_EXIT)
+test event_loop::tests::frame_capture_report_matches_standalone_backend ... 

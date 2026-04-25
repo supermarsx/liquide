@@ -46,8 +46,7 @@ impl WorkspacePolicy {
 
     /// Return `true` if a new workspace can be created at the given total.
     pub fn can_create_at(&self, current_count: usize) -> bool {
-        self.dynamic_creation
-            && (self.max_count == 0 || current_count < self.max_count)
+        self.dynamic_creation && (self.max_count == 0 || current_count < self.max_count)
     }
 
     /// Return `true` if a workspace can be destroyed at the given total.
@@ -205,12 +204,7 @@ fn total_overlap(candidate: &Rect, existing: &[WindowRect]) -> u64 {
 }
 
 /// Compute a cascade position for the given window index.
-pub fn cascade_position(
-    index: usize,
-    window_w: u32,
-    window_h: u32,
-    screen: Rect,
-) -> (i32, i32) {
+pub fn cascade_position(index: usize, window_w: u32, window_h: u32, screen: Rect) -> (i32, i32) {
     let offset = 30;
     let x = screen.x + (index as i32 * offset) % (screen.w as i32 - window_w as i32).max(1);
     let y = screen.y + (index as i32 * offset) % (screen.h as i32 - window_h as i32).max(1);
@@ -322,7 +316,10 @@ mod tests {
 
     #[test]
     fn default_placement_is_smart() {
-        assert_eq!(WindowPlacementPolicy::default(), WindowPlacementPolicy::Smart);
+        assert_eq!(
+            WindowPlacementPolicy::default(),
+            WindowPlacementPolicy::Smart
+        );
     }
 
     // ── smart_placement ─────────────────────────────────────────────

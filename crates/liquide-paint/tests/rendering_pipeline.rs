@@ -162,7 +162,9 @@ fn bare_text_in_flex_row_gets_measured() {
     let tree = le.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
 
     for (id, label) in [(t1, "LiquiDE"), (t2, "12:34")] {
-        let b = tree.find_by_node(id).unwrap_or_else(|| panic!("text '{}' missing box", label));
+        let b = tree
+            .find_by_node(id)
+            .unwrap_or_else(|| panic!("text '{}' missing box", label));
         assert!(b.content_rect.width > 0.0, "'{}' width must be > 0", label);
         assert!(
             b.content_rect.height > 0.0,
@@ -220,7 +222,14 @@ fn devtools_tab_text_is_visible() {
     doc.append_child(root, panel);
     doc.append_child(panel, tabs);
 
-    let labels = ["Elements", "Console", "Sources", "Performance", "Mutations", "Scene"];
+    let labels = [
+        "Elements",
+        "Console",
+        "Sources",
+        "Performance",
+        "Mutations",
+        "Scene",
+    ];
     let mut tab_ids = Vec::new();
     let mut text_ids = Vec::new();
     for label in &labels {
@@ -568,11 +577,7 @@ fn statusbar_text_items_are_visible() {
         let b = tree
             .find_by_node(*id)
             .unwrap_or_else(|| panic!("text '{}' must have a layout box", label));
-        assert!(
-            b.content_rect.width > 0.0,
-            "'{}' width must be > 0",
-            label,
-        );
+        assert!(b.content_rect.width > 0.0, "'{}' width must be > 0", label,);
         assert!(
             b.content_rect.height > 0.0,
             "'{}' height must be > 0",

@@ -1,17 +1,19 @@
 //! Cascade resolution and style computation for DOM trees.
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use liquide_dom::{Document, NodeId};
 
-use super::StyleEngine;
 use super::content::consume_remaining_properties;
+use super::StyleEngine;
 use crate::cascade::{CascadeDeclaration, CascadeMap, CascadePriority};
 use crate::computed::*;
 use crate::style_map::StyleMap;
 use crate::value_resolve::parse_inline_value;
+
+type ScopeVars = HashMap<String, liquide_theme_css::value::PropertyValue>;
 
 /// Result of an incremental restyle operation.
 ///
@@ -114,8 +116,9 @@ impl StyleEngine {
                 if rule.container_condition.is_some() {
                     continue;
                 }
-                // Skip pseudo-element rules — they apply to ::before/::after, not the element
-                if rule.pseudo_element.is_some() {
+                // Skip pseudo-element rules — they apply to synthetic boxes,
+                // not the element's own computed style.
+                if prepared_rule_pseudo_element(rule).is_some() {
                     continue;
                 }
                 if rule.selector.matches(doc, node_id) {
@@ -139,12 +142,10 @@ impl StyleEngine {
         }
 
         let resolved = cascade.resolve();
-        let empty_scope: std::collections::HashMap<
-            String,
-            liquide_theme_css::value::PropertyValue,
-        > = std::collections::HashMap::new();
+        let empty_scope = ScopeVars::new();
+        let inherited_style = style.clone();
         for (prop, val) in &resolved {
-            self.apply_single_property(prop, val, &mut style, &empty_scope);
+            self.apply_cascaded_property(prop, val, &mut style, &inherited_style, &empty_scope);
         }
 
         // ── Populate structured transition/animation defs from longhands ──
@@ -156,14 +157,14 @@ impl StyleEngine {
 
     pub fn restyle_all(&self, doc: &Document) -> StyleMap {
         let mut map = StyleMap::new();
-        let scope = std::collections::HashMap::new();
+        let scope = ScopeVars::new();
         self.restyle_node(doc, doc.root(), None, &mut map, &scope);
         map
     }
 
     pub fn restyle_subtree(&self, doc: &Document, node_id: NodeId, map: &mut StyleMap) {
         let parent_style = doc.parent(node_id).and_then(|pid| map.get(pid).cloned());
-        let scope = std::collections::HashMap::new();
+        let scope = self.inherited_scope_for_node(doc, node_id, map);
         self.restyle_node(doc, node_id, parent_style.as_deref(), map, &scope);
     }
 
@@ -203,7 +204,7 @@ impl StyleEngine {
             had_changes: false,
         };
 
-        let scope = std::collections::HashMap::new();
+        let scope = ScopeVars::new();
         self.restyle_dirty_walk(
             doc,
             doc.root(),
@@ -228,7 +229,7 @@ impl StyleEngine {
         node_id: NodeId,
         parent_style: Option<&ComputedStyle>,
         map: &mut StyleMap,
-        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+        scope_vars: &ScopeVars,
         dirty_nodes: &HashSet<NodeId>,
         force_restyle: bool,
         result: &mut RestyleResult,
@@ -246,11 +247,8 @@ impl StyleEngine {
                     .get(child_id)
                     .map(|n| matches!(n.data, liquide_dom::node::NodeData::ShadowRoot))
                     .unwrap_or(false);
-                let child_scope = if is_shadow {
-                    &std::collections::HashMap::new()
-                } else {
-                    scope_vars
-                };
+                let empty_scope = ScopeVars::new();
+                let child_scope = if is_shadow { &empty_scope } else { scope_vars };
                 self.restyle_dirty_walk(
                     doc,
                     child_id,
@@ -270,7 +268,10 @@ impl StyleEngine {
         let _guard = match StyleDepthGuard::try_enter() {
             Some(g) => g,
             None => {
-                tracing::warn!("restyle_dirty recursion depth limit reached at node {:?}", node_id);
+                tracing::warn!(
+                    "restyle_dirty recursion depth limit reached at node {:?}",
+                    node_id
+                );
                 return;
             }
         };
@@ -286,6 +287,14 @@ impl StyleEngine {
         }
 
         if !node.is_text() {
+            let inherited_scope_storage;
+            let inherited_scope = if force_restyle {
+                scope_vars
+            } else {
+                inherited_scope_storage = self.inherited_scope_for_node(doc, node_id, map);
+                &inherited_scope_storage
+            };
+
             let mut cascade = CascadeMap::new();
             let tag_name = node.tag_name();
 
@@ -307,7 +316,7 @@ impl StyleEngine {
                             continue;
                         }
                     }
-                    if rule.pseudo_element.is_some() {
+                    if prepared_rule_pseudo_element(rule).is_some() {
                         continue;
                     }
                     if rule.selector.matches(doc, node_id) {
@@ -332,51 +341,12 @@ impl StyleEngine {
 
             let resolved = cascade.resolve();
 
-            let has_custom_props = resolved.iter().any(|(p, _)| p.starts_with("--"));
-            let needs_property_overrides = !self.registered_properties.is_empty();
-            let needs_local_vars = has_custom_props || needs_property_overrides;
-
-            let mut owned_vars: Option<
-                std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
-            > = None;
-
-            if needs_local_vars {
-                let local_vars = owned_vars.insert(scope_vars.clone());
-
-                let mut explicitly_set: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
-                for (prop, val) in &resolved {
-                    if prop.starts_with("--") {
-                        local_vars.insert(prop.clone(), val.clone());
-                        explicitly_set.insert(prop.clone());
-                    }
-                }
-
-                for (name, def) in &self.registered_properties {
-                    if !def.inherits && !explicitly_set.contains(name) {
-                        if let Some(ref initial) = def.initial_value {
-                            local_vars.insert(
-                                name.clone(),
-                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
-                            );
-                        } else {
-                            local_vars.remove(name);
-                        }
-                    } else if !local_vars.contains_key(name) {
-                        if let Some(ref initial) = def.initial_value {
-                            local_vars.insert(
-                                name.clone(),
-                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
-                            );
-                        }
-                    }
-                }
-            }
-
-            let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+            let owned_vars = self.build_local_variable_scope(&resolved, inherited_scope);
+            let effective_vars = owned_vars.as_ref().unwrap_or(inherited_scope);
+            let inherited_style = style.clone();
 
             for (prop, val) in &resolved {
-                self.apply_single_property(prop, val, &mut style, effective_vars);
+                self.apply_cascaded_property(prop, val, &mut style, &inherited_style, effective_vars);
             }
 
             Self::assemble_text_decoration(&mut style);
@@ -392,18 +362,24 @@ impl StyleEngine {
             result.restyled_count += 1;
             result.had_changes = true;
             map.insert_shared(node_id, style.clone());
-            let child_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+            let child_vars = owned_vars.as_ref().unwrap_or(inherited_scope);
             self.compute_pseudo_styles(doc, node_id, &style, map, child_vars);
 
             // All children must be restyled since this node's style changed.
             let children = doc.children(node_id).to_vec();
             for child_id in children {
+                let empty_scope = ScopeVars::new();
+                let is_shadow = doc
+                    .get(child_id)
+                    .map(|n| matches!(n.data, liquide_dom::node::NodeData::ShadowRoot))
+                    .unwrap_or(false);
+                let child_scope = if is_shadow { &empty_scope } else { child_vars };
                 self.restyle_dirty_walk(
                     doc,
                     child_id,
                     Some(&style),
                     map,
-                    child_vars,
+                    child_scope,
                     dirty_nodes,
                     true,
                     result,
@@ -439,7 +415,7 @@ impl StyleEngine {
                     child_id,
                     Some(&style),
                     map,
-                    &std::collections::HashMap::new(),
+                    &ScopeVars::new(),
                     dirty_nodes,
                     true,
                     result,
@@ -465,12 +441,15 @@ impl StyleEngine {
         node_id: NodeId,
         parent_style: Option<&ComputedStyle>,
         map: &mut StyleMap,
-        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+        scope_vars: &ScopeVars,
     ) {
         let _guard = match StyleDepthGuard::try_enter() {
             Some(g) => g,
             None => {
-                tracing::warn!("restyle recursion depth limit reached at node {:?}", node_id);
+                tracing::warn!(
+                    "restyle recursion depth limit reached at node {:?}",
+                    node_id
+                );
                 return;
             }
         };
@@ -516,7 +495,7 @@ impl StyleEngine {
                         }
                     }
                     // Skip pseudo-element rules — they are computed separately below
-                    if rule.pseudo_element.is_some() {
+                    if prepared_rule_pseudo_element(rule).is_some() {
                         continue;
                     }
                     if rule.selector.matches(doc, node_id) {
@@ -550,53 +529,12 @@ impl StyleEngine {
             //
             // Defer cloning scope_vars until we actually need to modify it
             // (i.e. when custom properties or @property rules are present).
-            let has_custom_props = resolved.iter().any(|(p, _)| p.starts_with("--"));
-            let needs_property_overrides = !self.registered_properties.is_empty();
-            let needs_local_vars = has_custom_props || needs_property_overrides;
-
-            // Use Cow-like pattern: only clone when modifications are needed.
-            let mut owned_vars: Option<std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>> = None;
-
-            if needs_local_vars {
-                let local_vars = owned_vars.insert(scope_vars.clone());
-
-                // Collect which custom properties are explicitly declared on this element
-                let mut explicitly_set: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
-                for (prop, val) in &resolved {
-                    if prop.starts_with("--") {
-                        local_vars.insert(prop.clone(), val.clone());
-                        explicitly_set.insert(prop.clone());
-                    }
-                }
-
-                // For registered @property definitions: enforce `inherits: false`
-                // by resetting inherited values to initial when not explicitly set
-                for (name, def) in &self.registered_properties {
-                    if !def.inherits && !explicitly_set.contains(name) {
-                        if let Some(ref initial) = def.initial_value {
-                            local_vars.insert(
-                                name.clone(),
-                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
-                            );
-                        } else {
-                            local_vars.remove(name);
-                        }
-                    } else if !local_vars.contains_key(name) {
-                        if let Some(ref initial) = def.initial_value {
-                            local_vars.insert(
-                                name.clone(),
-                                liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
-                            );
-                        }
-                    }
-                }
-            }
-
+            let owned_vars = self.build_local_variable_scope(&resolved, scope_vars);
             let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+            let inherited_style = style.clone();
 
             for (prop, val) in &resolved {
-                self.apply_single_property(prop, val, &mut style, effective_vars);
+                self.apply_cascaded_property(prop, val, &mut style, &inherited_style, effective_vars);
             }
 
             // Assemble TextDecoration composite from longhands if set
@@ -622,7 +560,13 @@ impl StyleEngine {
             // Recurse into children with scoped variables
             let children = doc.children(node_id).to_vec();
             for child_id in children {
-                self.restyle_node(doc, child_id, Some(&style), map, child_vars);
+                let empty_scope = ScopeVars::new();
+                let is_shadow = doc
+                    .get(child_id)
+                    .map(|n| matches!(n.data, liquide_dom::node::NodeData::ShadowRoot))
+                    .unwrap_or(false);
+                let child_scope = if is_shadow { &empty_scope } else { child_vars };
+                self.restyle_node(doc, child_id, Some(&style), map, child_scope);
             }
             return;
         }
@@ -657,7 +601,13 @@ impl StyleEngine {
             if is_shadow {
                 // Shadow roots inherit from their host but don't match host
                 // document author rules. Pass parent style for inheritance.
-                self.restyle_node(doc, child_id, Some(&style), map, &std::collections::HashMap::new());
+                self.restyle_node(
+                    doc,
+                    child_id,
+                    Some(&style),
+                    map,
+                    &ScopeVars::new(),
+                );
             } else {
                 self.restyle_node(doc, child_id, Some(&style), map, scope_vars);
             }
@@ -676,7 +626,7 @@ impl StyleEngine {
         node_id: NodeId,
         host_style: &ComputedStyle,
         map: &mut StyleMap,
-        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+        scope_vars: &ScopeVars,
     ) {
         use crate::style_map::PseudoKind;
 
@@ -688,8 +638,8 @@ impl StyleEngine {
             for sheet in &self.sheets {
                 for rule_idx in sheet.candidate_indices(&tag_name) {
                     let rule = &sheet.rules[rule_idx];
-                    // Only consider rules targeting this pseudo-element
-                    if rule.pseudo_element.as_deref() != Some(pseudo_name) {
+                    // Only consider rules targeting this pseudo-element.
+                    if prepared_rule_pseudo_element(rule) != Some(pseudo_name) {
                         continue;
                     }
                     // Check media/supports/container conditions
@@ -724,6 +674,8 @@ impl StyleEngine {
             }
 
             let resolved = cascade.resolve();
+            let owned_vars = self.build_local_variable_scope(&resolved, scope_vars);
+            let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
 
             // Check if the content property is set — per spec, a pseudo-element
             // is only generated when `content` is not `none` / not absent.
@@ -741,9 +693,16 @@ impl StyleEngine {
             // Build the pseudo-element's computed style, inheriting from host
             let mut pseudo_style = ComputedStyle::default();
             pseudo_style.inherit_from(host_style);
+            let inherited_style = pseudo_style.clone();
 
             for (prop, val) in &resolved {
-                self.apply_single_property(prop, val, &mut pseudo_style, scope_vars);
+                self.apply_cascaded_property(
+                    prop,
+                    val,
+                    &mut pseudo_style,
+                    &inherited_style,
+                    effective_vars,
+                );
             }
 
             map.insert_pseudo(node_id, kind, Arc::new(pseudo_style));
@@ -767,7 +726,7 @@ impl StyleEngine {
             for sheet in &self.sheets {
                 for rule_idx in sheet.candidate_indices(&tag_name) {
                     let rule = &sheet.rules[rule_idx];
-                    if rule.pseudo_element.as_deref() != Some(pseudo_name) {
+                    if prepared_rule_pseudo_element(rule) != Some(pseudo_name) {
                         continue;
                     }
                     if let Some(ref cond) = rule.media_condition {
@@ -810,13 +769,149 @@ impl StyleEngine {
 
             let mut pseudo_style = ComputedStyle::default();
             pseudo_style.inherit_from(host_style);
+            let owned_vars = self.build_local_variable_scope(&resolved, scope_vars);
+            let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+            let inherited_style = pseudo_style.clone();
 
             for (prop, val) in &resolved {
-                self.apply_single_property(prop, val, &mut pseudo_style, scope_vars);
+                self.apply_cascaded_property(
+                    prop,
+                    val,
+                    &mut pseudo_style,
+                    &inherited_style,
+                    effective_vars,
+                );
             }
 
             map.insert_pseudo(node_id, kind, Arc::new(pseudo_style));
         }
+    }
+
+    fn build_local_variable_scope(
+        &self,
+        resolved: &[(String, liquide_theme_css::value::PropertyValue)],
+        inherited_scope: &ScopeVars,
+    ) -> Option<ScopeVars> {
+        let has_custom_props = resolved.iter().any(|(property, _)| property.starts_with("--"));
+        let needs_property_overrides = !self.registered_properties.is_empty();
+        if !has_custom_props && !needs_property_overrides {
+            return None;
+        }
+
+        let mut local_vars = inherited_scope.clone();
+        let mut explicitly_set = HashSet::new();
+        for (property, value) in resolved {
+            if property.starts_with("--") {
+                local_vars.insert(property.clone(), value.clone());
+                explicitly_set.insert(property.clone());
+            }
+        }
+
+        for (name, def) in &self.registered_properties {
+            if !def.inherits && !explicitly_set.contains(name) {
+                if let Some(ref initial) = def.initial_value {
+                    local_vars.insert(
+                        name.clone(),
+                        liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
+                    );
+                } else {
+                    local_vars.remove(name);
+                }
+            } else if !local_vars.contains_key(name) {
+                if let Some(ref initial) = def.initial_value {
+                    local_vars.insert(
+                        name.clone(),
+                        liquide_theme_css::value::PropertyValue::Keyword(initial.clone()),
+                    );
+                }
+            }
+        }
+
+        Some(local_vars)
+    }
+
+    fn resolve_scope_for_node(
+        &self,
+        doc: &Document,
+        node_id: NodeId,
+        map: &StyleMap,
+        inherited_scope: &ScopeVars,
+    ) -> ScopeVars {
+        let node = match doc.get(node_id) {
+            Some(node) if !node.is_text() => node,
+            _ => return inherited_scope.clone(),
+        };
+
+        let mut cascade = CascadeMap::new();
+        let tag_name = node.tag_name();
+
+        for sheet in &self.sheets {
+            for rule_idx in sheet.candidate_indices(&tag_name) {
+                let rule = &sheet.rules[rule_idx];
+                if let Some(ref cond) = rule.media_condition {
+                    if !self.evaluate_media_condition(cond) {
+                        continue;
+                    }
+                }
+                if let Some(ref cond) = rule.supports_condition {
+                    if !self.evaluate_supports_condition(cond) {
+                        continue;
+                    }
+                }
+                if let Some(ref cc) = rule.container_condition {
+                    if !self.evaluate_container_condition(cc, node_id, doc, map) {
+                        continue;
+                    }
+                }
+                if prepared_rule_pseudo_element(rule).is_some() {
+                    continue;
+                }
+                if rule.selector.matches(doc, node_id) {
+                    let mut priority = CascadePriority::author(rule.specificity, rule.source_order);
+                    priority.layer_order = rule.layer_order;
+                    cascade.add_properties(&rule.properties, priority);
+                }
+            }
+        }
+
+        let mut inline_order = 0u32;
+        for (prop, value) in node.inline_styles.iter() {
+            cascade.add(CascadeDeclaration {
+                property: prop.to_string(),
+                value: parse_inline_value(value),
+                priority: CascadePriority::inline(inline_order),
+            });
+            inline_order += 1;
+        }
+
+        let resolved = cascade.resolve();
+        self.build_local_variable_scope(&resolved, inherited_scope)
+            .unwrap_or_else(|| inherited_scope.clone())
+    }
+
+    fn inherited_scope_for_node(&self, doc: &Document, node_id: NodeId, map: &StyleMap) -> ScopeVars {
+        if doc
+            .get(node_id)
+            .map(|node| matches!(node.data, liquide_dom::node::NodeData::ShadowRoot))
+            .unwrap_or(false)
+        {
+            return ScopeVars::new();
+        }
+
+        let mut scope = ScopeVars::new();
+        let mut ancestors = doc.ancestors(node_id);
+        ancestors.reverse();
+        for ancestor_id in ancestors {
+            if doc
+                .get(ancestor_id)
+                .map(|node| matches!(node.data, liquide_dom::node::NodeData::ShadowRoot))
+                .unwrap_or(false)
+            {
+                scope.clear();
+            }
+            scope = self.resolve_scope_for_node(doc, ancestor_id, map, &scope);
+        }
+        scope
     }
 }
 
@@ -829,7 +924,8 @@ impl StyleEngine {
 ///   padding-*, border-*, float.
 fn is_allowed_pseudo_property(pseudo_name: &str, property: &str) -> bool {
     // Properties allowed for both ::first-line and ::first-letter
-    let first_line_ok = property.starts_with("font")
+    let first_line_ok = property.starts_with("--")
+        || property.starts_with("font")
         || property == "color"
         || property.starts_with("background")
         || property.starts_with("text-decoration")
@@ -852,26 +948,80 @@ fn is_allowed_pseudo_property(pseudo_name: &str, property: &str) -> bool {
     }
 }
 
+fn prepared_rule_pseudo_element(rule: &super::PreparedRule) -> Option<&str> {
+    rule.pseudo_element.as_deref().or_else(|| {
+        rule.selector
+            .compounds
+            .first()
+            .and_then(|compound| compound.pseudo_element.as_ref())
+            .map(|pseudo| match pseudo {
+                crate::selector::PseudoElement::Before => "before",
+                crate::selector::PseudoElement::After => "after",
+                crate::selector::PseudoElement::FirstLine => "first-line",
+                crate::selector::PseudoElement::FirstLetter => "first-letter",
+                crate::selector::PseudoElement::Placeholder => "placeholder",
+                crate::selector::PseudoElement::Selection => "selection",
+            })
+    })
+}
+
 /// Parse transition longhand strings into structured TransitionDef vec.
 fn parse_transition_defs(style: &ComputedStyle) -> Vec<TransitionDef> {
-    let properties: Vec<&str> = style.transition_property.as_deref()
-        .unwrap_or("all").split(',').map(str::trim).collect();
-    let durations: Vec<&str> = style.transition_duration.as_deref()
-        .unwrap_or("0s").split(',').map(str::trim).collect();
-    let timings: Vec<&str> = style.transition_timing_function.as_deref()
-        .unwrap_or("ease").split(',').map(str::trim).collect();
-    let delays: Vec<&str> = style.transition_delay.as_deref()
-        .unwrap_or("0s").split(',').map(str::trim).collect();
+    let properties: Vec<&str> = style
+        .transition_property
+        .as_deref()
+        .unwrap_or("all")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let durations: Vec<&str> = style
+        .transition_duration
+        .as_deref()
+        .unwrap_or("0s")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let timings: Vec<&str> = style
+        .transition_timing_function
+        .as_deref()
+        .unwrap_or("ease")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let delays: Vec<&str> = style
+        .transition_delay
+        .as_deref()
+        .unwrap_or("0s")
+        .split(',')
+        .map(str::trim)
+        .collect();
 
     let count = properties.len();
     let mut defs = Vec::with_capacity(count);
     for i in 0..count {
-        if properties[i] == "none" { continue; }
+        if properties[i] == "none" {
+            continue;
+        }
         defs.push(TransitionDef {
             property: properties[i].to_string(),
-            duration_ms: parse_time_ms(durations.get(i).copied().unwrap_or(durations.last().copied().unwrap_or("0s"))),
-            timing_function: parse_timing_function(timings.get(i).copied().unwrap_or(timings.last().copied().unwrap_or("ease"))),
-            delay_ms: parse_time_ms(delays.get(i).copied().unwrap_or(delays.last().copied().unwrap_or("0s"))),
+            duration_ms: parse_time_ms(
+                durations
+                    .get(i)
+                    .copied()
+                    .unwrap_or(durations.last().copied().unwrap_or("0s")),
+            ),
+            timing_function: parse_timing_function(
+                timings
+                    .get(i)
+                    .copied()
+                    .unwrap_or(timings.last().copied().unwrap_or("ease")),
+            ),
+            delay_ms: parse_time_ms(
+                delays
+                    .get(i)
+                    .copied()
+                    .unwrap_or(delays.last().copied().unwrap_or("0s")),
+            ),
         });
     }
     defs
@@ -885,23 +1035,55 @@ fn parse_animation_defs(style: &ComputedStyle) -> Vec<AnimationDef> {
     }
 
     let names: Vec<&str> = names_str.split(',').map(str::trim).collect();
-    let durations: Vec<&str> = style.animation_duration.as_deref()
-        .unwrap_or("0s").split(',').map(str::trim).collect();
-    let timings: Vec<&str> = style.animation_timing_function.as_deref()
-        .unwrap_or("ease").split(',').map(str::trim).collect();
-    let delays: Vec<&str> = style.animation_delay.as_deref()
-        .unwrap_or("0s").split(',').map(str::trim).collect();
+    let durations: Vec<&str> = style
+        .animation_duration
+        .as_deref()
+        .unwrap_or("0s")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let timings: Vec<&str> = style
+        .animation_timing_function
+        .as_deref()
+        .unwrap_or("ease")
+        .split(',')
+        .map(str::trim)
+        .collect();
+    let delays: Vec<&str> = style
+        .animation_delay
+        .as_deref()
+        .unwrap_or("0s")
+        .split(',')
+        .map(str::trim)
+        .collect();
 
     let count = names.len();
     let mut defs = Vec::with_capacity(count);
     for i in 0..count {
         let name = names[i];
-        if name == "none" { continue; }
+        if name == "none" {
+            continue;
+        }
         defs.push(AnimationDef {
             name: name.to_string(),
-            duration_ms: parse_time_ms(durations.get(i).copied().unwrap_or(durations.last().copied().unwrap_or("0s"))),
-            timing_function: parse_timing_function(timings.get(i).copied().unwrap_or(timings.last().copied().unwrap_or("ease"))),
-            delay_ms: parse_time_ms(delays.get(i).copied().unwrap_or(delays.last().copied().unwrap_or("0s"))),
+            duration_ms: parse_time_ms(
+                durations
+                    .get(i)
+                    .copied()
+                    .unwrap_or(durations.last().copied().unwrap_or("0s")),
+            ),
+            timing_function: parse_timing_function(
+                timings
+                    .get(i)
+                    .copied()
+                    .unwrap_or(timings.last().copied().unwrap_or("ease")),
+            ),
+            delay_ms: parse_time_ms(
+                delays
+                    .get(i)
+                    .copied()
+                    .unwrap_or(delays.last().copied().unwrap_or("0s")),
+            ),
             iteration_count: style.animation_iteration_count.clone(),
             direction: style.animation_direction,
             fill_mode: style.animation_fill_mode,
@@ -935,16 +1117,28 @@ fn parse_timing_function(s: &str) -> TimingFunction {
         "step-end" => TimingFunction::Steps(1, StepPosition::JumpEnd),
         other => {
             // Try cubic-bezier(x1, y1, x2, y2)
-            if let Some(inner) = other.strip_prefix("cubic-bezier(").and_then(|s| s.strip_suffix(')')) {
-                let nums: Vec<f32> = inner.split(',').filter_map(|n| n.trim().parse().ok()).collect();
+            if let Some(inner) = other
+                .strip_prefix("cubic-bezier(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                let nums: Vec<f32> = inner
+                    .split(',')
+                    .filter_map(|n| n.trim().parse().ok())
+                    .collect();
                 if nums.len() == 4 {
                     return TimingFunction::CubicBezier(nums[0], nums[1], nums[2], nums[3]);
                 }
             }
             // Try steps(n, position)
-            if let Some(inner) = other.strip_prefix("steps(").and_then(|s| s.strip_suffix(')')) {
+            if let Some(inner) = other
+                .strip_prefix("steps(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
                 let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
-                let n = parts.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                let n = parts
+                    .first()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(1);
                 let pos = match parts.get(1).map(|s| *s) {
                     Some("jump-start" | "start") => StepPosition::JumpStart,
                     Some("jump-end" | "end") => StepPosition::JumpEnd,

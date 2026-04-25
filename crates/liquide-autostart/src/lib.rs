@@ -69,8 +69,7 @@ mod tests {
 
     #[test]
     fn entry_should_show_in_not_show() {
-        let e = StartupEntry::new("a", "A", "/bin/a")
-            .with_not_show_in(vec!["XFCE".into()]);
+        let e = StartupEntry::new("a", "A", "/bin/a").with_not_show_in(vec!["XFCE".into()]);
         assert!(e.should_show_in("GNOME"));
         assert!(!e.should_show_in("XFCE"));
     }
@@ -136,14 +135,10 @@ mod tests {
         let mut mgr = AutostartManager::new();
 
         // Add entries.
-        mgr.add(
-            StartupEntry::new("firefox", "Firefox", "/usr/bin/firefox").with_delay(0),
-        )
-        .unwrap();
-        mgr.add(
-            StartupEntry::new("slack", "Slack", "/usr/bin/slack").with_delay(3),
-        )
-        .unwrap();
+        mgr.add(StartupEntry::new("firefox", "Firefox", "/usr/bin/firefox").with_delay(0))
+            .unwrap();
+        mgr.add(StartupEntry::new("slack", "Slack", "/usr/bin/slack").with_delay(3))
+            .unwrap();
         mgr.add(
             StartupEntry::new("nm-applet", "Network Manager", "/usr/bin/nm-applet")
                 .with_source(EntrySource::System),

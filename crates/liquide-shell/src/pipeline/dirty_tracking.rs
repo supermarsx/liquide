@@ -47,7 +47,8 @@ impl DirtyFlags {
     pub const CHILDREN_DIRTY: u8 = 0x08;
 
     /// All dirty flags at once.
-    pub const ALL: u8 = Self::STYLE_DIRTY | Self::LAYOUT_DIRTY | Self::PAINT_DIRTY | Self::CHILDREN_DIRTY;
+    pub const ALL: u8 =
+        Self::STYLE_DIRTY | Self::LAYOUT_DIRTY | Self::PAINT_DIRTY | Self::CHILDREN_DIRTY;
 
     /// No flags set.
     pub fn empty() -> Self {
@@ -56,7 +57,9 @@ impl DirtyFlags {
 
     /// Create from raw bits.
     pub fn from_bits(bits: u8) -> Self {
-        Self { bits: bits & Self::ALL }
+        Self {
+            bits: bits & Self::ALL,
+        }
     }
 
     /// Raw bits value.
@@ -91,14 +94,18 @@ impl DirtyFlags {
 
     /// Union of two flag sets.
     pub fn union(self, other: Self) -> Self {
-        Self { bits: self.bits | other.bits }
+        Self {
+            bits: self.bits | other.bits,
+        }
     }
 }
 
 impl std::ops::BitOr for DirtyFlags {
     type Output = Self;
     fn bitor(self, rhs: Self) -> Self {
-        Self { bits: self.bits | rhs.bits }
+        Self {
+            bits: self.bits | rhs.bits,
+        }
     }
 }
 
@@ -111,7 +118,9 @@ impl std::ops::BitOrAssign for DirtyFlags {
 impl std::ops::BitAnd for DirtyFlags {
     type Output = Self;
     fn bitand(self, rhs: Self) -> Self {
-        Self { bits: self.bits & rhs.bits }
+        Self {
+            bits: self.bits & rhs.bits,
+        }
     }
 }
 
@@ -216,10 +225,7 @@ impl DirtyTracker {
     /// Check if a node or any of its descendants are dirty.
     /// Uses the `CHILDREN_DIRTY` flag for O(1) lookup after propagation.
     pub fn subtree_is_dirty(&self, node: NodeId) -> bool {
-        self.flags
-            .get(&node)
-            .map(|f| f.any())
-            .unwrap_or(false)
+        self.flags.get(&node).map(|f| f.any()).unwrap_or(false)
     }
 
     /// Propagate `CHILDREN_DIRTY` flags upward through the tree.
@@ -233,11 +239,8 @@ impl DirtyTracker {
     ///   implies LAYOUT_DIRTY + PAINT_DIRTY).
     /// - If a node is LAYOUT_DIRTY, all descendants get LAYOUT_DIRTY (which
     ///   implies PAINT_DIRTY).
-    pub fn propagate<P, C>(
-        &mut self,
-        parent_fn: P,
-        children_fn: C,
-    ) where
+    pub fn propagate<P, C>(&mut self, parent_fn: P, children_fn: C)
+    where
         P: Fn(NodeId) -> Option<NodeId>,
         C: Fn(NodeId) -> Vec<NodeId>,
     {
@@ -391,6 +394,7 @@ impl Default for DirtyTracker {
 #[derive(Debug, Clone)]
 struct NodeSegment {
     /// The DOM node that owns this segment.
+    #[allow(dead_code)]
     node: NodeId,
     /// Display items for this node (not including children — those have
     /// their own segments).
@@ -612,11 +616,7 @@ impl IncrementalDisplayList {
     ///
     /// `paint_fn` is called for each dirty node to produce its new display items.
     /// Returns the list of nodes that were repainted.
-    pub fn patch<F>(
-        &mut self,
-        dirty_nodes: &[NodeId],
-        mut paint_fn: F,
-    ) -> Vec<NodeId>
+    pub fn patch<F>(&mut self, dirty_nodes: &[NodeId], mut paint_fn: F) -> Vec<NodeId>
     where
         F: FnMut(NodeId) -> Option<(Vec<DisplayItem>, Vec<NodeId>)>,
     {
@@ -856,23 +856,38 @@ mod tests {
 
     fn fill_rect(x: f32, y: f32, w: f32, h: f32, r: u8, g: u8, b: u8) -> DisplayItem {
         DisplayItem::FillRect {
-            rect: Rect { x, y, width: w, height: h },
+            rect: Rect {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
             color: Color { r, g, b, a: 255 },
         }
     }
 
     fn solid_color(x: f32, y: f32, w: f32, h: f32, r: u8, g: u8, b: u8) -> DisplayItem {
         DisplayItem::SolidColor {
-            rect: Rect { x, y, width: w, height: h },
+            rect: Rect {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
             color: Color { r, g, b, a: 255 },
-            radius: Corners::all(0.0),
+            radius: Corners::all(0.0_f32.into()),
         }
     }
 
     fn push_clip(x: f32, y: f32, w: f32, h: f32) -> DisplayItem {
         DisplayItem::PushClip {
-            rect: Rect { x, y, width: w, height: h },
-            radius: Corners::all(0.0),
+            rect: Rect {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
+            radius: Corners::all(0.0_f32.into()),
         }
     }
 
@@ -1064,8 +1079,7 @@ mod tests {
     #[test]
     fn tracker_propagate_children_dirty_upward() {
         // Tree:  1 -> 2 -> 3
-        let parents: HashMap<NodeId, NodeId> =
-            [(3, 2), (2, 1)].iter().copied().collect();
+        let parents: HashMap<NodeId, NodeId> = [(3, 2), (2, 1)].iter().copied().collect();
         let children_map: HashMap<NodeId, Vec<NodeId>> =
             [(1, vec![2]), (2, vec![3])].iter().cloned().collect();
 
@@ -1090,8 +1104,7 @@ mod tests {
     #[test]
     fn tracker_propagate_style_dirty_downward() {
         // Tree:  1 -> [2, 3], 2 -> [4]
-        let parents: HashMap<NodeId, NodeId> =
-            [(2, 1), (3, 1), (4, 2)].iter().copied().collect();
+        let parents: HashMap<NodeId, NodeId> = [(2, 1), (3, 1), (4, 2)].iter().copied().collect();
         let children_map: HashMap<NodeId, Vec<NodeId>> =
             [(1, vec![2, 3]), (2, vec![4])].iter().cloned().collect();
 
@@ -1175,7 +1188,12 @@ mod tests {
     fn idl_single_node_flatten() {
         let mut idl = IncrementalDisplayList::new();
 
-        idl.set_segment(1, vec![fill_rect(0.0, 0.0, 100.0, 100.0, 255, 0, 0)], vec![], 0);
+        idl.set_segment(
+            1,
+            vec![fill_rect(0.0, 0.0, 100.0, 100.0, 255, 0, 0)],
+            vec![],
+            0,
+        );
         idl.set_root(1);
 
         let dl = idl.flatten();
@@ -1218,8 +1236,18 @@ mod tests {
     fn idl_patch_updates_segment() {
         let mut idl = IncrementalDisplayList::new();
 
-        idl.set_segment(1, vec![fill_rect(0.0, 0.0, 200.0, 200.0, 100, 100, 100)], vec![2], 0);
-        idl.set_segment(2, vec![fill_rect(10.0, 10.0, 50.0, 50.0, 255, 0, 0)], vec![], 0);
+        idl.set_segment(
+            1,
+            vec![fill_rect(0.0, 0.0, 200.0, 200.0, 100, 100, 100)],
+            vec![2],
+            0,
+        );
+        idl.set_segment(
+            2,
+            vec![fill_rect(10.0, 10.0, 50.0, 50.0, 255, 0, 0)],
+            vec![],
+            0,
+        );
         idl.set_root(1);
 
         let dl1 = idl.flatten();
@@ -1311,8 +1339,18 @@ mod tests {
     #[test]
     fn idl_remove_segment() {
         let mut idl = IncrementalDisplayList::new();
-        idl.set_segment(1, vec![fill_rect(0.0, 0.0, 200.0, 200.0, 0, 0, 0)], vec![2], 0);
-        idl.set_segment(2, vec![fill_rect(10.0, 10.0, 50.0, 50.0, 255, 0, 0)], vec![], 0);
+        idl.set_segment(
+            1,
+            vec![fill_rect(0.0, 0.0, 200.0, 200.0, 0, 0, 0)],
+            vec![2],
+            0,
+        );
+        idl.set_segment(
+            2,
+            vec![fill_rect(10.0, 10.0, 50.0, 50.0, 255, 0, 0)],
+            vec![],
+            0,
+        );
         idl.set_root(1);
 
         assert_eq!(idl.segment_count(), 2);
@@ -1356,10 +1394,30 @@ mod tests {
         let mut idl = IncrementalDisplayList::new();
 
         // Tree: 1 -> 2 -> 3 -> 4 (depth 4)
-        idl.set_segment(1, vec![fill_rect(0.0, 0.0, 400.0, 400.0, 0, 0, 0)], vec![2], 0);
-        idl.set_segment(2, vec![fill_rect(10.0, 10.0, 300.0, 300.0, 50, 50, 50)], vec![3], 0);
-        idl.set_segment(3, vec![fill_rect(20.0, 20.0, 200.0, 200.0, 100, 100, 100)], vec![4], 0);
-        idl.set_segment(4, vec![fill_rect(30.0, 30.0, 100.0, 100.0, 200, 200, 200)], vec![], 0);
+        idl.set_segment(
+            1,
+            vec![fill_rect(0.0, 0.0, 400.0, 400.0, 0, 0, 0)],
+            vec![2],
+            0,
+        );
+        idl.set_segment(
+            2,
+            vec![fill_rect(10.0, 10.0, 300.0, 300.0, 50, 50, 50)],
+            vec![3],
+            0,
+        );
+        idl.set_segment(
+            3,
+            vec![fill_rect(20.0, 20.0, 200.0, 200.0, 100, 100, 100)],
+            vec![4],
+            0,
+        );
+        idl.set_segment(
+            4,
+            vec![fill_rect(30.0, 30.0, 100.0, 100.0, 200, 200, 200)],
+            vec![],
+            0,
+        );
         idl.set_root(1);
 
         let dl = idl.flatten();
@@ -1369,7 +1427,10 @@ mod tests {
         // Patch only the leaf
         let repainted = idl.patch(&[4], |node| {
             if node == 4 {
-                Some((vec![fill_rect(30.0, 30.0, 100.0, 100.0, 255, 255, 255)], vec![]))
+                Some((
+                    vec![fill_rect(30.0, 30.0, 100.0, 100.0, 255, 255, 255)],
+                    vec![],
+                ))
             } else {
                 None
             }
@@ -1414,7 +1475,9 @@ mod tests {
         let dl = idl.flatten();
         // PushOpacity + FillRect(bg) + FillRect(child) + PopOpacity = 4
         assert_eq!(dl.len(), 4);
-        assert!(matches!(dl.items[0], DisplayItem::PushOpacity { opacity } if (opacity - 0.5).abs() < 0.01));
+        assert!(
+            matches!(dl.items[0], DisplayItem::PushOpacity { opacity } if (opacity - 0.5).abs() < 0.01)
+        );
         assert!(matches!(dl.items[3], DisplayItem::PopOpacity));
     }
 
@@ -1535,11 +1598,36 @@ mod tests {
         );
 
         let mut idl = IncrementalDisplayList::new();
-        idl.set_segment(1, vec![fill_rect(0.0, 0.0, 800.0, 600.0, 30, 30, 30)], vec![2, 3], 0);
-        idl.set_segment(2, vec![fill_rect(0.0, 0.0, 800.0, 40.0, 50, 50, 100)], vec![], 0);
-        idl.set_segment(3, vec![fill_rect(0.0, 40.0, 800.0, 560.0, 40, 40, 40)], vec![4, 5], 0);
-        idl.set_segment(4, vec![fill_rect(10.0, 50.0, 100.0, 30.0, 200, 200, 200)], vec![], 0);
-        idl.set_segment(5, vec![fill_rect(10.0, 90.0, 100.0, 30.0, 180, 180, 180)], vec![], 0);
+        idl.set_segment(
+            1,
+            vec![fill_rect(0.0, 0.0, 800.0, 600.0, 30, 30, 30)],
+            vec![2, 3],
+            0,
+        );
+        idl.set_segment(
+            2,
+            vec![fill_rect(0.0, 0.0, 800.0, 40.0, 50, 50, 100)],
+            vec![],
+            0,
+        );
+        idl.set_segment(
+            3,
+            vec![fill_rect(0.0, 40.0, 800.0, 560.0, 40, 40, 40)],
+            vec![4, 5],
+            0,
+        );
+        idl.set_segment(
+            4,
+            vec![fill_rect(10.0, 50.0, 100.0, 30.0, 200, 200, 200)],
+            vec![],
+            0,
+        );
+        idl.set_segment(
+            5,
+            vec![fill_rect(10.0, 90.0, 100.0, 30.0, 180, 180, 180)],
+            vec![],
+            0,
+        );
         idl.set_root(1);
 
         let dl1 = idl.flatten();
@@ -1565,7 +1653,10 @@ mod tests {
         let repainted = idl.patch(&dirty_paint, |node| {
             if node == 4 {
                 // Hover: brighter color
-                Some((vec![fill_rect(10.0, 50.0, 100.0, 30.0, 255, 255, 255)], vec![]))
+                Some((
+                    vec![fill_rect(10.0, 50.0, 100.0, 30.0, 255, 255, 255)],
+                    vec![],
+                ))
             } else {
                 None
             }

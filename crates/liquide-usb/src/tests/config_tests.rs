@@ -40,7 +40,12 @@ fn test_usb_config_custom() {
 
 #[test]
 fn test_tier_mode_variants() {
-    let modes = [TierMode::Auto, TierMode::Tier1, TierMode::Tier2, TierMode::Tier3];
+    let modes = [
+        TierMode::Auto,
+        TierMode::Tier1,
+        TierMode::Tier2,
+        TierMode::Tier3,
+    ];
     assert_eq!(modes.len(), 4);
 }
 

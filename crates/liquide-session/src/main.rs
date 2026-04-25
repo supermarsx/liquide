@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 use liquide_session::config::{
-    JailConfig, ResumeConfig, ResourceLimits, SessionConfig, SupervisorConfig,
+    JailConfig, ResourceLimits, ResumeConfig, SessionConfig, SupervisorConfig,
 };
 use liquide_session::desktop::DesktopCompositor;
 use liquide_session::runtime::SessionRuntime;
@@ -132,7 +132,13 @@ async fn run(cli: Cli) -> Result<()> {
             debug_perf = cli.debug_perf,
             "Launching desktop compositor"
         );
-        run_desktop(cli.width, cli.height, cli.fps_cap, cli.debug_perf, cli.dev_mode)
+        run_desktop(
+            cli.width,
+            cli.height,
+            cli.fps_cap,
+            cli.debug_perf,
+            cli.dev_mode,
+        )
     }
 }
 
@@ -141,9 +147,15 @@ async fn run(cli: Cli) -> Result<()> {
 /// This creates the platform backend (Win32, X11, Wayland, or macOS),
 /// instantiates the desktop compositor with the shell, and enters the
 /// blocking event loop.
-fn run_desktop(width: u32, height: u32, fps_cap: u32, debug_perf: bool, dev_mode: bool) -> Result<()> {
-    let mut platform = liquide_platform::create_platform()
-        .context("Failed to create platform backend")?;
+fn run_desktop(
+    width: u32,
+    height: u32,
+    fps_cap: u32,
+    debug_perf: bool,
+    dev_mode: bool,
+) -> Result<()> {
+    let mut platform =
+        liquide_platform::create_platform().context("Failed to create platform backend")?;
 
     info!(
         platform = platform.platform_name(),

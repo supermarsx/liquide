@@ -195,7 +195,10 @@ fn parse_windows_json(json_str: &str) -> Result<Vec<DisplayInfo>, PlatformError>
                 if !available_resolutions.contains(&res) {
                     available_resolutions.push(res);
                 }
-                if !available_refresh_rates.iter().any(|&r: &f32| (r - mhz).abs() < 0.5) {
+                if !available_refresh_rates
+                    .iter()
+                    .any(|&r: &f32| (r - mhz).abs() < 0.5)
+                {
                     available_refresh_rates.push(mhz);
                 }
             }
@@ -351,9 +354,7 @@ fn parse_xrandr_output(output: &str) -> Result<Vec<DisplayInfo>, PlatformError> 
                 connected,
             });
             next_id += 1;
-        } else if (line.starts_with(' ') || line.starts_with('\t'))
-            && !line.starts_with("Screen")
-        {
+        } else if (line.starts_with(' ') || line.starts_with('\t')) && !line.starts_with("Screen") {
             // Mode line: "   1920x1080     60.00*+  144.00    120.00"
             if let Some(ref mut d) = current {
                 let trimmed = line.trim();
@@ -367,9 +368,7 @@ fn parse_xrandr_output(output: &str) -> Result<Vec<DisplayInfo>, PlatformError> 
                             }
 
                             for rate_str in parts_iter {
-                                let clean = rate_str
-                                    .trim_end_matches('*')
-                                    .trim_end_matches('+');
+                                let clean = rate_str.trim_end_matches('*').trim_end_matches('+');
                                 if let Ok(hz) = clean.parse::<f32>() {
                                     // If this rate is marked with *, it's the current.
                                     if rate_str.contains('*') {

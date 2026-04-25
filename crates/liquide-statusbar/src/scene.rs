@@ -6,6 +6,7 @@
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_datetime::{ClockFormat, ClockSettings, DateTime};
 
 use crate::items::StatusBarItemKind;
 use crate::shell_bar::ShellStatusBar;
@@ -71,6 +72,40 @@ impl Default for StatusBarLayout {
 }
 
 // ---------------------------------------------------------------------------
+// Fonts
+// ---------------------------------------------------------------------------
+
+/// Font parameters for status-bar text nodes.
+///
+/// Defaults mirror [`liquide_ui_core::ThemeFonts::status_bar`]. Keeping a
+/// local struct avoids a direct dependency on `liquide-ui-core` at scene
+/// build time while still aligning with the theme's status-bar role.
+#[derive(Debug, Clone)]
+pub struct StatusBarFonts {
+    pub family: String,
+    pub size: f32,
+    pub weight: u16,
+    pub line_height: f32,
+    pub letter_spacing: f32,
+    pub badge_size: f32,
+}
+
+impl Default for StatusBarFonts {
+    fn default() -> Self {
+        // Matches `ThemeFonts::status_bar` defaults: Manrope 12 px / 500 weight.
+        Self {
+            family: "Manrope".to_string(),
+            size: 12.0,
+            weight: 500,
+            line_height: 1.3,
+            letter_spacing: -0.1,
+            // Badges use a slightly smaller size than the main status text.
+            badge_size: 10.0,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Scene helpers
 // ---------------------------------------------------------------------------
 
@@ -89,6 +124,8 @@ fn text_node(
     bounds: Rect,
     z: u32,
     scale: u32,
+    fonts: &StatusBarFonts,
+    font_size: f32,
 ) -> SceneNode {
     SceneNode::new(
         id,
@@ -96,13 +133,13 @@ fn text_node(
             text,
             color,
             scale,
-            font_family: "Inter".to_string(),
-            font_size: 0.0,
-            font_weight: 400,
+            font_family: fonts.family.clone(),
+            font_size,
+            font_weight: fonts.weight,
             font_style_italic: false,
-            letter_spacing: 0.0,
+            letter_spacing: fonts.letter_spacing,
             word_spacing: 0.0,
-            line_height: 1.4,
+            line_height: fonts.line_height,
             text_align: 0,
             text_transform: 0,
             text_overflow: 0,
@@ -129,14 +166,30 @@ fn icon_node(id: u64, icon_id: u32, color: Color, bounds: Rect, z: u32) -> Scene
 
 impl ShellStatusBar {
     /// Build the scene graph for the status bar.
+    ///
+    /// `fonts` is optional — defaults come from [`StatusBarFonts::default`]
+    /// which matches `ThemeFonts::status_bar`.
     pub fn build_scene(
         &self,
         screen: Rect,
         colors: &StatusBarColors,
         layout: Option<&StatusBarLayout>,
     ) -> SceneNode {
+        self.build_scene_with_fonts(screen, colors, layout, None)
+    }
+
+    /// Build the scene graph, optionally overriding font params.
+    pub fn build_scene_with_fonts(
+        &self,
+        screen: Rect,
+        colors: &StatusBarColors,
+        layout: Option<&StatusBarLayout>,
+        fonts: Option<&StatusBarFonts>,
+    ) -> SceneNode {
         let defaults = StatusBarLayout::default();
         let layout = layout.unwrap_or(&defaults);
+        let default_fonts = StatusBarFonts::default();
+        let fonts = fonts.unwrap_or(&default_fonts);
 
         if !self.is_enabled() {
             return SceneNode::new(
@@ -168,8 +221,12 @@ impl ShellStatusBar {
         let mut right_x = bar_bounds.width - padding;
 
         // Accent border at the bottom edge of the status bar.
-        let border_rect =
-            Rect::new(0.0, bar_bounds.height - layout.border_height, bar_bounds.width, layout.border_height);
+        let border_rect = Rect::new(
+            0.0,
+            bar_bounds.height - layout.border_height,
+            bar_bounds.width,
+            layout.border_height,
+        );
         bar_node.add_child(solid_rect(
             NODE_STATUS_BAR + 1,
             colors.border,
@@ -216,7 +273,9 @@ impl ShellStatusBar {
                         colors.notification_inactive
                     }
                 }
-                StatusBarItemKind::ConnectionQuality { quality_percent, .. } => {
+                StatusBarItemKind::ConnectionQuality {
+                    quality_percent, ..
+                } => {
                     if *quality_percent > 70 {
                         colors.connected
                     } else {
@@ -229,14 +288,36 @@ impl ShellStatusBar {
             };
 
             match &item.kind {
-                StatusBarItemKind::Clock { .. } => {
-                    // Format time from the stored UNIX-epoch timestamp.
-                    let total_secs = item.last_update_us / 1_000_000;
-                    let hours = (total_secs / 3600) % 24;
-                    let minutes = (total_secs / 60) % 60;
-                    let time_str = format!("{hours:02}:{minutes:02}");
+                StatusBarItemKind::Clock { format } => {
+                    // Interpret `last_update_us` as microseconds-since-Unix-epoch
+                    // (the shell updates this with wall-clock time every tick).
+                    // Apply the bar's configured UTC offset so the clock reads
+                    // local time, then format via `ClockSettings`.
+                    let total_secs = (item.last_update_us / 1_000_000) as i64;
+                    let dt_utc = DateTime::from_unix_timestamp(total_secs);
+                    let dt_local = dt_utc.with_offset_minutes(self.clock_offset_minutes());
+                    let settings = ClockSettings {
+                        format: if self.clock_24h() {
+                            ClockFormat::H24
+                        } else if format.contains('%') {
+                            ClockFormat::Custom(format.clone())
+                        } else {
+                            ClockFormat::H12
+                        },
+                        show_seconds: self.clock_show_seconds(),
+                        show_date: false,
+                        timezone: String::new(),
+                    };
+                    let time_str = settings.format_time(&dt_local);
                     bar_node.add_child(text_node(
-                        item_id, time_str, color, item_bounds, 951, 1,
+                        item_id,
+                        time_str,
+                        color,
+                        item_bounds,
+                        951,
+                        1,
+                        fonts,
+                        fonts.size,
                     ));
                 }
                 StatusBarItemKind::NotificationIndicator { unread_count, .. } => {
@@ -246,12 +327,8 @@ impl ShellStatusBar {
                     if *unread_count > 0 {
                         let badge_text = format!("{unread_count}");
                         let badge_w = badge_text.len() as f32 * 8.0 + 4.0;
-                        let badge_rect = Rect::new(
-                            ix + item_width - badge_w,
-                            item_y,
-                            badge_w,
-                            12.0,
-                        );
+                        let badge_rect =
+                            Rect::new(ix + item_width - badge_w, item_y, badge_w, 12.0);
                         bar_node.add_child(text_node(
                             item_id + 1,
                             badge_text,
@@ -259,6 +336,8 @@ impl ShellStatusBar {
                             badge_rect,
                             952,
                             1,
+                            fonts,
+                            fonts.badge_size,
                         ));
                     }
                 }
@@ -278,6 +357,8 @@ impl ShellStatusBar {
                         item_bounds,
                         951,
                         1,
+                        fonts,
+                        fonts.size,
                     ));
                 }
                 StatusBarItemKind::SessionButton => {

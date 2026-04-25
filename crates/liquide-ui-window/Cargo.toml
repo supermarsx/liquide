@@ -17,3 +17,4 @@ liquide-compositor = { path = "../liquide-compositor" }
 bitflags.workspace = true
 serde.workspace = true
 tracing.workspace = true
+unicode-segmentation = "1"

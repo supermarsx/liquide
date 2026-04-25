@@ -1,11 +1,11 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::pixel::{BlendMode, Color, PixelFormat};
 
-use liquide_renderer_cpu::blur;
 use liquide_renderer_cpu::blend;
+use liquide_renderer_cpu::blur;
 use liquide_renderer_cpu::color::{self, SrgbLut};
 use liquide_renderer_cpu::glyph::{GlyphAtlas, GlyphKey, GlyphMetrics};
 use liquide_renderer_cpu::path::{self, PathBuilder};
@@ -18,7 +18,11 @@ use liquide_renderer_cpu::rasterizer::{self, Fill};
 fn bench_blur_region(c: &mut Criterion) {
     let mut fb = FrameBuffer::new(256, 256, PixelFormat::Bgra8);
     // Fill with non-trivial data so the blur does real work
-    for px in fb.pixels_mut().expect("CPU framebuffer required").chunks_exact_mut(4) {
+    for px in fb
+        .pixels_mut()
+        .expect("CPU framebuffer required")
+        .chunks_exact_mut(4)
+    {
         px[0] = 100; // B
         px[1] = 150; // G
         px[2] = 200; // R
@@ -35,7 +39,11 @@ fn bench_blur_region(c: &mut Criterion) {
 
 fn bench_blur_fast(c: &mut Criterion) {
     let mut fb = FrameBuffer::new(512, 512, PixelFormat::Bgra8);
-    for px in fb.pixels_mut().expect("CPU framebuffer required").chunks_exact_mut(4) {
+    for px in fb
+        .pixels_mut()
+        .expect("CPU framebuffer required")
+        .chunks_exact_mut(4)
+    {
         px[0] = 80;
         px[1] = 120;
         px[2] = 180;
@@ -206,7 +214,10 @@ fn bench_glyph_blit(c: &mut Criterion) {
         b.iter(|| {
             for (i, key) in keys.iter().enumerate() {
                 let glyph = atlas.get(key).unwrap();
-                let pos = Point::new((i as f32 % 50.0) * 18.0, 100.0 + (i as f32 / 50.0).floor() * 24.0);
+                let pos = Point::new(
+                    (i as f32 % 50.0) * 18.0,
+                    100.0 + (i as f32 / 50.0).floor() * 24.0,
+                );
                 atlas.blit_glyph(
                     black_box(&mut fb),
                     black_box(glyph),

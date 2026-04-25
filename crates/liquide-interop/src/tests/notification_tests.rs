@@ -58,7 +58,8 @@ fn test_list_contents() {
 fn test_actions() {
     let mut n = Notification::new("App", "Test");
     n.actions.push(NotificationAction::new("reply", "Reply"));
-    n.actions.push(NotificationAction::new("dismiss", "Dismiss"));
+    n.actions
+        .push(NotificationAction::new("dismiss", "Dismiss"));
     assert_eq!(n.actions.len(), 2);
     assert_eq!(n.actions[0].key, "reply");
 }

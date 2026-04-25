@@ -1,8 +1,6 @@
 //! Element rule definition and builder methods.
 
-use crate::computed::{
-    AlignItems, Display, FlexDirection, JustifyContent, Position,
-};
+use crate::computed::{AlignItems, Display, FlexDirection, JustifyContent, Position};
 
 use super::types::{PropertyRequirement, Severity, StructureRequirement};
 
@@ -45,8 +43,10 @@ impl ElementRule {
 
     /// Require position to be one of these values.
     pub fn position_one_of(mut self, values: &[Position], severity: Severity) -> Self {
-        self.property_requirements
-            .push((PropertyRequirement::PositionOneOf(values.to_vec()), severity));
+        self.property_requirements.push((
+            PropertyRequirement::PositionOneOf(values.to_vec()),
+            severity,
+        ));
         self
     }
 
@@ -60,11 +60,7 @@ impl ElementRule {
     }
 
     /// Require justify content to be one of these values.
-    pub fn justify_content_one_of(
-        mut self,
-        values: &[JustifyContent],
-        severity: Severity,
-    ) -> Self {
+    pub fn justify_content_one_of(mut self, values: &[JustifyContent], severity: Severity) -> Self {
         self.property_requirements.push((
             PropertyRequirement::JustifyContentOneOf(values.to_vec()),
             severity,

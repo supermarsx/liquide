@@ -1,4 +1,6 @@
-use crate::notifications::{NativeNotificationParams, NativeNotifications, NullNativeNotifications};
+use crate::notifications::{
+    NativeNotificationParams, NativeNotifications, NullNativeNotifications,
+};
 
 fn make_notification_params() -> NativeNotificationParams {
     NativeNotificationParams {

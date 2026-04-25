@@ -98,7 +98,7 @@ pub fn blend_overlay(dst: Color, src: Color) -> Color {
         r: overlay_ch(dst.r, src.r),
         g: overlay_ch(dst.g, src.g),
         b: overlay_ch(dst.b, src.b),
-        a: ((src.a as u16 + dst.a as u16 - (dst.a as u16 * src.a as u16 + 127) / 255)) as u8,
+        a: (src.a as u16 + dst.a as u16 - (dst.a as u16 * src.a as u16 + 127) / 255) as u8,
     }
 }
 
@@ -306,8 +306,16 @@ fn set_sat(r: f32, g: f32, b: f32, sat: f32) -> (f32, f32, f32) {
 #[inline]
 #[must_use]
 pub fn blend_hue(dst: Color, src: Color) -> Color {
-    let (sr, sg, sb) = (src.r as f32 / 255.0, src.g as f32 / 255.0, src.b as f32 / 255.0);
-    let (_dr, _dg, _db) = (dst.r as f32 / 255.0, dst.g as f32 / 255.0, dst.b as f32 / 255.0);
+    let (sr, sg, sb) = (
+        src.r as f32 / 255.0,
+        src.g as f32 / 255.0,
+        src.b as f32 / 255.0,
+    );
+    let (_dr, _dg, _db) = (
+        dst.r as f32 / 255.0,
+        dst.g as f32 / 255.0,
+        dst.b as f32 / 255.0,
+    );
     let s = saturation(dst.r, dst.g, dst.b);
     let l = luminance(dst.r, dst.g, dst.b);
     let (r, g, b) = set_sat(sr, sg, sb, s);
@@ -324,7 +332,11 @@ pub fn blend_hue(dst: Color, src: Color) -> Color {
 #[inline]
 #[must_use]
 pub fn blend_saturation(dst: Color, src: Color) -> Color {
-    let (dr, dg, db) = (dst.r as f32 / 255.0, dst.g as f32 / 255.0, dst.b as f32 / 255.0);
+    let (dr, dg, db) = (
+        dst.r as f32 / 255.0,
+        dst.g as f32 / 255.0,
+        dst.b as f32 / 255.0,
+    );
     let s = saturation(src.r, src.g, src.b);
     let l = luminance(dst.r, dst.g, dst.b);
     let (r, g, b) = set_sat(dr, dg, db, s);
@@ -341,7 +353,11 @@ pub fn blend_saturation(dst: Color, src: Color) -> Color {
 #[inline]
 #[must_use]
 pub fn blend_color(dst: Color, src: Color) -> Color {
-    let (sr, sg, sb) = (src.r as f32 / 255.0, src.g as f32 / 255.0, src.b as f32 / 255.0);
+    let (sr, sg, sb) = (
+        src.r as f32 / 255.0,
+        src.g as f32 / 255.0,
+        src.b as f32 / 255.0,
+    );
     let l = luminance(dst.r, dst.g, dst.b);
     let (r, g, b) = set_lum(sr, sg, sb, l);
     Color {
@@ -356,7 +372,11 @@ pub fn blend_color(dst: Color, src: Color) -> Color {
 #[inline]
 #[must_use]
 pub fn blend_luminosity(dst: Color, src: Color) -> Color {
-    let (dr, dg, db) = (dst.r as f32 / 255.0, dst.g as f32 / 255.0, dst.b as f32 / 255.0);
+    let (dr, dg, db) = (
+        dst.r as f32 / 255.0,
+        dst.g as f32 / 255.0,
+        dst.b as f32 / 255.0,
+    );
     let l = luminance(src.r, src.g, src.b);
     let (r, g, b) = set_lum(dr, dg, db, l);
     Color {
@@ -424,8 +444,10 @@ pub fn blend_scanline(dst: &mut [u8], src: &[u8], mode: BlendMode) {
             let pixel_count = dst.len() / 4;
             for i in 0..pixel_count {
                 let off = i * 4;
-                let d = Color::from_bgra_bytes([dst[off], dst[off + 1], dst[off + 2], dst[off + 3]]);
-                let s = Color::from_bgra_bytes([src[off], src[off + 1], src[off + 2], src[off + 3]]);
+                let d =
+                    Color::from_bgra_bytes([dst[off], dst[off + 1], dst[off + 2], dst[off + 3]]);
+                let s =
+                    Color::from_bgra_bytes([src[off], src[off + 1], src[off + 2], src[off + 3]]);
                 let result = blend(d, s, mode);
                 let bgra = result.to_bgra_bytes();
                 dst[off..off + 4].copy_from_slice(&bgra);

@@ -49,9 +49,21 @@ fn damage_tracker_detects_change() {
 #[test]
 fn damage_set_sort_priority() {
     let mut ds = DamageSet::new(64);
-    ds.add(DamageTile { x: 0, y: 0, class: DamageClass::BitmapRegion });
-    ds.add(DamageTile { x: 1, y: 0, class: DamageClass::TextGlyph });
-    ds.add(DamageTile { x: 2, y: 0, class: DamageClass::UiPrimitive });
+    ds.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::BitmapRegion,
+    });
+    ds.add(DamageTile {
+        x: 1,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    ds.add(DamageTile {
+        x: 2,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
     ds.sort_by_priority();
     assert_eq!(ds.tiles[0].class, DamageClass::TextGlyph);
     assert_eq!(ds.tiles[1].class, DamageClass::UiPrimitive);
@@ -61,9 +73,17 @@ fn damage_set_sort_priority() {
 #[test]
 fn damage_set_merge() {
     let mut a = DamageSet::new(64);
-    a.add(DamageTile { x: 0, y: 0, class: DamageClass::TextGlyph });
+    a.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
     let mut b = DamageSet::new(64);
-    b.add(DamageTile { x: 1, y: 1, class: DamageClass::BitmapRegion });
+    b.add(DamageTile {
+        x: 1,
+        y: 1,
+        class: DamageClass::BitmapRegion,
+    });
     a.merge(&b);
     assert_eq!(a.len(), 2);
 }
@@ -157,7 +177,11 @@ fn damage_set_default_is_empty() {
 #[test]
 fn damage_set_add_single() {
     let mut ds = DamageSet::new(64);
-    ds.add(DamageTile { x: 3, y: 7, class: DamageClass::TextGlyph });
+    ds.add(DamageTile {
+        x: 3,
+        y: 7,
+        class: DamageClass::TextGlyph,
+    });
     assert_eq!(ds.len(), 1);
     assert!(!ds.is_empty());
     assert_eq!(ds.tiles[0].x, 3);
@@ -169,7 +193,11 @@ fn damage_set_add_single() {
 fn damage_set_add_multiple() {
     let mut ds = DamageSet::new(64);
     for i in 0..100 {
-        ds.add(DamageTile { x: i, y: 0, class: DamageClass::UiPrimitive });
+        ds.add(DamageTile {
+            x: i,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
     }
     assert_eq!(ds.len(), 100);
 }
@@ -177,8 +205,16 @@ fn damage_set_add_multiple() {
 #[test]
 fn damage_set_clear() {
     let mut ds = DamageSet::new(64);
-    ds.add(DamageTile { x: 0, y: 0, class: DamageClass::TextGlyph });
-    ds.add(DamageTile { x: 1, y: 1, class: DamageClass::CursorOnly });
+    ds.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    ds.add(DamageTile {
+        x: 1,
+        y: 1,
+        class: DamageClass::CursorOnly,
+    });
     assert_eq!(ds.len(), 2);
     ds.clear();
     assert!(ds.is_empty());
@@ -278,7 +314,11 @@ fn damage_set_mark_rect_at_tile_boundary() {
 #[test]
 fn damage_set_mark_all_replaces_existing() {
     let mut ds = DamageSet::new(64);
-    ds.add(DamageTile { x: 99, y: 99, class: DamageClass::TextGlyph });
+    ds.add(DamageTile {
+        x: 99,
+        y: 99,
+        class: DamageClass::TextGlyph,
+    });
     ds.mark_all(2, 2);
     assert_eq!(ds.len(), 4);
     // The old tile at (99, 99) should be gone
@@ -315,7 +355,11 @@ fn damage_set_merge_empty_into_empty() {
 fn damage_set_merge_into_empty() {
     let mut a = DamageSet::new(64);
     let mut b = DamageSet::new(64);
-    b.add(DamageTile { x: 5, y: 5, class: DamageClass::BitmapRegion });
+    b.add(DamageTile {
+        x: 5,
+        y: 5,
+        class: DamageClass::BitmapRegion,
+    });
     a.merge(&b);
     assert_eq!(a.len(), 1);
     assert_eq!(a.tiles[0].x, 5);
@@ -324,12 +368,28 @@ fn damage_set_merge_into_empty() {
 #[test]
 fn damage_set_merge_preserves_both() {
     let mut a = DamageSet::new(64);
-    a.add(DamageTile { x: 0, y: 0, class: DamageClass::TextGlyph });
-    a.add(DamageTile { x: 1, y: 0, class: DamageClass::UiPrimitive });
+    a.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    a.add(DamageTile {
+        x: 1,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
 
     let mut b = DamageSet::new(64);
-    b.add(DamageTile { x: 2, y: 0, class: DamageClass::BitmapRegion });
-    b.add(DamageTile { x: 3, y: 0, class: DamageClass::CursorOnly });
+    b.add(DamageTile {
+        x: 2,
+        y: 0,
+        class: DamageClass::BitmapRegion,
+    });
+    b.add(DamageTile {
+        x: 3,
+        y: 0,
+        class: DamageClass::CursorOnly,
+    });
 
     a.merge(&b);
     assert_eq!(a.len(), 4);
@@ -339,9 +399,17 @@ fn damage_set_merge_preserves_both() {
 fn damage_set_merge_allows_duplicates() {
     // merge doesn't deduplicate — verify that behavior
     let mut a = DamageSet::new(64);
-    a.add(DamageTile { x: 0, y: 0, class: DamageClass::TextGlyph });
+    a.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
     let mut b = DamageSet::new(64);
-    b.add(DamageTile { x: 0, y: 0, class: DamageClass::TextGlyph });
+    b.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
     a.merge(&b);
     assert_eq!(a.len(), 2);
 }
@@ -351,10 +419,26 @@ fn damage_set_merge_allows_duplicates() {
 #[test]
 fn damage_set_sort_all_four_classes() {
     let mut ds = DamageSet::new(64);
-    ds.add(DamageTile { x: 0, y: 0, class: DamageClass::CursorOnly });
-    ds.add(DamageTile { x: 1, y: 0, class: DamageClass::BitmapRegion });
-    ds.add(DamageTile { x: 2, y: 0, class: DamageClass::TextGlyph });
-    ds.add(DamageTile { x: 3, y: 0, class: DamageClass::UiPrimitive });
+    ds.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::CursorOnly,
+    });
+    ds.add(DamageTile {
+        x: 1,
+        y: 0,
+        class: DamageClass::BitmapRegion,
+    });
+    ds.add(DamageTile {
+        x: 2,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    ds.add(DamageTile {
+        x: 3,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
     ds.sort_by_priority();
     assert_eq!(ds.tiles[0].class, DamageClass::TextGlyph);
     assert_eq!(ds.tiles[1].class, DamageClass::UiPrimitive);
@@ -365,9 +449,21 @@ fn damage_set_sort_all_four_classes() {
 #[test]
 fn damage_set_sort_stable_within_same_priority() {
     let mut ds = DamageSet::new(64);
-    ds.add(DamageTile { x: 10, y: 0, class: DamageClass::TextGlyph });
-    ds.add(DamageTile { x: 20, y: 0, class: DamageClass::TextGlyph });
-    ds.add(DamageTile { x: 5, y: 0, class: DamageClass::TextGlyph });
+    ds.add(DamageTile {
+        x: 10,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    ds.add(DamageTile {
+        x: 20,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    ds.add(DamageTile {
+        x: 5,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
     ds.sort_by_priority();
     // sort_by_key is stable, so insertion order is preserved within same key
     assert_eq!(ds.tiles[0].x, 10);
@@ -385,7 +481,11 @@ fn damage_set_sort_empty() {
 #[test]
 fn damage_set_sort_single_element() {
     let mut ds = DamageSet::new(64);
-    ds.add(DamageTile { x: 0, y: 0, class: DamageClass::CursorOnly });
+    ds.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::CursorOnly,
+    });
     ds.sort_by_priority();
     assert_eq!(ds.len(), 1);
     assert_eq!(ds.tiles[0].class, DamageClass::CursorOnly);
@@ -396,8 +496,8 @@ fn damage_set_sort_single_element() {
 #[test]
 fn damage_tracker_grid_dimensions() {
     let tracker = DamageTracker::new(64, 1920, 1080);
-    assert_eq!(tracker.grid_width(), 30);   // 1920 / 64 = 30
-    assert_eq!(tracker.grid_height(), 17);  // ceil(1080 / 64) = 17
+    assert_eq!(tracker.grid_width(), 30); // 1920 / 64 = 30
+    assert_eq!(tracker.grid_height(), 17); // ceil(1080 / 64) = 17
     assert_eq!(tracker.tile_size(), 64);
 }
 
@@ -412,8 +512,8 @@ fn damage_tracker_non_aligned_dimensions() {
 #[test]
 fn damage_tracker_exact_tile_alignment() {
     let tracker = DamageTracker::new(64, 256, 192);
-    assert_eq!(tracker.grid_width(), 4);    // 256 / 64 = 4
-    assert_eq!(tracker.grid_height(), 3);   // 192 / 64 = 3
+    assert_eq!(tracker.grid_width(), 4); // 256 / 64 = 4
+    assert_eq!(tracker.grid_height(), 3); // 192 / 64 = 3
 }
 
 #[test]
@@ -466,9 +566,9 @@ fn damage_tracker_multi_tile_changes() {
     let _ = tracker.compute_damage(&fb);
 
     // Modify pixels in 3 different tiles
-    fb.set_pixel(10, 10, Color::WHITE);    // tile (0, 0)
-    fb.set_pixel(130, 10, Color::WHITE);   // tile (2, 0)
-    fb.set_pixel(200, 200, Color::WHITE);  // tile (3, 3)
+    fb.set_pixel(10, 10, Color::WHITE); // tile (0, 0)
+    fb.set_pixel(130, 10, Color::WHITE); // tile (2, 0)
+    fb.set_pixel(200, 200, Color::WHITE); // tile (3, 3)
 
     let damage = tracker.compute_damage(&fb);
     assert_eq!(damage.len(), 3);
@@ -486,10 +586,10 @@ fn damage_tracker_all_tiles_changed() {
     let _ = tracker.compute_damage(&fb);
 
     // Modify a pixel in every tile
-    fb.set_pixel(10, 10, Color::WHITE);   // tile (0, 0)
-    fb.set_pixel(70, 10, Color::WHITE);   // tile (1, 0)
-    fb.set_pixel(10, 70, Color::WHITE);   // tile (0, 1)
-    fb.set_pixel(70, 70, Color::WHITE);   // tile (1, 1)
+    fb.set_pixel(10, 10, Color::WHITE); // tile (0, 0)
+    fb.set_pixel(70, 10, Color::WHITE); // tile (1, 0)
+    fb.set_pixel(10, 70, Color::WHITE); // tile (0, 1)
+    fb.set_pixel(70, 70, Color::WHITE); // tile (1, 1)
 
     let damage = tracker.compute_damage(&fb);
     assert_eq!(damage.len(), 4);
@@ -568,7 +668,10 @@ fn damage_tracker_resize_then_no_change() {
     tracker.resize(256, 256);
     let _ = tracker.compute_damage(&fb); // first after resize: full damage
     let d = tracker.compute_damage(&fb);
-    assert!(d.is_empty(), "no change after resize + first scan should yield no damage");
+    assert!(
+        d.is_empty(),
+        "no change after resize + first scan should yield no damage"
+    );
 }
 
 // ── DamageTracker with different pixel formats ──────────────────────────
@@ -678,16 +781,32 @@ fn crc32c_tile_out_of_bounds_returns_zero() {
 
 #[test]
 fn damage_tile_equality() {
-    let a = DamageTile { x: 1, y: 2, class: DamageClass::TextGlyph };
-    let b = DamageTile { x: 1, y: 2, class: DamageClass::TextGlyph };
-    let c = DamageTile { x: 1, y: 2, class: DamageClass::CursorOnly };
+    let a = DamageTile {
+        x: 1,
+        y: 2,
+        class: DamageClass::TextGlyph,
+    };
+    let b = DamageTile {
+        x: 1,
+        y: 2,
+        class: DamageClass::TextGlyph,
+    };
+    let c = DamageTile {
+        x: 1,
+        y: 2,
+        class: DamageClass::CursorOnly,
+    };
     assert_eq!(a, b);
     assert_ne!(a, c);
 }
 
 #[test]
 fn damage_tile_clone() {
-    let a = DamageTile { x: 5, y: 10, class: DamageClass::BitmapRegion };
+    let a = DamageTile {
+        x: 5,
+        y: 10,
+        class: DamageClass::BitmapRegion,
+    };
     let b = a;
     assert_eq!(a, b);
 }
@@ -755,7 +874,11 @@ fn workflow_damage_set_collect_and_sort() {
     ui_damage.mark_rect(0, 0, 128, 128, 10, 10);
 
     let mut text_damage = DamageSet::new(64);
-    text_damage.add(DamageTile { x: 0, y: 0, class: DamageClass::TextGlyph });
+    text_damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
 
     combined.merge(&cursor_damage);
     combined.merge(&ui_damage);
@@ -766,5 +889,8 @@ fn workflow_damage_set_collect_and_sort() {
     // TextGlyph should come first
     assert_eq!(combined.tiles[0].class, DamageClass::TextGlyph);
     // CursorOnly should be last
-    assert_eq!(combined.tiles.last().unwrap().class, DamageClass::CursorOnly);
+    assert_eq!(
+        combined.tiles.last().unwrap().class,
+        DamageClass::CursorOnly
+    );
 }

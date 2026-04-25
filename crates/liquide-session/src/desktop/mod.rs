@@ -19,29 +19,29 @@ mod devtools;
 mod devtools_state;
 mod event_handling;
 mod event_loop;
-pub mod lockfree_queue;
 mod loading;
+pub mod lockfree_queue;
 mod paint_state;
 mod render_thread;
 mod scene_split;
 mod tile_state;
 mod window_render;
 
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use liquide_render_coordinator::metrics::MetricsCollector;
-use liquide_telemetry_viewer::metrics::MetricsRegistry;
-use liquide_compositor::effects::QualityProfile;
 use liquide_compositor::Compositor;
+use liquide_compositor::Renderer;
+use liquide_compositor::effects::QualityProfile;
 use liquide_encoder::tile::TileBatch;
 use liquide_input::InputState;
 use liquide_platform::NativeWindowHandle;
-use liquide_compositor::Renderer;
+use liquide_render_coordinator::metrics::MetricsCollector;
 use liquide_renderer_cpu::SoftwareRenderer;
 use liquide_shell::Shell;
+use liquide_telemetry_viewer::metrics::MetricsRegistry;
 use tracing::info;
 
 use crate::telemetry::{TelemetryHandle, create_telemetry};
@@ -52,6 +52,12 @@ use paint_state::PaintState;
 use render_thread::{RenderMsg, RenderedFrame};
 use tile_state::TileEncoderState;
 use window_render::WindowRenderManager;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PresentPacingState {
+    awaiting_ack: bool,
+    last_acknowledged_present_count: u64,
+}
 
 /// The desktop compositor loop.
 ///
@@ -89,6 +95,8 @@ pub struct DesktopCompositor {
     render_thread: Option<thread::JoinHandle<()>>,
     /// Whether a render job is currently in flight (avoid double-submit).
     render_in_flight: bool,
+    /// Tracks backend present readiness for queued standalone pacing.
+    present_pacing: PresentPacingState,
     /// Telemetry system for performance monitoring.
     telemetry: TelemetryHandle,
     /// Cursor position, shape, and hardware/software cursor management.
@@ -191,6 +199,7 @@ impl DesktopCompositor {
             frame_rx: None,
             render_thread: None,
             render_in_flight: false,
+            present_pacing: PresentPacingState::default(),
             telemetry: create_telemetry(60), // 60fps target
             cursor: CursorState::new(width as f32 / 2.0, height as f32 / 2.0),
             dt: DevToolsState::new(),
@@ -209,7 +218,8 @@ impl DesktopCompositor {
 
     /// Enable developer mode (windowed, resizable, devtools available).
     pub fn set_dev_mode(&mut self, enabled: bool) {
-        self.dt.set_dev_mode(enabled, &mut self.shell, self.width, self.height);
+        self.dt
+            .set_dev_mode(enabled, &mut self.shell, self.width, self.height);
     }
 
     /// Whether developer mode is enabled.
@@ -282,7 +292,10 @@ impl DesktopCompositor {
                 .join(format!("{}.css", name));
             if candidate.exists() {
                 if let Ok(css) = std::fs::read_to_string(&candidate) {
-                    info!(theme = name, "loaded external CSS theme from {:?}", candidate);
+                    info!(
+                        theme = name,
+                        "loaded external CSS theme from {:?}", candidate
+                    );
                     shell.add_stylesheet(&css);
                 }
             }
@@ -291,15 +304,16 @@ impl DesktopCompositor {
         // Try user custom CSS
         let home = {
             #[cfg(windows)]
-            { std::env::var_os("USERPROFILE").map(std::path::PathBuf::from) }
+            {
+                std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)
+            }
             #[cfg(not(windows))]
-            { std::env::var_os("HOME").map(std::path::PathBuf::from) }
+            {
+                std::env::var_os("HOME").map(std::path::PathBuf::from)
+            }
         };
         if let Some(home_dir) = home {
-            let custom_css = home_dir
-                .join(".config")
-                .join("liquide")
-                .join("custom.css");
+            let custom_css = home_dir.join(".config").join("liquide").join("custom.css");
             if custom_css.exists() {
                 if let Ok(css) = std::fs::read_to_string(&custom_css) {
                     info!("loaded user custom CSS from {:?}", custom_css);

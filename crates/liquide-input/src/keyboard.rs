@@ -5,24 +5,93 @@ use serde::{Deserialize, Serialize};
 /// Physical/logical key code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KeyCode {
-    A, B, C, D, E, F, G, H, I, J, K, L, M,
-    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-    Digit0, Digit1, Digit2, Digit3, Digit4,
-    Digit5, Digit6, Digit7, Digit8, Digit9,
-    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
-    Escape, Enter, Tab, Backspace, Space,
-    ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
-    Home, End, PageUp, PageDown,
-    Insert, Delete,
-    CapsLock, NumLock, ScrollLock,
-    PrintScreen, Pause,
-    LeftShift, RightShift,
-    LeftCtrl, RightCtrl,
-    LeftAlt, RightAlt,
-    LeftSuper, RightSuper,
-    Comma, Period, Slash, Semicolon, Quote,
-    BracketLeft, BracketRight, Backslash,
-    Minus, Equal, Grave,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Digit0,
+    Digit1,
+    Digit2,
+    Digit3,
+    Digit4,
+    Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    Escape,
+    Enter,
+    Tab,
+    Backspace,
+    Space,
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Delete,
+    CapsLock,
+    NumLock,
+    ScrollLock,
+    PrintScreen,
+    Pause,
+    LeftShift,
+    RightShift,
+    LeftCtrl,
+    RightCtrl,
+    LeftAlt,
+    RightAlt,
+    LeftSuper,
+    RightSuper,
+    Comma,
+    Period,
+    Slash,
+    Semicolon,
+    Quote,
+    BracketLeft,
+    BracketRight,
+    Backslash,
+    Minus,
+    Equal,
+    Grave,
     ContextMenu,
 }
 
@@ -132,12 +201,24 @@ impl std::fmt::Display for KeyState {
 impl std::fmt::Display for Modifiers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut parts = Vec::new();
-        if self.shift() { parts.push("Shift"); }
-        if self.ctrl() { parts.push("Ctrl"); }
-        if self.alt() { parts.push("Alt"); }
-        if self.super_key() { parts.push("Super"); }
-        if self.contains(Self::CAPS_LOCK) { parts.push("CapsLock"); }
-        if self.contains(Self::NUM_LOCK) { parts.push("NumLock"); }
+        if self.shift() {
+            parts.push("Shift");
+        }
+        if self.ctrl() {
+            parts.push("Ctrl");
+        }
+        if self.alt() {
+            parts.push("Alt");
+        }
+        if self.super_key() {
+            parts.push("Super");
+        }
+        if self.contains(Self::CAPS_LOCK) {
+            parts.push("CapsLock");
+        }
+        if self.contains(Self::NUM_LOCK) {
+            parts.push("NumLock");
+        }
         if parts.is_empty() {
             write!(f, "(none)")
         } else {
@@ -167,7 +248,19 @@ pub struct KeyEvent {
 impl KeyEvent {
     /// Create a new key event.
     #[must_use]
-    pub fn new(key: KeyCode, state: KeyState, modifiers: Modifiers, scancode: u32, timestamp_us: u64) -> Self {
-        Self { key, state, modifiers, scancode, timestamp_us }
+    pub fn new(
+        key: KeyCode,
+        state: KeyState,
+        modifiers: Modifiers,
+        scancode: u32,
+        timestamp_us: u64,
+    ) -> Self {
+        Self {
+            key,
+            state,
+            modifiers,
+            scancode,
+            timestamp_us,
+        }
     }
 }

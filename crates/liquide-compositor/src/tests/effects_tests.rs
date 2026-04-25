@@ -99,8 +99,8 @@ fn controller_with_custom_thresholds() {
 
 #[test]
 fn effect_params_high_degradation() {
-    let params = EffectParams::for_profile(QualityProfile::Quality)
-        .apply_degradation(DegradationLevel::L7);
+    let params =
+        EffectParams::for_profile(QualityProfile::Quality).apply_degradation(DegradationLevel::L7);
     assert_eq!(params.blur_radius, 0);
     assert_eq!(params.max_backdrop_blurs, 0);
     assert_eq!(params.shadow_blur_radius, 0);

@@ -32,15 +32,53 @@ fn hash_path_string(d: &str) -> u64 {
 /// A parsed SVG path command.
 #[derive(Debug, Clone, Copy)]
 pub enum PathCommand {
-    MoveTo { x: f32, y: f32 },
-    LineTo { x: f32, y: f32 },
-    HLineTo { x: f32 },
-    VLineTo { y: f32 },
-    CubicTo { x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32 },
-    SmoothCubicTo { x2: f32, y2: f32, x: f32, y: f32 },
-    QuadTo { x1: f32, y1: f32, x: f32, y: f32 },
-    SmoothQuadTo { x: f32, y: f32 },
-    ArcTo { rx: f32, ry: f32, rotation: f32, large_arc: bool, sweep: bool, x: f32, y: f32 },
+    MoveTo {
+        x: f32,
+        y: f32,
+    },
+    LineTo {
+        x: f32,
+        y: f32,
+    },
+    HLineTo {
+        x: f32,
+    },
+    VLineTo {
+        y: f32,
+    },
+    CubicTo {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        x: f32,
+        y: f32,
+    },
+    SmoothCubicTo {
+        x2: f32,
+        y2: f32,
+        x: f32,
+        y: f32,
+    },
+    QuadTo {
+        x1: f32,
+        y1: f32,
+        x: f32,
+        y: f32,
+    },
+    SmoothQuadTo {
+        x: f32,
+        y: f32,
+    },
+    ArcTo {
+        rx: f32,
+        ry: f32,
+        rotation: f32,
+        large_arc: bool,
+        sweep: bool,
+        x: f32,
+        y: f32,
+    },
     Close,
 }
 
@@ -118,8 +156,14 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
     fn parse_flag(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<bool> {
         skip_ws_comma(chars);
         match chars.peek() {
-            Some('0') => { chars.next(); Some(false) }
-            Some('1') => { chars.next(); Some(true) }
+            Some('0') => {
+                chars.next();
+                Some(false)
+            }
+            Some('1') => {
+                chars.next();
+                Some(true)
+            }
             _ => None,
         }
     }
@@ -138,91 +182,170 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
 
         match current_cmd.to_ascii_uppercase() {
             'M' => {
-                if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
-                    if relative { x += cx; y += cy; }
-                    cx = x; cy = y; sx = x; sy = y;
+                if let (Some(mut x), Some(mut y)) =
+                    (parse_number(&mut chars), parse_number(&mut chars))
+                {
+                    if relative {
+                        x += cx;
+                        y += cy;
+                    }
+                    cx = x;
+                    cy = y;
+                    sx = x;
+                    sy = y;
                     commands.push(PathCommand::MoveTo { x, y });
                     // Subsequent coords are implicit LineTo
                     current_cmd = if relative { 'l' } else { 'L' };
                 }
             }
             'L' => {
-                if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
-                    if relative { x += cx; y += cy; }
-                    cx = x; cy = y;
+                if let (Some(mut x), Some(mut y)) =
+                    (parse_number(&mut chars), parse_number(&mut chars))
+                {
+                    if relative {
+                        x += cx;
+                        y += cy;
+                    }
+                    cx = x;
+                    cy = y;
                     commands.push(PathCommand::LineTo { x, y });
                 }
             }
             'H' => {
                 if let Some(mut x) = parse_number(&mut chars) {
-                    if relative { x += cx; }
+                    if relative {
+                        x += cx;
+                    }
                     cx = x;
                     commands.push(PathCommand::HLineTo { x });
                 }
             }
             'V' => {
                 if let Some(mut y) = parse_number(&mut chars) {
-                    if relative { y += cy; }
+                    if relative {
+                        y += cy;
+                    }
                     cy = y;
                     commands.push(PathCommand::VLineTo { y });
                 }
             }
             'C' => {
-                if let (Some(mut x1), Some(mut y1), Some(mut x2), Some(mut y2), Some(mut x), Some(mut y)) = (
-                    parse_number(&mut chars), parse_number(&mut chars),
-                    parse_number(&mut chars), parse_number(&mut chars),
-                    parse_number(&mut chars), parse_number(&mut chars),
+                if let (
+                    Some(mut x1),
+                    Some(mut y1),
+                    Some(mut x2),
+                    Some(mut y2),
+                    Some(mut x),
+                    Some(mut y),
+                ) = (
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
                 ) {
-                    if relative { x1 += cx; y1 += cy; x2 += cx; y2 += cy; x += cx; y += cy; }
-                    cx = x; cy = y;
-                    commands.push(PathCommand::CubicTo { x1, y1, x2, y2, x, y });
+                    if relative {
+                        x1 += cx;
+                        y1 += cy;
+                        x2 += cx;
+                        y2 += cy;
+                        x += cx;
+                        y += cy;
+                    }
+                    cx = x;
+                    cy = y;
+                    commands.push(PathCommand::CubicTo {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        x,
+                        y,
+                    });
                 }
             }
             'S' => {
                 if let (Some(mut x2), Some(mut y2), Some(mut x), Some(mut y)) = (
-                    parse_number(&mut chars), parse_number(&mut chars),
-                    parse_number(&mut chars), parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
                 ) {
-                    if relative { x2 += cx; y2 += cy; x += cx; y += cy; }
-                    cx = x; cy = y;
+                    if relative {
+                        x2 += cx;
+                        y2 += cy;
+                        x += cx;
+                        y += cy;
+                    }
+                    cx = x;
+                    cy = y;
                     commands.push(PathCommand::SmoothCubicTo { x2, y2, x, y });
                 }
             }
             'Q' => {
                 if let (Some(mut x1), Some(mut y1), Some(mut x), Some(mut y)) = (
-                    parse_number(&mut chars), parse_number(&mut chars),
-                    parse_number(&mut chars), parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
                 ) {
-                    if relative { x1 += cx; y1 += cy; x += cx; y += cy; }
-                    cx = x; cy = y;
+                    if relative {
+                        x1 += cx;
+                        y1 += cy;
+                        x += cx;
+                        y += cy;
+                    }
+                    cx = x;
+                    cy = y;
                     commands.push(PathCommand::QuadTo { x1, y1, x, y });
                 }
             }
             'T' => {
-                if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
-                    if relative { x += cx; y += cy; }
-                    cx = x; cy = y;
+                if let (Some(mut x), Some(mut y)) =
+                    (parse_number(&mut chars), parse_number(&mut chars))
+                {
+                    if relative {
+                        x += cx;
+                        y += cy;
+                    }
+                    cx = x;
+                    cy = y;
                     commands.push(PathCommand::SmoothQuadTo { x, y });
                 }
             }
             'A' => {
                 if let (Some(rx), Some(ry), Some(rot)) = (
-                    parse_number(&mut chars), parse_number(&mut chars),
+                    parse_number(&mut chars),
+                    parse_number(&mut chars),
                     parse_number(&mut chars),
                 ) {
                     if let (Some(la), Some(sf)) = (parse_flag(&mut chars), parse_flag(&mut chars)) {
-                        if let (Some(mut x), Some(mut y)) = (parse_number(&mut chars), parse_number(&mut chars)) {
-                            if relative { x += cx; y += cy; }
-                            cx = x; cy = y;
+                        if let (Some(mut x), Some(mut y)) =
+                            (parse_number(&mut chars), parse_number(&mut chars))
+                        {
+                            if relative {
+                                x += cx;
+                                y += cy;
+                            }
+                            cx = x;
+                            cy = y;
                             commands.push(PathCommand::ArcTo {
-                                rx, ry, rotation: rot, large_arc: la, sweep: sf, x, y,
+                                rx,
+                                ry,
+                                rotation: rot,
+                                large_arc: la,
+                                sweep: sf,
+                                x,
+                                y,
                             });
                         }
                     }
                 }
             }
             'Z' => {
-                cx = sx; cy = sy;
+                cx = sx;
+                cy = sy;
                 commands.push(PathCommand::Close);
             }
             _ => {
@@ -249,68 +372,138 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
     for cmd in commands {
         match *cmd {
             PathCommand::MoveTo { x, y } => {
-                cx = x; cy = y;
-                start_x = x; start_y = y;
-                last_cp_x = x; last_cp_y = y;
+                cx = x;
+                cy = y;
+                start_x = x;
+                start_y = y;
+                last_cp_x = x;
+                last_cp_y = y;
             }
             PathCommand::LineTo { x, y } => {
-                segments.push(PathSegment { x1: cx, y1: cy, x2: x, y2: y });
-                cx = x; cy = y;
-                last_cp_x = x; last_cp_y = y;
+                segments.push(PathSegment {
+                    x1: cx,
+                    y1: cy,
+                    x2: x,
+                    y2: y,
+                });
+                cx = x;
+                cy = y;
+                last_cp_x = x;
+                last_cp_y = y;
             }
             PathCommand::HLineTo { x } => {
-                segments.push(PathSegment { x1: cx, y1: cy, x2: x, y2: cy });
+                segments.push(PathSegment {
+                    x1: cx,
+                    y1: cy,
+                    x2: x,
+                    y2: cy,
+                });
                 cx = x;
-                last_cp_x = cx; last_cp_y = cy;
+                last_cp_x = cx;
+                last_cp_y = cy;
             }
             PathCommand::VLineTo { y } => {
-                segments.push(PathSegment { x1: cx, y1: cy, x2: cx, y2: y });
+                segments.push(PathSegment {
+                    x1: cx,
+                    y1: cy,
+                    x2: cx,
+                    y2: y,
+                });
                 cy = y;
-                last_cp_x = cx; last_cp_y = cy;
+                last_cp_x = cx;
+                last_cp_y = cy;
             }
-            PathCommand::CubicTo { x1, y1, x2, y2, x, y } => {
+            PathCommand::CubicTo {
+                x1,
+                y1,
+                x2,
+                y2,
+                x,
+                y,
+            } => {
                 flatten_cubic(&mut segments, cx, cy, x1, y1, x2, y2, x, y, 0);
-                last_cp_x = x2; last_cp_y = y2;
-                cx = x; cy = y;
+                last_cp_x = x2;
+                last_cp_y = y2;
+                cx = x;
+                cy = y;
             }
             PathCommand::SmoothCubicTo { x2, y2, x, y } => {
                 // Reflect previous control point
                 let rx1 = 2.0 * cx - last_cp_x;
                 let ry1 = 2.0 * cy - last_cp_y;
                 flatten_cubic(&mut segments, cx, cy, rx1, ry1, x2, y2, x, y, 0);
-                last_cp_x = x2; last_cp_y = y2;
-                cx = x; cy = y;
+                last_cp_x = x2;
+                last_cp_y = y2;
+                cx = x;
+                cy = y;
             }
             PathCommand::QuadTo { x1, y1, x, y } => {
                 flatten_quadratic(&mut segments, cx, cy, x1, y1, x, y);
-                last_cp_x = x1; last_cp_y = y1;
-                cx = x; cy = y;
+                last_cp_x = x1;
+                last_cp_y = y1;
+                cx = x;
+                cy = y;
             }
             PathCommand::SmoothQuadTo { x, y } => {
                 let rx1 = 2.0 * cx - last_cp_x;
                 let ry1 = 2.0 * cy - last_cp_y;
                 flatten_quadratic(&mut segments, cx, cy, rx1, ry1, x, y);
-                last_cp_x = rx1; last_cp_y = ry1;
-                cx = x; cy = y;
+                last_cp_x = rx1;
+                last_cp_y = ry1;
+                cx = x;
+                cy = y;
             }
-            PathCommand::ArcTo { rx, ry, rotation, large_arc, sweep, x, y } => {
+            PathCommand::ArcTo {
+                rx,
+                ry,
+                rotation,
+                large_arc,
+                sweep,
+                x,
+                y,
+            } => {
                 // Degenerate arc: zero radii → straight line.
                 if rx.abs() < 1e-6 || ry.abs() < 1e-6 {
-                    segments.push(PathSegment { x1: cx, y1: cy, x2: x, y2: y });
+                    segments.push(PathSegment {
+                        x1: cx,
+                        y1: cy,
+                        x2: x,
+                        y2: y,
+                    });
                 } else if (cx - x).abs() < 1e-6 && (cy - y).abs() < 1e-6 {
                     // Start == end → nothing to draw.
                 } else {
-                    arc_to_cubic_beziers(&mut segments, cx, cy, rx, ry, rotation, large_arc, sweep, x, y);
+                    arc_to_cubic_beziers(
+                        &mut segments,
+                        cx,
+                        cy,
+                        rx,
+                        ry,
+                        rotation,
+                        large_arc,
+                        sweep,
+                        x,
+                        y,
+                    );
                 }
-                cx = x; cy = y;
-                last_cp_x = x; last_cp_y = y;
+                cx = x;
+                cy = y;
+                last_cp_x = x;
+                last_cp_y = y;
             }
             PathCommand::Close => {
                 if (cx - start_x).abs() > 0.01 || (cy - start_y).abs() > 0.01 {
-                    segments.push(PathSegment { x1: cx, y1: cy, x2: start_x, y2: start_y });
+                    segments.push(PathSegment {
+                        x1: cx,
+                        y1: cy,
+                        x2: start_x,
+                        y2: start_y,
+                    });
                 }
-                cx = start_x; cy = start_y;
-                last_cp_x = cx; last_cp_y = cy;
+                cx = start_x;
+                cy = start_y;
+                last_cp_x = cx;
+                last_cp_y = cy;
             }
         }
     }
@@ -359,30 +552,40 @@ pub fn flatten_path_cached(d: &str) -> Vec<PathSegment> {
 /// Flatten a cubic bezier into line segments by recursive subdivision.
 fn flatten_cubic(
     out: &mut Vec<PathSegment>,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
-    x2: f32, y2: f32,
-    x3: f32, y3: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    x3: f32,
+    y3: f32,
     depth: u32,
 ) {
     // Guard against infinite recursion and NaN propagation.
-    if depth >= 16
-        || x0.is_nan() || y0.is_nan()
-        || x3.is_nan() || y3.is_nan()
-    {
-        out.push(PathSegment { x1: x0, y1: y0, x2: x3, y2: y3 });
+    if depth >= 16 || x0.is_nan() || y0.is_nan() || x3.is_nan() || y3.is_nan() {
+        out.push(PathSegment {
+            x1: x0,
+            y1: y0,
+            x2: x3,
+            y2: y3,
+        });
         return;
     }
 
     // Check if the curve is flat enough.
     let dx = x3 - x0;
     let dy = y3 - y0;
-    let d2 = ((x1 - x3) * dy - (y1 - y3) * dx).abs()
-           + ((x2 - x3) * dy - (y2 - y3) * dx).abs();
+    let d2 = ((x1 - x3) * dy - (y1 - y3) * dx).abs() + ((x2 - x3) * dy - (y2 - y3) * dx).abs();
     let chord_sq = dx * dx + dy * dy;
 
     if d2 * d2 <= 0.25 * chord_sq {
-        out.push(PathSegment { x1: x0, y1: y0, x2: x3, y2: y3 });
+        out.push(PathSegment {
+            x1: x0,
+            y1: y0,
+            x2: x3,
+            y2: y3,
+        });
         return;
     }
 
@@ -410,12 +613,15 @@ fn flatten_cubic(
 /// approximates each arc segment (≤ π/2) with a cubic Bézier.
 fn arc_to_cubic_beziers(
     out: &mut Vec<PathSegment>,
-    x1: f32, y1: f32,
-    rx: f32, ry: f32,
+    x1: f32,
+    y1: f32,
+    rx: f32,
+    ry: f32,
     x_rotation_deg: f32,
     large_arc: bool,
     sweep: bool,
-    x2: f32, y2: f32,
+    x2: f32,
+    y2: f32,
 ) {
     use std::f32::consts::PI;
 
@@ -460,7 +666,9 @@ fn arc_to_cubic_beziers(
     // Step 5: Compute θ1 and Δθ
     fn angle(ux: f32, uy: f32, vx: f32, vy: f32) -> f32 {
         let n = (ux * ux + uy * uy).sqrt() * (vx * vx + vy * vy).sqrt();
-        if n < 1e-10 { return 0.0; }
+        if n < 1e-10 {
+            return 0.0;
+        }
         let cos_a = ((ux * vx + uy * vy) / n).clamp(-1.0, 1.0);
         let sign = if ux * vy - uy * vx < 0.0 { -1.0 } else { 1.0 };
         sign * cos_a.acos()
@@ -468,8 +676,10 @@ fn arc_to_cubic_beziers(
 
     let theta1 = angle(1.0, 0.0, (x1p - cxp) / rx, (y1p - cyp) / ry);
     let mut d_theta = angle(
-        (x1p - cxp) / rx, (y1p - cyp) / ry,
-        (-x1p - cxp) / rx, (-y1p - cyp) / ry,
+        (x1p - cxp) / rx,
+        (y1p - cyp) / ry,
+        (-x1p - cxp) / rx,
+        (-y1p - cyp) / ry,
     );
 
     if !sweep && d_theta > 0.0 {
@@ -534,9 +744,12 @@ fn arc_to_cubic_beziers(
 /// Flatten a quadratic bezier into line segments.
 fn flatten_quadratic(
     out: &mut Vec<PathSegment>,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
-    x2: f32, y2: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
 ) {
     // Convert quadratic to cubic and flatten.
     let cx1 = x0 + (x1 - x0) * 2.0 / 3.0;
@@ -606,7 +819,9 @@ mod tests {
     fn parse_simple_path() {
         let cmds = parse_svg_path("M 10 20 L 30 40 Z");
         assert_eq!(cmds.len(), 3);
-        assert!(matches!(cmds[0], PathCommand::MoveTo { x, y } if (x - 10.0).abs() < 0.01 && (y - 20.0).abs() < 0.01));
+        assert!(
+            matches!(cmds[0], PathCommand::MoveTo { x, y } if (x - 10.0).abs() < 0.01 && (y - 20.0).abs() < 0.01)
+        );
         assert!(matches!(cmds[1], PathCommand::LineTo { .. }));
         assert!(matches!(cmds[2], PathCommand::Close));
     }
@@ -638,8 +853,14 @@ mod tests {
         paint_svg_path(
             &mut dl,
             "M 0 0 L 100 0 L 100 100 Z",
-            0.0, 0.0,
-            Color { r: 0, g: 0, b: 0, a: 255 },
+            0.0,
+            0.0,
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
             1.0,
             None,
         );
@@ -673,7 +894,18 @@ mod tests {
     fn flatten_cubic_depth_limit_prevents_stack_overflow() {
         // Craft a curve with NaN that would recurse infinitely without the depth guard.
         let mut out = Vec::new();
-        flatten_cubic(&mut out, 0.0, 0.0, f32::NAN, f32::NAN, 100.0, 100.0, 200.0, 200.0, 0);
+        flatten_cubic(
+            &mut out,
+            0.0,
+            0.0,
+            f32::NAN,
+            f32::NAN,
+            100.0,
+            100.0,
+            200.0,
+            200.0,
+            0,
+        );
         // Should produce a single line segment (bailout at depth 0 due to NaN).
         assert_eq!(out.len(), 1);
     }
@@ -703,7 +935,10 @@ mod tests {
         assert!((last.y2).abs() < 1.0);
         // The arc should bulge upward or downward — check that some point is not on the line
         let has_curvature = segs.iter().any(|s| s.y1.abs() > 1.0 || s.y2.abs() > 1.0);
-        assert!(has_curvature, "Arc segments should show curvature, not straight lines");
+        assert!(
+            has_curvature,
+            "Arc segments should show curvature, not straight lines"
+        );
     }
 
     #[test]
@@ -734,11 +969,17 @@ mod tests {
         let cmds = parse_svg_path("M 0 0 L 10 10");
         assert_eq!(cmds.len(), 2);
         match cmds[0] {
-            PathCommand::MoveTo { x, y } => { assert_eq!(x, 0.0); assert_eq!(y, 0.0); }
+            PathCommand::MoveTo { x, y } => {
+                assert_eq!(x, 0.0);
+                assert_eq!(y, 0.0);
+            }
             _ => panic!("expected MoveTo"),
         }
         match cmds[1] {
-            PathCommand::LineTo { x, y } => { assert_eq!(x, 10.0); assert_eq!(y, 10.0); }
+            PathCommand::LineTo { x, y } => {
+                assert_eq!(x, 10.0);
+                assert_eq!(y, 10.0);
+            }
             _ => panic!("expected LineTo"),
         }
     }
@@ -750,7 +991,15 @@ mod tests {
         let cmds = parse_svg_path("M 10 80 A 25 25 0 0 1 50 80");
         assert_eq!(cmds.len(), 2);
         match cmds[1] {
-            PathCommand::ArcTo { rx, ry, rotation, large_arc, sweep, x, y } => {
+            PathCommand::ArcTo {
+                rx,
+                ry,
+                rotation,
+                large_arc,
+                sweep,
+                x,
+                y,
+            } => {
                 assert_eq!(rx, 25.0);
                 assert_eq!(ry, 25.0);
                 assert_eq!(rotation, 0.0);
@@ -933,10 +1182,21 @@ mod tests {
         paint_svg_path(
             &mut dl,
             "M 0 0 L 100 0 L 100 100 Z",
-            10.0, 20.0,
-            Color { r: 0, g: 0, b: 0, a: 255 },
+            10.0,
+            20.0,
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
             2.0,
-            Some(Color { r: 255, g: 0, b: 0, a: 128 }),
+            Some(Color {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 128,
+            }),
         );
         // Should have fill rect + stroke lines
         assert!(dl.len() >= 4); // 1 fill + 3 line segments
@@ -948,8 +1208,14 @@ mod tests {
         paint_svg_path(
             &mut dl,
             "M 0 0 L 100 0 L 100 100 Z",
-            0.0, 0.0,
-            Color { r: 0, g: 0, b: 0, a: 0 }, // transparent
+            0.0,
+            0.0,
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            }, // transparent
             1.0,
             None,
         );
@@ -962,8 +1228,14 @@ mod tests {
         paint_svg_path(
             &mut dl,
             "M 0 0 L 100 0 L 100 100 Z",
-            0.0, 0.0,
-            Color { r: 0, g: 0, b: 0, a: 255 },
+            0.0,
+            0.0,
+            Color {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
             0.0, // zero width
             None,
         );

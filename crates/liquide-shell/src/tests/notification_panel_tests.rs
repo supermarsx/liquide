@@ -64,7 +64,7 @@ fn top_edge_hover_reveals_status_bar() {
 
     // Move cursor away from top edge first.
     shell.handle_platform_event(&mouse_move(500.0, 500.0));
-    let changed = shell.tick(1_000_000);
+    let _changed = shell.tick(1_000_000);
     // Status bar should be hidden (maximized + cursor not at top).
     assert!(!shell.status_bar_visible);
 
@@ -79,4 +79,35 @@ fn top_edge_hover_reveals_status_bar() {
     let changed = shell.tick(3_000_000);
     assert!(changed);
     assert!(!shell.status_bar_visible);
+}
+
+#[test]
+fn configured_reveal_distance_controls_auto_hide() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.config.status_bar.auto_hide_on_maximize = true;
+    shell.config.status_bar.auto_hide_reveal_distance = 6.0;
+    shell.status_bar = liquide_statusbar::ShellStatusBar::new(shell.config.status_bar.clone());
+
+    let id = shell.open_window("Max", Rect::new(0.0, 0.0, 800.0, 600.0));
+    shell.maximize(id).unwrap();
+
+    shell.status_bar_visible = false;
+    shell.handle_platform_event(&mouse_move(500.0, 5.0));
+    shell.tick(1_000_000);
+    assert!(shell.status_bar_visible);
+
+    shell.handle_platform_event(&mouse_move(500.0, 7.0));
+    shell.tick(2_000_000);
+    assert!(!shell.status_bar_visible);
+}
+
+#[test]
+fn launcher_click_respects_show_app_menu_setting() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.config.status_bar.show_app_menu = false;
+    shell.status_bar = liquide_statusbar::ShellStatusBar::new(shell.config.status_bar.clone());
+
+    let action = shell.handle_platform_event(&mouse_click(12.0, 15.0));
+    assert!(action.is_none());
+    assert!(!shell.launcher.is_visible());
 }

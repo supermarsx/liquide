@@ -181,12 +181,9 @@ impl ManagerRuntime {
         description: String,
         timestamp: u64,
     ) -> u64 {
-        let version = self.policies.commit(
-            entries,
-            admin.to_string(),
-            description,
-            timestamp,
-        );
+        let version = self
+            .policies
+            .commit(entries, admin.to_string(), description, timestamp);
         self.audit_events.push(ManagerAuditEvent::PolicyUpdated {
             admin: admin.to_string(),
             version,
@@ -202,13 +199,14 @@ impl ManagerRuntime {
         timestamp: u64,
     ) -> crate::Result<u64> {
         let from = self.policies.current_version();
-        let new = self.policies.rollback(target_version, admin.to_string(), timestamp)?;
-        self.audit_events
-            .push(ManagerAuditEvent::PolicyRolledBack {
-                admin: admin.to_string(),
-                from_version: from,
-                to_version: target_version,
-            });
+        let new = self
+            .policies
+            .rollback(target_version, admin.to_string(), timestamp)?;
+        self.audit_events.push(ManagerAuditEvent::PolicyRolledBack {
+            admin: admin.to_string(),
+            from_version: from,
+            to_version: target_version,
+        });
         Ok(new)
     }
 

@@ -236,7 +236,9 @@ impl LayoutTree {
 
     /// Find the layout box for a given DOM node (O(1) via index).
     pub fn find_by_node(&self, node_id: NodeId) -> Option<&LayoutBox> {
-        self.node_index.get(&node_id).and_then(|&id| self.boxes.get(id))
+        self.node_index
+            .get(&node_id)
+            .and_then(|&id| self.boxes.get(id))
     }
 
     /// Find the layout box ID for a given DOM node (O(1) via index).
@@ -373,7 +375,9 @@ impl LayoutTree {
 
     /// Get the current scroll offset for a layout box.
     pub fn scroll_offset(&self, box_id: LayoutBoxId) -> (f32, f32) {
-        self.get(box_id).map(|b| b.scroll_offset).unwrap_or((0.0, 0.0))
+        self.get(box_id)
+            .map(|b| b.scroll_offset)
+            .unwrap_or((0.0, 0.0))
     }
 
     /// Find the nearest scroll container ancestor for a given box.

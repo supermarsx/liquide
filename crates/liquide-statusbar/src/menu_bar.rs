@@ -28,15 +28,18 @@ impl SubMenuItem {
     }
 
     pub fn with_shortcut(mut self, s: impl Into<String>) -> Self {
-        self.shortcut = Some(s.into()); self
+        self.shortcut = Some(s.into());
+        self
     }
 
     pub fn with_separator(mut self) -> Self {
-        self.separator_after = true; self
+        self.separator_after = true;
+        self
     }
 
     pub fn checked(mut self, c: bool) -> Self {
-        self.checked = c; self
+        self.checked = c;
+        self
     }
 }
 
@@ -49,7 +52,10 @@ pub struct SubMenu {
 
 impl SubMenu {
     pub fn new(label: impl Into<String>, items: Vec<SubMenuItem>) -> Self {
-        Self { label: label.into(), items }
+        Self {
+            label: label.into(),
+            items,
+        }
     }
 }
 
@@ -70,7 +76,14 @@ pub struct MenuBar {
 impl MenuBar {
     pub fn new(menus: Vec<SubMenu>) -> Self {
         Self {
-            items: menus.into_iter().map(|m| MenuBarItem { menu: m, open: false, hover_index: None }).collect(),
+            items: menus
+                .into_iter()
+                .map(|m| MenuBarItem {
+                    menu: m,
+                    open: false,
+                    hover_index: None,
+                })
+                .collect(),
             active_index: None,
         }
     }
@@ -78,40 +91,61 @@ impl MenuBar {
     /// Build the default desktop menu bar.
     pub fn default_desktop() -> Self {
         Self::new(vec![
-            SubMenu::new("File", vec![
-                SubMenuItem::new("New Window", "file.new_window").with_shortcut("⌘N"),
-                SubMenuItem::new("Open…", "file.open").with_shortcut("⌘O").with_separator(),
-                SubMenuItem::new("Close Window", "file.close").with_shortcut("⌘W"),
-            ]),
-            SubMenu::new("Edit", vec![
-                SubMenuItem::new("Undo", "edit.undo").with_shortcut("⌘Z"),
-                SubMenuItem::new("Redo", "edit.redo").with_shortcut("⇧⌘Z").with_separator(),
-                SubMenuItem::new("Cut", "edit.cut").with_shortcut("⌘X"),
-                SubMenuItem::new("Copy", "edit.copy").with_shortcut("⌘C"),
-                SubMenuItem::new("Paste", "edit.paste").with_shortcut("⌘V"),
-                SubMenuItem::new("Select All", "edit.select_all").with_shortcut("⌘A"),
-            ]),
-            SubMenu::new("View", vec![
-                SubMenuItem::new("Toggle Fullscreen", "view.fullscreen").with_shortcut("⌃⌘F"),
-                SubMenuItem::new("Zoom In", "view.zoom_in").with_shortcut("⌘+"),
-                SubMenuItem::new("Zoom Out", "view.zoom_out").with_shortcut("⌘-"),
-                SubMenuItem::new("Actual Size", "view.zoom_reset").with_shortcut("⌘0").with_separator(),
-                SubMenuItem::new("Show Dock", "view.dock").checked(true),
-                SubMenuItem::new("Show Status Bar", "view.statusbar").checked(true),
-            ]),
-            SubMenu::new("Window", vec![
-                SubMenuItem::new("Minimize", "window.minimize").with_shortcut("⌘M"),
-                SubMenuItem::new("Zoom", "window.zoom"),
-                SubMenuItem::new("Tile Left", "window.tile_left"),
-                SubMenuItem::new("Tile Right", "window.tile_right").with_separator(),
-                SubMenuItem::new("Bring All to Front", "window.bring_all"),
-            ]),
-            SubMenu::new("Help", vec![
-                SubMenuItem::new("Liquide Help", "help.main").with_shortcut("⌘?"),
-                SubMenuItem::new("Keyboard Shortcuts", "help.shortcuts").with_separator(),
-                SubMenuItem::new("Report a Bug…", "help.report_bug"),
-                SubMenuItem::new("About Liquide", "help.about"),
-            ]),
+            SubMenu::new(
+                "File",
+                vec![
+                    SubMenuItem::new("New Window", "file.new_window").with_shortcut("⌘N"),
+                    SubMenuItem::new("Open…", "file.open")
+                        .with_shortcut("⌘O")
+                        .with_separator(),
+                    SubMenuItem::new("Close Window", "file.close").with_shortcut("⌘W"),
+                ],
+            ),
+            SubMenu::new(
+                "Edit",
+                vec![
+                    SubMenuItem::new("Undo", "edit.undo").with_shortcut("⌘Z"),
+                    SubMenuItem::new("Redo", "edit.redo")
+                        .with_shortcut("⇧⌘Z")
+                        .with_separator(),
+                    SubMenuItem::new("Cut", "edit.cut").with_shortcut("⌘X"),
+                    SubMenuItem::new("Copy", "edit.copy").with_shortcut("⌘C"),
+                    SubMenuItem::new("Paste", "edit.paste").with_shortcut("⌘V"),
+                    SubMenuItem::new("Select All", "edit.select_all").with_shortcut("⌘A"),
+                ],
+            ),
+            SubMenu::new(
+                "View",
+                vec![
+                    SubMenuItem::new("Toggle Fullscreen", "view.fullscreen").with_shortcut("⌃⌘F"),
+                    SubMenuItem::new("Zoom In", "view.zoom_in").with_shortcut("⌘+"),
+                    SubMenuItem::new("Zoom Out", "view.zoom_out").with_shortcut("⌘-"),
+                    SubMenuItem::new("Actual Size", "view.zoom_reset")
+                        .with_shortcut("⌘0")
+                        .with_separator(),
+                    SubMenuItem::new("Show Dock", "view.dock").checked(true),
+                    SubMenuItem::new("Show Status Bar", "view.statusbar").checked(true),
+                ],
+            ),
+            SubMenu::new(
+                "Window",
+                vec![
+                    SubMenuItem::new("Minimize", "window.minimize").with_shortcut("⌘M"),
+                    SubMenuItem::new("Zoom", "window.zoom"),
+                    SubMenuItem::new("Tile Left", "window.tile_left"),
+                    SubMenuItem::new("Tile Right", "window.tile_right").with_separator(),
+                    SubMenuItem::new("Bring All to Front", "window.bring_all"),
+                ],
+            ),
+            SubMenu::new(
+                "Help",
+                vec![
+                    SubMenuItem::new("Liquide Help", "help.main").with_shortcut("⌘?"),
+                    SubMenuItem::new("Keyboard Shortcuts", "help.shortcuts").with_separator(),
+                    SubMenuItem::new("Report a Bug…", "help.report_bug"),
+                    SubMenuItem::new("About Liquide", "help.about"),
+                ],
+            ),
         ])
     }
 
@@ -162,14 +196,30 @@ impl MenuBar {
             // Highlight if open
             if item.open {
                 painter.fill_rounded_rect(
-                    x, bar_y + 2.0, item_w, bar_h - 4.0,
-                    theme.radius_sm, colors.surface_active,
+                    x,
+                    bar_y + 2.0,
+                    item_w,
+                    bar_h - 4.0,
+                    theme.radius_sm,
+                    colors.surface_active,
                 );
             }
 
             // Label
-            let tc = if item.open { colors.text_primary } else { colors.text_secondary };
-            painter.draw_text(label, x + padding_h, text_y, font_size, tc, &theme.font_family, false);
+            let tc = if item.open {
+                colors.text_primary
+            } else {
+                colors.text_secondary
+            };
+            painter.draw_text(
+                label,
+                x + padding_h,
+                text_y,
+                font_size,
+                tc,
+                &theme.font_family,
+                false,
+            );
 
             // Dropdown
             if item.open {
@@ -182,12 +232,31 @@ impl MenuBar {
 
                 // Shadow
                 painter.fill_rounded_rect(
-                    menu_x + 1.0, menu_y + 2.0, menu_w, menu_h, radius,
+                    menu_x + 1.0,
+                    menu_y + 2.0,
+                    menu_w,
+                    menu_h,
+                    radius,
                     liquide_ui_core::UiColor::new(0, 0, 0, 50),
                 );
                 // Background
-                painter.fill_rounded_rect(menu_x, menu_y, menu_w, menu_h, radius, colors.surface_elevated);
-                painter.stroke_rounded_rect(menu_x, menu_y, menu_w, menu_h, radius, colors.border, 1.0);
+                painter.fill_rounded_rect(
+                    menu_x,
+                    menu_y,
+                    menu_w,
+                    menu_h,
+                    radius,
+                    colors.surface_elevated,
+                );
+                painter.stroke_rounded_rect(
+                    menu_x,
+                    menu_y,
+                    menu_w,
+                    menu_h,
+                    radius,
+                    colors.border,
+                    1.0,
+                );
 
                 for (j, sub_item) in item.menu.items.iter().enumerate() {
                     let iy = menu_y + 4.0 + j as f32 * item_h;
@@ -195,16 +264,25 @@ impl MenuBar {
 
                     if is_hover && sub_item.enabled {
                         painter.fill_rounded_rect(
-                            menu_x + 4.0, iy, menu_w - 8.0, item_h,
-                            radius * 0.5, colors.accent,
+                            menu_x + 4.0,
+                            iy,
+                            menu_w - 8.0,
+                            item_h,
+                            radius * 0.5,
+                            colors.accent,
                         );
                     }
 
                     // Checkmark
                     if sub_item.checked {
                         painter.draw_text(
-                            "✓", menu_x + 8.0, iy + (item_h - font_size) / 2.0,
-                            font_size, colors.accent, &theme.font_family, false,
+                            "✓",
+                            menu_x + 8.0,
+                            iy + (item_h - font_size) / 2.0,
+                            font_size,
+                            colors.accent,
+                            &theme.font_family,
+                            false,
                         );
                     }
 
@@ -217,23 +295,37 @@ impl MenuBar {
                     };
 
                     painter.draw_text(
-                        &sub_item.label, menu_x + 24.0, iy + (item_h - font_size) / 2.0,
-                        font_size, stc, &theme.font_family, false,
+                        &sub_item.label,
+                        menu_x + 24.0,
+                        iy + (item_h - font_size) / 2.0,
+                        font_size,
+                        stc,
+                        &theme.font_family,
+                        false,
                     );
 
                     if let Some(shortcut) = &sub_item.shortcut {
                         let sw = shortcut.len() as f32 * font_size * 0.5;
                         painter.draw_text(
-                            shortcut, menu_x + menu_w - sw - 16.0, iy + (item_h - font_size) / 2.0,
-                            font_size * 0.9, colors.text_secondary, &theme.font_family, false,
+                            shortcut,
+                            menu_x + menu_w - sw - 16.0,
+                            iy + (item_h - font_size) / 2.0,
+                            font_size * 0.9,
+                            colors.text_secondary,
+                            &theme.font_family,
+                            false,
                         );
                     }
 
                     if sub_item.separator_after {
                         let sep_y = iy + item_h - 1.0;
                         painter.draw_line(
-                            menu_x + 12.0, sep_y, menu_x + menu_w - 12.0, sep_y,
-                            colors.border_subtle, 1.0,
+                            menu_x + 12.0,
+                            sep_y,
+                            menu_x + menu_w - 12.0,
+                            sep_y,
+                            colors.border_subtle,
+                            1.0,
                         );
                     }
                 }

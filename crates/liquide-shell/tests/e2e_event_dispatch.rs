@@ -7,16 +7,16 @@
 //! - Propagation control (StopPropagation, StopImmediate) works
 //! - Shell exposes event handler registration API
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use liquide_dom::{Document, NodeId, PseudoStateFlags};
 use liquide_hit_test::dispatch::EventDispatcher;
 use liquide_hit_test::engine::HitTestEngine;
-use liquide_hit_test::event::{DomEvent, DomEventKind, MouseButton, Propagation};
-use liquide_layout::geometry::Point;
-use liquide_layout::tree::{BoxType, LayoutBox, LayoutTree};
+use liquide_hit_test::event::{DomEventKind, MouseButton, Propagation};
 use liquide_layout::Rect;
+use liquide_layout::geometry::Point;
+use liquide_layout::tree::{BoxType, LayoutTree};
 use liquide_style_engine::StyleMap;
 
 // ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ fn build_test_layout(root: NodeId, a: NodeId, b: NodeId) -> LayoutTree {
 
     // Root box
     let root_id = tree.alloc(root, BoxType::Block);
-    let mut root_box = tree.get_mut(root_id).unwrap();
+    let root_box = tree.get_mut(root_id).unwrap();
     root_box.border_rect = Rect::new(0.0, 0.0, 800.0, 600.0);
     root_box.content_rect = Rect::new(0.0, 0.0, 800.0, 600.0);
     root_box.padding_rect = Rect::new(0.0, 0.0, 800.0, 600.0);
@@ -138,7 +138,10 @@ fn test_hover_chain_leaves_element() {
     // Hover chain should now contain child_b, not child_a
     let chain = dispatcher.hover_chain();
     assert!(chain.contains(&b), "Hover chain should contain child_b");
-    assert!(!chain.contains(&a), "Hover chain should not contain child_a");
+    assert!(
+        !chain.contains(&a),
+        "Hover chain should not contain child_a"
+    );
 }
 
 #[test]
@@ -152,7 +155,9 @@ fn test_hover_sets_pseudo_state() {
 
     // child_a should have :hover pseudo-state
     assert!(
-        doc.get(a).unwrap().has_pseudo_state(PseudoStateFlags::HOVER),
+        doc.get(a)
+            .unwrap()
+            .has_pseudo_state(PseudoStateFlags::HOVER),
         "Element 'a' should have :hover pseudo-state"
     );
 
@@ -160,7 +165,9 @@ fn test_hover_sets_pseudo_state() {
     dispatcher.dispatch_mouse_move(Point::new(400.0, 400.0), &mut doc, &engine);
 
     assert!(
-        !doc.get(a).unwrap().has_pseudo_state(PseudoStateFlags::HOVER),
+        !doc.get(a)
+            .unwrap()
+            .has_pseudo_state(PseudoStateFlags::HOVER),
         "Element 'a' should lose :hover after mouse leaves"
     );
 }
@@ -179,8 +186,12 @@ fn test_mouse_down_up_generates_click() {
     dispatcher.dispatch_mouse_move(Point::new(50.0, 30.0), &mut doc, &engine);
 
     // Press
-    let down_events =
-        dispatcher.dispatch_mouse_down(Point::new(50.0, 30.0), MouseButton::Left, &mut doc, &engine);
+    let down_events = dispatcher.dispatch_mouse_down(
+        Point::new(50.0, 30.0),
+        MouseButton::Left,
+        &mut doc,
+        &engine,
+    );
 
     let has_mouse_down = down_events
         .iter()
@@ -215,10 +226,7 @@ fn test_right_click_generates_context_menu() {
     let has_ctx = up_events
         .iter()
         .any(|e| matches!(e.kind, DomEventKind::ContextMenu { .. }));
-    assert!(
-        has_ctx,
-        "Right-click should generate ContextMenu event"
-    );
+    assert!(has_ctx, "Right-click should generate ContextMenu event");
 }
 
 // ---------------------------------------------------------------------------
@@ -239,26 +247,35 @@ fn test_click_sets_focus() {
     assert_eq!(dispatcher.focus(), Some(a), "Focus should be on child_a");
 
     // Click on child_b
-    dispatcher.dispatch_mouse_down(Point::new(50.0, 120.0), MouseButton::Left, &mut doc, &engine);
+    dispatcher.dispatch_mouse_down(
+        Point::new(50.0, 120.0),
+        MouseButton::Left,
+        &mut doc,
+        &engine,
+    );
 
     assert_eq!(dispatcher.focus(), Some(b), "Focus should move to child_b");
 
     // child_a should have lost :focus
     assert!(
-        !doc.get(a).unwrap().has_pseudo_state(PseudoStateFlags::FOCUS),
+        !doc.get(a)
+            .unwrap()
+            .has_pseudo_state(PseudoStateFlags::FOCUS),
         "child_a should lose :focus"
     );
 
     // child_b should have :focus
     assert!(
-        doc.get(b).unwrap().has_pseudo_state(PseudoStateFlags::FOCUS),
+        doc.get(b)
+            .unwrap()
+            .has_pseudo_state(PseudoStateFlags::FOCUS),
         "child_b should have :focus"
     );
 }
 
 #[test]
 fn test_explicit_set_focus() {
-    let (mut doc, root, a, b) = build_test_dom();
+    let (mut doc, _root, a, b) = build_test_dom();
     let mut dispatcher = EventDispatcher::new();
 
     let events = dispatcher.set_focus(Some(a), &mut doc);
@@ -338,8 +355,18 @@ fn test_handler_does_not_fire_on_wrong_node() {
 
     // Click on child_b instead
     dispatcher.dispatch_mouse_move(Point::new(50.0, 120.0), &mut doc, &engine);
-    dispatcher.dispatch_mouse_down(Point::new(50.0, 120.0), MouseButton::Left, &mut doc, &engine);
-    dispatcher.dispatch_mouse_up(Point::new(50.0, 120.0), MouseButton::Left, &mut doc, &engine);
+    dispatcher.dispatch_mouse_down(
+        Point::new(50.0, 120.0),
+        MouseButton::Left,
+        &mut doc,
+        &engine,
+    );
+    dispatcher.dispatch_mouse_up(
+        Point::new(50.0, 120.0),
+        MouseButton::Left,
+        &mut doc,
+        &engine,
+    );
 
     assert_eq!(
         click_count.load(Ordering::SeqCst),
@@ -400,7 +427,7 @@ fn test_stop_propagation_prevents_bubble() {
 
 #[test]
 fn test_scroll_event_dispatches() {
-    let (mut doc, root, a, b) = build_test_dom();
+    let (_doc, root, a, b) = build_test_dom();
     let engine = build_test_engine(root, a, b);
     let mut dispatcher = EventDispatcher::new();
 
@@ -409,10 +436,7 @@ fn test_scroll_event_dispatches() {
 
     dispatcher.add_handler(
         a,
-        Some(DomEventKind::Scroll {
-            dx: 0.0,
-            dy: 0.0,
-        }),
+        Some(DomEventKind::Scroll { dx: 0.0, dy: 0.0 }),
         Box::new(move |_event| {
             counter.fetch_add(1, Ordering::SeqCst);
             Propagation::Continue
@@ -435,7 +459,7 @@ fn test_scroll_event_dispatches() {
 
 #[test]
 fn test_key_events_dispatch_to_focused() {
-    let (mut doc, root, a, b) = build_test_dom();
+    let (mut doc, _root, a, _b) = build_test_dom();
     let mut dispatcher = EventDispatcher::new();
 
     let key_count = Arc::new(AtomicU32::new(0));
@@ -485,18 +509,18 @@ fn test_active_pseudo_state_on_press_release() {
     // Press — should set :active
     dispatcher.dispatch_mouse_down(Point::new(50.0, 30.0), MouseButton::Left, &mut doc, &engine);
 
-    let has_active = doc.get(a).unwrap().has_pseudo_state(PseudoStateFlags::ACTIVE);
-    assert!(
-        has_active,
-        "Element should have :active on mouse down"
-    );
+    let has_active = doc
+        .get(a)
+        .unwrap()
+        .has_pseudo_state(PseudoStateFlags::ACTIVE);
+    assert!(has_active, "Element should have :active on mouse down");
 
     // Release — should clear :active
     dispatcher.dispatch_mouse_up(Point::new(50.0, 30.0), MouseButton::Left, &mut doc, &engine);
 
-    let still_active = doc.get(a).unwrap().has_pseudo_state(PseudoStateFlags::ACTIVE);
-    assert!(
-        !still_active,
-        "Element should lose :active on mouse up"
-    );
+    let still_active = doc
+        .get(a)
+        .unwrap()
+        .has_pseudo_state(PseudoStateFlags::ACTIVE);
+    assert!(!still_active, "Element should lose :active on mouse up");
 }

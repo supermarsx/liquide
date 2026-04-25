@@ -35,12 +35,7 @@ pub struct HotCornerDetector {
 }
 
 impl HotCornerDetector {
-    pub fn new(
-        screen_width: f32,
-        screen_height: f32,
-        threshold: f32,
-        dwell_ms: f32,
-    ) -> Self {
+    pub fn new(screen_width: f32, screen_height: f32, threshold: f32, dwell_ms: f32) -> Self {
         Self {
             screen_width,
             screen_height,
@@ -58,27 +53,14 @@ impl HotCornerDetector {
         let corner = self.detect_corner(x, y);
         match (corner, self.current_corner) {
             (Some(c), Some(prev)) if c == prev => {
-                // Still in the same corner — accumulate dwell time.
-                if self.triggered {
-                    return None;
-                }
-                self.dwell_time += dt_ms;
-                if self.dwell_time >= self.dwell_ms {
-                    self.triggered = true;
-                    return Some(c);
-                }
-                None
+                self.advance_dwell(dt_ms)
             }
             (Some(c), _) => {
                 // Entered a (different) corner — start fresh.
                 self.current_corner = Some(c);
-                self.dwell_time = dt_ms;
+                self.dwell_time = 0.0;
                 self.triggered = false;
-                if self.dwell_time >= self.dwell_ms {
-                    self.triggered = true;
-                    return Some(c);
-                }
-                None
+                self.advance_dwell(dt_ms)
             }
             (None, _) => {
                 // Left the corner area — reset.
@@ -90,9 +72,29 @@ impl HotCornerDetector {
         }
     }
 
+    /// Advance dwell time without requiring another pointer-move event.
+    pub fn tick(&mut self, dt_ms: f32) -> Option<Corner> {
+        self.advance_dwell(dt_ms)
+    }
+
     /// Returns the corner the cursor is currently dwelling in, if any.
     pub fn current_corner(&self) -> Option<Corner> {
         self.current_corner
+    }
+
+    fn advance_dwell(&mut self, dt_ms: f32) -> Option<Corner> {
+        let corner = self.current_corner?;
+        if self.triggered {
+            return None;
+        }
+
+        self.dwell_time += dt_ms.max(0.0);
+        if self.dwell_time >= self.dwell_ms {
+            self.triggered = true;
+            return Some(corner);
+        }
+
+        None
     }
 
     fn detect_corner(&self, x: f32, y: f32) -> Option<Corner> {
@@ -165,7 +167,10 @@ mod tests {
     #[test]
     fn bottom_right_corner() {
         let mut d = detector();
-        assert_eq!(d.on_mouse_move(1919.0, 1079.0, 250.0), Some(Corner::BottomRight));
+        assert_eq!(
+            d.on_mouse_move(1919.0, 1079.0, 250.0),
+            Some(Corner::BottomRight)
+        );
     }
 
     #[test]
@@ -177,7 +182,10 @@ mod tests {
     #[test]
     fn bottom_left_corner() {
         let mut d = detector();
-        assert_eq!(d.on_mouse_move(1.0, 1079.0, 250.0), Some(Corner::BottomLeft));
+        assert_eq!(
+            d.on_mouse_move(1.0, 1079.0, 250.0),
+            Some(Corner::BottomLeft)
+        );
     }
 
     #[test]
@@ -205,5 +213,13 @@ mod tests {
     fn zero_dwell_triggers_immediately() {
         let mut d = HotCornerDetector::new(1920.0, 1080.0, 5.0, 0.0);
         assert_eq!(d.on_mouse_move(1.0, 1.0, 0.0), Some(Corner::TopLeft));
+    }
+
+    #[test]
+    fn stationary_dwell_advances_on_tick() {
+        let mut d = detector();
+        assert_eq!(d.on_mouse_move(1.0, 1.0, 80.0), None);
+        assert_eq!(d.tick(80.0), None);
+        assert_eq!(d.tick(40.0), Some(Corner::TopLeft));
     }
 }

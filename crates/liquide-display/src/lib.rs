@@ -19,19 +19,19 @@ mod tests;
 
 // Re-export primary types at crate root for convenience.
 pub use arrangement::{
-    auto_arrange, auto_arrange_default, fix_gaps, primary_monitor, snap_to_grid,
     ArrangementPolicy, DisplayArrangement, GapInfo, MonitorArrangement, MonitorPosition,
+    auto_arrange, auto_arrange_default, fix_gaps, primary_monitor, snap_to_grid,
 };
 pub use color_profile::{ColorProfile, ColorSpace, IccProfileStore};
 pub use display::{DisplayId, DisplayInfo, Resolution, Rotation};
 pub use dpms::{DpmsController, DpmsPolicy, DpmsState};
-pub use night_light::{color_temperature_matrix, NightLight, NightLightSchedule};
+pub use night_light::{NightLight, NightLightSchedule, color_temperature_matrix};
 pub use output_profile::{
-    builtin_docked, builtin_laptop_only, builtin_presentation, OutputProfile, ProfileStore,
+    OutputProfile, ProfileStore, builtin_docked, builtin_laptop_only, builtin_presentation,
 };
-pub use platform::{enumerate_displays, PlatformError};
-pub use profile::{detect_matching_profile, DisplayConfig, DisplayProfile};
+pub use platform::{PlatformError, enumerate_displays};
+pub use profile::{DisplayConfig, DisplayProfile, detect_matching_profile};
 pub use wallpaper::{
-    compute_span_crop, compute_wallpaper_transform, SlideshowConfig, SlideshowOrder,
-    WallpaperConfig, WallpaperMode, WallpaperTransform,
+    SlideshowConfig, SlideshowOrder, WallpaperConfig, WallpaperMode, WallpaperTransform,
+    compute_span_crop, compute_wallpaper_transform,
 };

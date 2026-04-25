@@ -8,8 +8,8 @@ use std::sync::Arc;
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
 
 use liquide_protocol::messages::common::DisplayInfo;
 use liquide_protocol::messages::control::{
@@ -249,22 +249,18 @@ impl ConnectionManager {
         self.state = ConnectionState::Connecting;
 
         // Parse address.
-        let addr: SocketAddr = server.parse().map_err(|e| {
-            ClientError::ServerUnreachable {
-                server: format!("{server}: {e}"),
-            }
+        let addr: SocketAddr = server.parse().map_err(|e| ClientError::ServerUnreachable {
+            server: format!("{server}: {e}"),
         })?;
 
         // TCP connect with timeout.
-        let tcp_stream = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            TcpStream::connect(addr),
-        )
-        .await
-        .map_err(|_| ClientError::ConnectionTimeout { timeout_ms: 10_000 })?
-        .map_err(|e| ClientError::ServerUnreachable {
-            server: format!("{server}: {e}"),
-        })?;
+        let tcp_stream =
+            tokio::time::timeout(std::time::Duration::from_secs(10), TcpStream::connect(addr))
+                .await
+                .map_err(|_| ClientError::ConnectionTimeout { timeout_ms: 10_000 })?
+                .map_err(|e| ClientError::ServerUnreachable {
+                    server: format!("{server}: {e}"),
+                })?;
 
         // Disable Nagle's algorithm for lower latency.
         let _ = tcp_stream.set_nodelay(true);
@@ -275,11 +271,12 @@ impl ConnectionManager {
         let tls_config = build_client_tls_config();
         let connector = TlsConnector::from(tls_config);
 
-        let server_name = ServerName::try_from(addr.ip().to_string())
-            .map_err(|e| ClientError::ConnectionFailed {
+        let server_name = ServerName::try_from(addr.ip().to_string()).map_err(|e| {
+            ClientError::ConnectionFailed {
                 server: server.to_string(),
                 reason: format!("invalid server name for TLS: {e}"),
-            })?;
+            }
+        })?;
 
         let tls_stream = connector
             .connect(server_name, tcp_stream)
@@ -439,16 +436,15 @@ impl ConnectionManager {
     pub async fn recv_message(&mut self) -> Result<Vec<u8>> {
         const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or(ClientError::NotConnected)?;
+        let stream = self.stream.as_mut().ok_or(ClientError::NotConnected)?;
 
         // Read 4-byte length prefix (little-endian).
         let mut len_buf = [0u8; 4];
         tokio::time::timeout(READ_TIMEOUT, stream.read_exact(&mut len_buf))
             .await
-            .map_err(|_| ClientError::ConnectionTimeout { timeout_ms: READ_TIMEOUT.as_millis() as u64 })?
+            .map_err(|_| ClientError::ConnectionTimeout {
+                timeout_ms: READ_TIMEOUT.as_millis() as u64,
+            })?
             .map_err(|e| ClientError::ConnectionLost {
                 reason: format!("recv len: {e}"),
             })?;
@@ -464,7 +460,9 @@ impl ConnectionManager {
         let mut payload = vec![0u8; msg_len];
         tokio::time::timeout(READ_TIMEOUT, stream.read_exact(&mut payload))
             .await
-            .map_err(|_| ClientError::ConnectionTimeout { timeout_ms: READ_TIMEOUT.as_millis() as u64 })?
+            .map_err(|_| ClientError::ConnectionTimeout {
+                timeout_ms: READ_TIMEOUT.as_millis() as u64,
+            })?
             .map_err(|e| ClientError::ConnectionLost {
                 reason: format!("recv payload: {e}"),
             })?;
@@ -474,10 +472,7 @@ impl ConnectionManager {
 
     /// Send a length-prefixed message to the server.
     pub async fn send_message(&mut self, data: &[u8]) -> Result<()> {
-        let stream = self
-            .stream
-            .as_mut()
-            .ok_or(ClientError::NotConnected)?;
+        let stream = self.stream.as_mut().ok_or(ClientError::NotConnected)?;
 
         let len = (data.len() as u32).to_le_bytes();
         stream
@@ -575,8 +570,7 @@ impl ConnectionManager {
     #[must_use]
     pub fn should_reconnect(&self) -> bool {
         // max_reconnect_attempts == 0 means unlimited.
-        self.max_reconnect_attempts == 0
-            || self.reconnect_attempts < self.max_reconnect_attempts
+        self.max_reconnect_attempts == 0 || self.reconnect_attempts < self.max_reconnect_attempts
     }
 
     /// Compute the delay before the next reconnect attempt (exponential back-off).
@@ -602,13 +596,12 @@ mod tests {
         Vec<rustls::pki_types::CertificateDer<'static>>,
         rustls::pki_types::PrivateKeyDer<'static>,
     ) {
-        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()])
-            .expect("rcgen");
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).expect("rcgen");
         let cert_der = rustls::pki_types::CertificateDer::from(cert.cert.der().to_vec());
-        let key_der =
-            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
-                cert.key_pair.serialize_der(),
-            ));
+        let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+        );
         (vec![cert_der], key_der)
     }
 
@@ -627,9 +620,7 @@ mod tests {
 
     /// Run a mock TLS server that performs the Liquide handshake.
     /// Returns (listener_addr, join_handle).
-    async fn mock_tls_server(
-        auth_result: bool,
-    ) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    async fn mock_tls_server(auth_result: bool) -> (SocketAddr, tokio::task::JoinHandle<()>) {
         let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = tcp.local_addr().unwrap();
         let tls_cfg = server_tls_config();

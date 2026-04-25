@@ -105,9 +105,7 @@ impl GtkClipboard {
     /// Check if the clipboard has content.
     #[must_use]
     pub fn has_content(&self, target: ClipboardTarget) -> bool {
-        self.contents
-            .get(&target)
-            .is_some_and(|v| !v.is_empty())
+        self.contents.get(&target).is_some_and(|v| !v.is_empty())
     }
 
     /// Clear the clipboard.

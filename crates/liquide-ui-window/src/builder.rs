@@ -1,7 +1,7 @@
 //! Window builder — fluent API for constructing windows.
 
-use super::window::{Window, WindowFlags, WindowKind};
 use super::frame::FrameStyle;
+use super::window::{Window, WindowFlags, WindowKind};
 
 /// Fluent builder for constructing `Window` instances.
 pub struct WindowBuilder {
@@ -44,7 +44,8 @@ impl WindowBuilder {
     }
 
     pub fn kind(mut self, kind: WindowKind) -> Self {
-        self.kind = kind; self
+        self.kind = kind;
+        self
     }
 
     pub fn dialog(self) -> Self {
@@ -53,65 +54,80 @@ impl WindowBuilder {
     }
 
     pub fn popup(self) -> Self {
-        self.kind(WindowKind::Popup)
-            .flags(WindowFlags::FRAMELESS)
+        self.kind(WindowKind::Popup).flags(WindowFlags::FRAMELESS)
     }
 
     pub fn splash(self) -> Self {
-        self.kind(WindowKind::Splash)
-            .flags(WindowFlags::FRAMELESS)
+        self.kind(WindowKind::Splash).flags(WindowFlags::FRAMELESS)
     }
 
     pub fn flags(mut self, flags: WindowFlags) -> Self {
-        self.flags = flags; self
+        self.flags = flags;
+        self
     }
 
     pub fn closable(mut self, v: bool) -> Self {
-        self.flags.set(WindowFlags::CLOSABLE, v); self
+        self.flags.set(WindowFlags::CLOSABLE, v);
+        self
     }
 
     pub fn resizable(mut self, v: bool) -> Self {
-        self.flags.set(WindowFlags::RESIZABLE, v); self
+        self.flags.set(WindowFlags::RESIZABLE, v);
+        self
     }
 
     pub fn frameless(mut self, v: bool) -> Self {
-        self.flags.set(WindowFlags::FRAMELESS, v); self
+        self.flags.set(WindowFlags::FRAMELESS, v);
+        self
     }
 
     pub fn always_on_top(mut self, v: bool) -> Self {
-        self.flags.set(WindowFlags::ALWAYS_ON_TOP, v); self
+        self.flags.set(WindowFlags::ALWAYS_ON_TOP, v);
+        self
     }
 
     pub fn position(mut self, x: f32, y: f32) -> Self {
-        self.x = x; self.y = y; self
+        self.x = x;
+        self.y = y;
+        self
     }
 
     pub fn size(mut self, w: f32, h: f32) -> Self {
-        self.width = w; self.height = h; self
+        self.width = w;
+        self.height = h;
+        self
     }
 
     pub fn min_size(mut self, w: f32, h: f32) -> Self {
-        self.min_width = w; self.min_height = h; self
+        self.min_width = w;
+        self.min_height = h;
+        self
     }
 
     pub fn max_size(mut self, w: f32, h: f32) -> Self {
-        self.max_width = w; self.max_height = h; self
+        self.max_width = w;
+        self.max_height = h;
+        self
     }
 
     pub fn opacity(mut self, o: f32) -> Self {
-        self.opacity = o; self
+        self.opacity = o;
+        self
     }
 
     pub fn icon(mut self, icon_id: u32) -> Self {
-        self.icon = Some(icon_id); self
+        self.icon = Some(icon_id);
+        self
     }
 
     pub fn frame_style(mut self, style: FrameStyle) -> Self {
-        self.frame_style = Some(style); self
+        self.frame_style = Some(style);
+        self
     }
 
     pub fn title_bar_height(mut self, h: f32) -> Self {
-        self.title_bar_height = Some(h); self
+        self.title_bar_height = Some(h);
+        self
     }
 
     /// Build the window.

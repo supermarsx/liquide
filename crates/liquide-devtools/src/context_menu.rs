@@ -1,8 +1,8 @@
 //! Context menu — right-click context menus for DOM nodes in the
 //! element tree and viewport.
 
-use liquide_dom::NodeId;
 use liquide_compositor::geometry::Rect;
+use liquide_dom::NodeId;
 
 /// A single context menu item.
 #[derive(Debug, Clone)]
@@ -140,8 +140,10 @@ impl ContextMenu {
             return false;
         }
         let bounds = self.bounds();
-        if x < bounds.x || x > bounds.x + bounds.width
-            || y < bounds.y || y > bounds.y + bounds.height
+        if x < bounds.x
+            || x > bounds.x + bounds.width
+            || y < bounds.y
+            || y > bounds.y + bounds.height
         {
             if self.hovered_index.is_some() {
                 self.hovered_index = None;
@@ -172,8 +174,10 @@ impl ContextMenu {
             return None;
         }
         let bounds = self.bounds();
-        if x < bounds.x || x > bounds.x + bounds.width
-            || y < bounds.y || y > bounds.y + bounds.height
+        if x < bounds.x
+            || x > bounds.x + bounds.width
+            || y < bounds.y
+            || y > bounds.y + bounds.height
         {
             self.hide();
             return None;

@@ -70,7 +70,9 @@ impl SceneGraphDebugger {
 
         let kind_label = kind_label(&node.kind);
         if !self.kind_filter.is_empty()
-            && !kind_label.to_lowercase().contains(&self.kind_filter.to_lowercase())
+            && !kind_label
+                .to_lowercase()
+                .contains(&self.kind_filter.to_lowercase())
         {
             return;
         }
@@ -217,8 +219,8 @@ fn kind_label(kind: &SceneNodeKind) -> String {
 mod tests {
     use super::*;
     use liquide_compositor::geometry::Rect;
-    use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
     use liquide_compositor::pixel::Color;
+    use liquide_compositor::scene::{NodeProperties, SceneNode, SceneNodeKind};
 
     #[test]
     fn test_empty_snapshot() {
@@ -349,11 +351,7 @@ mod tests {
         );
         let mut hidden_props = NodeProperties::new(Rect::new(0.0, 0.0, 50.0, 50.0));
         hidden_props.visible = false;
-        root.add_child(SceneNode::new(
-            1,
-            SceneNodeKind::Overlay,
-            hidden_props,
-        ));
+        root.add_child(SceneNode::new(1, SceneNodeKind::Overlay, hidden_props));
 
         // Hidden nodes excluded by default.
         dbg.snapshot(&root);

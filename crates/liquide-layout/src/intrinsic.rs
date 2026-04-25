@@ -26,7 +26,9 @@ pub struct MeasureCache {
 impl MeasureCache {
     /// Create an empty measure cache.
     pub fn new() -> Self {
-        Self { map: HashMap::with_capacity(256) }
+        Self {
+            map: HashMap::with_capacity(256),
+        }
     }
 
     /// Look up a cached intrinsic width.
@@ -95,7 +97,14 @@ fn cached_measure_width(
         return width;
     }
 
-    let m = text_measurer.measure(text, font_size, font_family, font_weight, max_width, text_props);
+    let m = text_measurer.measure(
+        text,
+        font_size,
+        font_family,
+        font_weight,
+        max_width,
+        text_props,
+    );
     let width = m.width;
 
     MEASURE_CACHE.with(|c| {
@@ -163,7 +172,9 @@ pub fn min_content_width(
     if style.is_flex_container() && style.is_flex_row() {
         let children = doc.children(node_id).to_vec();
         let mut total = 0.0f32;
-        let gap = style.gap.width
+        let gap = style
+            .gap
+            .width
             .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
             .unwrap_or(0.0);
         let mut count = 0usize;
@@ -236,7 +247,9 @@ pub fn max_content_width(
     if style.is_flex_container() && style.is_flex_row() {
         let children = doc.children(node_id).to_vec();
         let mut total = 0.0f32;
-        let gap = style.gap.width
+        let gap = style
+            .gap
+            .width
             .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
             .unwrap_or(0.0);
         let mut count = 0usize;
@@ -271,8 +284,14 @@ pub fn max_content_width(
 
 /// Apply min-width / max-width constraints to a computed width.
 fn apply_min_max_width(style: &liquide_style_engine::computed::ComputedStyle, w: f32) -> f32 {
-    let min_w = style.min_width.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
-    let max_w = style.max_width.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(f32::INFINITY);
+    let min_w = style
+        .min_width
+        .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
+        .unwrap_or(0.0);
+    let max_w = style
+        .max_width
+        .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
+        .unwrap_or(f32::INFINITY);
     w.max(min_w).min(max_w)
 }
 
@@ -296,15 +315,31 @@ pub fn fit_content_width(
 /// Compute the horizontal padding + border contribution of an element.
 /// Used to add box-model edges to intrinsic content sizes.
 fn horizontal_box_edges(style: &liquide_style_engine::computed::ComputedStyle) -> f32 {
-    let pad_l = style.padding.left.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
-    let pad_r = style.padding.right.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
+    let pad_l = style
+        .padding
+        .left
+        .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
+        .unwrap_or(0.0);
+    let pad_r = style
+        .padding
+        .right
+        .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
+        .unwrap_or(0.0);
     pad_l + pad_r + style.border_width.left + style.border_width.right
 }
 
 /// Compute the horizontal margins of an element (non-auto margins only).
 /// Used when computing intrinsic contributions of flex items (CSS §4.1).
 fn horizontal_margins(style: &liquide_style_engine::computed::ComputedStyle) -> f32 {
-    let ml = style.margin.left.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
-    let mr = style.margin.right.resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0).unwrap_or(0.0);
+    let ml = style
+        .margin
+        .left
+        .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
+        .unwrap_or(0.0);
+    let mr = style
+        .margin
+        .right
+        .resolve_px(0.0, 16.0, style.font_size, 0.0, 0.0)
+        .unwrap_or(0.0);
     ml + mr
 }

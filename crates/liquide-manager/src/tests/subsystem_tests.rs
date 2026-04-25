@@ -131,7 +131,9 @@ fn test_session_remove() {
 fn test_session_lock_unlock() {
     let mut store = SessionStore::new();
     store.upsert("s1".into(), "alice".into(), "srv".into(), 100);
-    store.lock_session("s1", Some("maintenance".into())).unwrap();
+    store
+        .lock_session("s1", Some("maintenance".into()))
+        .unwrap();
     let s = store.get("s1", 200).unwrap();
     assert_eq!(s.status, crate::session_mgmt::SessionStatus::Locked);
 

@@ -23,11 +23,7 @@ pub async fn execute(client: &Client, output: &Output, cmd: &SessionsCommand) ->
     }
 }
 
-async fn list(
-    client: &Client,
-    output: &Output,
-    args: &crate::cli::SessionsListArgs,
-) -> Result<()> {
+async fn list(client: &Client, output: &Output, args: &crate::cli::SessionsListArgs) -> Result<()> {
     let mut path = "/api/v1/sessions".to_string();
     if let Some(user) = &args.user {
         path.push_str(&format!("?user={user}"));
@@ -61,11 +57,7 @@ async fn list(
     Ok(())
 }
 
-async fn show(
-    client: &Client,
-    output: &Output,
-    args: &crate::cli::SessionsShowArgs,
-) -> Result<()> {
+async fn show(client: &Client, output: &Output, args: &crate::cli::SessionsShowArgs) -> Result<()> {
     let path = format!("/api/v1/sessions/{}", args.session_id);
     let resp: ApiResponse<serde_json::Value> = client.get(&path).await?;
     match resp.data {
@@ -108,8 +100,9 @@ async fn disconnect_all(
         "user": args.user,
         "drain": args.drain,
     });
-    let resp: ApiResponse<serde_json::Value> =
-        client.post("/api/v1/sessions/disconnect-all", &body).await?;
+    let resp: ApiResponse<serde_json::Value> = client
+        .post("/api/v1/sessions/disconnect-all", &body)
+        .await?;
     if resp.success {
         output.success("All sessions disconnected.");
     } else if let Some(err) = resp.error {

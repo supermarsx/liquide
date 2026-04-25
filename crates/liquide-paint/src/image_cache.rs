@@ -49,7 +49,8 @@ impl ImageCache {
             return false;
         }
         self.evict_if_needed();
-        self.entries.insert(url.to_string(), ImageCacheEntry::Pending);
+        self.entries
+            .insert(url.to_string(), ImageCacheEntry::Pending);
         self.access_order.push(url.to_string());
         true
     }
@@ -69,7 +70,8 @@ impl ImageCache {
 
     /// Mark a previously requested URL as failed.
     pub fn mark_failed(&mut self, url: &str) {
-        self.entries.insert(url.to_string(), ImageCacheEntry::Failed);
+        self.entries
+            .insert(url.to_string(), ImageCacheEntry::Failed);
         self.touch(url);
     }
 
@@ -171,7 +173,10 @@ mod tests {
         cache.request_load("a.png"); // returns false but touches
         // Now b is LRU — inserting c should evict b
         cache.request_load("c.png");
-        assert!(cache.get("a.png").is_some(), "a.png should survive (was touched)");
+        assert!(
+            cache.get("a.png").is_some(),
+            "a.png should survive (was touched)"
+        );
         assert!(cache.get("b.png").is_none(), "b.png should be evicted");
         assert!(cache.get("c.png").is_some());
     }

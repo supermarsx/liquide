@@ -46,7 +46,10 @@ fn weight_value_roundtrip() {
 fn weight_from_style_name() {
     assert_eq!(FontWeight::from_style_name("Bold"), FontWeight::Bold);
     assert_eq!(FontWeight::from_style_name("thin"), FontWeight::Thin);
-    assert_eq!(FontWeight::from_style_name("SemiBold"), FontWeight::SemiBold);
+    assert_eq!(
+        FontWeight::from_style_name("SemiBold"),
+        FontWeight::SemiBold
+    );
     assert_eq!(FontWeight::from_style_name("Regular"), FontWeight::Regular);
     assert_eq!(FontWeight::from_style_name("Heavy"), FontWeight::Black);
     assert_eq!(FontWeight::from_style_name("Hairline"), FontWeight::Thin);
@@ -114,9 +117,18 @@ fn stretch_display() {
 
 #[test]
 fn format_from_extension() {
-    assert_eq!(FontFormat::from_extension("ttf"), Some(FontFormat::TrueType));
-    assert_eq!(FontFormat::from_extension("TTF"), Some(FontFormat::TrueType));
-    assert_eq!(FontFormat::from_extension("otf"), Some(FontFormat::OpenType));
+    assert_eq!(
+        FontFormat::from_extension("ttf"),
+        Some(FontFormat::TrueType)
+    );
+    assert_eq!(
+        FontFormat::from_extension("TTF"),
+        Some(FontFormat::TrueType)
+    );
+    assert_eq!(
+        FontFormat::from_extension("otf"),
+        Some(FontFormat::OpenType)
+    );
     assert_eq!(FontFormat::from_extension("woff"), Some(FontFormat::WOFF));
     assert_eq!(FontFormat::from_extension("woff2"), Some(FontFormat::WOFF2));
     assert_eq!(FontFormat::from_extension("pfb"), Some(FontFormat::Type1));
@@ -201,8 +213,7 @@ fn font_info_from_path_ttf() {
 
 #[test]
 fn font_info_from_path_italic() {
-    let info =
-        FontInfo::from_path("/home/user/.fonts/Roboto-BoldItalic.otf", false).unwrap();
+    let info = FontInfo::from_path("/home/user/.fonts/Roboto-BoldItalic.otf", false).unwrap();
     assert_eq!(info.family, "Roboto");
     assert_eq!(info.weight, FontWeight::Bold);
     assert_eq!(info.style, FontStyle::Italic);
@@ -341,9 +352,10 @@ fn manager_find_font_closest_weight() {
 #[test]
 fn manager_find_font_none() {
     let mgr = make_test_manager();
-    assert!(mgr
-        .find_font("Nonexistent", FontWeight::Regular, FontStyle::Regular)
-        .is_none());
+    assert!(
+        mgr.find_font("Nonexistent", FontWeight::Regular, FontStyle::Regular)
+            .is_none()
+    );
 }
 
 #[test]
@@ -515,7 +527,10 @@ fn fallback_resolve_first_none() {
 #[test]
 fn platform_system_dirs_nonempty() {
     let dirs = crate::platform::system_font_dirs();
-    assert!(!dirs.is_empty(), "should return at least one font directory");
+    assert!(
+        !dirs.is_empty(),
+        "should return at least one font directory"
+    );
 }
 
 #[test]

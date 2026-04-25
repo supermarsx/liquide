@@ -1,7 +1,7 @@
 //! Package metadata and versioning.
 
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// A semantic version.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -14,14 +14,20 @@ pub struct Version {
 impl Version {
     #[must_use]
     pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self { major, minor, patch }
+        Self {
+            major,
+            minor,
+            patch,
+        }
     }
 
     /// Parse a version string like "1.2.3".
     #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         let parts: Vec<&str> = s.split('.').collect();
-        if parts.len() != 3 { return None; }
+        if parts.len() != 3 {
+            return None;
+        }
         Some(Self {
             major: parts[0].parse().ok()?,
             minor: parts[1].parse().ok()?,
@@ -75,9 +81,18 @@ pub enum AppCategory {
 
 impl AppCategory {
     pub const ALL: &'static [AppCategory] = &[
-        Self::Productivity, Self::Development, Self::Graphics, Self::Multimedia,
-        Self::Games, Self::Education, Self::Internet, Self::System,
-        Self::Utilities, Self::Science, Self::Office, Self::Other,
+        Self::Productivity,
+        Self::Development,
+        Self::Graphics,
+        Self::Multimedia,
+        Self::Games,
+        Self::Education,
+        Self::Internet,
+        Self::System,
+        Self::Utilities,
+        Self::Science,
+        Self::Office,
+        Self::Other,
     ];
 
     #[must_use]
@@ -146,7 +161,11 @@ impl PackageInfo {
     /// Whether an update is available.
     #[must_use]
     pub fn has_update(&self) -> bool {
-        self.installed && self.installed_version.as_ref().is_some_and(|v| v < &self.version)
+        self.installed
+            && self
+                .installed_version
+                .as_ref()
+                .is_some_and(|v| v < &self.version)
     }
 
     /// Human-readable download size.

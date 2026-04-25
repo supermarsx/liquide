@@ -288,17 +288,16 @@ impl TabDragState {
 
         // Compute the target index based on the center of where the tab
         // would be if placed at the current drag x.
-        let center_x = x - self.grab_offset_x + (layout.tabs.first().map_or(MIN_TAB_WIDTH, |t| t.width) / 2.0);
+        let center_x =
+            x - self.grab_offset_x + (layout.tabs.first().map_or(MIN_TAB_WIDTH, |t| t.width) / 2.0);
         let scrolled_center = center_x + layout.scroll_offset;
 
-        layout
-            .tab_at_x(scrolled_center)
-            .unwrap_or_else(|| {
-                if scrolled_center <= 0.0 {
-                    0
-                } else {
-                    layout.tabs.len().saturating_sub(1)
-                }
-            })
+        layout.tab_at_x(scrolled_center).unwrap_or_else(|| {
+            if scrolled_center <= 0.0 {
+                0
+            } else {
+                layout.tabs.len().saturating_sub(1)
+            }
+        })
     }
 }

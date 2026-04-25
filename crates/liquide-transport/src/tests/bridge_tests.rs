@@ -65,9 +65,7 @@ fn enqueue_wakes_idle() {
     assert_eq!(bridge.scheduling_mode(), SchedulingMode::Idle);
 
     let header = make_header(ChannelId::CONTROL, 1);
-    bridge
-        .enqueue(header, Bytes::from_static(b"data"))
-        .unwrap();
+    bridge.enqueue(header, Bytes::from_static(b"data")).unwrap();
 
     // Should have transitioned from Idle to Normal
     assert_ne!(bridge.scheduling_mode(), SchedulingMode::Idle);
@@ -87,10 +85,7 @@ fn priority_ordering_in_drain() {
 
     // Enqueue in reverse priority order
     bridge
-        .enqueue(
-            make_header(ChannelId::VIDEO, 1),
-            Bytes::from_static(b"gfx"),
-        )
+        .enqueue(make_header(ChannelId::VIDEO, 1), Bytes::from_static(b"gfx"))
         .unwrap();
     bridge
         .enqueue(
@@ -201,7 +196,10 @@ fn deliver_to_channel() {
     let handle = bridge.register_channel(ChannelId::AUDIO_PLAYBACK);
 
     bridge
-        .deliver(ChannelId::AUDIO_PLAYBACK, Bytes::from_static(b"audio-frame"))
+        .deliver(
+            ChannelId::AUDIO_PLAYBACK,
+            Bytes::from_static(b"audio-frame"),
+        )
         .unwrap();
 
     let msg = handle.recv().unwrap();

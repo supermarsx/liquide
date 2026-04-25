@@ -250,12 +250,7 @@ impl TilingEngine {
     ///
     /// Returns one [`Rect`] per window.
     #[must_use]
-    pub fn arrange(
-        &self,
-        kind: TilingLayoutKind,
-        window_count: usize,
-        screen: Rect,
-    ) -> Vec<Rect> {
+    pub fn arrange(&self, kind: TilingLayoutKind, window_count: usize, screen: Rect) -> Vec<Rect> {
         if window_count == 0 {
             return Vec::new();
         }

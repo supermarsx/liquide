@@ -31,7 +31,11 @@ pub struct UpdateManager {
 impl UpdateManager {
     #[must_use]
     pub fn new(auto_check: bool) -> Self {
-        Self { pending: Vec::new(), last_check: 0, auto_check }
+        Self {
+            pending: Vec::new(),
+            last_check: 0,
+            auto_check,
+        }
     }
 
     /// Set the list of pending updates.
@@ -41,11 +45,15 @@ impl UpdateManager {
 
     /// Get all pending updates.
     #[must_use]
-    pub fn pending(&self) -> &[PendingUpdate] { &self.pending }
+    pub fn pending(&self) -> &[PendingUpdate] {
+        &self.pending
+    }
 
     /// Number of pending updates.
     #[must_use]
-    pub fn count(&self) -> usize { self.pending.len() }
+    pub fn count(&self) -> usize {
+        self.pending.len()
+    }
 
     /// Total download size for all updates.
     #[must_use]
@@ -71,12 +79,18 @@ impl UpdateManager {
 
     /// Last check timestamp.
     #[must_use]
-    pub fn last_check(&self) -> u64 { self.last_check }
+    pub fn last_check(&self) -> u64 {
+        self.last_check
+    }
 
     /// Whether auto-checking is enabled.
     #[must_use]
-    pub fn auto_check(&self) -> bool { self.auto_check }
+    pub fn auto_check(&self) -> bool {
+        self.auto_check
+    }
 
     /// Clear all pending updates.
-    pub fn clear(&mut self) { self.pending.clear(); }
+    pub fn clear(&mut self) {
+        self.pending.clear();
+    }
 }

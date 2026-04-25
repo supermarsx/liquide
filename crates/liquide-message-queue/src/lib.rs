@@ -69,13 +69,13 @@ pub mod service;
 pub mod well_known;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod bus_tests;
+#[cfg(test)]
+mod tests;
 
 // Re-export primary types at crate root for ergonomic use.
 pub use filter::MessageFilter;
-pub use message::{MessageResult, MessageType, QueueMessage, WindowId, WINDOW_BROADCAST};
+pub use message::{MessageResult, MessageType, QueueMessage, WINDOW_BROADCAST, WindowId};
 pub use pump::{MessageHandler, MessagePump};
 pub use queue::{Rect, ThreadQueue};
 pub use sent::SentMessage;
@@ -83,7 +83,9 @@ pub use timer::{TimerEntry, TimerManager};
 pub use wake_bits::WakeBits;
 
 // Re-export lazy paint types.
-pub use lazy_paint::{LazyPaintManager, LazyPaintStats, PaintDamage, PaintRequest, SurfaceId as PaintSurfaceId};
+pub use lazy_paint::{
+    LazyPaintManager, LazyPaintStats, PaintDamage, PaintRequest, SurfaceId as PaintSurfaceId,
+};
 
 // Re-export lock-free types.
 pub use lockfree::{CasSlot, DedupGuard, LockFreeQueue, SlabAllocator, SlabStats};

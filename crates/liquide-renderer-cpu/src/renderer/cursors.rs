@@ -60,25 +60,12 @@ impl SoftwareRenderer {
                 CursorShape::Progress => {
                     // Arrow + small hourglass
                     Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
-                    Self::draw_cursor_wait(
-                        fb,
-                        cx + 8.0 * s,
-                        cy + 8.0 * s,
-                        s * 0.6,
-                        outline,
-                        fill,
-                    );
+                    Self::draw_cursor_wait(fb, cx + 8.0 * s, cy + 8.0 * s, s * 0.6, outline, fill);
                 }
                 CursorShape::Help => {
                     // Arrow + question mark
                     Self::draw_cursor_arrow(fb, cx, cy, s, outline, fill);
-                    Self::draw_question_mark(
-                        fb,
-                        cx + 10.0 * s,
-                        cy + 10.0 * s,
-                        s * 0.7,
-                        outline,
-                    );
+                    Self::draw_question_mark(fb, cx + 10.0 * s, cy + 10.0 * s, s * 0.7, outline);
                 }
                 CursorShape::Crosshair => {
                     Self::draw_cursor_crosshair(fb, cx, cy, s, outline);

@@ -1,12 +1,12 @@
 //! Recording session — orchestrates capture lifecycle.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
+use crate::Result;
 use crate::format::{RecordingHeader, RecordingState};
 use crate::muxer::RecordingMuxer;
 use crate::segment::{AudioSegment, EventSegment, VideoSegment};
-use crate::Result;
 
 /// Configuration for a recording session.
 #[derive(Debug, Clone, Serialize, Deserialize)]

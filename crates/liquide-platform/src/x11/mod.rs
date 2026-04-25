@@ -189,8 +189,7 @@ impl X11DisplayBackend {
 
                 // Compute DPI scale from physical mm dimensions.
                 let dpi_scale = if (*output_info).mm_width > 0 {
-                    let dpi_x =
-                        ((*crtc_info).width as f64 * 25.4) / (*output_info).mm_width as f64;
+                    let dpi_x = ((*crtc_info).width as f64 * 25.4) / (*output_info).mm_width as f64;
                     (dpi_x / 96.0) as f32
                 } else {
                     1.0
@@ -324,10 +323,7 @@ impl X11WindowManager {
 }
 
 impl NativeWindowHost for X11WindowManager {
-    fn create_window(
-        &mut self,
-        params: NativeWindowParams,
-    ) -> PlatformResult<NativeWindowHandle> {
+    fn create_window(&mut self, params: NativeWindowParams) -> PlatformResult<NativeWindowHandle> {
         // SAFETY: All Xlib calls use the valid display connection.
         // XCreateWindow parameters are validated (width/height clamped to >= 1).
         // The root window and visual are obtained from the default screen.
@@ -446,11 +442,7 @@ impl NativeWindowHost for X11WindowManager {
         Ok(())
     }
 
-    fn set_geometry(
-        &mut self,
-        handle: NativeWindowHandle,
-        geometry: Rect,
-    ) -> PlatformResult<()> {
+    fn set_geometry(&mut self, handle: NativeWindowHandle, geometry: Rect) -> PlatformResult<()> {
         if let Some(state) = self.windows.get_mut(&handle.0) {
             let w = (geometry.width as c_uint).max(1);
             let h = (geometry.height as c_uint).max(1);
@@ -472,11 +464,7 @@ impl NativeWindowHost for X11WindowManager {
         Ok(())
     }
 
-    fn set_title(
-        &mut self,
-        handle: NativeWindowHandle,
-        title: &str,
-    ) -> PlatformResult<()> {
+    fn set_title(&mut self, handle: NativeWindowHandle, title: &str) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
             // SAFETY: set_title_raw and XFlush use valid display/window pointers.
             unsafe {
@@ -487,11 +475,7 @@ impl NativeWindowHost for X11WindowManager {
         Ok(())
     }
 
-    fn set_icon(
-        &mut self,
-        handle: NativeWindowHandle,
-        icon_data: &[u8],
-    ) -> PlatformResult<()> {
+    fn set_icon(&mut self, handle: NativeWindowHandle, icon_data: &[u8]) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
             // _NET_WM_ICON expects: [width, height, pixel0, pixel1, ...]
             // each pixel is ARGB packed into a c_long.
@@ -531,11 +515,7 @@ impl NativeWindowHost for X11WindowManager {
         Ok(())
     }
 
-    fn set_state(
-        &mut self,
-        handle: NativeWindowHandle,
-        state_name: &str,
-    ) -> PlatformResult<()> {
+    fn set_state(&mut self, handle: NativeWindowHandle, state_name: &str) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
             let xw = state.xwindow;
             // SAFETY: send_ewmh_state, XUnmapWindow, XMapWindow, and XFlush
@@ -544,39 +524,57 @@ impl NativeWindowHost for X11WindowManager {
                 match state_name {
                     "maximized" => {
                         send_ewmh_state(
-                            self.display, xw, self.root,
-                            self.atoms.net_wm_state, 1,
+                            self.display,
+                            xw,
+                            self.root,
+                            self.atoms.net_wm_state,
+                            1,
                             self.atoms.net_wm_state_maximized_vert,
                             self.atoms.net_wm_state_maximized_horz,
                         );
                     }
                     "minimized" => {
                         send_ewmh_state(
-                            self.display, xw, self.root,
-                            self.atoms.net_wm_state, 1,
-                            self.atoms.net_wm_state_hidden, 0,
+                            self.display,
+                            xw,
+                            self.root,
+                            self.atoms.net_wm_state,
+                            1,
+                            self.atoms.net_wm_state_hidden,
+                            0,
                         );
                         ffi::XUnmapWindow(self.display, xw);
                     }
                     "fullscreen" => {
                         send_ewmh_state(
-                            self.display, xw, self.root,
-                            self.atoms.net_wm_state, 1,
-                            self.atoms.net_wm_state_fullscreen, 0,
+                            self.display,
+                            xw,
+                            self.root,
+                            self.atoms.net_wm_state,
+                            1,
+                            self.atoms.net_wm_state_fullscreen,
+                            0,
                         );
                     }
                     _ => {
                         // "normal" — remove maximized / fullscreen / hidden.
                         send_ewmh_state(
-                            self.display, xw, self.root,
-                            self.atoms.net_wm_state, 0,
+                            self.display,
+                            xw,
+                            self.root,
+                            self.atoms.net_wm_state,
+                            0,
                             self.atoms.net_wm_state_maximized_vert,
                             self.atoms.net_wm_state_maximized_horz,
                         );
                         send_ewmh_state(
-                            self.display, xw, self.root,
-                            self.atoms.net_wm_state, 0,
-                            self.atoms.net_wm_state_fullscreen, 0,
+                            self.display,
+                            xw,
+                            self.root,
+                            self.atoms.net_wm_state,
+                            0,
+                            self.atoms.net_wm_state_fullscreen,
+                            0,
                         );
                         ffi::XMapWindow(self.display, xw);
                     }
@@ -587,11 +585,7 @@ impl NativeWindowHost for X11WindowManager {
         Ok(())
     }
 
-    fn set_z_order(
-        &mut self,
-        handle: NativeWindowHandle,
-        z_order: i32,
-    ) -> PlatformResult<()> {
+    fn set_z_order(&mut self, handle: NativeWindowHandle, z_order: i32) -> PlatformResult<()> {
         if let Some(state) = self.windows.get(&handle.0) {
             // SAFETY: XRaiseWindow / XLowerWindow and XFlush are safe
             // with a valid display and window.
@@ -811,7 +805,8 @@ impl X11Platform {
                                 event: MouseEvent::Scroll {
                                     axis: ScrollAxis::Vertical,
                                     delta: 3.0,
-                                    x, y,
+                                    x,
+                                    y,
                                 },
                             });
                         }
@@ -821,7 +816,8 @@ impl X11Platform {
                                 event: MouseEvent::Scroll {
                                     axis: ScrollAxis::Vertical,
                                     delta: -3.0,
-                                    x, y,
+                                    x,
+                                    y,
                                 },
                             });
                         }
@@ -832,7 +828,8 @@ impl X11Platform {
                                 event: MouseEvent::Scroll {
                                     axis: ScrollAxis::Horizontal,
                                     delta: -3.0,
-                                    x, y,
+                                    x,
+                                    y,
                                 },
                             });
                         }
@@ -842,7 +839,8 @@ impl X11Platform {
                                 event: MouseEvent::Scroll {
                                     axis: ScrollAxis::Horizontal,
                                     delta: 3.0,
-                                    x, y,
+                                    x,
+                                    y,
                                 },
                             });
                         }
@@ -858,7 +856,8 @@ impl X11Platform {
                                     event: MouseEvent::Button {
                                         button: mb,
                                         state: bs,
-                                        x, y,
+                                        x,
+                                        y,
                                     },
                                 });
                             }
@@ -873,7 +872,10 @@ impl X11Platform {
                 if let Some(&hv) = self.wm.xwindow_to_handle.get(&xm.window) {
                     self.event_queue.push_back(PlatformEvent::MouseInput {
                         handle: NativeWindowHandle(hv),
-                        event: MouseEvent::Move { x: xm.x as f32, y: xm.y as f32 },
+                        event: MouseEvent::Move {
+                            x: xm.x as f32,
+                            y: xm.y as f32,
+                        },
                     });
                 }
             }
@@ -884,7 +886,10 @@ impl X11Platform {
                 if let Some(&hv) = self.wm.xwindow_to_handle.get(&xc.window) {
                     self.event_queue.push_back(PlatformEvent::MouseInput {
                         handle: NativeWindowHandle(hv),
-                        event: MouseEvent::Enter { x: xc.x as f32, y: xc.y as f32 },
+                        event: MouseEvent::Enter {
+                            x: xc.x as f32,
+                            y: xc.y as f32,
+                        },
                     });
                 }
             }
@@ -997,9 +1002,10 @@ impl X11Platform {
                 let data_l0 = unsafe { xcm.data.l[0] } as ffi::Atom;
                 if data_l0 == self.wm.atoms.wm_delete_window {
                     if let Some(&hv) = self.wm.xwindow_to_handle.get(&xcm.window) {
-                        self.event_queue.push_back(PlatformEvent::WindowCloseRequested {
-                            handle: NativeWindowHandle(hv),
-                        });
+                        self.event_queue
+                            .push_back(PlatformEvent::WindowCloseRequested {
+                                handle: NativeWindowHandle(hv),
+                            });
                     }
                 }
             }
@@ -1019,8 +1025,7 @@ impl Drop for X11Platform {
         // Windows are destroyed before freeing the GC and closing the display.
         unsafe {
             // Destroy all windows we still own.
-            let xwindows: Vec<ffi::Window> =
-                self.wm.windows.values().map(|s| s.xwindow).collect();
+            let xwindows: Vec<ffi::Window> = self.wm.windows.values().map(|s| s.xwindow).collect();
             for xw in xwindows {
                 ffi::XDestroyWindow(self.display, xw);
             }
@@ -1189,7 +1194,9 @@ impl PlatformBackend for X11Platform {
             );
 
             if image.is_null() {
-                return Err(PlatformError::Presentation("XCreateImage returned null".into()));
+                return Err(PlatformError::Presentation(
+                    "XCreateImage returned null".into(),
+                ));
             }
 
             // On little-endian x86_64, ZPixmap with 32-bit depth stores
@@ -1197,8 +1204,16 @@ impl PlatformBackend for X11Platform {
             (*image).byte_order = ffi::LSBFirst;
 
             ffi::XPutImage(
-                self.display, xwindow, self.gc, image,
-                0, 0, 0, 0, width, height,
+                self.display,
+                xwindow,
+                self.gc,
+                image,
+                0,
+                0,
+                0,
+                0,
+                width,
+                height,
             );
 
             // Prevent XDestroyImage from freeing our Rust-owned buffer.

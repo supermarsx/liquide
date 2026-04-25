@@ -1,6 +1,6 @@
 use crate::capture::CaptureResult;
-use std::path::{Path, PathBuf};
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -17,7 +17,11 @@ pub enum OutputTarget {
 }
 
 /// Save a screenshot to file (BMP or PPM format — no external deps needed)
-pub fn save_screenshot(capture: &CaptureResult, path: &Path, format: OutputFormat) -> std::io::Result<()> {
+pub fn save_screenshot(
+    capture: &CaptureResult,
+    path: &Path,
+    format: OutputFormat,
+) -> std::io::Result<()> {
     match format {
         OutputFormat::Bmp => save_bmp(capture, path),
         OutputFormat::Ppm => save_ppm(capture, path),
@@ -49,14 +53,14 @@ fn save_bmp(capture: &CaptureResult, path: &Path) -> std::io::Result<()> {
     file.write_all(&40u32.to_le_bytes())?;
     file.write_all(&(w as i32).to_le_bytes())?;
     file.write_all(&(h as i32).to_le_bytes())?; // positive = bottom-up
-    file.write_all(&1u16.to_le_bytes())?;  // planes
+    file.write_all(&1u16.to_le_bytes())?; // planes
     file.write_all(&24u16.to_le_bytes())?; // bits per pixel (BGR, no alpha for compat)
-    file.write_all(&0u32.to_le_bytes())?;  // compression (none)
+    file.write_all(&0u32.to_le_bytes())?; // compression (none)
     file.write_all(&(pixel_data_size as u32).to_le_bytes())?;
     file.write_all(&2835u32.to_le_bytes())?; // h resolution (72 DPI)
     file.write_all(&2835u32.to_le_bytes())?; // v resolution
-    file.write_all(&0u32.to_le_bytes())?;  // colors in palette
-    file.write_all(&0u32.to_le_bytes())?;  // important colors
+    file.write_all(&0u32.to_le_bytes())?; // colors in palette
+    file.write_all(&0u32.to_le_bytes())?; // important colors
 
     // Pixel data (bottom-up, BGR)
     let mut row_buf = vec![0u8; row_size as usize];
@@ -66,7 +70,7 @@ fn save_bmp(capture: &CaptureResult, path: &Path) -> std::io::Result<()> {
             let dst_offset = (x * 3) as usize;
             if src_offset + 2 < capture.pixels.len() && dst_offset + 2 < row_buf.len() {
                 // Source is BGRA, BMP wants BGR
-                row_buf[dst_offset] = capture.pixels[src_offset];     // B
+                row_buf[dst_offset] = capture.pixels[src_offset]; // B
                 row_buf[dst_offset + 1] = capture.pixels[src_offset + 1]; // G
                 row_buf[dst_offset + 2] = capture.pixels[src_offset + 2]; // R
             }
@@ -156,10 +160,10 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let off = (y * stride + x * 4) as usize;
-                pixels[off] = 0;       // B
-                pixels[off + 1] = 128;  // G
-                pixels[off + 2] = 255;  // R
-                pixels[off + 3] = 255;  // A
+                pixels[off] = 0; // B
+                pixels[off + 1] = 128; // G
+                pixels[off + 2] = 255; // R
+                pixels[off + 3] = 255; // A
             }
         }
         CaptureResult {
@@ -167,7 +171,12 @@ mod tests {
             height: h,
             stride,
             pixels,
-            region: CaptureRegion { x: 0, y: 0, width: w, height: h },
+            region: CaptureRegion {
+                x: 0,
+                y: 0,
+                width: w,
+                height: h,
+            },
             timestamp: 1000,
         }
     }
@@ -232,8 +241,10 @@ mod tests {
 
         // Timestamp portion should be numeric
         let ts_part = name_bmp
-            .strip_prefix("screenshot_").unwrap()
-            .strip_suffix(".bmp").unwrap();
+            .strip_prefix("screenshot_")
+            .unwrap()
+            .strip_suffix(".bmp")
+            .unwrap();
         assert!(ts_part.parse::<u64>().is_ok());
     }
 

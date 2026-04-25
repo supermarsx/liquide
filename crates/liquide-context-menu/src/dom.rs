@@ -28,11 +28,7 @@ use crate::{ContextMenu, MenuItemKind};
 ///   ...
 /// </context-menu>
 /// ```
-pub fn build_context_menu_dom(
-    doc: &mut Document,
-    parent: NodeId,
-    menu: &ContextMenu,
-) -> NodeId {
+pub fn build_context_menu_dom(doc: &mut Document, parent: NodeId, menu: &ContextMenu) -> NodeId {
     let root = doc.create_element("context-menu");
     doc.set_id(root, "css-context-menu");
     doc.append_child(parent, root);
@@ -44,11 +40,7 @@ pub fn build_context_menu_dom(
 /// Re-synchronise the DOM subtree to match the current `ContextMenu` state.
 ///
 /// Removes all existing children and rebuilds them from `menu.items()`.
-pub fn sync_context_menu_dom(
-    doc: &mut Document,
-    menu_node: NodeId,
-    menu: &ContextMenu,
-) {
+pub fn sync_context_menu_dom(doc: &mut Document, menu_node: NodeId, menu: &ContextMenu) {
     // Remove existing children
     let children: Vec<NodeId> = doc.children(menu_node).to_vec();
     for child in children {

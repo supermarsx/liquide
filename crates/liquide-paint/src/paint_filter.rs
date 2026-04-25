@@ -143,17 +143,13 @@ impl PaintFilter {
                 Self::apply_opacity_in_place(&mut out, *v);
                 out
             }
-            PaintFilter::Erode {
-                radius_x,
-                radius_y,
-            } => Self::apply_morphology(input, *radius_x, *radius_y, true),
-            PaintFilter::Dilate {
-                radius_x,
-                radius_y,
-            } => Self::apply_morphology(input, *radius_x, *radius_y, false),
-            PaintFilter::Sharpen { amount, radius } => {
-                Self::apply_sharpen(input, *amount, *radius)
+            PaintFilter::Erode { radius_x, radius_y } => {
+                Self::apply_morphology(input, *radius_x, *radius_y, true)
             }
+            PaintFilter::Dilate { radius_x, radius_y } => {
+                Self::apply_morphology(input, *radius_x, *radius_y, false)
+            }
+            PaintFilter::Sharpen { amount, radius } => Self::apply_sharpen(input, *amount, *radius),
         }
     }
 
@@ -162,17 +158,23 @@ impl PaintFilter {
     pub fn apply_in_place(&self, buf: &mut PixelBuffer) {
         match self {
             PaintFilter::Brightness(v) => {
-                Self::apply_color_matrix_in_place(buf, &[
-                    *v, 0.0, 0.0, 0.0, 0.0, 0.0, *v, 0.0, 0.0, 0.0, 0.0, 0.0, *v, 0.0, 0.0,
-                    0.0, 0.0, 0.0, 1.0, 0.0,
-                ]);
+                Self::apply_color_matrix_in_place(
+                    buf,
+                    &[
+                        *v, 0.0, 0.0, 0.0, 0.0, 0.0, *v, 0.0, 0.0, 0.0, 0.0, 0.0, *v, 0.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0, 0.0,
+                    ],
+                );
             }
             PaintFilter::Contrast(v) => {
                 let t = (1.0 - v) * 0.5;
-                Self::apply_color_matrix_in_place(buf, &[
-                    *v, 0.0, 0.0, 0.0, t, 0.0, *v, 0.0, 0.0, t, 0.0, 0.0, *v, 0.0, t, 0.0,
-                    0.0, 0.0, 1.0, 0.0,
-                ]);
+                Self::apply_color_matrix_in_place(
+                    buf,
+                    &[
+                        *v, 0.0, 0.0, 0.0, t, 0.0, *v, 0.0, 0.0, t, 0.0, 0.0, *v, 0.0, t, 0.0, 0.0,
+                        0.0, 1.0, 0.0,
+                    ],
+                );
             }
             PaintFilter::Invert(v) => Self::apply_invert_in_place(buf, *v),
             PaintFilter::Opacity(v) => Self::apply_opacity_in_place(buf, *v),
@@ -258,12 +260,16 @@ impl PaintFilter {
                     b += temp[idx + 2] * weight;
                     a += temp[idx + 3] * weight;
                 }
-                output.set_pixel(x, y, [
-                    r.round().clamp(0.0, 255.0) as u8,
-                    g.round().clamp(0.0, 255.0) as u8,
-                    b.round().clamp(0.0, 255.0) as u8,
-                    a.round().clamp(0.0, 255.0) as u8,
-                ]);
+                output.set_pixel(
+                    x,
+                    y,
+                    [
+                        r.round().clamp(0.0, 255.0) as u8,
+                        g.round().clamp(0.0, 255.0) as u8,
+                        b.round().clamp(0.0, 255.0) as u8,
+                        a.round().clamp(0.0, 255.0) as u8,
+                    ],
+                );
             }
         }
         output
@@ -296,12 +302,16 @@ impl PaintFilter {
                     sb += p[2] as u32;
                     sa += p[3] as u32;
                 }
-                temp.set_pixel(x, y, [
-                    (sr as f32 / diameter) as u8,
-                    (sg as f32 / diameter) as u8,
-                    (sb as f32 / diameter) as u8,
-                    (sa as f32 / diameter) as u8,
-                ]);
+                temp.set_pixel(
+                    x,
+                    y,
+                    [
+                        (sr as f32 / diameter) as u8,
+                        (sg as f32 / diameter) as u8,
+                        (sb as f32 / diameter) as u8,
+                        (sa as f32 / diameter) as u8,
+                    ],
+                );
             }
         }
 
@@ -321,12 +331,16 @@ impl PaintFilter {
                     sb += p[2] as u32;
                     sa += p[3] as u32;
                 }
-                output.set_pixel(x, y, [
-                    (sr as f32 / diameter) as u8,
-                    (sg as f32 / diameter) as u8,
-                    (sb as f32 / diameter) as u8,
-                    (sa as f32 / diameter) as u8,
-                ]);
+                output.set_pixel(
+                    x,
+                    y,
+                    [
+                        (sr as f32 / diameter) as u8,
+                        (sg as f32 / diameter) as u8,
+                        (sb as f32 / diameter) as u8,
+                        (sa as f32 / diameter) as u8,
+                    ],
+                );
             }
         }
         output
@@ -377,12 +391,16 @@ impl PaintFilter {
                             .round()
                             .clamp(0.0, 255.0) as u8
                     };
-                    shadow.set_pixel(x, y, [
-                        blend(fg[0], bg[0]),
-                        blend(fg[1], bg[1]),
-                        blend(fg[2], bg[2]),
-                        (oa * 255.0) as u8,
-                    ]);
+                    shadow.set_pixel(
+                        x,
+                        y,
+                        [
+                            blend(fg[0], bg[0]),
+                            blend(fg[1], bg[1]),
+                            blend(fg[2], bg[2]),
+                            (oa * 255.0) as u8,
+                        ],
+                    );
                 } else {
                     shadow.set_pixel(x, y, [0, 0, 0, 0]);
                 }
@@ -402,10 +420,14 @@ impl PaintFilter {
             let g = data[i + 1] as f32 / 255.0;
             let b = data[i + 2] as f32 / 255.0;
             let a = data[i + 3] as f32 / 255.0;
-            data[i] = ((m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0) * 255.0) as u8;
-            data[i + 1] = ((m[5] * r + m[6] * g + m[7] * b + m[8] * a + m[9]).clamp(0.0, 1.0) * 255.0) as u8;
-            data[i + 2] = ((m[10] * r + m[11] * g + m[12] * b + m[13] * a + m[14]).clamp(0.0, 1.0) * 255.0) as u8;
-            data[i + 3] = ((m[15] * r + m[16] * g + m[17] * b + m[18] * a + m[19]).clamp(0.0, 1.0) * 255.0) as u8;
+            data[i] =
+                ((m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).clamp(0.0, 1.0) * 255.0) as u8;
+            data[i + 1] =
+                ((m[5] * r + m[6] * g + m[7] * b + m[8] * a + m[9]).clamp(0.0, 1.0) * 255.0) as u8;
+            data[i + 2] = ((m[10] * r + m[11] * g + m[12] * b + m[13] * a + m[14]).clamp(0.0, 1.0)
+                * 255.0) as u8;
+            data[i + 3] = ((m[15] * r + m[16] * g + m[17] * b + m[18] * a + m[19]).clamp(0.0, 1.0)
+                * 255.0) as u8;
             i += 4;
         }
     }
@@ -419,18 +441,24 @@ impl PaintFilter {
     // ── Simple color filters (via color matrix) ──────────────────
 
     fn apply_brightness(input: &PixelBuffer, factor: f32) -> PixelBuffer {
-        Self::apply_color_matrix(input, &[
-            factor, 0.0, 0.0, 0.0, 0.0, 0.0, factor, 0.0, 0.0, 0.0, 0.0, 0.0, factor, 0.0,
-            0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
-        ])
+        Self::apply_color_matrix(
+            input,
+            &[
+                factor, 0.0, 0.0, 0.0, 0.0, 0.0, factor, 0.0, 0.0, 0.0, 0.0, 0.0, factor, 0.0, 0.0,
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ],
+        )
     }
 
     fn apply_contrast(input: &PixelBuffer, factor: f32) -> PixelBuffer {
         let t = (1.0 - factor) * 0.5;
-        Self::apply_color_matrix(input, &[
-            factor, 0.0, 0.0, 0.0, t, 0.0, factor, 0.0, 0.0, t, 0.0, 0.0, factor, 0.0, t, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-        ])
+        Self::apply_color_matrix(
+            input,
+            &[
+                factor, 0.0, 0.0, 0.0, t, 0.0, factor, 0.0, 0.0, t, 0.0, 0.0, factor, 0.0, t, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+            ],
+        )
     }
 
     fn apply_saturate(input: &PixelBuffer, amount: f32) -> PixelBuffer {
@@ -480,7 +508,6 @@ impl PaintFilter {
         }
     }
 
-
     fn apply_sepia(input: &PixelBuffer, amount: f32) -> PixelBuffer {
         let s = amount;
         #[rustfmt::skip]
@@ -507,15 +534,9 @@ impl PaintFilter {
         }
     }
 
-
     // ── Morphological filters ────────────────────────────────────
 
-    fn apply_morphology(
-        input: &PixelBuffer,
-        rx: u32,
-        ry: u32,
-        is_erode: bool,
-    ) -> PixelBuffer {
+    fn apply_morphology(input: &PixelBuffer, rx: u32, ry: u32, is_erode: bool) -> PixelBuffer {
         let w = input.width;
         let h = input.height;
         let mut output = PixelBuffer::new(w, h);
@@ -558,12 +579,16 @@ impl PaintFilter {
                     let diff = o as f32 - b as f32;
                     (o as f32 + diff * amount).clamp(0.0, 255.0) as u8
                 };
-                output.set_pixel(x, y, [
-                    sharpen_ch(orig[0], blur[0]),
-                    sharpen_ch(orig[1], blur[1]),
-                    sharpen_ch(orig[2], blur[2]),
-                    orig[3],
-                ]);
+                output.set_pixel(
+                    x,
+                    y,
+                    [
+                        sharpen_ch(orig[0], blur[0]),
+                        sharpen_ch(orig[1], blur[1]),
+                        sharpen_ch(orig[2], blur[2]),
+                        orig[3],
+                    ],
+                );
             }
         }
         output

@@ -49,9 +49,15 @@ impl ArchiveFormat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FileOp {
     /// Copy files to a destination.
-    Copy { sources: Vec<String>, destination: String },
+    Copy {
+        sources: Vec<String>,
+        destination: String,
+    },
     /// Move files to a destination.
-    Move { sources: Vec<String>, destination: String },
+    Move {
+        sources: Vec<String>,
+        destination: String,
+    },
     /// Delete files (optionally to trash).
     Delete { paths: Vec<String>, trash: bool },
     /// Rename a file or directory.
@@ -61,18 +67,31 @@ pub enum FileOp {
     /// Create a new empty file.
     CreateFile { parent: String, name: String },
     /// Compress files into an archive.
-    Compress { sources: Vec<String>, archive_path: String, format: ArchiveFormat },
+    Compress {
+        sources: Vec<String>,
+        archive_path: String,
+        format: ArchiveFormat,
+    },
     /// Extract an archive to a destination.
-    Extract { archive_path: String, destination: String },
+    Extract {
+        archive_path: String,
+        destination: String,
+    },
 }
 
 impl std::fmt::Display for FileOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Copy { sources, destination } => {
+            Self::Copy {
+                sources,
+                destination,
+            } => {
                 write!(f, "copy {} item(s) to {}", sources.len(), destination)
             }
-            Self::Move { sources, destination } => {
+            Self::Move {
+                sources,
+                destination,
+            } => {
                 write!(f, "move {} item(s) to {}", sources.len(), destination)
             }
             Self::Delete { paths, trash } => {
@@ -85,10 +104,23 @@ impl std::fmt::Display for FileOp {
             Self::Rename { path, new_name } => write!(f, "rename {} to {}", path, new_name),
             Self::CreateFolder { parent, name } => write!(f, "create folder {}/{}", parent, name),
             Self::CreateFile { parent, name } => write!(f, "create file {}/{}", parent, name),
-            Self::Compress { sources, archive_path, format } => {
-                write!(f, "compress {} item(s) to {} ({})", sources.len(), archive_path, format)
+            Self::Compress {
+                sources,
+                archive_path,
+                format,
+            } => {
+                write!(
+                    f,
+                    "compress {} item(s) to {} ({})",
+                    sources.len(),
+                    archive_path,
+                    format
+                )
             }
-            Self::Extract { archive_path, destination } => {
+            Self::Extract {
+                archive_path,
+                destination,
+            } => {
                 write!(f, "extract {} to {}", archive_path, destination)
             }
         }
@@ -242,10 +274,14 @@ impl FileOperation {
         let files_total = sources.len() as u32;
         Self {
             kind: OperationKind::Copy,
-            sources, destination,
+            sources,
+            destination,
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total,
         }
     }
 
@@ -255,10 +291,14 @@ impl FileOperation {
         let files_total = sources.len() as u32;
         Self {
             kind: OperationKind::Move,
-            sources, destination,
+            sources,
+            destination,
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total,
         }
     }
 
@@ -268,10 +308,14 @@ impl FileOperation {
         let files_total = sources.len() as u32;
         Self {
             kind: OperationKind::Delete,
-            sources, destination: String::new(),
+            sources,
+            destination: String::new(),
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total,
         }
     }
 
@@ -280,10 +324,14 @@ impl FileOperation {
     pub fn rename(old_path: String, new_path: String) -> Self {
         Self {
             kind: OperationKind::Rename,
-            sources: vec![old_path], destination: new_path,
+            sources: vec![old_path],
+            destination: new_path,
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total: 1,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total: 1,
         }
     }
 
@@ -292,10 +340,14 @@ impl FileOperation {
     pub fn mkdir(path: String) -> Self {
         Self {
             kind: OperationKind::CreateDirectory,
-            sources: Vec::new(), destination: path,
+            sources: Vec::new(),
+            destination: path,
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total: 1,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total: 1,
         }
     }
 
@@ -304,10 +356,14 @@ impl FileOperation {
     pub fn create_file(parent: String, name: String) -> Self {
         Self {
             kind: OperationKind::CreateFile,
-            sources: vec![name], destination: parent,
+            sources: vec![name],
+            destination: parent,
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total: 1,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total: 1,
         }
     }
 
@@ -317,10 +373,14 @@ impl FileOperation {
         let files_total = sources.len() as u32;
         Self {
             kind: OperationKind::Compress,
-            sources, destination: archive_path,
+            sources,
+            destination: archive_path,
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total,
         }
     }
 
@@ -329,10 +389,14 @@ impl FileOperation {
     pub fn extract(archive_path: String, destination: String) -> Self {
         Self {
             kind: OperationKind::Extract,
-            sources: vec![archive_path], destination,
+            sources: vec![archive_path],
+            destination,
             state: OperationState::Pending,
-            progress: 0.0, bytes_processed: 0, bytes_total: 0,
-            files_processed: 0, files_total: 1,
+            progress: 0.0,
+            bytes_processed: 0,
+            bytes_total: 0,
+            files_processed: 0,
+            files_total: 1,
         }
     }
 
@@ -364,7 +428,11 @@ impl FileOperation {
                 let dest = &self.destination;
                 if let Some((parent, name)) = dest.rsplit_once('/') {
                     Some(FileOp::CreateFolder {
-                        parent: if parent.is_empty() { "/".into() } else { parent.into() },
+                        parent: if parent.is_empty() {
+                            "/".into()
+                        } else {
+                            parent.into()
+                        },
                         name: name.into(),
                     })
                 } else {
@@ -381,7 +449,8 @@ impl FileOperation {
             OperationKind::Compress => Some(FileOp::Compress {
                 sources: self.sources.clone(),
                 archive_path: self.destination.clone(),
-                format: ArchiveFormat::from_extension(&self.destination).unwrap_or(ArchiveFormat::Zip),
+                format: ArchiveFormat::from_extension(&self.destination)
+                    .unwrap_or(ArchiveFormat::Zip),
             }),
             OperationKind::Extract => Some(FileOp::Extract {
                 archive_path: self.sources.first().cloned().unwrap_or_default(),
@@ -395,7 +464,11 @@ impl FileOperation {
         self.bytes_processed = bytes_done;
         self.bytes_total = bytes_total;
         self.files_processed = files_done;
-        self.progress = if bytes_total > 0 { bytes_done as f32 / bytes_total as f32 } else { 0.0 };
+        self.progress = if bytes_total > 0 {
+            bytes_done as f32 / bytes_total as f32
+        } else {
+            0.0
+        };
     }
 
     /// Mark as completed.
@@ -417,7 +490,10 @@ impl FileOperation {
     /// Whether the operation is finished (completed, failed, or cancelled).
     #[must_use]
     pub fn is_done(&self) -> bool {
-        matches!(self.state, OperationState::Completed | OperationState::Failed | OperationState::Cancelled)
+        matches!(
+            self.state,
+            OperationState::Completed | OperationState::Failed | OperationState::Cancelled
+        )
     }
 }
 
@@ -428,9 +504,15 @@ pub struct OperationQueue {
 
 impl OperationQueue {
     #[must_use]
-    pub fn new() -> Self { Self { operations: Vec::new() } }
+    pub fn new() -> Self {
+        Self {
+            operations: Vec::new(),
+        }
+    }
 
-    pub fn enqueue(&mut self, op: FileOperation) { self.operations.push(op); }
+    pub fn enqueue(&mut self, op: FileOperation) {
+        self.operations.push(op);
+    }
 
     #[must_use]
     pub fn pending(&self) -> Vec<&FileOperation> {
@@ -438,14 +520,18 @@ impl OperationQueue {
     }
 
     #[must_use]
-    pub fn all(&self) -> &[FileOperation] { &self.operations }
+    pub fn all(&self) -> &[FileOperation] {
+        &self.operations
+    }
 
     pub fn clear_completed(&mut self) {
         self.operations.retain(|o| !o.is_done());
     }
 
     #[must_use]
-    pub fn count(&self) -> usize { self.operations.len() }
+    pub fn count(&self) -> usize {
+        self.operations.len()
+    }
 
     #[must_use]
     pub fn active_count(&self) -> usize {
@@ -454,7 +540,9 @@ impl OperationQueue {
 }
 
 impl Default for OperationQueue {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ===========================================================================
@@ -467,7 +555,10 @@ impl Default for OperationQueue {
 /// Compress/Extract are not yet implemented and will return an error.
 pub fn execute_operation(op: &FileOp) -> crate::Result<()> {
     match op {
-        FileOp::Copy { sources, destination } => {
+        FileOp::Copy {
+            sources,
+            destination,
+        } => {
             let dest = std::path::Path::new(destination);
             std::fs::create_dir_all(dest).map_err(|e| crate::FilesError::Io(e.to_string()))?;
             for src in sources {
@@ -483,7 +574,10 @@ pub fn execute_operation(op: &FileOp) -> crate::Result<()> {
             }
             Ok(())
         }
-        FileOp::Move { sources, destination } => {
+        FileOp::Move {
+            sources,
+            destination,
+        } => {
             let dest = std::path::Path::new(destination);
             std::fs::create_dir_all(dest).map_err(|e| crate::FilesError::Io(e.to_string()))?;
             for src in sources {
@@ -514,8 +608,7 @@ pub fn execute_operation(op: &FileOp) -> crate::Result<()> {
                     std::fs::remove_dir_all(path)
                         .map_err(|e| crate::FilesError::Io(e.to_string()))?;
                 } else if path.exists() {
-                    std::fs::remove_file(path)
-                        .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                    std::fs::remove_file(path).map_err(|e| crate::FilesError::Io(e.to_string()))?;
                 } else {
                     return Err(crate::FilesError::FileNotFound { path: p.clone() });
                 }
@@ -525,44 +618,41 @@ pub fn execute_operation(op: &FileOp) -> crate::Result<()> {
         FileOp::Rename { path, new_name } => {
             let src = std::path::Path::new(path);
             let new_path = src.parent().unwrap_or(src).join(new_name);
-            std::fs::rename(src, &new_path)
-                .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            std::fs::rename(src, &new_path).map_err(|e| crate::FilesError::Io(e.to_string()))?;
             Ok(())
         }
         FileOp::CreateFolder { parent, name } => {
             let dir = std::path::Path::new(parent).join(name);
-            std::fs::create_dir_all(&dir)
-                .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            std::fs::create_dir_all(&dir).map_err(|e| crate::FilesError::Io(e.to_string()))?;
             Ok(())
         }
         FileOp::CreateFile { parent, name } => {
             let file = std::path::Path::new(parent).join(name);
             // Create parent dirs if needed, then create empty file.
             if let Some(p) = file.parent() {
-                std::fs::create_dir_all(p)
-                    .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+                std::fs::create_dir_all(p).map_err(|e| crate::FilesError::Io(e.to_string()))?;
             }
-            std::fs::File::create(&file)
-                .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+            std::fs::File::create(&file).map_err(|e| crate::FilesError::Io(e.to_string()))?;
             Ok(())
         }
         FileOp::Compress { .. } => {
             Err(crate::FilesError::Io("compress not yet implemented".into()))
         }
-        FileOp::Extract { .. } => {
-            Err(crate::FilesError::Io("extract not yet implemented".into()))
-        }
+        FileOp::Extract { .. } => Err(crate::FilesError::Io("extract not yet implemented".into())),
     }
 }
 
 /// Recursively copy a directory tree.
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> crate::Result<()> {
-    std::fs::create_dir_all(dst)
-        .map_err(|e| crate::FilesError::Io(e.to_string()))?;
+    std::fs::create_dir_all(dst).map_err(|e| crate::FilesError::Io(e.to_string()))?;
     for entry in std::fs::read_dir(src).map_err(|e| crate::FilesError::Io(e.to_string()))? {
         let entry = entry.map_err(|e| crate::FilesError::Io(e.to_string()))?;
         let dest_path = dst.join(entry.file_name());
-        if entry.file_type().map_err(|e| crate::FilesError::Io(e.to_string()))?.is_dir() {
+        if entry
+            .file_type()
+            .map_err(|e| crate::FilesError::Io(e.to_string()))?
+            .is_dir()
+        {
             copy_dir_recursive(&entry.path(), &dest_path)?;
         } else {
             std::fs::copy(entry.path(), &dest_path)

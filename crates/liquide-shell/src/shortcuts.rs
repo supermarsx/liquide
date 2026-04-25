@@ -333,10 +333,7 @@ impl ShortcutManager {
             ShellAction::WorkspaceAdd,
         );
         bindings.insert(
-            KeyBinding::new(
-                KeyCode::ArrowLeft,
-                Modifiers::from_bits(sup | ctrl | shift),
-            ),
+            KeyBinding::new(KeyCode::ArrowLeft, Modifiers::from_bits(sup | ctrl | shift)),
             ShellAction::MoveWindowToPrevWorkspace,
         );
         bindings.insert(

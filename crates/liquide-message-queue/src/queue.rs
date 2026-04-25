@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::filter::MessageFilter;
-use crate::message::{MessageResult, MessageType, QueueMessage, WindowId, WINDOW_BROADCAST};
+use crate::message::{MessageResult, MessageType, QueueMessage, WINDOW_BROADCAST, WindowId};
 use crate::sent::SentMessage;
 use crate::timer::TimerManager;
 use crate::wake_bits::WakeBits;
@@ -30,7 +30,12 @@ pub struct Rect {
 impl Rect {
     #[must_use]
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Compute the union (bounding box) of two rects.
@@ -67,6 +72,9 @@ pub struct ThreadQueue {
     // ── Sent messages (cross-thread) ────────────────────────────────────
     /// Pending inter-thread sent messages awaiting processing.
     sent_messages: Vec<SentMessage>,
+    /// Scratch storage reused when draining sent messages to avoid a hot-path
+    /// allocation on every dispatch cycle.
+    sent_scratch: Vec<SentMessage>,
 
     // ── Wake / changed bits ─────────────────────────────────────────────
     /// Which kinds of work are pending right now.
@@ -119,15 +127,16 @@ impl ThreadQueue {
     pub fn new(id: u64) -> Self {
         Self {
             id,
-            messages: VecDeque::new(),
-            sent_messages: Vec::new(),
+            messages: VecDeque::with_capacity(64),
+            sent_messages: Vec::with_capacity(8),
+            sent_scratch: Vec::with_capacity(8),
             wake_bits: WakeBits::NONE,
             changed_bits: WakeBits::NONE,
             active_window: None,
             focus_window: None,
             capture_window: None,
             last_mouse_move: None,
-            invalid_regions: HashMap::new(),
+            invalid_regions: HashMap::with_capacity(8),
             timers: TimerManager::new(),
         }
     }
@@ -269,10 +278,17 @@ impl ThreadQueue {
     ///
     /// This is called at the top of every message retrieval to ensure sent
     /// messages (highest priority) are serviced first.
-    pub fn process_sent_messages(&mut self, handler: &mut dyn FnMut(&QueueMessage) -> MessageResult) {
-        // Drain sent_messages (take ownership to avoid borrow conflict).
-        let pending: Vec<SentMessage> = self.sent_messages.drain(..).collect();
-        for sm in pending {
+    pub fn process_sent_messages(
+        &mut self,
+        handler: &mut dyn FnMut(&QueueMessage) -> MessageResult,
+    ) {
+        if self.sent_messages.is_empty() {
+            self.wake_bits.remove(WakeBits::QS_SENDMESSAGE);
+            return;
+        }
+
+        std::mem::swap(&mut self.sent_messages, &mut self.sent_scratch);
+        for sm in self.sent_scratch.drain(..) {
             let result = handler(&sm.msg);
             sm.reply(result);
         }
@@ -292,9 +308,14 @@ impl ThreadQueue {
     ///
     /// If `filter.remove` is true the message is removed from the queue;
     /// otherwise it is left in place.
-    pub fn peek_message(&mut self, filter: Option<MessageFilter>, remove: bool) -> Option<QueueMessage> {
-        let filter = filter.unwrap_or_else(|| {
-            MessageFilter { remove, ..MessageFilter::all() }
+    pub fn peek_message(
+        &mut self,
+        filter: Option<MessageFilter>,
+        remove: bool,
+    ) -> Option<QueueMessage> {
+        let filter = filter.unwrap_or_else(|| MessageFilter {
+            remove,
+            ..MessageFilter::all()
         });
         let do_remove = filter.remove || remove;
 
@@ -304,7 +325,11 @@ impl ThreadQueue {
                 let msg = self.messages.remove(idx).unwrap();
                 // Recompute the relevant wake bit only if no more of that kind remain.
                 let bit = Self::wake_bits_for_msg(&msg.msg);
-                if !self.messages.iter().any(|m| Self::wake_bits_for_msg(&m.msg).intersects(bit)) {
+                if !self
+                    .messages
+                    .iter()
+                    .any(|m| Self::wake_bits_for_msg(&m.msg).intersects(bit))
+                {
                     self.wake_bits.remove(bit);
                 }
                 return Some(msg);
@@ -351,8 +376,7 @@ impl ThreadQueue {
                 let mut msg = QueueMessage::new(wid, MessageType::Paint);
                 // Encode the invalid region in wparam/lparam if present.
                 if let Some(r) = region {
-                    msg.wparam = ((r.x as i32 as u32 as u64) << 32)
-                        | (r.y as i32 as u32 as u64);
+                    msg.wparam = ((r.x as i32 as u32 as u64) << 32) | (r.y as i32 as u32 as u64);
                     msg.lparam = (((r.width as i32 as u32 as u64) << 32)
                         | (r.height as i32 as u32 as u64)) as i64;
                 }
@@ -466,12 +490,20 @@ impl ThreadQueue {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
-        self.timers.set_timer(window_id, timer_id, interval_ms, now_us);
+        self.timers
+            .set_timer(window_id, timer_id, interval_ms, now_us);
     }
 
     /// Register a timer using an explicit timestamp.
-    pub fn set_timer_at(&mut self, window_id: WindowId, timer_id: u32, interval_ms: u32, now_us: u64) {
-        self.timers.set_timer(window_id, timer_id, interval_ms, now_us);
+    pub fn set_timer_at(
+        &mut self,
+        window_id: WindowId,
+        timer_id: u32,
+        interval_ms: u32,
+        now_us: u64,
+    ) {
+        self.timers
+            .set_timer(window_id, timer_id, interval_ms, now_us);
     }
 
     /// Remove a timer.
@@ -548,6 +580,7 @@ impl ThreadQueue {
     pub fn clear(&mut self) {
         self.messages.clear();
         self.sent_messages.clear();
+        self.sent_scratch.clear();
         self.last_mouse_move = None;
         self.invalid_regions.clear();
         self.wake_bits = WakeBits::NONE;
@@ -562,7 +595,11 @@ impl ThreadQueue {
     /// Remove all messages targeted at a specific window (cleanup on destroy).
     pub fn purge_window(&mut self, window_id: WindowId) {
         self.messages.retain(|m| m.target != window_id);
-        if self.last_mouse_move.as_ref().is_some_and(|m| m.target == window_id) {
+        if self
+            .last_mouse_move
+            .as_ref()
+            .is_some_and(|m| m.target == window_id)
+        {
             self.last_mouse_move = None;
         }
         self.invalid_regions.remove(&window_id);

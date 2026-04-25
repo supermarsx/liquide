@@ -132,18 +132,24 @@ impl LockdownProfile {
 
     /// Disable a feature in this profile.
     pub fn disable(&mut self, feature: Feature) {
-        self.restrictions.insert(feature, FeatureRestriction {
-            disabled: true,
-            message: None,
-        });
+        self.restrictions.insert(
+            feature,
+            FeatureRestriction {
+                disabled: true,
+                message: None,
+            },
+        );
     }
 
     /// Disable a feature with a custom restriction message.
     pub fn disable_with_message(&mut self, feature: Feature, message: &str) {
-        self.restrictions.insert(feature, FeatureRestriction {
-            disabled: true,
-            message: Some(message.to_string()),
-        });
+        self.restrictions.insert(
+            feature,
+            FeatureRestriction {
+                disabled: true,
+                message: Some(message.to_string()),
+            },
+        );
     }
 
     /// Explicitly allow a feature (remove any restriction).
@@ -186,7 +192,10 @@ impl LockdownProfile {
     /// "kiosk" profile: most features locked down. Only basic interaction
     /// is allowed — no system modification, no peripherals, no dev tools.
     pub fn kiosk() -> Self {
-        let mut p = Self::new("kiosk", "Kiosk mode — single-purpose display with all system access disabled");
+        let mut p = Self::new(
+            "kiosk",
+            "Kiosk mode — single-purpose display with all system access disabled",
+        );
         for feature in Feature::all() {
             p.disable_with_message(*feature, "This feature is disabled in kiosk mode");
         }
@@ -197,13 +206,31 @@ impl LockdownProfile {
     /// appearance but cannot install software, access terminal, or change
     /// network/DNS settings.
     pub fn corporate() -> Self {
-        let mut p = Self::new("corporate", "Corporate managed desktop with moderate restrictions");
-        p.disable_with_message(Feature::InstallApps, "Software installation is managed by your IT department");
-        p.disable_with_message(Feature::AccessTerminal, "Terminal access is restricted by organization policy");
-        p.disable_with_message(Feature::ModifyNetwork, "Network settings are managed centrally");
+        let mut p = Self::new(
+            "corporate",
+            "Corporate managed desktop with moderate restrictions",
+        );
+        p.disable_with_message(
+            Feature::InstallApps,
+            "Software installation is managed by your IT department",
+        );
+        p.disable_with_message(
+            Feature::AccessTerminal,
+            "Terminal access is restricted by organization policy",
+        );
+        p.disable_with_message(
+            Feature::ModifyNetwork,
+            "Network settings are managed centrally",
+        );
         p.disable_with_message(Feature::ChangeDNS, "DNS settings are managed centrally");
-        p.disable_with_message(Feature::DeveloperMode, "Developer mode is not available on managed devices");
-        p.disable_with_message(Feature::USBDevices, "USB device access requires authorization");
+        p.disable_with_message(
+            Feature::DeveloperMode,
+            "Developer mode is not available on managed devices",
+        );
+        p.disable_with_message(
+            Feature::USBDevices,
+            "USB device access requires authorization",
+        );
         p
     }
 
@@ -211,10 +238,22 @@ impl LockdownProfile {
     /// apps, access developer tools, or record screens, but can change
     /// wallpaper and use peripherals.
     pub fn education() -> Self {
-        let mut p = Self::new("education", "Education environment with selective restrictions");
-        p.disable_with_message(Feature::InstallApps, "Application installation is managed by the school");
-        p.disable_with_message(Feature::DeveloperMode, "Developer mode is not available on school devices");
-        p.disable_with_message(Feature::ScreenRecording, "Screen recording is disabled on this device");
+        let mut p = Self::new(
+            "education",
+            "Education environment with selective restrictions",
+        );
+        p.disable_with_message(
+            Feature::InstallApps,
+            "Application installation is managed by the school",
+        );
+        p.disable_with_message(
+            Feature::DeveloperMode,
+            "Developer mode is not available on school devices",
+        );
+        p.disable_with_message(
+            Feature::ScreenRecording,
+            "Screen recording is disabled on this device",
+        );
         p.disable_with_message(Feature::RemoteDesktop, "Remote desktop is not available");
         p
     }
@@ -309,7 +348,11 @@ mod tests {
     fn empty_profile_allows_everything() {
         let profile = LockdownProfile::new("test", "test profile");
         for feature in Feature::all() {
-            assert!(profile.is_allowed(*feature), "{:?} should be allowed", feature);
+            assert!(
+                profile.is_allowed(*feature),
+                "{:?} should be allowed",
+                feature
+            );
         }
     }
 
@@ -326,7 +369,10 @@ mod tests {
         let mut profile = LockdownProfile::new("test", "test");
         profile.disable_with_message(Feature::AccessTerminal, "Not available");
         assert!(!profile.is_allowed(Feature::AccessTerminal));
-        assert_eq!(profile.restricted_message(Feature::AccessTerminal), Some("Not available"));
+        assert_eq!(
+            profile.restricted_message(Feature::AccessTerminal),
+            Some("Not available")
+        );
     }
 
     #[test]
@@ -371,7 +417,11 @@ mod tests {
         let profile = LockdownProfile::kiosk();
         assert_eq!(profile.name, "kiosk");
         for feature in Feature::all() {
-            assert!(!profile.is_allowed(*feature), "kiosk should block {:?}", feature);
+            assert!(
+                !profile.is_allowed(*feature),
+                "kiosk should block {:?}",
+                feature
+            );
             assert!(profile.restricted_message(*feature).is_some());
         }
         assert_eq!(profile.restriction_count(), 11);

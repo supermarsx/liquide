@@ -83,12 +83,60 @@ impl RunningAnimation {
     /// Compute the local progress (0.0–1.0) within the current iteration,
     /// accounting for direction and easing.
     pub fn progress(&self) -> f32 {
-        if self.state == AnimationState::Pending || self.duration_ms <= 0.0 {
+        if self.duration_ms <= 0.0 {
             return 0.0;
+        }
+        // Before the delay expires the semantics depend on `fill_mode`:
+        // `Backwards` / `Both` means "hold the first keyframe" which is
+        // `progress() == 0.0` for Normal/Alternate and `1.0` for the
+        // reversed directions.  For the other fill modes we report 0.0.
+        if self.state == AnimationState::Pending {
+            return match (self.fill_mode, self.direction) {
+                (FillMode::Backwards | FillMode::Both, Direction::Reverse)
+                | (FillMode::Backwards | FillMode::Both, Direction::AlternateReverse) => 1.0,
+                _ => 0.0,
+            };
+        }
+
+        // After finishing, `Forwards` / `Both` hold the final frame value.
+        if self.state == AnimationState::Finished {
+            let final_iter_even =
+                ((self.iterations_done.floor() as u32).saturating_sub(1)) % 2 == 0;
+            let end_value = match self.direction {
+                Direction::Normal => 1.0,
+                Direction::Reverse => 0.0,
+                Direction::Alternate => {
+                    if final_iter_even {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                Direction::AlternateReverse => {
+                    if final_iter_even {
+                        0.0
+                    } else {
+                        1.0
+                    }
+                }
+            };
+            return match self.fill_mode {
+                FillMode::Forwards | FillMode::Both => self.easing.evaluate(end_value),
+                _ => 0.0,
+            };
         }
 
         let active_time = (self.elapsed_ms - self.delay_ms).max(0.0);
-        let raw = (active_time / self.duration_ms).fract();
+        // Compute raw position inside the *current* iteration.  When we are
+        // exactly at an iteration boundary (active_time is an integer
+        // multiple of duration) we want `raw = 1.0` for the iteration that
+        // just completed, not `0.0` from the next one.
+        let iteration_f = active_time / self.duration_ms;
+        let raw = if iteration_f > 0.0 && (iteration_f - iteration_f.floor()).abs() < f32::EPSILON {
+            1.0
+        } else {
+            iteration_f.fract()
+        };
 
         let directed = match self.direction {
             Direction::Normal => raw,
@@ -112,16 +160,25 @@ impl RunningAnimation {
         self.easing.evaluate(directed)
     }
 
-    /// Advance the animation by `dt` milliseconds.
-    pub fn tick(&mut self, dt_ms: f32) {
+    /// Advance the animation by `dt` milliseconds.  Returns an
+    /// [`AnimationEvent`] if the tick produced a state transition
+    /// (start / iteration boundary / end), otherwise `None`.
+    pub fn tick(&mut self, dt_ms: f32) -> Option<AnimationEvent> {
         if self.state == AnimationState::Finished || self.state == AnimationState::Paused {
-            return;
+            return None;
         }
 
+        let was_pending = self.state == AnimationState::Pending;
+        let prev_iterations = self.iterations_done.floor() as u32;
         self.elapsed_ms += dt_ms;
 
-        if self.state == AnimationState::Pending && self.elapsed_ms >= self.delay_ms {
+        if was_pending && self.elapsed_ms >= self.delay_ms {
             self.state = AnimationState::Running;
+        }
+
+        let mut event: Option<AnimationEvent> = None;
+        if was_pending && self.state == AnimationState::Running {
+            event = Some(AnimationEvent::Start);
         }
 
         if self.state == AnimationState::Running && self.duration_ms > 0.0 {
@@ -132,11 +189,31 @@ impl RunningAnimation {
                 IterationCount::Finite(max) if self.iterations_done >= max => {
                     self.iterations_done = max;
                     self.state = AnimationState::Finished;
+                    // End takes precedence over an intermediate iteration event.
+                    event = Some(AnimationEvent::End);
                 }
-                _ => {}
+                _ => {
+                    let new_iter = self.iterations_done.floor() as u32;
+                    if new_iter > prev_iterations && event.is_none() {
+                        event = Some(AnimationEvent::Iteration(new_iter));
+                    }
+                }
             }
         }
+
+        event
     }
+}
+
+/// Lifecycle events emitted by [`AnimationScheduler::tick_all`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnimationEvent {
+    /// The animation's delay expired and it began running.
+    Start,
+    /// An iteration boundary was crossed; the u32 is the new iteration index.
+    Iteration(u32),
+    /// The animation reached its final iteration count.
+    End,
 }
 
 /// Manages all running CSS animations.
@@ -146,11 +223,27 @@ pub struct AnimationScheduler {
     animations: Vec<RunningAnimation>,
     /// Keyframes registry (name → rule).
     keyframes: HashMap<String, KeyframesRule>,
+    /// Events produced during the last `tick_all`.
+    pending_events: Vec<(NodeId, AnimationEvent)>,
+    /// When `true`, `tick_all` automatically drops finished animations at
+    /// the end of the tick (default).  Set to `false` if callers need to
+    /// inspect finished animations before they are removed.
+    auto_prune: bool,
 }
 
 impl AnimationScheduler {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            animations: Vec::new(),
+            keyframes: HashMap::new(),
+            pending_events: Vec::new(),
+            auto_prune: true,
+        }
+    }
+
+    /// Control whether `tick_all` auto-prunes finished animations.
+    pub fn set_auto_prune(&mut self, enabled: bool) {
+        self.auto_prune = enabled;
     }
 
     /// Register a `@keyframes` rule.
@@ -169,10 +262,31 @@ impl AnimationScheduler {
     }
 
     /// Tick all running animations forward by `dt_ms` milliseconds.
+    ///
+    /// Collects `AnimationEvent`s into an internal buffer that can be
+    /// drained with [`drain_events`](Self::drain_events), and (by default)
+    /// removes animations that reached their finished state and have no
+    /// forwards fill to retain.
     pub fn tick_all(&mut self, dt_ms: f32) {
+        self.pending_events.clear();
         for anim in &mut self.animations {
-            anim.tick(dt_ms);
+            if let Some(ev) = anim.tick(dt_ms) {
+                self.pending_events.push((anim.node_id, ev));
+            }
         }
+        if self.auto_prune {
+            // Retain finished animations only if a fill mode holds the
+            // value past the end of the timeline.  Otherwise drop them.
+            self.animations.retain(|a| {
+                a.state != AnimationState::Finished
+                    || matches!(a.fill_mode, FillMode::Forwards | FillMode::Both)
+            });
+        }
+    }
+
+    /// Drain accumulated events (start / iteration / end).
+    pub fn drain_events(&mut self) -> Vec<(NodeId, AnimationEvent)> {
+        std::mem::take(&mut self.pending_events)
     }
 
     /// Remove all finished animations.
@@ -205,16 +319,12 @@ impl AnimationScheduler {
         for kf in &rule.keyframes {
             for &sel in &kf.selectors {
                 if sel <= progress {
-                    if before.map_or(true, |b| {
-                        b.selectors.first().copied().unwrap_or(0.0) <= sel
-                    }) {
+                    if before.map_or(true, |b| b.selectors.first().copied().unwrap_or(0.0) <= sel) {
                         before = Some(kf);
                     }
                 }
                 if sel >= progress {
-                    if after.map_or(true, |a| {
-                        a.selectors.first().copied().unwrap_or(1.0) >= sel
-                    }) {
+                    if after.map_or(true, |a| a.selectors.first().copied().unwrap_or(1.0) >= sel) {
                         after = Some(kf);
                     }
                 }
@@ -287,9 +397,9 @@ fn interpolate_property_values(
                 (LengthUnit::Px(va), LengthUnit::Px(vb)) => {
                     Some(PropertyValue::Length(LengthUnit::Px(va + (vb - va) * t)))
                 }
-                (LengthUnit::Percent(va), LengthUnit::Percent(vb)) => {
-                    Some(PropertyValue::Length(LengthUnit::Percent(va + (vb - va) * t)))
-                }
+                (LengthUnit::Percent(va), LengthUnit::Percent(vb)) => Some(PropertyValue::Length(
+                    LengthUnit::Percent(va + (vb - va) * t),
+                )),
                 (LengthUnit::Em(va), LengthUnit::Em(vb)) => {
                     Some(PropertyValue::Length(LengthUnit::Em(va + (vb - va) * t)))
                 }

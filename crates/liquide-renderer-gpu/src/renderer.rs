@@ -62,11 +62,7 @@ pub struct GpuRenderer {
 impl GpuRenderer {
     /// Create a new GPU renderer with the given device, profile, and config.
     #[must_use]
-    pub fn new(
-        device: GpuDevice,
-        profile: GpuProfile,
-        config: PipelineConfig,
-    ) -> Self {
+    pub fn new(device: GpuDevice, profile: GpuProfile, config: PipelineConfig) -> Self {
         let supports_dmabuf = device.capabilities().supports_dmabuf;
         let vram_budget = VramBudget {
             total_mb: device.vram_total(),
@@ -131,9 +127,8 @@ impl GpuRenderer {
                 // Check VRAM pressure.
                 let usage = self.vram_allocator.usage_pct();
                 if usage > 90.0 {
-                    self.audit_events.push(GpuAuditEvent::VramWarning {
-                        used_pct: usage,
-                    });
+                    self.audit_events
+                        .push(GpuAuditEvent::VramWarning { used_pct: usage });
                 }
 
                 Ok(RenderedFrame {

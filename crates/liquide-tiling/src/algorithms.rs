@@ -3,7 +3,7 @@
 use liquide_compositor::geometry::Rect;
 
 use crate::gaps::TilingGaps;
-use crate::layout::{TilingLayout, TileZone};
+use crate::layout::{TileZone, TilingLayout};
 
 /// Compute window rectangles for the given layout, window count, work area,
 /// master ratio, master count, and gap config.
@@ -27,7 +27,9 @@ pub fn compute_layout(
     let g = eff.inner;
 
     match layout {
-        TilingLayout::Columns => layout_columns(window_count, usable, master_ratio, master_count, g),
+        TilingLayout::Columns => {
+            layout_columns(window_count, usable, master_ratio, master_count, g)
+        }
         TilingLayout::Rows => layout_rows(window_count, usable, master_ratio, master_count, g),
         TilingLayout::Grid => layout_grid(window_count, usable, g),
         TilingLayout::ThreeColumn => layout_three_column(window_count, usable, master_ratio, g),
@@ -103,7 +105,11 @@ fn layout_grid(n: usize, area: Rect, gap: f32) -> Vec<Rect> {
 
     for r in 0..rows {
         let remaining = n - idx;
-        let cols_this_row = if r == rows - 1 { remaining } else { cols.min(remaining) };
+        let cols_this_row = if r == rows - 1 {
+            remaining
+        } else {
+            cols.min(remaining)
+        };
         let this_gap = gap * (cols_this_row as f32 - 1.0).max(0.0);
         let cell_w = (area.width - this_gap) / cols_this_row as f32;
 
@@ -132,7 +138,12 @@ fn layout_three_column(n: usize, area: Rect, ratio: f32, gap: f32) -> Vec<Rect> 
         let side_w = area.width * side_ratio - gap / 2.0;
         let center_w = area.width - side_w - gap;
         return vec![
-            Rect::new(area.x + side_w + gap, area.y, center_w - side_w - gap, area.height),
+            Rect::new(
+                area.x + side_w + gap,
+                area.y,
+                center_w - side_w - gap,
+                area.height,
+            ),
             Rect::new(area.x, area.y, side_w, area.height),
         ];
     }

@@ -1,6 +1,6 @@
-use crate::animation::OverviewAnimator;
+use crate::animation::{OverviewAnimator, OverviewPhase};
 use crate::layout::{
-    compute_overview_layout, LayoutConfig, OverviewRect, OverviewSlot, WindowInfo,
+    LayoutConfig, OverviewRect, OverviewSlot, WindowInfo, compute_overview_layout,
 };
 use crate::search::OverviewSearch;
 
@@ -90,12 +90,13 @@ impl OverviewState {
     /// Begin exiting overview mode (plays exit animation).
     pub fn deactivate(&mut self) {
         self.animator.begin_exit();
-        self.active = false;
     }
 
     /// Advance the animation. Returns true while animation is in progress.
     pub fn tick(&mut self, dt_ms: f32) -> bool {
-        self.animator.tick(dt_ms)
+        let animating = self.animator.tick(dt_ms);
+        self.active = self.animator.is_visible();
+        animating
     }
 
     /// The current layout slots (after any search filtering).
@@ -105,6 +106,10 @@ impl OverviewState {
 
     /// Handle a keyboard event. Returns the resulting action.
     pub fn on_key(&mut self, key: OverviewKey) -> OverviewAction {
+        if !self.is_interactable() {
+            return OverviewAction::None;
+        }
+
         match key {
             OverviewKey::Escape => {
                 self.deactivate();
@@ -151,6 +156,10 @@ impl OverviewState {
 
     /// Handle a mouse click at `(x, y)`. Hit-tests against the current slots.
     pub fn on_click(&mut self, x: f32, y: f32) -> OverviewAction {
+        if !self.is_interactable() {
+            return OverviewAction::None;
+        }
+
         for (i, slot) in self.slots.iter().enumerate() {
             if slot.target.contains(x, y) {
                 self.selected_index = Some(i);
@@ -164,6 +173,11 @@ impl OverviewState {
 
     /// Update hover state based on mouse position.
     pub fn on_hover(&mut self, x: f32, y: f32) {
+        if !self.is_interactable() {
+            self.hovered_index = None;
+            return;
+        }
+
         self.hovered_index = None;
         for (i, slot) in self.slots.iter().enumerate() {
             if slot.target.contains(x, y) {
@@ -176,10 +190,21 @@ impl OverviewState {
     // ── internal ────────────────────────────────────────────────
 
     fn relayout_filtered(&mut self) {
+        let selected_window_id = self
+            .selected_index
+            .and_then(|idx| self.slots.get(idx))
+            .map(|slot| slot.window_id);
         let filtered = self.search.filter_windows(&self.windows);
         let infos: Vec<WindowInfo> = filtered.into_iter().cloned().collect();
         self.slots = compute_overview_layout(&infos, self.viewport, &self.config);
         self.grid_cols = compute_grid_cols(self.slots.len());
+
+        if let Some(window_id) = selected_window_id {
+            if let Some(new_idx) = self.slots.iter().position(|slot| slot.window_id == window_id) {
+                self.selected_index = Some(new_idx);
+                return;
+            }
+        }
 
         // Reset selection if it's now out of range.
         if let Some(idx) = self.selected_index {
@@ -215,6 +240,10 @@ impl OverviewState {
         }
         self.selected_index = Some(new_idx as usize);
     }
+
+    fn is_interactable(&self) -> bool {
+        self.active && !matches!(self.animator.phase, OverviewPhase::Exiting | OverviewPhase::Hidden)
+    }
 }
 
 fn compute_grid_cols(count: usize) -> u32 {
@@ -238,12 +267,7 @@ mod tests {
             .map(|i| WindowInfo {
                 id: i as u64 + 1,
                 title: format!("Window {}", i + 1),
-                original: OverviewRect::new(
-                    (i as f32) * 50.0,
-                    (i as f32) * 30.0,
-                    800.0,
-                    600.0,
-                ),
+                original: OverviewRect::new((i as f32) * 50.0, (i as f32) * 30.0, 800.0, 600.0),
                 workspace: 0,
                 monitor: 0,
             })
@@ -258,6 +282,8 @@ mod tests {
         assert!(state.active);
         assert_eq!(state.current_slots().len(), 4);
         state.deactivate();
+        assert!(state.active);
+        state.tick(state.animator.exit_duration_ms + 1.0);
         assert!(!state.active);
     }
 
@@ -267,7 +293,8 @@ mod tests {
         state.activate(make_windows(2), viewport(), LayoutConfig::default());
         let action = state.on_key(OverviewKey::Escape);
         assert_eq!(action, OverviewAction::Close);
-        assert!(!state.active);
+        assert!(state.active);
+        assert_eq!(state.animator.phase, OverviewPhase::Exiting);
     }
 
     #[test]
@@ -406,5 +433,21 @@ mod tests {
         // Filter to 1 result.
         state.on_key(OverviewKey::Char('a'));
         assert!(state.selected_index.unwrap_or(0) < state.current_slots().len());
+    }
+
+    #[test]
+    fn selection_tracks_window_identity_across_filtering() {
+        let mut state = OverviewState::new();
+        let mut wins = make_windows(3);
+        wins[0].title = "Alpha".into();
+        wins[1].title = "Bravo".into();
+        wins[2].title = "Beta".into();
+        state.activate(wins, viewport(), LayoutConfig::default());
+        state.selected_index = Some(1);
+
+        state.on_key(OverviewKey::Char('b'));
+
+        assert_eq!(state.selected_index, Some(0));
+        assert_eq!(state.on_key(OverviewKey::Enter), OverviewAction::SelectWindow(2));
     }
 }

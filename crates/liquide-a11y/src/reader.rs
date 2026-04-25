@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::node::AccessibleNode;
 use crate::Result;
+use crate::node::AccessibleNode;
 
 /// Priority for screen reader announcements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

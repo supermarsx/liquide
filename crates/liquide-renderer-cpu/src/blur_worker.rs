@@ -231,15 +231,22 @@ impl BlurWorker {
         radius: u32,
     ) {
         self.pending.insert(node_id);
-        if self.request_tx.send(WorkerMsg::Blur(BlurRequest {
-            node_id,
-            pixels,
-            width,
-            height,
-            radius,
-        })).is_err() {
+        if self
+            .request_tx
+            .send(WorkerMsg::Blur(BlurRequest {
+                node_id,
+                pixels,
+                width,
+                height,
+                radius,
+            }))
+            .is_err()
+        {
             self.pending.remove(&node_id);
-            tracing::warn!("blur worker channel closed; dropping blur request for node {}", node_id);
+            tracing::warn!(
+                "blur worker channel closed; dropping blur request for node {}",
+                node_id
+            );
         }
     }
 

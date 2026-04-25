@@ -7,8 +7,8 @@ use liquide_compositor::geometry::Rect;
 use liquide_platform::{NativeWindowParams, PlatformBackend};
 use tracing::{debug, info};
 
-use super::{DesktopCompositor, RenderMsg};
 use super::paint_state::TimerAction;
+use super::{DesktopCompositor, RenderMsg};
 
 impl DesktopCompositor {
     /// Run the desktop event loop using the given platform backend.
@@ -99,6 +99,7 @@ impl DesktopCompositor {
         debug!("rendering loading overlay");
         self.loading = true;
         self.render_frame_sync(platform);
+        let _ = self.wait_for_present_ready(platform, "loading overlay");
         info!(
             elapsed_ms = format!("{:.1}", run_start.elapsed().as_secs_f64() * 1000.0),
             "loading overlay presented"
@@ -116,6 +117,7 @@ impl DesktopCompositor {
         self.loading = false;
         self.dirty = true;
         self.render_frame_sync(platform);
+        let _ = self.wait_for_present_ready(platform, "initial desktop frame");
         self.dirty = false;
         info!(
             elapsed_ms = format!("{:.1}", run_start.elapsed().as_secs_f64() * 1000.0),
@@ -137,6 +139,8 @@ impl DesktopCompositor {
         );
 
         while self.running {
+            let _ = self.refresh_present_pacing(platform);
+
             // Drain all pending events.
             let mut had_event = false;
             while let Some(event) = platform.poll_event() {
@@ -165,11 +169,11 @@ impl DesktopCompositor {
                 self.last_render = Instant::now();
                 // If still dirty (events arrived during rendering),
                 // submit a new render job immediately.
-                if self.dirty {
+                if self.dirty && !self.present_pacing.awaiting_ack {
                     self.submit_render();
                     self.dirty = false;
                     self.cursor.dirty = false;
-                } else if self.cursor.dirty {
+                } else if self.cursor.dirty && !self.present_pacing.awaiting_ack {
                     self.submit_cursor_only_render();
                     self.cursor.dirty = false;
                 }
@@ -192,7 +196,7 @@ impl DesktopCompositor {
             }
 
             // Submit a render job if dirty and render thread is free.
-            if self.dirty && !self.render_in_flight {
+            if self.dirty && !self.render_in_flight && !self.present_pacing.awaiting_ack {
                 // During drag, bypass frame interval throttle for immediate
                 // visual feedback — the blur suppression keeps frame cost low.
                 let can_render = self.shell.is_dragging()
@@ -203,7 +207,11 @@ impl DesktopCompositor {
                     self.dirty = false;
                     self.cursor.dirty = false;
                 }
-            } else if self.cursor.dirty && !self.dirty && !self.render_in_flight {
+            } else if self.cursor.dirty
+                && !self.dirty
+                && !self.render_in_flight
+                && !self.present_pacing.awaiting_ack
+            {
                 // Cursor moved but nothing else changed — use fast path
                 // that reuses the cached scene without running the CSS pipeline.
                 let can_render = self.frame_interval.is_zero()
@@ -215,7 +223,7 @@ impl DesktopCompositor {
             }
 
             // Efficient idle with adaptive precision.
-            let target_sleep = if self.render_in_flight {
+            let target_sleep = if self.render_in_flight || self.present_pacing.awaiting_ack {
                 // Render in progress — brief yield to check for completion.
                 Duration::from_micros(100)
             } else if self.dirty && !self.frame_interval.is_zero() {

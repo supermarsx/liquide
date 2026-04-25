@@ -6,6 +6,10 @@
 
 use crate::entry::ClipboardEntry;
 
+fn should_queue_for_sync(entry: &ClipboardEntry) -> bool {
+    !entry.sensitive
+}
+
 /// Trait for clipboard sync backends (network, shared-memory, etc.).
 pub trait ClipboardSyncBackend {
     /// Queue an entry for outgoing sync to other devices.
@@ -81,7 +85,7 @@ impl Default for LocalSyncStub {
 
 impl ClipboardSyncBackend for LocalSyncStub {
     fn queue_outgoing(&mut self, entry: &ClipboardEntry) {
-        if !self.enabled {
+        if !self.enabled || !should_queue_for_sync(entry) {
             return;
         }
         self.outgoing.push(entry.clone());
@@ -113,6 +117,9 @@ impl<B: ClipboardSyncBackend> ClipboardSync<B> {
 
     /// Queue an entry for outgoing sync.
     pub fn queue_outgoing(&mut self, entry: &ClipboardEntry) {
+        if !should_queue_for_sync(entry) {
+            return;
+        }
         self.backend.queue_outgoing(entry);
     }
 

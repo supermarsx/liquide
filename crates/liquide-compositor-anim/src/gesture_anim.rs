@@ -191,7 +191,9 @@ impl GestureAnimation {
             GestureTarget::Cancel => 0.0,
         };
 
-        let spring_config = self.config.settle_spring
+        let spring_config = self
+            .config
+            .settle_spring
             .with_velocity(self.tracking_velocity);
         self.settle_spring = Some(SpringAnimation::new(
             spring_config,
@@ -313,7 +315,11 @@ mod tests {
         let mut anim = GestureAnimation::new(config);
         anim.set_progress(1.5);
         // Overshoot: 1.0 + (1.5 - 1.0) * 0.3 = 1.15
-        assert!((anim.progress() - 1.15).abs() < 0.001, "got {}", anim.progress());
+        assert!(
+            (anim.progress() - 1.15).abs() < 0.001,
+            "got {}",
+            anim.progress()
+        );
     }
 
     #[test]
@@ -326,7 +332,11 @@ mod tests {
         let mut anim = GestureAnimation::new(config);
         anim.set_progress(-1.0);
         // Undershoot: -1.0 * 0.3 = -0.3
-        assert!((anim.progress() - (-0.3)).abs() < 0.001, "got {}", anim.progress());
+        assert!(
+            (anim.progress() - (-0.3)).abs() < 0.001,
+            "got {}",
+            anim.progress()
+        );
     }
 
     #[test]
@@ -379,7 +389,11 @@ mod tests {
         anim.release(200.0);
         settle(&mut anim);
         assert!(anim.is_finished());
-        assert!((anim.progress() - 1.0).abs() < 0.01, "should settle to 1.0, got {}", anim.progress());
+        assert!(
+            (anim.progress() - 1.0).abs() < 0.01,
+            "should settle to 1.0, got {}",
+            anim.progress()
+        );
     }
 
     #[test]
@@ -389,7 +403,11 @@ mod tests {
         anim.release(-200.0);
         settle(&mut anim);
         assert!(anim.is_finished());
-        assert!((anim.progress() - 0.0).abs() < 0.01, "should settle to 0.0, got {}", anim.progress());
+        assert!(
+            (anim.progress() - 0.0).abs() < 0.01,
+            "should settle to 0.0, got {}",
+            anim.progress()
+        );
     }
 
     #[test]

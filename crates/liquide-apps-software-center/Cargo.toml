@@ -22,3 +22,7 @@ tracing-subscriber.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+
+liquide-app-harness = { path = "../liquide-app-harness" }
+liquide-ui-widgets = { path = "../liquide-ui-widgets" }

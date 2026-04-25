@@ -1,5 +1,5 @@
-use crate::window::WindowId;
 use crate::focus::*;
+use crate::window::WindowId;
 
 #[test]
 fn focus_initial_none() {

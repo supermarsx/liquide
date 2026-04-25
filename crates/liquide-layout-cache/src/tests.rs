@@ -18,8 +18,14 @@ mod constraint_tests {
 
     #[test]
     fn dimension_minmax_eq() {
-        assert_eq!(Dimension::MinMax(10.0, 200.0), Dimension::MinMax(10.0, 200.0));
-        assert_ne!(Dimension::MinMax(10.0, 200.0), Dimension::MinMax(10.0, 201.0));
+        assert_eq!(
+            Dimension::MinMax(10.0, 200.0),
+            Dimension::MinMax(10.0, 200.0)
+        );
+        assert_ne!(
+            Dimension::MinMax(10.0, 200.0),
+            Dimension::MinMax(10.0, 201.0)
+        );
     }
 
     #[test]
@@ -153,8 +159,8 @@ mod constraint_tests {
     fn constraints_writing_mode_affects_equality() {
         let mut a = LayoutConstraints::fixed(100.0, 200.0);
         let mut b = LayoutConstraints::fixed(100.0, 200.0);
-        a.writing_mode = WritingMode::Horizontal;
-        b.writing_mode = WritingMode::VerticalLR;
+        a.writing_mode = WritingMode::HorizontalTb;
+        b.writing_mode = WritingMode::VerticalLr;
         assert_ne!(a, b);
     }
 
@@ -613,8 +619,16 @@ mod dirty_tests {
         });
 
         assert!(dirty.needs_layout(3));
-        assert!(dirty.get_flags(2).contains(LayoutDirtyFlags::CHILD_NEEDS_LAYOUT));
-        assert!(dirty.get_flags(1).contains(LayoutDirtyFlags::CHILD_NEEDS_LAYOUT));
+        assert!(
+            dirty
+                .get_flags(2)
+                .contains(LayoutDirtyFlags::CHILD_NEEDS_LAYOUT)
+        );
+        assert!(
+            dirty
+                .get_flags(1)
+                .contains(LayoutDirtyFlags::CHILD_NEEDS_LAYOUT)
+        );
     }
 
     #[test]
@@ -658,13 +672,23 @@ mod policy_tests {
     #[test]
     fn never_cache_display_none() {
         let p = CachePolicy::new();
-        assert!(!p.should_cache(DisplayType::None, PositionType::Static, &Default::default(), 0));
+        assert!(!p.should_cache(
+            DisplayType::None,
+            PositionType::Static,
+            &Default::default(),
+            0
+        ));
     }
 
     #[test]
     fn never_cache_display_contents() {
         let p = CachePolicy::new();
-        assert!(!p.should_cache(DisplayType::Contents, PositionType::Static, &Default::default(), 0));
+        assert!(!p.should_cache(
+            DisplayType::Contents,
+            PositionType::Static,
+            &Default::default(),
+            0
+        ));
     }
 
     #[test]
@@ -676,7 +700,12 @@ mod policy_tests {
     #[test]
     fn always_cache_replaced() {
         let p = CachePolicy::new();
-        assert!(p.should_cache(DisplayType::Replaced, PositionType::Static, &leaf_hints(), 0));
+        assert!(p.should_cache(
+            DisplayType::Replaced,
+            PositionType::Static,
+            &leaf_hints(),
+            0
+        ));
     }
 
     #[test]
@@ -688,13 +717,23 @@ mod policy_tests {
     #[test]
     fn skip_absolute_by_default() {
         let p = CachePolicy::new();
-        assert!(!p.should_cache(DisplayType::Block, PositionType::Absolute, &Default::default(), 5));
+        assert!(!p.should_cache(
+            DisplayType::Block,
+            PositionType::Absolute,
+            &Default::default(),
+            5
+        ));
     }
 
     #[test]
     fn cache_absolute_when_policy_allows() {
         let p = CachePolicy::cache_all();
-        assert!(p.should_cache(DisplayType::Block, PositionType::Absolute, &Default::default(), 5));
+        assert!(p.should_cache(
+            DisplayType::Block,
+            PositionType::Absolute,
+            &Default::default(),
+            5
+        ));
     }
 
     #[test]
@@ -734,9 +773,19 @@ mod policy_tests {
             ..CachePolicy::new()
         };
         // Container with 2 children: below threshold
-        assert!(!p.should_cache(DisplayType::Block, PositionType::Static, &Default::default(), 2));
+        assert!(!p.should_cache(
+            DisplayType::Block,
+            PositionType::Static,
+            &Default::default(),
+            2
+        ));
         // Container with 5 children: above threshold
-        assert!(p.should_cache(DisplayType::Block, PositionType::Static, &Default::default(), 5));
+        assert!(p.should_cache(
+            DisplayType::Block,
+            PositionType::Static,
+            &Default::default(),
+            5
+        ));
         // Leaf node: exempt from threshold
         assert!(p.should_cache(DisplayType::Block, PositionType::Static, &leaf_hints(), 0));
     }
@@ -859,12 +908,10 @@ mod integration_tests {
 
         // Frame 2: only node 3's content changed
         let mut stats2 = FrameStatistics::new();
-        dirty.mark_dirty_and_propagate(3, LayoutDirtyFlags::CONTENT_CHANGED, |id| {
-            match id {
-                3 => Some(1),
-                2 => Some(1),
-                _ => None,
-            }
+        dirty.mark_dirty_and_propagate(3, LayoutDirtyFlags::CONTENT_CHANGED, |id| match id {
+            3 => Some(1),
+            2 => Some(1),
+            _ => None,
         });
 
         // Node 1 has CHILD_NEEDS_LAYOUT — needs to re-layout children
@@ -907,12 +954,19 @@ mod integration_tests {
         let mut cache = LayoutCache::new();
         let policy = CachePolicy::new();
 
-        let text_hints = SizingHints { is_leaf: true, ..Default::default() };
+        let text_hints = SizingHints {
+            is_leaf: true,
+            ..Default::default()
+        };
         let abs_hints = SizingHints::default();
 
         // Text node: policy says cache
         if policy.should_cache(DisplayType::Text, PositionType::Static, &text_hints, 0) {
-            cache.store(10, LayoutConstraints::auto(), LayoutResult::with_size(50.0, 14.0));
+            cache.store(
+                10,
+                LayoutConstraints::auto(),
+                LayoutResult::with_size(50.0, 14.0),
+            );
         }
 
         // Absolutely positioned: policy says skip
@@ -930,10 +984,10 @@ mod integration_tests {
         let mut cache = LayoutCache::new();
 
         let mut c_htb = LayoutConstraints::fixed(800.0, 600.0);
-        c_htb.writing_mode = WritingMode::Horizontal;
+        c_htb.writing_mode = WritingMode::HorizontalTb;
 
         let mut c_vlr = LayoutConstraints::fixed(800.0, 600.0);
-        c_vlr.writing_mode = WritingMode::VerticalLR;
+        c_vlr.writing_mode = WritingMode::VerticalLr;
 
         cache.store(1, c_htb.clone(), LayoutResult::with_size(800.0, 600.0));
         cache.store(1, c_vlr.clone(), LayoutResult::with_size(600.0, 800.0));

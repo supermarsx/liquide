@@ -1,18 +1,18 @@
-pub mod service;
-pub mod registry;
-pub mod lifecycle;
 pub mod health;
-pub mod state;
 pub mod inhibitor;
+pub mod lifecycle;
+pub mod registry;
+pub mod service;
 pub mod shutdown;
+pub mod state;
 
-pub use service::{ServiceId, ServiceDescriptor, ServiceState, RestartPolicy};
-pub use registry::ServiceRegistry;
-pub use lifecycle::LifecycleManager;
 pub use health::{HealthCheck, HealthStatus};
-pub use state::{SessionState, SessionWindow, SessionSnapshot, SessionStore, SessionError};
 pub use inhibitor::{InhibitFlag, Inhibitor, InhibitorRegistry};
-pub use shutdown::{ShutdownPhase, ShutdownReason, ShutdownKind, ShutdownManager};
+pub use lifecycle::LifecycleManager;
+pub use registry::ServiceRegistry;
+pub use service::{RestartPolicy, ServiceDescriptor, ServiceId, ServiceState};
+pub use shutdown::{ShutdownKind, ShutdownManager, ShutdownPhase, ShutdownReason};
+pub use state::{SessionError, SessionSnapshot, SessionState, SessionStore, SessionWindow};
 
 #[cfg(test)]
 mod tests;

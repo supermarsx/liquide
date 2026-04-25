@@ -22,6 +22,11 @@ serde.workspace = true
 criterion.workspace = true
 liquide-compositor.workspace = true
 
+[features]
+default = []
+# Reserved for future real-codec integration (openh264, libx264, etc.).
+real-codecs = []
+
 [[bench]]
 name = "encoder_bench"
 harness = false

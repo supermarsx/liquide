@@ -90,7 +90,9 @@ impl PlatformTimeBridge {
             .map_err(|e| TimeError::PlatformError(format!("timedatectl: {}", e)))?;
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if text.is_empty() {
-            Err(TimeError::PlatformError("could not determine timezone".into()))
+            Err(TimeError::PlatformError(
+                "could not determine timezone".into(),
+            ))
         } else {
             Ok(text)
         }
@@ -133,7 +135,9 @@ impl PlatformTimeBridge {
             .map_err(|e| TimeError::PlatformError(format!("Get-TimeZone: {}", e)))?;
         let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if text.is_empty() {
-            Err(TimeError::PlatformError("Get-TimeZone returned empty".into()))
+            Err(TimeError::PlatformError(
+                "Get-TimeZone returned empty".into(),
+            ))
         } else {
             Ok(text)
         }
@@ -188,7 +192,9 @@ impl PlatformTimeBridge {
                 return Ok(tz);
             }
         }
-        Err(TimeError::PlatformError("could not parse systemsetup output".into()))
+        Err(TimeError::PlatformError(
+            "could not parse systemsetup output".into(),
+        ))
     }
 
     #[cfg(target_os = "macos")]
@@ -223,19 +229,27 @@ impl PlatformTimeBridge {
 fn parse_offset_string(s: &str) -> Result<i32, TimeError> {
     let s = s.trim();
     if s.len() < 5 {
-        return Err(TimeError::PlatformError(format!("invalid offset format: '{}'", s)));
+        return Err(TimeError::PlatformError(format!(
+            "invalid offset format: '{}'",
+            s
+        )));
     }
     let sign = match s.as_bytes()[0] {
         b'+' => 1,
         b'-' => -1,
-        _ => return Err(TimeError::PlatformError(format!("invalid offset sign: '{}'", s))),
+        _ => {
+            return Err(TimeError::PlatformError(format!(
+                "invalid offset sign: '{}'",
+                s
+            )));
+        }
     };
-    let hours: i32 = s[1..3].parse().map_err(|_| {
-        TimeError::PlatformError(format!("invalid offset hours: '{}'", s))
-    })?;
-    let mins: i32 = s[3..5].parse().map_err(|_| {
-        TimeError::PlatformError(format!("invalid offset minutes: '{}'", s))
-    })?;
+    let hours: i32 = s[1..3]
+        .parse()
+        .map_err(|_| TimeError::PlatformError(format!("invalid offset hours: '{}'", s)))?;
+    let mins: i32 = s[3..5]
+        .parse()
+        .map_err(|_| TimeError::PlatformError(format!("invalid offset minutes: '{}'", s)))?;
     Ok(sign * (hours * 60 + mins))
 }
 

@@ -2,8 +2,8 @@
 //! produces correct scene nodes for windows, dock, status bar, and devtools.
 
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::scene::{SceneNode, SceneNodeKind};
-use liquide_shell::{Shell, WindowFlags};
+use liquide_compositor::scene::SceneNodeKind;
+use liquide_shell::Shell;
 
 fn new_shell() -> Shell {
     Shell::new(1920.0, 1080.0)
@@ -38,9 +38,10 @@ fn scene_contains_workspace_node() {
     let mut shell = new_shell();
     let scene = shell.build_scene();
 
-    let has_workspace = scene.children.iter().any(|c| {
-        matches!(c.kind, SceneNodeKind::Workspace { .. })
-    });
+    let has_workspace = scene
+        .children
+        .iter()
+        .any(|c| matches!(c.kind, SceneNodeKind::Workspace { .. }));
 
     // Workspace node or shell layer should exist
     assert!(
@@ -55,7 +56,7 @@ fn scene_contains_workspace_node() {
 fn opened_window_appears_in_scene() {
     let mut shell = new_shell();
     let bounds = Rect::new(100.0, 100.0, 640.0, 480.0);
-    let wid = shell.open_window("Scene Window", bounds);
+    let _wid = shell.open_window("Scene Window", bounds);
 
     let scene = shell.build_scene();
     let flat = scene.flatten();
@@ -111,11 +112,14 @@ fn decorated_window_has_decoration_node() {
     let scene = shell.build_scene();
     let flat = scene.flatten();
 
-    let has_decoration = flat.iter().any(|n| {
-        matches!(n.kind, SceneNodeKind::Decoration { .. })
-    });
+    let has_decoration = flat
+        .iter()
+        .any(|n| matches!(n.kind, SceneNodeKind::Decoration { .. }));
 
-    assert!(has_decoration, "decorated window should produce Decoration scene node");
+    assert!(
+        has_decoration,
+        "decorated window should produce Decoration scene node"
+    );
 }
 
 #[test]
@@ -127,9 +131,9 @@ fn window_has_shadow_node() {
     let scene = shell.build_scene();
     let flat = scene.flatten();
 
-    let has_shadow = flat.iter().any(|n| {
-        matches!(n.kind, SceneNodeKind::Shadow { .. })
-    });
+    let has_shadow = flat
+        .iter()
+        .any(|n| matches!(n.kind, SceneNodeKind::Shadow { .. }));
 
     assert!(has_shadow, "window should have a shadow node");
 }
@@ -143,9 +147,9 @@ fn window_has_glass_titlebar() {
     let scene = shell.build_scene();
     let flat = scene.flatten();
 
-    let has_glass = flat.iter().any(|n| {
-        matches!(n.kind, SceneNodeKind::Glass(_))
-    });
+    let has_glass = flat
+        .iter()
+        .any(|n| matches!(n.kind, SceneNodeKind::Glass(_)));
 
     assert!(has_glass, "window title bar should have a Glass node");
 }
@@ -222,10 +226,7 @@ fn minimized_window_not_visible_in_scene() {
     let visible_after = flat_after
         .iter()
         .any(|n| n.id >= w_base && n.id < w_base + 10);
-    assert!(
-        !visible_after,
-        "minimized window should NOT be in scene"
-    );
+    assert!(!visible_after, "minimized window should NOT be in scene");
 }
 
 // ── Scene Find / Walk ───────────────────────────────────────────────────────
@@ -268,7 +269,10 @@ fn scene_walk_visits_all_nodes() {
         count += 1;
     });
 
-    assert!(count > 1, "walk should visit multiple nodes, visited {count}");
+    assert!(
+        count > 1,
+        "walk should visit multiple nodes, visited {count}"
+    );
 }
 
 #[test]
@@ -423,12 +427,15 @@ fn scene_scales_with_window_count() {
     let count_empty = scene_empty.flatten().len();
 
     for i in 0..10 {
-        shell.open_window(format!("Scale {i}"), Rect::new(
-            (i as f32 * 50.0) % 1920.0,
-            (i as f32 * 40.0) % 1080.0,
-            400.0,
-            300.0,
-        ));
+        shell.open_window(
+            format!("Scale {i}"),
+            Rect::new(
+                (i as f32 * 50.0) % 1920.0,
+                (i as f32 * 40.0) % 1080.0,
+                400.0,
+                300.0,
+            ),
+        );
     }
 
     let scene_full = shell.build_scene();

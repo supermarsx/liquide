@@ -1125,7 +1125,9 @@ impl Win32Platform {
         // stable heap address that survives moves of the containing struct.
         // Wrapped in UnsafeCell so the wndproc can push events without
         // creating &mut references that would alias.
-        let event_queue = Box::new(UnsafeCell::new(VecDeque::<PlatformEvent>::with_capacity(256)));
+        let event_queue = Box::new(UnsafeCell::new(VecDeque::<PlatformEvent>::with_capacity(
+            256,
+        )));
 
         // Safety: obtain a raw pointer to the UnsafeCell. The temporary borrow
         // ends at the semicolon so it does not conflict with later accesses.
@@ -1421,11 +1423,7 @@ impl PlatformBackend for Win32Platform {
         }
     }
 
-    fn set_cursor_shape(
-        &mut self,
-        handle: NativeWindowHandle,
-        shape: &str,
-    ) -> bool {
+    fn set_cursor_shape(&mut self, handle: NativeWindowHandle, shape: &str) -> bool {
         let cursor_id = match shape {
             "default" | "arrow" => ffi::IDC_ARROW,
             "pointer" | "hand" => ffi::IDC_HAND,

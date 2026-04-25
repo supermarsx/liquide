@@ -103,9 +103,7 @@ impl SeatdSeat {
 impl SeatBackend for SeatdSeat {
     fn seat_info(&self) -> Result<SeatInfo> {
         if !self.connected {
-            return Err(LogindError::SeatdConnection(
-                "not connected".to_string(),
-            ));
+            return Err(LogindError::SeatdConnection("not connected".to_string()));
         }
         Ok(SeatInfo {
             id: "seat0".to_string(),
@@ -117,9 +115,7 @@ impl SeatBackend for SeatdSeat {
 
     fn take_device(&mut self, _major: u32, _minor: u32) -> Result<i32> {
         if !self.connected {
-            return Err(LogindError::SeatdConnection(
-                "not connected".to_string(),
-            ));
+            return Err(LogindError::SeatdConnection("not connected".to_string()));
         }
         // Stub: real implementation sends open_device to seatd
         Err(LogindError::NotSupported)
@@ -127,9 +123,7 @@ impl SeatBackend for SeatdSeat {
 
     fn release_device(&mut self, _major: u32, _minor: u32) -> Result<()> {
         if !self.connected {
-            return Err(LogindError::SeatdConnection(
-                "not connected".to_string(),
-            ));
+            return Err(LogindError::SeatdConnection("not connected".to_string()));
         }
         // Stub: real implementation sends close_device to seatd
         Err(LogindError::NotSupported)

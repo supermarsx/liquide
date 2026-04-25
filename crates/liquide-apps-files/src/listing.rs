@@ -74,19 +74,27 @@ impl DirectoryListing {
 
     /// Count of visible entries.
     #[must_use]
-    pub fn visible_count(&self) -> usize { self.entries.len() }
+    pub fn visible_count(&self) -> usize {
+        self.entries.len()
+    }
 
     /// Count of directories in the listing.
     #[must_use]
-    pub fn dir_count(&self) -> usize { self.entries.iter().filter(|e| e.is_dir()).count() }
+    pub fn dir_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.is_dir()).count()
+    }
 
     /// Count of files in the listing.
     #[must_use]
-    pub fn file_count(&self) -> usize { self.entries.iter().filter(|e| !e.is_dir()).count() }
+    pub fn file_count(&self) -> usize {
+        self.entries.iter().filter(|e| !e.is_dir()).count()
+    }
 
     /// Total size of all files.
     #[must_use]
-    pub fn total_size(&self) -> u64 { self.entries.iter().map(|e| e.size).sum() }
+    pub fn total_size(&self) -> u64 {
+        self.entries.iter().map(|e| e.size).sum()
+    }
 
     /// Parent path, if any.
     #[must_use]
@@ -103,7 +111,11 @@ impl DirectoryListing {
         // Fallback: string-based for virtual paths.
         let path = self.path.trim_end_matches('/');
         path.rsplit_once('/').map(|(parent, _)| {
-            if parent.is_empty() { "/".to_string() } else { parent.to_string() }
+            if parent.is_empty() {
+                "/".to_string()
+            } else {
+                parent.to_string()
+            }
         })
     }
 
@@ -122,7 +134,9 @@ impl DirectoryListing {
 
         let read_dir = std::fs::read_dir(path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
-                crate::FilesError::PermissionDenied { path: path.display().to_string() }
+                crate::FilesError::PermissionDenied {
+                    path: path.display().to_string(),
+                }
             } else {
                 crate::FilesError::Io(e.to_string())
             }
@@ -150,7 +164,9 @@ impl DirectoryListing {
             };
 
             let size = metadata.len();
-            let modified = metadata.modified().ok()
+            let modified = metadata
+                .modified()
+                .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
@@ -214,7 +230,8 @@ fn is_hidden(_entry: &std::fs::DirEntry, name: &str) -> bool {
     {
         use std::os::windows::fs::MetadataExt;
         // FILE_ATTRIBUTE_HIDDEN = 0x02
-        _entry.metadata()
+        _entry
+            .metadata()
             .map(|m| m.file_attributes() & 0x02 != 0)
             .unwrap_or_else(|_| name.starts_with('.'))
     }

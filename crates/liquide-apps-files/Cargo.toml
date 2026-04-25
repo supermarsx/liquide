@@ -22,3 +22,15 @@ tracing-subscriber.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+liquide-app-harness = { path = "../liquide-app-harness" }
+liquide-ui-core = { path = "../liquide-ui-core" }
+liquide-ui-widgets = { path = "../liquide-ui-widgets" }
+
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
+walkdir = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_UI_Shell", "Win32_Foundation"] }

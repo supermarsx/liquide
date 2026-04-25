@@ -4,7 +4,7 @@ use crate::api_client::{ApiError, ApiMethod, MockApiClient, RequestBuilder};
 use crate::component::{
     Column, DataTable, MetricCard, Severity, SortDirection, StatusBadge, Toast, Trend,
 };
-use crate::theme::{ThemePreset, PRESET_ALL};
+use crate::theme::{PRESET_ALL, ThemePreset};
 use crate::view_model::{
     AlertSeverityVM, AlertVM, DashboardVM, GatewayVM, PolicyVM, ServerStatusVM, ServerVM,
     SessionStatusVM, SessionVM, UserVM,
@@ -16,10 +16,7 @@ use crate::view_model::{
 
 #[test]
 fn test_data_table_creation() {
-    let cols = vec![
-        Column::new("name", "Name"),
-        Column::new("status", "Status"),
-    ];
+    let cols = vec![Column::new("name", "Name"), Column::new("status", "Status")];
     let table = DataTable::new(cols);
     assert_eq!(table.columns.len(), 2);
     assert!(table.rows.is_empty());
@@ -93,11 +90,7 @@ fn test_data_table_page_rows() {
     let cols = vec![Column::new("x", "X")];
     let mut table = DataTable::new(cols);
     table.per_page = 2;
-    table.set_rows(vec![
-        vec!["a".into()],
-        vec!["b".into()],
-        vec!["c".into()],
-    ]);
+    table.set_rows(vec![vec!["a".into()], vec!["b".into()], vec!["c".into()]]);
     // Page 1 (default)
     assert_eq!(table.page_rows().len(), 2);
     assert_eq!(table.page_rows()[0][0], "a");
@@ -344,7 +337,9 @@ fn test_preset_display() {
 
 #[test]
 fn test_column_builder() {
-    let col = Column::new("name", "Name").with_sortable(false).with_width(200);
+    let col = Column::new("name", "Name")
+        .with_sortable(false)
+        .with_width(200);
     assert!(!col.sortable);
     assert_eq!(col.width, Some(200));
 }

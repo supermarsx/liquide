@@ -46,13 +46,14 @@ impl DesktopHeap {
     /// `Err(DesktopError::HeapExhausted)` if the allocation would exceed the
     /// budget.
     pub fn allocate(&mut self, size: usize) -> Result<(), DesktopError> {
-        let new_used = self.used.checked_add(size).ok_or_else(|| {
-            DesktopError::HeapExhausted {
+        let new_used = self
+            .used
+            .checked_add(size)
+            .ok_or_else(|| DesktopError::HeapExhausted {
                 desktop: self.desktop_id,
                 requested: size,
                 available: self.budget.saturating_sub(self.used),
-            }
-        })?;
+            })?;
 
         if new_used > self.budget {
             return Err(DesktopError::HeapExhausted {

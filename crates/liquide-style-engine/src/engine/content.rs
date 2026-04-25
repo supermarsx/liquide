@@ -16,7 +16,7 @@ pub fn evaluate_content_value(raw: &str) -> String {
 
     // Handle common keywords
     match raw {
-        "open-quote" => return "\u{201C}".to_string(),  // left double quotation mark
+        "open-quote" => return "\u{201C}".to_string(), // left double quotation mark
         "close-quote" => return "\u{201D}".to_string(), // right double quotation mark
         "no-open-quote" | "no-close-quote" => return String::new(),
         _ => {}
@@ -71,7 +71,15 @@ pub fn evaluate_content_value(raw: &str) -> String {
                 }
                 result.push_str(&segment);
             }
-            'a' if { let mut c = chars.clone(); c.next(); matches!((c.next(), c.next(), c.next(), c.next()), (Some('t'), Some('t'), Some('r'), Some('('))) } => {
+            'a' if {
+                let mut c = chars.clone();
+                c.next();
+                matches!(
+                    (c.next(), c.next(), c.next(), c.next()),
+                    (Some('t'), Some('t'), Some('r'), Some('('))
+                )
+            } =>
+            {
                 // attr() function -- extract attribute name
                 // Skip "attr("
                 for _ in 0..5 {
@@ -92,7 +100,33 @@ pub fn evaluate_content_value(raw: &str) -> String {
                 result.push_str(attr_name.trim());
                 result.push(']');
             }
-            'c' if { let mut c = chars.clone(); c.next(); matches!((c.next(), c.next(), c.next(), c.next(), c.next(), c.next(), c.next(), c.next()), (Some('o'), Some('u'), Some('n'), Some('t'), Some('e'), Some('r'), Some('s'), Some('('))) } => {
+            'c' if {
+                let mut c = chars.clone();
+                c.next();
+                matches!(
+                    (
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next()
+                    ),
+                    (
+                        Some('o'),
+                        Some('u'),
+                        Some('n'),
+                        Some('t'),
+                        Some('e'),
+                        Some('r'),
+                        Some('s'),
+                        Some('(')
+                    )
+                )
+            } =>
+            {
                 // counters() function — emit placeholder for layout-time resolution
                 for _ in 0..9 {
                     chars.next();
@@ -127,7 +161,31 @@ pub fn evaluate_content_value(raw: &str) -> String {
                 result.push_str(separator);
                 result.push(']');
             }
-            'c' if { let mut c = chars.clone(); c.next(); matches!((c.next(), c.next(), c.next(), c.next(), c.next(), c.next(), c.next()), (Some('o'), Some('u'), Some('n'), Some('t'), Some('e'), Some('r'), Some('('))) } => {
+            'c' if {
+                let mut c = chars.clone();
+                c.next();
+                matches!(
+                    (
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next(),
+                        c.next()
+                    ),
+                    (
+                        Some('o'),
+                        Some('u'),
+                        Some('n'),
+                        Some('t'),
+                        Some('e'),
+                        Some('r'),
+                        Some('(')
+                    )
+                )
+            } =>
+            {
                 // counter() function — emit placeholder for layout-time resolution
                 for _ in 0..8 {
                     chars.next();
@@ -413,10 +471,7 @@ mod tests {
     #[test]
     fn counter_in_quoted_context() {
         // counter() outside quotes is a function call
-        assert_eq!(
-            evaluate_content_value("counter(item)"),
-            "[counter:item]"
-        );
+        assert_eq!(evaluate_content_value("counter(item)"), "[counter:item]");
     }
 
     #[test]

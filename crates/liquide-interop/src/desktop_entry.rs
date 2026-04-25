@@ -205,9 +205,8 @@ impl DesktopEntry {
             actions.push(action);
         }
 
-        let name = name.ok_or_else(|| {
-            InteropError::InvalidDesktopEntry("missing Name field".to_string())
-        })?;
+        let name = name
+            .ok_or_else(|| InteropError::InvalidDesktopEntry("missing Name field".to_string()))?;
 
         Ok(Self {
             entry_type: entry_type.unwrap_or(DesktopEntryType::Application),

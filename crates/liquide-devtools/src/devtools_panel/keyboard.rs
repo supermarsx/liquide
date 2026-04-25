@@ -18,13 +18,7 @@ impl DevToolsPanel {
     /// - Ctrl+Shift+C: Toggle element picker
     /// - Ctrl+Shift+I: Toggle devtools panel
     /// - Tab (when devtools focused): Cycle tabs
-    pub fn handle_key(
-        &mut self,
-        key: &str,
-        ctrl: bool,
-        shift: bool,
-        _alt: bool,
-    ) -> bool {
+    pub fn handle_key(&mut self, key: &str, ctrl: bool, shift: bool, _alt: bool) -> bool {
         // Escape always closes context menu first.
         if key == "Escape" && self.context_menu.is_visible() {
             self.context_menu.hide();
@@ -67,9 +61,18 @@ impl DevToolsPanel {
                     }
                     return true;
                 }
-                "Backspace" => { self.style_editor.backspace(); return true; }
-                "ArrowLeft" | "Left" => { self.style_editor.cursor_left(); return true; }
-                "ArrowRight" | "Right" => { self.style_editor.cursor_right(); return true; }
+                "Backspace" => {
+                    self.style_editor.backspace();
+                    return true;
+                }
+                "ArrowLeft" | "Left" => {
+                    self.style_editor.cursor_left();
+                    return true;
+                }
+                "ArrowRight" | "Right" => {
+                    self.style_editor.cursor_right();
+                    return true;
+                }
                 "Tab" => {
                     // Confirm current and move focus to next property (if any).
                     if let Some(edit) = self.style_editor.confirm_edit() {
@@ -106,7 +109,9 @@ impl DevToolsPanel {
         // If console is focused, route keys there (except global shortcuts above).
         if self.console_focused && self.active_tab == DevToolsTab::Console {
             // Any keystroke resets the caret blink so it stays solid while typing.
-            let reset_blink = |s: &mut Self| { s.caret_blink_epoch = Instant::now(); };
+            let reset_blink = |s: &mut Self| {
+                s.caret_blink_epoch = Instant::now();
+            };
             match key {
                 "Escape" => {
                     self.console_focused = false;
@@ -119,14 +124,46 @@ impl DevToolsPanel {
                     reset_blink(self);
                     return true;
                 }
-                "Backspace" => { self.console.backspace(); reset_blink(self); return true; }
-                "Delete" => { self.console.delete(); reset_blink(self); return true; }
-                "ArrowLeft" | "Left" => { self.console.cursor_left(); reset_blink(self); return true; }
-                "ArrowRight" | "Right" => { self.console.cursor_right(); reset_blink(self); return true; }
-                "ArrowUp" | "Up" => { self.console.history_up(); reset_blink(self); return true; }
-                "ArrowDown" | "Down" => { self.console.history_down(); reset_blink(self); return true; }
-                "Home" => { self.console.cursor_home(); reset_blink(self); return true; }
-                "End" => { self.console.cursor_end(); reset_blink(self); return true; }
+                "Backspace" => {
+                    self.console.backspace();
+                    reset_blink(self);
+                    return true;
+                }
+                "Delete" => {
+                    self.console.delete();
+                    reset_blink(self);
+                    return true;
+                }
+                "ArrowLeft" | "Left" => {
+                    self.console.cursor_left();
+                    reset_blink(self);
+                    return true;
+                }
+                "ArrowRight" | "Right" => {
+                    self.console.cursor_right();
+                    reset_blink(self);
+                    return true;
+                }
+                "ArrowUp" | "Up" => {
+                    self.console.history_up();
+                    reset_blink(self);
+                    return true;
+                }
+                "ArrowDown" | "Down" => {
+                    self.console.history_down();
+                    reset_blink(self);
+                    return true;
+                }
+                "Home" => {
+                    self.console.cursor_home();
+                    reset_blink(self);
+                    return true;
+                }
+                "End" => {
+                    self.console.cursor_end();
+                    reset_blink(self);
+                    return true;
+                }
                 _ if key.len() == 1 && !ctrl => {
                     if let Some(c) = key.chars().next() {
                         self.console.insert_char(c);

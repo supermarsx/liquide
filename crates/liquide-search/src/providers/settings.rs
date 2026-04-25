@@ -4,7 +4,7 @@
 //! keywords.
 
 use crate::provider::{
-    SearchCategory, SearchProvider, SearchResult, SearchResultAction, fuzzy_score, clamp_score,
+    SearchCategory, SearchProvider, SearchResult, SearchResultAction, clamp_score, fuzzy_score,
 };
 
 // ---------------------------------------------------------------------------
@@ -89,10 +89,18 @@ impl Default for SettingsSearchProvider {
 }
 
 impl SearchProvider for SettingsSearchProvider {
-    fn id(&self) -> &str { "settings" }
-    fn name(&self) -> &str { "Settings" }
-    fn icon(&self) -> &str { "preferences-system" }
-    fn priority(&self) -> u32 { 70 }
+    fn id(&self) -> &str {
+        "settings"
+    }
+    fn name(&self) -> &str {
+        "Settings"
+    }
+    fn icon(&self) -> &str {
+        "preferences-system"
+    }
+    fn priority(&self) -> u32 {
+        70
+    }
 
     fn search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
         let mut scored: Vec<(f32, &SettingEntry)> = self
@@ -169,9 +177,13 @@ mod tests {
 
     fn sample_entries() -> Vec<SettingEntry> {
         vec![
-            SettingEntry::new("display.resolution", "Screen Resolution", "Change display resolution")
-                .with_category("Display")
-                .with_keywords(&["monitor", "screen", "dpi"]),
+            SettingEntry::new(
+                "display.resolution",
+                "Screen Resolution",
+                "Change display resolution",
+            )
+            .with_category("Display")
+            .with_keywords(&["monitor", "screen", "dpi"]),
             SettingEntry::new("sound.volume", "Volume", "Adjust system volume")
                 .with_category("Sound")
                 .with_keywords(&["audio", "speaker", "mute"]),
@@ -322,7 +334,9 @@ mod tests {
     fn result_action_navigate() {
         let p = provider_with_samples();
         let r = p.search("volume", 1);
-        assert!(matches!(r[0].action, SearchResultAction::Navigate(ref s) if s.contains("sound.volume")));
+        assert!(
+            matches!(r[0].action, SearchResultAction::Navigate(ref s) if s.contains("sound.volume"))
+        );
     }
 
     // -- case insensitive -----------------------------------------------------

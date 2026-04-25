@@ -27,7 +27,7 @@ pub use a11y::{QtA11yBridge, QtA11yRole};
 pub use clipboard::QtClipboard;
 pub use dnd::QtDndBridge;
 pub use event::{QtEventBridge, QtKeyEvent, QtMouseEvent};
-pub use render::{QtRenderSurface, QtRenderBackend};
+pub use render::{QtRenderBackend, QtRenderSurface};
 pub use window::{QtWindow, QtWindowConfig};
 
 use thiserror::Error;

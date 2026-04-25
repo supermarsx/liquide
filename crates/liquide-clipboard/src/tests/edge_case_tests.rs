@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use crate::format::*;
-use crate::offer::*;
-use crate::transfer::*;
-use crate::store::*;
 use crate::manager::*;
+use crate::offer::*;
+use crate::store::*;
+use crate::transfer::*;
 
 // --- Display impls ---
 #[test]
@@ -12,19 +12,31 @@ fn format_display() {
     assert_eq!(format!("{}", ClipboardFormat::PlainText), "PlainText");
     assert_eq!(format!("{}", ClipboardFormat::Html), "HTML");
     assert_eq!(format!("{}", ClipboardFormat::Png), "PNG");
-    assert_eq!(format!("{}", ClipboardFormat::Custom("x/y".into())), "Custom(x/y)");
+    assert_eq!(
+        format!("{}", ClipboardFormat::Custom("x/y".into())),
+        "Custom(x/y)"
+    );
 }
 
 #[test]
 fn transfer_state_display() {
     assert_eq!(format!("{}", TransferState::Idle), "Idle");
     assert_eq!(format!("{}", TransferState::Complete), "Complete");
-    assert_eq!(format!("{}", TransferState::Failed("oops".into())), "Failed(oops)");
+    assert_eq!(
+        format!("{}", TransferState::Failed("oops".into())),
+        "Failed(oops)"
+    );
 
-    let ts = TransferState::Transferring { received: 100, total: Some(1000) };
+    let ts = TransferState::Transferring {
+        received: 100,
+        total: Some(1000),
+    };
     assert_eq!(format!("{ts}"), "Transferring(100/1000)");
 
-    let ts2 = TransferState::Transferring { received: 50, total: None };
+    let ts2 = TransferState::Transferring {
+        received: 50,
+        total: None,
+    };
     assert_eq!(format!("{ts2}"), "Transferring(50/?)");
 }
 
@@ -45,22 +57,34 @@ fn custom_format_mime_preserved() {
 
 #[test]
 fn from_mime_svg() {
-    assert_eq!(ClipboardFormat::from_mime(MIME_SVG), Some(ClipboardFormat::Svg));
+    assert_eq!(
+        ClipboardFormat::from_mime(MIME_SVG),
+        Some(ClipboardFormat::Svg)
+    );
 }
 
 #[test]
 fn from_mime_jpeg() {
-    assert_eq!(ClipboardFormat::from_mime(MIME_JPEG), Some(ClipboardFormat::Jpeg));
+    assert_eq!(
+        ClipboardFormat::from_mime(MIME_JPEG),
+        Some(ClipboardFormat::Jpeg)
+    );
 }
 
 #[test]
 fn from_mime_rich_text() {
-    assert_eq!(ClipboardFormat::from_mime(MIME_RICH_TEXT), Some(ClipboardFormat::RichText));
+    assert_eq!(
+        ClipboardFormat::from_mime(MIME_RICH_TEXT),
+        Some(ClipboardFormat::RichText)
+    );
 }
 
 #[test]
 fn from_mime_uri_list() {
-    assert_eq!(ClipboardFormat::from_mime(MIME_FILE_URI_LIST), Some(ClipboardFormat::FileUriList));
+    assert_eq!(
+        ClipboardFormat::from_mime(MIME_FILE_URI_LIST),
+        Some(ClipboardFormat::FileUriList)
+    );
 }
 
 #[test]
@@ -96,7 +120,12 @@ fn offer_only_custom_format() {
 
 #[test]
 fn offer_serde_roundtrip() {
-    let offer = ClipboardOffer::new(42, vec![ClipboardFormat::PlainText, ClipboardFormat::Png], 1000, 5);
+    let offer = ClipboardOffer::new(
+        42,
+        vec![ClipboardFormat::PlainText, ClipboardFormat::Png],
+        1000,
+        5,
+    );
     let json = serde_json::to_string(&offer).unwrap();
     let back: ClipboardOffer = serde_json::from_str(&json).unwrap();
     assert_eq!(offer, back);
@@ -113,7 +142,10 @@ fn request_serde_roundtrip() {
 #[test]
 fn offer_preferred_text_richtext_only() {
     let offer = ClipboardOffer::new(1, vec![ClipboardFormat::RichText], 0, 1);
-    assert_eq!(offer.preferred_text_format(), Some(&ClipboardFormat::RichText));
+    assert_eq!(
+        offer.preferred_text_format(),
+        Some(&ClipboardFormat::RichText)
+    );
 }
 
 #[test]
@@ -240,19 +272,27 @@ fn store_get_nonexistent() {
 fn store_entry_count() {
     let mut store = ClipboardStore::new(1024);
     assert_eq!(store.entry_count(), 0);
-    store.set(ClipboardFormat::PlainText, b"a".to_vec(), 1, 0).unwrap();
+    store
+        .set(ClipboardFormat::PlainText, b"a".to_vec(), 1, 0)
+        .unwrap();
     assert_eq!(store.entry_count(), 1);
-    store.set(ClipboardFormat::Html, b"b".to_vec(), 1, 0).unwrap();
+    store
+        .set(ClipboardFormat::Html, b"b".to_vec(), 1, 0)
+        .unwrap();
     assert_eq!(store.entry_count(), 2);
     // Overwrite doesn't increase count
-    store.set(ClipboardFormat::PlainText, b"c".to_vec(), 1, 0).unwrap();
+    store
+        .set(ClipboardFormat::PlainText, b"c".to_vec(), 1, 0)
+        .unwrap();
     assert_eq!(store.entry_count(), 2);
 }
 
 #[test]
 fn store_get_entry() {
     let mut store = ClipboardStore::new(1024);
-    store.set(ClipboardFormat::PlainText, b"hello".to_vec(), 42, 12345).unwrap();
+    store
+        .set(ClipboardFormat::PlainText, b"hello".to_vec(), 42, 12345)
+        .unwrap();
     let entry = store.get_entry(&ClipboardFormat::PlainText).unwrap();
     assert_eq!(entry.format, ClipboardFormat::PlainText);
     assert_eq!(entry.data, b"hello");
@@ -262,8 +302,12 @@ fn store_get_entry() {
 #[test]
 fn store_clear_preserves_serial() {
     let mut store = ClipboardStore::new(1024);
-    store.set(ClipboardFormat::PlainText, b"a".to_vec(), 1, 0).unwrap();
-    store.set(ClipboardFormat::Html, b"b".to_vec(), 1, 0).unwrap();
+    store
+        .set(ClipboardFormat::PlainText, b"a".to_vec(), 1, 0)
+        .unwrap();
+    store
+        .set(ClipboardFormat::Html, b"b".to_vec(), 1, 0)
+        .unwrap();
     let serial_before = store.serial();
     store.clear();
     assert_eq!(store.serial(), serial_before); // serial is not reset
@@ -287,7 +331,9 @@ fn store_max_zero_accepts_empty() {
 #[test]
 fn store_multiple_formats_total_bytes() {
     let mut store = ClipboardStore::new(100);
-    store.set(ClipboardFormat::PlainText, vec![0; 30], 1, 0).unwrap();
+    store
+        .set(ClipboardFormat::PlainText, vec![0; 30], 1, 0)
+        .unwrap();
     store.set(ClipboardFormat::Html, vec![0; 30], 1, 0).unwrap();
     store.set(ClipboardFormat::Png, vec![0; 30], 1, 0).unwrap();
     assert_eq!(store.total_bytes(), 90);
@@ -300,8 +346,12 @@ fn store_multiple_formats_total_bytes() {
 #[test]
 fn manager_get_remote() {
     let mut mgr = ClipboardManager::new(ClipboardPolicy::default());
-    mgr.receive_remote_data(ClipboardFormat::PlainText, b"remote data".to_vec()).unwrap();
-    assert_eq!(mgr.get_remote(&ClipboardFormat::PlainText), Some(b"remote data".as_ref()));
+    mgr.receive_remote_data(ClipboardFormat::PlainText, b"remote data".to_vec())
+        .unwrap();
+    assert_eq!(
+        mgr.get_remote(&ClipboardFormat::PlainText),
+        Some(b"remote data".as_ref())
+    );
 }
 
 #[test]
@@ -309,7 +359,8 @@ fn manager_clear_local() {
     let mut mgr = ClipboardManager::new(ClipboardPolicy::default());
     let mut data = HashMap::new();
     data.insert(ClipboardFormat::PlainText, b"hello".to_vec());
-    mgr.handle_local_offer(vec![ClipboardFormat::PlainText], data).unwrap();
+    mgr.handle_local_offer(vec![ClipboardFormat::PlainText], data)
+        .unwrap();
     assert!(mgr.get_local(&ClipboardFormat::PlainText).is_some());
     mgr.clear_local();
     assert!(mgr.get_local(&ClipboardFormat::PlainText).is_none());
@@ -318,7 +369,8 @@ fn manager_clear_local() {
 #[test]
 fn manager_clear_remote() {
     let mut mgr = ClipboardManager::new(ClipboardPolicy::default());
-    mgr.receive_remote_data(ClipboardFormat::PlainText, b"data".to_vec()).unwrap();
+    mgr.receive_remote_data(ClipboardFormat::PlainText, b"data".to_vec())
+        .unwrap();
     assert!(mgr.get_remote(&ClipboardFormat::PlainText).is_some());
     mgr.clear_remote();
     assert!(mgr.get_remote(&ClipboardFormat::PlainText).is_none());
@@ -330,7 +382,8 @@ fn manager_serial_increments() {
     let s0 = mgr.serial();
     let mut data = HashMap::new();
     data.insert(ClipboardFormat::PlainText, b"a".to_vec());
-    mgr.handle_local_offer(vec![ClipboardFormat::PlainText], data).unwrap();
+    mgr.handle_local_offer(vec![ClipboardFormat::PlainText], data)
+        .unwrap();
     assert!(mgr.serial() > s0);
 }
 
@@ -388,5 +441,8 @@ fn manager_transfer_state() {
     assert!(matches!(mgr.transfer_state(), TransferState::Idle));
     let offer = ClipboardOffer::new(1, vec![ClipboardFormat::PlainText], 0, 1);
     mgr.handle_remote_offer(offer).unwrap();
-    assert!(matches!(mgr.transfer_state(), TransferState::Offered { .. }));
+    assert!(matches!(
+        mgr.transfer_state(),
+        TransferState::Offered { .. }
+    ));
 }

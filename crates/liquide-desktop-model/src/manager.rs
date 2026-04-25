@@ -2,7 +2,7 @@
 //! threads, and secure desktop switching.
 
 use crate::desktop::{
-    Desktop, DESKTOP_DEFAULT, DESKTOP_DISCONNECT, DESKTOP_SCREENSAVER, DESKTOP_WINLOGON,
+    DESKTOP_DEFAULT, DESKTOP_DISCONNECT, DESKTOP_SCREENSAVER, DESKTOP_WINLOGON, Desktop,
 };
 use crate::error::DesktopError;
 use crate::heap::{DEFAULT_HEAP_BUDGET, DEFAULT_INTERACTIVE_HEAP_BUDGET};
@@ -222,7 +222,13 @@ impl DesktopManager {
         let desktop_id = self.alloc_desktop_id();
         let root_window = self.alloc_window_id();
 
-        let desktop = Desktop::new(desktop_id, name.to_string(), station_id, root_window, heap_budget);
+        let desktop = Desktop::new(
+            desktop_id,
+            name.to_string(),
+            station_id,
+            root_window,
+            heap_budget,
+        );
         self.desktops.insert(desktop_id, desktop);
 
         // Register with station.
@@ -402,8 +408,16 @@ impl DesktopManager {
     /// This is the secure desktop pattern: switch to a secure desktop, lock
     /// input, show prompt, then unlock and switch back.
     pub fn lock_input(&mut self, desktop_id: DesktopId) -> Result<(), DesktopError> {
-        if !self.desktops.contains_key(&desktop_id) {
-            return Err(DesktopError::DesktopNotFound(desktop_id));
+        let is_active_secure = match self.desktops.get(&desktop_id) {
+            Some(desktop) => self.active_desktop == Some(desktop_id) && desktop.is_secure(),
+            None => return Err(DesktopError::DesktopNotFound(desktop_id)),
+        };
+
+        if !is_active_secure {
+            return Err(DesktopError::InputLockRequiresActiveSecureDesktop {
+                desktop: desktop_id,
+                active_desktop: self.active_desktop,
+            });
         }
 
         // Mark this desktop as locked.

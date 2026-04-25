@@ -2,9 +2,9 @@
 
 use std::fmt;
 
+use liquide_plugin_abi::host_functions::{HOST_FUNCTIONS, HostFunction};
 use liquide_plugin_abi::types::{PluginResult, ResourceHandle};
 use liquide_plugin_abi::{ExtensionPoint, PluginManifest};
-use liquide_plugin_abi::host_functions::{HOST_FUNCTIONS, HostFunction};
 
 use crate::config::PluginHostConfig;
 use crate::dispatcher::{DispatchResult, Dispatcher};
@@ -45,8 +45,7 @@ impl PluginHost {
     ///
     /// Propagates errors from the runtime or dispatcher.
     pub fn load_plugin(&mut self, manifest: PluginManifest) -> Result<PluginId> {
-        let extension_points: Vec<ExtensionPoint> =
-            manifest.extension_points.clone();
+        let extension_points: Vec<ExtensionPoint> = manifest.extension_points.clone();
 
         let id = self.runtime.load_plugin(manifest)?;
 

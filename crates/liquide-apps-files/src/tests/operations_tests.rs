@@ -1,8 +1,6 @@
 //! Tests for file operations, FileOp enum, OperationProgress, and ArchiveFormat.
 
-use crate::operations::{
-    ArchiveFormat, FileOp, FileOperation, OperationKind, OperationProgress,
-};
+use crate::operations::{ArchiveFormat, FileOp, FileOperation, OperationKind, OperationProgress};
 
 // ===========================================================================
 // ArchiveFormat
@@ -19,12 +17,30 @@ fn test_archive_format_display() {
 
 #[test]
 fn test_archive_format_from_extension() {
-    assert_eq!(ArchiveFormat::from_extension("data.zip"), Some(ArchiveFormat::Zip));
-    assert_eq!(ArchiveFormat::from_extension("data.tar.gz"), Some(ArchiveFormat::TarGz));
-    assert_eq!(ArchiveFormat::from_extension("data.tgz"), Some(ArchiveFormat::TarGz));
-    assert_eq!(ArchiveFormat::from_extension("data.tar.bz2"), Some(ArchiveFormat::TarBz2));
-    assert_eq!(ArchiveFormat::from_extension("data.tar.xz"), Some(ArchiveFormat::TarXz));
-    assert_eq!(ArchiveFormat::from_extension("data.7z"), Some(ArchiveFormat::SevenZip));
+    assert_eq!(
+        ArchiveFormat::from_extension("data.zip"),
+        Some(ArchiveFormat::Zip)
+    );
+    assert_eq!(
+        ArchiveFormat::from_extension("data.tar.gz"),
+        Some(ArchiveFormat::TarGz)
+    );
+    assert_eq!(
+        ArchiveFormat::from_extension("data.tgz"),
+        Some(ArchiveFormat::TarGz)
+    );
+    assert_eq!(
+        ArchiveFormat::from_extension("data.tar.bz2"),
+        Some(ArchiveFormat::TarBz2)
+    );
+    assert_eq!(
+        ArchiveFormat::from_extension("data.tar.xz"),
+        Some(ArchiveFormat::TarXz)
+    );
+    assert_eq!(
+        ArchiveFormat::from_extension("data.7z"),
+        Some(ArchiveFormat::SevenZip)
+    );
     assert_eq!(ArchiveFormat::from_extension("data.txt"), None);
 }
 

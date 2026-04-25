@@ -355,7 +355,11 @@ mod tests {
 
         let delta = xor_delta_alloc(&current, &previous);
 
-        let expected: Vec<u8> = current.iter().zip(previous.iter()).map(|(&c, &p)| c ^ p).collect();
+        let expected: Vec<u8> = current
+            .iter()
+            .zip(previous.iter())
+            .map(|(&c, &p)| c ^ p)
+            .collect();
         assert_eq!(delta, expected);
     }
 
@@ -368,7 +372,11 @@ mod tests {
 
         let delta = xor_delta_alloc(&current, &previous);
 
-        let expected: Vec<u8> = current.iter().zip(previous.iter()).map(|(&c, &p)| c ^ p).collect();
+        let expected: Vec<u8> = current
+            .iter()
+            .zip(previous.iter())
+            .map(|(&c, &p)| c ^ p)
+            .collect();
         assert_eq!(delta, expected);
     }
 
@@ -429,7 +437,11 @@ mod tests {
         let delta = xor_delta_alloc(&current, &previous);
 
         // Verify against scalar
-        let expected: Vec<u8> = current.iter().zip(previous.iter()).map(|(&c, &p)| c ^ p).collect();
+        let expected: Vec<u8> = current
+            .iter()
+            .zip(previous.iter())
+            .map(|(&c, &p)| c ^ p)
+            .collect();
         assert_eq!(delta, expected);
 
         // Verify popcount

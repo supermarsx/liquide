@@ -79,11 +79,9 @@ impl NavSection {
     #[must_use]
     pub fn min_role(self) -> AuthRole {
         match self {
-            Self::Dashboard
-            | Self::Servers
-            | Self::Sessions
-            | Self::Metrics
-            | Self::Gateways => AuthRole::Viewer,
+            Self::Dashboard | Self::Servers | Self::Sessions | Self::Metrics | Self::Gateways => {
+                AuthRole::Viewer
+            }
             Self::Users | Self::Audit => AuthRole::Operator,
             Self::Policies | Self::Plugins => AuthRole::Admin,
         }

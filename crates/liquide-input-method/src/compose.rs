@@ -81,8 +81,7 @@ impl ComposeTable {
 
         // Check if any sequence has this as a prefix.
         let is_prefix = self.sequences.iter().any(|(seq, _)| {
-            seq.len() > self.buffer.len()
-                && seq[..self.buffer.len()] == self.buffer[..]
+            seq.len() > self.buffer.len() && seq[..self.buffer.len()] == self.buffer[..]
         });
 
         if is_prefix {
@@ -205,14 +204,12 @@ pub fn default_compose_table() -> ComposeTable {
         (vec![XK_DEAD_ACUTE, XK_U_UPPER], '\u{00da}'), // Ú
         (vec![XK_DEAD_ACUTE, XK_Y_LOWER], '\u{00fd}'), // ý
         (vec![XK_DEAD_ACUTE, XK_Y_UPPER], '\u{00dd}'), // Ý
-
         // Grave accent: ` + vowel
         (vec![XK_DEAD_GRAVE, XK_A_LOWER], '\u{00e0}'), // à
         (vec![XK_DEAD_GRAVE, XK_E_LOWER], '\u{00e8}'), // è
         (vec![XK_DEAD_GRAVE, XK_I_LOWER], '\u{00ec}'), // ì
         (vec![XK_DEAD_GRAVE, XK_O_LOWER], '\u{00f2}'), // ò
         (vec![XK_DEAD_GRAVE, XK_U_LOWER], '\u{00f9}'), // ù
-
         // Diaeresis (umlaut): ¨ + vowel
         (vec![XK_DEAD_DIAERESIS, XK_A_LOWER], '\u{00e4}'), // ä
         (vec![XK_DEAD_DIAERESIS, XK_A_UPPER], '\u{00c4}'), // Ä
@@ -223,90 +220,78 @@ pub fn default_compose_table() -> ComposeTable {
         (vec![XK_DEAD_DIAERESIS, XK_U_LOWER], '\u{00fc}'), // ü
         (vec![XK_DEAD_DIAERESIS, XK_U_UPPER], '\u{00dc}'), // Ü
         (vec![XK_DEAD_DIAERESIS, XK_Y_LOWER], '\u{00ff}'), // ÿ
-
         // Tilde: ~ + letter
         (vec![XK_DEAD_TILDE, XK_N_LOWER], '\u{00f1}'), // ñ
         (vec![XK_DEAD_TILDE, XK_N_UPPER], '\u{00d1}'), // Ñ
         (vec![XK_DEAD_TILDE, XK_A_LOWER], '\u{00e3}'), // ã
         (vec![XK_DEAD_TILDE, XK_O_LOWER], '\u{00f5}'), // õ
-
         // Circumflex: ^ + vowel
         (vec![XK_DEAD_CIRCUMFLEX, XK_A_LOWER], '\u{00e2}'), // â
         (vec![XK_DEAD_CIRCUMFLEX, XK_E_LOWER], '\u{00ea}'), // ê
         (vec![XK_DEAD_CIRCUMFLEX, XK_I_LOWER], '\u{00ee}'), // î
         (vec![XK_DEAD_CIRCUMFLEX, XK_O_LOWER], '\u{00f4}'), // ô
         (vec![XK_DEAD_CIRCUMFLEX, XK_U_LOWER], '\u{00fb}'), // û
-
         // Cedilla: ¸ + letter
         (vec![XK_DEAD_CEDILLA, XK_C_LOWER], '\u{00e7}'), // ç
         (vec![XK_DEAD_CEDILLA, XK_C_UPPER], '\u{00c7}'), // Ç
-
         // Ring above: ° + letter
         (vec![XK_DEAD_RING_ABOVE, XK_A_LOWER], '\u{00e5}'), // å
         (vec![XK_DEAD_RING_ABOVE, XK_A_UPPER], '\u{00c5}'), // Å
         (vec![XK_DEAD_RING_ABOVE, XK_U_LOWER], '\u{016f}'), // ů
-
         // Stroke: - through letter
         (vec![XK_DEAD_STROKE, XK_O_LOWER], '\u{00f8}'), // ø
         (vec![XK_DEAD_STROKE, XK_O_UPPER], '\u{00d8}'), // Ø
         (vec![XK_DEAD_STROKE, XK_L_LOWER], '\u{0142}'), // ł
         (vec![XK_DEAD_STROKE, XK_D_LOWER], '\u{0111}'), // đ
-
         // Caron (háček): ˇ + letter
         (vec![XK_DEAD_CARON, XK_C_LOWER], '\u{010d}'), // č
         (vec![XK_DEAD_CARON, XK_S_LOWER], '\u{0161}'), // š
         (vec![XK_DEAD_CARON, XK_Z_LOWER], '\u{017e}'), // ž
         (vec![XK_DEAD_CARON, XK_R_LOWER], '\u{0159}'), // ř
-
         // Macron: ¯ + vowel
         (vec![XK_DEAD_MACRON, XK_A_LOWER], '\u{0101}'), // ā
         (vec![XK_DEAD_MACRON, XK_E_LOWER], '\u{0113}'), // ē
         (vec![XK_DEAD_MACRON, XK_I_LOWER], '\u{012b}'), // ī
         (vec![XK_DEAD_MACRON, XK_O_LOWER], '\u{014d}'), // ō
         (vec![XK_DEAD_MACRON, XK_U_LOWER], '\u{016b}'), // ū
-
         // ===== Multi_key (Compose) sequences =====
 
         // Currency symbols
-        (vec![XK_MULTI_KEY, XK_E_LOWER, XK_EQUAL], '\u{20ac}'),       // €
-        (vec![XK_MULTI_KEY, XK_L_LOWER, XK_MINUS], '\u{00a3}'),       // £
-        (vec![XK_MULTI_KEY, XK_Y_LOWER, XK_EQUAL], '\u{00a5}'),       // ¥
-        (vec![XK_MULTI_KEY, XK_C_LOWER, XK_SLASH], '\u{00a2}'),       // ¢
-        (vec![XK_MULTI_KEY, XK_C_LOWER, XK_EQUAL], '\u{20ac}'),       // € (alt)
-
+        (vec![XK_MULTI_KEY, XK_E_LOWER, XK_EQUAL], '\u{20ac}'), // €
+        (vec![XK_MULTI_KEY, XK_L_LOWER, XK_MINUS], '\u{00a3}'), // £
+        (vec![XK_MULTI_KEY, XK_Y_LOWER, XK_EQUAL], '\u{00a5}'), // ¥
+        (vec![XK_MULTI_KEY, XK_C_LOWER, XK_SLASH], '\u{00a2}'), // ¢
+        (vec![XK_MULTI_KEY, XK_C_LOWER, XK_EQUAL], '\u{20ac}'), // € (alt)
         // Math symbols
-        (vec![XK_MULTI_KEY, XK_PLUS, XK_MINUS], '\u{00b1}'),          // ±
-        (vec![XK_MULTI_KEY, XK_MINUS, XK_COLON], '\u{00f7}'),         // ÷
-        (vec![XK_MULTI_KEY, XK_LESS, XK_EQUAL], '\u{2264}'),          // ≤
-        (vec![XK_MULTI_KEY, XK_GREATER, XK_EQUAL], '\u{2265}'),       // ≥
-        (vec![XK_MULTI_KEY, XK_SLASH, XK_EQUAL], '\u{2260}'),         // ≠
-        (vec![XK_MULTI_KEY, XK_PERIOD, XK_PERIOD], '\u{2026}'),       // …
-        (vec![XK_MULTI_KEY, XK_MINUS, XK_MINUS], '\u{2014}'),         // — (em dash)
-        (vec![XK_MULTI_KEY, XK_PERIOD, XK_MINUS], '\u{2013}'),        // – (en dash)
-        (vec![XK_MULTI_KEY, XK_LESS, XK_LESS], '\u{00ab}'),           // «
-        (vec![XK_MULTI_KEY, XK_GREATER, XK_GREATER], '\u{00bb}'),     // »
-
+        (vec![XK_MULTI_KEY, XK_PLUS, XK_MINUS], '\u{00b1}'), // ±
+        (vec![XK_MULTI_KEY, XK_MINUS, XK_COLON], '\u{00f7}'), // ÷
+        (vec![XK_MULTI_KEY, XK_LESS, XK_EQUAL], '\u{2264}'), // ≤
+        (vec![XK_MULTI_KEY, XK_GREATER, XK_EQUAL], '\u{2265}'), // ≥
+        (vec![XK_MULTI_KEY, XK_SLASH, XK_EQUAL], '\u{2260}'), // ≠
+        (vec![XK_MULTI_KEY, XK_PERIOD, XK_PERIOD], '\u{2026}'), // …
+        (vec![XK_MULTI_KEY, XK_MINUS, XK_MINUS], '\u{2014}'), // — (em dash)
+        (vec![XK_MULTI_KEY, XK_PERIOD, XK_MINUS], '\u{2013}'), // – (en dash)
+        (vec![XK_MULTI_KEY, XK_LESS, XK_LESS], '\u{00ab}'),  // «
+        (vec![XK_MULTI_KEY, XK_GREATER, XK_GREATER], '\u{00bb}'), // »
         // Special characters
-        (vec![XK_MULTI_KEY, XK_S_LOWER, XK_S_LOWER], '\u{00df}'),     // ß
-        (vec![XK_MULTI_KEY, XK_EXCLAM, XK_EXCLAM], '\u{00a1}'),       // ¡
-        (vec![XK_MULTI_KEY, XK_QUESTION, XK_QUESTION], '\u{00bf}'),   // ¿
-        (vec![XK_MULTI_KEY, XK_O_LOWER, XK_C_LOWER], '\u{00a9}'),     // ©
-        (vec![XK_MULTI_KEY, XK_O_LOWER, XK_R_LOWER], '\u{00ae}'),     // ®
-        (vec![XK_MULTI_KEY, XK_PARENLEFT, XK_C_LOWER], '\u{00a9}'),   // © (alt)
-        (vec![XK_MULTI_KEY, XK_PARENLEFT, XK_R_LOWER], '\u{00ae}'),   // ® (alt)
-        (vec![XK_MULTI_KEY, XK_SPACE, XK_SPACE], '\u{00a0}'),         // non-breaking space
-        (vec![XK_MULTI_KEY, XK_0_LOWER, XK_C_LOWER], '\u{00b0}'),     // °
-
+        (vec![XK_MULTI_KEY, XK_S_LOWER, XK_S_LOWER], '\u{00df}'), // ß
+        (vec![XK_MULTI_KEY, XK_EXCLAM, XK_EXCLAM], '\u{00a1}'),   // ¡
+        (vec![XK_MULTI_KEY, XK_QUESTION, XK_QUESTION], '\u{00bf}'), // ¿
+        (vec![XK_MULTI_KEY, XK_O_LOWER, XK_C_LOWER], '\u{00a9}'), // ©
+        (vec![XK_MULTI_KEY, XK_O_LOWER, XK_R_LOWER], '\u{00ae}'), // ®
+        (vec![XK_MULTI_KEY, XK_PARENLEFT, XK_C_LOWER], '\u{00a9}'), // © (alt)
+        (vec![XK_MULTI_KEY, XK_PARENLEFT, XK_R_LOWER], '\u{00ae}'), // ® (alt)
+        (vec![XK_MULTI_KEY, XK_SPACE, XK_SPACE], '\u{00a0}'),     // non-breaking space
+        (vec![XK_MULTI_KEY, XK_0_LOWER, XK_C_LOWER], '\u{00b0}'), // °
         // Superscripts
-        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_0], '\u{2070}'),        // ⁰
-        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_1], '\u{00b9}'),        // ¹
-        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_2], '\u{00b2}'),        // ²
-        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_3], '\u{00b3}'),        // ³
-
+        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_0], '\u{2070}'), // ⁰
+        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_1], '\u{00b9}'), // ¹
+        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_2], '\u{00b2}'), // ²
+        (vec![XK_MULTI_KEY, XK_CIRCUMFLEX, XK_3], '\u{00b3}'), // ³
         // Fractions
-        (vec![XK_MULTI_KEY, XK_1, XK_2], '\u{00bd}'),                 // ½
-        (vec![XK_MULTI_KEY, XK_1, XK_4], '\u{00bc}'),                 // ¼
-        (vec![XK_MULTI_KEY, XK_3, XK_4], '\u{00be}'),                 // ¾
+        (vec![XK_MULTI_KEY, XK_1, XK_2], '\u{00bd}'), // ½
+        (vec![XK_MULTI_KEY, XK_1, XK_4], '\u{00bc}'), // ¼
+        (vec![XK_MULTI_KEY, XK_3, XK_4], '\u{00be}'), // ¾
     ];
 
     ComposeTable::from_sequences(sequences)

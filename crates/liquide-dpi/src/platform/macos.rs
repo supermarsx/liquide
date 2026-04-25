@@ -155,11 +155,8 @@ impl PlatformDpi {
             {
                 // Flush previous display.
                 if in_display {
-                    let scale = Self::compute_display_scale(
-                        current_retina,
-                        current_actual,
-                        current_ui,
-                    );
+                    let scale =
+                        Self::compute_display_scale(current_retina, current_actual, current_ui);
                     results.push((id, scale));
                     id += 1;
                 }
@@ -198,8 +195,7 @@ impl PlatformDpi {
 
         // Flush last display.
         if in_display {
-            let scale =
-                Self::compute_display_scale(current_retina, current_actual, current_ui);
+            let scale = Self::compute_display_scale(current_retina, current_actual, current_ui);
             results.push((id, scale));
         }
 

@@ -1,5 +1,5 @@
 use crate::easing::EasingFunction;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 /// Rectangle
 #[derive(Debug, Clone, Copy)]
@@ -12,7 +12,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
-        Self { x, y, width: w, height: h }
+        Self {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
     }
 
     pub fn lerp(&self, other: &Rect, t: f32) -> Rect {
@@ -55,10 +60,7 @@ pub enum WindowEffect {
         to: Rect,
     },
     /// Window focus highlight (subtle scale pulse)
-    FocusIn {
-        window_id: u64,
-        bounds: Rect,
-    },
+    FocusIn { window_id: u64, bounds: Rect },
     /// Fullscreen transition
     Fullscreen {
         window_id: u64,
@@ -74,7 +76,7 @@ pub struct EffectState {
     pub easing: EasingFunction,
     pub duration: Duration,
     pub started_at: Instant,
-    pub progress: f32,  // 0.0 to 1.0
+    pub progress: f32, // 0.0 to 1.0
     pub finished: bool,
 }
 
@@ -129,33 +131,43 @@ impl EffectState {
         }
 
         match &self.effect {
-            WindowEffect::Open { window_id, from, to, opacity_from, opacity_to } => {
-                EffectFrame {
-                    window_id: *window_id,
-                    bounds: from.lerp(to, eased_t),
-                    opacity: opacity_from + (opacity_to - opacity_from) * eased_t,
-                    scale: 1.0,
-                    finished: self.finished,
-                }
-            }
-            WindowEffect::Close { window_id, from, to, opacity_from, opacity_to } => {
-                EffectFrame {
-                    window_id: *window_id,
-                    bounds: from.lerp(to, eased_t),
-                    opacity: opacity_from + (opacity_to - opacity_from) * eased_t,
-                    scale: 1.0,
-                    finished: self.finished,
-                }
-            }
-            WindowEffect::Transform { window_id, from, to } => {
-                EffectFrame {
-                    window_id: *window_id,
-                    bounds: from.lerp(to, eased_t),
-                    opacity: 1.0,
-                    scale: 1.0,
-                    finished: self.finished,
-                }
-            }
+            WindowEffect::Open {
+                window_id,
+                from,
+                to,
+                opacity_from,
+                opacity_to,
+            } => EffectFrame {
+                window_id: *window_id,
+                bounds: from.lerp(to, eased_t),
+                opacity: opacity_from + (opacity_to - opacity_from) * eased_t,
+                scale: 1.0,
+                finished: self.finished,
+            },
+            WindowEffect::Close {
+                window_id,
+                from,
+                to,
+                opacity_from,
+                opacity_to,
+            } => EffectFrame {
+                window_id: *window_id,
+                bounds: from.lerp(to, eased_t),
+                opacity: opacity_from + (opacity_to - opacity_from) * eased_t,
+                scale: 1.0,
+                finished: self.finished,
+            },
+            WindowEffect::Transform {
+                window_id,
+                from,
+                to,
+            } => EffectFrame {
+                window_id: *window_id,
+                bounds: from.lerp(to, eased_t),
+                opacity: 1.0,
+                scale: 1.0,
+                finished: self.finished,
+            },
             WindowEffect::FocusIn { window_id, bounds } => {
                 // Subtle scale pulse: 1.0 -> 1.02 -> 1.0
                 let scale = if eased_t < 0.5 {
@@ -171,15 +183,17 @@ impl EffectState {
                     finished: self.finished,
                 }
             }
-            WindowEffect::Fullscreen { window_id, from, to } => {
-                EffectFrame {
-                    window_id: *window_id,
-                    bounds: from.lerp(to, eased_t),
-                    opacity: 1.0,
-                    scale: 1.0,
-                    finished: self.finished,
-                }
-            }
+            WindowEffect::Fullscreen {
+                window_id,
+                from,
+                to,
+            } => EffectFrame {
+                window_id: *window_id,
+                bounds: from.lerp(to, eased_t),
+                opacity: 1.0,
+                scale: 1.0,
+                finished: self.finished,
+            },
         }
     }
 }
@@ -246,7 +260,11 @@ impl EffectManager {
         };
 
         self.cancel_effects_for(window_id);
-        self.active_effects.push(EffectState::new(effect, EasingFunction::EaseOutCubic, self.open_duration));
+        self.active_effects.push(EffectState::new(
+            effect,
+            EasingFunction::EaseOutCubic,
+            self.open_duration,
+        ));
     }
 
     /// Start a window close effect
@@ -272,7 +290,11 @@ impl EffectManager {
         };
 
         self.cancel_effects_for(window_id);
-        self.active_effects.push(EffectState::new(effect, EasingFunction::EaseIn, self.close_duration));
+        self.active_effects.push(EffectState::new(
+            effect,
+            EasingFunction::EaseIn,
+            self.close_duration,
+        ));
     }
 
     /// Start a window transform effect (move/resize/maximize/restore)
@@ -281,9 +303,17 @@ impl EffectManager {
             return;
         }
 
-        let effect = WindowEffect::Transform { window_id, from, to };
+        let effect = WindowEffect::Transform {
+            window_id,
+            from,
+            to,
+        };
         self.cancel_effects_for(window_id);
-        self.active_effects.push(EffectState::new(effect, EasingFunction::EaseOutCubic, self.transform_duration));
+        self.active_effects.push(EffectState::new(
+            effect,
+            EasingFunction::EaseOutCubic,
+            self.transform_duration,
+        ));
     }
 
     /// Start a focus highlight effect
@@ -293,7 +323,11 @@ impl EffectManager {
         }
 
         let effect = WindowEffect::FocusIn { window_id, bounds };
-        self.active_effects.push(EffectState::new(effect, EasingFunction::EaseInOut, self.focus_duration));
+        self.active_effects.push(EffectState::new(
+            effect,
+            EasingFunction::EaseInOut,
+            self.focus_duration,
+        ));
     }
 
     /// Update all active effects. Returns frames for each active effect.
@@ -336,18 +370,18 @@ impl EffectManager {
 
     /// Is a specific window currently animating?
     pub fn is_animating(&self, window_id: u64) -> bool {
-        self.active_effects.iter().any(|s| {
-            match &s.effect {
-                WindowEffect::Open { window_id: id, .. } => *id == window_id,
-                WindowEffect::Close { window_id: id, .. } => *id == window_id,
-                WindowEffect::Transform { window_id: id, .. } => *id == window_id,
-                WindowEffect::FocusIn { window_id: id, .. } => *id == window_id,
-                WindowEffect::Fullscreen { window_id: id, .. } => *id == window_id,
-            }
+        self.active_effects.iter().any(|s| match &s.effect {
+            WindowEffect::Open { window_id: id, .. } => *id == window_id,
+            WindowEffect::Close { window_id: id, .. } => *id == window_id,
+            WindowEffect::Transform { window_id: id, .. } => *id == window_id,
+            WindowEffect::FocusIn { window_id: id, .. } => *id == window_id,
+            WindowEffect::Fullscreen { window_id: id, .. } => *id == window_id,
         })
     }
 }
 
 impl Default for EffectManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

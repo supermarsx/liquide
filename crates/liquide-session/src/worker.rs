@@ -189,7 +189,10 @@ impl WorkerManager {
     #[must_use]
     pub fn all_running(&self) -> bool {
         !self.workers.is_empty()
-            && self.workers.values().all(|h| h.status == WorkerStatus::Running)
+            && self
+                .workers
+                .values()
+                .all(|h| h.status == WorkerStatus::Running)
     }
 
     /// Count of workers currently in the Running state.

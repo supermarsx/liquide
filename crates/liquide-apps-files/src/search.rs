@@ -38,10 +38,14 @@ impl FileSearch {
     }
 
     /// Set whether to search within file contents.
-    pub fn set_search_contents(&mut self, enabled: bool) { self.search_contents = enabled; }
+    pub fn set_search_contents(&mut self, enabled: bool) {
+        self.search_contents = enabled;
+    }
 
     /// Set case sensitivity.
-    pub fn set_case_sensitive(&mut self, sensitive: bool) { self.case_sensitive = sensitive; }
+    pub fn set_case_sensitive(&mut self, sensitive: bool) {
+        self.case_sensitive = sensitive;
+    }
 
     /// Start a search with the given query and file list.
     pub fn search(&mut self, query: &str, files: &[(String, String, bool, u64)]) {
@@ -90,19 +94,27 @@ impl FileSearch {
 
     /// Current query.
     #[must_use]
-    pub fn query(&self) -> &str { &self.query }
+    pub fn query(&self) -> &str {
+        &self.query
+    }
 
     /// Search results.
     #[must_use]
-    pub fn results(&self) -> &[SearchResult] { &self.results }
+    pub fn results(&self) -> &[SearchResult] {
+        &self.results
+    }
 
     /// Result count.
     #[must_use]
-    pub fn result_count(&self) -> usize { self.results.len() }
+    pub fn result_count(&self) -> usize {
+        self.results.len()
+    }
 
     /// Whether a search is in progress.
     #[must_use]
-    pub fn is_searching(&self) -> bool { self.searching }
+    pub fn is_searching(&self) -> bool {
+        self.searching
+    }
 
     /// Clear the search.
     pub fn clear(&mut self) {
@@ -113,5 +125,7 @@ impl FileSearch {
 }
 
 impl Default for FileSearch {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

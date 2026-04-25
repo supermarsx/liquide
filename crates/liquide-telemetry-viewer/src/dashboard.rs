@@ -4,18 +4,16 @@ use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{
-        Axis, Block, Borders, Chart, Dataset, List, ListItem, Paragraph,
-    },
-    Frame, Terminal,
+    widgets::{Axis, Block, Borders, Chart, Dataset, List, ListItem, Paragraph},
 };
 use std::io;
 use std::time::Instant;
@@ -131,14 +129,12 @@ fn draw_header(f: &mut Frame, area: Rect, snapshot: &TelemetrySnapshot, age: std
     };
 
     let header = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled(
-                "Liquide Telemetry Dashboard",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            "Liquide Telemetry Dashboard",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]),
         Line::from(vec![
             Span::raw("Status: "),
             Span::styled(

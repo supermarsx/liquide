@@ -1,4 +1,6 @@
-use crate::window_host::{NativeWindowHandle, NativeWindowHost, NativeWindowParams, NullWindowHost};
+use crate::window_host::{
+    NativeWindowHandle, NativeWindowHost, NativeWindowParams, NullWindowHost,
+};
 use liquide_compositor::geometry::Rect;
 
 fn make_params(title: &str) -> NativeWindowParams {

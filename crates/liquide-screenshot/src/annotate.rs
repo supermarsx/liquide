@@ -24,13 +24,48 @@ pub struct AnnotColor {
 }
 
 impl AnnotColor {
-    pub const RED: Self = Self { r: 255, g: 59, b: 48, a: 255 };
-    pub const GREEN: Self = Self { r: 52, g: 199, b: 89, a: 255 };
-    pub const BLUE: Self = Self { r: 0, g: 122, b: 255, a: 255 };
-    pub const YELLOW: Self = Self { r: 255, g: 204, b: 0, a: 255 };
-    pub const WHITE: Self = Self { r: 255, g: 255, b: 255, a: 255 };
-    pub const BLACK: Self = Self { r: 0, g: 0, b: 0, a: 255 };
-    pub const HIGHLIGHT: Self = Self { r: 255, g: 255, b: 0, a: 128 };
+    pub const RED: Self = Self {
+        r: 255,
+        g: 59,
+        b: 48,
+        a: 255,
+    };
+    pub const GREEN: Self = Self {
+        r: 52,
+        g: 199,
+        b: 89,
+        a: 255,
+    };
+    pub const BLUE: Self = Self {
+        r: 0,
+        g: 122,
+        b: 255,
+        a: 255,
+    };
+    pub const YELLOW: Self = Self {
+        r: 255,
+        g: 204,
+        b: 0,
+        a: 255,
+    };
+    pub const WHITE: Self = Self {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    pub const BLACK: Self = Self {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    pub const HIGHLIGHT: Self = Self {
+        r: 255,
+        g: 255,
+        b: 0,
+        a: 128,
+    };
 }
 
 /// A single annotation on the screenshot
@@ -78,12 +113,24 @@ impl AnnotationState {
         }
     }
 
-    pub fn set_tool(&mut self, tool: AnnotationTool) { self.current_tool = tool; }
-    pub fn set_color(&mut self, color: AnnotColor) { self.current_color = color; }
-    pub fn set_stroke_width(&mut self, w: f32) { self.current_stroke_width = w; }
-    pub fn set_font_size(&mut self, s: f32) { self.current_font_size = s; }
-    pub fn current_tool(&self) -> AnnotationTool { self.current_tool }
-    pub fn annotations(&self) -> &[Annotation] { &self.annotations }
+    pub fn set_tool(&mut self, tool: AnnotationTool) {
+        self.current_tool = tool;
+    }
+    pub fn set_color(&mut self, color: AnnotColor) {
+        self.current_color = color;
+    }
+    pub fn set_stroke_width(&mut self, w: f32) {
+        self.current_stroke_width = w;
+    }
+    pub fn set_font_size(&mut self, s: f32) {
+        self.current_font_size = s;
+    }
+    pub fn current_tool(&self) -> AnnotationTool {
+        self.current_tool
+    }
+    pub fn annotations(&self) -> &[Annotation] {
+        &self.annotations
+    }
 
     pub fn begin_draw(&mut self, x: f32, y: f32) {
         self.drawing = true;
@@ -194,15 +241,27 @@ impl AnnotationState {
         }
     }
 
-    pub fn can_undo(&self) -> bool { !self.undo_stack.is_empty() }
-    pub fn can_redo(&self) -> bool { !self.redo_stack.is_empty() }
-    pub fn annotation_count(&self) -> usize { self.annotations.len() }
-    pub fn is_drawing(&self) -> bool { self.drawing }
-    pub fn current_drawing_points(&self) -> &[(f32, f32)] { &self.current_points }
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+    pub fn annotation_count(&self) -> usize {
+        self.annotations.len()
+    }
+    pub fn is_drawing(&self) -> bool {
+        self.drawing
+    }
+    pub fn current_drawing_points(&self) -> &[(f32, f32)] {
+        &self.current_points
+    }
 }
 
 impl Default for AnnotationState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

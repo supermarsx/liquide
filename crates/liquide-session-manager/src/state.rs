@@ -86,7 +86,10 @@ pub enum SessionError {
     /// A named session was not found.
     SessionNotFound(String),
     /// Cannot perform the operation in the current state.
-    InvalidStateTransition { from: SessionState, to: SessionState },
+    InvalidStateTransition {
+        from: SessionState,
+        to: SessionState,
+    },
 }
 
 impl fmt::Display for SessionError {
@@ -181,11 +184,21 @@ pub fn deserialize_snapshot(s: &str) -> Result<SessionSnapshot, SessionError> {
             if geom_parts.len() != 4 {
                 return Err(err("invalid geometry"));
             }
-            let x = geom_parts[0].parse::<i32>().map_err(|_| err("invalid geometry x"))?;
-            let y = geom_parts[1].parse::<i32>().map_err(|_| err("invalid geometry y"))?;
-            let w = geom_parts[2].parse::<u32>().map_err(|_| err("invalid geometry w"))?;
-            let h = geom_parts[3].parse::<u32>().map_err(|_| err("invalid geometry h"))?;
-            let workspace = parts[3].parse::<u32>().map_err(|_| err("invalid window workspace"))?;
+            let x = geom_parts[0]
+                .parse::<i32>()
+                .map_err(|_| err("invalid geometry x"))?;
+            let y = geom_parts[1]
+                .parse::<i32>()
+                .map_err(|_| err("invalid geometry y"))?;
+            let w = geom_parts[2]
+                .parse::<u32>()
+                .map_err(|_| err("invalid geometry w"))?;
+            let h = geom_parts[3]
+                .parse::<u32>()
+                .map_err(|_| err("invalid geometry h"))?;
+            let workspace = parts[3]
+                .parse::<u32>()
+                .map_err(|_| err("invalid window workspace"))?;
             let is_maximized = parts[4] == "1";
             let is_minimized = parts[5] == "1";
             windows.push(SessionWindow {

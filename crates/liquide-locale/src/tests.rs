@@ -184,28 +184,19 @@ fn format_percent_de() {
 #[test]
 fn format_date_iso() {
     let loc = Locale::with_territory("en", "US");
-    assert_eq!(
-        format_date(2024, 1, 15, &loc, DateStyle::ISO),
-        "2024-01-15"
-    );
+    assert_eq!(format_date(2024, 1, 15, &loc, DateStyle::ISO), "2024-01-15");
 }
 
 #[test]
 fn format_date_short_us() {
     let loc = Locale::with_territory("en", "US");
-    assert_eq!(
-        format_date(2024, 1, 15, &loc, DateStyle::Short),
-        "1/15/24"
-    );
+    assert_eq!(format_date(2024, 1, 15, &loc, DateStyle::Short), "1/15/24");
 }
 
 #[test]
 fn format_date_short_de() {
     let loc = Locale::with_territory("de", "DE");
-    assert_eq!(
-        format_date(2024, 1, 15, &loc, DateStyle::Short),
-        "15.1.24"
-    );
+    assert_eq!(format_date(2024, 1, 15, &loc, DateStyle::Short), "15.1.24");
 }
 
 #[test]
@@ -247,41 +238,26 @@ fn format_date_long_es() {
 #[test]
 fn format_time_short_en() {
     let loc = Locale::with_territory("en", "US");
-    assert_eq!(
-        format_time(15, 30, 0, &loc, TimeStyle::Short),
-        "3:30 PM"
-    );
-    assert_eq!(
-        format_time(9, 5, 0, &loc, TimeStyle::Short),
-        "9:05 AM"
-    );
+    assert_eq!(format_time(15, 30, 0, &loc, TimeStyle::Short), "3:30 PM");
+    assert_eq!(format_time(9, 5, 0, &loc, TimeStyle::Short), "9:05 AM");
 }
 
 #[test]
 fn format_time_h24() {
     let loc = Locale::with_territory("de", "DE");
-    assert_eq!(
-        format_time(15, 30, 0, &loc, TimeStyle::H24),
-        "15:30"
-    );
+    assert_eq!(format_time(15, 30, 0, &loc, TimeStyle::H24), "15:30");
 }
 
 #[test]
 fn format_time_long() {
     let loc = Locale::with_territory("de", "DE");
-    assert_eq!(
-        format_time(15, 30, 45, &loc, TimeStyle::Long),
-        "15:30:45"
-    );
+    assert_eq!(format_time(15, 30, 45, &loc, TimeStyle::Long), "15:30:45");
 }
 
 #[test]
 fn format_time_midnight() {
     let loc = Locale::with_territory("en", "US");
-    assert_eq!(
-        format_time(0, 0, 0, &loc, TimeStyle::Short),
-        "12:00 AM"
-    );
+    assert_eq!(format_time(0, 0, 0, &loc, TimeStyle::Short), "12:00 AM");
 }
 
 #[test]
@@ -449,7 +425,10 @@ fn measurement_metric() {
 fn measurement_us_customary() {
     let loc = Locale::with_territory("en", "US");
     assert_eq!(measurement_for_locale(&loc), MeasurementSystem::USCustomary);
-    assert_eq!(MeasurementSystem::USCustomary.temperature_unit(), "\u{00b0}F");
+    assert_eq!(
+        MeasurementSystem::USCustomary.temperature_unit(),
+        "\u{00b0}F"
+    );
 }
 
 #[test]
@@ -473,7 +452,13 @@ fn error_display() {
 
 #[test]
 fn locale_parse_roundtrip() {
-    for s in &["en_US.UTF-8", "de_DE", "ja", "fr_FR.ISO-8859-1", "zh_CN.UTF-8"] {
+    for s in &[
+        "en_US.UTF-8",
+        "de_DE",
+        "ja",
+        "fr_FR.ISO-8859-1",
+        "zh_CN.UTF-8",
+    ] {
         let loc = Locale::parse(s).unwrap();
         let formatted = loc.to_string();
         let reparsed = Locale::parse(&formatted).unwrap();

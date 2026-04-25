@@ -34,6 +34,35 @@ pub enum LockScreenEvent {
     AuthError(String),
     /// Request screen grab for blur background
     RequestBackgroundCapture,
+    /// Request that the compositor hide the overview / Exposé before
+    /// displaying the lock screen, so the lock overlay can paint over a
+    /// stable scene. Consumers should call `OverviewAnimator::begin_exit`
+    /// (or equivalent) on receipt.
+    ClearOverview,
+}
+
+/// Non-character control keys that the lock screen needs to handle.
+///
+/// Platform key layers translate their native keysyms to this enum before
+/// dispatching to [`LockScreenState::handle_action`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LockNavKey {
+    /// Tab — cycle focus between password field and user-list.
+    Tab,
+    /// Shift+Tab — reverse cycle.
+    BackTab,
+    /// Arrow up — move up in user list.
+    ArrowUp,
+    /// Arrow down — move down in user list.
+    ArrowDown,
+    /// Arrow left — move selection left (power-menu buttons).
+    ArrowLeft,
+    /// Arrow right — move selection right.
+    ArrowRight,
+    /// Home — jump to first user / start of password field.
+    Home,
+    /// End — jump to last user / end of password field.
+    End,
 }
 
 /// Actions the shell can send to the lock screen
@@ -41,6 +70,8 @@ pub enum LockScreenEvent {
 pub enum LockScreenAction {
     /// User pressed a key (wake from clock phase)
     KeyPress(char),
+    /// User pressed a navigation / control key (Tab / arrow / Home / End).
+    NavKey(LockNavKey),
     /// User pressed enter (submit password)
     Submit,
     /// User pressed escape (back to clock)
@@ -49,6 +80,14 @@ pub enum LockScreenAction {
     Backspace,
     /// Mouse/touch click at (x, y) in lock screen coords
     Click(f32, f32),
+    /// Explicitly trigger the configured user-switch affordance.
+    SwitchUser,
+    /// Explicitly trigger a shutdown action.
+    Shutdown,
+    /// Explicitly trigger a restart action.
+    Restart,
+    /// Explicitly trigger a suspend action.
+    Suspend,
     /// External lock request (from hotkey, lid close, etc.)
     Lock,
     /// Timer tick (for clock update, lockout countdown)
@@ -71,6 +110,27 @@ pub struct LockScreenState {
     pub display_name: String,
     pub avatar_path: Option<String>,
     pending_events: Vec<LockScreenEvent>,
+    /// Cached background capture supplied by the compositor in response to
+    /// [`LockScreenEvent::RequestBackgroundCapture`]. When present the lock
+    /// screen renderer paints a blur-backdrop layer using this buffer as the
+    /// source; otherwise it falls back to a solid color.
+    background_capture: Option<BlurBackdrop>,
+}
+
+/// A compositor-supplied background capture used to build the lock screen's
+/// blur backdrop.
+///
+/// The compositor fills this after it receives
+/// [`LockScreenEvent::RequestBackgroundCapture`]. The lock screen itself
+/// never reads the pixel buffer — it only hands a reference to the renderer,
+/// which runs the blur pass. Pixel format is always RGBA8 (straight alpha).
+#[derive(Debug, Clone)]
+pub struct BlurBackdrop {
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Vec<u8>,
+    /// Blur radius in physical pixels (usually 20–40).
+    pub blur_radius: u32,
 }
 
 impl LockScreenState {
@@ -96,6 +156,7 @@ impl LockScreenState {
             display_name,
             avatar_path,
             pending_events: Vec::new(),
+            background_capture: None,
         }
     }
 
@@ -110,11 +171,10 @@ impl LockScreenState {
 
         match action {
             LockScreenAction::Lock => {
-                self.phase = ScreenPhase::Clock;
-                self.password_input.clear();
-                self.error_message = None;
-                self.locked_at = Instant::now();
-                self.pending_events.push(LockScreenEvent::RequestBackgroundCapture);
+                self.enter_fresh_lock_transition();
+                self.pending_events.push(LockScreenEvent::ClearOverview);
+                self.pending_events
+                    .push(LockScreenEvent::RequestBackgroundCapture);
             }
 
             LockScreenAction::KeyPress(c) => {
@@ -157,6 +217,36 @@ impl LockScreenState {
             LockScreenAction::Backspace => {
                 if self.phase == ScreenPhase::PasswordEntry {
                     self.password_input.pop();
+                }
+            }
+
+            LockScreenAction::NavKey(nav) => {
+                if self.is_locked_out() {
+                    return self.pending_events.clone();
+                }
+                match (self.phase, nav) {
+                    (ScreenPhase::Clock, LockNavKey::Tab)
+                    | (ScreenPhase::Clock, LockNavKey::ArrowDown)
+                    | (ScreenPhase::Clock, LockNavKey::ArrowRight) => {
+                        // Wake into password entry.
+                        self.phase = ScreenPhase::PasswordEntry;
+                        self.password_input.clear();
+                        self.error_message = None;
+                    }
+                    (ScreenPhase::PasswordEntry, LockNavKey::Home) => {
+                        // Conceptual: caret to start. Renderer tracks caret.
+                    }
+                    (ScreenPhase::PasswordEntry, LockNavKey::End) => {
+                        // Conceptual: caret to end.
+                    }
+                    (ScreenPhase::PasswordEntry, LockNavKey::Tab)
+                    | (ScreenPhase::PasswordEntry, LockNavKey::BackTab) => {
+                        // Cycle focus to user-switch affordance.
+                        if self.config.allow_user_switch {
+                            self.pending_events.push(LockScreenEvent::SwitchUser);
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -208,7 +298,8 @@ impl LockScreenState {
                         }
                         AuthResult::RequiresMfa => {
                             self.phase = ScreenPhase::AuthFailed;
-                            self.error_message = Some("Multi-factor authentication required.".into());
+                            self.error_message =
+                                Some("Multi-factor authentication required.".into());
                         }
                     }
                 }
@@ -225,6 +316,30 @@ impl LockScreenState {
 
             LockScreenAction::Click(x, y) => {
                 self.handle_click(x, y);
+            }
+
+            LockScreenAction::SwitchUser => {
+                if self.config.allow_user_switch {
+                    self.pending_events.push(LockScreenEvent::SwitchUser);
+                }
+            }
+
+            LockScreenAction::Shutdown => {
+                if self.config.show_power_options {
+                    self.pending_events.push(LockScreenEvent::Shutdown);
+                }
+            }
+
+            LockScreenAction::Restart => {
+                if self.config.show_power_options {
+                    self.pending_events.push(LockScreenEvent::Restart);
+                }
+            }
+
+            LockScreenAction::Suspend => {
+                if self.config.show_power_options {
+                    self.pending_events.push(LockScreenEvent::Suspend);
+                }
             }
 
             LockScreenAction::Tick => {
@@ -255,6 +370,34 @@ impl LockScreenState {
         self.lockout_until
             .map(|until| Instant::now() < until)
             .unwrap_or(false)
+    }
+
+    fn enter_fresh_lock_transition(&mut self) {
+        self.phase = ScreenPhase::Clock;
+        self.password_input.clear();
+        self.error_message = None;
+        self.failed_attempts = 0;
+        self.lockout_until = None;
+        self.locked_at = Instant::now();
+        self.background_capture = None;
+    }
+
+    /// Supply a compositor-captured background buffer used to build the
+    /// blur backdrop. Called by the shell after it receives
+    /// [`LockScreenEvent::RequestBackgroundCapture`] and captures the desktop
+    /// scene.
+    pub fn set_background_capture(&mut self, backdrop: BlurBackdrop) {
+        self.background_capture = Some(backdrop);
+    }
+
+    /// Drop the cached background capture (e.g. on unlock).
+    pub fn clear_background_capture(&mut self) {
+        self.background_capture = None;
+    }
+
+    /// Borrow the current blur backdrop, if the compositor has supplied one.
+    pub fn background_capture(&self) -> Option<&BlurBackdrop> {
+        self.background_capture.as_ref()
     }
 
     fn handle_click(&mut self, _x: f32, _y: f32) {
@@ -480,9 +623,73 @@ mod tests {
         let events = state.handle_action(LockScreenAction::Lock, &auth);
         assert_eq!(state.phase, ScreenPhase::Clock);
         assert!(state.password_input.is_empty());
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, LockScreenEvent::RequestBackgroundCapture))
+        );
+    }
+
+    #[test]
+    fn lock_action_clears_stale_relock_state() {
+        let mut state = make_state();
+        let auth = NullAuth::new();
+        state.failed_attempts = 3;
+        state.lockout_until = Some(Instant::now() + Duration::from_secs(30));
+        state.set_background_capture(BlurBackdrop {
+            width: 2,
+            height: 2,
+            rgba8: vec![0; 16],
+            blur_radius: 12,
+        });
+
+        state.handle_action(LockScreenAction::Lock, &auth);
+
+        assert_eq!(state.failed_attempts, 0);
+        assert!(state.lockout_until.is_none());
+        assert!(state.background_capture().is_none());
+    }
+
+    #[test]
+    fn explicit_switch_user_action_emits_event() {
+        let mut state = make_state();
+        state.config.allow_user_switch = true;
+        let auth = NullAuth::new();
+        let events = state.handle_action(LockScreenAction::SwitchUser, &auth);
         assert!(events
             .iter()
-            .any(|e| matches!(e, LockScreenEvent::RequestBackgroundCapture)));
+            .any(|event| matches!(event, LockScreenEvent::SwitchUser)));
+    }
+
+    #[test]
+    fn explicit_power_actions_emit_events() {
+        let mut state = make_state();
+        let auth = NullAuth::new();
+
+        let shutdown = state.handle_action(LockScreenAction::Shutdown, &auth);
+        assert!(shutdown
+            .iter()
+            .any(|event| matches!(event, LockScreenEvent::Shutdown)));
+
+        let restart = state.handle_action(LockScreenAction::Restart, &auth);
+        assert!(restart
+            .iter()
+            .any(|event| matches!(event, LockScreenEvent::Restart)));
+
+        let suspend = state.handle_action(LockScreenAction::Suspend, &auth);
+        assert!(suspend
+            .iter()
+            .any(|event| matches!(event, LockScreenEvent::Suspend)));
+    }
+
+    #[test]
+    fn explicit_power_actions_respect_config() {
+        let mut state = make_state();
+        state.config.show_power_options = false;
+        let auth = NullAuth::new();
+
+        let events = state.handle_action(LockScreenAction::Shutdown, &auth);
+        assert!(events.is_empty());
     }
 
     #[test]

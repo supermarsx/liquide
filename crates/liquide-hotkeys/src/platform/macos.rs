@@ -274,7 +274,10 @@ unsafe extern "C" fn hotkey_handler(
     user_data: *mut std::ffi::c_void,
 ) -> i32 {
     let pending = &*(user_data as *const Mutex<Vec<u32>>);
-    let mut hotkey_id = EventHotKeyID { signature: 0, id: 0 };
+    let mut hotkey_id = EventHotKeyID {
+        signature: 0,
+        id: 0,
+    };
     let status = GetEventParameter(
         event,
         K_EVENT_PARAM_DIRECT_OBJECT,

@@ -4,8 +4,8 @@
 //! of all ancestor clips down to the current node — used for visibility
 //! culling and overdraw elimination.
 
-use crate::transform_tree::{NodeId, ROOT_ID};
 use crate::Rect;
+use crate::transform_tree::{NodeId, ROOT_ID};
 
 /// The type of clip applied at a node.
 #[derive(Debug, Clone, PartialEq)]
@@ -13,16 +13,9 @@ pub enum ClipType {
     /// Axis-aligned rectangular clip.
     Rect,
     /// Rounded rectangle with per-corner radii (top-left, top-right, bottom-right, bottom-left).
-    RoundedRect {
-        radii: (f32, f32, f32, f32),
-    },
+    RoundedRect { radii: (f32, f32, f32, f32) },
     /// Circle or ellipse clip.
-    CircleEllipse {
-        cx: f32,
-        cy: f32,
-        rx: f32,
-        ry: f32,
-    },
+    CircleEllipse { cx: f32, cy: f32, rx: f32, ry: f32 },
     /// Arbitrary polygon clip (list of vertices).
     Path(Vec<(f32, f32)>),
 }
@@ -40,7 +33,11 @@ pub struct ClipNode {
     pub id: NodeId,
     /// Parent node, or `None` for the root.
     pub parent: Option<NodeId>,
-    /// The clip rectangle in local space.
+    /// The clip rectangle in the local space shared by this clip chain.
+    ///
+    /// The accumulated clip cached by this tree remains in that same local
+    /// space; callers must apply transforms separately before comparing it to
+    /// screen-space geometry.
     pub clip_rect: Rect,
     /// The clip shape type.
     pub clip_type: ClipType,
@@ -83,7 +80,8 @@ pub struct ClipChainEntry {
 /// Hierarchical tree of clip nodes with cached accumulated clips.
 pub struct ClipTree {
     nodes: Vec<ClipNode>,
-    /// Cached accumulated clip rect per node (intersection of all ancestor rects).
+    /// Cached accumulated local-space clip rect per node (AABB intersection of
+    /// all ancestor clip bounds).
     accumulated: Vec<Option<Rect>>,
     /// Per-node dirty flag.
     dirty: Vec<bool>,
@@ -106,7 +104,10 @@ impl ClipTree {
     /// Add a new clip node. Returns its `NodeId`.
     pub fn add(&mut self, parent: Option<NodeId>, clip_rect: Rect, clip_type: ClipType) -> NodeId {
         let id = self.nodes.len() as NodeId;
-        let parent_id = parent.unwrap_or(ROOT_ID);
+        let parent_id = match parent.unwrap_or(ROOT_ID) {
+            pid if (pid as usize) < self.nodes.len() => pid,
+            _ => ROOT_ID,
+        };
         self.nodes.push(ClipNode {
             id,
             parent: Some(parent_id),
@@ -167,7 +168,9 @@ impl ClipTree {
                 continue;
             }
             let parent_acc = match self.nodes[i].parent {
-                Some(pid) => self.accumulated[pid as usize].unwrap_or(self.nodes[pid as usize].clip_rect),
+                Some(pid) => {
+                    self.accumulated[pid as usize].unwrap_or(self.nodes[pid as usize].clip_rect)
+                }
                 None => self.nodes[i].clip_rect,
             };
             self.accumulated[i] = Some(intersect_rects(parent_acc, self.nodes[i].clip_rect));
@@ -200,6 +203,22 @@ impl ClipTree {
         }
         chain.reverse();
         ClipChain { clips: chain }
+    }
+
+    /// Test whether a point in the clip chain's local space is inside every
+    /// clip from the given node back to the root.
+    pub fn contains_point(&self, id: NodeId, point: (f32, f32)) -> bool {
+        let mut current = Some(id);
+        while let Some(nid) = current {
+            let Some(node) = self.nodes.get(nid as usize) else {
+                return false;
+            };
+            if !clip_contains_point(node, point.0, point.1) {
+                return false;
+            }
+            current = node.parent;
+        }
+        true
     }
 
     /// Test whether a rectangle is visible after applying all accumulated clips
@@ -270,8 +289,101 @@ fn intersect_rects(a: Rect, b: Rect) -> Rect {
 
 /// AABB intersection test.
 fn rects_intersect(a: Rect, b: Rect) -> bool {
-    a.x < b.x + b.width
-        && a.x + a.width > b.x
-        && a.y < b.y + b.height
-        && a.y + a.height > b.y
+    a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+}
+
+fn clip_contains_point(node: &ClipNode, x: f32, y: f32) -> bool {
+    match &node.clip_type {
+        ClipType::Rect => node.clip_rect.contains(x, y),
+        ClipType::RoundedRect { radii } => rounded_rect_contains_point(node.clip_rect, *radii, x, y),
+        ClipType::CircleEllipse { cx, cy, rx, ry } => ellipse_contains_point(*cx, *cy, *rx, *ry, x, y),
+        ClipType::Path(points) => path_contains_point(points, x, y),
+    }
+}
+
+fn rounded_rect_contains_point(
+    rect: Rect,
+    radii: (f32, f32, f32, f32),
+    x: f32,
+    y: f32,
+) -> bool {
+    if !rect.contains(x, y) {
+        return false;
+    }
+
+    let max_radius = (rect.width.min(rect.height) * 0.5).max(0.0);
+    let top_left = radii.0.clamp(0.0, max_radius);
+    let top_right = radii.1.clamp(0.0, max_radius);
+    let bottom_right = radii.2.clamp(0.0, max_radius);
+    let bottom_left = radii.3.clamp(0.0, max_radius);
+
+    if x < rect.x + top_left && y < rect.y + top_left {
+        return ellipse_contains_point(rect.x + top_left, rect.y + top_left, top_left, top_left, x, y);
+    }
+    if x >= rect.right() - top_right && y < rect.y + top_right {
+        return ellipse_contains_point(
+            rect.right() - top_right,
+            rect.y + top_right,
+            top_right,
+            top_right,
+            x,
+            y,
+        );
+    }
+    if x >= rect.right() - bottom_right && y >= rect.bottom() - bottom_right {
+        return ellipse_contains_point(
+            rect.right() - bottom_right,
+            rect.bottom() - bottom_right,
+            bottom_right,
+            bottom_right,
+            x,
+            y,
+        );
+    }
+    if x < rect.x + bottom_left && y >= rect.bottom() - bottom_left {
+        return ellipse_contains_point(
+            rect.x + bottom_left,
+            rect.bottom() - bottom_left,
+            bottom_left,
+            bottom_left,
+            x,
+            y,
+        );
+    }
+
+    true
+}
+
+fn ellipse_contains_point(cx: f32, cy: f32, rx: f32, ry: f32, x: f32, y: f32) -> bool {
+    if rx <= 0.0 || ry <= 0.0 {
+        return false;
+    }
+
+    let norm_x = (x - cx) / rx;
+    let norm_y = (y - cy) / ry;
+    norm_x * norm_x + norm_y * norm_y <= 1.0
+}
+
+fn path_contains_point(points: &[(f32, f32)], x: f32, y: f32) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+
+    let mut inside = false;
+    let mut previous = points[points.len() - 1];
+
+    for &current in points {
+        let (x0, y0) = previous;
+        let (x1, y1) = current;
+        let crosses_scanline = (y0 > y) != (y1 > y);
+        if crosses_scanline {
+            let intersection_x = x0 + (x1 - x0) * (y - y0) / (y1 - y0);
+            if x <= intersection_x {
+                inside = !inside;
+            }
+        }
+        previous = current;
+    }
+
+    inside
 }

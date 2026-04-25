@@ -28,7 +28,8 @@ fn test_remove_root() {
 fn test_focus_on_removed_node() {
     let mut tree = AccessibilityTree::new();
     tree.set_root(AccessibleNode::new(1, Role::Window, "Main"));
-    tree.add_node(1, AccessibleNode::new(2, Role::Button, "A")).unwrap();
+    tree.add_node(1, AccessibleNode::new(2, Role::Button, "A"))
+        .unwrap();
     let mut fm = FocusManager::new();
     fm.build_tab_order(&tree);
     fm.set_focus(2);

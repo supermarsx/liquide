@@ -124,8 +124,15 @@ impl AccessibilityBridge {
         let value_name: Vec<u16> = "TextScaleFactor\0".encode_utf16().collect();
 
         let mut hkey: isize = 0;
-        let rc =
-            unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, sub_key.as_ptr(), 0, KEY_READ, &raw mut hkey) };
+        let rc = unsafe {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                sub_key.as_ptr(),
+                0,
+                KEY_READ,
+                &raw mut hkey,
+            )
+        };
         if rc != 0 {
             return 1.0;
         }
@@ -147,11 +154,7 @@ impl AccessibilityBridge {
             RegCloseKey(hkey);
         }
 
-        if rc == 0 {
-            (data as f32) / 100.0
-        } else {
-            1.0
-        }
+        if rc == 0 { (data as f32) / 100.0 } else { 1.0 }
     }
 
     fn speak(&self, text: &str, priority: AnnouncePriority) {

@@ -109,7 +109,12 @@ mod tests {
 
     #[test]
     fn test_damage_rect_fields() {
-        let rect = DamageRect { x: 10, y: 20, width: 100, height: 200 };
+        let rect = DamageRect {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 200,
+        };
         assert_eq!(rect.x, 10);
         assert_eq!(rect.y, 20);
         assert_eq!(rect.width, 100);

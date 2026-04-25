@@ -15,7 +15,12 @@ pub struct Rect {
 impl Rect {
     /// Create a new rectangle.
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Returns the right edge (exclusive).

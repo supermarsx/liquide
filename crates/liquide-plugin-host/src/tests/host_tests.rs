@@ -1,4 +1,4 @@
-use liquide_plugin_abi::host_functions::{FN_LOG, FN_GET_CONFIG, FN_SEND_MESSAGE};
+use liquide_plugin_abi::host_functions::{FN_GET_CONFIG, FN_LOG, FN_SEND_MESSAGE};
 use liquide_plugin_abi::types::PluginResult;
 use liquide_plugin_abi::{ABI_VERSION, ExtensionPoint, PluginManifest};
 

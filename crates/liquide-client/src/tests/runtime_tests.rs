@@ -59,21 +59,39 @@ async fn test_drain_clears_events() {
 #[test]
 fn test_toggle_fullscreen() {
     let mut runtime = make_runtime();
-    assert_eq!(runtime.display_manager_mut().current_mode(), DisplayMode::SingleWindow);
+    assert_eq!(
+        runtime.display_manager_mut().current_mode(),
+        DisplayMode::SingleWindow
+    );
     runtime.toggle_fullscreen();
-    assert_eq!(runtime.display_manager_mut().current_mode(), DisplayMode::Fullscreen);
+    assert_eq!(
+        runtime.display_manager_mut().current_mode(),
+        DisplayMode::Fullscreen
+    );
     runtime.toggle_fullscreen();
-    assert_eq!(runtime.display_manager_mut().current_mode(), DisplayMode::SingleWindow);
+    assert_eq!(
+        runtime.display_manager_mut().current_mode(),
+        DisplayMode::SingleWindow
+    );
 }
 
 #[test]
 fn test_cycle_display_mode() {
     let mut runtime = make_runtime();
-    assert_eq!(runtime.display_manager_mut().current_mode(), DisplayMode::SingleWindow);
+    assert_eq!(
+        runtime.display_manager_mut().current_mode(),
+        DisplayMode::SingleWindow
+    );
     runtime.cycle_display_mode();
-    assert_eq!(runtime.display_manager_mut().current_mode(), DisplayMode::Fullscreen);
+    assert_eq!(
+        runtime.display_manager_mut().current_mode(),
+        DisplayMode::Fullscreen
+    );
     runtime.cycle_display_mode();
-    assert_eq!(runtime.display_manager_mut().current_mode(), DisplayMode::Tabbed);
+    assert_eq!(
+        runtime.display_manager_mut().current_mode(),
+        DisplayMode::Tabbed
+    );
 }
 
 #[test]
@@ -87,7 +105,11 @@ fn test_show_crash_screen() {
     assert!(data.restart_available);
 
     let events = runtime.drain_audit_events();
-    assert!(events.iter().any(|e| e.event_name() == "crash_screen_shown"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_name() == "crash_screen_shown")
+    );
 }
 
 #[test]

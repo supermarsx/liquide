@@ -212,7 +212,11 @@ impl PolicyManager {
     /// active after considering the current battery level. The manager will
     /// automatically switch to PowerSaver when below the threshold and
     /// restore the user's choice when battery recovers.
-    pub fn apply_battery_threshold(&mut self, battery_percent: u8, is_charging: bool) -> &PowerPolicy {
+    pub fn apply_battery_threshold(
+        &mut self,
+        battery_percent: u8,
+        is_charging: bool,
+    ) -> &PowerPolicy {
         if is_charging {
             // Restore user policy when charging.
             if self.forced_power_saver {

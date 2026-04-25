@@ -21,7 +21,10 @@ pub async fn execute(client: &Client, output: &Output, args: &StatusArgs) -> Res
             output.message(&format!("LiquiDE Server {}", status.version));
             output.message(&format!("  Status:       {}", status.status));
             output.message(&format!("  Uptime:       {}s", status.uptime_seconds));
-            output.message(&format!("  Sessions:     {} active", status.sessions_active));
+            output.message(&format!(
+                "  Sessions:     {} active",
+                status.sessions_active
+            ));
         }
         None => {
             if let Some(err) = resp.error {

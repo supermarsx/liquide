@@ -33,7 +33,7 @@ fn pipeline_produces_scene_nodes() {
     // The pipeline should produce at least some nodes from styled elements
     // (background colors, borders, text, etc.)
     // Note: exact count depends on which elements have visible styles
-    assert!(nodes.len() >= 0); // no panic = success
+    assert!(!nodes.is_empty());
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn display_list_bridge() {
             height: 50.0,
         },
         color: Color::new(255, 0, 0, 255),
-        radius: liquide_style_engine::dimension::Corners::all(0.0),
+        radius: liquide_style_engine::dimension::Corners::all(0.0_f32.into()),
     });
     list.push(DisplayItem::Text {
         rect: liquide_layout::Rect {
@@ -105,9 +105,7 @@ fn display_list_bridge() {
         text_indent: 0.0,
         text_decoration: None,
         text_shadows: Vec::new(),
-        text_emphasis_style: None,
-        text_emphasis_color: None,
-        text_emphasis_position: None,
+        text_emphasis: None,
         caret_color: None,
     });
 

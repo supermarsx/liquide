@@ -21,7 +21,12 @@ fn transfer_begin_offer() {
 #[test]
 fn transfer_request_format() {
     let mut t = ClipboardTransfer::new(1024);
-    let offer = ClipboardOffer::new(1, vec![ClipboardFormat::PlainText, ClipboardFormat::Html], 0, 1);
+    let offer = ClipboardOffer::new(
+        1,
+        vec![ClipboardFormat::PlainText, ClipboardFormat::Html],
+        0,
+        1,
+    );
     t.begin_offer(offer);
     assert!(t.request_format(ClipboardFormat::PlainText).is_ok());
     assert!(matches!(t.state(), TransferState::Requested { .. }));

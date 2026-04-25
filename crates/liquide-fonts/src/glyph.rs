@@ -74,23 +74,91 @@ pub struct OpenTypeFeature {
 /// Known OpenType features and their descriptions.
 pub fn known_features() -> Vec<OpenTypeFeature> {
     vec![
-        OpenTypeFeature { tag: "liga".into(), name: "Standard Ligatures".into(), default_on: true },
-        OpenTypeFeature { tag: "clig".into(), name: "Contextual Ligatures".into(), default_on: true },
-        OpenTypeFeature { tag: "dlig".into(), name: "Discretionary Ligatures".into(), default_on: false },
-        OpenTypeFeature { tag: "hlig".into(), name: "Historical Ligatures".into(), default_on: false },
-        OpenTypeFeature { tag: "kern".into(), name: "Kerning".into(), default_on: true },
-        OpenTypeFeature { tag: "smcp".into(), name: "Small Capitals".into(), default_on: false },
-        OpenTypeFeature { tag: "c2sc".into(), name: "Capitals to Small Caps".into(), default_on: false },
-        OpenTypeFeature { tag: "onum".into(), name: "Oldstyle Figures".into(), default_on: false },
-        OpenTypeFeature { tag: "lnum".into(), name: "Lining Figures".into(), default_on: false },
-        OpenTypeFeature { tag: "tnum".into(), name: "Tabular Figures".into(), default_on: false },
-        OpenTypeFeature { tag: "pnum".into(), name: "Proportional Figures".into(), default_on: false },
-        OpenTypeFeature { tag: "ss01".into(), name: "Stylistic Set 1".into(), default_on: false },
-        OpenTypeFeature { tag: "ss02".into(), name: "Stylistic Set 2".into(), default_on: false },
-        OpenTypeFeature { tag: "frac".into(), name: "Fractions".into(), default_on: false },
-        OpenTypeFeature { tag: "zero".into(), name: "Slashed Zero".into(), default_on: false },
-        OpenTypeFeature { tag: "calt".into(), name: "Contextual Alternates".into(), default_on: true },
-        OpenTypeFeature { tag: "swsh".into(), name: "Swash".into(), default_on: false },
+        OpenTypeFeature {
+            tag: "liga".into(),
+            name: "Standard Ligatures".into(),
+            default_on: true,
+        },
+        OpenTypeFeature {
+            tag: "clig".into(),
+            name: "Contextual Ligatures".into(),
+            default_on: true,
+        },
+        OpenTypeFeature {
+            tag: "dlig".into(),
+            name: "Discretionary Ligatures".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "hlig".into(),
+            name: "Historical Ligatures".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "kern".into(),
+            name: "Kerning".into(),
+            default_on: true,
+        },
+        OpenTypeFeature {
+            tag: "smcp".into(),
+            name: "Small Capitals".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "c2sc".into(),
+            name: "Capitals to Small Caps".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "onum".into(),
+            name: "Oldstyle Figures".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "lnum".into(),
+            name: "Lining Figures".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "tnum".into(),
+            name: "Tabular Figures".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "pnum".into(),
+            name: "Proportional Figures".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "ss01".into(),
+            name: "Stylistic Set 1".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "ss02".into(),
+            name: "Stylistic Set 2".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "frac".into(),
+            name: "Fractions".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "zero".into(),
+            name: "Slashed Zero".into(),
+            default_on: false,
+        },
+        OpenTypeFeature {
+            tag: "calt".into(),
+            name: "Contextual Alternates".into(),
+            default_on: true,
+        },
+        OpenTypeFeature {
+            tag: "swsh".into(),
+            name: "Swash".into(),
+            default_on: false,
+        },
     ]
 }
 

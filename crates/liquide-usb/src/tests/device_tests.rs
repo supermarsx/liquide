@@ -1,7 +1,10 @@
 use crate::device::{DeviceClass, DeviceInfo, DeviceState, SecurityKeyDb, UsbDevice, VidPid};
 
 fn sample_vid_pid() -> VidPid {
-    VidPid { vendor: 0x046D, product: 0xC534 }
+    VidPid {
+        vendor: 0x046D,
+        product: 0xC534,
+    }
 }
 
 fn sample_info() -> DeviceInfo {
@@ -23,20 +26,29 @@ fn test_device_class_display() {
 
 #[test]
 fn test_vid_pid_display() {
-    let vp = VidPid { vendor: 0x1050, product: 0x0407 };
+    let vp = VidPid {
+        vendor: 0x1050,
+        product: 0x0407,
+    };
     assert_eq!(vp.to_string(), "1050:0407");
 }
 
 #[test]
 fn test_vid_pid_matches_exact() {
-    let vp = VidPid { vendor: 0x1050, product: 0x0407 };
+    let vp = VidPid {
+        vendor: 0x1050,
+        product: 0x0407,
+    };
     assert!(vp.matches_pattern("1050:0407"));
     assert!(!vp.matches_pattern("1050:0408"));
 }
 
 #[test]
 fn test_vid_pid_matches_wildcard() {
-    let vp = VidPid { vendor: 0x1050, product: 0x0407 };
+    let vp = VidPid {
+        vendor: 0x1050,
+        product: 0x0407,
+    };
     assert!(vp.matches_pattern("1050:*"));
     assert!(vp.matches_pattern("*:0407"));
     assert!(!vp.matches_pattern("1051:*"));
@@ -62,28 +74,37 @@ fn test_usb_device_lifecycle() {
 #[test]
 fn test_security_key_db_yubico() {
     let db = SecurityKeyDb::new();
-    let yubikey = VidPid { vendor: 0x1050, product: 0x0407 };
+    let yubikey = VidPid {
+        vendor: 0x1050,
+        product: 0x0407,
+    };
     assert!(db.is_security_key(&yubikey));
 }
 
 #[test]
 fn test_security_key_db_non_key() {
     let db = SecurityKeyDb::new();
-    let mouse = VidPid { vendor: 0x046D, product: 0xC534 };
+    let mouse = VidPid {
+        vendor: 0x046D,
+        product: 0xC534,
+    };
     assert!(!db.is_security_key(&mouse));
 }
 
 #[test]
 fn test_security_key_db_overrides() {
-    let db = SecurityKeyDb::with_overrides(
-        &["AAAA:BBBB".to_string()],
-        &["1050:*".to_string()],
-    );
+    let db = SecurityKeyDb::with_overrides(&["AAAA:BBBB".to_string()], &["1050:*".to_string()]);
     // Custom addition should be recognized
-    let custom = VidPid { vendor: 0xAAAA, product: 0xBBBB };
+    let custom = VidPid {
+        vendor: 0xAAAA,
+        product: 0xBBBB,
+    };
     assert!(db.is_security_key(&custom));
 
     // Yubico exception should no longer match
-    let yubikey = VidPid { vendor: 0x1050, product: 0x0407 };
+    let yubikey = VidPid {
+        vendor: 0x1050,
+        product: 0x0407,
+    };
     assert!(!db.is_security_key(&yubikey));
 }

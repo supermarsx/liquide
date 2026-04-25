@@ -9,8 +9,7 @@ where
 {
     let mut buf = Vec::new();
     ciborium::into_writer(value, &mut buf).expect("CBOR serialize failed");
-    let decoded: T =
-        ciborium::from_reader(buf.as_slice()).expect("CBOR deserialize failed");
+    let decoded: T = ciborium::from_reader(buf.as_slice()).expect("CBOR deserialize failed");
     decoded
 }
 
@@ -40,9 +39,9 @@ fn video_frame_header_msg_cbor_roundtrip_full() {
         quantizer: Some(28),
         timestamp_us: 16_666,
         color_space: Some(ColorSpaceInfo {
-            primaries: 1,  // BT.709
-            transfer: 13,  // sRGB
-            matrix: 1,     // BT.709
+            primaries: 1, // BT.709
+            transfer: 13, // sRGB
+            matrix: 1,    // BT.709
             bit_depth: 8,
         }),
         hdr_metadata: Some(HdrMetadata {
@@ -116,9 +115,9 @@ fn video_frame_header_msg_optional_fields_omitted_in_cbor() {
     }]);
     full.quantizer = Some(30);
     full.color_space = Some(ColorSpaceInfo {
-        primaries: 1,  // BT.709
-        transfer: 13,  // sRGB
-        matrix: 1,     // BT.709
+        primaries: 1, // BT.709
+        transfer: 13, // sRGB
+        matrix: 1,    // BT.709
         bit_depth: 8,
     });
 

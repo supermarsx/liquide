@@ -1,6 +1,6 @@
 //! USB audit event types and logging.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Severity level for audit events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -217,8 +217,12 @@ impl std::fmt::Display for RecordingConfig {
         write!(
             f,
             "RecordingConfig({}, {}fps, {}, fmt={}, audio={}, cursor={})",
-            self.region, self.framerate, self.quality, self.output_format,
-            self.include_audio, self.include_cursor
+            self.region,
+            self.framerate,
+            self.quality,
+            self.output_format,
+            self.include_audio,
+            self.include_cursor
         )
     }
 }
@@ -267,8 +271,11 @@ impl std::fmt::Display for RecordingResult {
         write!(
             f,
             "RecordingResult(frames={}, duration={}ms, size={} bytes, avg_fps={:.1}, dropped={})",
-            self.frame_count, self.duration_ms, self.output_size_bytes,
-            self.average_fps, self.dropped_frames
+            self.frame_count,
+            self.duration_ms,
+            self.output_size_bytes,
+            self.average_fps,
+            self.dropped_frames
         )
     }
 }

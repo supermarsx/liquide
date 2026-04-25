@@ -71,11 +71,7 @@ pub struct Animation {
 
 impl Animation {
     /// Create a new animation. It starts in the `Pending` state.
-    pub fn new(
-        id: AnimationId,
-        tracks: HashMap<String, KeyframeTrack>,
-        duration_ms: f32,
-    ) -> Self {
+    pub fn new(id: AnimationId, tracks: HashMap<String, KeyframeTrack>, duration_ms: f32) -> Self {
         Self {
             id,
             tracks,
@@ -139,9 +135,7 @@ impl Animation {
         if active_time < 0.0 {
             // During delay.
             return match self.fill_mode {
-                FillMode::Backwards | FillMode::Both => {
-                    self.directed_t(0.0, 0)
-                }
+                FillMode::Backwards | FillMode::Both => self.directed_t(0.0, 0),
                 _ => 0.0,
             };
         }
@@ -187,10 +181,18 @@ impl Animation {
             PlayDirection::Normal => t,
             PlayDirection::Reverse => 1.0 - t,
             PlayDirection::Alternate => {
-                if iteration % 2 == 0 { t } else { 1.0 - t }
+                if iteration % 2 == 0 {
+                    t
+                } else {
+                    1.0 - t
+                }
             }
             PlayDirection::AlternateReverse => {
-                if iteration % 2 == 0 { 1.0 - t } else { t }
+                if iteration % 2 == 0 {
+                    1.0 - t
+                } else {
+                    t
+                }
             }
         }
     }
@@ -235,10 +237,21 @@ mod tests {
 
     fn simple_opacity_anim(duration_ms: f32) -> Animation {
         let mut tracks = HashMap::new();
-        tracks.insert("opacity".to_string(), KeyframeTrack::new(vec![
-            Keyframe { offset: 0.0, value: AnimValue::Float(0.0), easing: EasingFunction::Linear },
-            Keyframe { offset: 1.0, value: AnimValue::Float(1.0), easing: EasingFunction::Linear },
-        ]));
+        tracks.insert(
+            "opacity".to_string(),
+            KeyframeTrack::new(vec![
+                Keyframe {
+                    offset: 0.0,
+                    value: AnimValue::Float(0.0),
+                    easing: EasingFunction::Linear,
+                },
+                Keyframe {
+                    offset: 1.0,
+                    value: AnimValue::Float(1.0),
+                    easing: EasingFunction::Linear,
+                },
+            ]),
+        );
         Animation::new(AnimationId(1), tracks, duration_ms)
     }
 
@@ -316,7 +329,10 @@ mod tests {
         anim.direction = PlayDirection::Reverse;
         anim.tick(25.0);
         let t = anim.effective_t();
-        assert!((t - 0.75).abs() < 0.01, "reverse at 25%: expected ~0.75, got {t}");
+        assert!(
+            (t - 0.75).abs() < 0.01,
+            "reverse at 25%: expected ~0.75, got {t}"
+        );
     }
 
     #[test]
@@ -342,7 +358,10 @@ mod tests {
         anim.fill_mode = FillMode::Forwards;
         anim.tick(200.0); // well past end
         let t = anim.effective_t();
-        assert!((t - 1.0).abs() < 0.01, "forwards fill should hold 1.0, got {t}");
+        assert!(
+            (t - 1.0).abs() < 0.01,
+            "forwards fill should hold 1.0, got {t}"
+        );
     }
 
     #[test]
@@ -377,7 +396,10 @@ mod tests {
         anim.tick(50.0);
         assert_eq!(anim.state, AnimationState::Paused);
         let t = anim.effective_t();
-        assert!((t - 0.3).abs() < 0.01, "paused t should still be ~0.3, got {t}");
+        assert!(
+            (t - 0.3).abs() < 0.01,
+            "paused t should still be ~0.3, got {t}"
+        );
 
         anim.resume();
         assert_eq!(anim.state, AnimationState::Running);

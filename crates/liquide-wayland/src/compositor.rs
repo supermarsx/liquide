@@ -134,9 +134,7 @@ impl WlCompositor {
     ///
     /// Returns `true` if successful.
     pub fn place_above(&mut self, surface_id: ObjectId, sibling_id: ObjectId) -> bool {
-        if !self.surfaces.contains_key(&surface_id)
-            || !self.surfaces.contains_key(&sibling_id)
-        {
+        if !self.surfaces.contains_key(&surface_id) || !self.surfaces.contains_key(&sibling_id) {
             return false;
         }
         self.z_order.retain(|z| *z != surface_id);
@@ -153,9 +151,7 @@ impl WlCompositor {
     ///
     /// Returns `true` if successful.
     pub fn place_below(&mut self, surface_id: ObjectId, sibling_id: ObjectId) -> bool {
-        if !self.surfaces.contains_key(&surface_id)
-            || !self.surfaces.contains_key(&sibling_id)
-        {
+        if !self.surfaces.contains_key(&surface_id) || !self.surfaces.contains_key(&sibling_id) {
             return false;
         }
         self.z_order.retain(|z| *z != surface_id);
@@ -172,14 +168,8 @@ impl WlCompositor {
     /// of `parent_id`.
     ///
     /// Returns `true` if both surfaces exist and the relationship was created.
-    pub fn create_subsurface(
-        &mut self,
-        child_id: ObjectId,
-        parent_id: ObjectId,
-    ) -> bool {
-        if !self.surfaces.contains_key(&child_id)
-            || !self.surfaces.contains_key(&parent_id)
-        {
+    pub fn create_subsurface(&mut self, child_id: ObjectId, parent_id: ObjectId) -> bool {
+        if !self.surfaces.contains_key(&child_id) || !self.surfaces.contains_key(&parent_id) {
             return false;
         }
 

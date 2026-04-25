@@ -102,11 +102,7 @@ impl ResourcePool {
             .ok_or_else(|| PluginHostError::Internal(format!("unknown handle: {}", handle.0)))?;
         self.total_allocated = self.total_allocated.saturating_sub(alloc.size);
 
-        tracing::debug!(
-            handle = handle.0,
-            size = alloc.size,
-            "resource freed"
-        );
+        tracing::debug!(handle = handle.0, size = alloc.size, "resource freed");
 
         Ok(alloc)
     }

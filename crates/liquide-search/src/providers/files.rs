@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::provider::{
-    SearchCategory, SearchProvider, SearchResult, SearchResultAction, fuzzy_score, clamp_score,
+    SearchCategory, SearchProvider, SearchResult, SearchResultAction, clamp_score, fuzzy_score,
 };
 
 // ---------------------------------------------------------------------------
@@ -167,10 +167,18 @@ impl Default for FileSearchProvider {
 }
 
 impl SearchProvider for FileSearchProvider {
-    fn id(&self) -> &str { "files" }
-    fn name(&self) -> &str { "Files" }
-    fn icon(&self) -> &str { "system-file-manager" }
-    fn priority(&self) -> u32 { 60 }
+    fn id(&self) -> &str {
+        "files"
+    }
+    fn name(&self) -> &str {
+        "Files"
+    }
+    fn icon(&self) -> &str {
+        "system-file-manager"
+    }
+    fn priority(&self) -> u32 {
+        60
+    }
 
     fn search(&self, query: &str, max_results: usize) -> Vec<SearchResult> {
         self.index
@@ -181,7 +189,9 @@ impl SearchProvider for FileSearchProvider {
                 SearchResult {
                     id: e.path.to_string_lossy().into_owned(),
                     title: e.name.clone(),
-                    description: e.path.parent()
+                    description: e
+                        .path
+                        .parent()
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_default(),
                     icon: if e.is_dir {
@@ -217,7 +227,9 @@ fn icon_for_extension(ext: &str) -> String {
 
 fn mime_extensions(category: &str) -> Vec<&'static str> {
     match category.to_lowercase().as_str() {
-        "image" => vec!["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "ico", "tiff"],
+        "image" => vec![
+            "png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "ico", "tiff",
+        ],
         "video" => vec!["mp4", "mkv", "avi", "mov", "webm", "flv"],
         "audio" => vec!["mp3", "wav", "flac", "ogg", "aac", "m4a"],
         "document" => vec!["pdf", "doc", "docx", "odt", "txt", "rtf", "md"],
@@ -412,8 +424,10 @@ mod tests {
     #[test]
     fn provider_search_returns_results() {
         let mut p = FileSearchProvider::new();
-        p.index_mut().add_path(Path::new("/home/user/readme.md"), false);
-        p.index_mut().add_path(Path::new("/home/user/main.rs"), false);
+        p.index_mut()
+            .add_path(Path::new("/home/user/readme.md"), false);
+        p.index_mut()
+            .add_path(Path::new("/home/user/main.rs"), false);
 
         let r = p.search("readme", 10);
         assert_eq!(r.len(), 1);

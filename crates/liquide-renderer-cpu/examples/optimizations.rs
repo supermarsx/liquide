@@ -6,9 +6,9 @@
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::scene::FlatNode;
+use liquide_renderer_cpu::Renderer as _;
 use liquide_renderer_cpu::lod::PerformanceMode;
 use liquide_renderer_cpu::renderer::SoftwareRenderer;
-use liquide_renderer_cpu::Renderer as _;
 
 /// Example UI element with cached layout.
 struct UiElement {
@@ -164,7 +164,10 @@ fn optimized_render_loop() {
                 continue;
             }
 
-            println!("  - Element {} processed (bounds: {:?})", element.id, bounds);
+            println!(
+                "  - Element {} processed (bounds: {:?})",
+                element.id, bounds
+            );
             processed_elements += 1;
 
             // Use object pool for temporary buffer
@@ -188,7 +191,11 @@ fn optimized_render_loop() {
 
         // Print statistics
         println!("\nFrame {} statistics:", frame);
-        println!("  - Processed elements: {}/{}", processed_elements, elements.len());
+        println!(
+            "  - Processed elements: {}/{}",
+            processed_elements,
+            elements.len()
+        );
         println!("  - Frame time: {:.2}ms", frame_time);
 
         let layout_stats = renderer.layout_cache_stats();
@@ -232,10 +239,14 @@ fn optimized_render_loop() {
     );
 
     println!("\nOptimizations achieved:");
-    println!("  ✓ Layout caching: Avoided {} recalculations", 
-             layout_stats.valid_entries);
-    println!("  ✓ Texture caching: Reused {} textures without decoding", 
-             texture_stats.entry_count);
+    println!(
+        "  ✓ Layout caching: Avoided {} recalculations",
+        layout_stats.valid_entries
+    );
+    println!(
+        "  ✓ Texture caching: Reused {} textures without decoding",
+        texture_stats.entry_count
+    );
     println!("  ✓ Dirty rectangles: Skipped rendering unchanged regions");
     println!("  ✓ Object pooling: Reused buffers across frames");
     println!("  ✓ LOD: Automatically adjusted quality based on performance");

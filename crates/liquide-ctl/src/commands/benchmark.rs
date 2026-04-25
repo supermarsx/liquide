@@ -30,7 +30,10 @@ pub async fn execute(client: &Client, output: &Output, args: &BenchmarkArgs) -> 
         Some(result) => {
             output.message(&format!("  Score:       {:.1}", result.score));
             output.message(&format!("  Latency:     {:.2} ms", result.latency_ms));
-            output.message(&format!("  Throughput:  {:.1} Mbps", result.throughput_mbps));
+            output.message(&format!(
+                "  Throughput:  {:.1} Mbps",
+                result.throughput_mbps
+            ));
             output.message(&format!("  Duration:    {:.1}s", result.duration_seconds));
             output.success("Benchmark complete.");
         }

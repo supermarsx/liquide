@@ -180,12 +180,7 @@ impl PowerManager {
                 low_part: 0,
                 high_part: 0,
             };
-            if LookupPrivilegeValueA(
-                std::ptr::null(),
-                SE_SHUTDOWN_NAME.as_ptr(),
-                &mut luid,
-            ) == 0
-            {
+            if LookupPrivilegeValueA(std::ptr::null(), SE_SHUTDOWN_NAME.as_ptr(), &mut luid) == 0 {
                 CloseHandle(token);
                 return Err(PowerError::PermissionDenied);
             }
@@ -198,14 +193,8 @@ impl PowerManager {
                 }],
             };
 
-            let ok = AdjustTokenPrivileges(
-                token,
-                0,
-                &tp,
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            );
+            let ok =
+                AdjustTokenPrivileges(token, 0, &tp, 0, std::ptr::null_mut(), std::ptr::null_mut());
 
             let err = GetLastError();
             CloseHandle(token);
@@ -321,7 +310,9 @@ impl PowerBackend for PowerManager {
         let ok = unsafe { SetSuspendState(1, 0, 0) };
         if ok == 0 {
             self.state = PowerState::Active;
-            return Err(PowerError::PlatformError("SetSuspendState(hibernate) failed".into()));
+            return Err(PowerError::PlatformError(
+                "SetSuspendState(hibernate) failed".into(),
+            ));
         }
         self.state = PowerState::Active;
         Ok(())
@@ -333,7 +324,9 @@ impl PowerBackend for PowerManager {
         let ok = unsafe { ExitWindowsEx(EWX_SHUTDOWN | EWX_FORCEIFHUNG, 0) };
         if ok == 0 {
             self.state = PowerState::Active;
-            return Err(PowerError::PlatformError("ExitWindowsEx(shutdown) failed".into()));
+            return Err(PowerError::PlatformError(
+                "ExitWindowsEx(shutdown) failed".into(),
+            ));
         }
         Ok(())
     }
@@ -344,7 +337,9 @@ impl PowerBackend for PowerManager {
         let ok = unsafe { ExitWindowsEx(EWX_REBOOT | EWX_FORCEIFHUNG, 0) };
         if ok == 0 {
             self.state = PowerState::Active;
-            return Err(PowerError::PlatformError("ExitWindowsEx(reboot) failed".into()));
+            return Err(PowerError::PlatformError(
+                "ExitWindowsEx(reboot) failed".into(),
+            ));
         }
         Ok(())
     }

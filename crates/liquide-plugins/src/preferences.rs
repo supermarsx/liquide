@@ -46,7 +46,9 @@ impl PluginPreferences {
 
     /// Serialize preferences to a simple "key=value\n" text format.
     pub fn serialize(&self) -> String {
-        let mut lines: Vec<String> = self.values.iter()
+        let mut lines: Vec<String> = self
+            .values
+            .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect();
         lines.sort(); // deterministic output

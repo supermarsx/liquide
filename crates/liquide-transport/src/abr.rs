@@ -205,14 +205,12 @@ impl AbrController {
     fn downgrade(&mut self) {
         // Increase quality_index (worse quality) — clamp at 51
         if self.decision.quality_index < 51 {
-            self.decision.quality_index =
-                (self.decision.quality_index + 3).min(51);
+            self.decision.quality_index = (self.decision.quality_index + 3).min(51);
         }
 
         // Reduce FPS cap — clamp at 1
         if self.decision.video_fps_cap > 15 {
-            self.decision.video_fps_cap =
-                self.decision.video_fps_cap.saturating_sub(5).max(1);
+            self.decision.video_fps_cap = self.decision.video_fps_cap.saturating_sub(5).max(1);
         }
 
         // Increase tile compression — clamp at 6
@@ -221,22 +219,19 @@ impl AbrController {
         }
 
         // Reduce bandwidth budget by 20%
-        self.decision.bandwidth_budget =
-            (self.decision.bandwidth_budget as f64 * 0.80) as u64;
+        self.decision.bandwidth_budget = (self.decision.bandwidth_budget as f64 * 0.80) as u64;
     }
 
     /// Improve quality one step (only after sustained stability).
     fn upgrade(&mut self) {
         // Decrease quality_index (better quality) — clamp at 0
         if self.decision.quality_index > 0 {
-            self.decision.quality_index =
-                self.decision.quality_index.saturating_sub(2);
+            self.decision.quality_index = self.decision.quality_index.saturating_sub(2);
         }
 
         // Increase FPS cap — clamp at 60
         if self.decision.video_fps_cap < 60 {
-            self.decision.video_fps_cap =
-                (self.decision.video_fps_cap + 5).min(60);
+            self.decision.video_fps_cap = (self.decision.video_fps_cap + 5).min(60);
         }
 
         // Decrease tile compression — clamp at 1
@@ -245,8 +240,7 @@ impl AbrController {
         }
 
         // Increase bandwidth budget by 10%
-        self.decision.bandwidth_budget =
-            (self.decision.bandwidth_budget as f64 * 1.10) as u64;
+        self.decision.bandwidth_budget = (self.decision.bandwidth_budget as f64 * 1.10) as u64;
     }
 
     /// Reset to default quality settings.

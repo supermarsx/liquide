@@ -21,5 +21,5 @@ pub mod transition;
 
 pub use easing::{CubicBezier, EasingFunction};
 pub use interpolate::Interpolatable;
-pub use scheduler::{AnimationScheduler, AnimationState, RunningAnimation};
+pub use scheduler::{AnimationEvent, AnimationScheduler, AnimationState, RunningAnimation};
 pub use transition::{TransitionEngine, TransitionState};

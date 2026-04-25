@@ -272,8 +272,7 @@ fn deserialize_one(bytes: &[u8]) -> Result<(BusValue, &[u8]), DeserializeError> 
             if rest.len() < len {
                 return Err(DeserializeError::UnexpectedEof);
             }
-            let s = std::str::from_utf8(&rest[..len])
-                .map_err(|_| DeserializeError::InvalidUtf8)?;
+            let s = std::str::from_utf8(&rest[..len]).map_err(|_| DeserializeError::InvalidUtf8)?;
             Ok((BusValue::String(s.to_owned()), &rest[len..]))
         }
         TAG_BYTE_ARRAY => {

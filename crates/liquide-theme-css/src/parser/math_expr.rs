@@ -15,27 +15,20 @@ impl ThemeParser {
             return self.parse_calc_expr(inner);
         }
         if let Some(inner) = Self::strip_function(s, "min") {
-            let args = Self::split_function_args(inner);
-            let exprs: Option<Vec<_>> = args
-                .iter()
-                .map(|a| self.parse_calc_atom(a.trim()))
-                .collect();
-            return exprs.map(crate::value::CssMathExpr::Min);
+            let exprs = self.parse_function_expr_args(inner)?;
+            return Some(crate::value::CssMathExpr::Min(exprs));
         }
         if let Some(inner) = Self::strip_function(s, "max") {
-            let args = Self::split_function_args(inner);
-            let exprs: Option<Vec<_>> = args
-                .iter()
-                .map(|a| self.parse_calc_atom(a.trim()))
-                .collect();
-            return exprs.map(crate::value::CssMathExpr::Max);
+            let exprs = self.parse_function_expr_args(inner)?;
+            return Some(crate::value::CssMathExpr::Max(exprs));
         }
         if let Some(inner) = Self::strip_function(s, "clamp") {
-            let args = Self::split_function_args(inner);
-            if args.len() == 3 {
-                let min = self.parse_calc_atom(args[0].trim())?;
-                let pref = self.parse_calc_atom(args[1].trim())?;
-                let max = self.parse_calc_atom(args[2].trim())?;
+            let exprs = self.parse_function_expr_args(inner)?;
+            if exprs.len() == 3 {
+                let mut exprs = exprs.into_iter();
+                let min = exprs.next()?;
+                let pref = exprs.next()?;
+                let max = exprs.next()?;
                 return Some(crate::value::CssMathExpr::Clamp {
                     min: Box::new(min),
                     preferred: Box::new(pref),
@@ -94,7 +87,7 @@ impl ThemeParser {
             return self.parse_calc_expr(&s[1..s.len() - 1]);
         }
         // Try as length
-        if let Some(pv) = self.parse_length_value(s) {
+        if let Some(pv) = self.parse_explicit_length_value(s) {
             if let PropertyValue::Length(lu) = pv {
                 return Some(crate::value::CssMathExpr::Value(lu));
             }
@@ -107,13 +100,28 @@ impl ThemeParser {
     }
 
     /// Strip a function wrapper: e.g. `calc(100% - 20px)` → `100% - 20px`.
-    fn strip_function<'a>(s: &'a str, name: &str) -> Option<&'a str> {
+    pub(crate) fn strip_function<'a>(s: &'a str, name: &str) -> Option<&'a str> {
         let s = s.trim();
-        if s.starts_with(name) && s[name.len()..].starts_with('(') && s.ends_with(')') {
+        if s.len() > name.len() + 1
+            && s[..name.len()].eq_ignore_ascii_case(name)
+            && s[name.len()..].starts_with('(')
+            && s.ends_with(')')
+        {
             Some(&s[name.len() + 1..s.len() - 1])
         } else {
             None
         }
+    }
+
+    fn parse_function_expr_args(&self, s: &str) -> Option<Vec<crate::value::CssMathExpr>> {
+        let args = Self::split_function_args(s);
+        if args.is_empty() || args.iter().any(|arg| arg.trim().is_empty()) {
+            return None;
+        }
+
+        args.into_iter()
+            .map(|arg| self.parse_calc_expr(arg.trim()))
+            .collect()
     }
 
     /// Split function arguments by commas at the top level (respecting nested parens).

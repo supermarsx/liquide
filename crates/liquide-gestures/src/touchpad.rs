@@ -26,11 +26,35 @@ pub enum GesturePhase {
 /// High-level touchpad gesture.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TouchpadGesture {
-    TwoFingerScroll { dx: f64, dy: f64, phase: GesturePhase },
-    ThreeFingerSwipe { direction: SwipeDirection, dx: f64, dy: f64, phase: GesturePhase },
-    FourFingerSwipe { direction: SwipeDirection, dx: f64, dy: f64, phase: GesturePhase },
-    PinchZoom { scale: f64, center_x: f64, center_y: f64, phase: GesturePhase },
-    PinchRotate { angle: f64, center_x: f64, center_y: f64, phase: GesturePhase },
+    TwoFingerScroll {
+        dx: f64,
+        dy: f64,
+        phase: GesturePhase,
+    },
+    ThreeFingerSwipe {
+        direction: SwipeDirection,
+        dx: f64,
+        dy: f64,
+        phase: GesturePhase,
+    },
+    FourFingerSwipe {
+        direction: SwipeDirection,
+        dx: f64,
+        dy: f64,
+        phase: GesturePhase,
+    },
+    PinchZoom {
+        scale: f64,
+        center_x: f64,
+        center_y: f64,
+        phase: GesturePhase,
+    },
+    PinchRotate {
+        angle: f64,
+        center_x: f64,
+        center_y: f64,
+        phase: GesturePhase,
+    },
 }
 
 /// Semantic action for three-finger swipe directions (GNOME/Mutter style).
@@ -213,11 +237,12 @@ impl TouchpadRecognizer {
                 // gesture type — prevents false pinch/rotate when only one
                 // finger has moved (which shifts the centroid).
                 let min_move = 1.0_f64;
-                let all_moved = n >= 2 && self.fingers.iter().all(|f| {
-                    let fdx = f.cur_x - f.start_x;
-                    let fdy = f.cur_y - f.start_y;
-                    (fdx * fdx + fdy * fdy).sqrt() > min_move
-                });
+                let all_moved = n >= 2
+                    && self.fingers.iter().all(|f| {
+                        let fdx = f.cur_x - f.start_x;
+                        let fdy = f.cur_y - f.start_y;
+                        (fdx * fdx + fdy * fdy).sqrt() > min_move
+                    });
 
                 if n == 2 && all_moved {
                     // All fingers moved — decide scroll vs pinch vs rotate.
@@ -348,26 +373,54 @@ impl TouchpadRecognizer {
     fn emit_end(&mut self, out: &mut Vec<TouchpadGesture>) {
         match self.mode {
             RecognizerMode::Scrolling => {
-                out.push(TouchpadGesture::TwoFingerScroll { dx: 0.0, dy: 0.0, phase: GesturePhase::End });
+                out.push(TouchpadGesture::TwoFingerScroll {
+                    dx: 0.0,
+                    dy: 0.0,
+                    phase: GesturePhase::End,
+                });
             }
             RecognizerMode::Pinching => {
                 let spread = self.current_spread();
-                let scale = if self.initial_spread > 0.01 { spread / self.initial_spread } else { 1.0 };
+                let scale = if self.initial_spread > 0.01 {
+                    spread / self.initial_spread
+                } else {
+                    1.0
+                };
                 let (cx, cy) = self.centroid();
-                out.push(TouchpadGesture::PinchZoom { scale, center_x: cx, center_y: cy, phase: GesturePhase::End });
+                out.push(TouchpadGesture::PinchZoom {
+                    scale,
+                    center_x: cx,
+                    center_y: cy,
+                    phase: GesturePhase::End,
+                });
             }
             RecognizerMode::Rotating => {
                 let angle = self.current_angle() - self.initial_angle;
                 let (cx, cy) = self.centroid();
-                out.push(TouchpadGesture::PinchRotate { angle, center_x: cx, center_y: cy, phase: GesturePhase::End });
+                out.push(TouchpadGesture::PinchRotate {
+                    angle,
+                    center_x: cx,
+                    center_y: cy,
+                    phase: GesturePhase::End,
+                });
             }
             RecognizerMode::Swiping { fingers } => {
                 let (avg_dx, avg_dy) = self.average_delta_from_start();
                 let direction = classify_direction(avg_dx, avg_dy);
                 if fingers == 3 {
-                    out.push(TouchpadGesture::ThreeFingerSwipe { direction, dx: avg_dx, dy: avg_dy, phase: GesturePhase::End });
+                    out.push(TouchpadGesture::ThreeFingerSwipe {
+                        direction,
+                        dx: avg_dx,
+                        dy: avg_dy,
+                        phase: GesturePhase::End,
+                    });
                 } else {
-                    out.push(TouchpadGesture::FourFingerSwipe { direction, dx: avg_dx, dy: avg_dy, phase: GesturePhase::End });
+                    out.push(TouchpadGesture::FourFingerSwipe {
+                        direction,
+                        dx: avg_dx,
+                        dy: avg_dy,
+                        phase: GesturePhase::End,
+                    });
                 }
             }
             _ => {}
@@ -377,22 +430,46 @@ impl TouchpadRecognizer {
     fn emit_cancel(&mut self, out: &mut Vec<TouchpadGesture>) {
         match self.mode {
             RecognizerMode::Scrolling => {
-                out.push(TouchpadGesture::TwoFingerScroll { dx: 0.0, dy: 0.0, phase: GesturePhase::Cancel });
+                out.push(TouchpadGesture::TwoFingerScroll {
+                    dx: 0.0,
+                    dy: 0.0,
+                    phase: GesturePhase::Cancel,
+                });
             }
             RecognizerMode::Pinching => {
                 let (cx, cy) = self.centroid();
-                out.push(TouchpadGesture::PinchZoom { scale: 1.0, center_x: cx, center_y: cy, phase: GesturePhase::Cancel });
+                out.push(TouchpadGesture::PinchZoom {
+                    scale: 1.0,
+                    center_x: cx,
+                    center_y: cy,
+                    phase: GesturePhase::Cancel,
+                });
             }
             RecognizerMode::Rotating => {
                 let (cx, cy) = self.centroid();
-                out.push(TouchpadGesture::PinchRotate { angle: 0.0, center_x: cx, center_y: cy, phase: GesturePhase::Cancel });
+                out.push(TouchpadGesture::PinchRotate {
+                    angle: 0.0,
+                    center_x: cx,
+                    center_y: cy,
+                    phase: GesturePhase::Cancel,
+                });
             }
             RecognizerMode::Swiping { fingers } => {
                 let direction = SwipeDirection::Up;
                 if fingers == 3 {
-                    out.push(TouchpadGesture::ThreeFingerSwipe { direction, dx: 0.0, dy: 0.0, phase: GesturePhase::Cancel });
+                    out.push(TouchpadGesture::ThreeFingerSwipe {
+                        direction,
+                        dx: 0.0,
+                        dy: 0.0,
+                        phase: GesturePhase::Cancel,
+                    });
                 } else {
-                    out.push(TouchpadGesture::FourFingerSwipe { direction, dx: 0.0, dy: 0.0, phase: GesturePhase::Cancel });
+                    out.push(TouchpadGesture::FourFingerSwipe {
+                        direction,
+                        dx: 0.0,
+                        dy: 0.0,
+                        phase: GesturePhase::Cancel,
+                    });
                 }
             }
             _ => {}
@@ -432,9 +509,10 @@ impl TouchpadRecognizer {
             return (0.0, 0.0);
         }
         let n = self.fingers.len() as f64;
-        let (sx, sy) = self.fingers.iter().fold((0.0, 0.0), |(ax, ay), f| {
-            (ax + f.cur_x, ay + f.cur_y)
-        });
+        let (sx, sy) = self
+            .fingers
+            .iter()
+            .fold((0.0, 0.0), |(ax, ay), f| (ax + f.cur_x, ay + f.cur_y));
         (sx / n, sy / n)
     }
 
@@ -444,11 +522,15 @@ impl TouchpadRecognizer {
         }
         let (cx, cy) = self.centroid();
         let n = self.fingers.len() as f64;
-        let sum: f64 = self.fingers.iter().map(|f| {
-            let dx = f.cur_x - cx;
-            let dy = f.cur_y - cy;
-            (dx * dx + dy * dy).sqrt()
-        }).sum();
+        let sum: f64 = self
+            .fingers
+            .iter()
+            .map(|f| {
+                let dx = f.cur_x - cx;
+                let dy = f.cur_y - cy;
+                (dx * dx + dy * dy).sqrt()
+            })
+            .sum();
         sum / n
     }
 
@@ -464,9 +546,17 @@ impl TouchpadRecognizer {
 
 fn classify_direction(dx: f64, dy: f64) -> SwipeDirection {
     if dx.abs() > dy.abs() {
-        if dx > 0.0 { SwipeDirection::Right } else { SwipeDirection::Left }
+        if dx > 0.0 {
+            SwipeDirection::Right
+        } else {
+            SwipeDirection::Left
+        }
     } else {
-        if dy > 0.0 { SwipeDirection::Down } else { SwipeDirection::Up }
+        if dy > 0.0 {
+            SwipeDirection::Down
+        } else {
+            SwipeDirection::Up
+        }
     }
 }
 
@@ -475,7 +565,12 @@ mod tests {
     use super::*;
 
     fn ev(id: u32, x: f64, y: f64, kind: TouchpadEventKind) -> TouchpadEvent {
-        TouchpadEvent { finger_id: id, x, y, kind }
+        TouchpadEvent {
+            finger_id: id,
+            x,
+            y,
+            kind,
+        }
     }
 
     #[test]
@@ -497,7 +592,9 @@ mod tests {
         // Move both fingers down together past threshold
         rec.feed(ev(0, 300.0, 320.0, TouchpadEventKind::Motion));
         let gestures = rec.feed(ev(1, 500.0, 320.0, TouchpadEventKind::Motion));
-        let has_scroll = gestures.iter().any(|g| matches!(g, TouchpadGesture::TwoFingerScroll { .. }));
+        let has_scroll = gestures
+            .iter()
+            .any(|g| matches!(g, TouchpadGesture::TwoFingerScroll { .. }));
         assert!(has_scroll, "Expected TwoFingerScroll, got {:?}", gestures);
     }
 
@@ -528,26 +625,44 @@ mod tests {
         rec.feed(ev(1, 320.0, 300.0, TouchpadEventKind::Down));
         rec.feed(ev(2, 340.0, 300.0, TouchpadEventKind::Down));
         let gestures = rec.feed(ev(0, 300.0, 270.0, TouchpadEventKind::Motion));
-        let has_swipe = gestures.iter().any(|g| matches!(g,
-            TouchpadGesture::ThreeFingerSwipe { direction: SwipeDirection::Up, .. }
-        ));
+        let has_swipe = gestures.iter().any(|g| {
+            matches!(
+                g,
+                TouchpadGesture::ThreeFingerSwipe {
+                    direction: SwipeDirection::Up,
+                    ..
+                }
+            )
+        });
         assert!(has_swipe, "Expected three-finger swipe up");
-        assert_eq!(ThreeFingerAction::from_direction(SwipeDirection::Up), ThreeFingerAction::Overview);
+        assert_eq!(
+            ThreeFingerAction::from_direction(SwipeDirection::Up),
+            ThreeFingerAction::Overview
+        );
     }
 
     #[test]
     fn three_finger_swipe_down_show_desktop() {
-        assert_eq!(ThreeFingerAction::from_direction(SwipeDirection::Down), ThreeFingerAction::ShowDesktop);
+        assert_eq!(
+            ThreeFingerAction::from_direction(SwipeDirection::Down),
+            ThreeFingerAction::ShowDesktop
+        );
     }
 
     #[test]
     fn three_finger_swipe_left_workspace() {
-        assert_eq!(ThreeFingerAction::from_direction(SwipeDirection::Left), ThreeFingerAction::WorkspaceNext);
+        assert_eq!(
+            ThreeFingerAction::from_direction(SwipeDirection::Left),
+            ThreeFingerAction::WorkspaceNext
+        );
     }
 
     #[test]
     fn three_finger_swipe_right_workspace() {
-        assert_eq!(ThreeFingerAction::from_direction(SwipeDirection::Right), ThreeFingerAction::WorkspacePrev);
+        assert_eq!(
+            ThreeFingerAction::from_direction(SwipeDirection::Right),
+            ThreeFingerAction::WorkspacePrev
+        );
     }
 
     #[test]
@@ -556,12 +671,23 @@ mod tests {
         cfg.swipe_threshold = 5.0;
         let mut rec = TouchpadRecognizer::new(cfg);
         for i in 0..4 {
-            rec.feed(ev(i, 300.0 + i as f64 * 20.0, 400.0, TouchpadEventKind::Down));
+            rec.feed(ev(
+                i,
+                300.0 + i as f64 * 20.0,
+                400.0,
+                TouchpadEventKind::Down,
+            ));
         }
         let gestures = rec.feed(ev(0, 250.0, 400.0, TouchpadEventKind::Motion));
-        let has_swipe = gestures.iter().any(|g| matches!(g,
-            TouchpadGesture::FourFingerSwipe { direction: SwipeDirection::Left, .. }
-        ));
+        let has_swipe = gestures.iter().any(|g| {
+            matches!(
+                g,
+                TouchpadGesture::FourFingerSwipe {
+                    direction: SwipeDirection::Left,
+                    ..
+                }
+            )
+        });
         assert!(has_swipe, "Expected four-finger swipe left");
     }
 
@@ -577,9 +703,15 @@ mod tests {
         rec.feed(ev(0, 100.0, 120.0, TouchpadEventKind::Motion));
         rec.feed(ev(1, 300.0, 120.0, TouchpadEventKind::Motion));
         let gestures = rec.feed(ev(0, 100.0, 120.0, TouchpadEventKind::Up));
-        let has_end = gestures.iter().any(|g| matches!(g,
-            TouchpadGesture::TwoFingerScroll { phase: GesturePhase::End, .. }
-        ));
+        let has_end = gestures.iter().any(|g| {
+            matches!(
+                g,
+                TouchpadGesture::TwoFingerScroll {
+                    phase: GesturePhase::End,
+                    ..
+                }
+            )
+        });
         assert!(has_end, "Expected scroll End phase, got {:?}", gestures);
     }
 
@@ -595,9 +727,15 @@ mod tests {
         rec.feed(ev(0, 100.0, 120.0, TouchpadEventKind::Motion));
         rec.feed(ev(1, 300.0, 120.0, TouchpadEventKind::Motion));
         let gestures = rec.cancel();
-        let has_cancel = gestures.iter().any(|g| matches!(g,
-            TouchpadGesture::TwoFingerScroll { phase: GesturePhase::Cancel, .. }
-        ));
+        let has_cancel = gestures.iter().any(|g| {
+            matches!(
+                g,
+                TouchpadGesture::TwoFingerScroll {
+                    phase: GesturePhase::Cancel,
+                    ..
+                }
+            )
+        });
         assert!(has_cancel, "Expected cancel phase");
         assert_eq!(rec.finger_count(), 0);
     }
@@ -615,7 +753,9 @@ mod tests {
         let g1 = rec.feed(ev(0, 170.0, 300.0, TouchpadEventKind::Motion));
         let g2 = rec.feed(ev(1, 430.0, 300.0, TouchpadEventKind::Motion));
         let all: Vec<_> = g1.into_iter().chain(g2).collect();
-        let has_pinch = all.iter().any(|g| matches!(g, TouchpadGesture::PinchZoom { .. }));
+        let has_pinch = all
+            .iter()
+            .any(|g| matches!(g, TouchpadGesture::PinchZoom { .. }));
         assert!(has_pinch, "Expected PinchZoom, got {:?}", all);
     }
 

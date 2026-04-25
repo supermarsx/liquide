@@ -253,9 +253,7 @@ impl FocusManager {
         // sophisticated system would find the first focusable child,
         // but the caller can call set_focus() afterwards).
         self.state.focus_window = Some(window_id);
-        events.push(ActivationEvent::FocusGained {
-            window: window_id,
-        });
+        events.push(ActivationEvent::FocusGained { window: window_id });
 
         // Update foreground window to match.
         self.state.foreground_window = Some(window_id);
@@ -267,10 +265,7 @@ impl FocusManager {
     ///
     /// Returns `FocusLost` for the old focus and `FocusGained` for the new.
     /// If `window_id` is not registered, returns an error.
-    pub fn set_focus(
-        &mut self,
-        window_id: WindowId,
-    ) -> Result<Vec<ActivationEvent>, FocusError> {
+    pub fn set_focus(&mut self, window_id: WindowId) -> Result<Vec<ActivationEvent>, FocusError> {
         if !self.windows.contains_key(&window_id) {
             return Err(FocusError::WindowNotFound(window_id));
         }
@@ -292,9 +287,7 @@ impl FocusManager {
         }
 
         self.state.focus_window = Some(window_id);
-        events.push(ActivationEvent::FocusGained {
-            window: window_id,
-        });
+        events.push(ActivationEvent::FocusGained { window: window_id });
 
         Ok(events)
     }

@@ -129,7 +129,11 @@ fn test_store_deserialize_empty_lines_skipped() {
 fn test_store_default_favorites_have_uris() {
     let store = FavoriteStore::new();
     for f in store.list() {
-        assert!(f.uri.starts_with("file://"), "uri should start with file://: {}", f.uri);
+        assert!(
+            f.uri.starts_with("file://"),
+            "uri should start with file://: {}",
+            f.uri
+        );
         assert!(!f.display_name.is_empty());
         assert!(!f.icon.is_empty());
     }

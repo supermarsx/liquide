@@ -22,9 +22,7 @@ use crate::value::PropertyValue;
 
 use std::path::Path;
 
-use lightningcss::stylesheet::{
-    ParserFlags, ParserOptions, StyleSheet as LightningStyleSheet,
-};
+use lightningcss::stylesheet::{ParserFlags, ParserOptions, StyleSheet as LightningStyleSheet};
 
 /// CSS theme parser using lightningcss for full CSS3 support.
 pub struct ThemeParser {}
@@ -43,25 +41,42 @@ impl ThemeParser {
 
     /// Parse CSS from a string.
     pub fn parse_str(&self, css: &str) -> Result<StyleSheet> {
-        // Parse with lightningcss — enable CSS nesting support
-        let options = ParserOptions {
-            flags: ParserFlags::NESTING,
-            ..ParserOptions::default()
-        };
-        let lightning_sheet =
-            LightningStyleSheet::parse(css, options).map_err(|e| ThemeError::ParseError {
-                message: format!("lightningcss parse error: {:?}", e),
-                location: "unknown".to_string(),
-            })?;
-
-        // Convert to our stylesheet format
-        self.convert_stylesheet(lightning_sheet)
+        self.parse_str_with_filename(css, "<inline>".to_string())
     }
 
     /// Parse CSS from a file.
     pub fn parse_file<P: AsRef<Path>>(&self, path: P) -> Result<StyleSheet> {
+        let path = path.as_ref();
         let css = std::fs::read_to_string(path)?;
-        self.parse_str(&css)
+        self.parse_str_with_filename(&css, path.to_string_lossy().into_owned())
+    }
+
+    fn parse_str_with_filename(&self, css: &str, filename: String) -> Result<StyleSheet> {
+        let options = ParserOptions {
+            filename: filename.clone(),
+            flags: ParserFlags::NESTING,
+            ..ParserOptions::default()
+        };
+        let lightning_sheet =
+            LightningStyleSheet::parse(css, options).map_err(|error| ThemeError::ParseError {
+                message: format!("lightningcss parse error: {}", error.kind),
+                location: error
+                    .loc
+                    .as_ref()
+                    .map(Self::format_parse_error_location)
+                    .unwrap_or(filename),
+            })?;
+
+        self.convert_stylesheet(lightning_sheet)
+    }
+
+    fn format_parse_error_location(location: &lightningcss::error::ErrorLocation) -> String {
+        format!(
+            "{}:{}:{}",
+            location.filename,
+            location.line.saturating_add(1),
+            location.column
+        )
     }
 
     /// Convert lightningcss `StyleSheet` to our `StyleSheet` format.

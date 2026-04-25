@@ -543,7 +543,7 @@ mod tests {
 
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        struct Tracked(i32);
+        struct Tracked(#[allow(dead_code)] i32);
         impl Drop for Tracked {
             fn drop(&mut self) {
                 DROP_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -627,7 +627,7 @@ mod tests {
 
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        struct Tracked(i32);
+        struct Tracked(#[allow(dead_code)] i32);
         impl Drop for Tracked {
             fn drop(&mut self) {
                 DROP_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -651,7 +651,7 @@ mod tests {
 
         static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-        struct Tracked(i32);
+        struct Tracked(#[allow(dead_code)] i32);
         impl Drop for Tracked {
             fn drop(&mut self) {
                 DROP_COUNT.fetch_add(1, Ordering::Relaxed);

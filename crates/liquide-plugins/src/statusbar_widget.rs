@@ -22,7 +22,9 @@ pub struct WidgetContent {
 pub trait StatusBarWidgetProvider: Send + Sync {
     fn widget_id(&self) -> &str;
     fn position(&self) -> WidgetPosition;
-    fn priority(&self) -> i32 { 0 } // higher = more left/prominent
+    fn priority(&self) -> i32 {
+        0
+    } // higher = more left/prominent
     fn content(&self) -> WidgetContent;
     fn on_click(&mut self) -> Option<WidgetAction>;
     fn on_scroll(&mut self, delta: f32) -> Option<WidgetAction>;
@@ -31,7 +33,11 @@ pub trait StatusBarWidgetProvider: Send + Sync {
 
 #[derive(Debug, Clone)]
 pub enum WidgetAction {
-    ShowPopup { html: String, width: u32, height: u32 },
+    ShowPopup {
+        html: String,
+        width: u32,
+        height: u32,
+    },
     TogglePanel(String),
     RunCommand(String),
     OpenUrl(String),

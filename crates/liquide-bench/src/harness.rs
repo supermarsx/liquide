@@ -73,13 +73,14 @@ impl BenchHarness {
                 .record("compose_time", timestamp, compose_time_ms);
 
             // Simulate damage computation time: proportional to total tiles.
-            let damage_time_ms =
-                0.5 + (damage_fraction * 1.0) + Self::deterministic_jitter(i, 0.1);
+            let damage_time_ms = 0.5 + (damage_fraction * 1.0) + Self::deterministic_jitter(i, 0.1);
             self.metrics
                 .record("damage_compute_time", timestamp, damage_time_ms);
 
             // Simulate input-to-photon latency: compose + damage + overhead.
-            let input_to_photon = compose_time_ms + damage_time_ms + 3.0
+            let input_to_photon = compose_time_ms
+                + damage_time_ms
+                + 3.0
                 + self.network.simulated_rtt(i as u64) * 0.5
                 + Self::deterministic_jitter(i, 0.5);
             self.metrics
@@ -125,8 +126,8 @@ impl BenchHarness {
 
             // Compression ratio: depends on workload (more change = worse ratio).
             let damage_fraction = self.workload.profile.damage_fraction();
-            let compression_ratio = 3.0 + (1.0 - damage_fraction) * 7.0
-                + Self::deterministic_jitter(i, 0.5);
+            let compression_ratio =
+                3.0 + (1.0 - damage_fraction) * 7.0 + Self::deterministic_jitter(i, 0.5);
             self.metrics
                 .record("compression_ratio", timestamp, compression_ratio);
 
@@ -137,8 +138,7 @@ impl BenchHarness {
 
             // Total bytes per frame.
             let frame_bytes = compressed_size * damaged_tiles as f64;
-            self.metrics
-                .record("frame_bytes", timestamp, frame_bytes);
+            self.metrics.record("frame_bytes", timestamp, frame_bytes);
 
             // Encoding throughput in megabytes/sec.
             let throughput_mbps = if encode_time_ms > 0.0 {
@@ -197,8 +197,7 @@ impl BenchHarness {
             } else {
                 0.0
             };
-            self.metrics
-                .record("packet_dropped", timestamp, dropped);
+            self.metrics.record("packet_dropped", timestamp, dropped);
 
             // Messages per second estimate.
             let msg_per_sec = if rtt > 0.0 {

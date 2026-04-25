@@ -56,10 +56,7 @@ pub enum MenuItemKind {
     /// A submenu that opens when hovered.
     Submenu(Vec<MenuItem>),
     /// A toggle / checkbox item.
-    Toggle {
-        action: MenuAction,
-        checked: bool,
-    },
+    Toggle { action: MenuAction, checked: bool },
 }
 
 /// A horizontal separator between menu item groups.
@@ -391,11 +388,7 @@ impl ContextMenuBuilder {
 
     /// Add a submenu with the given label and children.
     #[must_use]
-    pub fn add_submenu(
-        mut self,
-        label: impl Into<String>,
-        children: Vec<MenuItem>,
-    ) -> Self {
+    pub fn add_submenu(mut self, label: impl Into<String>, children: Vec<MenuItem>) -> Self {
         self.items.push(MenuItem::submenu(label, children));
         self
     }
@@ -417,11 +410,7 @@ impl ContextMenuBuilder {
     /// `items` is a slice of `(label, action, selected)` tuples.
     /// `group_id` links them as a radio group.
     #[must_use]
-    pub fn add_radio_group(
-        mut self,
-        group_id: u32,
-        items: &[(&str, MenuAction, bool)],
-    ) -> Self {
+    pub fn add_radio_group(mut self, group_id: u32, items: &[(&str, MenuAction, bool)]) -> Self {
         for &(label, action, selected) in items {
             self.items
                 .push(MenuItem::radio(label, action, group_id, selected));
@@ -568,8 +557,10 @@ impl ContextMenu {
         // Cap height to 80% of screen height so long menus don't overflow.
         let max_h = (screen.height * 0.8).max(100.0);
         let h = raw_h.min(max_h);
-        let x = self.position.x.min(screen.width - w - 4.0).max(0.0);
-        let y = self.position.y.min(screen.height - h - 4.0).max(0.0);
+        let max_x = (screen.x + screen.width - w - 4.0).max(screen.x);
+        let max_y = (screen.y + screen.height - h - 4.0).max(screen.y);
+        let x = self.position.x.min(max_x).max(screen.x);
+        let y = self.position.y.min(max_y).max(screen.y);
         Rect::new(x, y, w, h)
     }
 
@@ -594,11 +585,7 @@ impl ContextMenu {
             .floor()
             .max(0.0) as usize;
         let visible_count = self.items.len().min(max_visible);
-        if idx < visible_count {
-            Some(idx)
-        } else {
-            None
-        }
+        if idx < visible_count { Some(idx) } else { None }
     }
 
     /// Update hover state based on mouse position. Returns `true` if
@@ -691,9 +678,7 @@ impl ContextMenu {
             if self.hover_index == Some(i) && !item.disabled {
                 panel.add_child(SceneNode::new(
                     base_id + 5 + i as u64,
-                    SceneNodeKind::Tint {
-                        color: hover_color,
-                    },
+                    SceneNodeKind::Tint { color: hover_color },
                     NodeProperties::new(Rect::new(4.0, iy, bounds.width - 8.0, item_h))
                         .with_z_order(z_base + 1),
                 ));
@@ -780,13 +765,8 @@ impl ContextMenu {
                         text_decoration: None,
                         text_shadows: vec![],
                     },
-                    NodeProperties::new(Rect::new(
-                        bounds.width - 80.0,
-                        iy + 6.0,
-                        72.0,
-                        20.0,
-                    ))
-                    .with_z_order(z_base + 2),
+                    NodeProperties::new(Rect::new(bounds.width - 80.0, iy + 6.0, 72.0, 20.0))
+                        .with_z_order(z_base + 2),
                 ));
             }
         }

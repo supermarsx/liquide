@@ -55,9 +55,8 @@ impl LinuxBackend {
 
     /// Parse `/etc/passwd` and return all entries.
     fn parse_passwd() -> Result<Vec<PasswdEntry>, AccountError> {
-        let content = fs::read_to_string("/etc/passwd").map_err(|e| {
-            AccountError::PlatformError(format!("failed to read /etc/passwd: {e}"))
-        })?;
+        let content = fs::read_to_string("/etc/passwd")
+            .map_err(|e| AccountError::PlatformError(format!("failed to read /etc/passwd: {e}")))?;
 
         let mut entries = Vec::new();
         for line in content.lines() {
@@ -85,9 +84,7 @@ impl LinuxBackend {
 
     /// Parse `/etc/group` and return all entries, resolving member names
     /// to UIDs using the supplied passwd entries.
-    fn parse_group_file_with(
-        passwd_entries: &[PasswdEntry],
-    ) -> Result<Vec<Group>, AccountError> {
+    fn parse_group_file_with(passwd_entries: &[PasswdEntry]) -> Result<Vec<Group>, AccountError> {
         let content = fs::read_to_string("/etc/group")
             .map_err(|e| AccountError::PlatformError(format!("failed to read /etc/group: {e}")))?;
 
@@ -447,14 +444,23 @@ impl PlatformBackend for LinuxBackend {
         // Validate avatar source path to prevent reading arbitrary files.
         let src = std::path::Path::new(path);
         if !src.exists() {
-            return Err(AccountError::PlatformError("avatar source file does not exist".into()));
+            return Err(AccountError::PlatformError(
+                "avatar source file does not exist".into(),
+            ));
         }
         if !src.is_file() {
-            return Err(AccountError::PlatformError("avatar source must be a regular file".into()));
+            return Err(AccountError::PlatformError(
+                "avatar source must be a regular file".into(),
+            ));
         }
         let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "bmp" | "svg") {
-            return Err(AccountError::PlatformError("avatar must be an image file (png, jpg, jpeg, bmp, svg)".into()));
+        if !matches!(
+            ext.to_ascii_lowercase().as_str(),
+            "png" | "jpg" | "jpeg" | "bmp" | "svg"
+        ) {
+            return Err(AccountError::PlatformError(
+                "avatar must be an image file (png, jpg, jpeg, bmp, svg)".into(),
+            ));
         }
         let dest = format!("{}/{}", self.avatar_dir, username);
         Self::run_cmd("cp", &[path, &dest])
@@ -482,9 +488,13 @@ impl PlatformBackend for LinuxBackend {
                 }
                 child.wait_with_output()
             })
-            .map_err(|e| AccountError::PlatformError(format!("old password verification failed: {e}")))?;
+            .map_err(|e| {
+                AccountError::PlatformError(format!("old password verification failed: {e}"))
+            })?;
         if !verify.status.success() {
-            return Err(AccountError::PlatformError("old password is incorrect".into()));
+            return Err(AccountError::PlatformError(
+                "old password is incorrect".into(),
+            ));
         }
 
         let passwd_input = format!("{username}:{new_password}");
@@ -556,8 +566,9 @@ impl PlatformBackend for LinuxBackend {
                 new_lines.push(format!("AutomaticLogin={username}"));
             }
 
-            fs::write(gdm_path, new_lines.join("\n") + "\n")
-                .map_err(|e| AccountError::PlatformError(format!("cannot write {gdm_path}: {e}")))?;
+            fs::write(gdm_path, new_lines.join("\n") + "\n").map_err(|e| {
+                AccountError::PlatformError(format!("cannot write {gdm_path}: {e}"))
+            })?;
             return Ok(());
         }
 

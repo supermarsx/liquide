@@ -66,14 +66,11 @@ impl PeekState {
     ///
     /// `windows_above` is the list of window IDs that are currently stacked
     /// above the target — these will be saved for restoration on `end_peek()`.
-    pub fn start_peek(
-        &mut self,
-        window_id: u64,
-        mode: PeekMode,
-        windows_above: &[u64],
-    ) {
+    pub fn start_peek(&mut self, window_id: u64, mode: PeekMode, windows_above: &[u64]) {
         // If already peeking the same window, ignore.
-        if self.target_window_id == Some(window_id) && !matches!(self.phase, PeekPhase::Idle | PeekPhase::Exiting(_)) {
+        if self.target_window_id == Some(window_id)
+            && !matches!(self.phase, PeekPhase::Idle | PeekPhase::Exiting(_))
+        {
             return;
         }
 
@@ -112,8 +109,7 @@ impl PeekState {
             PeekPhase::Active => {
                 self.active_elapsed_ms += dt_ms as f64;
                 // Check for timeout.
-                if self.peek_timeout_ms > 0
-                    && self.active_elapsed_ms >= self.peek_timeout_ms as f64
+                if self.peek_timeout_ms > 0 && self.active_elapsed_ms >= self.peek_timeout_ms as f64
                 {
                     self.end_peek();
                     return true;
@@ -127,7 +123,7 @@ impl PeekState {
                     self.target_window_id = None;
                     self.mode = None;
                     self.saved_z_order.clear();
-                }  else {
+                } else {
                     self.phase = PeekPhase::Exiting(new_p);
                 }
                 true

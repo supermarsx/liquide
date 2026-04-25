@@ -95,7 +95,12 @@ pub struct KineticState {
 
 impl KineticState {
     pub fn new(config: KineticConfig) -> Self {
-        Self { vx: 0.0, vy: 0.0, active: false, config }
+        Self {
+            vx: 0.0,
+            vy: 0.0,
+            active: false,
+            config,
+        }
     }
 
     /// Start kinetic scrolling with the given initial velocity (px/s).
@@ -205,10 +210,7 @@ mod tests {
     #[test]
     fn flick_velocity_two_points() {
         // 100px in 0.1s = 1000 px/s
-        let points = vec![
-            (0.0, 0.0, 0),
-            (100.0, 0.0, 100_000),
-        ];
+        let points = vec![(0.0, 0.0, 0), (100.0, 0.0, 100_000)];
         let (vx, vy) = flick_velocity(&points);
         assert!((vx - 1000.0).abs() < 1.0);
         assert!(vy.abs() < 1.0);
@@ -227,10 +229,7 @@ mod tests {
 
     #[test]
     fn flick_velocity_vertical() {
-        let points = vec![
-            (0.0, 0.0, 0),
-            (0.0, 50.0, 50_000),
-        ];
+        let points = vec![(0.0, 0.0, 0), (0.0, 50.0, 50_000)];
         let (vx, vy) = flick_velocity(&points);
         assert!(vx.abs() < 1.0);
         assert!((vy - 1000.0).abs() < 1.0);
@@ -241,11 +240,7 @@ mod tests {
         // Older segment: slow (10px in 100ms = 100 px/s)
         // Newer segment: fast (90px in 100ms = 900 px/s)
         // Weighted avg should be closer to 900 than to 100
-        let points = vec![
-            (0.0, 0.0, 0),
-            (10.0, 0.0, 100_000),
-            (100.0, 0.0, 200_000),
-        ];
+        let points = vec![(0.0, 0.0, 0), (10.0, 0.0, 100_000), (100.0, 0.0, 200_000)];
         let (vx, _) = flick_velocity(&points);
         assert!(vx > 500.0, "vx={} should be weighted toward recent", vx);
     }
@@ -358,8 +353,13 @@ mod tests {
         for offset in &[10.0, 50.0, 100.0, 500.0] {
             let dampened = rubber_band(*offset, 200.0);
             let recovered = rubber_band_inverse(dampened, 200.0);
-            assert!((recovered - offset).abs() < 0.01,
-                "offset={} dampened={} recovered={}", offset, dampened, recovered);
+            assert!(
+                (recovered - offset).abs() < 0.01,
+                "offset={} dampened={} recovered={}",
+                offset,
+                dampened,
+                recovered
+            );
         }
     }
 

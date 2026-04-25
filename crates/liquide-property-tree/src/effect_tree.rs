@@ -124,7 +124,10 @@ impl EffectTree {
         isolation: bool,
     ) -> NodeId {
         let id = self.nodes.len() as NodeId;
-        let parent_id = parent.unwrap_or(ROOT_ID);
+        let parent_id = match parent.unwrap_or(ROOT_ID) {
+            pid if (pid as usize) < self.nodes.len() => pid,
+            _ => ROOT_ID,
+        };
         self.nodes.push(EffectNode {
             id,
             parent: Some(parent_id),
@@ -159,6 +162,7 @@ impl EffectTree {
     pub fn set_blend_mode(&mut self, id: NodeId, mode: BlendMode) {
         if let Some(node) = self.nodes.get_mut(id as usize) {
             node.blend_mode = mode;
+            self.mark_dirty(id);
         }
     }
 
@@ -166,6 +170,7 @@ impl EffectTree {
     pub fn set_filters(&mut self, id: NodeId, filters: Vec<FilterOp>) {
         if let Some(node) = self.nodes.get_mut(id as usize) {
             node.filters = filters;
+            self.mark_dirty(id);
         }
     }
 

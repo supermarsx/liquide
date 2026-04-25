@@ -35,12 +35,12 @@ mod system_classes;
 pub use atom::ClassAtom;
 pub use class::{ClassInfo, WindowClass};
 pub use error::ClassError;
-pub use style::ClassStyle;
 pub use extra_data::{ClassExtraData, ExtraData, ExtraDataError, WindowExtraData};
-pub use registry::{field, ClassRegistry};
+pub use registry::{ClassRegistry, field};
+pub use style::ClassStyle;
 pub use subclass::{SubclassEntry, SubclassManager};
 pub use system_classes::{
-    handler, names, register_system_classes, SYSTEM_CLASS_COUNT, SYSTEM_MODULE_ID,
+    SYSTEM_CLASS_COUNT, SYSTEM_MODULE_ID, handler, names, register_system_classes,
 };
 
 #[cfg(test)]
@@ -146,14 +146,17 @@ mod tests {
     #[test]
     fn set_class_long_style_and_background() {
         let mut reg = ClassRegistry::new();
-        let atom = reg
-            .register_class(WindowClass::new("SC", 1, 1))
-            .unwrap();
+        let atom = reg.register_class(WindowClass::new("SC", 1, 1)).unwrap();
 
         // Change style
         reg.set_class_long(atom, field::STYLE, ClassStyle::OWNDC.bits() as u64)
             .unwrap();
-        assert!(reg.find_by_atom(atom).unwrap().style.contains(ClassStyle::OWNDC));
+        assert!(
+            reg.find_by_atom(atom)
+                .unwrap()
+                .style
+                .contains(ClassStyle::OWNDC)
+        );
 
         // Change background
         reg.set_class_long(atom, field::BACKGROUND, 0xFF_FF_00_00)

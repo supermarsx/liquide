@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use liquide_compositor::damage::{DamageClass, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
@@ -13,7 +13,7 @@ use liquide_encoder::compress::{compress_lz4, compress_zstd};
 use liquide_encoder::delta::xor_delta;
 use liquide_encoder::encoder::TileEncoder;
 use liquide_encoder::hash::crc32c;
-use liquide_encoder::strategy::{build_copy_index, choose_strategy, StrategyConfig};
+use liquide_encoder::strategy::{StrategyConfig, build_copy_index, choose_strategy};
 use liquide_encoder::tile::TileConfig;
 
 /// Generate a pseudo-random tile buffer with a given seed.
@@ -89,7 +89,9 @@ fn bench_encode_frame(c: &mut Criterion) {
     let mut fb = FrameBuffer::new(width, height, PixelFormat::Bgra8);
     // Fill the frame buffer with pseudo-random data so compression is realistic
     let pixel_data = make_tile_buffer(fb.pixels().len(), 1337);
-    fb.pixels_mut().expect("CPU framebuffer required").copy_from_slice(&pixel_data);
+    fb.pixels_mut()
+        .expect("CPU framebuffer required")
+        .copy_from_slice(&pixel_data);
 
     // Mark all 64 tiles as damaged
     let cols = width / config.tile_size;

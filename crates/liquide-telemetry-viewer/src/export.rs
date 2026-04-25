@@ -10,63 +10,70 @@ use crate::types::TelemetrySnapshot;
 /// Export telemetry data to JSON file.
 pub async fn export_json(output_path: &str, duration_secs: u64) -> Result<()> {
     tracing::info!("collecting data for {} seconds...", duration_secs);
-    
+
     let collector = TelemetryCollector::local();
     let mut snapshots = Vec::new();
-    
+
     let mut interval = time::interval(Duration::from_millis(100));
     let end_time = tokio::time::Instant::now() + Duration::from_secs(duration_secs);
-    
+
     while tokio::time::Instant::now() < end_time {
         interval.tick().await;
-        
+
         match collector.collect().await {
             Ok(snapshot) => snapshots.push(snapshot),
             Err(e) => tracing::warn!("collection error: {}", e),
         }
     }
-    
-    tracing::info!("collected {} snapshots, writing to {}", snapshots.len(), output_path);
-    
+
+    tracing::info!(
+        "collected {} snapshots, writing to {}",
+        snapshots.len(),
+        output_path
+    );
+
     let json = serde_json::to_string_pretty(&snapshots)?;
     tokio::fs::write(output_path, json).await?;
-    
+
     tracing::info!("export complete!");
-    
+
     Ok(())
 }
 
 /// Generate an HTML performance report.
 pub async fn generate_report(output_path: &str, duration_secs: u64) -> Result<()> {
     tracing::info!("collecting data for report ({} seconds)...", duration_secs);
-    
+
     let collector = TelemetryCollector::local();
     let mut snapshots = Vec::new();
-    
+
     let mut interval = time::interval(Duration::from_millis(100));
     let end_time = tokio::time::Instant::now() + Duration::from_secs(duration_secs);
-    
+
     while tokio::time::Instant::now() < end_time {
         interval.tick().await;
-        
+
         match collector.collect().await {
             Ok(snapshot) => snapshots.push(snapshot),
             Err(e) => tracing::warn!("collection error: {}", e),
         }
     }
-    
-    tracing::info!("collected {} snapshots, generating report...", snapshots.len());
-    
+
+    tracing::info!(
+        "collected {} snapshots, generating report...",
+        snapshots.len()
+    );
+
     // Calculate statistics
     let stats = compute_statistics(&snapshots);
-    
+
     // Generate HTML
     let html = generate_html_report(&stats, &snapshots);
-    
+
     tokio::fs::write(output_path, html).await?;
-    
+
     tracing::info!("report saved to {}", output_path);
-    
+
     Ok(())
 }
 
@@ -89,21 +96,21 @@ fn compute_statistics(snapshots: &[TelemetrySnapshot]) -> TelemetryStats {
     let mut frame_times: Vec<f64> = Vec::new();
     let mut fps_values: Vec<f64> = Vec::new();
     let mut health_dist = std::collections::HashMap::new();
-    
+
     for snapshot in snapshots {
         fps_values.push(snapshot.frames.fps);
         frame_times.extend(snapshot.frames.history.iter());
-        
+
         let health_str = format!("{:?}", snapshot.health);
         *health_dist.entry(health_str).or_insert(0) += 1;
     }
-    
+
     frame_times.sort_by(|a, b| a.total_cmp(b));
     fps_values.sort_by(|a, b| a.total_cmp(b));
-    
+
     let p95_idx = (frame_times.len() as f64 * 0.95) as usize;
     let p99_idx = (frame_times.len() as f64 * 0.99) as usize;
-    
+
     TelemetryStats {
         avg_fps: fps_values.iter().sum::<f64>() / fps_values.len().max(1) as f64,
         min_fps: fps_values.first().copied().unwrap_or(0.0),
@@ -203,7 +210,7 @@ fn generate_html_report(stats: &TelemetryStats, snapshots: &[TelemetrySnapshot])
 /// Generate health distribution HTML.
 fn generate_health_html(distribution: &std::collections::HashMap<String, usize>) -> String {
     let mut html = String::new();
-    
+
     for (health, count) in distribution {
         let class = health.to_lowercase();
         html.push_str(&format!(
@@ -211,6 +218,6 @@ fn generate_health_html(distribution: &std::collections::HashMap<String, usize>)
             class, health, count
         ));
     }
-    
+
     html
 }

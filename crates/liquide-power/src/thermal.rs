@@ -366,7 +366,10 @@ mod tests {
         // Should have a temperature update and a severity change.
         assert!(events.iter().any(|e| matches!(
             e,
-            ThermalEvent::TemperatureUpdated { temp_milli_celsius: 85_000, .. }
+            ThermalEvent::TemperatureUpdated {
+                temp_milli_celsius: 85_000,
+                ..
+            }
         )));
         assert!(events.iter().any(|e| matches!(
             e,
@@ -384,8 +387,16 @@ mod tests {
         mon.set_zones(vec![cpu_zone(50_000)]);
         let events = mon.update_zone("cpu", 55_000);
         // Temperature updated but still Normal.
-        assert!(events.iter().any(|e| matches!(e, ThermalEvent::TemperatureUpdated { .. })));
-        assert!(!events.iter().any(|e| matches!(e, ThermalEvent::SeverityChanged { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ThermalEvent::TemperatureUpdated { .. }))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ThermalEvent::SeverityChanged { .. }))
+        );
     }
 
     #[test]

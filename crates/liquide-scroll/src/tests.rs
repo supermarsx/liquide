@@ -102,7 +102,11 @@ mod tests {
 
         // At 50% time with ease-out cubic, should be past halfway.
         let pos = s.tick(50);
-        assert!(pos.0 > 50.0, "ease-out should be past 50% at t=0.5, got {}", pos.0);
+        assert!(
+            pos.0 > 50.0,
+            "ease-out should be past 50% at t=0.5, got {}",
+            pos.0
+        );
     }
 
     #[test]
@@ -399,7 +403,12 @@ mod tests {
         let rect = Rect::new(390.0, 0.0, 10.0, 600.0);
         // Click well below thumb (thumb is near top since offset=0).
         let hit = scrollbar::hit_test((395.0, 400.0), rect, &sb);
-        assert!(matches!(hit, ScrollbarHit::Track { before_thumb: false }));
+        assert!(matches!(
+            hit,
+            ScrollbarHit::Track {
+                before_thumb: false
+            }
+        ));
     }
 
     #[test]
@@ -585,9 +594,7 @@ mod tests {
 
         mgr.handle_scrollbar_click(
             1,
-            ScrollbarHit::Track {
-                before_thumb: true,
-            },
+            ScrollbarHit::Track { before_thumb: true },
             Orientation::Vertical,
         );
 
@@ -630,8 +637,7 @@ mod tests {
 
         let state = mgr.state(1).unwrap();
         // Should snap to nearest snap point (0 or 600).
-        let snapped =
-            (state.offset.1 - 0.0).abs() < 2.0 || (state.offset.1 - 600.0).abs() < 2.0;
+        let snapped = (state.offset.1 - 0.0).abs() < 2.0 || (state.offset.1 - 600.0).abs() < 2.0;
         assert!(snapped, "Expected snap to 0 or 600, got {}", state.offset.1);
     }
 }

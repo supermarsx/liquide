@@ -85,10 +85,7 @@ impl PowerManager {
 
     /// Parse `pmset -g batt` output for battery info.
     fn parse_pmset_battery() -> Option<BatteryInfo> {
-        let output = Command::new("pmset")
-            .args(["-g", "batt"])
-            .output()
-            .ok()?;
+        let output = Command::new("pmset").args(["-g", "batt"]).output().ok()?;
 
         if !output.status.success() {
             return None;
@@ -192,7 +189,9 @@ impl PowerBackend for PowerManager {
                 self.display = state;
                 Ok(())
             }
-            Ok(_) => Err(PowerError::PlatformError("display power command failed".into())),
+            Ok(_) => Err(PowerError::PlatformError(
+                "display power command failed".into(),
+            )),
             Err(e) => Err(PowerError::PlatformError(format!("command error: {e}"))),
         }
     }
@@ -286,7 +285,9 @@ impl PowerBackend for PowerManager {
             }
             _ => {
                 self.state = PowerState::Active;
-                Err(PowerError::PlatformError("hibernate not directly supported".into()))
+                Err(PowerError::PlatformError(
+                    "hibernate not directly supported".into(),
+                ))
             }
         }
     }

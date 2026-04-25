@@ -187,11 +187,30 @@ fn cs_blend(@builtin(global_invocation_id) gid: vec3<u32>) {
     let src = textureLoad(t_src, coord, 0);
     let dst = textureLoad(t_dst, coord, 0);
 
+    // Porter-Duff compositing cases (0..=2) bypass the generic "color-blend
+    // then SrcOver" pipeline and compute output rgb/a directly.
+    //   0 = SrcOver : co = src + dst*(1 - src.a)
+    //   1 = Src     : co = src (dst fully replaced)
+    //   2 = SrcAtop : co = src*dst.a + dst*(1 - src.a)
+    if (u.mode == 0u) {
+        let out_a = src.a + dst.a * (1.0 - src.a);
+        let out_rgb = src.rgb + dst.rgb * (1.0 - src.a);
+        textureStore(t_out, coord, vec4<f32>(out_rgb, out_a));
+        return;
+    }
+    if (u.mode == 1u) {
+        textureStore(t_out, coord, src);
+        return;
+    }
+    if (u.mode == 2u) {
+        let out_rgb = src.rgb * dst.a + dst.rgb * (1.0 - src.a);
+        let out_a = dst.a;
+        textureStore(t_out, coord, vec4<f32>(out_rgb, out_a));
+        return;
+    }
+
     var blended: vec3<f32>;
     switch (u.mode) {
-        case 0u: { blended = src.rgb; }                           // SrcOver (simplified)
-        case 1u: { blended = src.rgb; }                           // Src
-        case 2u: { blended = src.rgb; }                           // SrcAtop
         case 3u: { blended = blend_multiply(src.rgb, dst.rgb); }
         case 4u: { blended = blend_screen(src.rgb, dst.rgb); }
         case 5u: { blended = blend_overlay(src.rgb, dst.rgb); }
@@ -222,11 +241,11 @@ fn cs_blend(@builtin(global_invocation_id) gid: vec3<u32>) {
 pub const GRADIENT_FRAG: &str = r#"
 struct GradientUniforms {
     kind: u32,           // 0 = linear, 1 = radial, 2 = conic
-    angle: f32,          // linear: angle in radians; conic: start angle
-    center: vec2<f32>,   // radial/conic center (normalized 0..1)
+    angle: f32,          // linear: angle in radians (fallback); conic: start angle
+    center: vec2<f32>,   // linear: start point (0..1); radial/conic center (0..1)
     radius: f32,         // radial radius
     stop_count: u32,
-    _pad: vec2<f32>,
+    line_end: vec2<f32>, // linear: end point (0..1); unused otherwise
 };
 
 struct GradientStop {
@@ -262,9 +281,16 @@ fn fs_gradient(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     switch (u.kind) {
         case 0u: {
-            // Linear gradient
-            let dir = vec2<f32>(cos(u.angle), sin(u.angle));
-            t = dot(uv - vec2<f32>(0.5), dir) + 0.5;
+            // Linear gradient: project uv onto the start→end vector.
+            // Fall back to angle-based direction when start ≈ end (legacy callers).
+            let dir_vec = u.line_end - u.center;
+            let len2 = dot(dir_vec, dir_vec);
+            if (len2 > 1.0e-6) {
+                t = dot(uv - u.center, dir_vec) / len2;
+            } else {
+                let dir = vec2<f32>(cos(u.angle), sin(u.angle));
+                t = dot(uv - vec2<f32>(0.5), dir) + 0.5;
+            }
         }
         case 1u: {
             // Radial gradient

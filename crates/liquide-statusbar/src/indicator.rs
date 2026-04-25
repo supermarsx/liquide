@@ -40,7 +40,10 @@ impl SystemIndicator {
     pub fn clock() -> Self {
         Self {
             id: "clock".into(),
-            kind: IndicatorKind::Clock { format: "%H:%M".into(), timestamp_us: 0 },
+            kind: IndicatorKind::Clock {
+                format: "%H:%M".into(),
+                timestamp_us: 0,
+            },
             visible: true,
         }
     }
@@ -48,7 +51,10 @@ impl SystemIndicator {
     pub fn battery(percent: u8) -> Self {
         Self {
             id: "battery".into(),
-            kind: IndicatorKind::Battery { percent, charging: false },
+            kind: IndicatorKind::Battery {
+                percent,
+                charging: false,
+            },
             visible: true,
         }
     }
@@ -56,7 +62,10 @@ impl SystemIndicator {
     pub fn wifi(quality: u8) -> Self {
         Self {
             id: "wifi".into(),
-            kind: IndicatorKind::Wifi { quality_percent: quality, ssid: None },
+            kind: IndicatorKind::Wifi {
+                quality_percent: quality,
+                ssid: None,
+            },
             visible: true,
         }
     }
@@ -64,7 +73,10 @@ impl SystemIndicator {
     pub fn notification() -> Self {
         Self {
             id: "notifications".into(),
-            kind: IndicatorKind::Notification { unread_count: 0, dnd: false },
+            kind: IndicatorKind::Notification {
+                unread_count: 0,
+                dnd: false,
+            },
             visible: true,
         }
     }
@@ -72,7 +84,10 @@ impl SystemIndicator {
     pub fn volume(level: u8) -> Self {
         Self {
             id: "volume".into(),
-            kind: IndicatorKind::Volume { level, muted: false },
+            kind: IndicatorKind::Volume {
+                level,
+                muted: false,
+            },
             visible: true,
         }
     }
@@ -86,7 +101,9 @@ impl SystemIndicator {
         bar_y: f32,
         bar_h: f32,
     ) -> f32 {
-        if !self.visible { return 0.0; }
+        if !self.visible {
+            return 0.0;
+        }
 
         let colors = &theme.colors;
         let font_size = theme.font_size * 0.9;
@@ -100,28 +117,59 @@ impl SystemIndicator {
                 let time_str = format!("{hours:02}:{minutes:02}");
                 let w = time_str.len() as f32 * font_size * 0.55;
                 painter.draw_text(
-                    &time_str, x, text_y, font_size,
-                    colors.text_primary, &theme.font_family, false,
+                    &time_str,
+                    x,
+                    text_y,
+                    font_size,
+                    colors.text_primary,
+                    &theme.font_family,
+                    false,
                 );
                 w + 8.0
             }
             IndicatorKind::Battery { percent, charging } => {
-                let icon = if *charging { "⚡" } else if *percent > 20 { "🔋" } else { "🪫" };
+                let icon = if *charging {
+                    "⚡"
+                } else if *percent > 20 {
+                    "🔋"
+                } else {
+                    "🪫"
+                };
                 let label = format!("{icon} {percent}%");
                 let w = label.len() as f32 * font_size * 0.5;
                 painter.draw_text(
-                    &label, x, text_y, font_size,
-                    colors.text_secondary, &theme.font_family, false,
+                    &label,
+                    x,
+                    text_y,
+                    font_size,
+                    colors.text_secondary,
+                    &theme.font_family,
+                    false,
                 );
                 w + 8.0
             }
-            IndicatorKind::Wifi { quality_percent, .. } => {
+            IndicatorKind::Wifi {
+                quality_percent, ..
+            } => {
                 // Simple WiFi strength text indicator
-                let bars = if *quality_percent > 75 { "▂▄▆█" } else if *quality_percent > 50 { "▂▄▆" } else if *quality_percent > 25 { "▂▄" } else { "▂" };
+                let bars = if *quality_percent > 75 {
+                    "▂▄▆█"
+                } else if *quality_percent > 50 {
+                    "▂▄▆"
+                } else if *quality_percent > 25 {
+                    "▂▄"
+                } else {
+                    "▂"
+                };
                 let w = 28.0;
                 painter.draw_text(
-                    bars, x, text_y, font_size * 0.8,
-                    colors.text_secondary, &theme.font_family, false,
+                    bars,
+                    x,
+                    text_y,
+                    font_size * 0.8,
+                    colors.text_secondary,
+                    &theme.font_family,
+                    false,
                 );
                 w
             }
@@ -129,26 +177,52 @@ impl SystemIndicator {
                 let icon = if *dnd { "🔕" } else { "🔔" };
                 let w = 20.0;
                 painter.draw_text(
-                    icon, x, text_y, font_size,
-                    if *unread_count > 0 { colors.accent } else { colors.text_secondary },
-                    &theme.font_family, false,
+                    icon,
+                    x,
+                    text_y,
+                    font_size,
+                    if *unread_count > 0 {
+                        colors.accent
+                    } else {
+                        colors.text_secondary
+                    },
+                    &theme.font_family,
+                    false,
                 );
                 if *unread_count > 0 {
                     let badge = format!("{unread_count}");
                     let badge_fs = font_size * 0.7;
                     painter.draw_text(
-                        &badge, x + 12.0, bar_y + 2.0, badge_fs,
-                        colors.error, &theme.font_family, true,
+                        &badge,
+                        x + 12.0,
+                        bar_y + 2.0,
+                        badge_fs,
+                        colors.error,
+                        &theme.font_family,
+                        true,
                     );
                 }
                 w + 8.0
             }
             IndicatorKind::Volume { level, muted } => {
-                let icon = if *muted { "🔇" } else if *level > 66 { "🔊" } else if *level > 33 { "🔉" } else { "🔈" };
+                let icon = if *muted {
+                    "🔇"
+                } else if *level > 66 {
+                    "🔊"
+                } else if *level > 33 {
+                    "🔉"
+                } else {
+                    "🔈"
+                };
                 let w = 20.0;
                 painter.draw_text(
-                    icon, x, text_y, font_size,
-                    colors.text_secondary, &theme.font_family, false,
+                    icon,
+                    x,
+                    text_y,
+                    font_size,
+                    colors.text_secondary,
+                    &theme.font_family,
+                    false,
                 );
                 w
             }

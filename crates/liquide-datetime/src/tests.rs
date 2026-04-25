@@ -64,7 +64,12 @@ fn days_in_month_all() {
     let expected = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     for (i, &exp) in expected.iter().enumerate() {
         let m = (i + 1) as u32;
-        assert_eq!(DateTime::new(2023, m, 1, 0, 0, 0).days_in_month(), exp, "month {}", m);
+        assert_eq!(
+            DateTime::new(2023, m, 1, 0, 0, 0).days_in_month(),
+            exp,
+            "month {}",
+            m
+        );
     }
 }
 
@@ -81,7 +86,10 @@ fn day_of_year_dec31() {
 
 #[test]
 fn day_of_year_march1_leap() {
-    assert_eq!(DateTime::new(2024, 3, 1, 0, 0, 0).day_of_year(), 31 + 29 + 1);
+    assert_eq!(
+        DateTime::new(2024, 3, 1, 0, 0, 0).day_of_year(),
+        31 + 29 + 1
+    );
 }
 
 #[test]
@@ -134,13 +142,25 @@ fn with_offset_minutes_negative_day_wrap() {
 #[test]
 fn weekday_known_dates() {
     // 2024-01-15 is a Monday
-    assert_eq!(DateTime::new(2024, 1, 15, 0, 0, 0).weekday(), Weekday::Monday);
+    assert_eq!(
+        DateTime::new(2024, 1, 15, 0, 0, 0).weekday(),
+        Weekday::Monday
+    );
     // 2024-01-14 is a Sunday
-    assert_eq!(DateTime::new(2024, 1, 14, 0, 0, 0).weekday(), Weekday::Sunday);
+    assert_eq!(
+        DateTime::new(2024, 1, 14, 0, 0, 0).weekday(),
+        Weekday::Sunday
+    );
     // 2000-01-01 is a Saturday
-    assert_eq!(DateTime::new(2000, 1, 1, 0, 0, 0).weekday(), Weekday::Saturday);
+    assert_eq!(
+        DateTime::new(2000, 1, 1, 0, 0, 0).weekday(),
+        Weekday::Saturday
+    );
     // 1970-01-01 is a Thursday
-    assert_eq!(DateTime::new(1970, 1, 1, 0, 0, 0).weekday(), Weekday::Thursday);
+    assert_eq!(
+        DateTime::new(1970, 1, 1, 0, 0, 0).weekday(),
+        Weekday::Thursday
+    );
 }
 
 #[test]
@@ -203,7 +223,11 @@ fn timezone_display_trait() {
 #[test]
 fn tz_database_has_50_plus_entries() {
     let db = TimeZoneDatabase::new();
-    assert!(db.len() >= 50, "database has {} entries, expected >= 50", db.len());
+    assert!(
+        db.len() >= 50,
+        "database has {} entries, expected >= 50",
+        db.len()
+    );
 }
 
 #[test]
@@ -239,7 +263,11 @@ fn tz_database_search_city() {
 fn tz_database_search_abbreviation() {
     let db = TimeZoneDatabase::new();
     let results = db.search("CET");
-    assert!(results.len() >= 2, "expected multiple CET zones, got {}", results.len());
+    assert!(
+        results.len() >= 2,
+        "expected multiple CET zones, got {}",
+        results.len()
+    );
 }
 
 #[test]

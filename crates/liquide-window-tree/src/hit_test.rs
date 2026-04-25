@@ -1,4 +1,4 @@
-use crate::{WindowId, WindowNode, WindowStyle, WindowFlags, WindowTree};
+use crate::{WindowFlags, WindowId, WindowNode, WindowStyle, WindowTree};
 
 /// Which part of a window was hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -131,13 +131,18 @@ fn classify_hit(node: &WindowNode, point: (i32, i32)) -> HitTestResult {
     // resize border zone may overlap the client rect (the visual border drawn
     // by the window is thinner than the hit-test grab zone).
     let has_caption = node.style.contains(WindowStyle::CAPTION);
-    let has_border = node.style.contains(WindowStyle::BORDER) || node.style.contains(WindowStyle::THICK_FRAME);
+    let has_border =
+        node.style.contains(WindowStyle::BORDER) || node.style.contains(WindowStyle::THICK_FRAME);
     let resizable = node.style.contains(WindowStyle::THICK_FRAME);
 
     // Border / resize edges (highest priority).
     if has_border && resizable {
         if let Some(edge) = detect_resize_edge(lx, ly, w, h) {
-            return HitTestResult { window_id: node.id, hit_area: HitArea::Border(edge), local_point };
+            return HitTestResult {
+                window_id: node.id,
+                hit_area: HitArea::Border(edge),
+                local_point,
+            };
         }
     }
 
@@ -146,25 +151,43 @@ fn classify_hit(node: &WindowNode, point: (i32, i32)) -> HitTestResult {
         // Check scrollbars first (they overlap the client rect conceptually
         // but occupy the right/bottom edges).
         if node.style.contains(WindowStyle::VSCROLL) {
-            let sb_x = node.client_rect.right() - SCROLLBAR_WIDTH - node.client_rect.x + node.bounds.x;
+            let sb_x =
+                node.client_rect.right() - SCROLLBAR_WIDTH - node.client_rect.x + node.bounds.x;
             if lx >= sb_x {
-                return HitTestResult { window_id: node.id, hit_area: HitArea::VScroll, local_point };
+                return HitTestResult {
+                    window_id: node.id,
+                    hit_area: HitArea::VScroll,
+                    local_point,
+                };
             }
         }
         if node.style.contains(WindowStyle::HSCROLL) {
-            let sb_y = node.client_rect.bottom() - SCROLLBAR_WIDTH - node.client_rect.y + node.bounds.y;
+            let sb_y =
+                node.client_rect.bottom() - SCROLLBAR_WIDTH - node.client_rect.y + node.bounds.y;
             if ly >= sb_y {
-                return HitTestResult { window_id: node.id, hit_area: HitArea::HScroll, local_point };
+                return HitTestResult {
+                    window_id: node.id,
+                    hit_area: HitArea::HScroll,
+                    local_point,
+                };
             }
         }
-        return HitTestResult { window_id: node.id, hit_area: HitArea::Client, local_point };
+        return HitTestResult {
+            window_id: node.id,
+            hit_area: HitArea::Client,
+            local_point,
+        };
     }
 
     // Caption area and its buttons.
     if has_caption && ly >= 0 && ly < CAPTION_HEIGHT + if has_border { BORDER_WIDTH } else { 0 } {
         // System menu icon (leftmost area of caption).
         if node.style.contains(WindowStyle::SYS_MENU) && lx < CAPTION_HEIGHT {
-            return HitTestResult { window_id: node.id, hit_area: HitArea::SysMenu, local_point };
+            return HitTestResult {
+                window_id: node.id,
+                hit_area: HitArea::SysMenu,
+                local_point,
+            };
         }
 
         // Caption buttons (right side): Close, Maximize, Minimize.
@@ -172,26 +195,46 @@ fn classify_hit(node: &WindowNode, point: (i32, i32)) -> HitTestResult {
         if node.style.contains(WindowStyle::CLOSE_BOX) {
             btn_x -= BUTTON_WIDTH;
             if lx >= btn_x {
-                return HitTestResult { window_id: node.id, hit_area: HitArea::CloseButton, local_point };
+                return HitTestResult {
+                    window_id: node.id,
+                    hit_area: HitArea::CloseButton,
+                    local_point,
+                };
             }
         }
         if node.style.contains(WindowStyle::MAXIMIZE_BOX) {
             btn_x -= BUTTON_WIDTH;
             if lx >= btn_x {
-                return HitTestResult { window_id: node.id, hit_area: HitArea::MaxButton, local_point };
+                return HitTestResult {
+                    window_id: node.id,
+                    hit_area: HitArea::MaxButton,
+                    local_point,
+                };
             }
         }
         if node.style.contains(WindowStyle::MINIMIZE_BOX) {
             btn_x -= BUTTON_WIDTH;
             if lx >= btn_x {
-                return HitTestResult { window_id: node.id, hit_area: HitArea::MinButton, local_point };
+                return HitTestResult {
+                    window_id: node.id,
+                    hit_area: HitArea::MinButton,
+                    local_point,
+                };
             }
         }
 
-        return HitTestResult { window_id: node.id, hit_area: HitArea::Caption, local_point };
+        return HitTestResult {
+            window_id: node.id,
+            hit_area: HitArea::Caption,
+            local_point,
+        };
     }
 
-    HitTestResult { window_id: node.id, hit_area: HitArea::Nowhere, local_point }
+    HitTestResult {
+        window_id: node.id,
+        hit_area: HitArea::Nowhere,
+        local_point,
+    }
 }
 
 /// Detect which resize edge a point is on (within BORDER_WIDTH of window edges).

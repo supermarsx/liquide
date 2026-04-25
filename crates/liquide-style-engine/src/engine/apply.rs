@@ -11,7 +11,42 @@ use crate::dimension::Dimension;
 use crate::dimension::Sides;
 use crate::value_resolve::{parse_inline_value, *};
 
+fn css_wide_keyword(
+    val: &liquide_theme_css::value::PropertyValue,
+) -> Option<&'static str> {
+    let text = val.as_string()?.trim().to_ascii_lowercase();
+    if text.contains("revert-layer") {
+        Some("revert-layer")
+    } else if text.contains("revert") {
+        Some("revert")
+    } else if text.contains("unset") {
+        Some("unset")
+    } else if text.contains("inherit") {
+        Some("inherit")
+    } else if text.contains("initial") {
+        Some("initial")
+    } else {
+        None
+    }
+}
+
 impl StyleEngine {
+    pub(crate) fn apply_cascaded_property(
+        &self,
+        key: &str,
+        val: &liquide_theme_css::value::PropertyValue,
+        style: &mut ComputedStyle,
+        inherited_style: &ComputedStyle,
+        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+    ) {
+        if key == "all" {
+            self.apply_all_property(val, style, inherited_style, scope_vars);
+            return;
+        }
+
+        self.apply_single_property(key, val, style, scope_vars);
+    }
+
     pub(crate) fn apply_single_property(
         &self,
         key: &str,
@@ -21,8 +56,8 @@ impl StyleEngine {
     ) {
         // ── CSS-wide keywords ──
         // Check for initial/inherit/unset/revert before normal property handling
-        if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
-            match kw.as_str() {
+        if let Some(kw) = css_wide_keyword(val) {
+            match kw {
                 "initial" => {
                     // Reset this property to its initial (default) value
                     self.reset_property_to_initial(key, style);
@@ -128,12 +163,21 @@ impl StyleEngine {
             // Border radius
             "border-radius" => {
                 let r = resolve_number(val);
-                style.border_radius = crate::dimension::Corners::all(crate::dimension::EllipticalRadius::from(r));
+                style.border_radius =
+                    crate::dimension::Corners::all(crate::dimension::EllipticalRadius::from(r));
             }
-            "border-top-left-radius" => style.border_radius.top_left = resolve_elliptical_radius(val),
-            "border-top-right-radius" => style.border_radius.top_right = resolve_elliptical_radius(val),
-            "border-bottom-left-radius" => style.border_radius.bottom_left = resolve_elliptical_radius(val),
-            "border-bottom-right-radius" => style.border_radius.bottom_right = resolve_elliptical_radius(val),
+            "border-top-left-radius" => {
+                style.border_radius.top_left = resolve_elliptical_radius(val)
+            }
+            "border-top-right-radius" => {
+                style.border_radius.top_right = resolve_elliptical_radius(val)
+            }
+            "border-bottom-left-radius" => {
+                style.border_radius.bottom_left = resolve_elliptical_radius(val)
+            }
+            "border-bottom-right-radius" => {
+                style.border_radius.bottom_right = resolve_elliptical_radius(val)
+            }
 
             // Border color
             "border-color" => {
@@ -298,10 +342,11 @@ impl StyleEngine {
             }
             "font-family" => {
                 if let liquide_theme_css::value::PropertyValue::String(s) = val {
-                    style.font_family = Arc::new(s
-                        .split(',')
-                        .map(|f| f.trim().trim_matches('"').to_string())
-                        .collect());
+                    style.font_family = Arc::new(
+                        s.split(',')
+                            .map(|f| f.trim().trim_matches('"').to_string())
+                            .collect(),
+                    );
                 }
             }
             "font-size" => style.font_size = resolve_number(val),
@@ -1902,7 +1947,9 @@ impl StyleEngine {
 ///
 /// Handles both single-value (`10px` → equal x/y) and two-value
 /// (`List([10px, 20px])` → separate horizontal/vertical radii).
-fn resolve_elliptical_radius(val: &liquide_theme_css::value::PropertyValue) -> crate::dimension::EllipticalRadius {
+fn resolve_elliptical_radius(
+    val: &liquide_theme_css::value::PropertyValue,
+) -> crate::dimension::EllipticalRadius {
     use crate::dimension::EllipticalRadius;
     use crate::value_resolve::resolve_number;
 

@@ -7,7 +7,7 @@ use crate::bandwidth::BandwidthLimiter;
 use crate::config::{SmartCardConfig, UsbConfig};
 use crate::device::{DeviceInfo, DeviceState, UsbDevice};
 use crate::policy::{PolicyResult, UsbPolicy};
-use crate::{UsbError, Result};
+use crate::{Result, UsbError};
 
 /// Central manager for USB device redirection within a session.
 pub struct UsbManager {
@@ -50,12 +50,13 @@ impl UsbManager {
 
         // Check security key
         if self.policy.is_security_key(&info.vid_pid) {
-            self.audit_events.push(UsbAuditEvent::SecurityKeyForwardAttempt {
-                user: String::new(),
-                device_name: info.name.clone(),
-                vid_pid: info.vid_pid.to_string(),
-                allowed: false,
-            });
+            self.audit_events
+                .push(UsbAuditEvent::SecurityKeyForwardAttempt {
+                    user: String::new(),
+                    device_name: info.name.clone(),
+                    vid_pid: info.vid_pid.to_string(),
+                    allowed: false,
+                });
             return Err(UsbError::SecurityKeyBlocked {
                 vid_pid: info.vid_pid.to_string(),
             });
@@ -80,7 +81,9 @@ impl UsbManager {
         }
 
         // Device limit check
-        let active_count = self.devices.values()
+        let active_count = self
+            .devices
+            .values()
             .filter(|d| d.state() != DeviceState::Disconnected && d.state() != DeviceState::Blocked)
             .count() as u32;
         if active_count >= self.policy.max_devices() {
@@ -130,9 +133,10 @@ impl UsbManager {
     /// Checks bandwidth limits before forwarding.
     pub fn handle_data(&mut self, instance_id: u32, data: &[u8]) -> Result<Vec<u8>> {
         if !self.devices.contains_key(&instance_id) {
-            return Err(UsbError::InvalidDevice(
-                format!("no device with instance ID {}", instance_id),
-            ));
+            return Err(UsbError::InvalidDevice(format!(
+                "no device with instance ID {}",
+                instance_id
+            )));
         }
 
         if !self.bandwidth_limiter.try_consume(data.len() as u64) {

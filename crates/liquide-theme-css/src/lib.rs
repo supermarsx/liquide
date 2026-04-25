@@ -97,3 +97,7 @@ pub mod prelude {
     pub use crate::stylesheet::{QueryEnvironment, StyleSheet};
     pub use crate::value::{Color, PropertyValue};
 }
+
+#[cfg(test)]
+#[path = "tests/css_conformance_fixtures.rs"]
+mod css_conformance_fixtures;

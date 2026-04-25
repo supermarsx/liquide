@@ -57,18 +57,32 @@ impl Win32DockIntegration {
                     self.handle_window_closed(dock, *hwnd as u64);
                 }
                 Win32AppEvent::WindowChanged(info) => {
-                    // Title or state changed — we could update the dock label.
-                    // For now, just ensure the app is tracked.
+                    // Title or state changed — ensure the app is tracked and
+                    // re-emit to the dock so attention indicators can clear.
                     let app_id = Self::app_id_for(info);
                     if !self.app_windows.contains_key(&app_id) {
                         self.handle_window_opened(dock, info);
                     }
+                    dock.on_window_changed(&app_id);
                 }
-                Win32AppEvent::WindowFocused { hwnd: _hwnd } => {
-                    // Could highlight the dock item — future enhancement.
+                Win32AppEvent::WindowFocused { hwnd } => {
+                    // Highlight the dock item whose app owns this HWND.
+                    let app_id = self.app_id_for_hwnd(*hwnd as u64);
+                    if let Some(ref id) = app_id {
+                        // Focusing an app implicitly clears its attention flag.
+                        dock.set_needs_attention(id, false);
+                    }
+                    dock.set_focused_app(app_id.as_deref());
                 }
-                Win32AppEvent::WindowUnfocused { hwnd: _hwnd } => {
-                    // Could un-highlight the dock item — future enhancement.
+                Win32AppEvent::WindowUnfocused { hwnd } => {
+                    // Only clear focus if the unfocused HWND matched the
+                    // currently focused app (the shell may send unfocus for a
+                    // window whose app already lost focus).
+                    if let Some(app_id) = self.app_id_for_hwnd(*hwnd as u64) {
+                        if dock.focused_app() == Some(app_id.as_str()) {
+                            dock.set_focused_app(None);
+                        }
+                    }
                 }
             }
         }
@@ -197,6 +211,17 @@ impl Win32DockIntegration {
             .map(|(app_id, hwnds)| (app_id.clone(), hwnds.len()))
             .collect()
     }
+
+    /// Look up which tracked `app_id` owns a given HWND, if any.
+    fn app_id_for_hwnd(&self, hwnd: u64) -> Option<String> {
+        self.app_windows.iter().find_map(|(app_id, hwnds)| {
+            if hwnds.contains(&hwnd) {
+                Some(app_id.clone())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl Default for Win32DockIntegration {
@@ -258,9 +283,11 @@ mod tests {
         integration.reconcile(&mut dock, &windows);
 
         assert_eq!(integration.tracked_apps().len(), 1);
-        assert!(integration
-            .tracked_apps()
-            .iter()
-            .any(|(id, _)| id == "notepad"));
+        assert!(
+            integration
+                .tracked_apps()
+                .iter()
+                .any(|(id, _)| id == "notepad")
+        );
     }
 }

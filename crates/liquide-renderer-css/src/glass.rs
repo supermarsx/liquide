@@ -162,7 +162,9 @@ mod tests {
 
     #[test]
     fn test_to_compositor_params() {
-        let g = GlassStyle::default().with_inner_glow(0.5).with_parallax(0.3);
+        let g = GlassStyle::default()
+            .with_inner_glow(0.5)
+            .with_parallax(0.3);
         let params = g.to_compositor_params();
         assert_eq!(params.blur_radius, g.blur_radius);
         assert_eq!(params.tint_color, g.tint_color);

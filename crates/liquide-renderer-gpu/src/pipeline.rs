@@ -166,6 +166,16 @@ impl ComputePipeline {
 
         self.frame_count += 1;
 
+        // Runtime deprecation guard: this crate never implemented real GPU work.
+        // Log once per frame so surviving call sites are discoverable in production logs.
+        tracing::warn!(
+            frame_id = self.frame_count,
+            stages = self.stages.len(),
+            "liquide-renderer-gpu::ComputePipeline::execute_frame invoked — \
+             this crate is a deprecated stub that returns placeholder frames. \
+             Migrate to liquide-renderer-wgpu or liquide-renderer-cpu."
+        );
+
         tracing::trace!(
             frame_id = self.frame_count,
             stages = self.stages.len(),

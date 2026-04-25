@@ -23,7 +23,7 @@ pub struct SnapPreview {
     pub opacity: f32,
     pub corner_radius: f32,
     pub border_width: f32,
-    pub color: (u8, u8, u8, u8),  // RGBA
+    pub color: (u8, u8, u8, u8), // RGBA
 }
 
 impl SnapPreview {
@@ -59,7 +59,12 @@ impl SnapPreview {
             SnapZone::TopRight => Rect::new(x + half_w + gap, y, half_w, half_h),
             SnapZone::BottomLeft => Rect::new(x, y + half_h + gap, half_w, half_h),
             SnapZone::BottomRight => Rect::new(x + half_w + gap, y + half_h + gap, half_w, half_h),
-            SnapZone::Maximize => Rect::new(x, y, work_area.width - gap * 2.0, work_area.height - gap * 2.0),
+            SnapZone::Maximize => Rect::new(
+                x,
+                y,
+                work_area.width - gap * 2.0,
+                work_area.height - gap * 2.0,
+            ),
             SnapZone::None => Rect::new(0.0, 0.0, 0.0, 0.0),
         };
     }
@@ -93,5 +98,7 @@ impl SnapPreview {
 }
 
 impl Default for SnapPreview {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

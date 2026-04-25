@@ -347,11 +347,7 @@ mod tests {
         ring.push(make_frame(16_666));
         ring.push(make_frame(16_667));
         let fps = ring.fps();
-        assert!(
-            (fps - 60.0).abs() < 0.5,
-            "fps should be ~60, was {}",
-            fps
-        );
+        assert!((fps - 60.0).abs() < 0.5, "fps should be ~60, was {}", fps);
     }
 
     #[test]

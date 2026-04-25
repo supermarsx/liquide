@@ -12,13 +12,9 @@ use crate::store::AuthorizationStore;
 pub enum AuthResult {
     /// Authorization was granted. If keep-alive is enabled,
     /// `keep_alive_until` is the expiry timestamp (seconds since epoch).
-    Granted {
-        keep_alive_until: Option<u64>,
-    },
+    Granted { keep_alive_until: Option<u64> },
     /// Authorization was denied.
-    Denied {
-        reason: String,
-    },
+    Denied { reason: String },
     /// The user cancelled the authorization dialog.
     Cancelled,
     /// An error occurred during the authorization flow.
@@ -333,9 +329,8 @@ mod tests {
         let mut policy = AuthorizationPolicy::new();
         // NoAuth rule with keep-alive so we can test the store without
         // needing actual credential verification.
-        policy.add_rule(
-            PolicyRule::new("org.liquide.test", AuthLevel::NoAuth).with_keep_alive(300),
-        );
+        policy
+            .add_rule(PolicyRule::new("org.liquide.test", AuthLevel::NoAuth).with_keep_alive(300));
 
         let (mut agent, clock_handle) =
             AuthorizationAgent::with_test_clock(policy, "testuser", 1000);
@@ -358,10 +353,7 @@ mod tests {
 
     #[test]
     fn revoke_all_clears_grants() {
-        let mut agent = AuthorizationAgent::new(
-            AuthorizationPolicy::with_defaults(),
-            "testuser",
-        );
+        let mut agent = AuthorizationAgent::new(AuthorizationPolicy::with_defaults(), "testuser");
         agent.store.grant("a".to_string(), u64::MAX);
         agent.store.grant("b".to_string(), u64::MAX);
         assert!(agent.check_keep_alive("a"));
@@ -373,10 +365,7 @@ mod tests {
 
     #[test]
     fn revoke_single_grant() {
-        let mut agent = AuthorizationAgent::new(
-            AuthorizationPolicy::with_defaults(),
-            "testuser",
-        );
+        let mut agent = AuthorizationAgent::new(AuthorizationPolicy::with_defaults(), "testuser");
         agent.store.grant("a".to_string(), u64::MAX);
         agent.store.grant("b".to_string(), u64::MAX);
 
@@ -407,8 +396,7 @@ mod tests {
         let mut policy = AuthorizationPolicy::new();
         policy.add_rule(PolicyRule::new("org.liquide.test", AuthLevel::NoAuth));
 
-        let (mut agent, _handle) =
-            AuthorizationAgent::with_test_clock(policy, "testuser", 1000);
+        let (mut agent, _handle) = AuthorizationAgent::with_test_clock(policy, "testuser", 1000);
         let action = make_action("org.liquide.test", AuthLevel::AdminPassword);
         agent.register_action(action.clone());
 
@@ -446,9 +434,24 @@ mod tests {
 
     #[test]
     fn auth_result_predicates() {
-        assert!(AuthResult::Granted { keep_alive_until: None }.is_granted());
-        assert!(!AuthResult::Granted { keep_alive_until: None }.is_denied());
-        assert!(AuthResult::Denied { reason: "no".into() }.is_denied());
+        assert!(
+            AuthResult::Granted {
+                keep_alive_until: None
+            }
+            .is_granted()
+        );
+        assert!(
+            !AuthResult::Granted {
+                keep_alive_until: None
+            }
+            .is_denied()
+        );
+        assert!(
+            AuthResult::Denied {
+                reason: "no".into()
+            }
+            .is_denied()
+        );
         assert!(!AuthResult::Cancelled.is_granted());
         assert!(!AuthResult::Error("x".into()).is_granted());
     }
@@ -457,10 +460,9 @@ mod tests {
     fn policy_mut_allows_modification() {
         let mut agent = AuthorizationAgent::with_defaults("testuser");
         let before = agent.policy().len();
-        agent.policy_mut().add_rule(PolicyRule::new(
-            "org.custom.action",
-            AuthLevel::Fingerprint,
-        ));
+        agent
+            .policy_mut()
+            .add_rule(PolicyRule::new("org.custom.action", AuthLevel::Fingerprint));
         assert_eq!(agent.policy().len(), before + 1);
     }
 

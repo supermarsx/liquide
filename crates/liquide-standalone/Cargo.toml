@@ -25,6 +25,8 @@ liquide-xwayland = { path = "../liquide-xwayland" }
 liquide-compositor = { path = "../liquide-compositor" }
 liquide-input = { path = "../liquide-input" }
 liquide-common = { path = "../liquide-common" }
+liquide-platform.workspace = true
+liquide-session.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -33,6 +35,6 @@ anyhow.workspace = true
 tokio.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libc.workspace = true
+libc = "0.2"
 
 [dev-dependencies]

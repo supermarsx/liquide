@@ -1,10 +1,10 @@
-use liquide_compositor::geometry::Rect;
-use crate::window::*;
-use crate::workspace::*;
+use crate::decoration::*;
 use crate::focus::*;
 use crate::layout::*;
-use crate::decoration::*;
 use crate::shell::Shell;
+use crate::window::*;
+use crate::workspace::*;
+use liquide_compositor::geometry::Rect;
 
 // --- Display impls ---
 #[test]
@@ -44,7 +44,10 @@ fn workspace_id_display() {
 #[test]
 fn focus_policy_display() {
     assert_eq!(format!("{}", FocusPolicy::ClickToFocus), "ClickToFocus");
-    assert_eq!(format!("{}", FocusPolicy::FocusFollowsMouse), "FocusFollowsMouse");
+    assert_eq!(
+        format!("{}", FocusPolicy::FocusFollowsMouse),
+        "FocusFollowsMouse"
+    );
 }
 
 #[test]
@@ -311,7 +314,7 @@ fn decoration_exact_boundary_bottom_right() {
     // Corner starts at (right-20, bottom-20) = (480, 410)
     let zone = hit_test_decoration(bounds, &style, 499.9, 429.9);
     assert_eq!(zone, HitZone::ResizeBottomRight);
-    
+
     // Test a point well inside the client area
     let zone_client = hit_test_decoration(bounds, &style, 450.0, 400.0);
     assert_eq!(zone_client, HitZone::Client);

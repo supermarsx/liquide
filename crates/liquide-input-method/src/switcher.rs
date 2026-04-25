@@ -132,7 +132,11 @@ impl InputMethodSwitcher {
     /// Returns the per-window override if set, otherwise the global method.
     #[must_use]
     pub fn get_for_window(&self, window_id: u64) -> Option<&InputMethodInfo> {
-        let idx = self.per_window.get(&window_id).copied().unwrap_or(self.active_index);
+        let idx = self
+            .per_window
+            .get(&window_id)
+            .copied()
+            .unwrap_or(self.active_index);
         self.methods.get(idx)
     }
 

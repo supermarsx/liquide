@@ -157,7 +157,11 @@ fn test_renderer_produces_non_black_pixels() {
     let mut fb = FrameBuffer::new(1920, 1080, PixelFormat::Bgra8);
 
     // Fill framebuffer with black initially
-    for pixel in fb.pixels_mut().expect("CPU framebuffer required").chunks_exact_mut(4) {
+    for pixel in fb
+        .pixels_mut()
+        .expect("CPU framebuffer required")
+        .chunks_exact_mut(4)
+    {
         pixel[0] = 0; // B
         pixel[1] = 0; // G
         pixel[2] = 0; // R

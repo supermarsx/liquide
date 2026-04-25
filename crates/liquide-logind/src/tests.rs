@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::session::{StubSession, SessionProvider, SessionState};
-    use crate::seat::StubSeat;
-    use crate::vt::VtMode;
     use crate::privileges::Privileges;
+    use crate::seat::StubSeat;
+    use crate::session::{SessionProvider, SessionState, StubSession};
+    use crate::vt::VtMode;
 
     #[test]
     fn test_stub_session() {

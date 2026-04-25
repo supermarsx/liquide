@@ -431,7 +431,11 @@ fn unregister_active_window_transfers_focus() {
 
     let events = fm.unregister_window(w2);
     // Should deactivate w2 and activate w1 from chain.
-    assert!(events.iter().any(|e| matches!(e, ActivationEvent::Deactivate { window } if *window == w2)));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ActivationEvent::Deactivate { window } if *window == w2))
+    );
     assert_eq!(fm.active_window(), Some(w1));
 }
 
@@ -977,41 +981,51 @@ fn set_foreground_records_in_history() {
 #[test]
 fn message_is_mouse() {
     assert!(WindowMessage::MouseMove { x: 0.0, y: 0.0 }.is_mouse());
-    assert!(WindowMessage::MouseDown {
-        button: MouseButton::Left,
-        x: 0.0,
-        y: 0.0,
-    }
-    .is_mouse());
-    assert!(WindowMessage::MouseUp {
-        button: MouseButton::Right,
-        x: 0.0,
-        y: 0.0,
-    }
-    .is_mouse());
+    assert!(
+        WindowMessage::MouseDown {
+            button: MouseButton::Left,
+            x: 0.0,
+            y: 0.0,
+        }
+        .is_mouse()
+    );
+    assert!(
+        WindowMessage::MouseUp {
+            button: MouseButton::Right,
+            x: 0.0,
+            y: 0.0,
+        }
+        .is_mouse()
+    );
     assert!(WindowMessage::MouseWheel { delta: 1.0 }.is_mouse());
     assert!(WindowMessage::MouseEnter.is_mouse());
     assert!(WindowMessage::MouseLeave.is_mouse());
     assert!(!WindowMessage::Paint.is_mouse());
-    assert!(!WindowMessage::KeyDown {
-        keycode: 65,
-        modifiers: Modifiers::NONE,
-    }
-    .is_mouse());
+    assert!(
+        !WindowMessage::KeyDown {
+            keycode: 65,
+            modifiers: Modifiers::NONE,
+        }
+        .is_mouse()
+    );
 }
 
 #[test]
 fn message_is_keyboard() {
-    assert!(WindowMessage::KeyDown {
-        keycode: 65,
-        modifiers: Modifiers::NONE,
-    }
-    .is_keyboard());
-    assert!(WindowMessage::KeyUp {
-        keycode: 65,
-        modifiers: Modifiers::NONE,
-    }
-    .is_keyboard());
+    assert!(
+        WindowMessage::KeyDown {
+            keycode: 65,
+            modifiers: Modifiers::NONE,
+        }
+        .is_keyboard()
+    );
+    assert!(
+        WindowMessage::KeyUp {
+            keycode: 65,
+            modifiers: Modifiers::NONE,
+        }
+        .is_keyboard()
+    );
     assert!(WindowMessage::CharInput('a').is_keyboard());
     assert!(!WindowMessage::MouseMove { x: 0.0, y: 0.0 }.is_keyboard());
 }
@@ -1072,11 +1086,7 @@ fn message_target_new() {
 
 #[test]
 fn message_target_with_priority() {
-    let t = MessageTarget::with_priority(
-        WindowId(7),
-        WindowMessage::Close,
-        MessagePriority::High,
-    );
+    let t = MessageTarget::with_priority(WindowId(7), WindowMessage::Close, MessagePriority::High);
     assert_eq!(t.priority, MessagePriority::High);
 }
 
@@ -1562,9 +1572,16 @@ fn timer_multiple_fire_same_tick() {
     let fired = tm.tick(100);
     assert_eq!(fired.len(), 2);
 
-    let ids: Vec<u64> = fired.iter().filter_map(|mt| {
-        if let WindowMessage::Timer(id) = mt.message { Some(id) } else { None }
-    }).collect();
+    let ids: Vec<u64> = fired
+        .iter()
+        .filter_map(|mt| {
+            if let WindowMessage::Timer(id) = mt.message {
+                Some(id)
+            } else {
+                None
+            }
+        })
+        .collect();
     assert!(ids.contains(&t1));
     assert!(ids.contains(&t2));
     assert!(tm.is_empty());
@@ -1751,7 +1768,10 @@ fn hook_transform_key_to_char() {
             modifiers: Modifiers::NONE,
         },
     );
-    assert!(matches!(result, Some(WindowMessage::KeyDown { keycode: 66, .. })));
+    assert!(matches!(
+        result,
+        Some(WindowMessage::KeyDown { keycode: 66, .. })
+    ));
 }
 
 // ===============================================================
@@ -1782,7 +1802,10 @@ fn integration_queue_to_dispatch() {
         results.push(d.dispatch(&target));
     }
 
-    assert_eq!(results, vec![MessageResult::Handled, MessageResult::NotHandled]);
+    assert_eq!(
+        results,
+        vec![MessageResult::Handled, MessageResult::NotHandled]
+    );
 }
 
 #[test]

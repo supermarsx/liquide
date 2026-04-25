@@ -7,27 +7,27 @@
 //! This crate builds on the protocol type definitions in `liquide-wayland`
 //! and integrates with the existing `liquide-compositor` scene graph.
 
+pub mod buffer;
 pub mod client;
 pub mod display;
 pub mod error;
 pub mod global;
 pub mod registry;
-pub mod shm;
-pub mod surface_manager;
 pub mod seat_manager;
 pub mod shell_manager;
-pub mod buffer;
+pub mod shm;
+pub mod surface_manager;
 
-pub use client::{ClientId, ClientConnection, ClientState};
+pub use buffer::{BufferRef, BufferSource};
+pub use client::{ClientConnection, ClientId, ClientState};
 pub use display::WaylandDisplay;
-pub use error::{WaylandServerError, Result};
+pub use error::{Result, WaylandServerError};
 pub use global::{Global, GlobalId};
 pub use registry::GlobalRegistry;
-pub use shm::ShmPool;
-pub use surface_manager::SurfaceManager;
 pub use seat_manager::SeatManager;
 pub use shell_manager::ShellManager;
-pub use buffer::{BufferRef, BufferSource};
+pub use shm::ShmPool;
+pub use surface_manager::SurfaceManager;
 
 #[cfg(test)]
 mod tests;

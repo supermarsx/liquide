@@ -162,8 +162,6 @@ fn scan_recursive(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
 fn is_font_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|ext| {
-            crate::format::FontFormat::from_extension(ext).is_some()
-        })
+        .map(|ext| crate::format::FontFormat::from_extension(ext).is_some())
         .unwrap_or(false)
 }

@@ -28,11 +28,7 @@ use crate::status_bar::StatusBar;
 ///   </statusbar-slot>
 /// </statusbar>
 /// ```
-pub fn build_statusbar_dom(
-    doc: &mut Document,
-    parent: NodeId,
-    bar: &StatusBar,
-) -> StatusBarNodes {
+pub fn build_statusbar_dom(doc: &mut Document, parent: NodeId, bar: &StatusBar) -> StatusBarNodes {
     let statusbar = doc.create_element("statusbar");
     doc.set_id(statusbar, "css-statusbar");
     doc.append_child(parent, statusbar);
@@ -113,19 +109,13 @@ pub fn build_statusbar_dom(
 }
 
 /// Sync indicator text content to match the current state.
-pub fn sync_statusbar_indicators(
-    doc: &mut Document,
-    slot_right: NodeId,
-    bar: &StatusBar,
-) {
+pub fn sync_statusbar_indicators(doc: &mut Document, slot_right: NodeId, bar: &StatusBar) {
     // Find all indicator children and update text
     let children: Vec<NodeId> = doc.children(slot_right).to_vec();
     let mut indicator_idx = 0;
 
     for child in children {
-        let is_indicator = doc
-            .get(child)
-            .map_or(false, |n| n.has_class("indicator"));
+        let is_indicator = doc.get(child).map_or(false, |n| n.has_class("indicator"));
         if !is_indicator {
             continue;
         }
@@ -150,14 +140,19 @@ pub struct StatusBarNodes {
 
 fn indicator_label(ind: &SystemIndicator) -> String {
     match &ind.kind {
-        IndicatorKind::Clock { timestamp_us, format: _ } => {
+        IndicatorKind::Clock {
+            timestamp_us,
+            format: _,
+        } => {
             let total_secs = *timestamp_us / 1_000_000;
             let hours = (total_secs / 3600) % 24;
             let minutes = (total_secs / 60) % 60;
             format!("{hours:02}:{minutes:02}")
         }
         IndicatorKind::Battery { percent, .. } => format!("{}%", percent),
-        IndicatorKind::Wifi { quality_percent, .. } => format!("{}%", quality_percent),
+        IndicatorKind::Wifi {
+            quality_percent, ..
+        } => format!("{}%", quality_percent),
         IndicatorKind::Notification { unread_count, .. } => {
             if *unread_count > 0 {
                 format!("{}", unread_count)

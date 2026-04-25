@@ -280,7 +280,10 @@ impl Telemetry {
             self.thread_pool.queued_jobs,
             self.thread_pool.utilization * 100.0
         ));
-        report.push_str(&format!("\nWindow Metrics ({} windows):\n", self.windows.len()));
+        report.push_str(&format!(
+            "\nWindow Metrics ({} windows):\n",
+            self.windows.len()
+        ));
         for (wid, metrics) in &self.windows {
             report.push_str(&format!(
                 "  Window {}: {:.2}ms avg, {} nodes, {} slow frames{}\n",

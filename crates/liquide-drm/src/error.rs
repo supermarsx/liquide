@@ -20,6 +20,14 @@ pub enum DrmError {
     Ioctl { name: String, reason: String },
     #[error("VBLANK wait failed: {0}")]
     VblankWait(String),
+    #[error("DRM event buffer malformed at offset {offset}: {reason}")]
+    EventBufferMalformed { offset: usize, reason: String },
+    #[error("DRM event buffer truncated at offset {offset}: expected {expected} bytes, got {actual}")]
+    EventBufferTruncated {
+        offset: usize,
+        expected: usize,
+        actual: usize,
+    },
     #[error("device lost")]
     DeviceLost,
 }

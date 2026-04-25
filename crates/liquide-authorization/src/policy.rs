@@ -182,8 +182,7 @@ pub fn default_policies() -> Vec<PolicyRule> {
         PolicyRule::new("org.liquide.device.mount", AuthLevel::UserPassword),
         PolicyRule::new("org.liquide.device.unmount", AuthLevel::UserPassword),
         // Service management — admin
-        PolicyRule::new("org.liquide.service.*", AuthLevel::AdminPassword)
-            .with_keep_alive(60),
+        PolicyRule::new("org.liquide.service.*", AuthLevel::AdminPassword).with_keep_alive(60),
         // Catch-all wildcard — require admin by default for unknown actions
         PolicyRule::new("*", AuthLevel::AdminPassword),
     ]
@@ -289,15 +288,17 @@ mod tests {
         let before = policy.len();
         policy.remove_rules("org.liquide.system.shutdown");
         assert_eq!(policy.len(), before - 1);
-        assert!(policy
-            .find_matching_rule("org.liquide.system.shutdown")
-            .is_some()); // still matches wildcard
+        assert!(
+            policy
+                .find_matching_rule("org.liquide.system.shutdown")
+                .is_some()
+        ); // still matches wildcard
     }
 
     #[test]
     fn keep_alive_builder() {
-        let rule = PolicyRule::new("org.liquide.test", AuthLevel::UserPassword)
-            .with_keep_alive(600);
+        let rule =
+            PolicyRule::new("org.liquide.test", AuthLevel::UserPassword).with_keep_alive(600);
         assert!(rule.allow_keep_alive);
         assert_eq!(rule.keep_alive_seconds, 600);
     }

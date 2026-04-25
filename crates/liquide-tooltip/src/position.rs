@@ -83,7 +83,12 @@ pub fn compute_tooltip_position(
     x = x.clamp(4.0, (screen_w - tooltip_w - 4.0).max(4.0));
     y = y.clamp(4.0, (screen_h - tooltip_h - 4.0).max(4.0));
 
-    TooltipRect { x, y, width: tooltip_w, height: tooltip_h }
+    TooltipRect {
+        x,
+        y,
+        width: tooltip_w,
+        height: tooltip_h,
+    }
 }
 
 #[cfg(test)]
@@ -93,10 +98,16 @@ mod tests {
     #[test]
     fn test_tooltip_below() {
         let r = compute_tooltip_position(
-            100.0, 100.0, 80.0, 30.0,  // anchor
-            120.0, 24.0,                // tooltip size
-            0.0, 8.0,                   // offset
-            1920.0, 1080.0,             // screen
+            100.0,
+            100.0,
+            80.0,
+            30.0, // anchor
+            120.0,
+            24.0, // tooltip size
+            0.0,
+            8.0, // offset
+            1920.0,
+            1080.0, // screen
             TooltipPosition::Below,
         );
         assert!(r.y > 130.0); // Below anchor
@@ -106,10 +117,16 @@ mod tests {
     #[test]
     fn test_tooltip_flips_when_clipped() {
         let r = compute_tooltip_position(
-            100.0, 1060.0, 80.0, 20.0,  // anchor near bottom
-            120.0, 24.0,
-            0.0, 8.0,
-            1920.0, 1080.0,
+            100.0,
+            1060.0,
+            80.0,
+            20.0, // anchor near bottom
+            120.0,
+            24.0,
+            0.0,
+            8.0,
+            1920.0,
+            1080.0,
             TooltipPosition::Below,
         );
         // Should flip to above since bottom is clipped

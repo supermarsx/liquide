@@ -55,11 +55,7 @@ pub enum Schedule {
     /// Every day at a specific time.
     Daily { hour: u8, minute: u8 },
     /// Every week on a specific day and time.
-    Weekly {
-        day: Weekday,
-        hour: u8,
-        minute: u8,
-    },
+    Weekly { day: Weekday, hour: u8, minute: u8 },
     /// Every month on a specific day and time.
     Monthly { day: u8, hour: u8, minute: u8 },
     /// Cron expression.

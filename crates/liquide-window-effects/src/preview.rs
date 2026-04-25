@@ -139,8 +139,12 @@ impl TilePreview {
             TileZone::TopLeft => Rect::new(x0, y0, half_w, half_h),
             TileZone::TopRight => Rect::new(x0 + half_w + gap, y0, half_w, half_h),
             TileZone::BottomLeft => Rect::new(x0, y0 + half_h + gap, half_w, half_h),
-            TileZone::BottomRight => Rect::new(x0 + half_w + gap, y0 + half_h + gap, half_w, half_h),
-            TileZone::Maximize => Rect::new(x0, y0, screen.width - gap * 2.0, screen.height - gap * 2.0),
+            TileZone::BottomRight => {
+                Rect::new(x0 + half_w + gap, y0 + half_h + gap, half_w, half_h)
+            }
+            TileZone::Maximize => {
+                Rect::new(x0, y0, screen.width - gap * 2.0, screen.height - gap * 2.0)
+            }
         }
     }
 }

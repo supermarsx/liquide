@@ -65,7 +65,12 @@ impl ShmPool {
             // is the current mapping length. MREMAP_MAYMOVE allows the kernel to
             // relocate the mapping. We check for MAP_FAILED before storing.
             let new_data = unsafe {
-                libc::mremap(self.data as *mut _, self.size, new_size, libc::MREMAP_MAYMOVE)
+                libc::mremap(
+                    self.data as *mut _,
+                    self.size,
+                    new_size,
+                    libc::MREMAP_MAYMOVE,
+                )
             };
             if new_data == libc::MAP_FAILED {
                 return Err(WaylandServerError::ShmPool(format!(

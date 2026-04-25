@@ -1,6 +1,6 @@
+use crate::panels::*;
 use crate::schema::*;
 use crate::store::*;
-use crate::panels::*;
 
 // --- Schema tests ---
 
@@ -22,8 +22,14 @@ fn category_labels_and_icons() {
     assert_eq!(SettingCategory::Privacy.label(), "Privacy & Security");
     assert_eq!(SettingCategory::Custom("Foo".into()).label(), "Foo");
 
-    assert_eq!(SettingCategory::Appearance.icon(), "preferences-desktop-theme");
-    assert_eq!(SettingCategory::Custom("x".into()).icon(), "preferences-other");
+    assert_eq!(
+        SettingCategory::Appearance.icon(),
+        "preferences-desktop-theme"
+    );
+    assert_eq!(
+        SettingCategory::Custom("x".into()).icon(),
+        "preferences-other"
+    );
 }
 
 #[test]
@@ -58,10 +64,25 @@ fn setting_value_accessors() {
 
     assert_eq!(SettingValue::String("hello".into()).as_str(), Some("hello"));
     assert_eq!(SettingValue::Choice("night".into()).as_str(), Some("night"));
-    assert_eq!(SettingValue::KeyBinding("Ctrl+A".into()).as_str(), Some("Ctrl+A"));
-    assert_eq!(SettingValue::FilePath("/tmp/bg.png".into()).as_str(), Some("/tmp/bg.png"));
+    assert_eq!(
+        SettingValue::KeyBinding("Ctrl+A".into()).as_str(),
+        Some("Ctrl+A")
+    );
+    assert_eq!(
+        SettingValue::FilePath("/tmp/bg.png".into()).as_str(),
+        Some("/tmp/bg.png")
+    );
     assert_eq!(SettingValue::Bool(true).as_str(), None);
-    assert_eq!(SettingValue::Color { r: 0, g: 0, b: 0, a: 255 }.as_str(), None);
+    assert_eq!(
+        SettingValue::Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255
+        }
+        .as_str(),
+        None
+    );
 }
 
 // --- Store tests ---
@@ -178,9 +199,21 @@ fn store_reset_to_default() {
 fn store_reset_all() {
     let mut store = SettingsStore::new();
 
-    store.set(&SettingKey::new("appearance.font_size"), SettingValue::Int(20)).unwrap();
-    store.set(&SettingKey::new("desktop.show_icons"), SettingValue::Bool(false)).unwrap();
-    store.set(&SettingKey::new("wm.tiling_gap"), SettingValue::Int(16)).unwrap();
+    store
+        .set(
+            &SettingKey::new("appearance.font_size"),
+            SettingValue::Int(20),
+        )
+        .unwrap();
+    store
+        .set(
+            &SettingKey::new("desktop.show_icons"),
+            SettingValue::Bool(false),
+        )
+        .unwrap();
+    store
+        .set(&SettingKey::new("wm.tiling_gap"), SettingValue::Int(16))
+        .unwrap();
 
     store.reset_all();
 
@@ -258,13 +291,32 @@ fn store_save_load_roundtrip() {
 
     // Save with modified values
     {
-        let mut store = SettingsStore::new()
-            .with_config_path(config_path.clone());
+        let mut store = SettingsStore::new().with_config_path(config_path.clone());
 
-        store.set(&SettingKey::new("appearance.font_size"), SettingValue::Int(18)).unwrap();
-        store.set(&SettingKey::new("desktop.show_icons"), SettingValue::Bool(false)).unwrap();
-        store.set(&SettingKey::new("appearance.theme"), SettingValue::Choice("night".into())).unwrap();
-        store.set(&SettingKey::new("input.mouse_speed"), SettingValue::Float(2.0)).unwrap();
+        store
+            .set(
+                &SettingKey::new("appearance.font_size"),
+                SettingValue::Int(18),
+            )
+            .unwrap();
+        store
+            .set(
+                &SettingKey::new("desktop.show_icons"),
+                SettingValue::Bool(false),
+            )
+            .unwrap();
+        store
+            .set(
+                &SettingKey::new("appearance.theme"),
+                SettingValue::Choice("night".into()),
+            )
+            .unwrap();
+        store
+            .set(
+                &SettingKey::new("input.mouse_speed"),
+                SettingValue::Float(2.0),
+            )
+            .unwrap();
 
         store.save().unwrap();
         assert!(!store.is_dirty());
@@ -272,8 +324,7 @@ fn store_save_load_roundtrip() {
 
     // Load into a fresh store
     {
-        let mut store = SettingsStore::new()
-            .with_config_path(config_path.clone());
+        let mut store = SettingsStore::new().with_config_path(config_path.clone());
 
         store.load().unwrap();
 
@@ -297,8 +348,7 @@ fn store_load_nonexistent_file_uses_defaults() {
     let config_path = std::env::temp_dir().join("liquide_settings_nonexistent.conf");
     let _ = std::fs::remove_file(&config_path); // ensure it doesn't exist
 
-    let mut store = SettingsStore::new()
-        .with_config_path(config_path);
+    let mut store = SettingsStore::new().with_config_path(config_path);
 
     assert!(store.load().is_ok());
     assert_eq!(store.get_int("appearance.font_size"), Some(14));
@@ -334,10 +384,18 @@ fn default_panels_covers_categories() {
 fn default_panels_have_sections() {
     let panels = default_panels();
     for panel in &panels {
-        assert!(!panel.sections.is_empty(), "panel {:?} has no sections", panel.category);
+        assert!(
+            !panel.sections.is_empty(),
+            "panel {:?} has no sections",
+            panel.category
+        );
         for section in &panel.sections {
             assert!(!section.title.is_empty());
-            assert!(!section.setting_keys.is_empty(), "section '{}' has no keys", section.title);
+            assert!(
+                !section.setting_keys.is_empty(),
+                "section '{}' has no keys",
+                section.title
+            );
         }
     }
 }
@@ -354,7 +412,9 @@ fn default_panels_keys_exist_in_store() {
                 assert!(
                     store.get(&key).is_some(),
                     "panel key '{}' not found in store (panel: {:?}, section: '{}')",
-                    key_str, panel.category, section.title
+                    key_str,
+                    panel.category,
+                    section.title
                 );
             }
         }

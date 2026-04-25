@@ -143,9 +143,7 @@ impl EmojiPicker {
                 name_prefix.push(entry);
             } else if entry.keywords.iter().any(|kw| kw.starts_with(&q)) {
                 keyword_prefix.push(entry);
-            } else if name_lower.contains(&q)
-                || entry.keywords.iter().any(|kw| kw.contains(&q))
-            {
+            } else if name_lower.contains(&q) || entry.keywords.iter().any(|kw| kw.contains(&q)) {
                 substring.push(entry);
             }
         }
@@ -210,77 +208,339 @@ fn default_emoji_table() -> Vec<EmojiEntry> {
 
     vec![
         // Smileys & Emotion
-        EmojiEntry::new("\u{1F600}", "grinning face", vec!["happy", "smile", "grin"], SmileysEmotion),
-        EmojiEntry::new("\u{1F602}", "face with tears of joy", vec!["laugh", "cry", "lol", "joy"], SmileysEmotion),
-        EmojiEntry::new("\u{1F60D}", "heart eyes", vec!["love", "crush", "heart"], SmileysEmotion),
-        EmojiEntry::new("\u{1F60A}", "smiling face with smiling eyes", vec!["blush", "happy", "smile"], SmileysEmotion),
-        EmojiEntry::new("\u{1F914}", "thinking face", vec!["think", "hmm", "wonder"], SmileysEmotion),
-        EmojiEntry::new("\u{1F622}", "crying face", vec!["cry", "sad", "tear"], SmileysEmotion),
-        EmojiEntry::new("\u{1F621}", "angry face", vec!["angry", "mad", "rage"], SmileysEmotion),
-        EmojiEntry::new("\u{1F631}", "face screaming in fear", vec!["scream", "horror", "scared"], SmileysEmotion),
-        EmojiEntry::new("\u{1F609}", "winking face", vec!["wink", "flirt"], SmileysEmotion),
-        EmojiEntry::new("\u{2764}\u{FE0F}", "red heart", vec!["love", "heart", "valentine"], SmileysEmotion),
-        EmojiEntry::new("\u{1F525}", "fire", vec!["hot", "flame", "lit"], SmileysEmotion),
-        EmojiEntry::new("\u{1F4AF}", "hundred points", vec!["100", "perfect", "score"], SmileysEmotion),
-
+        EmojiEntry::new(
+            "\u{1F600}",
+            "grinning face",
+            vec!["happy", "smile", "grin"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F602}",
+            "face with tears of joy",
+            vec!["laugh", "cry", "lol", "joy"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F60D}",
+            "heart eyes",
+            vec!["love", "crush", "heart"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F60A}",
+            "smiling face with smiling eyes",
+            vec!["blush", "happy", "smile"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F914}",
+            "thinking face",
+            vec!["think", "hmm", "wonder"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F622}",
+            "crying face",
+            vec!["cry", "sad", "tear"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F621}",
+            "angry face",
+            vec!["angry", "mad", "rage"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F631}",
+            "face screaming in fear",
+            vec!["scream", "horror", "scared"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F609}",
+            "winking face",
+            vec!["wink", "flirt"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{2764}\u{FE0F}",
+            "red heart",
+            vec!["love", "heart", "valentine"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F525}",
+            "fire",
+            vec!["hot", "flame", "lit"],
+            SmileysEmotion,
+        ),
+        EmojiEntry::new(
+            "\u{1F4AF}",
+            "hundred points",
+            vec!["100", "perfect", "score"],
+            SmileysEmotion,
+        ),
         // People & Body
-        EmojiEntry::new("\u{1F44D}", "thumbs up", vec!["like", "approve", "yes", "ok"], PeopleBody),
-        EmojiEntry::new("\u{1F44E}", "thumbs down", vec!["dislike", "no", "bad"], PeopleBody),
-        EmojiEntry::new("\u{1F44F}", "clapping hands", vec!["clap", "bravo", "applause"], PeopleBody),
-        EmojiEntry::new("\u{1F64F}", "folded hands", vec!["pray", "please", "thanks"], PeopleBody),
-        EmojiEntry::new("\u{1F4AA}", "flexed biceps", vec!["muscle", "strong", "flex"], PeopleBody),
-        EmojiEntry::new("\u{1F44B}", "waving hand", vec!["wave", "hello", "bye", "hi"], PeopleBody),
-
+        EmojiEntry::new(
+            "\u{1F44D}",
+            "thumbs up",
+            vec!["like", "approve", "yes", "ok"],
+            PeopleBody,
+        ),
+        EmojiEntry::new(
+            "\u{1F44E}",
+            "thumbs down",
+            vec!["dislike", "no", "bad"],
+            PeopleBody,
+        ),
+        EmojiEntry::new(
+            "\u{1F44F}",
+            "clapping hands",
+            vec!["clap", "bravo", "applause"],
+            PeopleBody,
+        ),
+        EmojiEntry::new(
+            "\u{1F64F}",
+            "folded hands",
+            vec!["pray", "please", "thanks"],
+            PeopleBody,
+        ),
+        EmojiEntry::new(
+            "\u{1F4AA}",
+            "flexed biceps",
+            vec!["muscle", "strong", "flex"],
+            PeopleBody,
+        ),
+        EmojiEntry::new(
+            "\u{1F44B}",
+            "waving hand",
+            vec!["wave", "hello", "bye", "hi"],
+            PeopleBody,
+        ),
         // Animals & Nature
-        EmojiEntry::new("\u{1F436}", "dog face", vec!["dog", "puppy", "pet"], AnimalsNature),
-        EmojiEntry::new("\u{1F431}", "cat face", vec!["cat", "kitten", "pet"], AnimalsNature),
+        EmojiEntry::new(
+            "\u{1F436}",
+            "dog face",
+            vec!["dog", "puppy", "pet"],
+            AnimalsNature,
+        ),
+        EmojiEntry::new(
+            "\u{1F431}",
+            "cat face",
+            vec!["cat", "kitten", "pet"],
+            AnimalsNature,
+        ),
         EmojiEntry::new("\u{1F98A}", "fox", vec!["fox", "clever"], AnimalsNature),
-        EmojiEntry::new("\u{1F984}", "unicorn", vec!["unicorn", "magic", "fantasy"], AnimalsNature),
-        EmojiEntry::new("\u{1F427}", "penguin", vec!["penguin", "bird", "cold"], AnimalsNature),
-        EmojiEntry::new("\u{1F339}", "rose", vec!["rose", "flower", "romance"], AnimalsNature),
-
+        EmojiEntry::new(
+            "\u{1F984}",
+            "unicorn",
+            vec!["unicorn", "magic", "fantasy"],
+            AnimalsNature,
+        ),
+        EmojiEntry::new(
+            "\u{1F427}",
+            "penguin",
+            vec!["penguin", "bird", "cold"],
+            AnimalsNature,
+        ),
+        EmojiEntry::new(
+            "\u{1F339}",
+            "rose",
+            vec!["rose", "flower", "romance"],
+            AnimalsNature,
+        ),
         // Food & Drink
-        EmojiEntry::new("\u{1F355}", "pizza", vec!["pizza", "food", "slice"], FoodDrink),
-        EmojiEntry::new("\u{1F354}", "hamburger", vec!["burger", "food", "fast food"], FoodDrink),
-        EmojiEntry::new("\u{2615}", "hot beverage", vec!["coffee", "tea", "drink", "cafe"], FoodDrink),
-        EmojiEntry::new("\u{1F37A}", "beer mug", vec!["beer", "drink", "pub"], FoodDrink),
-        EmojiEntry::new("\u{1F34E}", "red apple", vec!["apple", "fruit", "food"], FoodDrink),
-        EmojiEntry::new("\u{1F370}", "shortcake", vec!["cake", "dessert", "sweet"], FoodDrink),
-
+        EmojiEntry::new(
+            "\u{1F355}",
+            "pizza",
+            vec!["pizza", "food", "slice"],
+            FoodDrink,
+        ),
+        EmojiEntry::new(
+            "\u{1F354}",
+            "hamburger",
+            vec!["burger", "food", "fast food"],
+            FoodDrink,
+        ),
+        EmojiEntry::new(
+            "\u{2615}",
+            "hot beverage",
+            vec!["coffee", "tea", "drink", "cafe"],
+            FoodDrink,
+        ),
+        EmojiEntry::new(
+            "\u{1F37A}",
+            "beer mug",
+            vec!["beer", "drink", "pub"],
+            FoodDrink,
+        ),
+        EmojiEntry::new(
+            "\u{1F34E}",
+            "red apple",
+            vec!["apple", "fruit", "food"],
+            FoodDrink,
+        ),
+        EmojiEntry::new(
+            "\u{1F370}",
+            "shortcake",
+            vec!["cake", "dessert", "sweet"],
+            FoodDrink,
+        ),
         // Travel & Places
-        EmojiEntry::new("\u{1F30D}", "globe showing Europe-Africa", vec!["earth", "world", "globe"], TravelPlaces),
-        EmojiEntry::new("\u{2600}\u{FE0F}", "sun", vec!["sun", "sunny", "weather", "bright"], TravelPlaces),
-        EmojiEntry::new("\u{1F680}", "rocket", vec!["rocket", "space", "launch"], TravelPlaces),
-        EmojiEntry::new("\u{1F3E0}", "house", vec!["house", "home", "building"], TravelPlaces),
-        EmojiEntry::new("\u{2708}\u{FE0F}", "airplane", vec!["plane", "airplane", "travel", "flight"], TravelPlaces),
-
+        EmojiEntry::new(
+            "\u{1F30D}",
+            "globe showing Europe-Africa",
+            vec!["earth", "world", "globe"],
+            TravelPlaces,
+        ),
+        EmojiEntry::new(
+            "\u{2600}\u{FE0F}",
+            "sun",
+            vec!["sun", "sunny", "weather", "bright"],
+            TravelPlaces,
+        ),
+        EmojiEntry::new(
+            "\u{1F680}",
+            "rocket",
+            vec!["rocket", "space", "launch"],
+            TravelPlaces,
+        ),
+        EmojiEntry::new(
+            "\u{1F3E0}",
+            "house",
+            vec!["house", "home", "building"],
+            TravelPlaces,
+        ),
+        EmojiEntry::new(
+            "\u{2708}\u{FE0F}",
+            "airplane",
+            vec!["plane", "airplane", "travel", "flight"],
+            TravelPlaces,
+        ),
         // Activities
-        EmojiEntry::new("\u{26BD}", "soccer ball", vec!["soccer", "football", "sport"], Activities),
-        EmojiEntry::new("\u{1F3B5}", "musical note", vec!["music", "note", "song"], Activities),
-        EmojiEntry::new("\u{1F3AE}", "video game", vec!["game", "controller", "play"], Activities),
-        EmojiEntry::new("\u{1F3A8}", "artist palette", vec!["art", "paint", "creative"], Activities),
-        EmojiEntry::new("\u{1F3AC}", "clapper board", vec!["movie", "film", "cinema"], Activities),
-
+        EmojiEntry::new(
+            "\u{26BD}",
+            "soccer ball",
+            vec!["soccer", "football", "sport"],
+            Activities,
+        ),
+        EmojiEntry::new(
+            "\u{1F3B5}",
+            "musical note",
+            vec!["music", "note", "song"],
+            Activities,
+        ),
+        EmojiEntry::new(
+            "\u{1F3AE}",
+            "video game",
+            vec!["game", "controller", "play"],
+            Activities,
+        ),
+        EmojiEntry::new(
+            "\u{1F3A8}",
+            "artist palette",
+            vec!["art", "paint", "creative"],
+            Activities,
+        ),
+        EmojiEntry::new(
+            "\u{1F3AC}",
+            "clapper board",
+            vec!["movie", "film", "cinema"],
+            Activities,
+        ),
         // Objects
-        EmojiEntry::new("\u{1F4BB}", "laptop", vec!["computer", "laptop", "tech"], Objects),
-        EmojiEntry::new("\u{1F4F1}", "mobile phone", vec!["phone", "cell", "mobile"], Objects),
-        EmojiEntry::new("\u{1F4A1}", "light bulb", vec!["idea", "light", "bulb"], Objects),
-        EmojiEntry::new("\u{1F512}", "locked", vec!["lock", "secure", "private"], Objects),
+        EmojiEntry::new(
+            "\u{1F4BB}",
+            "laptop",
+            vec!["computer", "laptop", "tech"],
+            Objects,
+        ),
+        EmojiEntry::new(
+            "\u{1F4F1}",
+            "mobile phone",
+            vec!["phone", "cell", "mobile"],
+            Objects,
+        ),
+        EmojiEntry::new(
+            "\u{1F4A1}",
+            "light bulb",
+            vec!["idea", "light", "bulb"],
+            Objects,
+        ),
+        EmojiEntry::new(
+            "\u{1F512}",
+            "locked",
+            vec!["lock", "secure", "private"],
+            Objects,
+        ),
         EmojiEntry::new("\u{1F511}", "key", vec!["key", "unlock", "access"], Objects),
-
         // Symbols
-        EmojiEntry::new("\u{2705}", "check mark button", vec!["check", "yes", "done", "correct"], Symbols),
-        EmojiEntry::new("\u{274C}", "cross mark", vec!["no", "wrong", "error", "x"], Symbols),
-        EmojiEntry::new("\u{2757}", "exclamation mark", vec!["exclamation", "important", "alert"], Symbols),
-        EmojiEntry::new("\u{267E}\u{FE0F}", "infinity", vec!["infinity", "forever", "loop"], Symbols),
-        EmojiEntry::new("\u{27A1}\u{FE0F}", "right arrow", vec!["arrow", "right", "next"], Symbols),
-
+        EmojiEntry::new(
+            "\u{2705}",
+            "check mark button",
+            vec!["check", "yes", "done", "correct"],
+            Symbols,
+        ),
+        EmojiEntry::new(
+            "\u{274C}",
+            "cross mark",
+            vec!["no", "wrong", "error", "x"],
+            Symbols,
+        ),
+        EmojiEntry::new(
+            "\u{2757}",
+            "exclamation mark",
+            vec!["exclamation", "important", "alert"],
+            Symbols,
+        ),
+        EmojiEntry::new(
+            "\u{267E}\u{FE0F}",
+            "infinity",
+            vec!["infinity", "forever", "loop"],
+            Symbols,
+        ),
+        EmojiEntry::new(
+            "\u{27A1}\u{FE0F}",
+            "right arrow",
+            vec!["arrow", "right", "next"],
+            Symbols,
+        ),
         // Flags
-        EmojiEntry::new("\u{1F1FA}\u{1F1F8}", "flag: United States", vec!["us", "usa", "america", "flag"], Flags),
-        EmojiEntry::new("\u{1F1EC}\u{1F1E7}", "flag: United Kingdom", vec!["uk", "britain", "flag"], Flags),
-        EmojiEntry::new("\u{1F1E9}\u{1F1EA}", "flag: Germany", vec!["germany", "de", "flag"], Flags),
-        EmojiEntry::new("\u{1F1EB}\u{1F1F7}", "flag: France", vec!["france", "fr", "flag"], Flags),
-        EmojiEntry::new("\u{1F1EF}\u{1F1F5}", "flag: Japan", vec!["japan", "jp", "flag"], Flags),
-        EmojiEntry::new("\u{1F1E8}\u{1F1F3}", "flag: China", vec!["china", "cn", "flag"], Flags),
+        EmojiEntry::new(
+            "\u{1F1FA}\u{1F1F8}",
+            "flag: United States",
+            vec!["us", "usa", "america", "flag"],
+            Flags,
+        ),
+        EmojiEntry::new(
+            "\u{1F1EC}\u{1F1E7}",
+            "flag: United Kingdom",
+            vec!["uk", "britain", "flag"],
+            Flags,
+        ),
+        EmojiEntry::new(
+            "\u{1F1E9}\u{1F1EA}",
+            "flag: Germany",
+            vec!["germany", "de", "flag"],
+            Flags,
+        ),
+        EmojiEntry::new(
+            "\u{1F1EB}\u{1F1F7}",
+            "flag: France",
+            vec!["france", "fr", "flag"],
+            Flags,
+        ),
+        EmojiEntry::new(
+            "\u{1F1EF}\u{1F1F5}",
+            "flag: Japan",
+            vec!["japan", "jp", "flag"],
+            Flags,
+        ),
+        EmojiEntry::new(
+            "\u{1F1E8}\u{1F1F3}",
+            "flag: China",
+            vec!["china", "cn", "flag"],
+            Flags,
+        ),
     ]
 }

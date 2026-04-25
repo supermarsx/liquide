@@ -47,7 +47,10 @@ impl std::fmt::Debug for Credentials {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuthResult {
     /// Authentication succeeded; contains the authenticated user identity.
-    Success { user_id: String, display_name: String },
+    Success {
+        user_id: String,
+        display_name: String,
+    },
     /// Authentication failed with a human-readable reason.
     Failure { reason: String },
     /// An additional MFA challenge is required before the attempt can complete.

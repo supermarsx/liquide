@@ -4,7 +4,7 @@ use crate::candidates::{Candidate, compute_layout, hit_test_candidate};
 use crate::compose::{ComposeResult, ComposeTable, default_compose_table};
 use crate::emoji::{EmojiCategory, EmojiPicker};
 use crate::engine::{InputAction, InputMethodEngine, KeyEvent};
-use crate::state::{InputMethodState, InputMode, PreeditString, PreeditSegment, SegmentStyle};
+use crate::state::{InputMethodState, InputMode, PreeditSegment, PreeditString, SegmentStyle};
 
 // ===== PreeditString tests =====
 
@@ -91,10 +91,7 @@ fn state_default() {
 #[test]
 fn state_with_candidates() {
     let mut s = InputMethodState::new();
-    s.candidates = vec![
-        Candidate::new("A"),
-        Candidate::new("B"),
-    ];
+    s.candidates = vec![Candidate::new("A"), Candidate::new("B")];
     s.selected_candidate = 1;
     assert!(s.has_candidates());
     assert_eq!(s.selected().unwrap().text, "B");
@@ -137,10 +134,8 @@ fn compose_table_basic() {
 
 #[test]
 fn compose_sequence_match() {
-    let mut t = ComposeTable::from_sequences(vec![
-        (vec![0x10, 0x20], 'A'),
-        (vec![0x10, 0x30], 'B'),
-    ]);
+    let mut t =
+        ComposeTable::from_sequences(vec![(vec![0x10, 0x20], 'A'), (vec![0x10, 0x30], 'B')]);
 
     assert_eq!(t.feed_key(0x10), ComposeResult::Composing);
     assert!(t.is_composing());
@@ -150,9 +145,7 @@ fn compose_sequence_match() {
 
 #[test]
 fn compose_sequence_cancel() {
-    let mut t = ComposeTable::from_sequences(vec![
-        (vec![0x10, 0x20], 'A'),
-    ]);
+    let mut t = ComposeTable::from_sequences(vec![(vec![0x10, 0x20], 'A')]);
 
     assert_eq!(t.feed_key(0x10), ComposeResult::Composing);
     assert_eq!(t.feed_key(0xFF), ComposeResult::Cancelled);
@@ -161,9 +154,7 @@ fn compose_sequence_cancel() {
 
 #[test]
 fn compose_reset() {
-    let mut t = ComposeTable::from_sequences(vec![
-        (vec![0x10, 0x20], 'A'),
-    ]);
+    let mut t = ComposeTable::from_sequences(vec![(vec![0x10, 0x20], 'A')]);
     t.feed_key(0x10);
     assert!(t.is_composing());
     t.reset();
@@ -481,8 +472,8 @@ fn engine_cancel() {
 
     let a = KeyEvent::new(0x0061, Some("a".to_string()), 0);
     engine.process_key(a);
-    assert!(engine.state().is_composing() || !engine.state().preedit.is_empty()
-        // The preedit might show in UpdatePreedit, check engine internal state.
+    assert!(
+        engine.state().is_composing() || !engine.state().preedit.is_empty() // The preedit might show in UpdatePreedit, check engine internal state.
     );
 
     let action = engine.cancel();
@@ -518,10 +509,7 @@ fn engine_candidate_navigation() {
 fn engine_select_candidate() {
     let mut engine = InputMethodEngine::new();
     engine.activate();
-    engine.state.candidates = vec![
-        Candidate::new("X"),
-        Candidate::new("Y"),
-    ];
+    engine.state.candidates = vec![Candidate::new("X"), Candidate::new("Y")];
 
     let action = engine.select_candidate(1);
     assert_eq!(action, InputAction::Commit("Y".to_string()));
@@ -595,7 +583,9 @@ fn key_event_modifiers() {
 // DeadKeyState tests
 // =====================================================================
 
-use crate::dead_keys::{DeadKeyState, DeadKeyResult, ComposeState, ComposeResult as CharComposeResult};
+use crate::dead_keys::{
+    ComposeResult as CharComposeResult, ComposeState, DeadKeyResult, DeadKeyState,
+};
 
 #[test]
 fn dead_key_acute_e_produces_eacute() {
@@ -698,10 +688,7 @@ fn dead_key_reset() {
 
 #[test]
 fn dead_key_custom_map() {
-    let dk = DeadKeyState::with_map(vec![
-        ('#', 'a', 'X'),
-        ('#', 'b', 'Y'),
-    ]);
+    let dk = DeadKeyState::with_map(vec![('#', 'a', 'X'), ('#', 'b', 'Y')]);
     assert_eq!(dk.pending(), None);
     // '#' should be recognized as a dead key.
     let mut dk = dk;
@@ -810,18 +797,19 @@ fn compose_char_three_key_sequence() {
 
 #[test]
 fn compose_char_custom_sequences() {
-    let mut cs = ComposeState::with_sequences(vec![
-        (vec!['x', 'y'], "XY-RESULT".into()),
-    ]);
+    let mut cs = ComposeState::with_sequences(vec![(vec!['x', 'y'], "XY-RESULT".into())]);
     assert_eq!(cs.feed('x'), CharComposeResult::InProgress);
-    assert_eq!(cs.feed('y'), CharComposeResult::Composed("XY-RESULT".into()));
+    assert_eq!(
+        cs.feed('y'),
+        CharComposeResult::Composed("XY-RESULT".into())
+    );
 }
 
 // =====================================================================
 // CandidateWindow tests
 // =====================================================================
 
-use crate::candidate_window::{CandidateWindow, CandidateEntry};
+use crate::candidate_window::{CandidateEntry, CandidateWindow};
 
 #[test]
 fn candidate_window_empty() {
@@ -931,10 +919,7 @@ fn candidate_window_select_by_number() {
 #[test]
 fn candidate_window_confirm() {
     let mut cw = CandidateWindow::new(5);
-    cw.set_candidates(vec![
-        CandidateEntry::new("A"),
-        CandidateEntry::new("B"),
-    ]);
+    cw.set_candidates(vec![CandidateEntry::new("A"), CandidateEntry::new("B")]);
     cw.next_candidate(); // select "B"
 
     let confirmed = cw.confirm();
@@ -1001,9 +986,7 @@ fn candidate_entry_builder() {
 // =====================================================================
 
 use crate::emoji_picker::{
-    EmojiPicker as KwEmojiPicker,
-    EmojiEntry as KwEmojiEntry,
-    EmojiCategory as KwEmojiCategory,
+    EmojiCategory as KwEmojiCategory, EmojiEntry as KwEmojiEntry, EmojiPicker as KwEmojiPicker,
 };
 
 #[test]
@@ -1019,7 +1002,11 @@ fn kw_emoji_search_by_keyword() {
     // "laugh" is a keyword on "face with tears of joy".
     let results = picker.search("laugh");
     assert!(!results.is_empty());
-    assert!(results.iter().any(|e| e.keywords.contains(&"laugh".to_string())));
+    assert!(
+        results
+            .iter()
+            .any(|e| e.keywords.contains(&"laugh".to_string()))
+    );
 }
 
 #[test]
@@ -1057,7 +1044,11 @@ fn kw_emoji_category_listing() {
     let picker = KwEmojiPicker::new();
     let smileys = picker.category_emojis(&KwEmojiCategory::SmileysEmotion);
     assert!(!smileys.is_empty());
-    assert!(smileys.iter().all(|e| e.category == KwEmojiCategory::SmileysEmotion));
+    assert!(
+        smileys
+            .iter()
+            .all(|e| e.category == KwEmojiCategory::SmileysEmotion)
+    );
 }
 
 #[test]
@@ -1081,13 +1072,23 @@ fn kw_emoji_recent_tracking() {
     let mut picker = KwEmojiPicker::new();
     assert!(picker.recent().is_empty());
 
-    let entry = KwEmojiEntry::new("\u{1F600}", "grin", vec!["happy"], KwEmojiCategory::SmileysEmotion);
+    let entry = KwEmojiEntry::new(
+        "\u{1F600}",
+        "grin",
+        vec!["happy"],
+        KwEmojiCategory::SmileysEmotion,
+    );
     picker.add_recent(entry.clone());
     assert_eq!(picker.recent().len(), 1);
     assert_eq!(picker.recent()[0].emoji, "\u{1F600}");
 
     // Adding the same emoji again moves it to front, no duplicates.
-    let entry2 = KwEmojiEntry::new("\u{1F602}", "joy", vec!["laugh"], KwEmojiCategory::SmileysEmotion);
+    let entry2 = KwEmojiEntry::new(
+        "\u{1F602}",
+        "joy",
+        vec!["laugh"],
+        KwEmojiCategory::SmileysEmotion,
+    );
     picker.add_recent(entry2);
     picker.add_recent(entry.clone());
     assert_eq!(picker.recent().len(), 2);
@@ -1126,7 +1127,7 @@ fn kw_emoji_search_prioritizes_name_over_keyword() {
 // InputMethodSwitcher tests
 // =====================================================================
 
-use crate::switcher::{InputMethodSwitcher, InputMethodInfo};
+use crate::switcher::{InputMethodInfo, InputMethodSwitcher};
 
 #[test]
 fn switcher_empty() {
@@ -1237,8 +1238,7 @@ fn switcher_switch_next_empty() {
 
 #[test]
 fn switcher_info_with_icon() {
-    let info = InputMethodInfo::new("en", "English", "en")
-        .with_icon("keyboard-en.svg");
+    let info = InputMethodInfo::new("en", "English", "en").with_icon("keyboard-en.svg");
     assert_eq!(info.icon.as_deref(), Some("keyboard-en.svg"));
 }
 

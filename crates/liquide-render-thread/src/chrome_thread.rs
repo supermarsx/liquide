@@ -5,15 +5,15 @@
 //! This thread continues to render even if the content thread is blocked,
 //! keeping the window responsive.
 
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use liquide_compositor::Renderer;
 use liquide_compositor::damage::DamageSet;
 use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
 use liquide_compositor::pixel::PixelFormat;
 use liquide_compositor::scene::FlatNode;
-use liquide_compositor::Renderer;
 
 use crate::message::{ChromeMessage, DamageRect, FrameComplete, FrameId};
 
@@ -48,7 +48,14 @@ impl ChromeThread {
     /// Returns the chrome thread handle and a receiver for incoming messages
     /// (which would be consumed by the actual thread worker).
     #[must_use]
-    pub fn new(width: u32, height: u32) -> (Self, mpsc::Receiver<ChromeMessage>, mpsc::Sender<FrameComplete>) {
+    pub fn new(
+        width: u32,
+        height: u32,
+    ) -> (
+        Self,
+        mpsc::Receiver<ChromeMessage>,
+        mpsc::Sender<FrameComplete>,
+    ) {
         let (msg_tx, msg_rx) = mpsc::channel();
         let (comp_tx, comp_rx) = mpsc::channel();
         let handle = Self {
@@ -172,14 +179,12 @@ pub fn chrome_worker(
 
                 // Ensure framebuffer matches dimensions, stride, and format.
                 let expected_stride = width * PixelFormat::Bgra8.bytes_per_pixel();
-                let needs_new = fb
-                    .as_ref()
-                    .map_or(true, |f| {
-                        f.width != width
-                            || f.height != height
-                            || f.stride != expected_stride
-                            || f.format != PixelFormat::Bgra8
-                    });
+                let needs_new = fb.as_ref().map_or(true, |f| {
+                    f.width != width
+                        || f.height != height
+                        || f.stride != expected_stride
+                        || f.format != PixelFormat::Bgra8
+                });
                 if needs_new {
                     fb = Some(FrameBuffer::new(width, height, PixelFormat::Bgra8));
                 }
@@ -226,10 +231,8 @@ pub fn chrome_worker(
                     stride: framebuf.stride,
                 };
                 // Re-allocate pixel buffer for next frame.
-                framebuf.memory = FrameMemory::Cpu(vec![
-                    0u8;
-                    (framebuf.stride * framebuf.height) as usize
-                ]);
+                framebuf.memory =
+                    FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);
 
                 if completion_tx.send(result).is_err() {
                     tracing::warn!("frame {} lost: completion channel closed", frame_id.0);
@@ -304,7 +307,13 @@ mod tests {
         let (mut handle, rx, _comp_tx) = ChromeThread::new(800, 600);
         handle.resize(1024, 768).unwrap();
         let msg = rx.recv().unwrap();
-        assert!(matches!(msg, ChromeMessage::Resize { width: 1024, height: 768 }));
+        assert!(matches!(
+            msg,
+            ChromeMessage::Resize {
+                width: 1024,
+                height: 768
+            }
+        ));
     }
 
     #[test]

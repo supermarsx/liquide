@@ -486,7 +486,10 @@ fn drag_no_detach_within_threshold() {
 #[test]
 fn policy_defaults() {
     assert_eq!(AutoGroupPolicy::default(), AutoGroupPolicy::Manual);
-    assert_eq!(GroupMinimizePolicy::default(), GroupMinimizePolicy::Individual);
+    assert_eq!(
+        GroupMinimizePolicy::default(),
+        GroupMinimizePolicy::Individual
+    );
 }
 
 #[test]
@@ -584,8 +587,14 @@ fn events_emitted_on_tab_navigation() {
     // TabGroupCreated, TabChanged(next), TabChanged(prev)
     assert_eq!(events.len(), 3);
     assert!(matches!(events[0], GroupEvent::TabGroupCreated { .. }));
-    assert!(matches!(events[1], GroupEvent::TabChanged { new_index: 1, .. }));
-    assert!(matches!(events[2], GroupEvent::TabChanged { new_index: 0, .. }));
+    assert!(matches!(
+        events[1],
+        GroupEvent::TabChanged { new_index: 1, .. }
+    ));
+    assert!(matches!(
+        events[2],
+        GroupEvent::TabChanged { new_index: 0, .. }
+    ));
 }
 
 #[test]
@@ -596,7 +605,10 @@ fn event_log_empty_check() {
     log.push(GroupEvent::Created { group_id: 1 });
     assert!(!log.is_empty());
     assert_eq!(log.len(), 1);
-    assert!(matches!(log.last(), Some(GroupEvent::Created { group_id: 1 })));
+    assert!(matches!(
+        log.last(),
+        Some(GroupEvent::Created { group_id: 1 })
+    ));
     let drained = log.drain();
     assert_eq!(drained.len(), 1);
     assert!(log.is_empty());
@@ -633,7 +645,10 @@ fn glob_match_question_mark() {
 fn glob_match_combined() {
     assert!(glob_match("org.mozilla.*", "org.mozilla.firefox"));
     assert!(glob_match("org.*.firefox", "org.mozilla.firefox"));
-    assert!(glob_match("*- Mozilla Firefox", "Tab Title - Mozilla Firefox"));
+    assert!(glob_match(
+        "*- Mozilla Firefox",
+        "Tab Title - Mozilla Firefox"
+    ));
     assert!(!glob_match("org.gnome.*", "org.mozilla.firefox"));
 }
 
@@ -647,15 +662,36 @@ fn glob_match_empty() {
 #[test]
 fn matcher_any_matches_everything() {
     let m = WindowMatcher::any();
-    let info = WindowInfo::new(1, Some("firefox".into()), "Title", WindowType::Normal, 800, 600);
+    let info = WindowInfo::new(
+        1,
+        Some("firefox".into()),
+        "Title",
+        WindowType::Normal,
+        800,
+        600,
+    );
     assert!(m.matches(&info));
 }
 
 #[test]
 fn matcher_app_id_pattern() {
     let m = WindowMatcher::app_id("org.mozilla.*");
-    let info1 = WindowInfo::new(1, Some("org.mozilla.firefox".into()), "Tab", WindowType::Normal, 800, 600);
-    let info2 = WindowInfo::new(2, Some("org.gnome.terminal".into()), "Term", WindowType::Normal, 800, 600);
+    let info1 = WindowInfo::new(
+        1,
+        Some("org.mozilla.firefox".into()),
+        "Tab",
+        WindowType::Normal,
+        800,
+        600,
+    );
+    let info2 = WindowInfo::new(
+        2,
+        Some("org.gnome.terminal".into()),
+        "Term",
+        WindowType::Normal,
+        800,
+        600,
+    );
     assert!(m.matches(&info1));
     assert!(!m.matches(&info2));
 }
@@ -663,7 +699,14 @@ fn matcher_app_id_pattern() {
 #[test]
 fn matcher_title_pattern() {
     let m = WindowMatcher::title("*Settings*");
-    let info1 = WindowInfo::new(1, None, "System Settings - General", WindowType::Normal, 800, 600);
+    let info1 = WindowInfo::new(
+        1,
+        None,
+        "System Settings - General",
+        WindowType::Normal,
+        800,
+        600,
+    );
     let info2 = WindowInfo::new(2, None, "Web Browser", WindowType::Normal, 800, 600);
     assert!(m.matches(&info1));
     assert!(!m.matches(&info2));
@@ -681,9 +724,30 @@ fn matcher_window_type_filter() {
 #[test]
 fn matcher_combined_and() {
     let m = WindowMatcher::app_id("firefox").with_title("*Settings*");
-    let info1 = WindowInfo::new(1, Some("firefox".into()), "Settings Tab", WindowType::Normal, 800, 600);
-    let info2 = WindowInfo::new(2, Some("firefox".into()), "Main Tab", WindowType::Normal, 800, 600);
-    let info3 = WindowInfo::new(3, Some("chrome".into()), "Settings", WindowType::Normal, 800, 600);
+    let info1 = WindowInfo::new(
+        1,
+        Some("firefox".into()),
+        "Settings Tab",
+        WindowType::Normal,
+        800,
+        600,
+    );
+    let info2 = WindowInfo::new(
+        2,
+        Some("firefox".into()),
+        "Main Tab",
+        WindowType::Normal,
+        800,
+        600,
+    );
+    let info3 = WindowInfo::new(
+        3,
+        Some("chrome".into()),
+        "Settings",
+        WindowType::Normal,
+        800,
+        600,
+    );
     assert!(m.matches(&info1));
     assert!(!m.matches(&info2)); // title doesn't match
     assert!(!m.matches(&info3)); // app_id doesn't match
@@ -694,9 +758,30 @@ fn matcher_combined_or() {
     let m = WindowMatcher::app_id("firefox")
         .with_window_type(WindowType::Dialog)
         .match_any();
-    let info1 = WindowInfo::new(1, Some("firefox".into()), "Main", WindowType::Normal, 800, 600);
-    let info2 = WindowInfo::new(2, Some("chrome".into()), "Save", WindowType::Dialog, 400, 300);
-    let info3 = WindowInfo::new(3, Some("terminal".into()), "Term", WindowType::Normal, 800, 600);
+    let info1 = WindowInfo::new(
+        1,
+        Some("firefox".into()),
+        "Main",
+        WindowType::Normal,
+        800,
+        600,
+    );
+    let info2 = WindowInfo::new(
+        2,
+        Some("chrome".into()),
+        "Save",
+        WindowType::Dialog,
+        400,
+        300,
+    );
+    let info3 = WindowInfo::new(
+        3,
+        Some("terminal".into()),
+        "Term",
+        WindowType::Normal,
+        800,
+        600,
+    );
     assert!(m.matches(&info1)); // app matches
     assert!(m.matches(&info2)); // type matches
     assert!(!m.matches(&info3)); // neither matches
@@ -722,7 +807,14 @@ fn rule_engine_evaluate_collects_all() {
         WindowMatcher::window_type(WindowType::Dialog),
         vec![RuleAction::Center],
     ));
-    let info = WindowInfo::new(1, Some("firefox".into()), "Save As", WindowType::Dialog, 400, 300);
+    let info = WindowInfo::new(
+        1,
+        Some("firefox".into()),
+        "Save As",
+        WindowType::Dialog,
+        400,
+        300,
+    );
     let actions = engine.evaluate(&info);
     assert_eq!(actions.len(), 2);
     assert_eq!(actions[0], RuleAction::MoveToWorkspace(2));
@@ -745,7 +837,14 @@ fn rule_engine_stop_processing() {
         WindowMatcher::any(),
         vec![RuleAction::Center],
     ));
-    let info = WindowInfo::new(1, Some("firefox".into()), "Tab", WindowType::Normal, 800, 600);
+    let info = WindowInfo::new(
+        1,
+        Some("firefox".into()),
+        "Tab",
+        WindowType::Normal,
+        800,
+        600,
+    );
     let actions = engine.evaluate(&info);
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0], RuleAction::Maximize);
@@ -755,12 +854,7 @@ fn rule_engine_stop_processing() {
 fn rule_engine_disabled_rule_skipped() {
     let mut engine = RuleEngine::new();
     engine.add_rule(
-        WindowRule::new(
-            "Disabled",
-            WindowMatcher::any(),
-            vec![RuleAction::Minimize],
-        )
-        .disabled(),
+        WindowRule::new("Disabled", WindowMatcher::any(), vec![RuleAction::Minimize]).disabled(),
     );
     let info = WindowInfo::new(1, None, "Title", WindowType::Normal, 800, 600);
     let actions = engine.evaluate(&info);
@@ -770,9 +864,20 @@ fn rule_engine_disabled_rule_skipped() {
 #[test]
 fn rule_engine_insert_and_reorder() {
     let mut engine = RuleEngine::new();
-    engine.add_rule(WindowRule::new("A", WindowMatcher::any(), vec![RuleAction::Maximize]));
-    engine.add_rule(WindowRule::new("B", WindowMatcher::any(), vec![RuleAction::Center]));
-    engine.insert_rule(1, WindowRule::new("C", WindowMatcher::any(), vec![RuleAction::Minimize]));
+    engine.add_rule(WindowRule::new(
+        "A",
+        WindowMatcher::any(),
+        vec![RuleAction::Maximize],
+    ));
+    engine.add_rule(WindowRule::new(
+        "B",
+        WindowMatcher::any(),
+        vec![RuleAction::Center],
+    ));
+    engine.insert_rule(
+        1,
+        WindowRule::new("C", WindowMatcher::any(), vec![RuleAction::Minimize]),
+    );
     assert_eq!(engine.rule_count(), 3);
     assert_eq!(engine.get_rule(1).unwrap().description, "C");
     assert!(engine.reorder_rule(2, 0));
@@ -806,7 +911,14 @@ fn rule_engine_no_match_returns_empty() {
         WindowMatcher::app_id("chrome"),
         vec![RuleAction::Maximize],
     ));
-    let info = WindowInfo::new(1, Some("firefox".into()), "Tab", WindowType::Normal, 800, 600);
+    let info = WindowInfo::new(
+        1,
+        Some("firefox".into()),
+        "Tab",
+        WindowType::Normal,
+        800,
+        600,
+    );
     let actions = engine.evaluate(&info);
     assert!(actions.is_empty());
 }
@@ -871,7 +983,10 @@ fn work_area_left_right_struts() {
 #[test]
 fn center_place_basic() {
     let screen = Rect::new(0, 0, 1920, 1080);
-    let config = PlacementConfig { respect_struts: false, ..Default::default() };
+    let config = PlacementConfig {
+        respect_struts: false,
+        ..Default::default()
+    };
     let (x, y) = center_place((800, 600), &screen, &[], &config);
     assert_eq!(x, 560);
     assert_eq!(y, 240);

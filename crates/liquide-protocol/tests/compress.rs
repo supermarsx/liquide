@@ -52,17 +52,35 @@ fn zstd_empty_data() {
 
 #[test]
 fn algorithm_from_u8() {
-    assert_eq!(CompressionAlgorithm::from_u8(0), Some(CompressionAlgorithm::None));
-    assert_eq!(CompressionAlgorithm::from_u8(1), Some(CompressionAlgorithm::Lz4));
-    assert_eq!(CompressionAlgorithm::from_u8(2), Some(CompressionAlgorithm::Zstd));
+    assert_eq!(
+        CompressionAlgorithm::from_u8(0),
+        Some(CompressionAlgorithm::None)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_u8(1),
+        Some(CompressionAlgorithm::Lz4)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_u8(2),
+        Some(CompressionAlgorithm::Zstd)
+    );
     assert_eq!(CompressionAlgorithm::from_u8(3), None);
 }
 
 #[test]
 fn algorithm_from_str() {
-    assert_eq!(CompressionAlgorithm::from_str("none"), Some(CompressionAlgorithm::None));
-    assert_eq!(CompressionAlgorithm::from_str("lz4"), Some(CompressionAlgorithm::Lz4));
-    assert_eq!(CompressionAlgorithm::from_str("zstd"), Some(CompressionAlgorithm::Zstd));
+    assert_eq!(
+        CompressionAlgorithm::from_str("none"),
+        Some(CompressionAlgorithm::None)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_str("lz4"),
+        Some(CompressionAlgorithm::Lz4)
+    );
+    assert_eq!(
+        CompressionAlgorithm::from_str("zstd"),
+        Some(CompressionAlgorithm::Zstd)
+    );
     assert_eq!(CompressionAlgorithm::from_str("gzip"), None);
 }
 
@@ -75,9 +93,24 @@ fn algorithm_as_str() {
 
 #[test]
 fn channel_compression_recommendations() {
-    assert_eq!(channel_compression(ChannelId::CONTROL), CompressionAlgorithm::Lz4);
-    assert_eq!(channel_compression(ChannelId::EMERGENCY), CompressionAlgorithm::Lz4);
-    assert_eq!(channel_compression(ChannelId::VIDEO), CompressionAlgorithm::None);
-    assert_eq!(channel_compression(ChannelId::CURSOR), CompressionAlgorithm::None);
-    assert_eq!(channel_compression(ChannelId::TILE), CompressionAlgorithm::Zstd);
+    assert_eq!(
+        channel_compression(ChannelId::CONTROL),
+        CompressionAlgorithm::Lz4
+    );
+    assert_eq!(
+        channel_compression(ChannelId::EMERGENCY),
+        CompressionAlgorithm::Lz4
+    );
+    assert_eq!(
+        channel_compression(ChannelId::VIDEO),
+        CompressionAlgorithm::None
+    );
+    assert_eq!(
+        channel_compression(ChannelId::CURSOR),
+        CompressionAlgorithm::None
+    );
+    assert_eq!(
+        channel_compression(ChannelId::TILE),
+        CompressionAlgorithm::Zstd
+    );
 }

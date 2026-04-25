@@ -4,7 +4,6 @@
 /// user list, provider selection buttons, credential input fields,
 /// clock display, and power actions.  Inspired by GDM/SDDM greeter
 /// patterns.
-
 use crate::provider::ProviderRegistry;
 
 // ---------------------------------------------------------------------------
@@ -251,11 +250,12 @@ impl GreeterModel {
 
     /// Select a user by index.  Emits `GreeterEvent::UserSelected`.
     pub fn select_user(&mut self, index: usize) -> bool {
-        if index >= self.users.len() {
+        let sorted_indices = self.sorted_user_indices();
+        let Some(actual_index) = sorted_indices.get(index).copied() else {
             return false;
-        }
-        self.selected_user_index = Some(index);
-        let username = self.users[index].username.clone();
+        };
+        self.selected_user_index = Some(actual_index);
+        let username = self.users[actual_index].username.clone();
         self.pending_events
             .push(GreeterEvent::UserSelected(username));
         true
@@ -264,7 +264,10 @@ impl GreeterModel {
     /// Select a user by username.
     pub fn select_user_by_name(&mut self, username: &str) -> bool {
         if let Some(idx) = self.users.iter().position(|u| u.username == username) {
-            self.select_user(idx)
+            self.selected_user_index = Some(idx);
+            self.pending_events
+                .push(GreeterEvent::UserSelected(username.to_string()));
+            true
         } else {
             false
         }
@@ -272,8 +275,7 @@ impl GreeterModel {
 
     /// Get the currently selected user entry.
     pub fn selected_user(&self) -> Option<&UserEntry> {
-        self.selected_user_index
-            .and_then(|i| self.users.get(i))
+        self.selected_user_index.and_then(|i| self.users.get(i))
     }
 
     /// Handle provider selection.  Emits `GreeterEvent::ProviderSelected`.
@@ -303,8 +305,7 @@ impl GreeterModel {
 
     /// Handle a power action request.
     pub fn power_action(&mut self, action: PowerAction) {
-        self.pending_events
-            .push(GreeterEvent::PowerAction(action));
+        self.pending_events.push(GreeterEvent::PowerAction(action));
     }
 
     /// Drain pending events.
@@ -319,9 +320,9 @@ impl GreeterModel {
         screen_height: f32,
         registry: &ProviderRegistry,
     ) -> GreeterLayout {
-        let field_count = if let Some(provider_id) = self
-            .selected_user_index
-            .and_then(|_| Some("password")) // default provider for layout estimation
+        let field_count = if let Some(provider_id) =
+            self.selected_user_index.and_then(|_| Some("password"))
+        // default provider for layout estimation
         {
             registry
                 .get(provider_id)
@@ -342,13 +343,25 @@ impl GreeterModel {
 
     /// Users sorted for display: previously-logged-in users first.
     pub fn sorted_users(&self) -> Vec<&UserEntry> {
-        let mut sorted: Vec<&UserEntry> = self.users.iter().collect();
-        sorted.sort_by(|a, b| {
-            b.has_logged_in_before
-                .cmp(&a.has_logged_in_before)
-                .then_with(|| a.username.cmp(&b.username))
+        self.sorted_user_indices()
+            .into_iter()
+            .filter_map(|index| self.users.get(index))
+            .collect()
+    }
+
+    fn sorted_user_indices(&self) -> Vec<usize> {
+        let mut indices: Vec<usize> = (0..self.users.len()).collect();
+        indices.sort_by(|&left, &right| {
+            let left_user = &self.users[left];
+            let right_user = &self.users[right];
+            right_user
+                .has_logged_in_before
+                .cmp(&left_user.has_logged_in_before)
+                .then_with(|| left_user.username.cmp(&right_user.username))
+                .then_with(|| left_user.display_name.cmp(&right_user.display_name))
+                .then_with(|| left.cmp(&right))
         });
-        sorted
+        indices
     }
 }
 
@@ -406,10 +419,10 @@ mod tests {
     fn greeter_select_user() {
         let mut model = GreeterModel::new(sample_users());
         assert!(model.select_user(1));
-        assert_eq!(model.selected_user_index, Some(1));
+        assert_eq!(model.selected_user_index, Some(2));
         let events = model.take_events();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0], GreeterEvent::UserSelected("bob".into()));
+        assert_eq!(events[0], GreeterEvent::UserSelected("charlie".into()));
     }
 
     #[test]
@@ -418,6 +431,14 @@ mod tests {
         assert!(!model.select_user(10));
         assert!(model.selected_user_index.is_none());
         assert!(model.take_events().is_empty());
+    }
+
+    #[test]
+    fn greeter_select_user_uses_sorted_display_index() {
+        let mut model = GreeterModel::new(sample_users());
+        assert!(model.select_user(2));
+        let selected = model.selected_user().unwrap();
+        assert_eq!(selected.username, "bob");
     }
 
     #[test]
@@ -451,10 +472,7 @@ mod tests {
         model.select_provider("pin");
         let events = model.take_events();
         assert_eq!(events.len(), 1);
-        assert_eq!(
-            events[0],
-            GreeterEvent::ProviderSelected("pin".into())
-        );
+        assert_eq!(events[0], GreeterEvent::ProviderSelected("pin".into()));
     }
 
     #[test]

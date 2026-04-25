@@ -1,18 +1,11 @@
 use bytes::BytesMut;
 use liquide_protocol::channel::ChannelId;
-use liquide_protocol::codec::{cbor_decode, cbor_encode, FrameCodec};
+use liquide_protocol::codec::{FrameCodec, cbor_decode, cbor_encode};
 use liquide_protocol::frame::{FrameFlags, FrameHeader};
 
 #[test]
 fn codec_encode_decode_roundtrip() {
-    let header = FrameHeader::new(
-        ChannelId::CONTROL,
-        1,
-        5000,
-        0x0001,
-        0,
-        0,
-    );
+    let header = FrameHeader::new(ChannelId::CONTROL, 1, 5000, 0x0001, 0, 0);
     let payload = b"hello liquide";
     let mut buf = BytesMut::with_capacity(256);
 
@@ -30,14 +23,7 @@ fn codec_encode_decode_roundtrip() {
 
 #[test]
 fn codec_with_crc() {
-    let header = FrameHeader::new(
-        ChannelId::VIDEO,
-        10,
-        100_000,
-        0x1001,
-        FrameFlags::CRC,
-        0,
-    );
+    let header = FrameHeader::new(ChannelId::VIDEO, 10, 100_000, 0x1001, FrameFlags::CRC, 0);
     let payload = b"video frame data";
     let mut buf = BytesMut::with_capacity(256);
 

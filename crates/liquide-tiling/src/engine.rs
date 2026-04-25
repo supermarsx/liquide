@@ -94,11 +94,7 @@ impl TilingEngine {
 
         self.cached_positions = positions.clone();
 
-        self.windows
-            .iter()
-            .copied()
-            .zip(positions)
-            .collect()
+        self.windows.iter().copied().zip(positions).collect()
     }
 
     /// Add a window to the end of the tiling set.
@@ -265,8 +261,7 @@ impl TilingEngine {
             return None;
         }
 
-        let target_idx =
-            navigate::find_index_in_direction(dir, current, &self.cached_positions)?;
+        let target_idx = navigate::find_index_in_direction(dir, current, &self.cached_positions)?;
         self.focused = Some(target_idx);
         Some(self.windows[target_idx])
     }

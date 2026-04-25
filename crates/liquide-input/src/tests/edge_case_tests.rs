@@ -1,9 +1,9 @@
 use crate::event::InputEvent;
 use crate::keyboard::*;
 use crate::mouse::*;
-use crate::touch::*;
-use crate::state::InputState;
 use crate::router::*;
+use crate::state::InputState;
+use crate::touch::*;
 use liquide_compositor::geometry::Rect;
 
 // --- KeyCode Display ---
@@ -37,8 +37,12 @@ fn modifiers_display_shift_ctrl() {
 #[test]
 fn modifiers_display_all() {
     let m = Modifiers::from_bits(
-        Modifiers::SHIFT | Modifiers::CTRL | Modifiers::ALT |
-        Modifiers::SUPER | Modifiers::CAPS_LOCK | Modifiers::NUM_LOCK,
+        Modifiers::SHIFT
+            | Modifiers::CTRL
+            | Modifiers::ALT
+            | Modifiers::SUPER
+            | Modifiers::CAPS_LOCK
+            | Modifiers::NUM_LOCK,
     );
     assert_eq!(format!("{m}"), "Shift+Ctrl+Alt+Super+CapsLock+NumLock");
 }
@@ -95,9 +99,18 @@ fn input_event_display_touch() {
 #[test]
 fn grab_mode_display() {
     assert_eq!(format!("{}", GrabMode::None), "None");
-    assert_eq!(format!("{}", GrabMode::Keyboard { surface_id: 1 }), "Keyboard(surface=1)");
-    assert_eq!(format!("{}", GrabMode::Pointer { surface_id: 2 }), "Pointer(surface=2)");
-    assert_eq!(format!("{}", GrabMode::Full { surface_id: 3 }), "Full(surface=3)");
+    assert_eq!(
+        format!("{}", GrabMode::Keyboard { surface_id: 1 }),
+        "Keyboard(surface=1)"
+    );
+    assert_eq!(
+        format!("{}", GrabMode::Pointer { surface_id: 2 }),
+        "Pointer(surface=2)"
+    );
+    assert_eq!(
+        format!("{}", GrabMode::Full { surface_id: 3 }),
+        "Full(surface=3)"
+    );
 }
 
 #[test]
@@ -112,7 +125,13 @@ fn grab_mode_surface_id() {
 #[test]
 fn state_release_unpressed_key() {
     let mut state = InputState::new();
-    let release = InputEvent::Keyboard(KeyEvent::new(KeyCode::Z, KeyState::Released, Modifiers::new(), 0, 0));
+    let release = InputEvent::Keyboard(KeyEvent::new(
+        KeyCode::Z,
+        KeyState::Released,
+        Modifiers::new(),
+        0,
+        0,
+    ));
     state.handle_event(&release); // should not panic
     assert!(!state.is_key_pressed(KeyCode::Z));
 }
@@ -122,7 +141,10 @@ fn state_release_unpressed_key() {
 fn state_release_unpressed_button() {
     let mut state = InputState::new();
     let release = InputEvent::Mouse(MouseEvent::Button {
-        button: MouseButton::Right, state: ButtonState::Released, x: 0.0, y: 0.0,
+        button: MouseButton::Right,
+        state: ButtonState::Released,
+        x: 0.0,
+        y: 0.0,
     });
     state.handle_event(&release); // should not panic
     assert!(!state.is_button_pressed(MouseButton::Right));
@@ -133,7 +155,9 @@ fn state_release_unpressed_button() {
 fn state_touch_end_nonexistent_id() {
     let mut state = InputState::new();
     let end = InputEvent::Touch(TouchEvent::new(
-        TouchPhase::End, TouchPoint::new(999, 0.0, 0.0, 0.0), 0,
+        TouchPhase::End,
+        TouchPoint::new(999, 0.0, 0.0, 0.0),
+        0,
     ));
     state.handle_event(&end); // should not panic
     assert_eq!(state.active_touch_count(), 0);
@@ -144,10 +168,14 @@ fn state_touch_end_nonexistent_id() {
 fn state_duplicate_touch_begin() {
     let mut state = InputState::new();
     state.handle_event(&InputEvent::Touch(TouchEvent::new(
-        TouchPhase::Begin, TouchPoint::new(1, 10.0, 20.0, 1.0), 0,
+        TouchPhase::Begin,
+        TouchPoint::new(1, 10.0, 20.0, 1.0),
+        0,
     )));
     state.handle_event(&InputEvent::Touch(TouchEvent::new(
-        TouchPhase::Begin, TouchPoint::new(1, 30.0, 40.0, 0.5), 1,
+        TouchPhase::Begin,
+        TouchPoint::new(1, 30.0, 40.0, 0.5),
+        1,
     )));
     // Should overwrite, still count 1
     assert_eq!(state.active_touch_count(), 1);
@@ -161,7 +189,10 @@ fn state_duplicate_touch_begin() {
 #[test]
 fn state_extreme_mouse_coordinates() {
     let mut state = InputState::new();
-    state.handle_event(&InputEvent::Mouse(MouseEvent::Move { x: f32::MAX, y: f32::MIN }));
+    state.handle_event(&InputEvent::Mouse(MouseEvent::Move {
+        x: f32::MAX,
+        y: f32::MIN,
+    }));
     assert_eq!(state.cursor_position(), (f32::MAX, f32::MIN));
 }
 
@@ -169,7 +200,10 @@ fn state_extreme_mouse_coordinates() {
 #[test]
 fn state_negative_mouse_coordinates() {
     let mut state = InputState::new();
-    state.handle_event(&InputEvent::Mouse(MouseEvent::Move { x: -100.0, y: -200.0 }));
+    state.handle_event(&InputEvent::Mouse(MouseEvent::Move {
+        x: -100.0,
+        y: -200.0,
+    }));
     assert_eq!(state.cursor_position(), (-100.0, -200.0));
 }
 
@@ -178,13 +212,22 @@ fn state_negative_mouse_coordinates() {
 fn state_multiple_buttons_pressed() {
     let mut state = InputState::new();
     state.handle_event(&InputEvent::Mouse(MouseEvent::Button {
-        button: MouseButton::Left, state: ButtonState::Pressed, x: 0.0, y: 0.0,
+        button: MouseButton::Left,
+        state: ButtonState::Pressed,
+        x: 0.0,
+        y: 0.0,
     }));
     state.handle_event(&InputEvent::Mouse(MouseEvent::Button {
-        button: MouseButton::Right, state: ButtonState::Pressed, x: 0.0, y: 0.0,
+        button: MouseButton::Right,
+        state: ButtonState::Pressed,
+        x: 0.0,
+        y: 0.0,
     }));
     state.handle_event(&InputEvent::Mouse(MouseEvent::Button {
-        button: MouseButton::Middle, state: ButtonState::Pressed, x: 0.0, y: 0.0,
+        button: MouseButton::Middle,
+        state: ButtonState::Pressed,
+        x: 0.0,
+        y: 0.0,
     }));
     assert!(state.is_button_pressed(MouseButton::Left));
     assert!(state.is_button_pressed(MouseButton::Right));
@@ -193,7 +236,10 @@ fn state_multiple_buttons_pressed() {
 
     // Release one
     state.handle_event(&InputEvent::Mouse(MouseEvent::Button {
-        button: MouseButton::Left, state: ButtonState::Released, x: 0.0, y: 0.0,
+        button: MouseButton::Left,
+        state: ButtonState::Released,
+        x: 0.0,
+        y: 0.0,
     }));
     assert!(!state.is_button_pressed(MouseButton::Left));
     assert!(state.is_button_pressed(MouseButton::Right));
@@ -205,10 +251,18 @@ fn state_multiple_buttons_pressed() {
 fn state_pressed_keys_accessor() {
     let mut state = InputState::new();
     state.handle_event(&InputEvent::Keyboard(KeyEvent::new(
-        KeyCode::A, KeyState::Pressed, Modifiers::new(), 0, 0,
+        KeyCode::A,
+        KeyState::Pressed,
+        Modifiers::new(),
+        0,
+        0,
     )));
     state.handle_event(&InputEvent::Keyboard(KeyEvent::new(
-        KeyCode::B, KeyState::Pressed, Modifiers::new(), 0, 0,
+        KeyCode::B,
+        KeyState::Pressed,
+        Modifiers::new(),
+        0,
+        0,
     )));
     let keys = state.pressed_keys();
     assert!(keys.contains(&KeyCode::A));
@@ -221,7 +275,10 @@ fn state_pressed_keys_accessor() {
 fn state_scroll_updates_cursor() {
     let mut state = InputState::new();
     state.handle_event(&InputEvent::Mouse(MouseEvent::Scroll {
-        axis: ScrollAxis::Vertical, delta: -3.0, x: 50.0, y: 60.0,
+        axis: ScrollAxis::Vertical,
+        delta: -3.0,
+        x: 50.0,
+        y: 60.0,
     }));
     assert_eq!(state.cursor_position(), (50.0, 60.0));
 }
@@ -240,16 +297,28 @@ fn state_leave_preserves_cursor() {
 fn state_both_shift_keys() {
     let mut state = InputState::new();
     state.handle_event(&InputEvent::Keyboard(KeyEvent::new(
-        KeyCode::LeftShift, KeyState::Pressed, Modifiers::new(), 0, 0,
+        KeyCode::LeftShift,
+        KeyState::Pressed,
+        Modifiers::new(),
+        0,
+        0,
     )));
     state.handle_event(&InputEvent::Keyboard(KeyEvent::new(
-        KeyCode::RightShift, KeyState::Pressed, Modifiers::new(), 0, 0,
+        KeyCode::RightShift,
+        KeyState::Pressed,
+        Modifiers::new(),
+        0,
+        0,
     )));
     assert!(state.modifier_state().shift());
 
     // Release left shift, right still held
     state.handle_event(&InputEvent::Keyboard(KeyEvent::new(
-        KeyCode::LeftShift, KeyState::Released, Modifiers::new(), 0, 0,
+        KeyCode::LeftShift,
+        KeyState::Released,
+        Modifiers::new(),
+        0,
+        0,
     )));
     assert!(state.modifier_state().shift()); // Right still held
 }
@@ -297,16 +366,26 @@ fn router_default_trait() {
 }
 
 // --- Router: Leave event with no focus ---
-struct TestSurface { id: u64, bounds: Rect }
+struct TestSurface {
+    id: u64,
+    bounds: Rect,
+}
 impl InputTarget for TestSurface {
-    fn id(&self) -> u64 { self.id }
-    fn bounds(&self) -> Rect { self.bounds }
+    fn id(&self) -> u64 {
+        self.id
+    }
+    fn bounds(&self) -> Rect {
+        self.bounds
+    }
 }
 
 #[test]
 fn router_leave_event_no_focus() {
     let router = InputRouter::new();
-    let s = TestSurface { id: 1, bounds: Rect::new(0.0, 0.0, 100.0, 100.0) };
+    let s = TestSurface {
+        id: 1,
+        bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+    };
     let surfaces: Vec<&dyn InputTarget> = vec![&s];
     let result = router.route(&InputEvent::Mouse(MouseEvent::Leave), &surfaces);
     // Leave has no position, falls through to focused (which is None)
@@ -318,7 +397,10 @@ fn router_leave_event_no_focus() {
 fn router_leave_event_with_focus() {
     let mut router = InputRouter::new();
     router.set_focus(1);
-    let s = TestSurface { id: 1, bounds: Rect::new(0.0, 0.0, 100.0, 100.0) };
+    let s = TestSurface {
+        id: 1,
+        bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+    };
     let surfaces: Vec<&dyn InputTarget> = vec![&s];
     let result = router.route(&InputEvent::Mouse(MouseEvent::Leave), &surfaces);
     assert_eq!(result.unwrap().0, 1);
@@ -328,8 +410,14 @@ fn router_leave_event_with_focus() {
 #[test]
 fn router_touch_hit_test() {
     let router = InputRouter::new();
-    let s1 = TestSurface { id: 1, bounds: Rect::new(0.0, 0.0, 100.0, 100.0) };
-    let s2 = TestSurface { id: 2, bounds: Rect::new(200.0, 200.0, 100.0, 100.0) };
+    let s1 = TestSurface {
+        id: 1,
+        bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+    };
+    let s2 = TestSurface {
+        id: 2,
+        bounds: Rect::new(200.0, 200.0, 100.0, 100.0),
+    };
     let surfaces: Vec<&dyn InputTarget> = vec![&s1, &s2];
 
     let pt = TouchPoint::new(1, 250.0, 250.0, 1.0);
@@ -342,8 +430,14 @@ fn router_touch_hit_test() {
 #[test]
 fn router_overlapping_surfaces_last_wins() {
     let router = InputRouter::new();
-    let s1 = TestSurface { id: 1, bounds: Rect::new(0.0, 0.0, 200.0, 200.0) };
-    let s2 = TestSurface { id: 2, bounds: Rect::new(50.0, 50.0, 200.0, 200.0) };
+    let s1 = TestSurface {
+        id: 1,
+        bounds: Rect::new(0.0, 0.0, 200.0, 200.0),
+    };
+    let s2 = TestSurface {
+        id: 2,
+        bounds: Rect::new(50.0, 50.0, 200.0, 200.0),
+    };
     let surfaces: Vec<&dyn InputTarget> = vec![&s1, &s2];
 
     let evt = InputEvent::Mouse(MouseEvent::Move { x: 100.0, y: 100.0 });
@@ -356,9 +450,18 @@ fn router_overlapping_surfaces_last_wins() {
 #[test]
 fn router_keyboard_no_focus_no_grab() {
     let router = InputRouter::new();
-    let s = TestSurface { id: 1, bounds: Rect::new(0.0, 0.0, 100.0, 100.0) };
+    let s = TestSurface {
+        id: 1,
+        bounds: Rect::new(0.0, 0.0, 100.0, 100.0),
+    };
     let surfaces: Vec<&dyn InputTarget> = vec![&s];
-    let ke = InputEvent::Keyboard(KeyEvent::new(KeyCode::A, KeyState::Pressed, Modifiers::new(), 0, 0));
+    let ke = InputEvent::Keyboard(KeyEvent::new(
+        KeyCode::A,
+        KeyState::Pressed,
+        Modifiers::new(),
+        0,
+        0,
+    ));
     let result = router.route(&ke, &surfaces);
     assert!(result.is_none()); // No focus, no keyboard grab
 }
@@ -398,7 +501,13 @@ fn touch_point_max_pressure() {
 // --- KeyEvent serde roundtrip ---
 #[test]
 fn key_event_serde_roundtrip() {
-    let ke = KeyEvent::new(KeyCode::Enter, KeyState::Pressed, Modifiers::from_bits(Modifiers::CTRL), 28, 12345);
+    let ke = KeyEvent::new(
+        KeyCode::Enter,
+        KeyState::Pressed,
+        Modifiers::from_bits(Modifiers::CTRL),
+        28,
+        12345,
+    );
     let json = serde_json::to_string(&ke).unwrap();
     let back: KeyEvent = serde_json::from_str(&json).unwrap();
     assert_eq!(ke, back);

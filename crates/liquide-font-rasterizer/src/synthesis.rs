@@ -29,19 +29,33 @@ impl SynthesisConfig {
     /// Standard synthetic bold.
     #[must_use]
     pub fn bold() -> Self {
-        Self { bold: true, bold_strength: 1.0, ..Default::default() }
+        Self {
+            bold: true,
+            bold_strength: 1.0,
+            ..Default::default()
+        }
     }
 
     /// Standard synthetic italic (12° oblique).
     #[must_use]
     pub fn italic() -> Self {
-        Self { italic: true, oblique_angle: 12.0, ..Default::default() }
+        Self {
+            italic: true,
+            oblique_angle: 12.0,
+            ..Default::default()
+        }
     }
 
     /// Both synthetic bold and italic.
     #[must_use]
     pub fn bold_italic() -> Self {
-        Self { bold: true, bold_strength: 1.0, italic: true, oblique_angle: 12.0, ..Default::default() }
+        Self {
+            bold: true,
+            bold_strength: 1.0,
+            italic: true,
+            oblique_angle: 12.0,
+            ..Default::default()
+        }
     }
 }
 
@@ -68,7 +82,8 @@ pub fn apply_synthetic_bold(bitmap: &GlyphBitmap, strength_px: f32) -> GlyphBitm
                 let dst_idx = (y * new_width + dst_x) as usize * bpp;
                 for c in 0..bpp {
                     if src_idx + c < bitmap.pixels.len() && dst_idx + c < new_pixels.len() {
-                        new_pixels[dst_idx + c] = new_pixels[dst_idx + c].max(bitmap.pixels[src_idx + c]);
+                        new_pixels[dst_idx + c] =
+                            new_pixels[dst_idx + c].max(bitmap.pixels[src_idx + c]);
                     }
                 }
             }
@@ -190,9 +205,14 @@ mod tests {
     #[test]
     fn test_empty_bitmap() {
         let empty = GlyphBitmap {
-            glyph_id: 0, width: 0, height: 0,
-            bearing_x: 0.0, bearing_y: 0.0, advance: 0.0,
-            pixels: vec![], is_subpixel: false,
+            glyph_id: 0,
+            width: 0,
+            height: 0,
+            bearing_x: 0.0,
+            bearing_y: 0.0,
+            advance: 0.0,
+            pixels: vec![],
+            is_subpixel: false,
         };
         let bold = apply_synthetic_bold(&empty, 1.0);
         assert_eq!(bold.width, 0);

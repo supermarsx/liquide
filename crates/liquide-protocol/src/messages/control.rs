@@ -408,4 +408,3 @@ pub struct SecureAttentionAckMsg {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<BTreeMap<String, String>>,
 }
-

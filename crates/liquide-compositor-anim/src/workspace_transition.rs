@@ -548,8 +548,16 @@ mod tests {
     #[test]
     fn stack_outgoing_scales_down() {
         let (out, _) = stack_transform(0.5, TransitionDirection::Forward, 1920.0);
-        assert!(out.scale_x < 1.0, "outgoing should scale down: {}", out.scale_x);
-        assert!(out.scale_x > 0.9, "should not scale too much: {}", out.scale_x);
+        assert!(
+            out.scale_x < 1.0,
+            "outgoing should scale down: {}",
+            out.scale_x
+        );
+        assert!(
+            out.scale_x > 0.9,
+            "should not scale too much: {}",
+            out.scale_x
+        );
     }
 
     // --- WorkspaceTransition tests ---
@@ -559,7 +567,8 @@ mod tests {
         let wt = WorkspaceTransition::new(
             TransitionStyle::Slide,
             TransitionDirection::Forward,
-            1920.0, 1080.0,
+            1920.0,
+            1080.0,
         );
         let (out, inc) = wt.compute(0.0);
         assert!(approx(out.translate_x, 0.0));
@@ -571,7 +580,8 @@ mod tests {
         let wt = WorkspaceTransition::new(
             TransitionStyle::Fade,
             TransitionDirection::Forward,
-            1920.0, 1080.0,
+            1920.0,
+            1080.0,
         );
         let (out, inc) = wt.compute(0.5);
         assert!(approx(out.opacity, 0.5));
@@ -583,9 +593,10 @@ mod tests {
         let wt = WorkspaceTransition::new(
             TransitionStyle::Cube,
             TransitionDirection::Forward,
-            1920.0, 1080.0,
+            1920.0,
+            1080.0,
         );
-        let (out, inc) = wt.compute(0.0);
+        let (out, _inc) = wt.compute(0.0);
         // At start, outgoing should be roughly at identity.
         assert!(approx(out.scale_x, 1.0));
     }
@@ -595,7 +606,8 @@ mod tests {
         let wt = WorkspaceTransition::new(
             TransitionStyle::Stack,
             TransitionDirection::Forward,
-            1920.0, 1080.0,
+            1920.0,
+            1080.0,
         );
         let (out, inc) = wt.compute(1.0);
         assert!(approx(out.scale_x, 0.9));
@@ -607,7 +619,8 @@ mod tests {
         let wt = WorkspaceTransition::new(
             TransitionStyle::Cube,
             TransitionDirection::Forward,
-            1920.0, 1080.0,
+            1920.0,
+            1080.0,
         );
         let result = wt.cube_transforms(0.5);
         assert!(result.is_some());
@@ -618,7 +631,8 @@ mod tests {
         let wt = WorkspaceTransition::new(
             TransitionStyle::Slide,
             TransitionDirection::Forward,
-            1920.0, 1080.0,
+            1920.0,
+            1080.0,
         );
         assert!(wt.cube_transforms(0.5).is_none());
     }
@@ -628,7 +642,8 @@ mod tests {
         let wt = WorkspaceTransition::new(
             TransitionStyle::Slide,
             TransitionDirection::Forward,
-            1920.0, 1080.0,
+            1920.0,
+            1080.0,
         );
         let (out_neg, _) = wt.compute(-0.5);
         let (out_zero, _) = wt.compute(0.0);

@@ -1,8 +1,7 @@
 use crate::device::DeviceClass;
 use crate::message::{
-    CapabilityAnnouncement, DetachReason, DeviceRedirectionMsg, FsCapability,
-    SmartCardCapability, UsbAttachRequest, UsbAttachResponse, UsbDataTransfer,
-    UsbDetachNotification,
+    CapabilityAnnouncement, DetachReason, DeviceRedirectionMsg, FsCapability, SmartCardCapability,
+    UsbAttachRequest, UsbAttachResponse, UsbDataTransfer, UsbDetachNotification,
 };
 
 #[test]

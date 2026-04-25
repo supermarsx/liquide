@@ -157,13 +157,15 @@ impl PathBuilder {
 
     /// Move to a new point without drawing.
     pub fn move_to(&mut self, x: f32, y: f32) -> &mut Self {
-        self.segments.push(PathSegment::MoveTo(PathPoint::new(x, y)));
+        self.segments
+            .push(PathSegment::MoveTo(PathPoint::new(x, y)));
         self
     }
 
     /// Draw a straight line to the given point.
     pub fn line_to(&mut self, x: f32, y: f32) -> &mut Self {
-        self.segments.push(PathSegment::LineTo(PathPoint::new(x, y)));
+        self.segments
+            .push(PathSegment::LineTo(PathPoint::new(x, y)));
         self
     }
 
@@ -226,8 +228,7 @@ impl PathBuilder {
         }
 
         // Split the arc into segments of at most 90 degrees each
-        let n =
-            ((sweep_angle.abs() / std::f32::consts::FRAC_PI_2).ceil() as usize).max(1);
+        let n = ((sweep_angle.abs() / std::f32::consts::FRAC_PI_2).ceil() as usize).max(1);
         let step = sweep_angle / n as f32;
 
         for i in 0..n {
@@ -419,13 +420,7 @@ const AA_SAMPLES: u32 = 4;
 /// Fill a path into the framebuffer using the even-odd rule.
 ///
 /// Uses scanline rasterization with 4x vertical supersampling for AA.
-pub fn fill_path(
-    fb: &mut FrameBuffer,
-    path: &Path,
-    fill: &Fill,
-    mode: BlendMode,
-    lut: &SrgbLut,
-) {
+pub fn fill_path(fb: &mut FrameBuffer, path: &Path, fill: &Fill, mode: BlendMode, lut: &SrgbLut) {
     let tolerance = 0.25; // flatten tolerance in pixels
     let edges = path.flatten(tolerance);
     if edges.is_empty() {
@@ -471,11 +466,7 @@ pub fn fill_path(
                 for x in ix0..ix1 {
                     let fx = x as f32 + 0.5;
                     // Compute fractional coverage at edges
-                    let c = if fx >= left && fx <= right {
-                        1
-                    } else {
-                        0
-                    };
+                    let c = if fx >= left && fx <= right { 1 } else { 0 };
                     coverage[(x - x0) as usize] += c;
                 }
             }
@@ -518,13 +509,7 @@ pub fn fill_path(
 /// Implemented by offsetting the path outward and inward by half the stroke
 /// width, creating two offset paths, and filling the region between them.
 /// For simplicity, we use a direct per-pixel distance approach.
-pub fn stroke_path(
-    fb: &mut FrameBuffer,
-    path: &Path,
-    width: f32,
-    color: Color,
-    mode: BlendMode,
-) {
+pub fn stroke_path(fb: &mut FrameBuffer, path: &Path, width: f32, color: Color, mode: BlendMode) {
     if width <= 0.0 {
         return;
     }

@@ -97,9 +97,7 @@ pub mod ws {
             let (stream, peer) = self.inner.accept().await?;
             let ws_stream = accept_async(tokio_tungstenite::MaybeTlsStream::Plain(stream))
                 .await
-                .map_err(|e| {
-                    crate::TransportError::Protocol(format!("WS upgrade failed: {e}"))
-                })?;
+                .map_err(|e| crate::TransportError::Protocol(format!("WS upgrade failed: {e}")))?;
             let transport = WebSocketTransport::from_server_stream(ws_stream, peer);
             tracing::debug!(%peer, "WebSocket accepted");
             Ok((transport, peer))
@@ -173,8 +171,10 @@ pub mod tls {
         /// Accept and return the raw server-side TLS stream.
         pub async fn accept_raw(
             &self,
-        ) -> crate::Result<(tokio_rustls::server::TlsStream<tokio::net::TcpStream>, SocketAddr)>
-        {
+        ) -> crate::Result<(
+            tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+            SocketAddr,
+        )> {
             let (stream, peer) = self.inner.accept().await?;
             stream.set_nodelay(true)?;
             let tls_stream = self
@@ -232,14 +232,13 @@ pub mod quic {
         /// Waits for a new QUIC connection and accepts the first bidirectional
         /// stream opened by the peer.
         pub async fn accept(&self) -> crate::Result<(QuicTransport, SocketAddr)> {
-            let incoming = self
-                .endpoint
-                .accept()
+            let incoming =
+                self.endpoint.accept().await.ok_or_else(|| {
+                    crate::TransportError::Protocol("QUIC endpoint closed".into())
+                })?;
+            let connection = incoming
                 .await
-                .ok_or_else(|| crate::TransportError::Protocol("QUIC endpoint closed".into()))?;
-            let connection = incoming.await.map_err(|e| {
-                crate::TransportError::Protocol(format!("QUIC accept: {e}"))
-            })?;
+                .map_err(|e| crate::TransportError::Protocol(format!("QUIC accept: {e}")))?;
             let remote = connection.remote_address();
             let transport = QuicTransport::from_connection(connection).await?;
             tracing::debug!(%remote, "QUIC accepted");

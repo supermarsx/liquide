@@ -50,7 +50,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     pub fn zero() -> Self {
@@ -88,10 +93,7 @@ impl Rect {
     }
 
     pub fn contains(&self, point: Point) -> bool {
-        point.x >= self.x
-            && point.x < self.right()
-            && point.y >= self.y
-            && point.y < self.bottom()
+        point.x >= self.x && point.x < self.right() && point.y >= self.y && point.y < self.bottom()
     }
 
     /// Return a copy of this rect with the origin shifted by `(dx, dy)`.

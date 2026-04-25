@@ -40,7 +40,11 @@ impl TouchEvent {
     /// Create a new touch event.
     #[must_use]
     pub fn new(phase: TouchPhase, point: TouchPoint, timestamp_us: u64) -> Self {
-        Self { phase, point, timestamp_us }
+        Self {
+            phase,
+            point,
+            timestamp_us,
+        }
     }
 }
 

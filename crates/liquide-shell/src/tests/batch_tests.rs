@@ -1,7 +1,7 @@
 use liquide_compositor::geometry::Rect;
 
-use crate::shell::batch::{WindowBatch, WindowOp, ZOrderOp};
 use crate::shell::Shell;
+use crate::shell::batch::{WindowBatch, WindowOp, ZOrderOp};
 use crate::window::WindowId;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,13 @@ fn optimize_coalesces_move_and_resize_into_move_resize() {
     batch.optimize();
     assert_eq!(batch.len(), 1);
     match &batch.ops()[0] {
-        WindowOp::MoveResize { id: oid, x, y, width, height } => {
+        WindowOp::MoveResize {
+            id: oid,
+            x,
+            y,
+            width,
+            height,
+        } => {
             assert_eq!(*oid, id);
             assert_eq!(*x, 10.0);
             assert_eq!(*y, 20.0);
@@ -125,7 +131,13 @@ fn optimize_move_resize_supersedes_individual_ops() {
     batch.optimize();
     assert_eq!(batch.len(), 1);
     match &batch.ops()[0] {
-        WindowOp::MoveResize { x, y, width, height, .. } => {
+        WindowOp::MoveResize {
+            x,
+            y,
+            width,
+            height,
+            ..
+        } => {
             assert_eq!(*x, 100.0);
             assert_eq!(*y, 200.0);
             assert_eq!(*width, 300.0);
@@ -155,7 +167,13 @@ fn optimize_preserves_separate_windows() {
 
     // Ops are sorted by window id for determinism.
     match &batch.ops()[0] {
-        WindowOp::MoveResize { id, x, y, width, height } => {
+        WindowOp::MoveResize {
+            id,
+            x,
+            y,
+            width,
+            height,
+        } => {
             assert_eq!(*id, id_a);
             assert_eq!(*x, 10.0);
             assert_eq!(*y, 10.0);
@@ -165,7 +183,13 @@ fn optimize_preserves_separate_windows() {
         other => panic!("expected MoveResize for id_a, got {:?}", other),
     }
     match &batch.ops()[1] {
-        WindowOp::MoveResize { id, x, y, width, height } => {
+        WindowOp::MoveResize {
+            id,
+            x,
+            y,
+            width,
+            height,
+        } => {
             assert_eq!(*id, id_b);
             assert_eq!(*x, 20.0);
             assert_eq!(*y, 20.0);
@@ -458,7 +482,13 @@ fn tile_visible_windows_excludes_minimized() {
 #[test]
 fn batch_push_raw_op() {
     let mut batch = WindowBatch::new();
-    batch.push(WindowOp::SetTitle { id: WindowId(1), title: "Hello".to_string() });
-    batch.push(WindowOp::SetZOrder { id: WindowId(2), position: ZOrderOp::Bottom });
+    batch.push(WindowOp::SetTitle {
+        id: WindowId(1),
+        title: "Hello".to_string(),
+    });
+    batch.push(WindowOp::SetZOrder {
+        id: WindowId(2),
+        position: ZOrderOp::Bottom,
+    });
     assert_eq!(batch.len(), 2);
 }

@@ -73,9 +73,15 @@ fn config_display() {
 #[test]
 fn host_plugin_ids_are_sequential() {
     let mut host = PluginHost::with_defaults();
-    let id1 = host.load_plugin(sample_manifest("com.edge.seq1", vec![])).unwrap();
-    let id2 = host.load_plugin(sample_manifest("com.edge.seq2", vec![])).unwrap();
-    let id3 = host.load_plugin(sample_manifest("com.edge.seq3", vec![])).unwrap();
+    let id1 = host
+        .load_plugin(sample_manifest("com.edge.seq1", vec![]))
+        .unwrap();
+    let id2 = host
+        .load_plugin(sample_manifest("com.edge.seq2", vec![]))
+        .unwrap();
+    let id3 = host
+        .load_plugin(sample_manifest("com.edge.seq3", vec![]))
+        .unwrap();
     assert_eq!(id1, PluginId(1));
     assert_eq!(id2, PluginId(2));
     assert_eq!(id3, PluginId(3));
@@ -111,13 +117,19 @@ fn host_allocate_for_nonexistent() {
 fn host_reload_after_unload() {
     let mut host = PluginHost::with_defaults();
     let id1 = host
-        .load_plugin(sample_manifest("com.edge.reload", vec![ExtensionPoint::PreAuth]))
+        .load_plugin(sample_manifest(
+            "com.edge.reload",
+            vec![ExtensionPoint::PreAuth],
+        ))
         .unwrap();
     host.unload_plugin(id1).unwrap();
 
     // Can reload same manifest ID because the old one is now unloaded.
     let id2 = host
-        .load_plugin(sample_manifest("com.edge.reload", vec![ExtensionPoint::PreAuth]))
+        .load_plugin(sample_manifest(
+            "com.edge.reload",
+            vec![ExtensionPoint::PreAuth],
+        ))
         .unwrap();
     assert_ne!(id1, id2);
     assert_eq!(host.active_plugin_count(), 1);

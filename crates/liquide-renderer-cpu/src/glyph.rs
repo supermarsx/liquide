@@ -124,7 +124,13 @@ impl GlyphAtlas {
         bitmap: &[u8],
         metrics: &GlyphMetrics,
     ) -> crate::Result<&CachedGlyph> {
-        let GlyphMetrics { width, height, bearing_x, bearing_y, advance } = *metrics;
+        let GlyphMetrics {
+            width,
+            height,
+            bearing_x,
+            bearing_y,
+            advance,
+        } = *metrics;
 
         // Check if it already exists
         if self.entries.contains_key(&key) {
@@ -140,10 +146,7 @@ impl GlyphAtlas {
 
         if self.cursor_y + height > self.height {
             // Atlas is full — evict everything and retry once.
-            tracing::debug!(
-                entries = self.entries.len(),
-                "glyph atlas full, resetting"
-            );
+            tracing::debug!(entries = self.entries.len(), "glyph atlas full, resetting");
             self.clear();
             // After clear, cursors are at (0,0). If the single glyph is
             // larger than the entire atlas, give up.
@@ -151,7 +154,8 @@ impl GlyphAtlas {
                 return Err(crate::RendererError::AtlasFull { size: self.width });
             }
         }
-        let _total = width.checked_mul(height)
+        let _total = width
+            .checked_mul(height)
             .ok_or(crate::RendererError::AtlasFull { size: self.width })?;
         if bitmap.len() < (width * height) as usize {
             return Err(crate::RendererError::InvalidGlyph);
@@ -186,13 +190,7 @@ impl GlyphAtlas {
     /// Blit a glyph from the atlas into a framebuffer at the given position.
     ///
     /// The glyph alpha is used as a mask with the given foreground color.
-    pub fn blit_glyph(
-        &self,
-        fb: &mut FrameBuffer,
-        glyph: &CachedGlyph,
-        pos: Point,
-        color: Color,
-    ) {
+    pub fn blit_glyph(&self, fb: &mut FrameBuffer, glyph: &CachedGlyph, pos: Point, color: Color) {
         let dx = (pos.x + glyph.bearing_x as f32) as i32;
         let dy = (pos.y - glyph.bearing_y as f32) as i32;
 
@@ -206,8 +204,7 @@ impl GlyphAtlas {
                 if fx < 0 || fx >= fb.width as i32 {
                     continue;
                 }
-                let atlas_off =
-                    ((glyph.atlas_y + row) * self.width + glyph.atlas_x + col) as usize;
+                let atlas_off = ((glyph.atlas_y + row) * self.width + glyph.atlas_x + col) as usize;
                 let alpha = self.pixels[atlas_off];
                 if alpha == 0 {
                     continue;
@@ -239,7 +236,13 @@ impl GlyphAtlas {
         bitmap: &[u8],
         metrics: &GlyphMetrics,
     ) -> crate::Result<&CachedGlyph> {
-        let GlyphMetrics { width, height, bearing_x, bearing_y, advance } = *metrics;
+        let GlyphMetrics {
+            width,
+            height,
+            bearing_x,
+            bearing_y,
+            advance,
+        } = *metrics;
 
         if self.entries.contains_key(&key) {
             return Ok(&self.entries[&key]);
@@ -318,9 +321,8 @@ impl GlyphAtlas {
                 }
 
                 // Read 3 subpixel alpha values from atlas
-                let atlas_base = ((glyph.atlas_y + row) * self.width
-                    + glyph.atlas_x
-                    + col * 3) as usize;
+                let atlas_base =
+                    ((glyph.atlas_y + row) * self.width + glyph.atlas_x + col * 3) as usize;
                 let a0 = self.pixels[atlas_base];
                 let a1 = self.pixels[atlas_base + 1];
                 let a2 = self.pixels[atlas_base + 2];

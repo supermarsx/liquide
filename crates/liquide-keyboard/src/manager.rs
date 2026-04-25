@@ -146,7 +146,11 @@ impl KeyboardLayoutManager {
 
         // Pick the character based on modifier state.
         let ch = if shifted && alt_gr {
-            mapping.shift_alt_gr.or(mapping.alt_gr).or(mapping.shift).unwrap_or(base_char)
+            mapping
+                .shift_alt_gr
+                .or(mapping.alt_gr)
+                .or(mapping.shift)
+                .unwrap_or(base_char)
         } else if alt_gr {
             mapping.alt_gr.unwrap_or(base_char)
         } else if shifted {

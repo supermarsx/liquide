@@ -1,8 +1,8 @@
 use bytes::Bytes;
 
+use crate::Transport;
 use crate::listener::ws::WebSocketListener;
 use crate::websocket::WebSocketTransport;
-use crate::Transport;
 
 #[tokio::test]
 async fn ws_connect_send_recv() {
@@ -26,10 +26,7 @@ async fn ws_connect_send_recv() {
     assert!(client.is_connected());
     assert_eq!(client.peer_addr(), Some(addr));
 
-    client
-        .send(Bytes::from_static(b"hello ws"))
-        .await
-        .unwrap();
+    client.send(Bytes::from_static(b"hello ws")).await.unwrap();
     let reply = client.recv().await.unwrap();
     assert_eq!(&reply[..], b"hello back");
 
@@ -57,10 +54,7 @@ async fn ws_multiple_messages() {
     let mut client = WebSocketTransport::new();
     client.connect(addr).await.unwrap();
     for i in 0u32..10 {
-        client
-            .send(Bytes::from(format!("ws-{i}")))
-            .await
-            .unwrap();
+        client.send(Bytes::from(format!("ws-{i}"))).await.unwrap();
     }
     let ack = client.recv().await.unwrap();
     assert_eq!(&ack[..], b"done");
@@ -141,10 +135,7 @@ async fn ws_bidirectional_interleaved() {
         for i in 0u32..5 {
             let msg = transport.recv().await.unwrap();
             assert_eq!(&msg[..], format!("c{i}").as_bytes());
-            transport
-                .send(Bytes::from(format!("s{i}")))
-                .await
-                .unwrap();
+            transport.send(Bytes::from(format!("s{i}"))).await.unwrap();
         }
     });
 

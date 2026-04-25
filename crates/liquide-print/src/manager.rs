@@ -66,10 +66,7 @@ impl PrintManager {
     ) -> Option<u64> {
         // Verify the printer exists.
         if self.printer_by_id(printer_id).is_none() {
-            tracing::warn!(
-                "Cannot submit job: printer {:?} not found",
-                printer_id
-            );
+            tracing::warn!("Cannot submit job: printer {:?} not found", printer_id);
             return None;
         }
 

@@ -1,22 +1,22 @@
 //! Accessibility framework — accessibility tree model, focus management,
 //! screen reader abstraction, keyboard navigation, and event system.
 
-pub mod node;
-pub mod tree;
-pub mod focus;
-pub mod reader;
-pub mod navigation;
 pub mod event;
+pub mod focus;
+pub mod navigation;
+pub mod node;
+pub mod reader;
+pub mod tree;
 
 #[cfg(test)]
 mod tests;
 
-pub use node::{NodeId, Role, State, AccessibleNode, NodeBounds};
-pub use tree::AccessibilityTree;
-pub use focus::FocusManager;
-pub use reader::{ScreenReader, AnnouncePriority, NullReader, LogReader};
-pub use navigation::{NavigationAction, NavigationResult, KeyboardNavigation};
 pub use event::{AccessibilityEvent, EventQueue};
+pub use focus::FocusManager;
+pub use navigation::{KeyboardNavigation, NavigationAction, NavigationResult};
+pub use node::{AccessibleNode, NodeBounds, NodeId, Role, State};
+pub use reader::{AnnouncePriority, LogReader, NullReader, ScreenReader};
+pub use tree::AccessibilityTree;
 
 use thiserror::Error;
 

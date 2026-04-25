@@ -14,13 +14,11 @@ fn self_signed_cert_and_key() -> (
     Vec<rustls::pki_types::CertificateDer<'static>>,
     rustls::pki_types::PrivateKeyDer<'static>,
 ) {
-    let cert =
-        rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).expect("rcgen");
+    let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).expect("rcgen");
     let cert_der = rustls::pki_types::CertificateDer::from(cert.cert.der().to_vec());
-    let key_der =
-        rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
-            cert.key_pair.serialize_der(),
-        ));
+    let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+    );
     (vec![cert_der], key_der)
 }
 
@@ -48,9 +46,7 @@ async fn send_msg<W: AsyncWriteExt + Unpin, T: serde::Serialize>(w: &mut W, msg:
 
 /// Spin up a mock TLS server that performs the Liquide handshake.
 /// Returns (listener_addr, join_handle).
-pub async fn mock_tls_server(
-    auth_result: bool,
-) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+pub async fn mock_tls_server(auth_result: bool) -> (SocketAddr, tokio::task::JoinHandle<()>) {
     let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp.local_addr().unwrap();
     let tls_cfg = server_tls_config();

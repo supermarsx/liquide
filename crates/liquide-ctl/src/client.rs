@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 
 /// Client for communicating with the LiquiDE server daemon.
@@ -198,10 +198,7 @@ mod tests {
 
     #[test]
     fn build_url_both_clean() {
-        assert_eq!(
-            build_url("https://s", "health"),
-            "https://s/health"
-        );
+        assert_eq!(build_url("https://s", "health"), "https://s/health");
     }
 
     #[test]

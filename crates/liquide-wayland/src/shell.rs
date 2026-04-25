@@ -160,11 +160,7 @@ impl XdgSurface {
     /// Create a popup role for this surface.
     ///
     /// Returns `None` if a role is already assigned.
-    pub fn get_popup(
-        &mut self,
-        popup_id: ObjectId,
-        parent_id: ObjectId,
-    ) -> Option<XdgPopup> {
+    pub fn get_popup(&mut self, popup_id: ObjectId, parent_id: ObjectId) -> Option<XdgPopup> {
         if self.role != XdgRole::None {
             return None;
         }
@@ -584,13 +580,7 @@ impl XdgPopup {
     }
 
     /// Generate a configure event for this popup.
-    pub fn configure(
-        &mut self,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-    ) -> ConfigureEvent {
+    pub fn configure(&mut self, x: i32, y: i32, width: i32, height: i32) -> ConfigureEvent {
         let serial = self.next_serial;
         self.next_serial += 1;
         let event = ConfigureEvent {

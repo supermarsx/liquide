@@ -146,10 +146,7 @@ pub struct StreamSession {
 
 impl StreamSession {
     /// Create a new stream session with the given config and frame callback.
-    pub fn new(
-        config: StreamConfig,
-        on_frame: Box<dyn FnMut(&[u8], u32, u32, u64)>,
-    ) -> Self {
+    pub fn new(config: StreamConfig, on_frame: Box<dyn FnMut(&[u8], u32, u32, u64)>) -> Self {
         Self {
             config,
             state: StreamState::Idle,

@@ -144,35 +144,67 @@ impl Selector {
     ///
     /// E.g. `"div > p.intro:hover"` → `"p.intro:hover"`.
     fn last_compound(s: &str) -> &str {
-        let bytes = s.as_bytes();
-        let mut depth: i32 = 0; // track parentheses for functional pseudo-classes
-        let mut last_split = 0;
-        let mut i = 0;
-        while i < bytes.len() {
-            match bytes[i] {
-                b'(' | b'[' => depth += 1,
-                b')' | b']' => depth -= 1,
-                b' ' | b'>' | b'+' | b'~' if depth == 0 => {
-                    // Skip whitespace and combinators
-                    let mut j = i + 1;
-                    while j < bytes.len()
-                        && (bytes[j] == b' '
-                            || bytes[j] == b'>'
-                            || bytes[j] == b'+'
-                            || bytes[j] == b'~')
-                    {
-                        j += 1;
+        let chars: Vec<(usize, char)> = s.char_indices().collect();
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut last_split = 0usize;
+        let mut index = 0usize;
+
+        while index < chars.len() {
+            let (byte_idx, ch) = chars[index];
+
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active_quote {
+                    quote = None;
+                }
+                index += 1;
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                '(' => paren_depth += 1,
+                ')' => {
+                    if paren_depth > 0 {
+                        paren_depth -= 1;
                     }
-                    if j < bytes.len() {
-                        last_split = j;
+                }
+                '[' => bracket_depth += 1,
+                ']' => {
+                    if bracket_depth > 0 {
+                        bracket_depth -= 1;
                     }
-                    i = j;
+                }
+                ' ' | '>' | '+' | '~' if paren_depth == 0 && bracket_depth == 0 => {
+                    let mut next = index + 1;
+                    while next < chars.len() {
+                        let (_, next_ch) = chars[next];
+                        if next_ch.is_whitespace() || matches!(next_ch, '>' | '+' | '~') {
+                            next += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some((next_idx, _)) = chars.get(next) {
+                        last_split = *next_idx;
+                    }
+                    index = next;
                     continue;
                 }
-                _ => {}
+                _ => {
+                    let _ = byte_idx;
+                }
             }
-            i += 1;
+
+            index += 1;
         }
+
         &s[last_split..]
     }
 
@@ -192,15 +224,22 @@ impl Selector {
         let mut pseudo_classes = Vec::new();
         let mut pseudo_element = None;
 
-        let mut chars = s.chars().peekable();
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len();
+        let mut index = 0usize;
 
-        // Read element name
-        while let Some(&ch) = chars.peek() {
-            if ch.is_alphanumeric() || ch == '-' || ch == '_' || ch == '*' {
-                element.push(ch);
-                chars.next();
-            } else {
-                break;
+        if index < len {
+            match chars[index] {
+                '*' => {
+                    element.push('*');
+                    index += 1;
+                }
+                '.' | '#' | ':' | '[' => {}
+                _ => {
+                    if let Some(name) = Self::parse_identifier(&chars, &mut index) {
+                        element = name;
+                    }
+                }
             }
         }
 
@@ -208,98 +247,113 @@ impl Selector {
             element = "*".to_string();
         }
 
-        // Parse modifiers
-        while let Some(ch) = chars.next() {
-            match ch {
+        while index < len {
+            match chars[index] {
                 '.' => {
-                    let mut class = String::new();
-                    while let Some(&ch) = chars.peek() {
-                        if ch.is_alphanumeric() || ch == '-' || ch == '_' {
-                            class.push(ch);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
+                    index += 1;
+                    let class = Self::parse_identifier(&chars, &mut index).unwrap_or_default();
                     if !class.is_empty() {
                         classes.push(class);
                     }
                 }
                 '#' => {
-                    let mut id_str = String::new();
-                    while let Some(&ch) = chars.peek() {
-                        if ch.is_alphanumeric() || ch == '-' || ch == '_' {
-                            id_str.push(ch);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
+                    index += 1;
+                    let id_str = Self::parse_identifier(&chars, &mut index).unwrap_or_default();
                     if !id_str.is_empty() {
                         id = Some(id_str);
                     }
                 }
                 ':' => {
-                    if chars.peek() == Some(&':') {
-                        // Pseudo-element
-                        chars.next();
-                        let mut pseudo = String::new();
-                        while let Some(&ch) = chars.peek() {
-                            if ch.is_alphanumeric() || ch == '-' {
-                                pseudo.push(ch);
-                                chars.next();
-                            } else {
-                                break;
-                            }
+                    let is_pseudo_element = index + 1 < len && chars[index + 1] == ':';
+                    index += if is_pseudo_element { 2 } else { 1 };
+                    let pseudo = Self::parse_identifier(&chars, &mut index).unwrap_or_default();
+
+                    if index < len && chars[index] == '(' {
+                        if let Some(next_index) = Self::consume_enclosed(&chars, index, '(', ')') {
+                            index = next_index;
                         }
+                    }
+
+                    if is_pseudo_element {
                         if !pseudo.is_empty() {
                             pseudo_element = Some(pseudo);
                         }
                     } else {
-                        // Pseudo-class (may have functional args)
-                        let mut pseudo = String::new();
-                        while let Some(&ch) = chars.peek() {
-                            if ch.is_alphanumeric() || ch == '-' {
-                                pseudo.push(ch);
-                                chars.next();
-                            } else {
-                                break;
-                            }
-                        }
-                        // Skip over functional arguments like :nth-child(2n+1)
-                        if chars.peek() == Some(&'(') {
-                            let mut depth = 0;
-                            for ch in chars.by_ref() {
-                                if ch == '(' {
-                                    depth += 1;
-                                }
-                                if ch == ')' {
-                                    depth -= 1;
-                                    if depth == 0 {
-                                        break;
-                                    }
-                                }
-                            }
-                        }
                         if !pseudo.is_empty() {
                             pseudo_classes.push(pseudo);
                         }
                     }
                 }
                 '[' => {
-                    // Attribute selector — skip over it
-                    for ch in chars.by_ref() {
-                        if ch == ']' {
-                            break;
-                        }
+                    if let Some(next_index) = Self::consume_enclosed(&chars, index, '[', ']') {
+                        index = next_index;
+                    } else {
+                        break;
                     }
                 }
-                _ if ch.is_whitespace() => continue,
-                _ => { /* ignore unexpected chars in decomposition */ }
+                ch if ch.is_whitespace() => index += 1,
+                _ => index += 1,
             }
         }
 
         (element, classes, id, pseudo_classes, pseudo_element)
+    }
+
+    fn parse_identifier(chars: &[char], index: &mut usize) -> Option<String> {
+        let start = *index;
+        while *index < chars.len()
+            && (chars[*index].is_alphanumeric() || chars[*index] == '-' || chars[*index] == '_')
+        {
+            *index += 1;
+        }
+
+        if *index == start {
+            None
+        } else {
+            Some(chars[start..*index].iter().collect())
+        }
+    }
+
+    fn consume_enclosed(chars: &[char], start: usize, open: char, close: char) -> Option<usize> {
+        if chars.get(start).copied()? != open {
+            return None;
+        }
+
+        let mut depth = 1usize;
+        let mut quote = None;
+        let mut escaped = false;
+        let mut index = start + 1;
+
+        while index < chars.len() {
+            let ch = chars[index];
+            if let Some(active_quote) = quote {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == active_quote {
+                    quote = None;
+                }
+                index += 1;
+                continue;
+            }
+
+            match ch {
+                '"' | '\'' => quote = Some(ch),
+                c if c == open => depth += 1,
+                c if c == close => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(index + 1);
+                    }
+                }
+                _ => {}
+            }
+
+            index += 1;
+        }
+
+        None
     }
 
     /// Check if this selector matches an element with given properties
@@ -310,6 +364,10 @@ impl Selector {
         id: Option<&str>,
         pseudo_classes: &[String],
     ) -> bool {
+        if self.pseudo_element.is_some() {
+            return false;
+        }
+
         // Check element
         if self.element != "*" && self.element != element {
             return false;
@@ -435,6 +493,19 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_nested_selector_argument_without_top_level_split() {
+        let sel = Selector::parse(r#"button:not(:is(.active, [data-state="open,now"]))"#).unwrap();
+        assert_eq!(sel.element, "button");
+        assert_eq!(sel.pseudo_classes, vec!["not"]);
+    }
+
+    #[test]
+    fn test_last_compound_ignores_combinators_inside_quotes() {
+        let sel = Selector::parse(r#"form a[href="https://example.com?q=a>b"]"#).unwrap();
+        assert_eq!(sel.element, "a");
+    }
+
+    #[test]
     fn test_matches() {
         let sel = Selector::parse("button.primary:hover").unwrap();
 
@@ -471,6 +542,12 @@ mod tests {
         assert_eq!(sel.raw, "p::before");
         assert_eq!(sel.element, "p");
         assert_eq!(sel.pseudo_element, Some("before".to_string()));
+    }
+
+    #[test]
+    fn test_matches_fail_closed_for_pseudo_elements() {
+        let sel = Selector::parse("p::before").unwrap();
+        assert!(!sel.matches("p", &[], None, &[]));
     }
 
     #[test]

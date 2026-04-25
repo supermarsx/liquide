@@ -91,7 +91,10 @@ impl UsbPolicy {
             }
         }
         if !self.allowed_vid_pid.is_empty() {
-            let allowed = self.allowed_vid_pid.iter().any(|p| vid_pid.matches_pattern(p));
+            let allowed = self
+                .allowed_vid_pid
+                .iter()
+                .any(|p| vid_pid.matches_pattern(p));
             if !allowed {
                 return PolicyResult::Denied {
                     reason: format!("VID:PID {} is not in the allowed list", vid_pid),

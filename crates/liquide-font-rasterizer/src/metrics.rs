@@ -158,7 +158,10 @@ impl<'a> FontMetricsProvider<'a> {
     pub fn measure_text(&self, face_id: FontFaceId, size_px: f32, text: &str) -> (f32, f32) {
         let Some(face) = self.db.get(face_id) else {
             let m = RealFontMetrics::approximate(size_px);
-            return (text.chars().count() as f32 * m.avg_char_width, m.line_height);
+            return (
+                text.chars().count() as f32 * m.avg_char_width,
+                m.line_height,
+            );
         };
 
         let scaled = face.font.as_scaled(ab_glyph::PxScale::from(size_px));

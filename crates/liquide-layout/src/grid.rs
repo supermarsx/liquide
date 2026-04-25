@@ -8,7 +8,10 @@ const MAX_AUTO_ROWS: usize = 10_000;
 
 use liquide_dom::{Document, NodeId};
 use liquide_style_engine::StyleMap;
-use liquide_style_engine::computed::{AlignContent, AlignItems, AlignSelf, BoxSizing, Display, GridAutoFlow, GridLine, JustifyContent, JustifyItems, JustifySelf, Position, TrackSize};
+use liquide_style_engine::computed::{
+    AlignContent, AlignItems, AlignSelf, BoxSizing, Display, GridAutoFlow, GridLine,
+    JustifyContent, JustifyItems, JustifySelf, Position, TrackSize,
+};
 use liquide_style_engine::dimension::Dimension;
 
 use crate::geometry::Rect;
@@ -42,9 +45,20 @@ pub fn layout_grid<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     base_font_size: f32,
 ) -> LayoutBoxId {
     layout_grid_inner(
-        doc, node_id, styles, tree, text_measurer, image_measurer,
-        container_width, container_height, offset_x, offset_y,
-        viewport_w, viewport_h, base_font_size, None,
+        doc,
+        node_id,
+        styles,
+        tree,
+        text_measurer,
+        image_measurer,
+        container_width,
+        container_height,
+        offset_x,
+        offset_y,
+        viewport_w,
+        viewport_h,
+        base_font_size,
+        None,
     )
 }
 
@@ -73,15 +87,13 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let box_id = tree.alloc(node_id, BoxType::Grid);
 
     let font_size = style.font_size;
-    let explicit_width = style
-        .width
-        .resolve_px(
-            container_width,
-            base_font_size,
-            font_size,
-            viewport_w,
-            viewport_h,
-        );
+    let explicit_width = style.width.resolve_px(
+        container_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
     let width = explicit_width.unwrap_or(container_width);
 
     let pad_top = resolve_dim(
@@ -220,8 +232,16 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     // lookup failed because the box hasn't been parented yet at this point.
     let (parent_col_tracks, parent_row_tracks) = match parent_tracks {
         Some((cols, rows)) => {
-            let pc = if has_subgrid_cols { cols.to_vec() } else { Vec::new() };
-            let pr = if has_subgrid_rows { rows.to_vec() } else { Vec::new() };
+            let pc = if has_subgrid_cols {
+                cols.to_vec()
+            } else {
+                Vec::new()
+            };
+            let pr = if has_subgrid_rows {
+                rows.to_vec()
+            } else {
+                Vec::new()
+            };
             (pc, pr)
         }
         None => (Vec::new(), Vec::new()),
@@ -234,13 +254,14 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         parent_col_tracks
     } else {
         // First expand any repeat() definitions
-        let expanded_cols = expand_repeat_tracks(&style.grid_template_columns, content_width, gap_col);
+        let expanded_cols =
+            expand_repeat_tracks(&style.grid_template_columns, content_width, gap_col);
         resolve_tracks(&expanded_cols, content_width, gap_col)
     };
     let mut num_cols = col_tracks.len().max(1);
     // Number of column lines = num_cols + 1 (lines are edges of tracks)
     let num_col_lines = num_cols + 1;
-    
+
     // Calculate explicit row count for resolving negative row lines
     // The explicit grid is defined by grid-template-rows, grid-template-areas, etc.
     let explicit_row_count = if !style.grid_template_rows.is_empty() {
@@ -259,7 +280,12 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
 
     // Collect effective children, flattening display:contents nodes
     let mut effective_children: Vec<NodeId> = Vec::new();
-    fn collect_grid_children(doc: &Document, children: &[NodeId], styles: &StyleMap, out: &mut Vec<NodeId>) {
+    fn collect_grid_children(
+        doc: &Document,
+        children: &[NodeId],
+        styles: &StyleMap,
+        out: &mut Vec<NodeId>,
+    ) {
         for &child_id in children {
             let child_style = styles.get(child_id).cloned().unwrap_or_default();
             if child_style.display == Display::None {
@@ -282,7 +308,13 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         }
 
         // Resolve explicit grid placement using the helper that handles negative lines
-        let col_start = resolve_grid_line(&child_style.grid_column.start, num_col_lines, &area_line_names, "col", true);
+        let col_start = resolve_grid_line(
+            &child_style.grid_column.start,
+            num_col_lines,
+            &area_line_names,
+            "col",
+            true,
+        );
         let col_end = match &child_style.grid_column.end {
             GridLine::Span(n) => {
                 // H14: clamp span to parent track count for subgrid children
@@ -295,7 +327,13 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             }
             other => resolve_grid_line(other, num_col_lines, &area_line_names, "col", false),
         };
-        let row_start = resolve_grid_line(&child_style.grid_row.start, num_row_lines, &area_line_names, "row", true);
+        let row_start = resolve_grid_line(
+            &child_style.grid_row.start,
+            num_row_lines,
+            &area_line_names,
+            "row",
+            true,
+        );
         let row_end = match &child_style.grid_row.end {
             GridLine::Span(n) => {
                 // H14: clamp span to parent track count for subgrid children
@@ -400,8 +438,7 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 occupied.extend(std::iter::repeat(false).take(num_cols));
                 num_rows += 1;
             }
-            if auto_cursor_col < num_cols
-                && !occupied[auto_cursor_row * num_cols + auto_cursor_col]
+            if auto_cursor_col < num_cols && !occupied[auto_cursor_row * num_cols + auto_cursor_col]
             {
                 break;
             }
@@ -466,7 +503,8 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         vec![implicit_row_px; num_rows]
     } else {
         // First expand any repeat() definitions
-        let expanded_rows = expand_repeat_tracks(&style.grid_template_rows, available_h_for_rows, gap_row);
+        let expanded_rows =
+            expand_repeat_tracks(&style.grid_template_rows, available_h_for_rows, gap_row);
         let mut rt = resolve_tracks(&expanded_rows, available_h_for_rows, gap_row);
         // Extend with implicit row size (grid-auto-rows) for tracks beyond the template
         while rt.len() < num_rows {
@@ -533,69 +571,74 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     text_box
                 } else {
                     // Empty text node — still needs a box
-                    let text_box = tree.alloc(item.node_id, BoxType::Text { line_boxes: Vec::new() });
+                    let text_box = tree.alloc(
+                        item.node_id,
+                        BoxType::Text {
+                            line_boxes: Vec::new(),
+                        },
+                    );
                     tree.add_child(box_id, text_box);
                     text_box
                 }
             } else if child_style.is_flex_container() {
-            crate::flex::layout_flex(
-                doc,
-                item.node_id,
-                styles,
-                tree,
-                text_measurer,
-                image_measurer,
-                cell_width,
-                container_height,
-                0.0,
-                0.0,
-                viewport_w,
-                viewport_h,
-                base_font_size,
-            )
-        } else if child_style.is_grid_container() {
-            // Pass sliced parent tracks for subgrid inheritance.
-            // The child subgrid inherits exactly the tracks corresponding
-            // to its span in the parent grid.
-            let child_col_end = item.col_end.min(col_tracks.len());
-            let child_col_start = item.col_start.min(child_col_end);
-            let child_col_slice = &col_tracks[child_col_start..child_col_end];
-            let child_row_end = item.row_end.min(row_tracks.len());
-            let child_row_start = item.row_start.min(child_row_end);
-            let child_row_slice = &row_tracks[child_row_start..child_row_end];
-            layout_grid_inner(
-                doc,
-                item.node_id,
-                styles,
-                tree,
-                text_measurer,
-                image_measurer,
-                cell_width,
-                container_height,
-                0.0,
-                0.0,
-                viewport_w,
-                viewport_h,
-                base_font_size,
-                Some((child_col_slice, child_row_slice)),
-            )
-        } else {
-            crate::block::layout_block(
-                doc,
-                item.node_id,
-                styles,
-                tree,
-                text_measurer,
-                image_measurer,
-                cell_width,
-                container_height,
-                0.0,
-                0.0,
-                viewport_w,
-                viewport_h,
-                base_font_size,
-            )
-        }
+                crate::flex::layout_flex(
+                    doc,
+                    item.node_id,
+                    styles,
+                    tree,
+                    text_measurer,
+                    image_measurer,
+                    cell_width,
+                    container_height,
+                    0.0,
+                    0.0,
+                    viewport_w,
+                    viewport_h,
+                    base_font_size,
+                )
+            } else if child_style.is_grid_container() {
+                // Pass sliced parent tracks for subgrid inheritance.
+                // The child subgrid inherits exactly the tracks corresponding
+                // to its span in the parent grid.
+                let child_col_end = item.col_end.min(col_tracks.len());
+                let child_col_start = item.col_start.min(child_col_end);
+                let child_col_slice = &col_tracks[child_col_start..child_col_end];
+                let child_row_end = item.row_end.min(row_tracks.len());
+                let child_row_start = item.row_start.min(child_row_end);
+                let child_row_slice = &row_tracks[child_row_start..child_row_end];
+                layout_grid_inner(
+                    doc,
+                    item.node_id,
+                    styles,
+                    tree,
+                    text_measurer,
+                    image_measurer,
+                    cell_width,
+                    container_height,
+                    0.0,
+                    0.0,
+                    viewport_w,
+                    viewport_h,
+                    base_font_size,
+                    Some((child_col_slice, child_row_slice)),
+                )
+            } else {
+                crate::block::layout_block(
+                    doc,
+                    item.node_id,
+                    styles,
+                    tree,
+                    text_measurer,
+                    image_measurer,
+                    cell_width,
+                    container_height,
+                    0.0,
+                    0.0,
+                    viewport_w,
+                    viewport_h,
+                    base_font_size,
+                )
+            }
         } else {
             // Node not found — create a placeholder
             crate::block::layout_block(
@@ -655,9 +698,19 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
 
     // ── justify-content: distribute horizontal free space between column tracks ──
     let total_col_width: f32 = (0..num_cols)
-        .map(|c| if c < col_tracks.len() { col_tracks[c] } else { fallback_col_pos })
+        .map(|c| {
+            if c < col_tracks.len() {
+                col_tracks[c]
+            } else {
+                fallback_col_pos
+            }
+        })
         .sum::<f32>()
-        + if num_cols > 1 { (num_cols - 1) as f32 * gap_col } else { 0.0 };
+        + if num_cols > 1 {
+            (num_cols - 1) as f32 * gap_col
+        } else {
+            0.0
+        };
     let free_x = (content_width - total_col_width).max(0.0);
     let (jc_start, jc_extra) = grid_content_distribute(style.justify_content, free_x, num_cols);
 
@@ -670,15 +723,28 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         } else {
             fallback_col_pos
         };
-        cumulative_x += cw + if col < num_cols - 1 { gap_col + jc_extra } else { 0.0 };
+        cumulative_x += cw
+            + if col < num_cols - 1 {
+                gap_col + jc_extra
+            } else {
+                0.0
+            };
     }
 
     // ── align-content: distribute vertical free space between row tracks ──
     let explicit_container_h = style.height.resolve_px(
-        container_height, base_font_size, font_size, viewport_w, viewport_h,
+        container_height,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
     );
     let total_row_height: f32 = row_heights.iter().sum::<f32>()
-        + if num_rows > 1 { (num_rows - 1) as f32 * gap_row } else { 0.0 };
+        + if num_rows > 1 {
+            (num_rows - 1) as f32 * gap_row
+        } else {
+            0.0
+        };
     let container_h_for_align = explicit_container_h.unwrap_or(total_row_height);
     let free_y = (container_h_for_align - total_row_height).max(0.0);
     let (ac_start, ac_extra) = grid_content_distribute_align(style.align_content, free_y, num_rows);
@@ -687,7 +753,12 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let mut cumulative_y = ac_start;
     for row in 0..num_rows {
         y_offsets[row] = cumulative_y;
-        cumulative_y += row_heights[row] + if row < num_rows - 1 { gap_row + ac_extra } else { 0.0 };
+        cumulative_y += row_heights[row]
+            + if row < num_rows - 1 {
+                gap_row + ac_extra
+            } else {
+                0.0
+            };
     }
 
     // Update child positions using placed_items (supports spanning)
@@ -732,14 +803,21 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             let child_style = styles.get(item.node_id).cloned().unwrap_or_default();
             let child_w = b.margin_rect.width.min(cell_w);
             let alignment = match child_style.justify_self {
-                JustifySelf::Auto | JustifySelf::Normal | JustifySelf::Stretch => style.justify_items,
+                JustifySelf::Auto | JustifySelf::Normal | JustifySelf::Stretch => {
+                    style.justify_items
+                }
                 JustifySelf::Center => JustifyItems::Center,
-                JustifySelf::Start | JustifySelf::SelfStart | JustifySelf::FlexStart => JustifyItems::Start,
+                JustifySelf::Start | JustifySelf::SelfStart | JustifySelf::FlexStart => {
+                    JustifyItems::Start
+                }
                 JustifySelf::End | JustifySelf::SelfEnd | JustifySelf::FlexEnd => JustifyItems::End,
             };
             let x_offset = match alignment {
                 JustifyItems::Center => (cell_w - child_w) / 2.0,
-                JustifyItems::End | JustifyItems::FlexEnd | JustifyItems::SelfEnd | JustifyItems::Right => cell_w - child_w,
+                JustifyItems::End
+                | JustifyItems::FlexEnd
+                | JustifyItems::SelfEnd
+                | JustifyItems::Right => cell_w - child_w,
                 _ => 0.0, // Start, Stretch, Normal
             };
 
@@ -896,7 +974,10 @@ fn resolve_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<f32> {
     // Grow MinMax tracks toward their max using leftover space (after fr distribution)
     let leftover = (remaining - distributed).max(0.0);
     if leftover > 0.0 {
-        let minmax_count = tracks.iter().filter(|t| matches!(t, TrackSize::MinMax(..))).count();
+        let minmax_count = tracks
+            .iter()
+            .filter(|t| matches!(t, TrackSize::MinMax(..)))
+            .count();
         if minmax_count > 0 {
             let share = leftover / minmax_count as f32;
             for (i, track) in tracks.iter().enumerate() {
@@ -934,12 +1015,15 @@ fn resolve_track_px(track: &TrackSize, available: f32) -> f32 {
 /// Note: auto-fit collapsing is handled during layout, not here.
 fn expand_repeat_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<TrackSize> {
     use liquide_style_engine::computed::RepeatMode;
-    
+
     let mut expanded = Vec::new();
-    
+
     for track in tracks {
         match track {
-            TrackSize::Repeat { mode, tracks: inner } => {
+            TrackSize::Repeat {
+                mode,
+                tracks: inner,
+            } => {
                 match mode {
                     RepeatMode::Count(n) => {
                         // Fixed count: repeat N times
@@ -950,10 +1034,9 @@ fn expand_repeat_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<T
                     RepeatMode::AutoFill | RepeatMode::AutoFit => {
                         // Calculate how many repetitions fit
                         // First, calculate the minimum size of one repetition
-                        let rep_size: f32 = inner.iter()
-                            .map(|t| min_track_size(t, available))
-                            .sum();
-                        
+                        let rep_size: f32 =
+                            inner.iter().map(|t| min_track_size(t, available)).sum();
+
                         if rep_size > 0.0 {
                             // Guard against NaN when rep_size + gap is zero or negative
                             if rep_size + gap <= 0.0 {
@@ -965,7 +1048,7 @@ fn expand_repeat_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<T
                             // Solve for count: count = (available + gap) / (rep_size + gap)
                             let count = ((available + gap) / (rep_size + gap)).floor() as u32;
                             let count = count.max(1); // At least one
-                            
+
                             for _ in 0..count {
                                 expanded.extend(inner.clone());
                             }
@@ -981,7 +1064,7 @@ fn expand_repeat_tracks(tracks: &[TrackSize], available: f32, gap: f32) -> Vec<T
             }
         }
     }
-    
+
     expanded
 }
 
@@ -1187,9 +1270,19 @@ mod tests {
 
         let mut tree = LayoutTree::new();
         let box_id = layout_grid(
-            &doc, container, &styles, &mut tree,
-            &DefaultTextMeasurer, &DefaultImageMeasurer,
-            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+            &doc,
+            container,
+            &styles,
+            &mut tree,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+            600.0,
+            400.0,
+            0.0,
+            0.0,
+            1920.0,
+            1080.0,
+            16.0,
         );
 
         (tree, box_id, children)
@@ -1239,9 +1332,19 @@ mod tests {
 
         let mut tree = LayoutTree::new();
         let parent_box = layout_grid(
-            &doc, parent_grid, &styles, &mut tree,
-            &DefaultTextMeasurer, &DefaultImageMeasurer,
-            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+            &doc,
+            parent_grid,
+            &styles,
+            &mut tree,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+            600.0,
+            400.0,
+            0.0,
+            0.0,
+            1920.0,
+            1080.0,
+            16.0,
         );
 
         // The parent grid should have column tracks stored
@@ -1301,9 +1404,19 @@ mod tests {
 
         let mut tree = LayoutTree::new();
         let parent_box = layout_grid(
-            &doc, parent_grid, &styles, &mut tree,
-            &DefaultTextMeasurer, &DefaultImageMeasurer,
-            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+            &doc,
+            parent_grid,
+            &styles,
+            &mut tree,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+            600.0,
+            400.0,
+            0.0,
+            0.0,
+            1920.0,
+            1080.0,
+            16.0,
         );
 
         let pb = tree.get(parent_box).unwrap();
@@ -1328,14 +1441,8 @@ mod tests {
 
         let mut parent_style = ComputedStyle::default();
         parent_style.display = Display::Grid;
-        parent_style.grid_template_columns = vec![
-            TrackSize::Px(150.0),
-            TrackSize::Px(250.0),
-        ];
-        parent_style.grid_template_rows = vec![
-            TrackSize::Px(40.0),
-            TrackSize::Px(70.0),
-        ];
+        parent_style.grid_template_columns = vec![TrackSize::Px(150.0), TrackSize::Px(250.0)];
+        parent_style.grid_template_rows = vec![TrackSize::Px(40.0), TrackSize::Px(70.0)];
 
         let mut child_style = ComputedStyle::default();
         child_style.display = Display::Grid;
@@ -1356,9 +1463,19 @@ mod tests {
 
         let mut tree = LayoutTree::new();
         let parent_box = layout_grid(
-            &doc, parent_grid, &styles, &mut tree,
-            &DefaultTextMeasurer, &DefaultImageMeasurer,
-            600.0, 400.0, 0.0, 0.0, 1920.0, 1080.0, 16.0,
+            &doc,
+            parent_grid,
+            &styles,
+            &mut tree,
+            &DefaultTextMeasurer,
+            &DefaultImageMeasurer,
+            600.0,
+            400.0,
+            0.0,
+            0.0,
+            1920.0,
+            1080.0,
+            16.0,
         );
 
         let pb = tree.get(parent_box).unwrap();
@@ -1374,20 +1491,13 @@ mod tests {
         // A regular child grid should NOT inherit parent tracks
         let mut parent_style = ComputedStyle::default();
         parent_style.display = Display::Grid;
-        parent_style.grid_template_columns = vec![
-            TrackSize::Px(100.0),
-            TrackSize::Px(200.0),
-        ];
+        parent_style.grid_template_columns = vec![TrackSize::Px(100.0), TrackSize::Px(200.0)];
 
         let mut child_style = ComputedStyle::default();
         child_style.display = Display::Grid;
         child_style.grid_template_columns = vec![TrackSize::Px(50.0), TrackSize::Px(50.0)];
 
-        let (tree, parent_box, _children) = grid_with_styles(
-            1,
-            parent_style,
-            &[child_style],
-        );
+        let (tree, parent_box, _children) = grid_with_styles(1, parent_style, &[child_style]);
 
         let pb = tree.get(parent_box).unwrap();
         // Parent should have its own tracks

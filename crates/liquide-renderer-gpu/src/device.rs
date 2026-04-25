@@ -85,11 +85,7 @@ pub struct GpuCapabilities {
 impl GpuCapabilities {
     /// Create a new capability descriptor.
     #[must_use]
-    pub fn new(
-        vendor: GpuVendor,
-        device_type: GpuDeviceType,
-        device_name: String,
-    ) -> Self {
+    pub fn new(vendor: GpuVendor, device_type: GpuDeviceType, device_name: String) -> Self {
         Self {
             vendor,
             device_type,

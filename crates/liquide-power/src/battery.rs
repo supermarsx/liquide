@@ -182,9 +182,7 @@ impl BatteryMonitor {
             if current.state != prev.state {
                 events.push(BatteryEvent::StateChanged(current.state));
                 // Reset threshold flags when we start charging.
-                if current.state == BatteryState::Charging
-                    || current.state == BatteryState::Full
-                {
+                if current.state == BatteryState::Charging || current.state == BatteryState::Full {
                     self.reset_thresholds();
                 }
             }
@@ -360,7 +358,11 @@ mod tests {
         let mut mon = BatteryMonitor::new();
         let d = make_detail(3, BatteryState::Discharging);
         let events = mon.update(&d);
-        assert!(events.iter().any(|e| matches!(e, BatteryEvent::CriticalBattery { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BatteryEvent::CriticalBattery { .. }))
+        );
     }
 
     #[test]
@@ -370,7 +372,15 @@ mod tests {
         let events1 = mon.update(&d);
         let warning_count = events1
             .iter()
-            .filter(|e| matches!(e, BatteryEvent::LowBattery { severity: BatterySeverity::Warning, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    BatteryEvent::LowBattery {
+                        severity: BatterySeverity::Warning,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(warning_count, 1);
 
@@ -379,7 +389,15 @@ mod tests {
         let events2 = mon.update(&d2);
         let warning_count2 = events2
             .iter()
-            .filter(|e| matches!(e, BatteryEvent::LowBattery { severity: BatterySeverity::Warning, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    BatteryEvent::LowBattery {
+                        severity: BatterySeverity::Warning,
+                        ..
+                    }
+                )
+            })
             .count();
         assert_eq!(warning_count2, 0);
     }

@@ -1,4 +1,4 @@
-use crate::{ShmAccess, ShmHandle, SharedMemoryError, SharedMemoryOps};
+use crate::{SharedMemoryError, SharedMemoryOps, ShmAccess, ShmHandle};
 
 pub struct SharedMemory {
     name: String,
@@ -27,11 +27,7 @@ unsafe extern "system" {
         dwMaximumSizeLow: u32,
         lpName: *const u16,
     ) -> isize;
-    fn OpenFileMappingW(
-        dwDesiredAccess: u32,
-        bInheritHandle: i32,
-        lpName: *const u16,
-    ) -> isize;
+    fn OpenFileMappingW(dwDesiredAccess: u32, bInheritHandle: i32, lpName: *const u16) -> isize;
     fn MapViewOfFile(
         hFileMappingObject: isize,
         dwDesiredAccess: u32,
@@ -141,11 +137,7 @@ impl SharedMemoryOps for SharedMemory {
 
             // Query actual size via VirtualQuery
             let mut mbi: MemoryBasicInformation = std::mem::zeroed();
-            VirtualQuery(
-                ptr,
-                &mut mbi,
-                std::mem::size_of::<MemoryBasicInformation>(),
-            );
+            VirtualQuery(ptr, &mut mbi, std::mem::size_of::<MemoryBasicInformation>());
             let size = mbi.region_size;
 
             Ok(SharedMemory {

@@ -5,7 +5,7 @@
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::scene::SceneNodeKind;
 use liquide_devtools::{DevToolsPanel, DevToolsTab};
-use liquide_shell::{Shell, ShellAction, WindowState};
+use liquide_shell::{Shell, ShellAction};
 
 fn new_shell() -> Shell {
     Shell::new(1920.0, 1080.0)
@@ -48,7 +48,10 @@ fn full_workflow_app_window_dock_devtools() {
 
     // --- Step 4: Open DevTools ---
     devtools.handle_key("F12", false, false, false);
-    assert!(devtools.is_visible(), "devtools should be visible after F12");
+    assert!(
+        devtools.is_visible(),
+        "devtools should be visible after F12"
+    );
 
     // --- Step 5: Inspect DOM tree ---
     let doc = shell.document();
@@ -98,12 +101,13 @@ fn multiple_apps_tracked_in_dock() {
     assert_eq!(shell.window_count(), 3);
 
     // Each app's dock running count should be > 0
-    for app_id in &["com.liquide.terminal", "com.liquide.browser", "com.liquide.files"] {
+    for app_id in &[
+        "com.liquide.terminal",
+        "com.liquide.browser",
+        "com.liquide.files",
+    ] {
         let item = shell.dock().items().iter().find(|i| i.app_id == *app_id);
-        assert!(
-            item.is_some(),
-            "dock should have an item for {app_id}"
-        );
+        assert!(item.is_some(), "dock should have an item for {app_id}");
         assert!(
             item.unwrap().running_window_count > 0,
             "dock running count for {app_id} should be > 0"
@@ -224,7 +228,7 @@ fn tiling_works_while_devtools_visible() {
     );
 
     // Scene should have both window and devtools nodes
-    let scene = shell.build_scene();
+    let _scene = shell.build_scene();
     let doc = shell.document();
     let layout = shell.layout_tree().unwrap();
     let styles = shell.style_map().unwrap();
@@ -371,8 +375,8 @@ fn scene_flattening_includes_all_visible_window_types() {
     let bounds = Rect::new(100.0, 100.0, 640.0, 480.0);
 
     // Open different types of windows
-    let w_normal = shell.open_window("Normal", bounds);
-    let w_app = shell.open_app_window("com.liquide.terminal");
+    let _w_normal = shell.open_window("Normal", bounds);
+    let _w_app = shell.open_app_window("com.liquide.terminal");
 
     let scene = shell.build_scene();
     let flat = scene.flatten();
@@ -391,7 +395,10 @@ fn scene_flattening_includes_all_visible_window_types() {
         .filter(|n| matches!(n.kind, SceneNodeKind::Background { .. }))
         .count();
 
-    assert!(shadows >= 2, "should have shadows for both windows, got {shadows}");
+    assert!(
+        shadows >= 2,
+        "should have shadows for both windows, got {shadows}"
+    );
     assert!(
         decorations >= 2,
         "should have decorations for both windows, got {decorations}"

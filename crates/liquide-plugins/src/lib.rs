@@ -1,18 +1,16 @@
-pub mod registry;
 pub mod context_menu;
-pub mod statusbar_widget;
 pub mod file_preview;
-pub mod theme_extension;
 pub mod manifest;
-pub mod sandbox;
 pub mod preferences;
+pub mod registry;
+pub mod sandbox;
+pub mod statusbar_widget;
+pub mod theme_extension;
 
-pub use registry::{PluginRegistry, PluginInfo, PluginState, PluginError as RegistryError};
-pub use manifest::{
-    PluginManifest, ExtensionPoint, Permission, ManifestError, parse_manifest,
-};
-pub use sandbox::{PluginCapabilities, PluginApi, SandboxedPlugin};
+pub use manifest::{ExtensionPoint, ManifestError, Permission, PluginManifest, parse_manifest};
 pub use preferences::PluginPreferences;
+pub use registry::{PluginError as RegistryError, PluginInfo, PluginRegistry, PluginState};
+pub use sandbox::{PluginApi, PluginCapabilities, SandboxedPlugin};
 
 use std::any::Any;
 
@@ -53,7 +51,11 @@ impl std::fmt::Display for PluginError {
             Self::LoadFailed(msg) => write!(f, "load failed: {}", msg),
             Self::ManifestInvalid(msg) => write!(f, "invalid manifest: {}", msg),
             Self::IncompatibleVersion { required, found } => {
-                write!(f, "incompatible version: requires {}, found {}", required, found)
+                write!(
+                    f,
+                    "incompatible version: requires {}, found {}",
+                    required, found
+                )
             }
             Self::InitFailed(msg) => write!(f, "init failed: {}", msg),
             Self::Disabled(id) => write!(f, "plugin disabled: {}", id.0),

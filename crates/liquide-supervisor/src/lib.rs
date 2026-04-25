@@ -104,8 +104,7 @@ pub use ipc::{
     SupervisorStatus,
 };
 pub use resource::{
-    HostMetrics, ResourceMonitor, ResourceSeverity, ResourceSnapshot, ResourceType,
-    ResourceWarning,
+    HostMetrics, ResourceMonitor, ResourceSeverity, ResourceSnapshot, ResourceType, ResourceWarning,
 };
 pub use restart::{RestartDecision, RestartPolicy};
 pub use runtime::SupervisorRuntime;

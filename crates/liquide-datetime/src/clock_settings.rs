@@ -73,7 +73,13 @@ impl ClockSettings {
     pub fn format_date(&self, dt: &DateTime) -> String {
         let wd = dt.weekday();
         let month_name = month_short_name(dt.month);
-        format!("{}, {} {}, {}", wd.short_name(), month_name, dt.day, dt.year)
+        format!(
+            "{}, {} {}, {}",
+            wd.short_name(),
+            month_name,
+            dt.day,
+            dt.year
+        )
     }
 }
 

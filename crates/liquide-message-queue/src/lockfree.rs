@@ -6,7 +6,7 @@
 //! - **SlabAllocator**: Pre-allocated pool (NT's PAGED_LOOKASIDE_LIST for LPC messages)
 
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 // ─── Lock-Free MPSC Queue ───────────────────────────────────────────────
 

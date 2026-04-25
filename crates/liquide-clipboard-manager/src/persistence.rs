@@ -76,10 +76,7 @@ pub fn should_persist(entry: &ClipboardEntry) -> bool {
 
 /// Serialise a list of entries to a writer.  Only entries passing
 /// [`should_persist`] are written.
-pub fn save_entries<W: Write>(
-    entries: &[ClipboardEntry],
-    writer: &mut W,
-) -> PersistResult<usize> {
+pub fn save_entries<W: Write>(entries: &[ClipboardEntry], writer: &mut W) -> PersistResult<usize> {
     let persistable: Vec<&ClipboardEntry> = entries.iter().filter(|e| should_persist(e)).collect();
 
     writer.write_all(MAGIC)?;

@@ -59,7 +59,10 @@ fn activate_overwrites_previous_reason() {
 fn fallback_reason_display() {
     assert_eq!(FallbackReason::NoGpu.to_string(), "no GPU available");
     assert_eq!(FallbackReason::DeviceLost.to_string(), "Vulkan device lost");
-    assert_eq!(FallbackReason::OutOfVram.to_string(), "VRAM budget exhausted");
+    assert_eq!(
+        FallbackReason::OutOfVram.to_string(),
+        "VRAM budget exhausted"
+    );
     assert_eq!(
         FallbackReason::UnsupportedFormat.to_string(),
         "unsupported pixel format"

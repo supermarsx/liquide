@@ -14,9 +14,9 @@ pub struct MimeType {
 impl MimeType {
     /// Parse a MIME type string like `text/plain`.
     pub fn parse(s: &str) -> Result<Self> {
-        let (type_, subtype) = s.split_once('/').ok_or_else(|| {
-            InteropError::ParseError(format!("invalid MIME type: {s}"))
-        })?;
+        let (type_, subtype) = s
+            .split_once('/')
+            .ok_or_else(|| InteropError::ParseError(format!("invalid MIME type: {s}")))?;
         Ok(Self {
             type_: type_.to_string(),
             subtype: subtype.to_string(),
@@ -86,17 +86,19 @@ impl MimeDatabase {
     #[must_use]
     pub fn default_for(&self, mime: &MimeType) -> Option<String> {
         // User associations take priority over system
-        let user = self.associations.iter().find(|a| {
-            a.mime_type.matches(mime) && a.source == MimeSource::User
-        });
+        let user = self
+            .associations
+            .iter()
+            .find(|a| a.mime_type.matches(mime) && a.source == MimeSource::User);
         if let Some(u) = user {
             return Some(u.desktop_entry_id.clone());
         }
 
         // Then system
-        let system = self.associations.iter().find(|a| {
-            a.mime_type.matches(mime) && a.source == MimeSource::System
-        });
+        let system = self
+            .associations
+            .iter()
+            .find(|a| a.mime_type.matches(mime) && a.source == MimeSource::System);
         if let Some(s) = system {
             return Some(s.desktop_entry_id.clone());
         }

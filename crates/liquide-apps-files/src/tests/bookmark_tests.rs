@@ -68,7 +68,11 @@ fn test_bookmark_manager_add() {
 #[test]
 fn test_bookmark_manager_add_with_icon() {
     let mut bm = BookmarkManager::empty();
-    bm.add("Proj".into(), "/projects".into(), Some("folder-code".into()));
+    bm.add(
+        "Proj".into(),
+        "/projects".into(),
+        Some("folder-code".into()),
+    );
     let b = bm.find("Proj").unwrap();
     assert_eq!(b.icon_name(), "folder-code");
 }

@@ -1,5 +1,5 @@
 use crate::format::{
-    ChapterMark, RecordingHeader, RecordingState, RECORDING_MAGIC, RECORDING_VERSION,
+    ChapterMark, RECORDING_MAGIC, RECORDING_VERSION, RecordingHeader, RecordingState,
 };
 
 #[test]

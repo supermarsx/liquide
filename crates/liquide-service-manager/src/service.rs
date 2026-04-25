@@ -267,10 +267,7 @@ mod tests {
     #[test]
     fn config_with_multiple_dependencies() {
         let cfg = ServiceConfig::new("app", "/bin/app")
-            .with_dependencies(vec![
-                ServiceId::new("dbus"),
-                ServiceId::new("audio"),
-            ]);
+            .with_dependencies(vec![ServiceId::new("dbus"), ServiceId::new("audio")]);
         assert_eq!(cfg.dependencies.len(), 2);
     }
 

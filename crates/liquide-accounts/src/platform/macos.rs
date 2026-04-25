@@ -75,8 +75,8 @@ impl MacosBackend {
             .map_err(|_| AccountError::PlatformError("cannot parse UID".to_string()))?;
 
         let display_name = Self::dscl_read(&user_path, "RealName").unwrap_or(username.to_string());
-        let home_dir = Self::dscl_read(&user_path, "NFSHomeDirectory")
-            .unwrap_or(format!("/Users/{username}"));
+        let home_dir =
+            Self::dscl_read(&user_path, "NFSHomeDirectory").unwrap_or(format!("/Users/{username}"));
         let shell = Self::dscl_read(&user_path, "UserShell").unwrap_or("/bin/zsh".to_string());
 
         // Check admin group membership.
@@ -117,22 +117,21 @@ impl MacosBackend {
         };
 
         // Password last changed — use `dscl . -read /Users/<user> passwordPolicyOptions`
-        let password_last_changed =
-            Self::dscl_read(&user_path, "passwordPolicyOptions")
-                .ok()
-                .and_then(|xml| {
-                    // Rough extraction of passwordLastSetTime from plist XML.
-                    if let Some(pos) = xml.find("passwordLastSetTime") {
-                        xml[pos..]
-                            .split("<real>")
-                            .nth(1)
-                            .and_then(|s| s.split("</real>").next())
-                            .and_then(|s| s.trim().parse::<f64>().ok())
-                            .map(|t| t as u64)
-                    } else {
-                        None
-                    }
-                });
+        let password_last_changed = Self::dscl_read(&user_path, "passwordPolicyOptions")
+            .ok()
+            .and_then(|xml| {
+                // Rough extraction of passwordLastSetTime from plist XML.
+                if let Some(pos) = xml.find("passwordLastSetTime") {
+                    xml[pos..]
+                        .split("<real>")
+                        .nth(1)
+                        .and_then(|s| s.split("</real>").next())
+                        .and_then(|s| s.trim().parse::<f64>().ok())
+                        .map(|t| t as u64)
+                } else {
+                    None
+                }
+            });
 
         // Auto-login: check /etc/kcpassword existence and loginwindow pref.
         let auto_login = Command::new("defaults")
@@ -195,8 +194,7 @@ impl Default for MacosBackend {
 
 impl PlatformBackend for MacosBackend {
     fn current_user(&self) -> Result<UserAccount, AccountError> {
-        let username = std::env::var("USER")
-            .unwrap_or_else(|_| whoami_fallback());
+        let username = std::env::var("USER").unwrap_or_else(|_| whoami_fallback());
         Self::build_user_account(&username)
     }
 
@@ -348,13 +346,7 @@ impl PlatformBackend for MacosBackend {
         let username = Self::uid_to_username(uid)?;
         let user_path = format!("/Users/{username}");
         let output = Command::new("dscl")
-            .args([
-                ".",
-                "-passwd",
-                &user_path,
-                old_password,
-                new_password,
-            ])
+            .args([".", "-passwd", &user_path, old_password, new_password])
             .output()
             .map_err(|e| AccountError::PlatformError(format!("dscl passwd failed: {e}")))?;
         if output.status.success() {
@@ -491,8 +483,8 @@ impl PlatformBackend for MacosBackend {
             let gid = parts[1].parse::<u32>().unwrap_or(0);
 
             // Get members.
-            let members_str = Self::dscl_read(&format!("/Groups/{name}"), "GroupMembership")
-                .unwrap_or_default();
+            let members_str =
+                Self::dscl_read(&format!("/Groups/{name}"), "GroupMembership").unwrap_or_default();
             let member_names: Vec<&str> = members_str.split_whitespace().collect();
 
             // Resolve to UIDs.

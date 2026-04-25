@@ -6,7 +6,7 @@
 //!
 //! ## Architecture
 //!
-//! - **Template Engine** — Builder-pattern `TemplateNode` + `Component` trait 
+//! - **Template Engine** — Builder-pattern `TemplateNode` + `Component` trait
 //!   + `TemplateRenderer` with keyed reconciliation
 //! - **Components** — Dock, StatusBar, Launcher, Notifications, Context/Session/App menus
 //!
@@ -29,22 +29,22 @@
 //!
 //! let component = DockComponent::new(items);
 //! let doc = liquide_dom::Document::new();
-//! 
+//!
 //! // Apply to DOM
 //! TemplateRenderer::apply(&component, &doc);
 //! ```
 
-pub mod template;
-pub mod types;
-pub mod html_parser;
 pub mod accordion;
 pub mod dock;
-pub mod statusbar;
+pub mod html_parser;
 pub mod launcher;
-pub mod notifications;
 pub mod menus;
+pub mod notifications;
+pub mod statusbar;
+pub mod template;
+pub mod types;
 
 // Re-export key types
+pub use html_parser::{HtmlParseError, HtmlParser};
 pub use template::{Component, TemplateNode, TemplateRenderer};
-pub use html_parser::{HtmlParser, HtmlParseError};
 pub use types::*;

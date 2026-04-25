@@ -15,7 +15,7 @@ use std::thread;
 use liquide_compositor::scene::FlatNode;
 use liquide_render_thread::coordinator::RenderCoordinator;
 use liquide_render_thread::message::FrameComplete;
-use liquide_render_thread::{chrome_thread, content_thread, ChromeThread, ContentThread};
+use liquide_render_thread::{ChromeThread, ContentThread, chrome_thread, content_thread};
 use liquide_renderer_cpu::SoftwareRenderer;
 use tracing::{debug, info, warn};
 
@@ -43,6 +43,7 @@ impl WindowRenderManager {
     ///
     /// Spawns chrome and content worker threads immediately.
     /// Each thread creates its own `SoftwareRenderer` instance.
+    #[allow(dead_code)]
     pub(super) fn register_window(&mut self, window_id: u64, width: u32, height: u32) {
         if self.pipelines.contains_key(&window_id) {
             return;
@@ -98,6 +99,7 @@ impl WindowRenderManager {
     ///
     /// `chrome_nodes` are the decoration FlatNodes (title bar, borders).
     /// `content_nodes` are the application content FlatNodes.
+    #[allow(dead_code)]
     pub(super) fn request_frame(
         &mut self,
         window_id: u64,
@@ -105,7 +107,10 @@ impl WindowRenderManager {
         content_nodes: Vec<FlatNode>,
     ) {
         if let Some(pipeline) = self.pipelines.get_mut(&window_id) {
-            if let Err(e) = pipeline.coordinator.request_frame(chrome_nodes, content_nodes) {
+            if let Err(e) = pipeline
+                .coordinator
+                .request_frame(chrome_nodes, content_nodes)
+            {
                 warn!(window_id, error = %e, "failed to submit per-window frame");
             }
         }
@@ -114,6 +119,7 @@ impl WindowRenderManager {
     /// Poll all pipelines for completed frames.
     ///
     /// Returns `(window_id, Vec<FrameComplete>)` for each window with results.
+    #[allow(dead_code)]
     pub(super) fn poll_completions(&mut self) -> Vec<(u64, Vec<FrameComplete>)> {
         let mut results = Vec::new();
         for (&wid, pipeline) in &mut self.pipelines {

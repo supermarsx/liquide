@@ -1,6 +1,6 @@
 //! Tests for API endpoint definitions and pagination.
 
-use crate::api::{ApiResponse, HttpMethod, Pagination, PaginatedResponse, default_endpoints};
+use crate::api::{ApiResponse, HttpMethod, PaginatedResponse, Pagination, default_endpoints};
 use crate::config::AdminRole;
 
 // ===========================================================================
@@ -95,20 +95,29 @@ fn test_pagination_defaults() {
 
 #[test]
 fn test_pagination_offset_page1() {
-    let p = Pagination { page: 1, per_page: 10 };
+    let p = Pagination {
+        page: 1,
+        per_page: 10,
+    };
     assert_eq!(p.offset(), 0);
     assert_eq!(p.limit(), 10);
 }
 
 #[test]
 fn test_pagination_offset_page3() {
-    let p = Pagination { page: 3, per_page: 10 };
+    let p = Pagination {
+        page: 3,
+        per_page: 10,
+    };
     assert_eq!(p.offset(), 20);
 }
 
 #[test]
 fn test_pagination_offset_page0_saturates() {
-    let p = Pagination { page: 0, per_page: 10 };
+    let p = Pagination {
+        page: 0,
+        per_page: 10,
+    };
     assert_eq!(p.offset(), 0);
 }
 
@@ -119,7 +128,10 @@ fn test_pagination_offset_page0_saturates() {
 #[test]
 fn test_paginated_response_first_page() {
     let items: Vec<u32> = (1..=50).collect();
-    let page = Pagination { page: 1, per_page: 10 };
+    let page = Pagination {
+        page: 1,
+        per_page: 10,
+    };
     let resp = PaginatedResponse::from_vec(items, &page);
     assert_eq!(resp.items.len(), 10);
     assert_eq!(resp.items[0], 1);
@@ -131,7 +143,10 @@ fn test_paginated_response_first_page() {
 #[test]
 fn test_paginated_response_last_page() {
     let items: Vec<u32> = (1..=53).collect();
-    let page = Pagination { page: 6, per_page: 10 };
+    let page = Pagination {
+        page: 6,
+        per_page: 10,
+    };
     let resp = PaginatedResponse::from_vec(items, &page);
     assert_eq!(resp.items.len(), 3);
     assert_eq!(resp.items[0], 51);
@@ -141,7 +156,10 @@ fn test_paginated_response_last_page() {
 #[test]
 fn test_paginated_response_beyond_last_page() {
     let items: Vec<u32> = (1..=10).collect();
-    let page = Pagination { page: 5, per_page: 10 };
+    let page = Pagination {
+        page: 5,
+        per_page: 10,
+    };
     let resp = PaginatedResponse::from_vec(items, &page);
     assert!(resp.items.is_empty());
 }

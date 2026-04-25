@@ -24,7 +24,11 @@ enum TableGroupKind {
 }
 
 /// Classify a table child as header, body, or footer group.
-fn classify_table_group(doc: &Document, node_id: NodeId, style: &liquide_style_engine::computed::ComputedStyle) -> TableGroupKind {
+fn classify_table_group(
+    doc: &Document,
+    node_id: NodeId,
+    style: &liquide_style_engine::computed::ComputedStyle,
+) -> TableGroupKind {
     match style.display {
         Display::TableHeaderGroup => return TableGroupKind::Header,
         Display::TableFooterGroup => return TableGroupKind::Footer,
@@ -43,7 +47,11 @@ fn classify_table_group(doc: &Document, node_id: NodeId, style: &liquide_style_e
 }
 
 /// Check if a child is a table row group (thead/tbody/tfoot).
-fn is_table_row_group(doc: &Document, node_id: NodeId, style: &liquide_style_engine::computed::ComputedStyle) -> bool {
+fn is_table_row_group(
+    doc: &Document,
+    node_id: NodeId,
+    style: &liquide_style_engine::computed::ComputedStyle,
+) -> bool {
     matches!(
         style.display,
         Display::TableHeaderGroup | Display::TableFooterGroup | Display::TableRowGroup
@@ -223,7 +231,8 @@ pub fn layout_table<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     // Table-specific CSS properties:
     // border-collapse: separate (default) uses border-spacing between cells;
     // border-collapse: collapse merges adjacent borders (not yet rendered collapsed).
-    let use_collapsed = style.border_collapse == liquide_style_engine::computed::BorderCollapse::Collapse;
+    let use_collapsed =
+        style.border_collapse == liquide_style_engine::computed::BorderCollapse::Collapse;
     let effective_spacing = if use_collapsed { 0.0 } else { border_spacing };
 
     // caption-side: top (default) or bottom — controls caption placement.
@@ -233,7 +242,8 @@ pub fn layout_table<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let _hide_empty = style.empty_cells == liquide_style_engine::computed::EmptyCells::Hide;
 
     // table-layout: auto (default) or fixed — fixed uses first-row widths only.
-    let table_layout_fixed = style.table_layout == liquide_style_engine::computed::TableLayout::Fixed;
+    let table_layout_fixed =
+        style.table_layout == liquide_style_engine::computed::TableLayout::Fixed;
 
     // ── Step 0: Layout captions ──
     let children = doc.children(node_id).to_vec();
@@ -414,9 +424,19 @@ pub fn layout_table<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                         .unwrap_or(false);
                 if gc_is_row {
                     collect_row(
-                        doc, gc_id, styles, tree, text_measurer, image_measurer,
-                        content_width, container_height, viewport_w, viewport_h,
-                        base_font_size, box_id, &mut rows,
+                        doc,
+                        gc_id,
+                        styles,
+                        tree,
+                        text_measurer,
+                        image_measurer,
+                        content_width,
+                        container_height,
+                        viewport_w,
+                        viewport_h,
+                        base_font_size,
+                        box_id,
+                        &mut rows,
                     );
                 }
                 // Non-row children inside a group are ignored (per spec)
@@ -432,9 +452,19 @@ pub fn layout_table<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
 
         if is_row {
             collect_row(
-                doc, child_id, styles, tree, text_measurer, image_measurer,
-                content_width, container_height, viewport_w, viewport_h,
-                base_font_size, box_id, &mut rows,
+                doc,
+                child_id,
+                styles,
+                tree,
+                text_measurer,
+                image_measurer,
+                content_width,
+                container_height,
+                viewport_w,
+                viewport_h,
+                base_font_size,
+                box_id,
+                &mut rows,
             );
         } else {
             // Non-row child: treat as a single-cell row (anonymous table row)
@@ -586,7 +616,11 @@ pub fn layout_table<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     // Use explicit width from style if available, else intrinsic
                     let cell_style = styles.get(cell._node_id).cloned().unwrap_or_default();
                     let explicit_w = cell_style.width.resolve_px(
-                        content_width, base_font_size, font_size, viewport_w, viewport_h,
+                        content_width,
+                        base_font_size,
+                        font_size,
+                        viewport_w,
+                        viewport_h,
                     );
                     col_max_widths[gc] = explicit_w.unwrap_or(cell.intrinsic_width);
                 }
@@ -598,7 +632,9 @@ pub fn layout_table<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 let gc = cell_grid_col[0][ci];
                 let end_col = (gc + cell.colspan).min(num_cols);
                 let span = end_col - gc;
-                if span == 0 { continue; }
+                if span == 0 {
+                    continue;
+                }
                 let spanned_spacing = if span > 1 {
                     (span - 1) as f32 * effective_spacing
                 } else {

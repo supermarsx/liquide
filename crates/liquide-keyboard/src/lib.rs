@@ -12,16 +12,16 @@
 //! - **[`compose`]** — Multi-key compose sequences (X11 Compose)
 //! - **[`accessibility`]** — StickyKeys, SlowKeys, BounceKeys, MouseKeys
 
-pub mod layout;
+pub mod accessibility;
 pub mod builtin;
+pub mod compose;
+pub mod layout;
 pub mod manager;
+pub mod numpad;
 pub mod osk;
 pub mod repeat;
-pub mod xkb;
 pub mod repeat_fsm;
-pub mod numpad;
-pub mod compose;
-pub mod accessibility;
+pub mod xkb;
 
 #[cfg(test)]
 mod tests;
@@ -30,20 +30,18 @@ mod tests;
 mod tests_new;
 
 // Re-export primary types at the crate root.
+pub use accessibility::{
+    AccessibilityConfig, BounceKeys, KeyDecision, MouseButton, MouseKeyAction, MouseKeys, SlowKeys,
+    StickyKeys, process_key,
+};
+pub use compose::{ComposeState, ComposeStatus, ComposeTable};
 pub use layout::{DeadKey, DeadKeyId, KeyMapping, KeyboardLayout};
 pub use manager::{KeyOutput, KeyboardLayoutManager, Modifiers};
-pub use osk::{
-    compute_osk_layout, ModifierKind, OskKey, OskKeyType, OskLayout, OskRow,
-};
+pub use numpad::{NavKey, NumpadOutput, NumpadState, numpad_translate};
+pub use osk::{ModifierKind, OskKey, OskKeyType, OskLayout, OskRow, compute_osk_layout};
 pub use repeat::{KeyRepeat, KeyRepeatTracker};
-pub use xkb::{
-    compile_keymap, lookup_keysym, KeySymEntry, KeymapConfig, ModifierChange,
-    ModifierChangeKind, ModifierMask, XkbKeymap, XkbState,
-};
 pub use repeat_fsm::{RepeatAction, RepeatConfig, RepeatState};
-pub use numpad::{numpad_translate, NavKey, NumpadOutput, NumpadState};
-pub use compose::{ComposeState, ComposeStatus, ComposeTable};
-pub use accessibility::{
-    process_key, AccessibilityConfig, BounceKeys, KeyDecision, MouseButton,
-    MouseKeyAction, MouseKeys, SlowKeys, StickyKeys,
+pub use xkb::{
+    KeySymEntry, KeymapConfig, ModifierChange, ModifierChangeKind, ModifierMask, XkbKeymap,
+    XkbState, compile_keymap, lookup_keysym,
 };

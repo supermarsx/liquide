@@ -11,9 +11,9 @@ mod mouse;
 mod rendering;
 mod scene;
 mod side_panels;
-mod types;
 #[cfg(test)]
 mod tests;
+mod types;
 
 pub use types::{DevToolsConfig, DevToolsTab, DockPosition, FrameSnapshot, SideTab};
 
@@ -292,18 +292,12 @@ impl DevToolsPanel {
     pub fn panel_bounds(&self) -> Rect {
         let size = self.config.panel_size;
         match self.config.dock_position {
-            DockPosition::Bottom => Rect::new(
-                0.0,
-                self.screen_height - size,
-                self.screen_width,
-                size,
-            ),
-            DockPosition::Right => Rect::new(
-                self.screen_width - size,
-                0.0,
-                size,
-                self.screen_height,
-            ),
+            DockPosition::Bottom => {
+                Rect::new(0.0, self.screen_height - size, self.screen_width, size)
+            }
+            DockPosition::Right => {
+                Rect::new(self.screen_width - size, 0.0, size, self.screen_height)
+            }
             DockPosition::Left => Rect::new(0.0, 0.0, size, self.screen_height),
             DockPosition::Float | DockPosition::Detached => {
                 // When detached, use same layout as Float but the desktop
@@ -409,10 +403,7 @@ impl Default for DevToolsPanel {
 /// Build a generic key-value row template node.
 pub(crate) fn row_kv(label: &str, value: &str, cls: &str) -> TemplateNode {
     TemplateNode::el("devtools-row")
-        .child(
-            TemplateNode::el("devtools-label")
-                .child(TemplateNode::text(label)),
-        )
+        .child(TemplateNode::el("devtools-label").child(TemplateNode::text(label)))
         .child(
             TemplateNode::el("devtools-value")
                 .class(cls)
@@ -427,7 +418,9 @@ pub(crate) fn row_kv_class(label: &str, value: &str, cls: &str) -> TemplateNode 
 }
 
 /// Format a `TimingFunction` as a human-readable string.
-pub(crate) fn format_timing_function(tf: &liquide_style_engine::computed::TimingFunction) -> String {
+pub(crate) fn format_timing_function(
+    tf: &liquide_style_engine::computed::TimingFunction,
+) -> String {
     use liquide_style_engine::computed::TimingFunction;
     match tf {
         TimingFunction::Linear => "linear".to_string(),
@@ -473,9 +466,7 @@ pub(crate) fn format_mutation_record(record: &crate::mutation_log::MutationRecor
             format!("text #{} \"{}\"", node, t)
         }
         MutationKind::PseudoStateChanged {
-            node,
-            new_flags,
-            ..
+            node, new_flags, ..
         } => {
             format!("pseudo #{} flags={:#x}", node, new_flags)
         }

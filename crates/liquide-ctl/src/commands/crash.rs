@@ -9,10 +9,7 @@ pub async fn execute(_client: &Client, output: &Output, cmd: &CrashCommand) -> R
             output.message("No crash reports.");
         }
         CrashCommand::Show(args) => {
-            output.message(&format!(
-                "Crash report '{}' not found.",
-                args.report_id
-            ));
+            output.message(&format!("Crash report '{}' not found.", args.report_id));
         }
         CrashCommand::Export(args) => {
             output.message(&format!("Exporting crash report '{}'...", args.report_id));

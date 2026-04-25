@@ -3,7 +3,7 @@
 use std::fmt;
 use std::time::Instant;
 
-use crate::{SessionError, Result};
+use crate::{Result, SessionError};
 
 /// Number of session states.
 const NUM_STATES: usize = 9;
@@ -107,10 +107,7 @@ impl SessionState {
                 SessionState::Suspended,
                 SessionState::Terminated,
             ],
-            Self::Suspended => &[
-                SessionState::Running,
-                SessionState::Terminated,
-            ],
+            Self::Suspended => &[SessionState::Running, SessionState::Terminated],
             Self::Crashed => &[
                 SessionState::Running,
                 SessionState::Failed,

@@ -28,19 +28,12 @@ async fn show(client: &Client, output: &Output) -> Result<()> {
     Ok(())
 }
 
-async fn set(
-    client: &Client,
-    output: &Output,
-    args: &crate::cli::PolicySetArgs,
-) -> Result<()> {
+async fn set(client: &Client, output: &Output, args: &crate::cli::PolicySetArgs) -> Result<()> {
     let path = format!("/api/v1/policy/{}/{}", args.scope, args.key);
     let body = serde_json::json!({ "value": args.value });
     let resp: ApiResponse<serde_json::Value> = client.put(&path, &body).await?;
     if resp.success {
-        output.success(&format!(
-            "Set {}.{} = {}",
-            args.scope, args.key, args.value
-        ));
+        output.success(&format!("Set {}.{} = {}", args.scope, args.key, args.value));
     } else if let Some(err) = resp.error {
         output.error(&err);
     }
@@ -63,10 +56,7 @@ async fn effective(
             if let Some(err) = resp.error {
                 output.error(&err);
             } else {
-                output.message(&format!(
-                    "No effective policy for {}.",
-                    args.username
-                ));
+                output.message(&format!("No effective policy for {}.", args.username));
             }
         }
     }

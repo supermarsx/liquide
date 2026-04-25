@@ -1,7 +1,7 @@
 //! Tests for the ManagerRuntime coordinator.
 
 use crate::audit::{AuditLevel, ManagerAuditEvent};
-use crate::config::{AdminRole, ManagerConfig, ServerEntry, GatewayEntry};
+use crate::config::{AdminRole, GatewayEntry, ManagerConfig, ServerEntry};
 use crate::metrics::MetricsSnapshot;
 use crate::policy_mgmt::{PolicyEntry, PolicyScope};
 use crate::runtime::ManagerRuntime;
@@ -25,13 +25,11 @@ fn make_config() -> ManagerConfig {
                 api_key: "key-b".into(),
             },
         ],
-        gateways: vec![
-            GatewayEntry {
-                name: "gw-1".into(),
-                address: "10.0.1.1:443".into(),
-                api_key: "gw-key".into(),
-            },
-        ],
+        gateways: vec![GatewayEntry {
+            name: "gw-1".into(),
+            address: "10.0.1.1:443".into(),
+            api_key: "gw-key".into(),
+        }],
         ..ManagerConfig::default()
     }
 }
@@ -122,7 +120,10 @@ fn test_restart_server() {
     rt.restart_server("srv-a", "admin").unwrap();
     let events = rt.drain_audit_events();
     assert_eq!(events.len(), 1);
-    assert!(matches!(events[0], ManagerAuditEvent::ServerRestarted { .. }));
+    assert!(matches!(
+        events[0],
+        ManagerAuditEvent::ServerRestarted { .. }
+    ));
 }
 
 #[test]
@@ -145,7 +146,10 @@ fn test_register_and_disconnect_session() {
     rt.disconnect_session("s1", "admin").unwrap();
     assert_eq!(rt.sessions().count(), 0);
     let events = rt.drain_audit_events();
-    assert!(matches!(events[0], ManagerAuditEvent::SessionDisconnected { .. }));
+    assert!(matches!(
+        events[0],
+        ManagerAuditEvent::SessionDisconnected { .. }
+    ));
 }
 
 #[test]
@@ -160,13 +164,17 @@ fn test_lock_and_unlock_session() {
     let mut rt = make_runtime();
     rt.register_session("s1".into(), "alice".into(), "srv-a".into(), 100);
 
-    rt.lock_session("s1", "admin", Some("maint".into())).unwrap();
+    rt.lock_session("s1", "admin", Some("maint".into()))
+        .unwrap();
     let events = rt.drain_audit_events();
     assert!(matches!(events[0], ManagerAuditEvent::SessionLocked { .. }));
 
     rt.unlock_session("s1", "admin").unwrap();
     let events = rt.drain_audit_events();
-    assert!(matches!(events[0], ManagerAuditEvent::SessionUnlocked { .. }));
+    assert!(matches!(
+        events[0],
+        ManagerAuditEvent::SessionUnlocked { .. }
+    ));
 }
 
 // ===========================================================================
@@ -185,7 +193,10 @@ fn test_update_policies() {
     assert_eq!(v, 1);
     assert_eq!(rt.policies().current_version(), 1);
     let events = rt.drain_audit_events();
-    assert!(matches!(events[0], ManagerAuditEvent::PolicyUpdated { version: 1, .. }));
+    assert!(matches!(
+        events[0],
+        ManagerAuditEvent::PolicyUpdated { version: 1, .. }
+    ));
 }
 
 #[test]
@@ -198,7 +209,14 @@ fn test_rollback_policy() {
     let v = rt.rollback_policy(1, "admin", 300).unwrap();
     assert_eq!(v, 3);
     let events = rt.drain_audit_events();
-    assert!(matches!(events[0], ManagerAuditEvent::PolicyRolledBack { from_version: 2, to_version: 1, .. }));
+    assert!(matches!(
+        events[0],
+        ManagerAuditEvent::PolicyRolledBack {
+            from_version: 2,
+            to_version: 1,
+            ..
+        }
+    ));
 }
 
 #[test]

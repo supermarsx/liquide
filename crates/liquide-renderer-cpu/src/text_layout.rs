@@ -43,7 +43,9 @@ impl TextLayoutEngine {
     }
 
     fn lock_font_db(&self) -> MutexGuard<'_, FontDatabase> {
-        self.font_db.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.font_db
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// Measure the width and height of a single-line text run.
@@ -187,11 +189,8 @@ impl TextLayoutEngine {
                             .collect()
                     } else {
                         // Count spaces (word break opportunities)
-                        let space_count = glyphs
-                            .iter()
-                            .filter(|g| g.codepoint == ' ')
-                            .count();
-                        
+                        let space_count = glyphs.iter().filter(|g| g.codepoint == ' ').count();
+
                         if space_count == 0 {
                             // No spaces to expand, just use Start alignment
                             glyphs
@@ -209,7 +208,7 @@ impl TextLayoutEngine {
                             let extra_space = (max_width - line_width).max(0.0);
                             let space_expansion = extra_space / space_count as f32;
                             let mut accumulated_expansion = 0.0_f32;
-                            
+
                             glyphs
                                 .iter()
                                 .map(|g| {

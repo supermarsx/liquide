@@ -71,6 +71,80 @@ pub fn apply_to_transform(base: &[f32; 6], anim: &[f32; 6]) -> [f32; 6] {
     compose_affine(base, anim)
 }
 
+/// Apply an animated opacity on top of a base opacity.
+///
+/// Opacities compose multiplicatively: `result = base * anim` clamped to
+/// `[0.0, 1.0]`.
+#[allow(dead_code)]
+pub fn apply_to_opacity(base: f32, anim: f32) -> f32 {
+    (base * anim).clamp(0.0, 1.0)
+}
+
+/// Apply any sampled animation state for a single layer on top of the layer's
+/// base transform and opacity.  Returns `(transform, opacity)`.
+#[allow(dead_code)]
+pub fn apply_layer_state(
+    base_transform: &[f32; 6],
+    base_opacity: f32,
+    state: &LayerAnimState,
+) -> ([f32; 6], f32) {
+    let transform = match state.transform {
+        Some(t) => apply_to_transform(base_transform, &t),
+        None => *base_transform,
+    };
+    let opacity = match state.opacity {
+        Some(o) => apply_to_opacity(base_opacity, o),
+        None => base_opacity,
+    };
+    (transform, opacity)
+}
+
+/// Walk a scene graph and apply sampled values for any node whose
+/// animations/transitions are active in `scheduler`.
+///
+/// Invoke this once per frame, right before `compute_damage`/`flatten_into`
+/// so that the renderer sees the up-to-date transform/opacity state.  The
+/// callback `lookup` maps each node ID to the list of `AnimationId`s the
+/// main thread associated with it; transitions are found automatically.
+#[allow(dead_code)]
+pub fn apply_scheduler_to_scene<F>(
+    scene: &mut liquide_compositor::scene::SceneNode,
+    scheduler: &CompositorAnimScheduler,
+    mut lookup: F,
+) where
+    F: FnMut(u64) -> Vec<AnimationId>,
+{
+    scene.walk_mut(&mut |node| {
+        let anim_ids = lookup(node.id);
+        let state = collect_layer_state(scheduler, node.id, &anim_ids);
+        if state.opacity.is_none() && state.transform.is_none() {
+            return;
+        }
+        if let Some(o) = state.opacity {
+            node.properties.opacity = apply_to_opacity(node.properties.opacity, o);
+        }
+        if let Some(t) = state.transform {
+            let base = [
+                node.properties.transform.a,
+                node.properties.transform.b,
+                node.properties.transform.c,
+                node.properties.transform.d,
+                node.properties.transform.tx,
+                node.properties.transform.ty,
+            ];
+            let applied = apply_to_transform(&base, &t);
+            node.properties.transform = liquide_compositor::geometry::Affine2D {
+                a: applied[0],
+                b: applied[1],
+                c: applied[2],
+                d: applied[3],
+                tx: applied[4],
+                ty: applied[5],
+            };
+        }
+    });
+}
+
 /// Compose two 2D affine transforms: result = a * b.
 ///
 /// The matrix layout is [a, b, c, d, tx, ty] representing:
@@ -81,12 +155,12 @@ pub fn apply_to_transform(base: &[f32; 6], anim: &[f32; 6]) -> [f32; 6] {
 /// ```
 pub fn compose_affine(a: &[f32; 6], b: &[f32; 6]) -> [f32; 6] {
     [
-        a[0] * b[0] + a[2] * b[1],         // a
-        a[1] * b[0] + a[3] * b[1],         // b
-        a[0] * b[2] + a[2] * b[3],         // c
-        a[1] * b[2] + a[3] * b[3],         // d
-        a[0] * b[4] + a[2] * b[5] + a[4],  // tx
-        a[1] * b[4] + a[3] * b[5] + a[5],  // ty
+        a[0] * b[0] + a[2] * b[1],        // a
+        a[1] * b[0] + a[3] * b[1],        // b
+        a[0] * b[2] + a[2] * b[3],        // c
+        a[1] * b[2] + a[3] * b[3],        // d
+        a[0] * b[4] + a[2] * b[5] + a[4], // tx
+        a[1] * b[4] + a[3] * b[5] + a[5], // ty
     ]
 }
 
@@ -107,14 +181,7 @@ pub fn decompose_affine(m: &[f32; 6]) -> (f32, f32, f32, f32, f32) {
 pub fn recompose_affine(tx: f32, ty: f32, sx: f32, sy: f32, rotation: f32) -> [f32; 6] {
     let cos = rotation.cos();
     let sin = rotation.sin();
-    [
-        cos * sx,
-        sin * sx,
-        -sin * sy,
-        cos * sy,
-        tx,
-        ty,
-    ]
+    [cos * sx, sin * sx, -sin * sy, cos * sy, tx, ty]
 }
 
 #[cfg(test)]
@@ -136,8 +203,12 @@ mod tests {
         let identity = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
         let result = compose_affine(&identity, &identity);
         for i in 0..6 {
-            assert!(approx(result[i], identity[i]),
-                "identity compose mismatch at {i}: {} vs {}", result[i], identity[i]);
+            assert!(
+                approx(result[i], identity[i]),
+                "identity compose mismatch at {i}: {} vs {}",
+                result[i],
+                identity[i]
+            );
         }
     }
 
@@ -194,8 +265,12 @@ mod tests {
         let (tx, ty, sx, sy, r) = decompose_affine(&original);
         let rebuilt = recompose_affine(tx, ty, sx, sy, r);
         for i in 0..6 {
-            assert!(approx(original[i], rebuilt[i]),
-                "roundtrip mismatch at {i}: {} vs {}", original[i], rebuilt[i]);
+            assert!(
+                approx(original[i], rebuilt[i]),
+                "roundtrip mismatch at {i}: {} vs {}",
+                original[i],
+                rebuilt[i]
+            );
         }
     }
 
@@ -205,8 +280,12 @@ mod tests {
         let (tx, ty, sx, sy, r) = decompose_affine(&original);
         let rebuilt = recompose_affine(tx, ty, sx, sy, r);
         for i in 0..6 {
-            assert!(approx(original[i], rebuilt[i]),
-                "roundtrip scale mismatch at {i}: {} vs {}", original[i], rebuilt[i]);
+            assert!(
+                approx(original[i], rebuilt[i]),
+                "roundtrip scale mismatch at {i}: {} vs {}",
+                original[i],
+                rebuilt[i]
+            );
         }
     }
 
@@ -232,9 +311,12 @@ mod tests {
     fn collect_layer_state_with_transition() {
         let mut s = CompositorAnimScheduler::new();
         s.add_transition(
-            1, "opacity".to_string(),
-            AnimValue::Float(0.0), AnimValue::Float(1.0),
-            200.0, EasingFunction::Linear,
+            1,
+            "opacity".to_string(),
+            AnimValue::Float(0.0),
+            AnimValue::Float(1.0),
+            200.0,
+            EasingFunction::Linear,
         );
         s.tick_all(100.0);
         let state = collect_layer_state(&s, 1, &[]);
@@ -249,19 +331,33 @@ mod tests {
 
         // Transition drives opacity to 0.5.
         s.add_transition(
-            1, "opacity".to_string(),
-            AnimValue::Float(0.0), AnimValue::Float(1.0),
-            200.0, EasingFunction::Linear,
+            1,
+            "opacity".to_string(),
+            AnimValue::Float(0.0),
+            AnimValue::Float(1.0),
+            200.0,
+            EasingFunction::Linear,
         );
         s.tick_all(100.0);
 
         // Animation drives opacity to a different value.
         let id = s.next_animation_id();
         let mut tracks = HashMap::new();
-        tracks.insert("opacity".to_string(), KeyframeTrack::new(vec![
-            Keyframe { offset: 0.0, value: AnimValue::Float(0.8), easing: EasingFunction::Linear },
-            Keyframe { offset: 1.0, value: AnimValue::Float(0.8), easing: EasingFunction::Linear },
-        ]));
+        tracks.insert(
+            "opacity".to_string(),
+            KeyframeTrack::new(vec![
+                Keyframe {
+                    offset: 0.0,
+                    value: AnimValue::Float(0.8),
+                    easing: EasingFunction::Linear,
+                },
+                Keyframe {
+                    offset: 1.0,
+                    value: AnimValue::Float(0.8),
+                    easing: EasingFunction::Linear,
+                },
+            ]),
+        );
         let anim = Animation::new(id, tracks, 1000.0);
         s.add_animation(anim);
         s.tick_all(10.0);

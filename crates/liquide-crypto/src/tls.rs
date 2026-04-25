@@ -106,9 +106,9 @@ impl TlsConfig {
                     super::CryptoError::Certificate(format!("failed to parse CA certs: {e}"))
                 })?;
             for cert in ca_certs {
-                root_store
-                    .add(cert)
-                    .map_err(|e| super::CryptoError::Certificate(format!("invalid CA cert: {e}")))?;
+                root_store.add(cert).map_err(|e| {
+                    super::CryptoError::Certificate(format!("invalid CA cert: {e}"))
+                })?;
             }
         }
 

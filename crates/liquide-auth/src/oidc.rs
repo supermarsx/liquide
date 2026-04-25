@@ -32,7 +32,7 @@ impl AuthProvider for OidcProvider {
             _ => {
                 return Ok(AuthResult::Failure {
                     reason: "OIDC only supports token credentials".into(),
-                })
+                });
             }
         };
 
@@ -51,13 +51,13 @@ impl AuthProvider for OidcProvider {
                 Err(_) => {
                     return Ok(AuthResult::Failure {
                         reason: "invalid JWT payload encoding".into(),
-                    })
+                    });
                 }
             },
             None => {
                 return Ok(AuthResult::Failure {
                     reason: "invalid JWT base64url".into(),
-                })
+                });
             }
         };
 
@@ -106,7 +106,7 @@ impl AuthProvider for OidcProvider {
             .get("sub")
             .cloned()
             .unwrap_or_else(|| "unknown".into());
-        let display_name = claims
+        let _display_name = claims
             .get("name")
             .or_else(|| claims.get("preferred_username"))
             .cloned()
@@ -114,10 +114,13 @@ impl AuthProvider for OidcProvider {
 
         // TODO: implement JWKS fetching from {issuer}/.well-known/jwks.json
         // and RS256/ES256 signature verification before accepting tokens.
-        tracing::error!("OIDC signature verification not yet implemented — refusing unverified token");
+        tracing::error!(
+            "OIDC signature verification not yet implemented — refusing unverified token"
+        );
 
         Ok(AuthResult::Failure {
-            reason: "OIDC JWT signature verification not implemented — refusing unverified token".into(),
+            reason: "OIDC JWT signature verification not implemented — refusing unverified token"
+                .into(),
         })
     }
 
@@ -128,8 +131,7 @@ impl AuthProvider for OidcProvider {
 
 /// Decode base64url (no padding) to bytes.
 fn base64url_decode(input: &str) -> Option<Vec<u8>> {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut lookup = [255u8; 256];
     for (i, &b) in ALPHABET.iter().enumerate() {
         lookup[b as usize] = i as u8;
@@ -248,7 +250,8 @@ mod tests {
 
     #[test]
     fn test_parse_jwt_claims() {
-        let json = r#"{"sub":"user123","iss":"https://idp.example.com","name":"Alice","exp":9999999999}"#;
+        let json =
+            r#"{"sub":"user123","iss":"https://idp.example.com","name":"Alice","exp":9999999999}"#;
         let claims = parse_jwt_claims(json);
         assert_eq!(claims.get("sub").unwrap(), "user123");
         assert_eq!(claims.get("iss").unwrap(), "https://idp.example.com");
@@ -368,9 +371,7 @@ mod tests {
     #[test]
     fn test_supports() {
         let provider = OidcProvider::new("https://idp.example.com", "my-client");
-        assert!(provider.supports(&Credentials::OidcToken {
-            token: "x".into()
-        }));
+        assert!(provider.supports(&Credentials::OidcToken { token: "x".into() }));
         assert!(!provider.supports(&Credentials::Password {
             username: "u".into(),
             password: "p".into(),

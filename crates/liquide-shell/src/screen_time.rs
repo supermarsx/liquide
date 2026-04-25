@@ -225,12 +225,14 @@ impl DailyReport {
                 .get(app_id)
                 .cloned()
                 .unwrap_or_else(|| "Uncategorized".to_string());
-            let entry = result.entry(cat.clone()).or_insert_with(|| CategoryScreenTime {
-                category: cat,
-                screen_time_us: 0,
-                app_count: 0,
-                launch_count: 0,
-            });
+            let entry = result
+                .entry(cat.clone())
+                .or_insert_with(|| CategoryScreenTime {
+                    category: cat,
+                    screen_time_us: 0,
+                    app_count: 0,
+                    launch_count: 0,
+                });
             entry.screen_time_us += app_st.screen_time_us;
             entry.app_count += 1;
             entry.launch_count += app_st.launch_count;
@@ -352,7 +354,11 @@ impl ScreenTimeTracker {
 
     /// Create with a custom tick duration (us per monotonic tick).
     #[must_use]
-    pub fn with_tick_duration(wall_anchor_us: u64, mono_anchor: u64, tick_duration_us: u64) -> Self {
+    pub fn with_tick_duration(
+        wall_anchor_us: u64,
+        mono_anchor: u64,
+        tick_duration_us: u64,
+    ) -> Self {
         let mut t = Self::new(wall_anchor_us, mono_anchor);
         t.tick_duration_us = tick_duration_us.max(1);
         t
@@ -546,7 +552,8 @@ impl ScreenTimeTracker {
 
     /// Set the app category.
     pub fn set_category(&mut self, app_id: &str, category: &str) {
-        self.categories.insert(app_id.to_string(), category.to_string());
+        self.categories
+            .insert(app_id.to_string(), category.to_string());
     }
 
     /// Remove an app's category assignment.
@@ -630,18 +637,13 @@ impl ScreenTimeTracker {
             .iter()
             .map(|limit| {
                 let used = match &limit.target {
-                    LimitTarget::App(id) => {
-                        day.apps.get(id).map_or(0, |a| a.screen_time_us)
-                    }
-                    LimitTarget::Category(cat) => {
-                        day.apps
-                            .iter()
-                            .filter(|(aid, _)| {
-                                self.categories.get(*aid) == Some(cat)
-                            })
-                            .map(|(_, a)| a.screen_time_us)
-                            .sum()
-                    }
+                    LimitTarget::App(id) => day.apps.get(id).map_or(0, |a| a.screen_time_us),
+                    LimitTarget::Category(cat) => day
+                        .apps
+                        .iter()
+                        .filter(|(aid, _)| self.categories.get(*aid) == Some(cat))
+                        .map(|(_, a)| a.screen_time_us)
+                        .sum(),
                     LimitTarget::AllApps => day.total_screen_time_us,
                 };
 

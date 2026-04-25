@@ -36,11 +36,11 @@ pub struct NetworkInterface {
     pub display_name: String,
     pub iface_type: InterfaceType,
     pub state: ConnectionState,
-    pub hw_address: Option<String>,   // MAC
+    pub hw_address: Option<String>, // MAC
     pub ipv4: Option<String>,
     pub ipv6: Option<String>,
     pub speed_mbps: Option<u32>,
-    pub signal_strength: Option<i32>,  // dBm for WiFi
+    pub signal_strength: Option<i32>, // dBm for WiFi
     pub is_metered: bool,
 }
 
@@ -49,7 +49,7 @@ pub struct NetworkInterface {
 pub struct AccessPoint {
     pub ssid: String,
     pub bssid: String,
-    pub signal_strength: i32,  // dBm (typically -30 to -90)
+    pub signal_strength: i32, // dBm (typically -30 to -90)
     pub frequency_mhz: u32,
     pub security: WiFiSecurity,
     pub is_saved: bool,
@@ -93,17 +93,23 @@ pub enum VpnType {
 pub enum NetworkEvent {
     InterfaceAdded(NetworkInterface),
     InterfaceRemoved(InterfaceId),
-    StateChanged { id: InterfaceId, state: ConnectionState },
+    StateChanged {
+        id: InterfaceId,
+        state: ConnectionState,
+    },
     WiFiScanComplete(Vec<AccessPoint>),
-    VpnStateChanged { id: String, state: ConnectionState },
+    VpnStateChanged {
+        id: String,
+        state: ConnectionState,
+    },
     ConnectivityChanged(ConnectivityState),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectivityState {
     Full,
-    Limited,  // connected but no internet
-    Portal,   // captive portal detected
+    Limited, // connected but no internet
+    Portal,  // captive portal detected
     None,
 }
 
@@ -352,10 +358,22 @@ mod tests {
     #[test]
     fn network_error_display() {
         assert_eq!(format!("{}", NetworkError::NotSupported), "not supported");
-        assert_eq!(format!("{}", NetworkError::InterfaceNotFound), "interface not found");
-        assert_eq!(format!("{}", NetworkError::AuthenticationFailed), "authentication failed");
-        assert_eq!(format!("{}", NetworkError::AlreadyConnected), "already connected");
-        assert_eq!(format!("{}", NetworkError::PermissionDenied), "permission denied");
+        assert_eq!(
+            format!("{}", NetworkError::InterfaceNotFound),
+            "interface not found"
+        );
+        assert_eq!(
+            format!("{}", NetworkError::AuthenticationFailed),
+            "authentication failed"
+        );
+        assert_eq!(
+            format!("{}", NetworkError::AlreadyConnected),
+            "already connected"
+        );
+        assert_eq!(
+            format!("{}", NetworkError::PermissionDenied),
+            "permission denied"
+        );
         assert_eq!(format!("{}", NetworkError::Timeout), "timeout");
         assert_eq!(
             format!("{}", NetworkError::PlatformError("oops".into())),

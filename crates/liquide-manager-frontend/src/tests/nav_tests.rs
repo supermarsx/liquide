@@ -120,11 +120,14 @@ fn test_breadcrumbs() {
     state.navigate(NavSection::Servers);
     state.navigate(NavSection::Sessions);
     let crumbs = state.breadcrumbs();
-    assert_eq!(crumbs, vec![
-        NavSection::Dashboard,
-        NavSection::Servers,
-        NavSection::Sessions,
-    ]);
+    assert_eq!(
+        crumbs,
+        vec![
+            NavSection::Dashboard,
+            NavSection::Servers,
+            NavSection::Sessions,
+        ]
+    );
 }
 
 #[test]

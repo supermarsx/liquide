@@ -108,22 +108,14 @@ impl GestureRecognizer {
                     });
                 }
                 TouchPhase::Moved => {
-                    if let Some(touch) = self
-                        .active_touches
-                        .iter_mut()
-                        .find(|t| t.id == event.id)
-                    {
+                    if let Some(touch) = self.active_touches.iter_mut().find(|t| t.id == event.id) {
                         touch.current_x = event.x;
                         touch.current_y = event.y;
                     }
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
                     // Process later, keep for now.
-                    if let Some(touch) = self
-                        .active_touches
-                        .iter_mut()
-                        .find(|t| t.id == event.id)
-                    {
+                    if let Some(touch) = self.active_touches.iter_mut().find(|t| t.id == event.id) {
                         touch.current_x = event.x;
                         touch.current_y = event.y;
                     }
@@ -132,10 +124,7 @@ impl GestureRecognizer {
         }
 
         // Find the last ended event to decide on the gesture.
-        let last_ended = events
-            .iter()
-            .rev()
-            .find(|e| e.phase == TouchPhase::Ended);
+        let last_ended = events.iter().rev().find(|e| e.phase == TouchPhase::Ended);
 
         if let Some(ended) = last_ended {
             let result = self.evaluate_gesture(ended.timestamp);

@@ -9,6 +9,7 @@ description = "CSS box model layout engine: block, inline, flex, grid, positione
 [dependencies]
 liquide-dom = { path = "../liquide-dom" }
 liquide-font-rasterizer = { path = "../liquide-font-rasterizer" }
+liquide-layout-cache = { path = "../liquide-layout-cache" }
 liquide-style-engine = { path = "../liquide-style-engine" }
 rustybuzz = { workspace = true }
 serde = { workspace = true }

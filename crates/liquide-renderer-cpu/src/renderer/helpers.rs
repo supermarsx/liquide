@@ -36,9 +36,8 @@ impl SoftwareRenderer {
             let fy = y as f32 + 0.5;
             for x in x0..x1 {
                 let fx = x as f32 + 0.5;
-                let d = rasterizer::sdf_rounded_rect_per_corner(
-                    fx, fy, &rect, r_tl, r_tr, r_br, r_bl,
-                );
+                let d =
+                    rasterizer::sdf_rounded_rect_per_corner(fx, fy, &rect, r_tl, r_tr, r_br, r_bl);
                 let coverage = (-d + 0.5).clamp(0.0, 1.0);
                 if coverage <= 0.0 {
                     continue;

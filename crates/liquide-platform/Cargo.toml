@@ -13,5 +13,9 @@ liquide-interop.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+liquide-drm.workspace = true
+libc = "0.2"
+
 [dev-dependencies]
 serde_json.workspace = true

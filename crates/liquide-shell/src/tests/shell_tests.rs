@@ -1,7 +1,9 @@
-use liquide_compositor::geometry::Rect;
-use crate::window::*;
 use crate::layout::TilingLayout;
+use crate::notification::TrayMenuItem;
+use crate::seamless::{TrayIconInfo, TrayMenuEntry};
 use crate::shell::Shell;
+use crate::window::*;
+use liquide_compositor::geometry::Rect;
 
 #[test]
 fn shell_create() {
@@ -158,4 +160,182 @@ fn shell_resize_screen() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.resize_screen(2560.0, 1440.0);
     assert_eq!(shell.screen_rect(), Rect::new(0.0, 0.0, 2560.0, 1440.0));
+}
+
+fn child_by_attr(shell: &Shell, parent: liquide_dom::NodeId, attr: &str, value: &str) -> liquide_dom::NodeId {
+    shell
+        .desktop_dom
+        .doc
+        .children(parent)
+        .iter()
+        .copied()
+    .find(|&child| shell.desktop_dom.doc.get_attribute(child, attr).as_deref() == Some(value))
+        .expect("child with matching attribute")
+}
+
+#[test]
+fn shell_sync_dom_formats_clock_from_status_bar_model() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.status_bar.set_clock_offset_minutes(60);
+    shell.status_bar.set_clock_show_seconds(true);
+    shell.status_bar
+        .update_clock((13_u64 * 3600 + 5 * 60 + 9) * 1_000_000);
+
+    shell.sync_dom();
+
+    let center_slot = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("statusbar-slot-center")
+        .expect("center slot");
+    let item = shell.desktop_dom.doc.children(center_slot)[0];
+    let text = shell.desktop_dom.doc.children(item)[0];
+    assert_eq!(
+        shell.desktop_dom.doc.get(text).unwrap().text_content(),
+        Some("14:05:09")
+    );
+}
+
+#[test]
+fn shell_sync_dom_hides_branding_when_app_menu_is_disabled() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.config.status_bar.show_app_menu = false;
+    shell.status_bar = liquide_statusbar::ShellStatusBar::new(shell.config.status_bar.clone());
+
+    shell.sync_dom();
+
+    assert!(shell.desktop_dom.doc.get_element_by_id("logo").is_none());
+}
+
+#[test]
+fn shell_sync_dom_renders_dock_focus_attention_and_badges() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.dock.set_badge("com.liquide.files", 5);
+    shell.dock
+        .set_needs_attention("com.liquide.terminal", true);
+
+    let focused = shell.open_window("Browser", Rect::new(120.0, 160.0, 480.0, 320.0));
+    shell.window_mut(focused).unwrap().app_id = "com.liquide.browser".into();
+    shell.set_focus(focused).unwrap();
+
+    shell.sync_dom();
+
+    let dock = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("shell-dock")
+        .expect("dock node");
+    let files = child_by_attr(&shell, dock, "data-app-id", "com.liquide.files");
+    let browser = child_by_attr(&shell, dock, "data-app-id", "com.liquide.browser");
+    let terminal = child_by_attr(&shell, dock, "data-app-id", "com.liquide.terminal");
+
+    assert_eq!(
+        shell.desktop_dom.doc.get_attribute(files, "data-badge").as_deref(),
+        Some("5")
+    );
+    assert!(shell.desktop_dom.doc.get(browser).unwrap().has_class("focused"));
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get(terminal)
+            .unwrap()
+            .has_class("needs-attention")
+    );
+
+    let badge = shell
+        .desktop_dom
+        .doc
+        .children(files)
+        .iter()
+        .copied()
+        .find(|&child| shell.desktop_dom.doc.get(child).unwrap().tag_name() == "dock-badge")
+        .expect("dock badge");
+    let badge_text = shell.desktop_dom.doc.children(badge)[0];
+    assert_eq!(
+        shell.desktop_dom.doc.get(badge_text).unwrap().text_content(),
+        Some("5")
+    );
+}
+
+#[test]
+fn shell_sync_dom_renders_live_tray_items() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let notification_id = shell
+        .notifications
+        .add_tray_icon("Mail", "Unread mail", "mail-icon", 0);
+    shell.notifications.update_tray_icon(
+        notification_id,
+        None,
+        None,
+        Some(Some("3")),
+        1,
+    );
+    shell.notifications.set_tray_menu(
+        notification_id,
+        vec![TrayMenuItem::new("open", "Open Inbox")],
+    );
+    shell.seamless.add_tray_icon(TrayIconInfo {
+        item_id: "remote-app".into(),
+        app_id: "remote.app".into(),
+        icon_data: vec![0x89, 0x50, 0x4E, 0x47],
+        tooltip: "Remote tray icon".into(),
+        menu_items: vec![TrayMenuEntry {
+            id: "show".into(),
+            label: "Show".into(),
+            enabled: true,
+            separator: false,
+        }],
+    });
+
+    shell.sync_dom();
+
+    let tray = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("tray")
+        .expect("tray node");
+    let children = shell.desktop_dom.doc.children(tray);
+    assert_eq!(children.len(), 2);
+
+    let notification_item = child_by_attr(&shell, tray, "data-source", "notification");
+    let seamless_item = child_by_attr(&shell, tray, "data-source", "seamless");
+
+    assert_eq!(
+        shell.desktop_dom.doc.get_attribute(notification_item, "data-label").as_deref(),
+        Some("Mail")
+    );
+    assert_eq!(
+        shell
+            .desktop_dom
+            .doc
+            .get_attribute(notification_item, "data-has-menu")
+            .as_deref(),
+        Some("true")
+    );
+    let notification_badge = shell
+        .desktop_dom
+        .doc
+        .children(notification_item)
+        .iter()
+        .copied()
+        .find(|&child| shell.desktop_dom.doc.get(child).unwrap().tag_name() == "status-tray-badge")
+        .expect("notification badge");
+    let badge_text = shell.desktop_dom.doc.children(notification_badge)[0];
+    assert_eq!(
+        shell.desktop_dom.doc.get(badge_text).unwrap().text_content(),
+        Some("3")
+    );
+    assert_eq!(
+        shell.desktop_dom.doc.get_attribute(seamless_item, "data-label").as_deref(),
+        Some("remote.app")
+    );
+    assert_eq!(
+        shell
+            .desktop_dom
+            .doc
+            .get_attribute(seamless_item, "data-has-icon-data")
+            .as_deref(),
+        Some("true")
+    );
 }

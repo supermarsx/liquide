@@ -230,42 +230,59 @@ mod inner {
 
     type PFN_vkGetInstanceProcAddr =
         unsafe extern "C" fn(VkInstance, *const u8) -> PFN_vkVoidFunction;
-    type PFN_vkCreateInstance =
-        unsafe extern "C" fn(*const VkInstanceCreateInfo, *const c_void, *mut VkInstance) -> VkResult;
-    type PFN_vkDestroyInstance =
-        unsafe extern "C" fn(VkInstance, *const c_void);
+    type PFN_vkCreateInstance = unsafe extern "C" fn(
+        *const VkInstanceCreateInfo,
+        *const c_void,
+        *mut VkInstance,
+    ) -> VkResult;
+    type PFN_vkDestroyInstance = unsafe extern "C" fn(VkInstance, *const c_void);
     type PFN_vkEnumeratePhysicalDevices =
         unsafe extern "C" fn(VkInstance, *mut u32, *mut VkPhysicalDevice) -> VkResult;
-    type PFN_vkEnumerateDeviceExtensionProperties =
-        unsafe extern "C" fn(VkPhysicalDevice, *const u8, *mut u32, *mut VkExtensionProperties) -> VkResult;
-    type PFN_vkCreateDevice =
-        unsafe extern "C" fn(VkPhysicalDevice, *const VkDeviceCreateInfo, *const c_void, *mut VkDevice) -> VkResult;
-    type PFN_vkDestroyDevice =
-        unsafe extern "C" fn(VkDevice, *const c_void);
-    type PFN_vkGetDeviceQueue =
-        unsafe extern "C" fn(VkDevice, u32, u32, *mut VkQueue);
-    type PFN_vkCreateImage =
-        unsafe extern "C" fn(VkDevice, *const VkImageCreateInfo, *const c_void, *mut VkImage) -> VkResult;
-    type PFN_vkDestroyImage =
-        unsafe extern "C" fn(VkDevice, VkImage, *const c_void);
+    type PFN_vkEnumerateDeviceExtensionProperties = unsafe extern "C" fn(
+        VkPhysicalDevice,
+        *const u8,
+        *mut u32,
+        *mut VkExtensionProperties,
+    ) -> VkResult;
+    type PFN_vkCreateDevice = unsafe extern "C" fn(
+        VkPhysicalDevice,
+        *const VkDeviceCreateInfo,
+        *const c_void,
+        *mut VkDevice,
+    ) -> VkResult;
+    type PFN_vkDestroyDevice = unsafe extern "C" fn(VkDevice, *const c_void);
+    type PFN_vkGetDeviceQueue = unsafe extern "C" fn(VkDevice, u32, u32, *mut VkQueue);
+    type PFN_vkCreateImage = unsafe extern "C" fn(
+        VkDevice,
+        *const VkImageCreateInfo,
+        *const c_void,
+        *mut VkImage,
+    ) -> VkResult;
+    type PFN_vkDestroyImage = unsafe extern "C" fn(VkDevice, VkImage, *const c_void);
     type PFN_vkGetImageMemoryRequirements =
         unsafe extern "C" fn(VkDevice, VkImage, *mut VkMemoryRequirements);
-    type PFN_vkAllocateMemory =
-        unsafe extern "C" fn(VkDevice, *const VkMemoryAllocateInfo, *const c_void, *mut VkDeviceMemory) -> VkResult;
-    type PFN_vkFreeMemory =
-        unsafe extern "C" fn(VkDevice, VkDeviceMemory, *const c_void);
+    type PFN_vkAllocateMemory = unsafe extern "C" fn(
+        VkDevice,
+        *const VkMemoryAllocateInfo,
+        *const c_void,
+        *mut VkDeviceMemory,
+    ) -> VkResult;
+    type PFN_vkFreeMemory = unsafe extern "C" fn(VkDevice, VkDeviceMemory, *const c_void);
     type PFN_vkBindImageMemory =
         unsafe extern "C" fn(VkDevice, VkImage, VkDeviceMemory, u64) -> VkResult;
-    type PFN_vkGetImageSubresourceLayout =
-        unsafe extern "C" fn(VkDevice, VkImage, *const VkImageSubresource, *mut VkSubresourceLayout);
+    type PFN_vkGetImageSubresourceLayout = unsafe extern "C" fn(
+        VkDevice,
+        VkImage,
+        *const VkImageSubresource,
+        *mut VkSubresourceLayout,
+    );
     type PFN_vkGetPhysicalDeviceMemoryProperties =
         unsafe extern "C" fn(VkPhysicalDevice, *mut VkPhysicalDeviceMemoryProperties);
     // Extension: VK_KHR_external_memory_fd
     type PFN_vkGetMemoryFdKHR =
         unsafe extern "C" fn(VkDevice, *const VkMemoryGetFdInfoKHR, *mut i32) -> VkResult;
     // Device-level GetDeviceProcAddr for extension functions
-    type PFN_vkGetDeviceProcAddr =
-        unsafe extern "C" fn(VkDevice, *const u8) -> PFN_vkVoidFunction;
+    type PFN_vkGetDeviceProcAddr = unsafe extern "C" fn(VkDevice, *const u8) -> PFN_vkVoidFunction;
 
     struct VkLib {
         _handle: *mut c_void,
@@ -281,9 +298,7 @@ mod inner {
 
     impl VkLib {
         fn load() -> Option<&'static VkLib> {
-            VK_LIB
-                .get_or_init(|| Self::try_load())
-                .as_ref()
+            VK_LIB.get_or_init(|| Self::try_load()).as_ref()
         }
 
         fn try_load() -> Option<VkLib> {
@@ -297,9 +312,7 @@ mod inner {
 
             // SAFETY: The library name is a valid null-terminated C string.
             // dlopen returns null on failure, which we check below.
-            let handle = unsafe {
-                dlopen(b"libvulkan.so.1\0".as_ptr(), RTLD_NOW | RTLD_LOCAL)
-            };
+            let handle = unsafe { dlopen(b"libvulkan.so.1\0".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
             if handle.is_null() {
                 return None;
             }
@@ -418,9 +431,8 @@ mod inner {
             // functions. The symbol name is null-terminated. We null-check the
             // result below. The transmute is sound because the Vulkan spec
             // guarantees this symbol's ABI matches PFN_vkCreateInstance.
-            let vk_create_instance: PFN_vkCreateInstance = unsafe {
-                std::mem::transmute(lib.get_proc(VK_NULL_HANDLE, b"vkCreateInstance\0"))
-            };
+            let vk_create_instance: PFN_vkCreateInstance =
+                unsafe { std::mem::transmute(lib.get_proc(VK_NULL_HANDLE, b"vkCreateInstance\0")) };
             if (vk_create_instance as *const c_void).is_null() {
                 return None;
             }
@@ -437,9 +449,7 @@ mod inner {
             };
 
             // We need VK_KHR_external_memory_capabilities at instance level.
-            let instance_exts: [*const u8; 1] = [
-                b"VK_KHR_external_memory_capabilities\0".as_ptr(),
-            ];
+            let instance_exts: [*const u8; 1] = [b"VK_KHR_external_memory_capabilities\0".as_ptr()];
 
             let create_info = VkInstanceCreateInfo {
                 s_type: VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -464,7 +474,12 @@ mod inner {
             // --- resolve instance-level functions ---
             macro_rules! ifn {
                 ($name:literal) => {{
-                    let p = unsafe { lib.get_proc(instance, concat!($name, "\0").as_bytes().as_ptr() as *const u8) };
+                    let p = unsafe {
+                        lib.get_proc(
+                            instance,
+                            concat!($name, "\0").as_bytes().as_ptr() as *const u8,
+                        )
+                    };
                     // We build the name with a trailing nul above via concat.
                     // Actually, get_proc expects the slice to be nul-terminated.
                     // Let's use a byte literal directly.
@@ -491,8 +506,11 @@ mod inner {
             let fn_enumerate_physical_devices: PFN_vkEnumeratePhysicalDevices = unsafe {
                 let p = lib.get_proc(instance, b"vkEnumeratePhysicalDevices\0");
                 if p.is_null() {
-                    let d: PFN_vkDestroyInstance = std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
-                    if !(d as *const c_void).is_null() { d(instance, std::ptr::null()); }
+                    let d: PFN_vkDestroyInstance =
+                        std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
+                    if !(d as *const c_void).is_null() {
+                        d(instance, std::ptr::null());
+                    }
                     return None;
                 }
                 std::mem::transmute(p)
@@ -501,8 +519,11 @@ mod inner {
             let fn_enumerate_device_ext_props: PFN_vkEnumerateDeviceExtensionProperties = unsafe {
                 let p = lib.get_proc(instance, b"vkEnumerateDeviceExtensionProperties\0");
                 if p.is_null() {
-                    let d: PFN_vkDestroyInstance = std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
-                    if !(d as *const c_void).is_null() { d(instance, std::ptr::null()); }
+                    let d: PFN_vkDestroyInstance =
+                        std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
+                    if !(d as *const c_void).is_null() {
+                        d(instance, std::ptr::null());
+                    }
                     return None;
                 }
                 std::mem::transmute(p)
@@ -511,8 +532,11 @@ mod inner {
             let fn_create_device: PFN_vkCreateDevice = unsafe {
                 let p = lib.get_proc(instance, b"vkCreateDevice\0");
                 if p.is_null() {
-                    let d: PFN_vkDestroyInstance = std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
-                    if !(d as *const c_void).is_null() { d(instance, std::ptr::null()); }
+                    let d: PFN_vkDestroyInstance =
+                        std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
+                    if !(d as *const c_void).is_null() {
+                        d(instance, std::ptr::null());
+                    }
                     return None;
                 }
                 std::mem::transmute(p)
@@ -521,8 +545,11 @@ mod inner {
             let fn_get_device_proc_addr: PFN_vkGetDeviceProcAddr = unsafe {
                 let p = lib.get_proc(instance, b"vkGetDeviceProcAddr\0");
                 if p.is_null() {
-                    let d: PFN_vkDestroyInstance = std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
-                    if !(d as *const c_void).is_null() { d(instance, std::ptr::null()); }
+                    let d: PFN_vkDestroyInstance =
+                        std::mem::transmute(lib.get_proc(instance, b"vkDestroyInstance\0"));
+                    if !(d as *const c_void).is_null() {
+                        d(instance, std::ptr::null());
+                    }
                     return None;
                 }
                 std::mem::transmute(p)
@@ -530,7 +557,9 @@ mod inner {
 
             let fn_destroy_instance: PFN_vkDestroyInstance = unsafe {
                 let p = lib.get_proc(instance, b"vkDestroyInstance\0");
-                if p.is_null() { return None; }
+                if p.is_null() {
+                    return None;
+                }
                 std::mem::transmute(p)
             };
 
@@ -581,7 +610,12 @@ mod inner {
             for &phys in &physical_devices {
                 let mut ext_count: u32 = 0;
                 let r = unsafe {
-                    fn_enumerate_device_ext_props(phys, std::ptr::null(), &mut ext_count, std::ptr::null_mut())
+                    fn_enumerate_device_ext_props(
+                        phys,
+                        std::ptr::null(),
+                        &mut ext_count,
+                        std::ptr::null_mut(),
+                    )
                 };
                 if r != VK_SUCCESS || ext_count == 0 {
                     continue;
@@ -595,7 +629,12 @@ mod inner {
                     ext_count as usize
                 ];
                 let r = unsafe {
-                    fn_enumerate_device_ext_props(phys, std::ptr::null(), &mut ext_count, exts.as_mut_ptr())
+                    fn_enumerate_device_ext_props(
+                        phys,
+                        std::ptr::null(),
+                        &mut ext_count,
+                        exts.as_mut_ptr(),
+                    )
                 };
                 if r != VK_SUCCESS {
                     continue;
@@ -604,8 +643,7 @@ mod inner {
                 let mut found = [false; 2];
                 for ext in &exts[..ext_count as usize] {
                     for (i, req) in required_exts.iter().enumerate() {
-                        if ext.extension_name.starts_with(req)
-                            && ext.extension_name[req.len()] == 0
+                        if ext.extension_name.starts_with(req) && ext.extension_name[req.len()] == 0
                         {
                             found[i] = true;
                         }
@@ -652,9 +690,8 @@ mod inner {
             };
 
             let mut device: VkDevice = VK_NULL_HANDLE;
-            let res = unsafe {
-                fn_create_device(chosen_phys, &device_ci, std::ptr::null(), &mut device)
-            };
+            let res =
+                unsafe { fn_create_device(chosen_phys, &device_ci, std::ptr::null(), &mut device) };
             if res != VK_SUCCESS || device == VK_NULL_HANDLE {
                 unsafe { fn_destroy_instance(instance, std::ptr::null()) };
                 return None;
@@ -669,7 +706,10 @@ mod inner {
                     let p = unsafe { fn_get_device_proc_addr(device, $name.as_ptr()) };
                     if p.is_null() {
                         let dd: PFN_vkDestroyDevice = unsafe {
-                            std::mem::transmute(fn_get_device_proc_addr(device, b"vkDestroyDevice\0".as_ptr()))
+                            std::mem::transmute(fn_get_device_proc_addr(
+                                device,
+                                b"vkDestroyDevice\0".as_ptr(),
+                            ))
                         };
                         if !(dd as *const c_void).is_null() {
                             unsafe { dd(device, std::ptr::null()) };
@@ -751,11 +791,7 @@ mod inner {
         ///
         /// The returned [`ExportableImage`] owns the DMA-BUF fd and Vulkan
         /// handles. Call [`destroy_image`](Self::destroy_image) to free them.
-        pub fn create_exportable_image(
-            &self,
-            width: u32,
-            height: u32,
-        ) -> Option<ExportableImage> {
+        pub fn create_exportable_image(&self, width: u32, height: u32) -> Option<ExportableImage> {
             if !self.supports_dmabuf {
                 return None;
             }
@@ -848,9 +884,7 @@ mod inner {
 
             // -- bind memory to image --
             // SAFETY: `image` and `memory` are valid Vulkan handles.
-            let res = unsafe {
-                (self.fn_bind_image_memory)(self.device, image, memory, 0)
-            };
+            let res = unsafe { (self.fn_bind_image_memory)(self.device, image, memory, 0) };
             if res != VK_SUCCESS {
                 unsafe {
                     (self.fn_free_memory)(self.device, memory, std::ptr::null());
@@ -868,9 +902,7 @@ mod inner {
             };
 
             let mut fd: i32 = -1;
-            let res = unsafe {
-                (self.fn_get_memory_fd_khr)(self.device, &fd_info, &mut fd)
-            };
+            let res = unsafe { (self.fn_get_memory_fd_khr)(self.device, &fd_info, &mut fd) };
             if res != VK_SUCCESS || fd < 0 {
                 unsafe {
                     (self.fn_free_memory)(self.device, memory, std::ptr::null());

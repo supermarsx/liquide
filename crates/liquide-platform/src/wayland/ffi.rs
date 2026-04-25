@@ -234,12 +234,8 @@ pub type wl_keyboard_modifiers_fn = unsafe extern "C" fn(
     mods_locked: u32,
     group: u32,
 );
-pub type wl_keyboard_repeat_info_fn = unsafe extern "C" fn(
-    data: *mut c_void,
-    keyboard: *mut wl_proxy,
-    rate: i32,
-    delay: i32,
-);
+pub type wl_keyboard_repeat_info_fn =
+    unsafe extern "C" fn(data: *mut c_void, keyboard: *mut wl_proxy, rate: i32, delay: i32);
 
 #[repr(C)]
 pub struct wl_keyboard_listener {
@@ -266,13 +262,8 @@ pub type wl_pointer_leave_fn = unsafe extern "C" fn(
     serial: u32,
     surface: *mut wl_proxy,
 );
-pub type wl_pointer_motion_fn = unsafe extern "C" fn(
-    data: *mut c_void,
-    pointer: *mut wl_proxy,
-    time: u32,
-    sx: i32,
-    sy: i32,
-);
+pub type wl_pointer_motion_fn =
+    unsafe extern "C" fn(data: *mut c_void, pointer: *mut wl_proxy, time: u32, sx: i32, sy: i32);
 pub type wl_pointer_button_fn = unsafe extern "C" fn(
     data: *mut c_void,
     pointer: *mut wl_proxy,
@@ -288,8 +279,7 @@ pub type wl_pointer_axis_fn = unsafe extern "C" fn(
     axis: u32,
     value: i32,
 );
-pub type wl_pointer_frame_fn =
-    unsafe extern "C" fn(data: *mut c_void, pointer: *mut wl_proxy);
+pub type wl_pointer_frame_fn = unsafe extern "C" fn(data: *mut c_void, pointer: *mut wl_proxy);
 pub type wl_pointer_axis_source_fn =
     unsafe extern "C" fn(data: *mut c_void, pointer: *mut wl_proxy, axis_source: u32);
 pub type wl_pointer_axis_stop_fn =
@@ -331,8 +321,7 @@ pub type wl_output_mode_fn = unsafe extern "C" fn(
     height: i32,
     refresh: i32,
 );
-pub type wl_output_done_fn =
-    unsafe extern "C" fn(data: *mut c_void, output: *mut wl_proxy);
+pub type wl_output_done_fn = unsafe extern "C" fn(data: *mut c_void, output: *mut wl_proxy);
 pub type wl_output_scale_fn =
     unsafe extern "C" fn(data: *mut c_void, output: *mut wl_proxy, factor: i32);
 
@@ -370,8 +359,7 @@ pub type xdg_toplevel_configure_fn = unsafe extern "C" fn(
     height: i32,
     states: *mut wl_array,
 );
-pub type xdg_toplevel_close_fn =
-    unsafe extern "C" fn(data: *mut c_void, toplevel: *mut wl_proxy);
+pub type xdg_toplevel_close_fn = unsafe extern "C" fn(data: *mut c_void, toplevel: *mut wl_proxy);
 
 #[repr(C)]
 pub struct xdg_toplevel_listener {
@@ -380,8 +368,7 @@ pub struct xdg_toplevel_listener {
 }
 
 // wl_buffer events
-pub type wl_buffer_release_fn =
-    unsafe extern "C" fn(data: *mut c_void, buffer: *mut wl_proxy);
+pub type wl_buffer_release_fn = unsafe extern "C" fn(data: *mut c_void, buffer: *mut wl_proxy);
 
 #[repr(C)]
 pub struct wl_buffer_listener {

@@ -517,7 +517,7 @@ impl Default for ComputedStyle {
                 b: 0,
                 a: 255,
             }),
-            border_radius: Corners::all(0.0),
+            border_radius: Corners::all(EllipticalRadius::default()),
             border_image: None,
 
             // Flex
@@ -1142,7 +1142,10 @@ impl ComputedStyle {
             || !self.filter.is_empty()
             || !self.backdrop_filter.is_empty()
             || self.contain.paint
-            || self.will_change.iter().any(|prop| prop == "transform" || prop == "perspective" || prop == "filter")
+            || self
+                .will_change
+                .iter()
+                .any(|prop| prop == "transform" || prop == "perspective" || prop == "filter")
     }
 
     /// Is this element visible?
@@ -1159,7 +1162,10 @@ impl ComputedStyle {
 
     /// Is this flex container using row direction?
     pub fn is_flex_row(&self) -> bool {
-        matches!(self.flex_direction, FlexDirection::Row | FlexDirection::RowReverse)
+        matches!(
+            self.flex_direction,
+            FlexDirection::Row | FlexDirection::RowReverse
+        )
     }
 
     /// Is this element a grid container?

@@ -1,5 +1,5 @@
 use crate::easing::EasingFunction;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 /// Workspace transition direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,9 @@ impl WorkspaceTransition {
 }
 
 impl Default for WorkspaceTransition {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Output frame for workspace transition

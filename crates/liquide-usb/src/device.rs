@@ -1,7 +1,7 @@
 //! USB device types, identification, and security key database.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
-use serde::{Serialize, Deserialize};
 
 /// USB device class categories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -46,15 +46,13 @@ impl VidPid {
         let vendor_match = if vendor_str == "*" {
             true
         } else {
-            u16::from_str_radix(vendor_str, 16)
-                .is_ok_and(|v| v == self.vendor)
+            u16::from_str_radix(vendor_str, 16).is_ok_and(|v| v == self.vendor)
         };
 
         let product_match = if product_str == "*" {
             true
         } else {
-            u16::from_str_radix(product_str, 16)
-                .is_ok_and(|p| p == self.product)
+            u16::from_str_radix(product_str, 16).is_ok_and(|p| p == self.product)
         };
 
         vendor_match && product_match
@@ -195,7 +193,9 @@ impl SecurityKeyDb {
     /// Check whether a given VID:PID is a known security key.
     #[must_use]
     pub fn is_security_key(&self, vid_pid: &VidPid) -> bool {
-        self.known_patterns.iter().any(|p| vid_pid.matches_pattern(p))
+        self.known_patterns
+            .iter()
+            .any(|p| vid_pid.matches_pattern(p))
     }
 }
 

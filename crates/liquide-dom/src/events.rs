@@ -208,11 +208,7 @@ impl EventTargetMap {
 /// Dispatch an event through the DOM tree following the W3C model.
 ///
 /// Returns `true` if `preventDefault()` was called.
-pub fn dispatch_event(
-    doc: &Document,
-    targets: &mut EventTargetMap,
-    event: &mut Event,
-) -> bool {
+pub fn dispatch_event(doc: &Document, targets: &mut EventTargetMap, event: &mut Event) -> bool {
     let target = event.target;
 
     // Build the event path: root → ... → parent → target
@@ -268,12 +264,7 @@ pub fn dispatch_event(
 }
 
 /// Fire all matching listeners on a node.
-fn fire_listeners(
-    targets: &mut EventTargetMap,
-    node_id: NodeId,
-    event: &mut Event,
-    capture: bool,
-) {
+fn fire_listeners(targets: &mut EventTargetMap, node_id: NodeId, event: &mut Event, capture: bool) {
     let listeners = targets.matching_listeners(node_id, &event.event_type, capture);
     let mut to_remove = Vec::new();
 
@@ -290,8 +281,7 @@ fn fire_listeners(
         if let Err(_) = result {
             eprintln!(
                 "event listener panicked during '{}' on node {:?}",
-                event.event_type,
-                node_id,
+                event.event_type, node_id,
             );
         }
         if listener.options.once {
@@ -310,8 +300,8 @@ mod tests {
     use super::*;
     use crate::Document;
     use std::sync::{
-        atomic::{AtomicU32, Ordering},
         Mutex,
+        atomic::{AtomicU32, Ordering},
     };
 
     static CALL_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -345,8 +335,18 @@ mod tests {
         doc.append_child(parent, child);
 
         let mut targets = EventTargetMap::new();
-        targets.add_listener(parent, "click", increment_handler, ListenerOptions::default());
-        targets.add_listener(child, "click", increment_handler, ListenerOptions::default());
+        targets.add_listener(
+            parent,
+            "click",
+            increment_handler,
+            ListenerOptions::default(),
+        );
+        targets.add_listener(
+            child,
+            "click",
+            increment_handler,
+            ListenerOptions::default(),
+        );
 
         let mut event = Event::new("click", child, true);
         dispatch_event(&doc, &mut targets, &mut event);
@@ -370,9 +370,17 @@ mod tests {
             parent,
             "click",
             increment_handler,
-            ListenerOptions { capture: true, once: false },
+            ListenerOptions {
+                capture: true,
+                once: false,
+            },
         );
-        targets.add_listener(child, "click", increment_handler, ListenerOptions::default());
+        targets.add_listener(
+            child,
+            "click",
+            increment_handler,
+            ListenerOptions::default(),
+        );
 
         let mut event = Event::new("click", child, true);
         dispatch_event(&doc, &mut targets, &mut event);
@@ -394,9 +402,19 @@ mod tests {
         doc.append_child(parent, child);
 
         let mut targets = EventTargetMap::new();
-        targets.add_listener(grandparent, "click", increment_handler, ListenerOptions::default());
+        targets.add_listener(
+            grandparent,
+            "click",
+            increment_handler,
+            ListenerOptions::default(),
+        );
         targets.add_listener(parent, "click", stop_handler, ListenerOptions::default());
-        targets.add_listener(child, "click", increment_handler, ListenerOptions::default());
+        targets.add_listener(
+            child,
+            "click",
+            increment_handler,
+            ListenerOptions::default(),
+        );
 
         let mut event = Event::new("click", child, true);
         dispatch_event(&doc, &mut targets, &mut event);
@@ -430,8 +448,18 @@ mod tests {
         doc.append_child(parent, child);
 
         let mut targets = EventTargetMap::new();
-        targets.add_listener(parent, "focus", increment_handler, ListenerOptions::default());
-        targets.add_listener(child, "focus", increment_handler, ListenerOptions::default());
+        targets.add_listener(
+            parent,
+            "focus",
+            increment_handler,
+            ListenerOptions::default(),
+        );
+        targets.add_listener(
+            child,
+            "focus",
+            increment_handler,
+            ListenerOptions::default(),
+        );
 
         // focus does NOT bubble
         let mut event = Event::new("focus", child, false);
@@ -454,7 +482,10 @@ mod tests {
             node,
             "click",
             increment_handler,
-            ListenerOptions { capture: false, once: true },
+            ListenerOptions {
+                capture: false,
+                once: true,
+            },
         );
 
         let mut event = Event::new("click", node, true);
