@@ -3,6 +3,8 @@
 //! Displays a selectable list of items in a popup. Inspired by Qt's
 //! QComboBox and GTK's GtkComboBox.
 
+use std::cell::Cell;
+
 use liquide_ui_core::{
     Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
@@ -19,7 +21,12 @@ pub struct DropdownItem {
 
 impl DropdownItem {
     pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
-        Self { id: id.into(), label: label.into(), icon: None, enabled: true }
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            enabled: true,
+        }
     }
 
     pub fn with_icon(mut self, icon: impl Into<String>) -> Self {
@@ -42,6 +49,7 @@ pub struct Dropdown {
     open: bool,
     hover_index: Option<usize>,
     on_select: Option<Box<dyn FnMut(usize, &DropdownItem) + Send>>,
+    item_height_cache: Cell<f32>,
     x: f32,
     y: f32,
     width: f32,
@@ -58,6 +66,7 @@ impl Dropdown {
             open: false,
             hover_index: None,
             on_select: None,
+            item_height_cache: Cell::new(Self::item_height(&UiTheme::default())),
             x: 0.0,
             y: 0.0,
             width: 0.0,
@@ -94,7 +103,9 @@ impl Dropdown {
         self.selected.and_then(|i| self.items.get(i))
     }
 
-    pub fn is_open(&self) -> bool { self.open }
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
 
     fn item_height(theme: &UiTheme) -> f32 {
         theme.font_size + 12.0
@@ -119,17 +130,33 @@ impl Dropdown {
 }
 
 impl Default for Dropdown {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for Dropdown {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
-    fn set_enabled(&mut self, e: bool) { self.state.enabled = e; }
-    fn focusable(&self) -> bool { true }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.state.enabled = e;
+    }
+    fn focusable(&self) -> bool {
+        true
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, theme: &UiTheme) -> LayoutResult {
         let w = 200.0;
@@ -139,50 +166,113 @@ impl Widget for Dropdown {
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
     }
 
     fn paint(&self, painter: &mut Painter, theme: &UiTheme) {
+        let ih = Self::item_height(theme);
+        self.item_height_cache.set(ih);
         let colors = &theme.colors;
         let radius = theme.radius_md;
 
         // Main button area
-        let bg = if self.state.hovered || self.open { colors.surface_hover } else { colors.surface };
+        let bg = if self.state.hovered || self.open {
+            colors.surface_hover
+        } else {
+            colors.surface
+        };
         painter.fill_rounded_rect(self.x, self.y, self.width, self.height, radius, bg);
-        painter.stroke_rounded_rect(self.x, self.y, self.width, self.height, radius, colors.border, 1.0);
+        painter.stroke_rounded_rect(
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            radius,
+            colors.border,
+            1.0,
+        );
 
         // Selected text / placeholder
         let padding = 10.0;
         let text_y = self.y + (self.height - theme.font_size) / 2.0;
-        let display_text = self.selected_item()
+        let display_text = self
+            .selected_item()
             .map(|i| i.label.as_str())
             .unwrap_or(&self.placeholder);
-        let text_color = if self.selected.is_some() { colors.text_primary } else { colors.text_secondary };
-        painter.draw_text(display_text, self.x + padding, text_y, theme.font_size, text_color, &theme.font_family, false);
+        let text_color = if self.selected.is_some() {
+            colors.text_primary
+        } else {
+            colors.text_secondary
+        };
+        painter.draw_text(
+            display_text,
+            self.x + padding,
+            text_y,
+            theme.font_size,
+            text_color,
+            &theme.font_family,
+            false,
+        );
 
         // Dropdown arrow (chevron)
         let arrow_x = self.x + self.width - 20.0;
         let arrow_y = self.y + self.height / 2.0;
-        painter.draw_line(arrow_x, arrow_y - 3.0, arrow_x + 5.0, arrow_y + 2.0, colors.text_secondary, 1.5);
-        painter.draw_line(arrow_x + 5.0, arrow_y + 2.0, arrow_x + 10.0, arrow_y - 3.0, colors.text_secondary, 1.5);
+        painter.draw_line(
+            arrow_x,
+            arrow_y - 3.0,
+            arrow_x + 5.0,
+            arrow_y + 2.0,
+            colors.text_secondary,
+            1.5,
+        );
+        painter.draw_line(
+            arrow_x + 5.0,
+            arrow_y + 2.0,
+            arrow_x + 10.0,
+            arrow_y - 3.0,
+            colors.text_secondary,
+            1.5,
+        );
 
         // Focus ring
         if self.state.focused && !self.open {
             painter.stroke_rounded_rect(
-                self.x - 1.5, self.y - 1.5, self.width + 3.0, self.height + 3.0,
-                radius + 1.0, colors.focus_ring, 1.5,
+                self.x - 1.5,
+                self.y - 1.5,
+                self.width + 3.0,
+                self.height + 3.0,
+                radius + 1.0,
+                colors.focus_ring,
+                1.5,
             );
         }
 
         // Popup
         if self.open {
-            let ih = Self::item_height(theme);
             let popup_y = self.y + self.height + 2.0;
             let popup_h = self.popup_height(theme);
 
             // Popup background + shadow
-            painter.fill_rounded_rect(self.x, popup_y, self.width, popup_h, radius, colors.surface_elevated);
-            painter.stroke_rounded_rect(self.x, popup_y, self.width, popup_h, radius, colors.border, 1.0);
+            painter.fill_rounded_rect(
+                self.x,
+                popup_y,
+                self.width,
+                popup_h,
+                radius,
+                colors.surface_elevated,
+            );
+            painter.stroke_rounded_rect(
+                self.x,
+                popup_y,
+                self.width,
+                popup_h,
+                radius,
+                colors.border,
+                1.0,
+            );
 
             // Items
             for (i, item) in self.items.iter().enumerate().take(8) {
@@ -191,8 +281,19 @@ impl Widget for Dropdown {
                 let is_selected = self.selected == Some(i);
 
                 if is_hover || is_selected {
-                    let highlight = if is_selected { colors.accent } else { colors.surface_hover };
-                    painter.fill_rounded_rect(self.x + 2.0, iy, self.width - 4.0, ih, radius * 0.5, highlight);
+                    let highlight = if is_selected {
+                        colors.accent
+                    } else {
+                        colors.surface_hover
+                    };
+                    painter.fill_rounded_rect(
+                        self.x + 2.0,
+                        iy,
+                        self.width - 4.0,
+                        ih,
+                        radius * 0.5,
+                        highlight,
+                    );
                 }
 
                 let tc = if !item.enabled {
@@ -202,14 +303,25 @@ impl Widget for Dropdown {
                 } else {
                     colors.text_primary
                 };
-                painter.draw_text(&item.label, self.x + padding, iy + (ih - theme.font_size) / 2.0, theme.font_size, tc, &theme.font_family, false);
+                painter.draw_text(
+                    &item.label,
+                    self.x + padding,
+                    iy + (ih - theme.font_size) / 2.0,
+                    theme.font_size,
+                    tc,
+                    &theme.font_family,
+                    false,
+                );
             }
         }
     }
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
         match event {
-            Event::MouseEnter => { self.state.hovered = true; EventResponse::Consumed }
+            Event::MouseEnter => {
+                self.state.hovered = true;
+                EventResponse::Consumed
+            }
             Event::MouseLeave => {
                 self.state.hovered = false;
                 self.hover_index = None;
@@ -219,7 +331,7 @@ impl Widget for Dropdown {
                 self.state.pressed = true;
                 if self.open {
                     // Check if click is on an item in the popup
-                    let ih = 28.0;  // approximate
+                    let ih = self.item_height_cache.get();
                     let popup_y = self.y + self.height + 2.0;
                     if *y >= popup_y {
                         let idx = ((*y - popup_y - 2.0) / ih) as usize;
@@ -234,55 +346,97 @@ impl Widget for Dropdown {
                 }
                 EventResponse::RequestFocus
             }
-            Event::MouseUp { .. } => { self.state.pressed = false; EventResponse::Consumed }
-            Event::FocusIn => { self.state.focused = true; EventResponse::Consumed }
+            Event::MouseUp { .. } => {
+                self.state.pressed = false;
+                EventResponse::Consumed
+            }
+            Event::FocusIn => {
+                self.state.focused = true;
+                EventResponse::Consumed
+            }
             Event::FocusOut => {
                 self.state.focused = false;
                 self.open = false;
                 EventResponse::Consumed
             }
             Event::MouseMove { x: _, y } if self.open => {
-                let ih = 28.0;
+                let ih = self.item_height_cache.get();
                 let popup_y = self.y + self.height + 2.0;
                 if *y >= popup_y {
                     let idx = ((*y - popup_y - 2.0) / ih) as usize;
-                    self.hover_index = if idx < self.items.len().min(8) { Some(idx) } else { None };
+                    self.hover_index = if idx < self.items.len().min(8) {
+                        Some(idx)
+                    } else {
+                        None
+                    };
                 } else {
                     self.hover_index = None;
                 }
                 EventResponse::Consumed
             }
-            Event::KeyDown { key, .. } if self.state.focused => {
-                match key {
-                    Key::Space | Key::Enter => {
-                        if self.open {
-                            if let Some(idx) = self.hover_index {
-                                self.select_index(idx);
-                            } else {
-                                self.open = false;
-                            }
+            Event::KeyDown { key, .. } if self.state.focused => match key {
+                Key::Space | Key::Enter => {
+                    if self.open {
+                        if let Some(idx) = self.hover_index {
+                            self.select_index(idx);
                         } else {
-                            self.open = true;
+                            self.open = false;
                         }
-                        EventResponse::Consumed
+                    } else {
+                        self.open = true;
                     }
-                    Key::ArrowDown if self.open => {
-                        let max = self.items.len().min(8);
-                        self.hover_index = Some(self.hover_index.map(|i| (i + 1).min(max - 1)).unwrap_or(0));
-                        EventResponse::Consumed
-                    }
-                    Key::ArrowUp if self.open => {
-                        self.hover_index = self.hover_index.map(|i| i.saturating_sub(1)).or(Some(0));
-                        EventResponse::Consumed
-                    }
-                    Key::Escape if self.open => {
-                        self.open = false;
-                        EventResponse::Consumed
-                    }
-                    _ => EventResponse::Ignored,
+                    EventResponse::Consumed
                 }
-            }
+                Key::ArrowDown if self.open => {
+                    let max = self.items.len().min(8);
+                    self.hover_index =
+                        Some(self.hover_index.map(|i| (i + 1).min(max - 1)).unwrap_or(0));
+                    EventResponse::Consumed
+                }
+                Key::ArrowUp if self.open => {
+                    self.hover_index = self.hover_index.map(|i| i.saturating_sub(1)).or(Some(0));
+                    EventResponse::Consumed
+                }
+                Key::Escape if self.open => {
+                    self.open = false;
+                    EventResponse::Consumed
+                }
+                _ => EventResponse::Ignored,
+            },
             _ => EventResponse::Ignored,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_ui_core::{Constraints, MouseButton};
+
+    #[test]
+    fn dropdown_hover_uses_cached_theme_row_height() {
+        let theme = UiTheme::default();
+        let mut dropdown = Dropdown::new().with_items(vec![
+            DropdownItem::new("1", "One"),
+            DropdownItem::new("2", "Two"),
+            DropdownItem::new("3", "Three"),
+        ]);
+        let _ = dropdown.measure(&Constraints::UNBOUNDED, &theme);
+        dropdown.item_height_cache.set(Dropdown::item_height(&theme));
+        dropdown.layout(0.0, 0.0, 160.0, 30.0);
+
+        let _ = dropdown.handle_event(&Event::MouseDown {
+            x: 4.0,
+            y: 4.0,
+            button: MouseButton::Left,
+        });
+        assert!(dropdown.is_open());
+
+        let popup_y = dropdown.y + dropdown.height + 2.0;
+        let _ = dropdown.handle_event(&Event::MouseMove {
+            x: 8.0,
+            y: popup_y + 2.0 + dropdown.item_height_cache.get() * 2.0,
+        });
+        assert_eq!(dropdown.hover_index, Some(2));
     }
 }

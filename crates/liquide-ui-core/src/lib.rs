@@ -20,6 +20,7 @@ pub mod style;
 pub mod text;
 pub mod text_service;
 pub mod theme;
+pub mod theme_light;
 pub mod theme_manager;
 pub mod widget;
 

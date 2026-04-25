@@ -1,10 +1,10 @@
 //! Core widget trait — the fundamental building block.
 
+use crate::constraints::Constraints;
 use crate::event::{Event, EventResponse};
 use crate::id::WidgetId;
-use crate::painter::Painter;
-use crate::constraints::Constraints;
 use crate::layout::LayoutResult;
+use crate::painter::Painter;
 use crate::theme::UiTheme;
 
 /// Result of handling a UI event.
@@ -82,10 +82,14 @@ pub trait Widget: Send {
     fn set_enabled(&mut self, enabled: bool);
 
     /// Whether this widget can receive keyboard focus.
-    fn focusable(&self) -> bool { false }
+    fn focusable(&self) -> bool {
+        false
+    }
 
     /// Get the tooltip text for this widget, if any.
-    fn tooltip(&self) -> Option<&str> { None }
+    fn tooltip(&self) -> Option<&str> {
+        None
+    }
 
     /// Measure the preferred size given parent constraints.
     fn measure(&self, constraints: &Constraints, theme: &UiTheme) -> LayoutResult;
@@ -103,5 +107,7 @@ pub trait Widget: Send {
     fn lifecycle(&mut self, _event: WidgetLifecycle) {}
 
     /// Child widgets (for composite widgets).
-    fn children(&self) -> &[WidgetId] { &[] }
+    fn children(&self) -> &[WidgetId] {
+        &[]
+    }
 }

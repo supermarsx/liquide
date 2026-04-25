@@ -1,5 +1,7 @@
 //! Text measurement abstraction.
 
+use unicode_segmentation::UnicodeSegmentation;
+
 /// Font metrics for text layout.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FontMetrics {
@@ -40,11 +42,26 @@ impl TextMeasure for SimpleTextMeasure {
     fn measure_text(&self, text: &str, font_size: f32, bold: bool) -> (f32, f32) {
         let metrics = FontMetrics::approximate(font_size);
         let width_factor = if bold { 1.1 } else { 1.0 };
-        let width = text.len() as f32 * metrics.avg_char_width * width_factor;
+        let width = UnicodeSegmentation::graphemes(text, true).count() as f32
+            * metrics.avg_char_width
+            * width_factor;
         (width, metrics.line_height)
     }
 
     fn font_metrics(&self, font_size: f32) -> FontMetrics {
         FontMetrics::approximate(font_size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SimpleTextMeasure, TextMeasure};
+
+    #[test]
+    fn simple_text_measure_counts_graphemes_not_bytes() {
+        let measurer = SimpleTextMeasure;
+        let (precomposed, _) = measurer.measure_text("é", 14.0, false);
+        let (combining, _) = measurer.measure_text("e\u{0301}", 14.0, false);
+        assert!((precomposed - combining).abs() < f32::EPSILON);
     }
 }

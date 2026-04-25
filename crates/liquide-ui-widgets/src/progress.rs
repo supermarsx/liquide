@@ -73,7 +73,10 @@ impl ProgressBar {
 
     /// Set the progress value (only relevant in Determinate mode).
     pub fn set_value(&mut self, value: f32) {
-        if let ProgressMode::Determinate { value: ref mut v, .. } = self.mode {
+        if let ProgressMode::Determinate {
+            value: ref mut v, ..
+        } = self.mode
+        {
             *v = value;
         }
     }
@@ -94,13 +97,25 @@ impl ProgressBar {
 }
 
 impl Widget for ProgressBar {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
     fn set_enabled(&mut self, _e: bool) {}
-    fn focusable(&self) -> bool { false }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn focusable(&self) -> bool {
+        false
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, _theme: &UiTheme) -> LayoutResult {
         let (w, h) = constraints.clamp(200.0, 8.0);
@@ -108,7 +123,10 @@ impl Widget for ProgressBar {
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
     }
 
     fn paint(&self, painter: &mut Painter, theme: &UiTheme) {
@@ -117,7 +135,14 @@ impl Widget for ProgressBar {
         let bar_color = self.color_override.unwrap_or(colors.accent);
 
         // Track
-        painter.fill_rounded_rect(self.x, self.y, self.width, self.height, radius, colors.surface_hover);
+        painter.fill_rounded_rect(
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            radius,
+            colors.surface_hover,
+        );
 
         // Fill
         match self.mode {
@@ -125,7 +150,14 @@ impl Widget for ProgressBar {
                 let frac = self.fraction();
                 if frac > 0.0 {
                     let fill_w = self.width * frac;
-                    painter.fill_rounded_rect(self.x, self.y, fill_w, self.height, radius, bar_color);
+                    painter.fill_rounded_rect(
+                        self.x,
+                        self.y,
+                        fill_w,
+                        self.height,
+                        radius,
+                        bar_color,
+                    );
                 }
                 // Label
                 if self.show_label {
@@ -134,7 +166,15 @@ impl Widget for ProgressBar {
                     let tw = pct.len() as f32 * fs * 0.55;
                     let tx = self.x + (self.width - tw) / 2.0;
                     let ty = self.y + (self.height - fs) / 2.0;
-                    painter.draw_text(&pct, tx, ty, fs, colors.text_primary, &theme.font_family, false);
+                    painter.draw_text(
+                        &pct,
+                        tx,
+                        ty,
+                        fs,
+                        colors.text_primary,
+                        &theme.font_family,
+                        false,
+                    );
                 }
             }
             ProgressMode::Indeterminate { phase } => {
@@ -143,15 +183,28 @@ impl Widget for ProgressBar {
                 let travel = self.width - bar_w;
                 let t = if phase < 1.0 { phase } else { 2.0 - phase };
                 let offset = travel * t;
-                painter.fill_rounded_rect(self.x + offset, self.y, bar_w, self.height, radius, bar_color);
+                painter.fill_rounded_rect(
+                    self.x + offset,
+                    self.y,
+                    bar_w,
+                    self.height,
+                    radius,
+                    bar_color,
+                );
             }
         }
     }
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
         match event {
-            Event::MouseEnter => { self.state.hovered = true; EventResponse::Consumed }
-            Event::MouseLeave => { self.state.hovered = false; EventResponse::Consumed }
+            Event::MouseEnter => {
+                self.state.hovered = true;
+                EventResponse::Consumed
+            }
+            Event::MouseLeave => {
+                self.state.hovered = false;
+                EventResponse::Consumed
+            }
             _ => EventResponse::Ignored,
         }
     }

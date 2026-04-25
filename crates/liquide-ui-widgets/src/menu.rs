@@ -8,8 +8,8 @@
 //! - Separators
 //! - Icons
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+use serde::{Deserialize, Serialize};
 
 /// Unique menu item identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -230,9 +230,7 @@ impl MenuBar {
         if self.items.is_empty() {
             return;
         }
-        let next = self
-            .active_index
-            .map_or(0, |i| (i + 1) % self.items.len());
+        let next = self.active_index.map_or(0, |i| (i + 1) % self.items.len());
         self.active_index = Some(next);
     }
 
@@ -241,10 +239,9 @@ impl MenuBar {
         if self.items.is_empty() {
             return;
         }
-        let prev = self.active_index.map_or(
-            self.items.len() - 1,
-            |i| if i == 0 { self.items.len() - 1 } else { i - 1 },
-        );
+        let prev = self.active_index.map_or(self.items.len() - 1, |i| {
+            if i == 0 { self.items.len() - 1 } else { i - 1 }
+        });
         self.active_index = Some(prev);
     }
 
@@ -428,6 +425,9 @@ mod tests {
     #[test]
     fn test_checkable_item() {
         let item = MenuItem::checkable(MenuItemId(1), "Show Grid", true);
-        assert!(matches!(item.kind, MenuItemKind::Checkable { checked: true }));
+        assert!(matches!(
+            item.kind,
+            MenuItemKind::Checkable { checked: true }
+        ));
     }
 }

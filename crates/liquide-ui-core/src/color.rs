@@ -25,7 +25,12 @@ impl UiColor {
     }
 
     pub const fn transparent() -> Self {
-        Self { r: 0, g: 0, b: 0, a: 0 }
+        Self {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        }
     }
 
     pub const fn white() -> Self {

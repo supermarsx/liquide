@@ -101,7 +101,12 @@ pub struct LayoutNode {
 
 impl LayoutNode {
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     pub fn zero() -> Self {
@@ -154,10 +159,14 @@ pub fn flex_layout(
     let inner_w = container_width - padding.horizontal();
     let inner_h = container_height - padding.vertical();
 
-    let _total_main: f32 = children.iter().map(|c| match direction {
-        Direction::Horizontal => c.width,
-        Direction::Vertical => c.height,
-    }).sum::<f32>() + spacing * (children.len().saturating_sub(1)) as f32;
+    let _total_main: f32 = children
+        .iter()
+        .map(|c| match direction {
+            Direction::Horizontal => c.width,
+            Direction::Vertical => c.height,
+        })
+        .sum::<f32>()
+        + spacing * (children.len().saturating_sub(1)) as f32;
 
     let mut pos = match direction {
         Direction::Horizontal => padding.left,
@@ -175,7 +184,11 @@ pub fn flex_layout(
                         Alignment::End => padding.top + inner_h - child.height,
                         Alignment::Stretch => padding.top,
                     };
-                    let cross_h = if alignment == Alignment::Stretch { inner_h } else { child.height };
+                    let cross_h = if alignment == Alignment::Stretch {
+                        inner_h
+                    } else {
+                        child.height
+                    };
                     let node = (pos, cross, child.width, cross_h);
                     pos += child.width + spacing;
                     node
@@ -187,7 +200,11 @@ pub fn flex_layout(
                         Alignment::End => padding.left + inner_w - child.width,
                         Alignment::Stretch => padding.left,
                     };
-                    let cross_w = if alignment == Alignment::Stretch { inner_w } else { child.width };
+                    let cross_w = if alignment == Alignment::Stretch {
+                        inner_w
+                    } else {
+                        child.width
+                    };
                     let node = (cross, pos, cross_w, child.height);
                     pos += child.height + spacing;
                     node

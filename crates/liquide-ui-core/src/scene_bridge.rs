@@ -17,12 +17,11 @@
 
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::Color;
-use liquide_compositor::scene::{
-    GlassParams, NodeProperties, SceneNode, SceneNodeKind,
-};
+use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
 
 use crate::color::UiColor;
 use crate::painter::PaintCommand;
+use crate::text::{SimpleTextMeasure, TextMeasure};
 
 /// Converts widget paint commands to compositor scene nodes.
 pub struct SceneBridge {
@@ -49,14 +48,38 @@ impl SceneBridge {
     }
 
     /// Convert a list of paint commands into scene nodes.
-    pub fn convert(&mut self, commands: &[PaintCommand], parent_x: f32, parent_y: f32) -> Vec<SceneNode> {
+    pub fn convert(
+        &mut self,
+        commands: &[PaintCommand],
+        parent_x: f32,
+        parent_y: f32,
+    ) -> Vec<SceneNode> {
         let mut nodes = Vec::with_capacity(commands.len());
         let mut z = self.z_base;
+        let mut clip_stack: Vec<Rect> = Vec::new();
 
         for cmd in commands {
-            if let Some(node) = self.convert_command(cmd, parent_x, parent_y, z) {
-                nodes.push(node);
-                z += 1;
+            match cmd {
+                PaintCommand::PushClip { x, y, w, h } => {
+                    let next = Rect::new(x + parent_x, y + parent_y, *w, *h);
+                    let clip = clip_stack
+                        .last()
+                        .copied()
+                        .map(|current| intersect_rect(current, next))
+                        .unwrap_or(next);
+                    clip_stack.push(clip);
+                }
+                PaintCommand::PopClip => {
+                    clip_stack.pop();
+                }
+                _ => {
+                    if let Some(node) =
+                        self.convert_command(cmd, parent_x, parent_y, z, clip_stack.last().copied())
+                    {
+                        nodes.push(node);
+                        z += 1;
+                    }
+                }
             }
         }
 
@@ -70,22 +93,17 @@ impl SceneBridge {
         offset_x: f32,
         offset_y: f32,
         z: u32,
+        active_clip: Option<Rect>,
     ) -> Option<SceneNode> {
         match cmd {
-            PaintCommand::FillRect {
-                x,
-                y,
-                w,
-                h,
-                color,
-            } => {
+            PaintCommand::FillRect { x, y, w, h, color } => {
                 let bounds = Rect::new(x + offset_x, y + offset_y, *w, *h);
                 Some(SceneNode::new(
                     self.alloc_id(),
                     SceneNodeKind::Background {
                         color: ui_to_scene_color(color),
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
@@ -107,7 +125,7 @@ impl SceneBridge {
                         inner_glow: false,
                         parallax: false,
                     }),
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
@@ -120,15 +138,12 @@ impl SceneBridge {
                 font_family,
                 bold,
             } => {
+                let measurer = SimpleTextMeasure;
+                let (width, height) = measurer.measure_text(text, *size, *bold);
                 // Map font size to scale factor for bitmap fallback (base = 16px).
                 let scale = (*size / 16.0).max(1.0).round() as u32;
                 let weight = if *bold { 700_u16 } else { 400 };
-                let bounds = Rect::new(
-                    x + offset_x,
-                    y + offset_y,
-                    text.len() as f32 * size * 0.55, // Approximate width.
-                    *size * 1.2, // Approximate height.
-                );
+                let bounds = Rect::new(x + offset_x, y + offset_y, width, height);
                 Some(SceneNode::new(
                     self.alloc_id(),
                     SceneNodeKind::Text {
@@ -150,7 +165,7 @@ impl SceneBridge {
                         text_decoration: None,
                         text_shadows: vec![],
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
@@ -168,7 +183,7 @@ impl SceneBridge {
                         icon_id: *icon_id,
                         color: ui_to_scene_color(color),
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
@@ -191,22 +206,12 @@ impl SceneBridge {
                     SceneNodeKind::Background {
                         color: ui_to_scene_color(color),
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
-            PaintCommand::FillCircle {
-                cx,
-                cy,
-                r,
-                color,
-            } => {
-                let bounds = Rect::new(
-                    cx - r + offset_x,
-                    cy - r + offset_y,
-                    r * 2.0,
-                    r * 2.0,
-                );
+            PaintCommand::FillCircle { cx, cy, r, color } => {
+                let bounds = Rect::new(cx - r + offset_x, cy - r + offset_y, r * 2.0, r * 2.0);
                 // Approximate circle as a Glass node with full corner radius.
                 Some(SceneNode::new(
                     self.alloc_id(),
@@ -216,7 +221,7 @@ impl SceneBridge {
                         inner_glow: false,
                         parallax: false,
                     }),
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
@@ -244,7 +249,7 @@ impl SceneBridge {
                         button_colors: Default::default(),
                         button_layout: Default::default(),
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
@@ -272,16 +277,29 @@ impl SceneBridge {
                         button_colors: Default::default(),
                         button_layout: Default::default(),
                     },
-                    NodeProperties::new(bounds).with_z_order(z),
+                    apply_clip(NodeProperties::new(bounds).with_z_order(z), active_clip),
                 ))
             }
 
-            PaintCommand::PushClip { .. } | PaintCommand::PopClip => {
-                // Clips are handled at a higher level via SceneNode clip properties.
-                None
-            }
+            PaintCommand::PushClip { .. } | PaintCommand::PopClip => None,
         }
     }
+}
+
+fn apply_clip(properties: NodeProperties, clip: Option<Rect>) -> NodeProperties {
+    if let Some(clip_rect) = clip {
+        properties.with_clip(clip_rect)
+    } else {
+        properties
+    }
+}
+
+fn intersect_rect(a: Rect, b: Rect) -> Rect {
+    let left = a.x.max(b.x);
+    let top = a.y.max(b.y);
+    let right = a.right().min(b.right());
+    let bottom = a.bottom().min(b.bottom());
+    Rect::new(left, top, (right - left).max(0.0), (bottom - top).max(0.0))
 }
 
 /// Convert a UI color to a compositor Color.
@@ -336,5 +354,25 @@ mod tests {
         let mut bridge = SceneBridge::new(5000, 0);
         let nodes = bridge.convert(painter.commands(), 0.0, 0.0);
         assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_nested_clips_are_propagated_to_scene_nodes() {
+        let mut painter = Painter::new();
+        painter.push_clip(0.0, 0.0, 50.0, 50.0);
+        painter.push_clip(25.0, 25.0, 50.0, 50.0);
+        painter.fill_rect(10.0, 10.0, 100.0, 100.0, UiColor::white());
+        painter.pop_clip();
+        painter.pop_clip();
+
+        let mut bridge = SceneBridge::new(6000, 0);
+        let nodes = bridge.convert(painter.commands(), 0.0, 0.0);
+        assert_eq!(nodes.len(), 1);
+
+        let clip = nodes[0].properties.clip.expect("clip should be preserved");
+        assert_eq!(clip.x, 25.0);
+        assert_eq!(clip.y, 25.0);
+        assert_eq!(clip.width, 25.0);
+        assert_eq!(clip.height, 25.0);
     }
 }

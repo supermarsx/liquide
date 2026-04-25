@@ -3,8 +3,8 @@
 //! Divides its area into two or more resizable regions separated by
 //! draggable dividers. Supports horizontal and vertical orientations.
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+use serde::{Deserialize, Serialize};
 
 /// Splitter orientation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,7 +166,11 @@ impl Splitter {
                 continue;
             }
             if let PaneSize::Fraction(f) = pane.size {
-                let ratio = if fraction_total > 0.0 { f / fraction_total } else { 0.0 };
+                let ratio = if fraction_total > 0.0 {
+                    f / fraction_total
+                } else {
+                    0.0
+                };
                 let px = remaining * ratio;
                 let clamped = clamp_size(px, pane.min_size, pane.max_size);
                 sizes[i] = clamped;
@@ -244,8 +248,12 @@ mod tests {
     #[test]
     fn test_equal_split() {
         let mut sp = Splitter::new(WidgetId::from_raw(1), SplitDirection::Horizontal);
-        sp.add_pane(SplitPane::new(WidgetId::from_raw(10), PaneSize::Fraction(0.5)).with_min_size(0.0));
-        sp.add_pane(SplitPane::new(WidgetId::from_raw(11), PaneSize::Fraction(0.5)).with_min_size(0.0));
+        sp.add_pane(
+            SplitPane::new(WidgetId::from_raw(10), PaneSize::Fraction(0.5)).with_min_size(0.0),
+        );
+        sp.add_pane(
+            SplitPane::new(WidgetId::from_raw(11), PaneSize::Fraction(0.5)).with_min_size(0.0),
+        );
         sp.set_total_size(800.0);
 
         let sizes = sp.compute_sizes();
@@ -256,7 +264,10 @@ mod tests {
     #[test]
     fn test_fixed_and_fill() {
         let mut sp = Splitter::new(WidgetId::from_raw(1), SplitDirection::Vertical);
-        sp.add_pane(SplitPane::new(WidgetId::from_raw(10), PaneSize::Fixed(200.0)));
+        sp.add_pane(SplitPane::new(
+            WidgetId::from_raw(10),
+            PaneSize::Fixed(200.0),
+        ));
         sp.add_pane(SplitPane::new(WidgetId::from_raw(11), PaneSize::Fill).with_min_size(0.0));
         sp.set_total_size(600.0);
 
@@ -280,9 +291,15 @@ mod tests {
     #[test]
     fn test_three_panes() {
         let mut sp = Splitter::new(WidgetId::from_raw(1), SplitDirection::Horizontal);
-        sp.add_pane(SplitPane::new(WidgetId::from_raw(10), PaneSize::Fraction(0.25)).with_min_size(0.0));
-        sp.add_pane(SplitPane::new(WidgetId::from_raw(11), PaneSize::Fraction(0.5)).with_min_size(0.0));
-        sp.add_pane(SplitPane::new(WidgetId::from_raw(12), PaneSize::Fraction(0.25)).with_min_size(0.0));
+        sp.add_pane(
+            SplitPane::new(WidgetId::from_raw(10), PaneSize::Fraction(0.25)).with_min_size(0.0),
+        );
+        sp.add_pane(
+            SplitPane::new(WidgetId::from_raw(11), PaneSize::Fraction(0.5)).with_min_size(0.0),
+        );
+        sp.add_pane(
+            SplitPane::new(WidgetId::from_raw(12), PaneSize::Fraction(0.25)).with_min_size(0.0),
+        );
         sp.set_total_size(1000.0);
 
         let sizes = sp.compute_sizes();

@@ -5,6 +5,7 @@
 
 use liquide_ui_core::{
     Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
+    text::{SimpleTextMeasure, TextMeasure},
     widget::{Widget, WidgetState},
 };
 
@@ -43,7 +44,11 @@ impl Checkbox {
     }
 
     pub fn checked(mut self, checked: bool) -> Self {
-        self.check_state = if checked { CheckState::Checked } else { CheckState::Unchecked };
+        self.check_state = if checked {
+            CheckState::Checked
+        } else {
+            CheckState::Unchecked
+        };
         self
     }
 
@@ -62,9 +67,13 @@ impl Checkbox {
         self
     }
 
-    pub fn is_checked(&self) -> bool { self.check_state == CheckState::Checked }
+    pub fn is_checked(&self) -> bool {
+        self.check_state == CheckState::Checked
+    }
 
-    pub fn check_state(&self) -> CheckState { self.check_state }
+    pub fn check_state(&self) -> CheckState {
+        self.check_state
+    }
 
     fn toggle(&mut self) {
         self.check_state = match self.check_state {
@@ -81,16 +90,31 @@ const BOX_SIZE: f32 = 18.0;
 const BOX_LABEL_GAP: f32 = 8.0;
 
 impl Widget for Checkbox {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
-    fn set_enabled(&mut self, e: bool) { self.state.enabled = e; }
-    fn focusable(&self) -> bool { true }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.state.enabled = e;
+    }
+    fn focusable(&self) -> bool {
+        true
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, theme: &UiTheme) -> LayoutResult {
-        let label_w = self.label.len() as f32 * theme.font_size * 0.55;
+        let measurer = SimpleTextMeasure;
+        let label_w = measurer.measure_text(&self.label, theme.font_size, false).0;
         let total_w = BOX_SIZE + BOX_LABEL_GAP + label_w;
         let h = BOX_SIZE.max(theme.font_size + 4.0);
         let (w, h) = constraints.clamp(total_w, h);
@@ -98,7 +122,10 @@ impl Widget for Checkbox {
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
     }
 
     fn paint(&self, painter: &mut Painter, theme: &UiTheme) {
@@ -110,8 +137,11 @@ impl Widget for Checkbox {
         let (bg, border) = match self.check_state {
             CheckState::Checked | CheckState::Indeterminate => (colors.accent, colors.accent),
             CheckState::Unchecked => {
-                if self.state.hovered { (colors.surface_hover, colors.border) }
-                else { (colors.surface, colors.border) }
+                if self.state.hovered {
+                    (colors.surface_hover, colors.border)
+                } else {
+                    (colors.surface, colors.border)
+                }
             }
         };
         painter.fill_rounded_rect(self.x, box_y, BOX_SIZE, BOX_SIZE, radius, bg);
@@ -130,7 +160,14 @@ impl Widget for Checkbox {
             CheckState::Indeterminate => {
                 // Draw a horizontal dash
                 let dash_y = box_y + BOX_SIZE / 2.0;
-                painter.draw_line(self.x + 4.0, dash_y, self.x + BOX_SIZE - 4.0, dash_y, mark_color, 2.0);
+                painter.draw_line(
+                    self.x + 4.0,
+                    dash_y,
+                    self.x + BOX_SIZE - 4.0,
+                    dash_y,
+                    mark_color,
+                    2.0,
+                );
             }
             CheckState::Unchecked => {}
         }
@@ -138,8 +175,13 @@ impl Widget for Checkbox {
         // Focus ring
         if self.state.focused {
             painter.stroke_rounded_rect(
-                self.x - 2.0, box_y - 2.0, BOX_SIZE + 4.0, BOX_SIZE + 4.0,
-                radius + 1.0, colors.focus_ring, 1.5,
+                self.x - 2.0,
+                box_y - 2.0,
+                BOX_SIZE + 4.0,
+                BOX_SIZE + 4.0,
+                radius + 1.0,
+                colors.focus_ring,
+                1.5,
             );
         }
 
@@ -147,16 +189,37 @@ impl Widget for Checkbox {
         if !self.label.is_empty() {
             let text_x = self.x + BOX_SIZE + BOX_LABEL_GAP;
             let text_y = self.y + (self.height - theme.font_size) / 2.0;
-            let text_color = if self.state.enabled { colors.text_primary } else { colors.text_disabled };
-            painter.draw_text(&self.label, text_x, text_y, theme.font_size, text_color, &theme.font_family, false);
+            let text_color = if self.state.enabled {
+                colors.text_primary
+            } else {
+                colors.text_disabled
+            };
+            painter.draw_text(
+                &self.label,
+                text_x,
+                text_y,
+                theme.font_size,
+                text_color,
+                &theme.font_family,
+                false,
+            );
         }
     }
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
         match event {
-            Event::MouseEnter => { self.state.hovered = true; EventResponse::Consumed }
-            Event::MouseLeave => { self.state.hovered = false; EventResponse::Consumed }
-            Event::MouseDown { .. } => { self.state.pressed = true; EventResponse::RequestFocus }
+            Event::MouseEnter => {
+                self.state.hovered = true;
+                EventResponse::Consumed
+            }
+            Event::MouseLeave => {
+                self.state.hovered = false;
+                EventResponse::Consumed
+            }
+            Event::MouseDown { .. } => {
+                self.state.pressed = true;
+                EventResponse::RequestFocus
+            }
             Event::MouseUp { .. } if self.state.pressed => {
                 self.state.pressed = false;
                 if self.state.enabled {
@@ -164,9 +227,17 @@ impl Widget for Checkbox {
                 }
                 EventResponse::Consumed
             }
-            Event::FocusIn => { self.state.focused = true; EventResponse::Consumed }
-            Event::FocusOut => { self.state.focused = false; EventResponse::Consumed }
-            Event::KeyDown { key: Key::Space, .. } if self.state.focused && self.state.enabled => {
+            Event::FocusIn => {
+                self.state.focused = true;
+                EventResponse::Consumed
+            }
+            Event::FocusOut => {
+                self.state.focused = false;
+                EventResponse::Consumed
+            }
+            Event::KeyDown {
+                key: Key::Space, ..
+            } if self.state.focused && self.state.enabled => {
                 self.toggle();
                 EventResponse::Consumed
             }

@@ -5,7 +5,7 @@
 //! GTK's GtkScrolledWindow.
 
 use liquide_ui_core::{
-    Constraints, Event, EventResponse, LayoutResult, Painter, UiTheme, WidgetId,
+    Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
 };
 
@@ -20,6 +20,13 @@ pub enum ScrollBarPolicy {
     AlwaysOff,
 }
 
+/// Axis currently being dragged via a scrollbar thumb.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DragAxis {
+    Vertical,
+    Horizontal,
+}
+
 /// Scroll view container.
 pub struct ScrollView {
     state: WidgetState,
@@ -32,11 +39,12 @@ pub struct ScrollView {
     h_policy: ScrollBarPolicy,
     v_policy: ScrollBarPolicy,
     scroll_speed: f32,
-    /// Whether user is dragging the scrollbar thumb.
-    dragging: bool,
-    #[allow(dead_code)]
+    /// Which scrollbar thumb (if any) is currently being dragged.
+    drag_axis: Option<DragAxis>,
+    drag_start_x: f32,
     drag_start_y: f32,
-    drag_scroll_start: f32,
+    drag_scroll_start_x: f32,
+    drag_scroll_start_y: f32,
     x: f32,
     y: f32,
     width: f32,
@@ -57,9 +65,11 @@ impl ScrollView {
             h_policy: ScrollBarPolicy::Auto,
             v_policy: ScrollBarPolicy::Auto,
             scroll_speed: 40.0,
-            dragging: false,
+            drag_axis: None,
+            drag_start_x: 0.0,
             drag_start_y: 0.0,
-            drag_scroll_start: 0.0,
+            drag_scroll_start_x: 0.0,
+            drag_scroll_start_y: 0.0,
             x: 0.0,
             y: 0.0,
             width: 0.0,
@@ -135,25 +145,83 @@ impl ScrollView {
         let ratio = self.height / self.content_height;
         let thumb_h = (track_h * ratio).max(SCROLLBAR_MIN_THUMB);
         let max_scroll = self.content_height - self.height;
-        let t = if max_scroll > 0.0 { self.scroll_y / max_scroll } else { 0.0 };
+        let t = if max_scroll > 0.0 {
+            self.scroll_y / max_scroll
+        } else {
+            0.0
+        };
         let thumb_y = self.y + t * (track_h - thumb_h);
         let thumb_x = self.x + self.width - SCROLLBAR_WIDTH;
         (thumb_x, thumb_y, SCROLLBAR_WIDTH, thumb_h)
     }
+
+    fn h_thumb_rect(&self) -> (f32, f32, f32, f32) {
+        if self.content_width <= self.width {
+            return (0.0, 0.0, 0.0, 0.0);
+        }
+        // Leave room on the right edge for the vertical scrollbar when
+        // both are visible so the two thumbs can't overlap.
+        let track_w = if self.needs_v_scrollbar() {
+            self.width - SCROLLBAR_WIDTH
+        } else {
+            self.width
+        };
+        let ratio = self.width / self.content_width;
+        let thumb_w = (track_w * ratio).max(SCROLLBAR_MIN_THUMB);
+        let max_scroll = self.content_width - self.width;
+        let t = if max_scroll > 0.0 {
+            self.scroll_x / max_scroll
+        } else {
+            0.0
+        };
+        let thumb_x = self.x + t * (track_w - thumb_w);
+        let thumb_y = self.y + self.height - SCROLLBAR_WIDTH;
+        (thumb_x, thumb_y, thumb_w, SCROLLBAR_WIDTH)
+    }
+
+    fn page_height(&self) -> f32 {
+        (self.height - SCROLLBAR_WIDTH).max(SCROLLBAR_MIN_THUMB)
+    }
+
+    fn page_width(&self) -> f32 {
+        (self.width - SCROLLBAR_WIDTH).max(SCROLLBAR_MIN_THUMB)
+    }
+
+    fn scroll_by_page_x(&mut self, forward: bool) {
+        let step = self.page_width();
+        self.scroll_x += if forward { step } else { -step };
+        self.clamp_scroll();
+    }
 }
 
 impl Default for ScrollView {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for ScrollView {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
-    fn set_enabled(&mut self, e: bool) { self.state.enabled = e; }
-    fn focusable(&self) -> bool { true }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.state.enabled = e;
+    }
+    fn focusable(&self) -> bool {
+        true
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, _theme: &UiTheme) -> LayoutResult {
         let (w, h) = constraints.clamp(300.0, 200.0);
@@ -161,7 +229,10 @@ impl Widget for ScrollView {
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
         self.clamp_scroll();
     }
 
@@ -180,42 +251,69 @@ impl Widget for ScrollView {
         // Vertical scrollbar
         if self.needs_v_scrollbar() {
             let track_x = self.x + self.width - SCROLLBAR_WIDTH;
-            // Track
             painter.fill_rounded_rect(
-                track_x, self.y, SCROLLBAR_WIDTH, self.height,
-                SCROLLBAR_WIDTH / 2.0, colors.surface,
+                track_x,
+                self.y,
+                SCROLLBAR_WIDTH,
+                self.height,
+                SCROLLBAR_WIDTH / 2.0,
+                colors.surface,
             );
-            // Thumb
             let (tx, ty, tw, th) = self.v_thumb_rect();
-            let thumb_color = if self.dragging { colors.accent } else { colors.text_secondary };
+            let thumb_color = if self.drag_axis == Some(DragAxis::Vertical) {
+                colors.accent
+            } else {
+                colors.text_secondary
+            };
             painter.fill_rounded_rect(tx, ty, tw, th, tw / 2.0, thumb_color);
         }
 
         // Horizontal scrollbar
         if self.needs_h_scrollbar() {
             let track_y = self.y + self.height - SCROLLBAR_WIDTH;
-            let track_w = if self.needs_v_scrollbar() { self.width - SCROLLBAR_WIDTH } else { self.width };
+            let track_w = if self.needs_v_scrollbar() {
+                self.width - SCROLLBAR_WIDTH
+            } else {
+                self.width
+            };
             painter.fill_rounded_rect(
-                self.x, track_y, track_w, SCROLLBAR_WIDTH,
-                SCROLLBAR_WIDTH / 2.0, colors.surface,
+                self.x,
+                track_y,
+                track_w,
+                SCROLLBAR_WIDTH,
+                SCROLLBAR_WIDTH / 2.0,
+                colors.surface,
             );
-            // Thumb
             if self.content_width > self.width {
-                let ratio = self.width / self.content_width;
-                let thumb_w = (track_w * ratio).max(SCROLLBAR_MIN_THUMB);
-                let max_scroll = self.content_width - self.width;
-                let t = if max_scroll > 0.0 { self.scroll_x / max_scroll } else { 0.0 };
-                let thumb_x = self.x + t * (track_w - thumb_w);
-                let thumb_color = if self.dragging { colors.accent } else { colors.text_secondary };
-                painter.fill_rounded_rect(thumb_x, track_y, thumb_w, SCROLLBAR_WIDTH, SCROLLBAR_WIDTH / 2.0, thumb_color);
+                let (tx, ty, tw, th) = self.h_thumb_rect();
+                let thumb_color = if self.drag_axis == Some(DragAxis::Horizontal) {
+                    colors.accent
+                } else {
+                    colors.text_secondary
+                };
+                painter.fill_rounded_rect(tx, ty, tw, th, th / 2.0, thumb_color);
             }
         }
     }
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
         match event {
-            Event::MouseEnter => { self.state.hovered = true; EventResponse::Consumed }
-            Event::MouseLeave => { self.state.hovered = false; EventResponse::Consumed }
+            Event::MouseEnter => {
+                self.state.hovered = true;
+                EventResponse::Consumed
+            }
+            Event::MouseLeave => {
+                self.state.hovered = false;
+                EventResponse::Consumed
+            }
+            Event::FocusIn => {
+                self.state.focused = true;
+                EventResponse::Consumed
+            }
+            Event::FocusOut => {
+                self.state.focused = false;
+                EventResponse::Consumed
+            }
             Event::Scroll { dx, dy, .. } => {
                 self.scroll_x += dx * self.scroll_speed;
                 self.scroll_y += dy * self.scroll_speed;
@@ -223,33 +321,209 @@ impl Widget for ScrollView {
                 EventResponse::Consumed
             }
             Event::MouseDown { x, y, .. } => {
-                // Check if clicking on vertical scrollbar thumb
+                // Vertical thumb has priority when both overlap in the
+                // bottom-right corner.
                 if self.needs_v_scrollbar() {
                     let (tx, ty, tw, th) = self.v_thumb_rect();
                     if *x >= tx && *x <= tx + tw && *y >= ty && *y <= ty + th {
-                        self.dragging = true;
+                        self.drag_axis = Some(DragAxis::Vertical);
+                        self.drag_start_x = *x;
                         self.drag_start_y = *y;
-                        self.drag_scroll_start = self.scroll_y;
+                        self.drag_scroll_start_x = self.scroll_x;
+                        self.drag_scroll_start_y = self.scroll_y;
                         return EventResponse::Consumed;
                     }
                 }
-                EventResponse::Ignored
+                if self.needs_h_scrollbar() {
+                    let (tx, ty, tw, th) = self.h_thumb_rect();
+                    if *x >= tx && *x <= tx + tw && *y >= ty && *y <= ty + th {
+                        self.drag_axis = Some(DragAxis::Horizontal);
+                        self.drag_start_x = *x;
+                        self.drag_start_y = *y;
+                        self.drag_scroll_start_x = self.scroll_x;
+                        self.drag_scroll_start_y = self.scroll_y;
+                        return EventResponse::Consumed;
+                    }
+                }
+                EventResponse::RequestFocus
             }
             Event::MouseUp { .. } => {
-                if self.dragging {
-                    self.dragging = false;
+                if self.drag_axis.is_some() {
+                    self.drag_axis = None;
                     return EventResponse::Consumed;
                 }
                 EventResponse::Ignored
             }
-            Event::MouseMove { y, .. } if self.dragging => {
-                let delta = *y - self.drag_start_y;
-                let track_h = self.height;
-                let ratio = self.content_height / track_h;
-                self.scroll_y = (self.drag_scroll_start + delta * ratio).clamp(0.0, (self.content_height - self.height).max(0.0));
-                EventResponse::Consumed
+            Event::MouseMove { x, y } => match self.drag_axis {
+                Some(DragAxis::Vertical) => {
+                    let delta = *y - self.drag_start_y;
+                    let track_h = self.height;
+                    let ratio = if track_h > 0.0 {
+                        self.content_height / track_h
+                    } else {
+                        1.0
+                    };
+                    let max_scroll = (self.content_height - self.height).max(0.0);
+                    self.scroll_y =
+                        (self.drag_scroll_start_y + delta * ratio).clamp(0.0, max_scroll);
+                    EventResponse::Consumed
+                }
+                Some(DragAxis::Horizontal) => {
+                    let delta = *x - self.drag_start_x;
+                    let track_w = if self.needs_v_scrollbar() {
+                        self.width - SCROLLBAR_WIDTH
+                    } else {
+                        self.width
+                    };
+                    let ratio = if track_w > 0.0 {
+                        self.content_width / track_w
+                    } else {
+                        1.0
+                    };
+                    let max_scroll = (self.content_width - self.width).max(0.0);
+                    self.scroll_x =
+                        (self.drag_scroll_start_x + delta * ratio).clamp(0.0, max_scroll);
+                    EventResponse::Consumed
+                }
+                None => EventResponse::Ignored,
+            },
+            Event::KeyDown { key, modifiers } if self.state.focused => {
+                let step = self.scroll_speed;
+                match key {
+                    Key::ArrowUp => {
+                        self.scroll_y -= step;
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    Key::ArrowDown => {
+                        self.scroll_y += step;
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    Key::ArrowLeft => {
+                        self.scroll_x -= step;
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    Key::ArrowRight => {
+                        self.scroll_x += step;
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    Key::PageUp => {
+                        if modifiers.shift {
+                            self.scroll_by_page_x(false);
+                        } else {
+                            self.scroll_y -= self.page_height();
+                            self.clamp_scroll();
+                        }
+                        EventResponse::Consumed
+                    }
+                    Key::PageDown => {
+                        if modifiers.shift {
+                            self.scroll_by_page_x(true);
+                        } else {
+                            self.scroll_y += self.page_height();
+                            self.clamp_scroll();
+                        }
+                        EventResponse::Consumed
+                    }
+                    Key::Home => {
+                        if modifiers.ctrl {
+                            self.scroll_y = 0.0;
+                        }
+                        self.scroll_x = 0.0;
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    Key::End => {
+                        if modifiers.ctrl {
+                            self.scroll_y = (self.content_height - self.height).max(0.0);
+                        }
+                        self.scroll_x = (self.content_width - self.width).max(0.0);
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    Key::Space if modifiers.shift => {
+                        self.scroll_y -= self.page_height();
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    Key::Space => {
+                        self.scroll_y += self.page_height();
+                        self.clamp_scroll();
+                        EventResponse::Consumed
+                    }
+                    _ => EventResponse::Ignored,
+                }
             }
             _ => EventResponse::Ignored,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_ui_core::{Event, Key, Modifiers, MouseButton};
+
+    fn make_view(w: f32, h: f32, cw: f32, ch: f32) -> ScrollView {
+        let mut sv = ScrollView::new();
+        sv.layout(0.0, 0.0, w, h);
+        sv.set_content_size(cw, ch);
+        sv.state.focused = true;
+        sv
+    }
+
+    #[test]
+    fn horizontal_thumb_drag_moves_scroll_x() {
+        let mut sv = make_view(200.0, 100.0, 1000.0, 100.0);
+        // Hit the horizontal thumb at its starting position.
+        let (tx, ty, _, _) = sv.h_thumb_rect();
+        let _ = sv.handle_event(&Event::MouseDown {
+            x: tx + 1.0,
+            y: ty + 1.0,
+            button: MouseButton::Left,
+        });
+        assert_eq!(sv.drag_axis, Some(DragAxis::Horizontal));
+        // Drag right by 50 px along the track.
+        let _ = sv.handle_event(&Event::MouseMove {
+            x: tx + 51.0,
+            y: ty + 1.0,
+        });
+        // Content is 5× the viewport — horizontal thumb drag should yield
+        // roughly content_width/track_w × delta pixels of scroll.
+        assert!(
+            sv.scroll_x > 0.0,
+            "scroll_x did not advance after h-thumb drag"
+        );
+    }
+
+    #[test]
+    fn keyboard_pagedown_advances_near_viewport() {
+        let mut sv = make_view(200.0, 100.0, 100.0, 1000.0);
+        let start = sv.scroll_y;
+        let _ = sv.handle_event(&Event::KeyDown {
+            key: Key::PageDown,
+            modifiers: Modifiers::NONE,
+        });
+        assert!(
+            sv.scroll_y > start + 50.0,
+            "PageDown did not scroll ~ one viewport"
+        );
+    }
+
+    #[test]
+    fn keyboard_ctrl_end_jumps_to_bottom() {
+        let mut sv = make_view(200.0, 100.0, 100.0, 1000.0);
+        let m = Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        };
+        let _ = sv.handle_event(&Event::KeyDown {
+            key: Key::End,
+            modifiers: m,
+        });
+        assert!((sv.scroll_y - 900.0).abs() < 0.001);
     }
 }

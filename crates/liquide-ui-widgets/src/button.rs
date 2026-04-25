@@ -6,6 +6,7 @@
 
 use liquide_ui_core::{
     Constraints, Event, EventResponse, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
+    text::{SimpleTextMeasure, TextMeasure},
     widget::{Widget, WidgetState},
 };
 
@@ -45,18 +46,34 @@ impl ButtonStyle {
         let (bg, fg, border) = match variant {
             ButtonVariant::Primary => {
                 if !state.enabled {
-                    (colors.accent.with_alpha(77), colors.text_on_accent.with_alpha(128), UiColor::transparent())
+                    (
+                        colors.accent.with_alpha(77),
+                        colors.text_on_accent.with_alpha(128),
+                        UiColor::transparent(),
+                    )
                 } else if state.pressed {
-                    (colors.accent_active, colors.text_on_accent, UiColor::transparent())
+                    (
+                        colors.accent_active,
+                        colors.text_on_accent,
+                        UiColor::transparent(),
+                    )
                 } else if state.hovered {
-                    (colors.accent_hover, colors.text_on_accent, UiColor::transparent())
+                    (
+                        colors.accent_hover,
+                        colors.text_on_accent,
+                        UiColor::transparent(),
+                    )
                 } else {
                     (colors.accent, colors.text_on_accent, UiColor::transparent())
                 }
             }
             ButtonVariant::Secondary => {
                 if !state.enabled {
-                    (colors.surface.with_alpha(10), colors.text_disabled, colors.border_subtle)
+                    (
+                        colors.surface.with_alpha(10),
+                        colors.text_disabled,
+                        colors.border_subtle,
+                    )
                 } else if state.pressed {
                     (colors.surface_active, colors.text_primary, colors.border)
                 } else if state.hovered {
@@ -67,22 +84,50 @@ impl ButtonStyle {
             }
             ButtonVariant::Ghost => {
                 if !state.enabled {
-                    (UiColor::transparent(), colors.text_disabled, UiColor::transparent())
+                    (
+                        UiColor::transparent(),
+                        colors.text_disabled,
+                        UiColor::transparent(),
+                    )
                 } else if state.pressed {
-                    (colors.surface_active, colors.text_primary, UiColor::transparent())
+                    (
+                        colors.surface_active,
+                        colors.text_primary,
+                        UiColor::transparent(),
+                    )
                 } else if state.hovered {
-                    (colors.surface_hover, colors.text_primary, UiColor::transparent())
+                    (
+                        colors.surface_hover,
+                        colors.text_primary,
+                        UiColor::transparent(),
+                    )
                 } else {
-                    (UiColor::transparent(), colors.text_secondary, UiColor::transparent())
+                    (
+                        UiColor::transparent(),
+                        colors.text_secondary,
+                        UiColor::transparent(),
+                    )
                 }
             }
             ButtonVariant::Danger => {
                 if !state.enabled {
-                    (colors.error.with_alpha(77), colors.text_on_accent.with_alpha(128), UiColor::transparent())
+                    (
+                        colors.error.with_alpha(77),
+                        colors.text_on_accent.with_alpha(128),
+                        UiColor::transparent(),
+                    )
                 } else if state.pressed {
-                    (UiColor::new(200, 50, 40, 255), colors.text_on_accent, UiColor::transparent())
+                    (
+                        UiColor::new(200, 50, 40, 255),
+                        colors.text_on_accent,
+                        UiColor::transparent(),
+                    )
                 } else if state.hovered {
-                    (UiColor::new(255, 90, 80, 255), colors.text_on_accent, UiColor::transparent())
+                    (
+                        UiColor::new(255, 90, 80, 255),
+                        colors.text_on_accent,
+                        UiColor::transparent(),
+                    )
                 } else {
                     (colors.error, colors.text_on_accent, UiColor::transparent())
                 }
@@ -174,18 +219,36 @@ impl Button {
 }
 
 impl Widget for Button {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
-    fn set_enabled(&mut self, e: bool) { self.state.enabled = e; }
-    fn focusable(&self) -> bool { true }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.state.enabled = e;
+    }
+    fn focusable(&self) -> bool {
+        true
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, theme: &UiTheme) -> LayoutResult {
-        let char_w = theme.font_size * 0.55;
-        let text_w = self.label.len() as f32 * char_w;
-        let icon_w = if self.icon_id.is_some() { theme.font_size + 4.0 } else { 0.0 };
+        let measurer = SimpleTextMeasure;
+        let text_w = measurer.measure_text(&self.label, theme.font_size, false).0;
+        let icon_w = if self.icon_id.is_some() {
+            theme.font_size + 4.0
+        } else {
+            0.0
+        };
         let w = text_w + icon_w + self.padding_h * 2.0;
         let h = theme.font_size + self.padding_v * 2.0;
         let (w, h) = constraints.clamp(w, h);
@@ -203,13 +266,25 @@ impl Widget for Button {
         let style = ButtonStyle::resolve(theme, self.variant, &self.state);
 
         // Background
-        painter.fill_rounded_rect(self.x, self.y, self.width, self.height, style.radius, style.background);
+        painter.fill_rounded_rect(
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            style.radius,
+            style.background,
+        );
 
         // Border
         if style.border_width > 0.0 {
             painter.stroke_rounded_rect(
-                self.x, self.y, self.width, self.height,
-                style.radius, style.border, style.border_width,
+                self.x,
+                self.y,
+                self.width,
+                self.height,
+                style.radius,
+                style.border,
+                style.border_width,
             );
         }
 
@@ -224,7 +299,15 @@ impl Widget for Button {
 
         // Label
         let text_y = self.y + (self.height - theme.font_size) / 2.0;
-        painter.draw_text(&self.label, text_x, text_y, theme.font_size, style.foreground, &theme.font_family, false);
+        painter.draw_text(
+            &self.label,
+            text_x,
+            text_y,
+            theme.font_size,
+            style.foreground,
+            &theme.font_family,
+            false,
+        );
     }
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
@@ -250,7 +333,10 @@ impl Widget for Button {
                 EventResponse::Consumed
             }
             Event::KeyDown { key, .. } if self.state.focused && self.state.enabled => {
-                if matches!(key, liquide_ui_core::Key::Enter | liquide_ui_core::Key::Space) {
+                if matches!(
+                    key,
+                    liquide_ui_core::Key::Enter | liquide_ui_core::Key::Space
+                ) {
                     if let Some(cb) = &mut self.on_click {
                         cb();
                     }

@@ -19,7 +19,11 @@ impl BorderStyle {
     };
 
     pub fn new(width: f32, color: UiColor, radius: f32) -> Self {
-        Self { width, color, radius }
+        Self {
+            width,
+            color,
+            radius,
+        }
     }
 }
 

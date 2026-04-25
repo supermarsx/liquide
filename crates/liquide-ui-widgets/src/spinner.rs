@@ -4,8 +4,8 @@
 //! - Indeterminate: continuous spin for unknown-duration operations
 //! - Determinate: fills based on a progress value
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+use serde::{Deserialize, Serialize};
 
 /// Spinner style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

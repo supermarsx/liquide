@@ -5,6 +5,7 @@
 
 use liquide_ui_core::{
     Constraints, Event, EventResponse, LayoutResult, Painter, UiColor, UiTheme, WidgetId,
+    text::{SimpleTextMeasure, TextMeasure},
     widget::{Widget, WidgetState},
 };
 
@@ -62,7 +63,9 @@ impl Label {
     }
 
     pub fn heading(text: impl Into<String>) -> Self {
-        Self::new(text).with_style(LabelStyle::Heading).with_bold(true)
+        Self::new(text)
+            .with_style(LabelStyle::Heading)
+            .with_bold(true)
     }
 
     pub fn caption(text: impl Into<String>) -> Self {
@@ -129,36 +132,57 @@ impl Label {
 }
 
 impl Widget for Label {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
-    fn set_enabled(&mut self, e: bool) { self.state.enabled = e; }
-    fn focusable(&self) -> bool { self.selectable }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.state.enabled = e;
+    }
+    fn focusable(&self) -> bool {
+        self.selectable
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, theme: &UiTheme) -> LayoutResult {
         let fs = self.font_size(theme);
-        let char_w = fs * 0.55;
-        let w = self.text.len() as f32 * char_w;
+        let measurer = SimpleTextMeasure;
+        let w = measurer.measure_text(&self.text, fs, self.bold).0;
         let h = fs + 4.0;
         let (w, h) = constraints.clamp(w, h);
         LayoutResult::new(w, h)
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
     }
 
     fn paint(&self, painter: &mut Painter, theme: &UiTheme) {
         let fs = self.font_size(theme);
         let font_family = self.font_family(theme);
+        let measurer = SimpleTextMeasure;
         let color = self.color_override.unwrap_or_else(|| {
-            if self.state.enabled { theme.colors.text_primary } else { theme.colors.text_disabled }
+            if self.state.enabled {
+                theme.colors.text_primary
+            } else {
+                theme.colors.text_disabled
+            }
         });
 
-        let char_w = fs * 0.55;
-        let text_w = self.text.len() as f32 * char_w;
+        let text_w = measurer.measure_text(&self.text, fs, self.bold).0;
         let text_x = match self.align {
             TextAlign::Left => self.x,
             TextAlign::Center => self.x + (self.width - text_w) / 2.0,
@@ -166,13 +190,27 @@ impl Widget for Label {
         };
         let text_y = self.y + (self.height - fs) / 2.0;
 
-        painter.draw_text(&self.text, text_x, text_y, fs, color, font_family, self.bold);
+        painter.draw_text(
+            &self.text,
+            text_x,
+            text_y,
+            fs,
+            color,
+            font_family,
+            self.bold,
+        );
     }
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
         match event {
-            Event::MouseEnter => { self.state.hovered = true; EventResponse::Consumed }
-            Event::MouseLeave => { self.state.hovered = false; EventResponse::Consumed }
+            Event::MouseEnter => {
+                self.state.hovered = true;
+                EventResponse::Consumed
+            }
+            Event::MouseLeave => {
+                self.state.hovered = false;
+                EventResponse::Consumed
+            }
             _ => EventResponse::Ignored,
         }
     }

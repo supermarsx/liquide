@@ -22,6 +22,7 @@
 
 pub mod button;
 pub mod checkbox;
+pub mod drop_indicator;
 pub mod dropdown;
 pub mod label;
 pub mod list_view;
@@ -42,19 +43,20 @@ pub mod tree_view;
 // Re-exports
 pub use button::{Button, ButtonStyle, ButtonVariant};
 pub use checkbox::Checkbox;
+pub use drop_indicator::{DropIndicator, DropShape, Edge as DropEdge};
 pub use dropdown::{Dropdown, DropdownItem};
 pub use label::Label;
-pub use list_view::{ListView, ListItem, SelectionMode, RowHeightMode};
-pub use menu::{MenuBar, MenuItem, ContextMenu, MenuItemId, Shortcut};
+pub use list_view::{ListItem, ListView, RowHeightMode, SelectionMode};
+pub use menu::{ContextMenu, MenuBar, MenuItem, MenuItemId, Shortcut};
 pub use progress::ProgressBar;
 pub use scroll_view::ScrollView;
 pub use separator::Separator;
 pub use slider::Slider;
 pub use spinner::Spinner;
-pub use splitter::{Splitter, SplitPane, SplitDirection, PaneSize};
-pub use tab_view::{TabView, Tab, TabId, TabPosition};
-pub use table_view::{TableView, Column, TableRow, CellValue, SortDirection};
+pub use splitter::{PaneSize, SplitDirection, SplitPane, Splitter};
+pub use tab_view::{Tab, TabId, TabPosition, TabView};
+pub use table_view::{CellValue, Column, SortDirection, TableRow, TableView};
 pub use text_area::TextArea;
 pub use text_input::TextInput;
-pub use toolbar::{Toolbar, ToolItem, ToolItemId};
-pub use tree_view::{TreeView, TreeNode, NodeId};
+pub use toolbar::{ToolItem, ToolItemId, Toolbar};
+pub use tree_view::{NodeId, TreeNode, TreeView};

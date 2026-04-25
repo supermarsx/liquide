@@ -7,8 +7,8 @@
 //! - Virtualized scrolling for large datasets
 //! - Cell rendering callbacks
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+use serde::{Deserialize, Serialize};
 
 /// Column sort direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,7 +238,11 @@ impl TableView {
     /// Total content width (sum of visible column widths).
     #[must_use]
     pub fn content_width(&self) -> f32 {
-        self.columns.iter().filter(|c| c.visible).map(|c| c.width).sum()
+        self.columns
+            .iter()
+            .filter(|c| c.visible)
+            .map(|c| c.width)
+            .sum()
     }
 
     /// Total content height.
@@ -254,7 +258,8 @@ impl TableView {
             return (0, 0);
         }
         let first = (self.scroll_y / self.row_height).floor() as usize;
-        let count = ((self.viewport_height - self.header_height) / self.row_height).ceil() as usize + 1;
+        let count =
+            ((self.viewport_height - self.header_height) / self.row_height).ceil() as usize + 1;
         let last = (first + count).min(self.total_rows);
         (first, last)
     }
@@ -310,7 +315,8 @@ impl TableView {
         // Approximate: header text length * 8 + padding
         if let Some(col) = self.columns.get_mut(column_idx) {
             let header_width = col.header.len() as f32 * 8.0 + 20.0;
-            let content_width: f32 = self.visible_rows
+            let content_width: f32 = self
+                .visible_rows
                 .iter()
                 .filter_map(|row| row.cells.get(column_idx))
                 .map(|cell| match cell {
@@ -366,10 +372,7 @@ mod tests {
     fn test_sort_toggle() {
         let mut tv = TableView::new(WidgetId::from_raw(1), sample_columns());
         tv.sort_by("name");
-        assert_eq!(
-            tv.sort_state().unwrap().direction,
-            SortDirection::Ascending
-        );
+        assert_eq!(tv.sort_state().unwrap().direction, SortDirection::Ascending);
         tv.sort_by("name");
         assert_eq!(
             tv.sort_state().unwrap().direction,

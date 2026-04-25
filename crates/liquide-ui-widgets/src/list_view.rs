@@ -4,10 +4,10 @@
 //! are materialized at any time. Items are laid out vertically with uniform
 //! or variable row heights.
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
 #[allow(unused_imports)]
 use liquide_ui_core::widget::Widget;
+use serde::{Deserialize, Serialize};
 
 /// How row heights are determined.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -167,7 +167,9 @@ impl ListView {
             RowHeightMode::Uniform(h) => h * self.total_count as f32,
             RowHeightMode::Variable => {
                 // Sum of visible item heights + estimated for the rest.
-                let known: f32 = self.visible_items.iter()
+                let known: f32 = self
+                    .visible_items
+                    .iter()
                     .filter_map(|item| item.height)
                     .sum();
                 let avg = if !self.visible_items.is_empty() {
@@ -250,7 +252,9 @@ impl ListView {
 
     /// Focus the next item (arrow down).
     pub fn focus_next(&mut self) {
-        let next = self.focused_index.map_or(0, |i| (i + 1).min(self.total_count.saturating_sub(1)));
+        let next = self
+            .focused_index
+            .map_or(0, |i| (i + 1).min(self.total_count.saturating_sub(1)));
         self.focused_index = Some(next);
     }
 

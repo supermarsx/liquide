@@ -34,7 +34,10 @@ impl Separator {
             kind: SeparatorKind::Horizontal,
             thickness: 1.0,
             color_override: None,
-            x: 0.0, y: 0.0, width: 0.0, height: 0.0,
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
         }
     }
 
@@ -44,7 +47,10 @@ impl Separator {
             kind: SeparatorKind::Vertical,
             thickness: 1.0,
             color_override: None,
-            x: 0.0, y: 0.0, width: 0.0, height: 0.0,
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
         }
     }
 
@@ -60,13 +66,25 @@ impl Separator {
 }
 
 impl Widget for Separator {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { true }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        true
+    }
     fn set_enabled(&mut self, _: bool) {}
-    fn focusable(&self) -> bool { false }
-    fn tooltip(&self) -> Option<&str> { None }
+    fn focusable(&self) -> bool {
+        false
+    }
+    fn tooltip(&self) -> Option<&str> {
+        None
+    }
 
     fn measure(&self, constraints: &Constraints, _theme: &UiTheme) -> LayoutResult {
         match self.kind {
@@ -82,7 +100,10 @@ impl Widget for Separator {
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
     }
 
     fn paint(&self, painter: &mut Painter, theme: &UiTheme) {

@@ -6,8 +6,8 @@
 //! - Tab overflow (scroll or dropdown for many tabs)
 //! - Tab icons and badges
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+use serde::{Deserialize, Serialize};
 
 /// Unique tab identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -243,10 +243,9 @@ impl TabView {
         if self.tabs.is_empty() {
             return;
         }
-        let prev = self.active_index.map_or(
-            self.tabs.len() - 1,
-            |i| if i == 0 { self.tabs.len() - 1 } else { i - 1 },
-        );
+        let prev = self.active_index.map_or(self.tabs.len() - 1, |i| {
+            if i == 0 { self.tabs.len() - 1 } else { i - 1 }
+        });
         self.active_index = Some(prev);
     }
 

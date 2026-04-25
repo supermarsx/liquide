@@ -130,8 +130,17 @@ pub fn clip_to_rect(display_list: &DisplayList, rect: &PixelRect) -> Vec<Display
     // but no draw ops between it and its Pop, we could remove both.
     // For simplicity and correctness we leave them in — the rasterizer
     // handles empty state pairs as no-ops.
-    let _ = (clip_depth, opacity_depth, transform_depth, blend_depth,
-             filter_depth, backdrop_depth, mask_depth, stacking_depth, layer_depth);
+    let _ = (
+        clip_depth,
+        opacity_depth,
+        transform_depth,
+        blend_depth,
+        filter_depth,
+        backdrop_depth,
+        mask_depth,
+        stacking_depth,
+        layer_depth,
+    );
 
     result
 }
@@ -162,7 +171,13 @@ fn item_bounds_pixel(item: &DisplayItem) -> Option<PixelRect> {
         }
 
         DisplayItem::BoxShadow {
-            rect, offset_x, offset_y, blur_radius, spread_radius, inset, ..
+            rect,
+            offset_x,
+            offset_y,
+            blur_radius,
+            spread_radius,
+            inset,
+            ..
         } => {
             if *inset {
                 Some(PixelRect::new(rect.x, rect.y, rect.width, rect.height))
@@ -180,7 +195,12 @@ fn item_bounds_pixel(item: &DisplayItem) -> Option<PixelRect> {
             }
         }
 
-        DisplayItem::Outline { rect, width, offset, .. } => {
+        DisplayItem::Outline {
+            rect,
+            width,
+            offset,
+            ..
+        } => {
             let expand = *width + offset.max(0.0);
             Some(PixelRect::new(
                 rect.x - expand,
@@ -190,7 +210,14 @@ fn item_bounds_pixel(item: &DisplayItem) -> Option<PixelRect> {
             ))
         }
 
-        DisplayItem::Line { x1, y1, x2, y2, width, .. } => {
+        DisplayItem::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            width,
+            ..
+        } => {
             let half_w = width / 2.0;
             let min_x = x1.min(*x2) - half_w;
             let min_y = y1.min(*y2) - half_w;
@@ -207,8 +234,5 @@ fn item_bounds_pixel(item: &DisplayItem) -> Option<PixelRect> {
 /// AABB intersection test for PixelRects.
 #[inline]
 fn pixel_rects_intersect(a: &PixelRect, b: &PixelRect) -> bool {
-    a.x < b.right()
-        && a.right() > b.x
-        && a.y < b.bottom()
-        && a.bottom() > b.y
+    a.x < b.right() && a.right() > b.x && a.y < b.bottom() && a.bottom() > b.y
 }

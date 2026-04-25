@@ -1,13 +1,13 @@
 //! Tests for tile-based incremental rasterization.
 
+use crate::TileRasterizer;
 use crate::cache::TileCache;
 use crate::clipper;
 use crate::compositor;
 use crate::damage::DamageTracker;
 use crate::grid::{PixelRect, TileGrid};
 use crate::scheduler;
-use crate::tile::{Tile, TileId, TileState, DEFAULT_TILE_SIZE, validate_tile_size};
-use crate::TileRasterizer;
+use crate::tile::{DEFAULT_TILE_SIZE, Tile, TileId, TileState, validate_tile_size};
 use liquide_compositor::pixel::Color;
 use liquide_paint::display_list::{DisplayItem, DisplayList};
 
@@ -498,9 +498,10 @@ fn clipper_includes_intersecting_items() {
     let refs = clipper::clip_to_rect(&dl, &region);
 
     // Only the first rect intersects.
-    let draw_refs: Vec<_> = refs.iter().filter(|r| {
-        matches!(&dl.items[r.index], DisplayItem::FillRect { .. })
-    }).collect();
+    let draw_refs: Vec<_> = refs
+        .iter()
+        .filter(|r| matches!(&dl.items[r.index], DisplayItem::FillRect { .. }))
+        .collect();
     assert_eq!(draw_refs.len(), 1);
     assert_eq!(draw_refs[0].index, 0);
 }
@@ -716,11 +717,7 @@ fn rasterizer_semitransparent_blend() {
 
 #[test]
 fn scheduler_orders_by_distance() {
-    let dirty = vec![
-        TileId::new(5, 5),
-        TileId::new(0, 0),
-        TileId::new(2, 2),
-    ];
+    let dirty = vec![TileId::new(5, 5), TileId::new(0, 0), TileId::new(2, 2)];
     let center = TileId::new(2, 2);
     let ordered = scheduler::schedule(&dirty, center);
     assert_eq!(ordered[0], TileId::new(2, 2)); // distance 0
@@ -738,8 +735,12 @@ fn scheduler_visible_tiles_first_prioritizes_viewport() {
 
     // First 4 tiles should be within the viewport (cols 0-1, rows 0-1).
     for id in &ordered[..4] {
-        assert!(id.col < 2 && id.row < 2,
-            "expected visible tile, got ({}, {})", id.col, id.row);
+        assert!(
+            id.col < 2 && id.row < 2,
+            "expected visible tile, got ({}, {})",
+            id.col,
+            id.row
+        );
     }
 }
 

@@ -1,7 +1,7 @@
 //! Toolbar widget: horizontal strip of tool buttons, separators, and widgets.
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+use serde::{Deserialize, Serialize};
 
 /// Toolbar item identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -64,9 +64,9 @@ impl ToolItem {
     #[must_use]
     pub fn id(&self) -> Option<ToolItemId> {
         match self {
-            Self::Button { id, .. }
-            | Self::Toggle { id, .. }
-            | Self::DropdownButton { id, .. } => Some(*id),
+            Self::Button { id, .. } | Self::Toggle { id, .. } | Self::DropdownButton { id, .. } => {
+                Some(*id)
+            }
             Self::Separator | Self::Spacer => None,
         }
     }
@@ -155,9 +155,9 @@ impl Toolbar {
     /// Check if a toggle-button is pressed.
     #[must_use]
     pub fn is_pressed(&self, id: ToolItemId) -> bool {
-        self.items.iter().any(|item| {
-            matches!(item, ToolItem::Toggle { id: tid, pressed: true, .. } if *tid == id)
-        })
+        self.items.iter().any(
+            |item| matches!(item, ToolItem::Toggle { id: tid, pressed: true, .. } if *tid == id),
+        )
     }
 
     /// Total toolbar size along the main axis.

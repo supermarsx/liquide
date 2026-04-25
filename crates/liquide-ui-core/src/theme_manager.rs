@@ -22,12 +22,7 @@ pub enum ThemePreset {
 
 impl ThemePreset {
     /// All available presets, in cycle order.
-    pub const ALL: [ThemePreset; 4] = [
-        Self::LiquidGlass,
-        Self::Night,
-        Self::Sunset,
-        Self::Midday,
-    ];
+    pub const ALL: [ThemePreset; 4] = [Self::LiquidGlass, Self::Night, Self::Sunset, Self::Midday];
 
     /// Build the full `UiTheme` for this preset.
     pub fn to_theme(self) -> UiTheme {
@@ -199,7 +194,10 @@ impl ThemeManager {
     /// Cycle to the next preset in order.
     pub fn cycle_next(&mut self) {
         let all = ThemePreset::ALL;
-        let idx = all.iter().position(|p| *p == self.config.preset).unwrap_or(0);
+        let idx = all
+            .iter()
+            .position(|p| *p == self.config.preset)
+            .unwrap_or(0);
         let next = (idx + 1) % all.len();
         self.set_preset(all[next]);
     }
@@ -207,7 +205,10 @@ impl ThemeManager {
     /// Cycle to the previous preset.
     pub fn cycle_prev(&mut self) {
         let all = ThemePreset::ALL;
-        let idx = all.iter().position(|p| *p == self.config.preset).unwrap_or(0);
+        let idx = all
+            .iter()
+            .position(|p| *p == self.config.preset)
+            .unwrap_or(0);
         let prev = if idx == 0 { all.len() - 1 } else { idx - 1 };
         self.set_preset(all[prev]);
     }
@@ -284,6 +285,7 @@ mod tests {
         mgr.set_mode(ThemeMode::Light);
         assert_eq!(mgr.current_preset(), ThemePreset::Midday);
         assert!(!mgr.active_theme().is_dark());
+        assert_eq!(mgr.active_theme().widgets, UiTheme::light().widgets);
     }
 
     #[test]
@@ -320,7 +322,10 @@ mod tests {
     #[test]
     fn test_preset_from_name() {
         assert_eq!(ThemePreset::from_name("Night"), Some(ThemePreset::Night));
-        assert_eq!(ThemePreset::from_name("liquid_glass"), Some(ThemePreset::LiquidGlass));
+        assert_eq!(
+            ThemePreset::from_name("liquid_glass"),
+            Some(ThemePreset::LiquidGlass)
+        );
         assert_eq!(ThemePreset::from_name("unknown"), None);
     }
 

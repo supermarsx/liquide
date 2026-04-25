@@ -8,6 +8,7 @@ use liquide_ui_core::{
     Constraints, Event, EventResponse, Key, LayoutResult, Painter, UiTheme, WidgetId,
     widget::{Widget, WidgetState},
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 /// A multi-line text editor.
 pub struct TextArea {
@@ -36,13 +37,18 @@ impl TextArea {
             read_only: false,
             placeholder: String::new(),
             on_change: None,
-            x: 0.0, y: 0.0, width: 0.0, height: 0.0,
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
         }
     }
 
     pub fn with_text(mut self, text: &str) -> Self {
         self.lines = text.lines().map(String::from).collect();
-        if self.lines.is_empty() { self.lines.push(String::new()); }
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
         self.cursor_line = 0;
         self.cursor_col = 0;
         self
@@ -75,10 +81,13 @@ impl TextArea {
 
     /// Set text content programmatically.
     pub fn set_text(&mut self, text: &str) {
+        let column = self.cursor_grapheme_column();
         self.lines = text.lines().map(String::from).collect();
-        if self.lines.is_empty() { self.lines.push(String::new()); }
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
         self.cursor_line = self.cursor_line.min(self.lines.len() - 1);
-        self.cursor_col = self.cursor_col.min(self.lines[self.cursor_line].len());
+        self.cursor_col = boundary_for_grapheme_column(&self.lines[self.cursor_line], column);
     }
 
     fn line_height(theme: &UiTheme) -> f32 {
@@ -97,14 +106,18 @@ impl TextArea {
     }
 
     fn insert_char(&mut self, c: char) {
-        if self.read_only { return; }
+        if self.read_only {
+            return;
+        }
         self.lines[self.cursor_line].insert(self.cursor_col, c);
         self.cursor_col += c.len_utf8();
         self.notify_change();
     }
 
     fn insert_newline(&mut self) {
-        if self.read_only { return; }
+        if self.read_only {
+            return;
+        }
         let rest = self.lines[self.cursor_line][self.cursor_col..].to_string();
         self.lines[self.cursor_line].truncate(self.cursor_col);
         self.cursor_line += 1;
@@ -114,10 +127,11 @@ impl TextArea {
     }
 
     fn delete_backward(&mut self) {
-        if self.read_only { return; }
+        if self.read_only {
+            return;
+        }
         if self.cursor_col > 0 {
-            let prev = self.lines[self.cursor_line][..self.cursor_col]
-                .char_indices().last().map(|(i, _)| i).unwrap_or(0);
+            let prev = prev_grapheme_boundary(&self.lines[self.cursor_line], self.cursor_col);
             self.lines[self.cursor_line].drain(prev..self.cursor_col);
             self.cursor_col = prev;
         } else if self.cursor_line > 0 {
@@ -130,12 +144,12 @@ impl TextArea {
     }
 
     fn delete_forward(&mut self) {
-        if self.read_only { return; }
+        if self.read_only {
+            return;
+        }
         let line_len = self.lines[self.cursor_line].len();
         if self.cursor_col < line_len {
-            let next = self.lines[self.cursor_line][self.cursor_col..]
-                .char_indices().nth(1).map(|(i, _)| self.cursor_col + i)
-                .unwrap_or(line_len);
+            let next = next_grapheme_boundary(&self.lines[self.cursor_line], self.cursor_col);
             self.lines[self.cursor_line].drain(self.cursor_col..next);
         } else if self.cursor_line + 1 < self.lines.len() {
             let next_line = self.lines.remove(self.cursor_line + 1);
@@ -155,20 +169,74 @@ impl TextArea {
             self.scroll_offset_y = cursor_y + lh - visible_h;
         }
     }
+
+    fn cursor_grapheme_column(&self) -> usize {
+        self.lines
+            .get(self.cursor_line)
+            .map(|line| grapheme_column(line, self.cursor_col))
+            .unwrap_or(0)
+    }
+}
+
+fn prev_grapheme_boundary(text: &str, cursor: usize) -> usize {
+    let mut last = 0;
+    for (idx, _) in UnicodeSegmentation::grapheme_indices(text, true) {
+        if idx >= cursor {
+            break;
+        }
+        last = idx;
+    }
+    last
+}
+
+fn next_grapheme_boundary(text: &str, cursor: usize) -> usize {
+    for (idx, _) in UnicodeSegmentation::grapheme_indices(text, true) {
+        if idx > cursor {
+            return idx;
+        }
+    }
+    text.len()
+}
+
+fn grapheme_column(text: &str, cursor: usize) -> usize {
+    UnicodeSegmentation::graphemes(&text[..cursor.min(text.len())], true).count()
+}
+
+fn boundary_for_grapheme_column(text: &str, column: usize) -> usize {
+    UnicodeSegmentation::grapheme_indices(text, true)
+        .nth(column)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len())
 }
 
 impl Default for TextArea {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for TextArea {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
-    fn set_enabled(&mut self, e: bool) { self.state.enabled = e; }
-    fn focusable(&self) -> bool { true }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.state.enabled = e;
+    }
+    fn focusable(&self) -> bool {
+        true
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, theme: &UiTheme) -> LayoutResult {
         let lh = Self::line_height(theme);
@@ -178,7 +246,10 @@ impl Widget for TextArea {
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
     }
 
     fn paint(&self, painter: &mut Painter, theme: &UiTheme) {
@@ -188,20 +259,38 @@ impl Widget for TextArea {
         let padding = 4.0;
 
         // Background
-        let bg = if self.state.focused { colors.surface_hover } else { colors.surface };
+        let bg = if self.state.focused {
+            colors.surface_hover
+        } else {
+            colors.surface
+        };
         painter.fill_rounded_rect(self.x, self.y, self.width, self.height, radius, bg);
-        let border = if self.state.focused { colors.accent } else { colors.border };
+        let border = if self.state.focused {
+            colors.accent
+        } else {
+            colors.border
+        };
         painter.stroke_rounded_rect(self.x, self.y, self.width, self.height, radius, border, 1.0);
 
         // Clip
-        painter.push_clip(self.x + 1.0, self.y + 1.0, self.width - 2.0, self.height - 2.0);
+        painter.push_clip(
+            self.x + 1.0,
+            self.y + 1.0,
+            self.width - 2.0,
+            self.height - 2.0,
+        );
 
         // Placeholder
         let is_empty = self.lines.len() == 1 && self.lines[0].is_empty();
         if is_empty && !self.state.focused {
             painter.draw_text(
-                &self.placeholder, self.x + padding, self.y + padding,
-                theme.font_size, colors.text_disabled, &theme.font_family, false,
+                &self.placeholder,
+                self.x + padding,
+                self.y + padding,
+                theme.font_size,
+                colors.text_disabled,
+                &theme.font_family,
+                false,
             );
         } else {
             // Lines
@@ -210,15 +299,23 @@ impl Widget for TextArea {
             for i in first_visible..(first_visible + visible_count).min(self.lines.len()) {
                 let ly = self.y + padding + i as f32 * lh - self.scroll_offset_y;
                 painter.draw_text(
-                    &self.lines[i], self.x + padding, ly,
-                    theme.font_size, colors.text_primary, &theme.font_family, false,
+                    &self.lines[i],
+                    self.x + padding,
+                    ly,
+                    theme.font_size,
+                    colors.text_primary,
+                    &theme.font_family,
+                    false,
                 );
             }
 
             // Cursor
             if self.state.focused {
                 let char_w = theme.font_size * 0.55;
-                let cx = self.x + padding + self.cursor_col as f32 * char_w;
+                let cx = self.x
+                    + padding
+                    + grapheme_column(&self.lines[self.cursor_line], self.cursor_col) as f32
+                        * char_w;
                 let cy = self.y + padding + self.cursor_line as f32 * lh - self.scroll_offset_y;
                 painter.draw_line(cx, cy, cx, cy + lh - 2.0, colors.accent, 1.5);
             }
@@ -229,18 +326,35 @@ impl Widget for TextArea {
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
         match event {
-            Event::MouseEnter => { self.state.hovered = true; EventResponse::Consumed }
-            Event::MouseLeave => { self.state.hovered = false; EventResponse::Consumed }
+            Event::MouseEnter => {
+                self.state.hovered = true;
+                EventResponse::Consumed
+            }
+            Event::MouseLeave => {
+                self.state.hovered = false;
+                EventResponse::Consumed
+            }
             Event::MouseDown { .. } => {
                 self.state.pressed = true;
                 EventResponse::RequestFocus
             }
-            Event::MouseUp { .. } => { self.state.pressed = false; EventResponse::Consumed }
-            Event::FocusIn => { self.state.focused = true; EventResponse::Consumed }
-            Event::FocusOut => { self.state.focused = false; EventResponse::Consumed }
+            Event::MouseUp { .. } => {
+                self.state.pressed = false;
+                EventResponse::Consumed
+            }
+            Event::FocusIn => {
+                self.state.focused = true;
+                EventResponse::Consumed
+            }
+            Event::FocusOut => {
+                self.state.focused = false;
+                EventResponse::Consumed
+            }
             Event::Scroll { dy, .. } => {
-                self.scroll_offset_y = (self.scroll_offset_y + dy * 30.0)
-                    .clamp(0.0, (self.content_height(&UiTheme::default()) - self.height).max(0.0));
+                self.scroll_offset_y = (self.scroll_offset_y + dy * 30.0).clamp(
+                    0.0,
+                    (self.content_height(&UiTheme::default()) - self.height).max(0.0),
+                );
                 EventResponse::Consumed
             }
             Event::TextInput { text } if self.state.focused => {
@@ -253,46 +367,105 @@ impl Widget for TextArea {
                 }
                 EventResponse::Consumed
             }
-            Event::KeyDown { key, .. } if self.state.focused => {
-                match key {
-                    Key::Backspace => { self.delete_backward(); EventResponse::Consumed }
-                    Key::Delete => { self.delete_forward(); EventResponse::Consumed }
-                    Key::Enter => { self.insert_newline(); EventResponse::Consumed }
-                    Key::ArrowLeft => {
-                        if self.cursor_col > 0 {
-                            self.cursor_col -= 1;
-                        } else if self.cursor_line > 0 {
-                            self.cursor_line -= 1;
-                            self.cursor_col = self.lines[self.cursor_line].len();
-                        }
-                        EventResponse::Consumed
-                    }
-                    Key::ArrowRight => {
-                        let len = self.lines[self.cursor_line].len();
-                        if self.cursor_col < len {
-                            self.cursor_col += 1;
-                        } else if self.cursor_line + 1 < self.lines.len() {
-                            self.cursor_line += 1;
-                            self.cursor_col = 0;
-                        }
-                        EventResponse::Consumed
-                    }
-                    Key::ArrowUp if self.cursor_line > 0 => {
-                        self.cursor_line -= 1;
-                        self.cursor_col = self.cursor_col.min(self.lines[self.cursor_line].len());
-                        EventResponse::Consumed
-                    }
-                    Key::ArrowDown if self.cursor_line + 1 < self.lines.len() => {
-                        self.cursor_line += 1;
-                        self.cursor_col = self.cursor_col.min(self.lines[self.cursor_line].len());
-                        EventResponse::Consumed
-                    }
-                    Key::Home => { self.cursor_col = 0; EventResponse::Consumed }
-                    Key::End => { self.cursor_col = self.lines[self.cursor_line].len(); EventResponse::Consumed }
-                    _ => EventResponse::Ignored,
+            Event::KeyDown { key, .. } if self.state.focused => match key {
+                Key::Backspace => {
+                    self.delete_backward();
+                    EventResponse::Consumed
                 }
-            }
+                Key::Delete => {
+                    self.delete_forward();
+                    EventResponse::Consumed
+                }
+                Key::Enter => {
+                    self.insert_newline();
+                    EventResponse::Consumed
+                }
+                Key::ArrowLeft => {
+                    if self.cursor_col > 0 {
+                        self.cursor_col =
+                            prev_grapheme_boundary(&self.lines[self.cursor_line], self.cursor_col);
+                    } else if self.cursor_line > 0 {
+                        self.cursor_line -= 1;
+                        self.cursor_col = self.lines[self.cursor_line].len();
+                    }
+                    EventResponse::Consumed
+                }
+                Key::ArrowRight => {
+                    let len = self.lines[self.cursor_line].len();
+                    if self.cursor_col < len {
+                        self.cursor_col =
+                            next_grapheme_boundary(&self.lines[self.cursor_line], self.cursor_col);
+                    } else if self.cursor_line + 1 < self.lines.len() {
+                        self.cursor_line += 1;
+                        self.cursor_col = 0;
+                    }
+                    EventResponse::Consumed
+                }
+                Key::ArrowUp if self.cursor_line > 0 => {
+                    let column = self.cursor_grapheme_column();
+                    self.cursor_line -= 1;
+                    self.cursor_col = boundary_for_grapheme_column(&self.lines[self.cursor_line], column);
+                    EventResponse::Consumed
+                }
+                Key::ArrowDown if self.cursor_line + 1 < self.lines.len() => {
+                    let column = self.cursor_grapheme_column();
+                    self.cursor_line += 1;
+                    self.cursor_col = boundary_for_grapheme_column(&self.lines[self.cursor_line], column);
+                    EventResponse::Consumed
+                }
+                Key::Home => {
+                    self.cursor_col = 0;
+                    EventResponse::Consumed
+                }
+                Key::End => {
+                    self.cursor_col = self.lines[self.cursor_line].len();
+                    EventResponse::Consumed
+                }
+                _ => EventResponse::Ignored,
+            },
             _ => EventResponse::Ignored,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_ui_core::Modifiers;
+
+    fn focused(text: &str) -> TextArea {
+        let mut area = TextArea::new().with_text(text);
+        area.state.focused = true;
+        area
+    }
+
+    #[test]
+    fn arrow_navigation_keeps_precomposed_unicode_insert_safe() {
+        let mut area = focused("é");
+        let _ = area.handle_event(&Event::KeyDown {
+            key: Key::ArrowRight,
+            modifiers: Modifiers::NONE,
+        });
+        assert_eq!(area.cursor_col, "é".len());
+
+        let _ = area.handle_event(&Event::TextInput { text: "x".into() });
+        assert_eq!(area.text(), "éx");
+    }
+
+    #[test]
+    fn vertical_navigation_retargets_to_grapheme_boundaries() {
+        let mut area = focused("a\néé");
+        area.cursor_line = 0;
+        area.cursor_col = 1;
+
+        let _ = area.handle_event(&Event::KeyDown {
+            key: Key::ArrowDown,
+            modifiers: Modifiers::NONE,
+        });
+        assert_eq!(area.cursor_line, 1);
+        assert_eq!(area.cursor_col, "é".len());
+
+        let _ = area.handle_event(&Event::TextInput { text: "x".into() });
+        assert_eq!(area.lines[1], "éxé");
     }
 }

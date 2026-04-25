@@ -86,12 +86,7 @@ pub fn composite_region(
 }
 
 /// Composite a single tile into the framebuffer.
-pub fn composite_tile(
-    grid: &TileGrid,
-    tile_id: TileId,
-    framebuffer: &mut [u8],
-    stride: u32,
-) {
+pub fn composite_tile(grid: &TileGrid, tile_id: TileId, framebuffer: &mut [u8], stride: u32) {
     let tile = grid.tile_at(tile_id.col, tile_id.row);
     let tile_size = grid.tile_size();
     let bpp = 4usize;

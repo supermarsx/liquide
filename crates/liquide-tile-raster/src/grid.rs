@@ -15,7 +15,12 @@ impl PixelRect {
     /// Create a new pixel rectangle.
     #[inline]
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// Right edge.
@@ -101,12 +106,14 @@ impl TileGrid {
         let mut tiles = Vec::with_capacity((cols * rows) as usize);
         for row in 0..rows {
             for col in 0..cols {
-                let tw = tile_size.min(viewport_width.saturating_sub(
-                    col.checked_mul(tile_size).unwrap_or(viewport_width),
-                ));
-                let th = tile_size.min(viewport_height.saturating_sub(
-                    row.checked_mul(tile_size).unwrap_or(viewport_height),
-                ));
+                let tw = tile_size.min(
+                    viewport_width
+                        .saturating_sub(col.checked_mul(tile_size).unwrap_or(viewport_width)),
+                );
+                let th = tile_size.min(
+                    viewport_height
+                        .saturating_sub(row.checked_mul(tile_size).unwrap_or(viewport_height)),
+                );
                 tiles.push(Tile::new(TileId::new(col, row), tw, th));
             }
         }
@@ -163,8 +170,12 @@ impl TileGrid {
     /// Panics if col >= cols or row >= rows.
     #[inline]
     pub fn tile_at(&self, col: u32, row: u32) -> &Tile {
-        debug_assert!(col < self.cols && row < self.rows,
-            "tile_at({col}, {row}) out of bounds ({}, {})", self.cols, self.rows);
+        debug_assert!(
+            col < self.cols && row < self.rows,
+            "tile_at({col}, {row}) out of bounds ({}, {})",
+            self.cols,
+            self.rows
+        );
         &self.tiles[(row * self.cols + col) as usize]
     }
 
@@ -174,8 +185,12 @@ impl TileGrid {
     /// Panics if col >= cols or row >= rows.
     #[inline]
     pub fn tile_at_mut(&mut self, col: u32, row: u32) -> &mut Tile {
-        debug_assert!(col < self.cols && row < self.rows,
-            "tile_at_mut({col}, {row}) out of bounds ({}, {})", self.cols, self.rows);
+        debug_assert!(
+            col < self.cols && row < self.rows,
+            "tile_at_mut({col}, {row}) out of bounds ({}, {})",
+            self.cols,
+            self.rows
+        );
         &mut self.tiles[(row * self.cols + col) as usize]
     }
 
@@ -226,18 +241,20 @@ impl TileGrid {
         let mut new_tiles = Vec::with_capacity((new_cols * new_rows) as usize);
         for row in 0..new_rows {
             for col in 0..new_cols {
-                let tw = self.tile_size.min(new_width.saturating_sub(
-                    col.checked_mul(self.tile_size).unwrap_or(new_width),
-                ));
-                let th = self.tile_size.min(new_height.saturating_sub(
-                    row.checked_mul(self.tile_size).unwrap_or(new_height),
-                ));
+                let tw = self.tile_size.min(
+                    new_width.saturating_sub(col.checked_mul(self.tile_size).unwrap_or(new_width)),
+                );
+                let th = self.tile_size.min(
+                    new_height
+                        .saturating_sub(row.checked_mul(self.tile_size).unwrap_or(new_height)),
+                );
 
                 // Try to reuse existing clean tile if it fits
                 if col < self.cols && row < self.rows {
                     let old_idx = (row * self.cols + col) as usize;
                     let old_tile = &self.tiles[old_idx];
-                    if old_tile.width == tw && old_tile.height == th
+                    if old_tile.width == tw
+                        && old_tile.height == th
                         && old_tile.state == TileState::Clean
                     {
                         // Preserve the clean tile

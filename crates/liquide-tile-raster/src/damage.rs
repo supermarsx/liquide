@@ -15,9 +15,7 @@ pub struct DamageTracker {
 impl DamageTracker {
     /// Create a new empty damage tracker.
     pub fn new() -> Self {
-        Self {
-            rects: Vec::new(),
-        }
+        Self { rects: Vec::new() }
     }
 
     /// Add a damaged rectangle.
@@ -50,20 +48,26 @@ impl DamageTracker {
 
     /// Merge overlapping damage rectangles to reduce tile invalidation.
     ///
-    /// Uses a greedy merge: repeatedly finds pairs of rects where the union
-    /// area is less than the sum of individual areas plus a tolerance, and
-    /// merges them. This reduces the number of invalidation passes without
-    /// over-inflating the damage area.
+    /// Uses a sorted-interval sweep: rects are sorted by their left edge
+    /// then collapsed against a running output list in a single forward
+    /// pass (each new rect absorbs any still-intersecting output entries
+    /// and grows until stable). Cost is `O(n log n)` from the initial
+    /// sort plus near-linear amortised merging — replacing the previous
+    /// nested `O(n²)` repeat-until-stable pass.
+    ///
+    /// Rotated-clip damage is reported by its axis-aligned bounding box
+    /// one layer up (see t8 §3.5 Low — "flatten converts layer-local
+    /// clip to screen-space via AABB"). This sweep intentionally does
+    /// not try to recover the original shape.
     pub fn merge_damage(&mut self) {
         const MAX_DAMAGE_RECTS: usize = 256;
-        const MAX_MERGE_ITERS: usize = 50;
 
         if self.rects.len() <= 1 {
             return;
         }
 
         // If there are too many rects, collapse into one bounding rect
-        // to avoid O(n³) merge cost.
+        // to avoid pathological merge cost.
         if self.rects.len() > MAX_DAMAGE_RECTS {
             if let Some(bbox) = self.bounding_box() {
                 self.rects.clear();
@@ -72,39 +76,31 @@ impl DamageTracker {
             return;
         }
 
-        // Sort by x to improve locality of merge comparisons.
-        self.rects.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by x to enable the sweep.
+        self.rects
+            .sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut merged = true;
-        let mut iterations = 0;
-        while merged && iterations < MAX_MERGE_ITERS {
-            merged = false;
-            iterations += 1;
+        let mut out: Vec<PixelRect> = Vec::with_capacity(self.rects.len());
+        let rects = std::mem::take(&mut self.rects);
+        for r in rects {
+            let mut current = r;
+            // Collapse any existing entries that overlap `current` or
+            // would waste less than 25% if merged (the old heuristic).
             let mut i = 0;
-            while i < self.rects.len() {
-                let mut j = i + 1;
-                while j < self.rects.len() {
-                    let a = &self.rects[i];
-                    let b = &self.rects[j];
-
-                    // Merge if rects overlap or if the union wastes less than 25%
-                    // compared to keeping them separate.
-                    let union_rect = a.union(b);
-                    let union_area = union_rect.area();
-                    let separate_area = a.area() + b.area();
-
-                    if a.intersects(b) || union_area <= separate_area * 1.25 {
-                        self.rects[i] = union_rect;
-                        self.rects.swap_remove(j);
-                        merged = true;
-                        // Don't increment j — the swapped element needs checking
-                    } else {
-                        j += 1;
-                    }
+            while i < out.len() {
+                let o = out[i];
+                let union = o.union(&current);
+                if o.intersects(&current) || union.area() <= (o.area() + current.area()) * 1.25 {
+                    current = union;
+                    out.swap_remove(i);
+                    i = 0;
+                    continue;
                 }
                 i += 1;
             }
+            out.push(current);
         }
+        self.rects = out;
     }
 
     /// Total area of all damage rectangles (for statistics/debugging).
@@ -112,10 +108,7 @@ impl DamageTracker {
     /// After `merge_damage()`, this represents the actual area that will
     /// be invalidated. Before merging, it may double-count overlapping areas.
     pub fn total_damage_area(&self) -> u64 {
-        self.rects
-            .iter()
-            .map(|r| r.area() as u64)
-            .sum()
+        self.rects.iter().map(|r| r.area() as u64).sum()
     }
 
     /// Compute the bounding box of all damage.

@@ -6,8 +6,8 @@
 //! - Virtual scrolling for large trees
 //! - Flat rendering of the visible subset
 
-use serde::{Deserialize, Serialize};
 use liquide_ui_core::WidgetId;
+use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a tree node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -260,7 +260,9 @@ mod tests {
                 parent_index: Some(0),
             },
             FlatTreeEntry {
-                node: TreeNode::new(NodeId(3), "Child B").with_children().with_depth(1),
+                node: TreeNode::new(NodeId(3), "Child B")
+                    .with_children()
+                    .with_depth(1),
                 parent_index: Some(0),
             },
             FlatTreeEntry {
@@ -317,7 +319,11 @@ mod tests {
         let mut tv = TreeView::new(WidgetId::from_raw(1));
         tv.set_nodes(sample_nodes());
         tv.expand_all();
-        assert!(tv.nodes().iter().all(|n| !n.node.has_children || n.node.expanded));
+        assert!(
+            tv.nodes()
+                .iter()
+                .all(|n| !n.node.has_children || n.node.expanded)
+        );
         tv.collapse_all();
         assert!(tv.nodes().iter().all(|n| !n.node.expanded));
     }

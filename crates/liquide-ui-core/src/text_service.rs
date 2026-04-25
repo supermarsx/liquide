@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use liquide_font_rasterizer::database::FontDatabase;
 use liquide_font_rasterizer::metrics::{FontMetricsProvider, RealFontMetrics};
 use liquide_font_rasterizer::shaper::TextShaper;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::theme::{FontToken, UiTheme};
 
@@ -42,7 +43,9 @@ impl TextService {
     }
 
     fn lock_font_db(&self) -> MutexGuard<'_, FontDatabase> {
-        self.font_db.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.font_db
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// Measure single-line text dimensions.
@@ -70,17 +73,14 @@ impl TextService {
             (width, metrics.line_height)
         } else {
             let m = RealFontMetrics::approximate(font_size);
-            let width = text.len() as f32 * (m.avg_char_width + letter_spacing);
+            let width = UnicodeSegmentation::graphemes(text, true).count() as f32
+                * (m.avg_char_width + letter_spacing);
             (width, m.line_height)
         }
     }
 
     /// Measure text using a font token from the theme.
-    pub fn measure_with_token(
-        &self,
-        text: &str,
-        token: &FontToken,
-    ) -> (f32, f32) {
+    pub fn measure_with_token(&self, text: &str, token: &FontToken) -> (f32, f32) {
         self.measure(
             text,
             &token.family,
@@ -91,12 +91,7 @@ impl TextService {
     }
 
     /// Get font metrics for a specific font.
-    pub fn metrics(
-        &self,
-        font_family: &str,
-        font_size: f32,
-        font_weight: u16,
-    ) -> RealFontMetrics {
+    pub fn metrics(&self, font_family: &str, font_size: f32, font_weight: u16) -> RealFontMetrics {
         let db = self.lock_font_db();
         if let Some(face_id) = db.resolve(font_family, font_weight, false) {
             let provider = FontMetricsProvider::new(&db);
@@ -110,11 +105,7 @@ impl TextService {
     ///
     /// Uses the theme's font configuration to map role names like
     /// "primary_ui", "display", "terminal", etc. to `FontToken`s.
-    pub fn resolve_font_role<'a>(
-        &self,
-        theme: &'a UiTheme,
-        role: &str,
-    ) -> &'a FontToken {
+    pub fn resolve_font_role<'a>(&self, theme: &'a UiTheme, role: &str) -> &'a FontToken {
         theme.font_for_role(role)
     }
 
@@ -221,10 +212,23 @@ mod tests {
     }
 
     #[test]
+    fn test_measure_fallback_counts_graphemes_not_bytes() {
+        let svc = TextService::new_fallback();
+        let (precomposed, _) = svc.measure("é", "Manrope", 14.0, 400, 0.0);
+        let (combining, _) = svc.measure("e\u{0301}", "Manrope", 14.0, 400, 0.0);
+        assert!((precomposed - combining).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn test_layout_wrapped() {
         let svc = TextService::new_fallback();
         let lines = svc.layout_wrapped(
-            "Hello World this is a long text", "Manrope", 14.0, 400, 0.0, 50.0,
+            "Hello World this is a long text",
+            "Manrope",
+            14.0,
+            400,
+            0.0,
+            50.0,
         );
         assert!(!lines.is_empty());
         for line in &lines {

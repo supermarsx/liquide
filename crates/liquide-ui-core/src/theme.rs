@@ -1084,7 +1084,7 @@ impl UiTheme {
             mode: ThemeMode::Light,
             colors: ThemeColors::midday(),
             fonts: ThemeFonts::default(),
-            widgets: WidgetThemes::liquid_glass_dark(), // TODO: light widget variants.
+            widgets: WidgetThemes::liquid_glass_light(),
             elevation: ThemeElevation::default(),
             motion: ThemeMotion::default(),
             font_size: 14.0,

@@ -140,7 +140,15 @@ impl Painter {
         });
     }
 
-    pub fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: UiColor) {
+    pub fn fill_rounded_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        color: UiColor,
+    ) {
         self.commands.push(PaintCommand::FillRoundedRect {
             x: x + self.offset_x,
             y: y + self.offset_y,
@@ -162,7 +170,16 @@ impl Painter {
         });
     }
 
-    pub fn stroke_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: UiColor, width: f32) {
+    pub fn stroke_rounded_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        color: UiColor,
+        width: f32,
+    ) {
         self.commands.push(PaintCommand::StrokeRoundedRect {
             x: x + self.offset_x,
             y: y + self.offset_y,
@@ -226,7 +243,8 @@ impl Painter {
     }
 
     pub fn push_clip(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.clip_stack.push((x + self.offset_x, y + self.offset_y, w, h));
+        self.clip_stack
+            .push((x + self.offset_x, y + self.offset_y, w, h));
         self.commands.push(PaintCommand::PushClip {
             x: x + self.offset_x,
             y: y + self.offset_y,

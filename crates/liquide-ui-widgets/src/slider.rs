@@ -47,7 +47,10 @@ impl Slider {
             show_value: false,
             on_change: None,
             dragging: false,
-            x: 0.0, y: 0.0, width: 0.0, height: 0.0,
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
         }
     }
 
@@ -76,7 +79,9 @@ impl Slider {
         self
     }
 
-    pub fn value(&self) -> f32 { self.value }
+    pub fn value(&self) -> f32 {
+        self.value
+    }
 
     pub fn set_value(&mut self, v: f32) {
         self.value = self.snap(v);
@@ -93,16 +98,25 @@ impl Slider {
     }
 
     fn fraction(&self) -> f32 {
-        if (self.max - self.min).abs() < f32::EPSILON { 0.0 }
-        else { (self.value - self.min) / (self.max - self.min) }
+        if (self.max - self.min).abs() < f32::EPSILON {
+            0.0
+        } else {
+            (self.value - self.min) / (self.max - self.min)
+        }
     }
 
     fn value_from_pos(&self, pos: f32) -> f32 {
         let (start, len) = match self.orientation {
-            SliderOrientation::Horizontal => (self.x + THUMB_RADIUS, self.width - THUMB_RADIUS * 2.0),
-            SliderOrientation::Vertical => (self.y + THUMB_RADIUS, self.height - THUMB_RADIUS * 2.0),
+            SliderOrientation::Horizontal => {
+                (self.x + THUMB_RADIUS, self.width - THUMB_RADIUS * 2.0)
+            }
+            SliderOrientation::Vertical => {
+                (self.y + THUMB_RADIUS, self.height - THUMB_RADIUS * 2.0)
+            }
         };
-        if len <= 0.0 { return self.min; }
+        if len <= 0.0 {
+            return self.min;
+        }
         let t = ((pos - start) / len).clamp(0.0, 1.0);
         self.snap(self.min + t * (self.max - self.min))
     }
@@ -123,13 +137,27 @@ impl Slider {
 }
 
 impl Widget for Slider {
-    fn id(&self) -> WidgetId { self.state.id }
-    fn visible(&self) -> bool { self.state.visible }
-    fn set_visible(&mut self, v: bool) { self.state.visible = v; }
-    fn enabled(&self) -> bool { self.state.enabled }
-    fn set_enabled(&mut self, e: bool) { self.state.enabled = e; }
-    fn focusable(&self) -> bool { true }
-    fn tooltip(&self) -> Option<&str> { self.state.tooltip.as_deref() }
+    fn id(&self) -> WidgetId {
+        self.state.id
+    }
+    fn visible(&self) -> bool {
+        self.state.visible
+    }
+    fn set_visible(&mut self, v: bool) {
+        self.state.visible = v;
+    }
+    fn enabled(&self) -> bool {
+        self.state.enabled
+    }
+    fn set_enabled(&mut self, e: bool) {
+        self.state.enabled = e;
+    }
+    fn focusable(&self) -> bool {
+        true
+    }
+    fn tooltip(&self) -> Option<&str> {
+        self.state.tooltip.as_deref()
+    }
 
     fn measure(&self, constraints: &Constraints, _theme: &UiTheme) -> LayoutResult {
         match self.orientation {
@@ -145,7 +173,10 @@ impl Widget for Slider {
     }
 
     fn layout(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.x = x; self.y = y; self.width = w; self.height = h;
+        self.x = x;
+        self.y = y;
+        self.width = w;
+        self.height = h;
     }
 
     fn paint(&self, painter: &mut Painter, theme: &UiTheme) {
@@ -161,13 +192,21 @@ impl Widget for Slider {
 
                 // Track background
                 painter.fill_rounded_rect(
-                    self.x, track_y, self.width, TRACK_HEIGHT,
-                    TRACK_HEIGHT / 2.0, colors.surface_hover,
+                    self.x,
+                    track_y,
+                    self.width,
+                    TRACK_HEIGHT,
+                    TRACK_HEIGHT / 2.0,
+                    colors.surface_hover,
                 );
                 // Track fill
                 painter.fill_rounded_rect(
-                    self.x, track_y, thumb_cx - self.x, TRACK_HEIGHT,
-                    TRACK_HEIGHT / 2.0, colors.accent,
+                    self.x,
+                    track_y,
+                    thumb_cx - self.x,
+                    TRACK_HEIGHT,
+                    TRACK_HEIGHT / 2.0,
+                    colors.accent,
                 );
                 // Thumb
                 let thumb_color = if self.dragging {
@@ -179,23 +218,39 @@ impl Widget for Slider {
                 };
                 painter.fill_circle(thumb_cx, cy, THUMB_RADIUS, thumb_color);
                 painter.stroke_rounded_rect(
-                    thumb_cx - THUMB_RADIUS, cy - THUMB_RADIUS,
-                    THUMB_RADIUS * 2.0, THUMB_RADIUS * 2.0,
-                    THUMB_RADIUS, colors.accent, 2.0,
+                    thumb_cx - THUMB_RADIUS,
+                    cy - THUMB_RADIUS,
+                    THUMB_RADIUS * 2.0,
+                    THUMB_RADIUS * 2.0,
+                    THUMB_RADIUS,
+                    colors.accent,
+                    2.0,
                 );
                 // Focus ring
                 if self.state.focused {
                     painter.stroke_rounded_rect(
-                        thumb_cx - THUMB_RADIUS - 2.0, cy - THUMB_RADIUS - 2.0,
-                        THUMB_RADIUS * 2.0 + 4.0, THUMB_RADIUS * 2.0 + 4.0,
-                        THUMB_RADIUS + 2.0, colors.focus_ring, 1.5,
+                        thumb_cx - THUMB_RADIUS - 2.0,
+                        cy - THUMB_RADIUS - 2.0,
+                        THUMB_RADIUS * 2.0 + 4.0,
+                        THUMB_RADIUS * 2.0 + 4.0,
+                        THUMB_RADIUS + 2.0,
+                        colors.focus_ring,
+                        1.5,
                     );
                 }
                 // Value label
                 if self.show_value {
                     let txt = format!("{:.1}", self.value);
                     let fs = theme.font_size * 0.8;
-                    painter.draw_text(&txt, thumb_cx - 10.0, self.y - fs - 4.0, fs, colors.text_secondary, &theme.font_family, false);
+                    painter.draw_text(
+                        &txt,
+                        thumb_cx - 10.0,
+                        self.y - fs - 4.0,
+                        fs,
+                        colors.text_secondary,
+                        &theme.font_family,
+                        false,
+                    );
                 }
             }
             SliderOrientation::Vertical => {
@@ -206,18 +261,30 @@ impl Widget for Slider {
                 let thumb_cy = self.y + self.height - THUMB_RADIUS - usable * frac;
 
                 painter.fill_rounded_rect(
-                    track_x, self.y, TRACK_HEIGHT, self.height,
-                    TRACK_HEIGHT / 2.0, colors.surface_hover,
+                    track_x,
+                    self.y,
+                    TRACK_HEIGHT,
+                    self.height,
+                    TRACK_HEIGHT / 2.0,
+                    colors.surface_hover,
                 );
                 painter.fill_rounded_rect(
-                    track_x, thumb_cy, TRACK_HEIGHT, self.y + self.height - thumb_cy,
-                    TRACK_HEIGHT / 2.0, colors.accent,
+                    track_x,
+                    thumb_cy,
+                    TRACK_HEIGHT,
+                    self.y + self.height - thumb_cy,
+                    TRACK_HEIGHT / 2.0,
+                    colors.accent,
                 );
                 painter.fill_circle(cx, thumb_cy, THUMB_RADIUS, colors.surface_elevated);
                 painter.stroke_rounded_rect(
-                    cx - THUMB_RADIUS, thumb_cy - THUMB_RADIUS,
-                    THUMB_RADIUS * 2.0, THUMB_RADIUS * 2.0,
-                    THUMB_RADIUS, colors.accent, 2.0,
+                    cx - THUMB_RADIUS,
+                    thumb_cy - THUMB_RADIUS,
+                    THUMB_RADIUS * 2.0,
+                    THUMB_RADIUS * 2.0,
+                    THUMB_RADIUS,
+                    colors.accent,
+                    2.0,
                 );
             }
         }
@@ -225,8 +292,14 @@ impl Widget for Slider {
 
     fn handle_event(&mut self, event: &Event) -> EventResponse {
         match event {
-            Event::MouseEnter => { self.state.hovered = true; EventResponse::Consumed }
-            Event::MouseLeave => { self.state.hovered = false; EventResponse::Consumed }
+            Event::MouseEnter => {
+                self.state.hovered = true;
+                EventResponse::Consumed
+            }
+            Event::MouseLeave => {
+                self.state.hovered = false;
+                EventResponse::Consumed
+            }
             Event::MouseDown { x, y, .. } if self.state.enabled => {
                 self.dragging = true;
                 let pos = match self.orientation {
@@ -248,29 +321,33 @@ impl Widget for Slider {
                 self.set_value_notifying(self.value_from_pos(pos));
                 EventResponse::Consumed
             }
-            Event::FocusIn => { self.state.focused = true; EventResponse::Consumed }
-            Event::FocusOut => { self.state.focused = false; EventResponse::Consumed }
-            Event::KeyDown { key, .. } if self.state.focused && self.state.enabled => {
-                match key {
-                    Key::ArrowRight | Key::ArrowUp => {
-                        self.set_value_notifying(self.value + self.small_step());
-                        EventResponse::Consumed
-                    }
-                    Key::ArrowLeft | Key::ArrowDown => {
-                        self.set_value_notifying(self.value - self.small_step());
-                        EventResponse::Consumed
-                    }
-                    Key::Home => {
-                        self.set_value_notifying(self.min);
-                        EventResponse::Consumed
-                    }
-                    Key::End => {
-                        self.set_value_notifying(self.max);
-                        EventResponse::Consumed
-                    }
-                    _ => EventResponse::Ignored,
-                }
+            Event::FocusIn => {
+                self.state.focused = true;
+                EventResponse::Consumed
             }
+            Event::FocusOut => {
+                self.state.focused = false;
+                EventResponse::Consumed
+            }
+            Event::KeyDown { key, .. } if self.state.focused && self.state.enabled => match key {
+                Key::ArrowRight | Key::ArrowUp => {
+                    self.set_value_notifying(self.value + self.small_step());
+                    EventResponse::Consumed
+                }
+                Key::ArrowLeft | Key::ArrowDown => {
+                    self.set_value_notifying(self.value - self.small_step());
+                    EventResponse::Consumed
+                }
+                Key::Home => {
+                    self.set_value_notifying(self.min);
+                    EventResponse::Consumed
+                }
+                Key::End => {
+                    self.set_value_notifying(self.max);
+                    EventResponse::Consumed
+                }
+                _ => EventResponse::Ignored,
+            },
             _ => EventResponse::Ignored,
         }
     }
