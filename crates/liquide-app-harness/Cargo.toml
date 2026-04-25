@@ -1,0 +1,28 @@
+[package]
+name = "liquide-app-harness"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Reusable AppBootstrap glue wiring the LiquiDE rendering pipeline for built-in applications."
+
+[lib]
+name = "liquide_app_harness"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Placeholder for future wgpu/GPU renderer wiring. Currently a no-op; the
+# harness uses the CPU paint-command path regardless of this flag.
+real-gpu = []
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+
+liquide-ui-core = { path = "../liquide-ui-core" }
+liquide-platform = { path = "../liquide-platform" }
+liquide-input = { path = "../liquide-input" }
+liquide-compositor = { path = "../liquide-compositor" }
+liquide-ime = { path = "../liquide-ime" }
