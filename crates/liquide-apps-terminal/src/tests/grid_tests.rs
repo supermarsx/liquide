@@ -160,7 +160,10 @@ fn test_row_text() {
 #[test]
 fn test_attrs() {
     let mut g = Grid::new(5, 5);
-    let attrs = CellAttrs { bold: true, ..CellAttrs::default() };
+    let attrs = CellAttrs {
+        bold: true,
+        ..CellAttrs::default()
+    };
     g.set_attrs(attrs);
     g.put_char('X');
     assert!(g.cell(0, 0).unwrap().attrs.bold);

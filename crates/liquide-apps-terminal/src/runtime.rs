@@ -1,11 +1,11 @@
 //! Terminal runtime coordinator.
 
 use crate::config::TerminalConfig;
+use crate::grid::CellAttrs;
 use crate::grid::Grid;
 use crate::search::SearchState;
 use crate::tab::TabManager;
 use crate::vt::{Action, CsiAction, EraseMode, OscAction, Parser, SgrParam};
-use crate::grid::CellAttrs;
 
 /// Central coordinator for the terminal emulator.
 pub struct TerminalRuntime {
@@ -16,6 +16,14 @@ pub struct TerminalRuntime {
 }
 
 impl TerminalRuntime {
+    fn set_tab_title(&mut self, id: u32, title: Option<String>) {
+        if let Some(title) = title {
+            if let Some(tab) = self.tabs.get_mut(id) {
+                tab.set_title(title);
+            }
+        }
+    }
+
     /// Create a new terminal runtime.
     #[must_use]
     pub fn new(config: TerminalConfig) -> Self {
@@ -29,22 +37,31 @@ impl TerminalRuntime {
 
     /// Get the config.
     #[must_use]
-    pub fn config(&self) -> &TerminalConfig { &self.config }
+    pub fn config(&self) -> &TerminalConfig {
+        &self.config
+    }
 
     /// Create a new tab, returning its ID.
-    pub fn new_tab(&mut self, title: Option<String>) -> u32 {
+    pub fn new_tab(&mut self, title: Option<String>) -> crate::Result<u32> {
         let id = self.tabs.new_tab(
             &self.config.shell,
             self.config.rows,
             self.config.cols,
             self.config.scrollback_lines,
-        );
-        if let Some(title) = title {
-            if let Some(tab) = self.tabs.get_mut(id) {
-                tab.set_title(title);
-            }
-        }
-        id
+        )?;
+        self.set_tab_title(id, title);
+        Ok(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_stub_tab(&mut self, title: Option<String>) -> crate::Result<u32> {
+        let id = self.tabs.new_stub_tab(
+            self.config.rows,
+            self.config.cols,
+            self.config.scrollback_lines,
+        )?;
+        self.set_tab_title(id, title);
+        Ok(id)
     }
 
     /// Close a tab.
@@ -59,16 +76,21 @@ impl TerminalRuntime {
 
     /// Tab count.
     #[must_use]
-    pub fn tab_count(&self) -> usize { self.tabs.count() }
+    pub fn tab_count(&self) -> usize {
+        self.tabs.count()
+    }
 
     /// List tabs.
     #[must_use]
-    pub fn tab_list(&self) -> Vec<(u32, String)> { self.tabs.list() }
+    pub fn tab_list(&self) -> Vec<(u32, String)> {
+        self.tabs.list()
+    }
 
     /// Get the active grid (read-only).
     #[must_use]
     pub fn active_grid(&self) -> &Grid {
-        self.tabs.active_tab()
+        self.tabs
+            .active_tab()
             .map(|t| t.grid())
             .expect("no active tab")
     }
@@ -85,7 +107,9 @@ impl TerminalRuntime {
 
     /// Send keyboard input to the active PTY.
     pub fn send_input(&mut self, data: &[u8]) -> crate::Result<()> {
-        let tab = self.tabs.active_tab_mut()
+        let tab = self
+            .tabs
+            .active_tab_mut()
             .ok_or(crate::TerminalError::TabNotFound { id: 0 })?;
         tab.pty_mut().write(data)
     }
@@ -99,13 +123,19 @@ impl TerminalRuntime {
 
     /// Get the search state.
     #[must_use]
-    pub fn search(&self) -> &SearchState { &self.search }
+    pub fn search(&self) -> &SearchState {
+        &self.search
+    }
 
     /// Search mutable access.
-    pub fn search_mut(&mut self) -> &mut SearchState { &mut self.search }
+    pub fn search_mut(&mut self) -> &mut SearchState {
+        &mut self.search
+    }
 
     fn apply_action(&mut self, action: Action) {
-        let Some(tab) = self.tabs.active_tab_mut() else { return };
+        let Some(tab) = self.tabs.active_tab_mut() else {
+            return;
+        };
         let grid = tab.grid_mut();
 
         match action {
@@ -113,10 +143,10 @@ impl TerminalRuntime {
                 grid.put_char(ch);
             }
             Action::Execute(byte) => match byte {
-                0x08 => grid.cursor_back(1),      // BS
-                0x09 => grid.cursor_tab(),            // HT
+                0x08 => grid.cursor_back(1),            // BS
+                0x09 => grid.cursor_tab(),              // HT
                 0x0a | 0x0b | 0x0c => grid.line_feed(), // LF/VT/FF
-                0x0d => grid.carriage_return(),    // CR
+                0x0d => grid.carriage_return(),         // CR
                 _ => {}
             },
             Action::CsiDispatch(csi) => self.apply_csi(csi),
@@ -126,7 +156,9 @@ impl TerminalRuntime {
     }
 
     fn apply_csi(&mut self, csi: CsiAction) {
-        let Some(tab) = self.tabs.active_tab_mut() else { return };
+        let Some(tab) = self.tabs.active_tab_mut() else {
+            return;
+        };
         let grid = tab.grid_mut();
 
         match csi {
@@ -164,13 +196,14 @@ impl TerminalRuntime {
             CsiAction::DeleteLines(n) => grid.delete_lines(n),
             CsiAction::InsertChars(n) => grid.insert_chars(n),
             CsiAction::DeleteChars(n) => grid.delete_chars(n),
-            CsiAction::DeviceStatusReport
-            | CsiAction::Unknown(_) => {}
+            CsiAction::DeviceStatusReport | CsiAction::Unknown(_) => {}
         }
     }
 
     fn apply_osc(&mut self, osc: OscAction) {
-        let Some(tab) = self.tabs.active_tab_mut() else { return };
+        let Some(tab) = self.tabs.active_tab_mut() else {
+            return;
+        };
         match osc {
             OscAction::SetTitle(title) => {
                 tab.shell_integration_mut().set_title(title);
@@ -267,7 +300,6 @@ impl TerminalRuntime {
         true
     }
 
-    /// Send a named key to the active tab's PTY, mapping key names
     /// to the appropriate terminal escape sequences.
     pub fn send_key(&mut self, key: &str) -> crate::Result<()> {
         let bytes: &[u8] = match key {
@@ -357,7 +389,8 @@ impl TerminalRuntime {
     /// Current cursor position (row, col) for cursor rendering.
     #[must_use]
     pub fn cursor_position(&self) -> (u32, u32) {
-        self.tabs.active_tab()
+        self.tabs
+            .active_tab()
             .map(|t| t.grid().cursor())
             .unwrap_or((0, 0))
     }
@@ -374,11 +407,29 @@ fn apply_sgr(attrs: &mut CellAttrs, param: SgrParam) {
         SgrParam::Reverse => attrs.reverse = true,
         SgrParam::Hidden => attrs.hidden = true,
         SgrParam::Strikethrough => attrs.strikethrough = true,
-        SgrParam::Foreground(idx) => { attrs.fg = Some(idx); attrs.fg_rgb = None; }
-        SgrParam::Background(idx) => { attrs.bg = Some(idx); attrs.bg_rgb = None; }
-        SgrParam::ForegroundRgb(r, g, b) => { attrs.fg_rgb = Some((r, g, b)); attrs.fg = None; }
-        SgrParam::BackgroundRgb(r, g, b) => { attrs.bg_rgb = Some((r, g, b)); attrs.bg = None; }
-        SgrParam::DefaultForeground => { attrs.fg = None; attrs.fg_rgb = None; }
-        SgrParam::DefaultBackground => { attrs.bg = None; attrs.bg_rgb = None; }
+        SgrParam::Foreground(idx) => {
+            attrs.fg = Some(idx);
+            attrs.fg_rgb = None;
+        }
+        SgrParam::Background(idx) => {
+            attrs.bg = Some(idx);
+            attrs.bg_rgb = None;
+        }
+        SgrParam::ForegroundRgb(r, g, b) => {
+            attrs.fg_rgb = Some((r, g, b));
+            attrs.fg = None;
+        }
+        SgrParam::BackgroundRgb(r, g, b) => {
+            attrs.bg_rgb = Some((r, g, b));
+            attrs.bg = None;
+        }
+        SgrParam::DefaultForeground => {
+            attrs.fg = None;
+            attrs.fg_rgb = None;
+        }
+        SgrParam::DefaultBackground => {
+            attrs.bg = None;
+            attrs.bg_rgb = None;
+        }
     }
 }

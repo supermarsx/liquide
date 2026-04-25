@@ -1,13 +1,22 @@
 //! Tests for the terminal runtime coordinator.
 
 use crate::config::TerminalConfig;
+use crate::pty::{PtyBackend, PtySize, PtyState};
 use crate::runtime::TerminalRuntime;
-use crate::url_detect::{detect_links, LinkKind};
 use crate::scrollback::ScrollbackBuffer;
 use crate::search::SearchState;
 use crate::shell_integration::ShellIntegration;
-use crate::pty::{PtyBackend, PtySize, PtyState};
 use crate::tab::TabManager;
+use crate::url_detect::{LinkKind, detect_links};
+
+fn add_stub_tab(rt: &mut TerminalRuntime, title: Option<String>) -> u32 {
+    rt.new_stub_tab(title).expect("stub PTY tab should start")
+}
+
+fn add_stub_manager_tab(tm: &mut TabManager) -> u32 {
+    tm.new_stub_tab(24, 80, 10_000)
+        .expect("stub PTY tab should start")
+}
 
 // ===========================================================================
 // Runtime
@@ -20,9 +29,34 @@ fn test_runtime_new() {
 }
 
 #[test]
+fn test_default_config_uses_auto_shell_resolution() {
+    assert!(TerminalConfig::default().shell.is_empty());
+}
+
+#[test]
+fn test_runtime_new_tab_propagates_spawn_failure() {
+    let mut config = TerminalConfig::default();
+    #[cfg(unix)]
+    {
+        config.shell = "/definitely/not/a/real/shell".into();
+    }
+    #[cfg(windows)]
+    {
+        config.shell = "Z:\\definitely-not-a-real-shell.exe".into();
+    }
+
+    let mut rt = TerminalRuntime::new(config);
+    assert!(matches!(
+        rt.new_tab(None),
+        Err(crate::TerminalError::PtySpawnFailed { .. })
+    ));
+    assert_eq!(rt.tab_count(), 0);
+}
+
+#[test]
 fn test_runtime_new_tab() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    let id = rt.new_tab(None);
+    let id = add_stub_tab(&mut rt, None);
     assert_eq!(id, 1);
     assert_eq!(rt.tab_count(), 1);
 }
@@ -30,7 +64,7 @@ fn test_runtime_new_tab() {
 #[test]
 fn test_runtime_close_tab() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    let id = rt.new_tab(None);
+    let id = add_stub_tab(&mut rt, None);
     rt.close_tab(id).unwrap();
     assert_eq!(rt.tab_count(), 0);
 }
@@ -38,7 +72,7 @@ fn test_runtime_close_tab() {
 #[test]
 fn test_runtime_process_text() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"Hello");
     let grid = rt.active_grid();
     assert_eq!(grid.row_text(0), "Hello");
@@ -47,7 +81,7 @@ fn test_runtime_process_text() {
 #[test]
 fn test_runtime_process_csi() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     // Bold text
     rt.process_output(b"\x1b[1mBold\x1b[0m");
     let grid = rt.active_grid();
@@ -58,7 +92,7 @@ fn test_runtime_process_csi() {
 #[test]
 fn test_runtime_resize() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.resize(40, 100);
     let grid = rt.active_grid();
     assert_eq!(grid.rows(), 40);
@@ -68,8 +102,8 @@ fn test_runtime_resize() {
 #[test]
 fn test_runtime_multiple_tabs() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    let id1 = rt.new_tab(Some("first".into()));
-    let id2 = rt.new_tab(Some("second".into()));
+    let id1 = add_stub_tab(&mut rt, Some("first".into()));
+    let id2 = add_stub_tab(&mut rt, Some("second".into()));
     rt.set_active_tab(id2).unwrap();
     rt.process_output(b"Tab2");
     rt.set_active_tab(id1).unwrap();
@@ -82,7 +116,7 @@ fn test_runtime_multiple_tabs() {
 #[test]
 fn test_runtime_osc_title() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"\x1b]0;My Title\x07");
     let tabs = rt.tab_list();
     assert_eq!(tabs[0].1, "My Title");
@@ -103,7 +137,11 @@ fn test_detect_url() {
 #[test]
 fn test_detect_filepath() {
     let links = detect_links("open /usr/bin/bash now", 0);
-    assert!(links.iter().any(|l| l.kind == LinkKind::FilePath && l.target == "/usr/bin/bash"));
+    assert!(
+        links
+            .iter()
+            .any(|l| l.kind == LinkKind::FilePath && l.target == "/usr/bin/bash")
+    );
 }
 
 #[test]
@@ -149,8 +187,14 @@ fn test_scrollback_viewport() {
 #[test]
 fn test_scrollback_find_lines() {
     let mut sb = ScrollbackBuffer::new(100);
-    let cell_h = crate::grid::Cell { ch: 'h', ..crate::grid::Cell::default() };
-    let cell_i = crate::grid::Cell { ch: 'i', ..crate::grid::Cell::default() };
+    let cell_h = crate::grid::Cell {
+        ch: 'h',
+        ..crate::grid::Cell::default()
+    };
+    let cell_i = crate::grid::Cell {
+        ch: 'i',
+        ..crate::grid::Cell::default()
+    };
     sb.push(vec![cell_h.clone(), cell_i.clone()]);
     sb.push(vec![crate::grid::Cell::default()]);
     let matches = sb.find_lines("hi");
@@ -263,13 +307,13 @@ fn test_pty_lifecycle() {
 
 #[test]
 fn test_pty_write_not_running() {
-    let mut pty = PtyBackend::new("/bin/bash".into(), PtySize::default());
+    let mut pty = PtyBackend::new(String::new(), PtySize::default());
     assert!(pty.write(b"test").is_err());
 }
 
 #[test]
 fn test_pty_resize() {
-    let mut pty = PtyBackend::new("/bin/bash".into(), PtySize::default());
+    let mut pty = PtyBackend::new(String::new(), PtySize::default());
     pty.resize(PtySize::new(40, 120));
     assert_eq!(pty.size().rows, 40);
     assert_eq!(pty.size().cols, 120);
@@ -283,11 +327,11 @@ fn test_pty_resize() {
 fn test_tab_manager() {
     let mut tm = TabManager::new();
     assert_eq!(tm.count(), 0);
-    let id1 = tm.new_tab("/bin/sh", 24, 80, 10_000);
+    let id1 = add_stub_manager_tab(&mut tm);
     assert_eq!(tm.count(), 1);
     assert_eq!(tm.active_id(), id1);
 
-    let id2 = tm.new_tab("/bin/sh", 24, 80, 10_000);
+    let id2 = add_stub_manager_tab(&mut tm);
     assert_eq!(tm.count(), 2);
     tm.set_active(id2).unwrap();
     assert_eq!(tm.active_id(), id2);
@@ -300,9 +344,10 @@ fn test_tab_manager() {
 #[test]
 fn test_tab_display_title() {
     let mut tm = TabManager::new();
-    let id = tm.new_tab("/bin/sh", 24, 80, 10_000);
+    let id = add_stub_manager_tab(&mut tm);
     let tab = tm.get_mut(id).unwrap();
-    tab.shell_integration_mut().set_cwd("/home/user/projects".into());
+    tab.shell_integration_mut()
+        .set_cwd("/home/user/projects".into());
     assert_eq!(tab.display_title(), "projects");
 }
 
@@ -319,7 +364,7 @@ fn test_tick_no_tab() {
 #[test]
 fn test_tick_no_data() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     // No data in PTY buffer -> tick returns false.
     assert!(!rt.tick());
 }
@@ -327,7 +372,7 @@ fn test_tick_no_data() {
 #[test]
 fn test_tick_with_data() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     // Put data into the PTY (stub echoes writes to output_buffer).
     rt.send_input(b"Hello").unwrap();
     // Now tick should read it and update the grid.
@@ -338,7 +383,7 @@ fn test_tick_with_data() {
 #[test]
 fn test_tick_multiple_rounds() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.send_input(b"AB").unwrap();
     assert!(rt.tick());
     rt.send_input(b"CD").unwrap();
@@ -353,7 +398,7 @@ fn test_tick_multiple_rounds() {
 #[test]
 fn test_send_key_enter() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.send_key("Enter").unwrap();
     // Enter sends \r which the PTY echoes; tick processes it as CR.
     assert!(rt.tick());
@@ -362,7 +407,7 @@ fn test_send_key_enter() {
 #[test]
 fn test_send_key_arrow() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     // Write some text first so cursor is not at 0.
     rt.send_input(b"ABC").unwrap();
     rt.tick();
@@ -376,7 +421,7 @@ fn test_send_key_arrow() {
 #[test]
 fn test_send_char() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.send_char('Z').unwrap();
     rt.tick();
     assert_eq!(rt.active_grid().row_text(0), "Z");
@@ -407,7 +452,7 @@ fn test_visible_lines_empty() {
 #[test]
 fn test_visible_lines_text() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"Hello");
     let lines = rt.visible_lines();
     assert_eq!(lines.len(), 24); // 24 rows default
@@ -419,12 +464,16 @@ fn test_visible_lines_text() {
 #[test]
 fn test_visible_lines_bold_spans() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"AB\x1b[1mCD\x1b[0mEF");
     let lines = rt.visible_lines();
     // Should have multiple spans due to attribute changes.
     let spans = &lines[0].spans;
-    assert!(spans.len() >= 3, "Expected at least 3 spans, got {}", spans.len());
+    assert!(
+        spans.len() >= 3,
+        "Expected at least 3 spans, got {}",
+        spans.len()
+    );
     // First span (A,B) should not be bold.
     assert!(!spans[0].bold);
     assert_eq!(spans[0].start, 0);
@@ -440,14 +489,14 @@ fn test_visible_lines_bold_spans() {
 #[test]
 fn test_visible_lines_color_spans() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     // Red foreground (31) then reset.
     rt.process_output(b"\x1b[31mRed\x1b[0mNormal");
     let lines = rt.visible_lines();
     let spans = &lines[0].spans;
     assert!(spans.len() >= 2);
     assert_eq!(spans[0].fg, Some(1)); // color index 1 = red
-    assert_eq!(spans[1].fg, None);    // reset
+    assert_eq!(spans[1].fg, None); // reset
 }
 
 // ===========================================================================
@@ -463,7 +512,7 @@ fn test_cursor_position_no_tab() {
 #[test]
 fn test_cursor_position_after_text() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"ABC");
     assert_eq!(rt.cursor_position(), (0, 3));
 }
@@ -471,7 +520,7 @@ fn test_cursor_position_after_text() {
 #[test]
 fn test_cursor_position_after_newline() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"line1\r\nline2");
     assert_eq!(rt.cursor_position(), (1, 5));
 }
@@ -501,13 +550,16 @@ fn test_grid_cursor_tab_at_stop() {
 #[test]
 fn test_grid_insert_lines() {
     let mut g = crate::grid::Grid::new(5, 5);
-    g.set_cursor(0, 0); g.put_char('A');
-    g.set_cursor(1, 0); g.put_char('B');
-    g.set_cursor(2, 0); g.put_char('C');
+    g.set_cursor(0, 0);
+    g.put_char('A');
+    g.set_cursor(1, 0);
+    g.put_char('B');
+    g.set_cursor(2, 0);
+    g.put_char('C');
     g.set_cursor(1, 0);
     g.insert_lines(1);
     assert_eq!(g.row_text(0), "A");
-    assert_eq!(g.row_text(1), "");    // inserted blank
+    assert_eq!(g.row_text(1), ""); // inserted blank
     assert_eq!(g.row_text(2), "B");
     assert_eq!(g.row_text(3), "C");
 }
@@ -515,20 +567,25 @@ fn test_grid_insert_lines() {
 #[test]
 fn test_grid_delete_lines() {
     let mut g = crate::grid::Grid::new(5, 5);
-    g.set_cursor(0, 0); g.put_char('A');
-    g.set_cursor(1, 0); g.put_char('B');
-    g.set_cursor(2, 0); g.put_char('C');
+    g.set_cursor(0, 0);
+    g.put_char('A');
+    g.set_cursor(1, 0);
+    g.put_char('B');
+    g.set_cursor(2, 0);
+    g.put_char('C');
     g.set_cursor(1, 0);
     g.delete_lines(1);
     assert_eq!(g.row_text(0), "A");
     assert_eq!(g.row_text(1), "C");
-    assert_eq!(g.row_text(2), "");    // blank inserted at bottom
+    assert_eq!(g.row_text(2), ""); // blank inserted at bottom
 }
 
 #[test]
 fn test_grid_insert_chars() {
     let mut g = crate::grid::Grid::new(3, 5);
-    for ch in "ABCDE".chars() { g.put_char(ch); }
+    for ch in "ABCDE".chars() {
+        g.put_char(ch);
+    }
     g.set_cursor(0, 2);
     g.insert_chars(1);
     // Row should now be "AB CDE" truncated to 5: "AB CD"
@@ -538,7 +595,9 @@ fn test_grid_insert_chars() {
 #[test]
 fn test_grid_delete_chars() {
     let mut g = crate::grid::Grid::new(3, 5);
-    for ch in "ABCDE".chars() { g.put_char(ch); }
+    for ch in "ABCDE".chars() {
+        g.put_char(ch);
+    }
     g.set_cursor(0, 2);
     g.delete_chars(1);
     // C removed, shift left, blank at end: "ABDE "
@@ -552,19 +611,19 @@ fn test_grid_delete_chars() {
 #[test]
 fn test_runtime_csi_insert_lines() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"Line0\r\nLine1\r\nLine2");
     // Move to row 1, insert 1 line: \x1b[2;1H\x1b[1L
     rt.process_output(b"\x1b[2;1H\x1b[1L");
     assert_eq!(rt.active_grid().row_text(0), "Line0");
-    assert_eq!(rt.active_grid().row_text(1), "");     // inserted
+    assert_eq!(rt.active_grid().row_text(1), ""); // inserted
     assert_eq!(rt.active_grid().row_text(2), "Line1");
 }
 
 #[test]
 fn test_runtime_csi_delete_chars() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
     rt.process_output(b"ABCDE");
     // Move to col 1, delete 2 chars: \x1b[1;2H\x1b[2P
     rt.process_output(b"\x1b[1;2H\x1b[2P");
@@ -578,7 +637,7 @@ fn test_runtime_csi_delete_chars() {
 #[test]
 fn test_full_roundtrip() {
     let mut rt = TerminalRuntime::new(TerminalConfig::default());
-    rt.new_tab(None);
+    add_stub_tab(&mut rt, None);
 
     // Simulate: type "ls", press Enter, get output.
     // The stub PTY echoes writes, so send_input -> tick processes it.

@@ -38,7 +38,9 @@ impl SearchState {
 
     /// Whether search is case sensitive.
     #[must_use]
-    pub fn case_sensitive(&self) -> bool { self.case_sensitive }
+    pub fn case_sensitive(&self) -> bool {
+        self.case_sensitive
+    }
 
     /// Execute a search on provided lines (flattened text).
     pub fn search(&mut self, query: &str, lines: &[String]) {
@@ -77,19 +79,27 @@ impl SearchState {
 
     /// Current query.
     #[must_use]
-    pub fn query(&self) -> &str { &self.query }
+    pub fn query(&self) -> &str {
+        &self.query
+    }
 
     /// All matches.
     #[must_use]
-    pub fn matches(&self) -> &[SearchMatch] { &self.matches }
+    pub fn matches(&self) -> &[SearchMatch] {
+        &self.matches
+    }
 
     /// Total match count.
     #[must_use]
-    pub fn match_count(&self) -> usize { self.matches.len() }
+    pub fn match_count(&self) -> usize {
+        self.matches.len()
+    }
 
     /// Current match index.
     #[must_use]
-    pub fn current_index(&self) -> usize { self.current_index }
+    pub fn current_index(&self) -> usize {
+        self.current_index
+    }
 
     /// Get the current match.
     #[must_use]
@@ -99,14 +109,18 @@ impl SearchState {
 
     /// Move to the next match.
     pub fn next_match(&mut self) -> Option<&SearchMatch> {
-        if self.matches.is_empty() { return None; }
+        if self.matches.is_empty() {
+            return None;
+        }
         self.current_index = (self.current_index + 1) % self.matches.len();
         self.matches.get(self.current_index)
     }
 
     /// Move to the previous match.
     pub fn prev_match(&mut self) -> Option<&SearchMatch> {
-        if self.matches.is_empty() { return None; }
+        if self.matches.is_empty() {
+            return None;
+        }
         if self.current_index == 0 {
             self.current_index = self.matches.len() - 1;
         } else {
@@ -124,5 +138,7 @@ impl SearchState {
 }
 
 impl Default for SearchState {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

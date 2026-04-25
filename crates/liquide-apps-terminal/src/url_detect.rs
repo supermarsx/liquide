@@ -41,7 +41,8 @@ pub fn detect_links(line: &str, line_index: usize) -> Vec<DetectedLink> {
     for (i, _) in line.char_indices() {
         if i == 0 || line.as_bytes().get(i.wrapping_sub(1)).copied() == Some(b' ') {
             if line[i..].starts_with('/') && line[i..].len() > 1 {
-                let end = line[i..].find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+                let end = line[i..]
+                    .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
                     .map(|e| i + e)
                     .unwrap_or(line.len());
                 if end > i + 1 {
@@ -60,11 +61,18 @@ pub fn detect_links(line: &str, line_index: usize) -> Vec<DetectedLink> {
     links
 }
 
-fn detect_pattern(line: &str, line_index: usize, prefix: &str, kind: LinkKind, links: &mut Vec<DetectedLink>) {
+fn detect_pattern(
+    line: &str,
+    line_index: usize,
+    prefix: &str,
+    kind: LinkKind,
+    links: &mut Vec<DetectedLink>,
+) {
     let mut start = 0;
     while let Some(pos) = line[start..].find(prefix) {
         let abs_start = start + pos;
-        let end = line[abs_start..].find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '>' || c == ')')
+        let end = line[abs_start..]
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '>' || c == ')')
             .map(|e| abs_start + e)
             .unwrap_or(line.len());
         if end > abs_start + prefix.len() {

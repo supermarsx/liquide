@@ -40,15 +40,21 @@ impl ScrollbackBuffer {
 
     /// Total lines in the buffer.
     #[must_use]
-    pub fn len(&self) -> usize { self.lines.len() }
+    pub fn len(&self) -> usize {
+        self.lines.len()
+    }
 
     /// Whether the buffer is empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool { self.lines.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
 
     /// Maximum capacity.
     #[must_use]
-    pub fn capacity(&self) -> usize { self.max_lines }
+    pub fn capacity(&self) -> usize {
+        self.max_lines
+    }
 
     /// Get a line by index (0 = oldest).
     #[must_use]
@@ -59,8 +65,15 @@ impl ScrollbackBuffer {
     /// Get the text content of a line.
     #[must_use]
     pub fn line_text(&self, index: usize) -> String {
-        self.lines.get(index)
-            .map(|l| l.iter().map(|c| c.ch).collect::<String>().trim_end().to_string())
+        self.lines
+            .get(index)
+            .map(|l| {
+                l.iter()
+                    .map(|c| c.ch)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
             .unwrap_or_default()
     }
 
@@ -81,11 +94,15 @@ impl ScrollbackBuffer {
 
     /// Current viewport offset from bottom.
     #[must_use]
-    pub fn viewport_offset(&self) -> usize { self.viewport_offset }
+    pub fn viewport_offset(&self) -> usize {
+        self.viewport_offset
+    }
 
     /// Whether viewport is at the bottom.
     #[must_use]
-    pub fn at_bottom(&self) -> bool { self.viewport_offset == 0 }
+    pub fn at_bottom(&self) -> bool {
+        self.viewport_offset == 0
+    }
 
     /// Clear the scrollback buffer.
     pub fn clear(&mut self) {
@@ -96,7 +113,9 @@ impl ScrollbackBuffer {
     /// Search for a string in the scrollback, returning matching line indices.
     #[must_use]
     pub fn find_lines(&self, needle: &str) -> Vec<usize> {
-        self.lines.iter().enumerate()
+        self.lines
+            .iter()
+            .enumerate()
             .filter(|(_, line)| {
                 let text: String = line.iter().map(|c| c.ch).collect();
                 text.contains(needle)
@@ -107,5 +126,7 @@ impl ScrollbackBuffer {
 }
 
 impl Default for ScrollbackBuffer {
-    fn default() -> Self { Self::new(10_000) }
+    fn default() -> Self {
+        Self::new(10_000)
+    }
 }

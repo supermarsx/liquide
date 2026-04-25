@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Terminal emulator configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalConfig {
-    /// Default shell command.
+    /// Default shell command. Empty means auto-resolve per platform.
     pub shell: String,
     /// Default number of rows.
     pub rows: u32,
@@ -38,7 +38,7 @@ pub struct TerminalConfig {
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
-            shell: "/bin/bash".to_string(),
+            shell: String::new(),
             rows: 24,
             cols: 80,
             font_family: "monospace".to_string(),
@@ -79,7 +79,9 @@ impl Default for ColorScheme {
             name: "liquid-dark".to_string(),
             foreground: "#d4d4d4".to_string(),
             background: "#1e1e2e".to_string(),
-            palette: std::array::from_fn(|i| format!("#{:02x}{:02x}{:02x}", i * 17, i * 11, i * 15)),
+            palette: std::array::from_fn(|i| {
+                format!("#{:02x}{:02x}{:02x}", i * 17, i * 11, i * 15)
+            }),
             selection: "#44475a".to_string(),
             cursor_color: "#f8f8f2".to_string(),
         }

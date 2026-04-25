@@ -57,7 +57,10 @@ fn test_cursor_down() {
 #[test]
 fn test_cursor_forward() {
     let actions = parse(b"\x1b[5C");
-    assert_eq!(actions, vec![Action::CsiDispatch(CsiAction::CursorForward(5))]);
+    assert_eq!(
+        actions,
+        vec![Action::CsiDispatch(CsiAction::CursorForward(5))]
+    );
 }
 
 #[test]
@@ -71,7 +74,10 @@ fn test_cursor_position() {
     let actions = parse(b"\x1b[10;20H");
     assert_eq!(
         actions,
-        vec![Action::CsiDispatch(CsiAction::CursorPosition { row: 10, col: 20 })]
+        vec![Action::CsiDispatch(CsiAction::CursorPosition {
+            row: 10,
+            col: 20
+        })]
     );
 }
 
@@ -80,26 +86,42 @@ fn test_cursor_position_default() {
     let actions = parse(b"\x1b[H");
     assert_eq!(
         actions,
-        vec![Action::CsiDispatch(CsiAction::CursorPosition { row: 1, col: 1 })]
+        vec![Action::CsiDispatch(CsiAction::CursorPosition {
+            row: 1,
+            col: 1
+        })]
     );
 }
 
 #[test]
 fn test_erase_display_to_end() {
     let actions = parse(b"\x1b[J");
-    assert_eq!(actions, vec![Action::CsiDispatch(CsiAction::EraseDisplay(EraseMode::ToEnd))]);
+    assert_eq!(
+        actions,
+        vec![Action::CsiDispatch(CsiAction::EraseDisplay(
+            EraseMode::ToEnd
+        ))]
+    );
 }
 
 #[test]
 fn test_erase_display_all() {
     let actions = parse(b"\x1b[2J");
-    assert_eq!(actions, vec![Action::CsiDispatch(CsiAction::EraseDisplay(EraseMode::All))]);
+    assert_eq!(
+        actions,
+        vec![Action::CsiDispatch(CsiAction::EraseDisplay(EraseMode::All))]
+    );
 }
 
 #[test]
 fn test_erase_line() {
     let actions = parse(b"\x1b[1K");
-    assert_eq!(actions, vec![Action::CsiDispatch(CsiAction::EraseLine(EraseMode::ToBeginning))]);
+    assert_eq!(
+        actions,
+        vec![Action::CsiDispatch(CsiAction::EraseLine(
+            EraseMode::ToBeginning
+        ))]
+    );
 }
 
 // ===========================================================================
@@ -109,7 +131,10 @@ fn test_erase_line() {
 #[test]
 fn test_sgr_reset() {
     let actions = parse(b"\x1b[0m");
-    assert_eq!(actions, vec![Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::Reset]))]);
+    assert_eq!(
+        actions,
+        vec![Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::Reset]))]
+    );
 }
 
 #[test]
@@ -117,7 +142,10 @@ fn test_sgr_bold_italic() {
     let actions = parse(b"\x1b[1;3m");
     assert_eq!(
         actions,
-        vec![Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::Bold, SgrParam::Italic]))]
+        vec![Action::CsiDispatch(CsiAction::Sgr(vec![
+            SgrParam::Bold,
+            SgrParam::Italic
+        ]))]
     );
 }
 
@@ -126,7 +154,9 @@ fn test_sgr_foreground_color() {
     let actions = parse(b"\x1b[31m");
     assert_eq!(
         actions,
-        vec![Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::Foreground(1)]))]
+        vec![Action::CsiDispatch(CsiAction::Sgr(vec![
+            SgrParam::Foreground(1)
+        ]))]
     );
 }
 
@@ -135,7 +165,9 @@ fn test_sgr_256_color() {
     let actions = parse(b"\x1b[38;5;200m");
     assert_eq!(
         actions,
-        vec![Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::Foreground(200)]))]
+        vec![Action::CsiDispatch(CsiAction::Sgr(vec![
+            SgrParam::Foreground(200)
+        ]))]
     );
 }
 
@@ -144,7 +176,9 @@ fn test_sgr_truecolor() {
     let actions = parse(b"\x1b[38;2;255;128;0m");
     assert_eq!(
         actions,
-        vec![Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::ForegroundRgb(255, 128, 0)]))]
+        vec![Action::CsiDispatch(CsiAction::Sgr(vec![
+            SgrParam::ForegroundRgb(255, 128, 0)
+        ]))]
     );
 }
 
@@ -175,7 +209,9 @@ fn test_osc_set_cwd() {
     let actions = parse(b"\x1b]7;file:///home/user\x07");
     assert_eq!(
         actions,
-        vec![Action::OscDispatch(OscAction::SetWorkingDirectory("file:///home/user".into()))]
+        vec![Action::OscDispatch(OscAction::SetWorkingDirectory(
+            "file:///home/user".into()
+        ))]
     );
 }
 
@@ -188,7 +224,10 @@ fn test_osc_command_start() {
 #[test]
 fn test_osc_command_end() {
     let actions = parse(b"\x1b]133;D;0\x07");
-    assert_eq!(actions, vec![Action::OscDispatch(OscAction::CommandEnd(Some(0)))]);
+    assert_eq!(
+        actions,
+        vec![Action::OscDispatch(OscAction::CommandEnd(Some(0)))]
+    );
 }
 
 #[test]
@@ -213,7 +252,10 @@ fn test_mixed_text_and_csi() {
     assert_eq!(actions.len(), 5);
     assert_eq!(actions[0], Action::Print('A'));
     assert_eq!(actions[1], Action::Print('B'));
-    assert_eq!(actions[2], Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::Bold])));
+    assert_eq!(
+        actions[2],
+        Action::CsiDispatch(CsiAction::Sgr(vec![SgrParam::Bold]))
+    );
     assert_eq!(actions[3], Action::Print('C'));
     assert_eq!(actions[4], Action::Print('D'));
 }

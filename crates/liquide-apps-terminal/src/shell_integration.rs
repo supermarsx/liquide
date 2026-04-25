@@ -37,11 +37,15 @@ impl ShellIntegration {
 
     /// Get the current working directory.
     #[must_use]
-    pub fn cwd(&self) -> Option<&str> { self.cwd.as_deref() }
+    pub fn cwd(&self) -> Option<&str> {
+        self.cwd.as_deref()
+    }
 
     /// CWD history.
     #[must_use]
-    pub fn cwd_history(&self) -> &[String] { &self.cwd_history }
+    pub fn cwd_history(&self) -> &[String] {
+        &self.cwd_history
+    }
 
     /// Set the window title (from OSC 0/2).
     pub fn set_title(&mut self, title: String) {
@@ -50,7 +54,9 @@ impl ShellIntegration {
 
     /// Get the window title.
     #[must_use]
-    pub fn title(&self) -> Option<&str> { self.title.as_deref() }
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
 
     /// Mark command start (OSC 133;A).
     pub fn command_start(&mut self) {
@@ -65,11 +71,15 @@ impl ShellIntegration {
 
     /// Whether a command is currently executing.
     #[must_use]
-    pub fn in_command(&self) -> bool { self.in_command }
+    pub fn in_command(&self) -> bool {
+        self.in_command
+    }
 
     /// Last command exit code.
     #[must_use]
-    pub fn last_exit_code(&self) -> Option<i32> { self.last_exit_code }
+    pub fn last_exit_code(&self) -> Option<i32> {
+        self.last_exit_code
+    }
 
     /// Generate a tab title from shell state.
     #[must_use]
@@ -90,5 +100,7 @@ impl ShellIntegration {
 }
 
 impl Default for ShellIntegration {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

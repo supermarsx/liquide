@@ -17,13 +17,7 @@ pub struct Tab {
 }
 
 impl Tab {
-    /// Create a new tab.
-    #[must_use]
-    pub fn new(id: u32, shell: &str, rows: u32, cols: u32, scrollback_lines: u32) -> Self {
-        let size = PtySize::new(rows, cols);
-        let mut pty = PtyBackend::new(shell.to_string(), size);
-        // Auto-spawn the PTY so it's immediately ready for I/O.
-        let _ = pty.spawn();
+    fn from_pty(id: u32, rows: u32, cols: u32, scrollback_lines: u32, pty: PtyBackend) -> Self {
         Self {
             id,
             title: format!("Tab {id}"),
@@ -35,48 +29,101 @@ impl Tab {
         }
     }
 
+    pub(crate) fn new_with_pty(
+        id: u32,
+        rows: u32,
+        cols: u32,
+        scrollback_lines: u32,
+        mut pty: PtyBackend,
+    ) -> crate::Result<Self> {
+        pty.spawn()?;
+        Ok(Self::from_pty(id, rows, cols, scrollback_lines, pty))
+    }
+
+    /// Create a new tab.
+    pub fn new(
+        id: u32,
+        shell: &str,
+        rows: u32,
+        cols: u32,
+        scrollback_lines: u32,
+    ) -> crate::Result<Self> {
+        let size = PtySize::new(rows, cols);
+        Self::new_with_pty(
+            id,
+            rows,
+            cols,
+            scrollback_lines,
+            PtyBackend::new(shell.to_string(), size),
+        )
+    }
+
     /// Tab ID.
     #[must_use]
-    pub fn id(&self) -> u32 { self.id }
+    pub fn id(&self) -> u32 {
+        self.id
+    }
 
     /// Tab title.
     #[must_use]
-    pub fn title(&self) -> &str { &self.title }
+    pub fn title(&self) -> &str {
+        &self.title
+    }
 
     /// Set tab title.
-    pub fn set_title(&mut self, title: String) { self.title = title; }
+    pub fn set_title(&mut self, title: String) {
+        self.title = title;
+    }
 
     /// Get the character grid.
     #[must_use]
-    pub fn grid(&self) -> &Grid { &self.grid }
+    pub fn grid(&self) -> &Grid {
+        &self.grid
+    }
 
     /// Get a mutable reference to the grid.
-    pub fn grid_mut(&mut self) -> &mut Grid { &mut self.grid }
+    pub fn grid_mut(&mut self) -> &mut Grid {
+        &mut self.grid
+    }
 
     /// Get the scrollback buffer.
     #[must_use]
-    pub fn scrollback(&self) -> &ScrollbackBuffer { &self.scrollback }
+    pub fn scrollback(&self) -> &ScrollbackBuffer {
+        &self.scrollback
+    }
 
     /// Get a mutable reference to the scrollback.
-    pub fn scrollback_mut(&mut self) -> &mut ScrollbackBuffer { &mut self.scrollback }
+    pub fn scrollback_mut(&mut self) -> &mut ScrollbackBuffer {
+        &mut self.scrollback
+    }
 
     /// Get the PTY backend.
     #[must_use]
-    pub fn pty(&self) -> &PtyBackend { &self.pty }
+    pub fn pty(&self) -> &PtyBackend {
+        &self.pty
+    }
 
     /// Get a mutable PTY reference.
-    pub fn pty_mut(&mut self) -> &mut PtyBackend { &mut self.pty }
+    pub fn pty_mut(&mut self) -> &mut PtyBackend {
+        &mut self.pty
+    }
 
     /// Get shell integration state.
     #[must_use]
-    pub fn shell_integration(&self) -> &ShellIntegration { &self.shell_integration }
+    pub fn shell_integration(&self) -> &ShellIntegration {
+        &self.shell_integration
+    }
 
     /// Get mutable shell integration.
-    pub fn shell_integration_mut(&mut self) -> &mut ShellIntegration { &mut self.shell_integration }
+    pub fn shell_integration_mut(&mut self) -> &mut ShellIntegration {
+        &mut self.shell_integration
+    }
 
     /// Whether this tab has been closed.
     #[must_use]
-    pub fn is_closed(&self) -> bool { self.closed }
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
 
     /// Mark this tab as closed.
     pub fn close(&mut self) {
@@ -121,20 +168,47 @@ impl TabManager {
     }
 
     /// Create a new tab and return its ID.
-    pub fn new_tab(&mut self, shell: &str, rows: u32, cols: u32, scrollback: u32) -> u32 {
+    pub fn new_tab(
+        &mut self,
+        shell: &str,
+        rows: u32,
+        cols: u32,
+        scrollback: u32,
+    ) -> crate::Result<u32> {
         let id = self.next_id;
+        let tab = Tab::new(id, shell, rows, cols, scrollback)?;
         self.next_id += 1;
-        let tab = Tab::new(id, shell, rows, cols, scrollback);
         self.tabs.push(tab);
         if self.tabs.len() == 1 {
             self.active_tab_id = id;
         }
-        id
+        Ok(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_stub_tab(
+        &mut self,
+        rows: u32,
+        cols: u32,
+        scrollback: u32,
+    ) -> crate::Result<u32> {
+        let id = self.next_id;
+        let size = PtySize::new(rows, cols);
+        let tab = Tab::new_with_pty(id, rows, cols, scrollback, PtyBackend::new_stub(size))?;
+        self.next_id += 1;
+        self.tabs.push(tab);
+        if self.tabs.len() == 1 {
+            self.active_tab_id = id;
+        }
+        Ok(id)
     }
 
     /// Close a tab by ID.
     pub fn close_tab(&mut self, id: u32) -> crate::Result<()> {
-        let tab = self.tabs.iter_mut().find(|t| t.id == id)
+        let tab = self
+            .tabs
+            .iter_mut()
+            .find(|t| t.id == id)
             .ok_or(crate::TerminalError::TabNotFound { id })?;
         tab.close();
         self.tabs.retain(|t| !t.is_closed());
@@ -178,19 +252,28 @@ impl TabManager {
 
     /// Active tab ID.
     #[must_use]
-    pub fn active_id(&self) -> u32 { self.active_tab_id }
+    pub fn active_id(&self) -> u32 {
+        self.active_tab_id
+    }
 
     /// Total tab count.
     #[must_use]
-    pub fn count(&self) -> usize { self.tabs.len() }
+    pub fn count(&self) -> usize {
+        self.tabs.len()
+    }
 
     /// List tab IDs and titles.
     #[must_use]
     pub fn list(&self) -> Vec<(u32, String)> {
-        self.tabs.iter().map(|t| (t.id(), t.display_title())).collect()
+        self.tabs
+            .iter()
+            .map(|t| (t.id(), t.display_title()))
+            .collect()
     }
 }
 
 impl Default for TabManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

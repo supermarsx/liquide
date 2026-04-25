@@ -27,12 +27,19 @@ pub struct PtySize {
 impl PtySize {
     #[must_use]
     pub fn new(rows: u32, cols: u32) -> Self {
-        Self { rows, cols, pixel_width: 0, pixel_height: 0 }
+        Self {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }
     }
 }
 
 impl Default for PtySize {
-    fn default() -> Self { Self::new(24, 80) }
+    fn default() -> Self {
+        Self::new(24, 80)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +184,8 @@ mod unix_pty {
 
                     // User-supplied env vars.
                     for (k, v) in env_vars {
-                        if let (Ok(ck), Ok(cv)) = (CString::new(k.as_str()), CString::new(v.as_str()))
+                        if let (Ok(ck), Ok(cv)) =
+                            (CString::new(k.as_str()), CString::new(v.as_str()))
                         {
                             setenv(ck.as_ptr(), cv.as_ptr(), 1);
                         }
@@ -191,8 +199,8 @@ mod unix_pty {
                     }
 
                     // Exec shell.
-                    let shell_c = CString::new(shell)
-                        .unwrap_or_else(|_| CString::new("/bin/sh").unwrap());
+                    let shell_c =
+                        CString::new(shell).unwrap_or_else(|_| CString::new("/bin/sh").unwrap());
                     let args: [*const libc_c_char; 2] = [shell_c.as_ptr(), std::ptr::null()];
                     execvp(shell_c.as_ptr(), args.as_ptr());
                     std::process::exit(127);
@@ -493,18 +501,12 @@ mod windows_pty {
                 };
 
                 if CreatePipe(&mut pipe_in_read, &mut pipe_in_write, &sa, 0) == 0 {
-                    return Err(format!(
-                        "CreatePipe (input) failed: {}",
-                        GetLastError()
-                    ));
+                    return Err(format!("CreatePipe (input) failed: {}", GetLastError()));
                 }
                 if CreatePipe(&mut pipe_out_read, &mut pipe_out_write, &sa, 0) == 0 {
                     CloseHandle(pipe_in_read);
                     CloseHandle(pipe_in_write);
-                    return Err(format!(
-                        "CreatePipe (output) failed: {}",
-                        GetLastError()
-                    ));
+                    return Err(format!("CreatePipe (output) failed: {}", GetLastError()));
                 }
 
                 // Create the pseudo console.
@@ -816,6 +818,12 @@ impl PlatformPty {
 // Public PtyBackend (preserves existing API)
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PtyMode {
+    Platform,
+    Stub,
+}
+
 /// PTY backend managing a shell process.
 pub struct PtyBackend {
     shell: String,
@@ -824,14 +832,13 @@ pub struct PtyBackend {
     size: PtySize,
     output_buffer: Vec<u8>,
     env_vars: Vec<(String, String)>,
+    mode: PtyMode,
     /// The live platform PTY handle, present only while `state == Running`.
     platform: Option<PlatformPty>,
 }
 
 impl PtyBackend {
-    /// Create a new PTY backend with the given shell.
-    #[must_use]
-    pub fn new(shell: String, size: PtySize) -> Self {
+    fn with_mode(shell: String, size: PtySize, mode: PtyMode) -> Self {
         Self {
             shell,
             working_directory: None,
@@ -839,8 +846,21 @@ impl PtyBackend {
             size,
             output_buffer: Vec::new(),
             env_vars: Vec::new(),
+            mode,
             platform: None,
         }
+    }
+
+    /// Create a new PTY backend with the given shell.
+    #[must_use]
+    pub fn new(shell: String, size: PtySize) -> Self {
+        Self::with_mode(shell, size, PtyMode::Platform)
+    }
+
+    /// Create a deterministic in-memory PTY backend for tests.
+    #[must_use]
+    pub fn new_stub(size: PtySize) -> Self {
+        Self::with_mode(String::new(), size, PtyMode::Stub)
     }
 
     /// Set the initial working directory.
@@ -874,6 +894,14 @@ impl PtyBackend {
             return Ok(());
         }
 
+        self.output_buffer.clear();
+
+        if self.mode == PtyMode::Stub {
+            self.platform = None;
+            self.state = PtyState::Running;
+            return Ok(());
+        }
+
         let shell = self.resolve_shell();
         let rows = self.size.rows.min(u16::MAX as u32) as u16;
         let cols = self.size.cols.min(u16::MAX as u32) as u16;
@@ -899,11 +927,20 @@ impl PtyBackend {
                 reason: "PTY not running".into(),
             });
         }
-        if let Some(ref pty) = self.platform {
-            pty.write(data).map_err(|reason| crate::TerminalError::PtySpawnFailed { reason })?;
-        } else {
-            // Fallback echo for testing when no platform PTY is available.
-            self.output_buffer.extend_from_slice(data);
+        match self.mode {
+            PtyMode::Platform => {
+                let pty =
+                    self.platform
+                        .as_ref()
+                        .ok_or_else(|| crate::TerminalError::PtySpawnFailed {
+                            reason: "PTY backend unavailable".into(),
+                        })?;
+                pty.write(data)
+                    .map_err(|reason| crate::TerminalError::PtySpawnFailed { reason })?;
+            }
+            PtyMode::Stub => {
+                self.output_buffer.extend_from_slice(data);
+            }
         }
         Ok(())
     }
@@ -911,19 +948,22 @@ impl PtyBackend {
     /// Read available output bytes from the PTY.
     #[must_use]
     pub fn read(&mut self) -> Vec<u8> {
-        if let Some(ref pty) = self.platform {
-            let mut buf = vec![0u8; 8192];
-            match pty.read(&mut buf) {
-                Ok(0) => {}
-                Ok(n) => {
-                    buf.truncate(n);
-                    return buf;
+        match self.mode {
+            PtyMode::Platform => {
+                if let Some(ref pty) = self.platform {
+                    let mut buf = vec![0u8; 8192];
+                    match pty.read(&mut buf) {
+                        Ok(0) => {}
+                        Ok(n) => {
+                            buf.truncate(n);
+                            return buf;
+                        }
+                        Err(_) => {}
+                    }
                 }
-                Err(_) => {}
+                Vec::new()
             }
-            Vec::new()
-        } else {
-            std::mem::take(&mut self.output_buffer)
+            PtyMode::Stub => std::mem::take(&mut self.output_buffer),
         }
     }
 
@@ -939,11 +979,13 @@ impl PtyBackend {
 
     /// Get current state, polling the child process if running.
     #[must_use]
-    pub fn state(&self) -> PtyState { self.state }
+    pub fn state(&self) -> PtyState {
+        self.state
+    }
 
     /// Poll the child process and update state if it has exited.
     pub fn poll(&mut self) {
-        if self.state != PtyState::Running {
+        if self.state != PtyState::Running || self.mode != PtyMode::Platform {
             return;
         }
         if let Some(ref pty) = self.platform {
@@ -959,17 +1001,22 @@ impl PtyBackend {
 
     /// Get current size.
     #[must_use]
-    pub fn size(&self) -> PtySize { self.size }
+    pub fn size(&self) -> PtySize {
+        self.size
+    }
 
     /// Get the shell command.
     #[must_use]
-    pub fn shell(&self) -> &str { &self.shell }
+    pub fn shell(&self) -> &str {
+        &self.shell
+    }
 
     /// Signal the shell to exit.
     pub fn kill(&mut self) {
         if let Some(ref pty) = self.platform {
             pty.kill_process();
         }
+        self.output_buffer.clear();
         self.state = PtyState::Killed;
         self.platform = None;
     }
@@ -977,6 +1024,7 @@ impl PtyBackend {
     /// Mark as exited with a code.
     pub fn mark_exited(&mut self, code: i32) {
         self.state = PtyState::Exited(code);
+        self.output_buffer.clear();
         self.platform = None;
     }
 }
