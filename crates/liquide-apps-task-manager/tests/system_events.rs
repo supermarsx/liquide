@@ -105,7 +105,10 @@ fn event_category_all_variants() {
 #[test]
 fn event_category_display() {
     assert_eq!(EventCategory::ServiceControl.as_str(), "Service Control");
-    assert_eq!(EventCategory::ApplicationError.as_str(), "Application Error");
+    assert_eq!(
+        EventCategory::ApplicationError.as_str(),
+        "Application Error"
+    );
     assert_eq!(format!("{}", EventCategory::Disk), "Disk");
 }
 
@@ -484,6 +487,8 @@ fn ipc_get_event_log_stats() {
 #[test]
 fn ipc_clear_event_log() {
     use liquide_apps_task_manager::ipc::IpcRequest;
-    let req = IpcRequest::ClearEventLog { source: "System".into() };
+    let req = IpcRequest::ClearEventLog {
+        source: "System".into(),
+    };
     assert_eq!(req.as_str(), "Clear Event Log");
 }

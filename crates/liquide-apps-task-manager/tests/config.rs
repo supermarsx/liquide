@@ -1,7 +1,7 @@
 //! Tests for `config` module types.
 
-use liquide_apps_task_manager::config::*;
 use liquide_apps_task_manager::TaskManagerConfig;
+use liquide_apps_task_manager::config::*;
 
 // ---------------------------------------------------------------------------
 // Default config
@@ -18,7 +18,10 @@ fn default_config_constructs() {
 #[test]
 fn default_general_config() {
     let cfg = GeneralConfig::default();
-    assert_eq!(cfg.view_mode, liquide_apps_task_manager::ui::ViewMode::Standard);
+    assert_eq!(
+        cfg.view_mode,
+        liquide_apps_task_manager::ui::ViewMode::Standard
+    );
     assert_eq!(cfg.show_tray_icon, TrayIconMode::WhenMinimized);
     assert_eq!(cfg.language, "system");
     assert!(!cfg.start_minimized);
@@ -135,7 +138,10 @@ fn default_notifications_config() {
 #[test]
 fn default_export_config() {
     let cfg = ExportConfig::default();
-    assert_eq!(cfg.format, liquide_apps_task_manager::export::ExportFormat::Csv);
+    assert_eq!(
+        cfg.format,
+        liquide_apps_task_manager::export::ExportFormat::Csv
+    );
     assert!(cfg.include_headers);
     assert_eq!(cfg.timestamp_format, TimestampFormat::Iso8601);
     assert_eq!(cfg.decimal_separator, '.');

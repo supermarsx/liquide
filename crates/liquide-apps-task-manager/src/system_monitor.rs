@@ -498,8 +498,7 @@ pub fn build_tree(processes: &[MonitorProcessInfo]) -> Vec<ProcessNode> {
     }
 
     // Collect all PIDs for quick parent lookup.
-    let pid_set: std::collections::HashSet<u32> =
-        processes.iter().map(|p| p.pid).collect();
+    let pid_set: std::collections::HashSet<u32> = processes.iter().map(|p| p.pid).collect();
 
     // Build a mapping from ppid -> list of children indices.
     let mut children_map: HashMap<u32, Vec<usize>> = HashMap::new();
@@ -930,8 +929,7 @@ pub mod linux {
         }
 
         fn collect_processes(&self) -> Result<Vec<MonitorProcessInfo>, String> {
-            let entries =
-                fs::read_dir("/proc").map_err(|e| format!("read /proc: {e}"))?;
+            let entries = fs::read_dir("/proc").map_err(|e| format!("read /proc: {e}"))?;
 
             let mut processes = Vec::new();
 
@@ -1150,8 +1148,7 @@ pub mod windows {
 
         /// Collect uptime.
         fn uptime_seconds() -> u64 {
-            let script =
-                r#"[math]::Round((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime | Select-Object -ExpandProperty TotalSeconds)"#;
+            let script = r#"[math]::Round((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime | Select-Object -ExpandProperty TotalSeconds)"#;
             Self::run_powershell(script)
                 .ok()
                 .and_then(|s| s.trim().parse().ok())
@@ -1325,11 +1322,7 @@ pub mod macos {
                     continue;
                 }
                 let key = parts[0].trim();
-                let val: u64 = parts[1]
-                    .trim()
-                    .trim_end_matches('.')
-                    .parse()
-                    .unwrap_or(0);
+                let val: u64 = parts[1].trim().trim_end_matches('.').parse().unwrap_or(0);
 
                 match key {
                     "Pages free" => free_pages = val,
@@ -1346,8 +1339,8 @@ pub mod macos {
             let cached = inactive_pages * page_size;
 
             // Get swap via sysctl
-            let swap_output = Self::run_command("sysctl", &["-n", "vm.swapusage"])
-                .unwrap_or_default();
+            let swap_output =
+                Self::run_command("sysctl", &["-n", "vm.swapusage"]).unwrap_or_default();
             let mut swap_total: u64 = 0;
             let mut swap_used: u64 = 0;
             for part in swap_output.split_whitespace() {
@@ -1374,10 +1367,8 @@ pub mod macos {
 
         /// Collect processes via ps.
         fn collect_processes_via_ps() -> Result<Vec<MonitorProcessInfo>, String> {
-            let output = Self::run_command(
-                "ps",
-                &["aux", "-o", "pid,ppid,pcpu,rss,stat,user,command"],
-            )?;
+            let output =
+                Self::run_command("ps", &["aux", "-o", "pid,ppid,pcpu,rss,stat,user,command"])?;
 
             let mut processes = Vec::new();
 
@@ -1590,15 +1581,18 @@ impl SystemMonitor {
             .push(timestamp_ms, resources.memory.usage_percent());
 
         if let Some(ref gpu) = resources.gpu {
-            self.gpu_history
-                .push(timestamp_ms, gpu.utilization_percent);
+            self.gpu_history.push(timestamp_ms, gpu.utilization_percent);
         }
 
         self.last_resources = Some(resources);
     }
 
     /// Record network statistics, computing rates from previous samples.
-    pub fn record_network(&mut self, timestamp_ms: u64, raw_stats: Vec<NetworkStats>) -> Vec<NetworkStats> {
+    pub fn record_network(
+        &mut self,
+        timestamp_ms: u64,
+        raw_stats: Vec<NetworkStats>,
+    ) -> Vec<NetworkStats> {
         let mut results = Vec::new();
         let mut total_rx_rate = 0u64;
         let mut total_tx_rate = 0u64;
@@ -1648,7 +1642,11 @@ impl SystemMonitor {
     /// Get the top N processes by CPU usage.
     pub fn top_by_cpu(&self, n: usize) -> Vec<&MonitorProcessInfo> {
         let mut sorted: Vec<&MonitorProcessInfo> = self.last_processes.iter().collect();
-        sorted.sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            b.cpu_percent
+                .partial_cmp(&a.cpu_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         sorted.truncate(n);
         sorted
     }
@@ -2139,10 +2137,30 @@ mod tests {
     #[test]
     fn count_tree_nodes_works() {
         let procs = vec![
-            MonitorProcessInfo { pid: 1, ppid: 0, name: "root".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 2, ppid: 1, name: "a".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 3, ppid: 1, name: "b".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 4, ppid: 2, name: "c".into(), ..Default::default() },
+            MonitorProcessInfo {
+                pid: 1,
+                ppid: 0,
+                name: "root".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 2,
+                ppid: 1,
+                name: "a".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 3,
+                ppid: 1,
+                name: "b".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 4,
+                ppid: 2,
+                name: "c".into(),
+                ..Default::default()
+            },
         ];
         let tree = build_tree(&procs);
         assert_eq!(count_tree_nodes(&tree), 4);
@@ -2151,9 +2169,24 @@ mod tests {
     #[test]
     fn find_in_tree_found() {
         let procs = vec![
-            MonitorProcessInfo { pid: 1, ppid: 0, name: "root".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 2, ppid: 1, name: "child".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 3, ppid: 2, name: "grandchild".into(), ..Default::default() },
+            MonitorProcessInfo {
+                pid: 1,
+                ppid: 0,
+                name: "root".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 2,
+                ppid: 1,
+                name: "child".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 3,
+                ppid: 2,
+                name: "grandchild".into(),
+                ..Default::default()
+            },
         ];
         let tree = build_tree(&procs);
 
@@ -2164,9 +2197,12 @@ mod tests {
 
     #[test]
     fn find_in_tree_not_found() {
-        let procs = vec![
-            MonitorProcessInfo { pid: 1, ppid: 0, name: "root".into(), ..Default::default() },
-        ];
+        let procs = vec![MonitorProcessInfo {
+            pid: 1,
+            ppid: 0,
+            name: "root".into(),
+            ..Default::default()
+        }];
         let tree = build_tree(&procs);
         assert!(find_in_tree(&tree, 999).is_none());
     }
@@ -2174,9 +2210,24 @@ mod tests {
     #[test]
     fn flatten_tree_order() {
         let procs = vec![
-            MonitorProcessInfo { pid: 1, ppid: 0, name: "root".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 2, ppid: 1, name: "a".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 3, ppid: 2, name: "b".into(), ..Default::default() },
+            MonitorProcessInfo {
+                pid: 1,
+                ppid: 0,
+                name: "root".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 2,
+                ppid: 1,
+                name: "a".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 3,
+                ppid: 2,
+                name: "b".into(),
+                ..Default::default()
+            },
         ];
         let tree = build_tree(&procs);
         let flat = flatten_tree(&tree);
@@ -2228,32 +2279,28 @@ mod tests {
     #[test]
     fn system_monitor_record_network() {
         let mut m = SystemMonitor::new();
-        let raw = vec![
-            NetworkStats {
-                interface: "eth0".to_string(),
-                rx_bytes: 1000,
-                tx_bytes: 500,
-                rx_packets: 10,
-                tx_packets: 5,
-                rx_rate_bps: 0,
-                tx_rate_bps: 0,
-            },
-        ];
+        let raw = vec![NetworkStats {
+            interface: "eth0".to_string(),
+            rx_bytes: 1000,
+            tx_bytes: 500,
+            rx_packets: 10,
+            tx_packets: 5,
+            rx_rate_bps: 0,
+            tx_rate_bps: 0,
+        }];
 
         let first = m.record_network(1000, raw.clone());
         assert_eq!(first[0].rx_rate_bps, 0);
 
-        let raw2 = vec![
-            NetworkStats {
-                interface: "eth0".to_string(),
-                rx_bytes: 3000,
-                tx_bytes: 1500,
-                rx_packets: 20,
-                tx_packets: 10,
-                rx_rate_bps: 0,
-                tx_rate_bps: 0,
-            },
-        ];
+        let raw2 = vec![NetworkStats {
+            interface: "eth0".to_string(),
+            rx_bytes: 3000,
+            tx_bytes: 1500,
+            rx_packets: 20,
+            tx_packets: 10,
+            rx_rate_bps: 0,
+            tx_rate_bps: 0,
+        }];
         let second = m.record_network(2000, raw2);
         assert_eq!(second[0].rx_rate_bps, 2000);
         assert_eq!(second[0].tx_rate_bps, 1000);
@@ -2263,8 +2310,18 @@ mod tests {
     fn system_monitor_process_tree() {
         let mut m = SystemMonitor::new();
         m.record_processes(vec![
-            MonitorProcessInfo { pid: 1, ppid: 0, name: "init".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 2, ppid: 1, name: "bash".into(), ..Default::default() },
+            MonitorProcessInfo {
+                pid: 1,
+                ppid: 0,
+                name: "init".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 2,
+                ppid: 1,
+                name: "bash".into(),
+                ..Default::default()
+            },
         ]);
 
         let tree = m.process_tree();
@@ -2276,9 +2333,24 @@ mod tests {
     fn system_monitor_top_by_cpu() {
         let mut m = SystemMonitor::new();
         m.record_processes(vec![
-            MonitorProcessInfo { pid: 1, cpu_percent: 10.0, name: "a".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 2, cpu_percent: 50.0, name: "b".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 3, cpu_percent: 30.0, name: "c".into(), ..Default::default() },
+            MonitorProcessInfo {
+                pid: 1,
+                cpu_percent: 10.0,
+                name: "a".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 2,
+                cpu_percent: 50.0,
+                name: "b".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 3,
+                cpu_percent: 30.0,
+                name: "c".into(),
+                ..Default::default()
+            },
         ]);
 
         let top = m.top_by_cpu(2);
@@ -2291,9 +2363,24 @@ mod tests {
     fn system_monitor_top_by_memory() {
         let mut m = SystemMonitor::new();
         m.record_processes(vec![
-            MonitorProcessInfo { pid: 1, memory_bytes: 1000, name: "a".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 2, memory_bytes: 5000, name: "b".into(), ..Default::default() },
-            MonitorProcessInfo { pid: 3, memory_bytes: 3000, name: "c".into(), ..Default::default() },
+            MonitorProcessInfo {
+                pid: 1,
+                memory_bytes: 1000,
+                name: "a".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 2,
+                memory_bytes: 5000,
+                name: "b".into(),
+                ..Default::default()
+            },
+            MonitorProcessInfo {
+                pid: 3,
+                memory_bytes: 3000,
+                name: "c".into(),
+                ..Default::default()
+            },
         ]);
 
         let top = m.top_by_memory(2);
@@ -2306,9 +2393,10 @@ mod tests {
     fn system_monitor_clear() {
         let mut m = SystemMonitor::new();
         m.record_resources(1000, SystemResources::default());
-        m.record_processes(vec![
-            MonitorProcessInfo { pid: 1, ..Default::default() },
-        ]);
+        m.record_processes(vec![MonitorProcessInfo {
+            pid: 1,
+            ..Default::default()
+        }]);
         m.clear();
 
         assert!(m.cpu_history.is_empty());

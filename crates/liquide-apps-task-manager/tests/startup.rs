@@ -122,7 +122,10 @@ fn boot_phase_serde_roundtrip() {
 fn shutdown_type_as_str_all() {
     assert_eq!(ShutdownType::NormalShutdown.as_str(), "Normal Shutdown");
     assert_eq!(ShutdownType::NormalReboot.as_str(), "Normal Reboot");
-    assert_eq!(ShutdownType::UnexpectedShutdown.as_str(), "Unexpected Shutdown");
+    assert_eq!(
+        ShutdownType::UnexpectedShutdown.as_str(),
+        "Unexpected Shutdown"
+    );
     assert_eq!(ShutdownType::Bsod.as_str(), "BSOD");
 }
 

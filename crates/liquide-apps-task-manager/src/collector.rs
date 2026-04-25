@@ -365,8 +365,7 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
         let kernel_ms = stime * 1000 / hz;
 
         // Read /proc/{pid}/status for VmRSS and UID
-        let status_file =
-            fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+        let status_file = fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
         let mut memory_kb: u64 = 0;
         let mut uid: u32 = 0;
         let mut vm_size_kb: u64 = 0;
@@ -508,7 +507,9 @@ fn collect_system_metrics_native() -> SystemMetrics {
             // Count logical processors from per-core lines
             let cpu_count = content
                 .lines()
-                .filter(|l| l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(|b| b.is_ascii_digit()))
+                .filter(|l| {
+                    l.starts_with("cpu") && l.as_bytes().get(3).is_some_and(|b| b.is_ascii_digit())
+                })
                 .count();
             metrics.cpu_count = cpu_count as u32;
         }
@@ -534,8 +535,7 @@ fn collect_system_metrics_native() -> SystemMetrics {
         metrics.memory_total = total;
         metrics.memory_used = total.saturating_sub(available);
         if total > 0 {
-            metrics.memory_percent =
-                (metrics.memory_used as f64 / total as f64 * 100.0) as f32;
+            metrics.memory_percent = (metrics.memory_used as f64 / total as f64 * 100.0) as f32;
         }
     }
 
@@ -640,11 +640,7 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
     // correctly. Process32FirstW writes into `pe` on success (returns != 0).
     if unsafe { Process32FirstW(snap, &mut pe) } != 0 {
         loop {
-            let name_end = pe
-                .sz_exe_file
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(260);
+            let name_end = pe.sz_exe_file.iter().position(|&c| c == 0).unwrap_or(260);
             let name = String::from_utf16_lossy(&pe.sz_exe_file[..name_end]);
 
             let pid = pe.th32_process_id;
@@ -662,8 +658,7 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
 
             // SAFETY: OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION is a
             // safe Win32 call. Returns null on failure (e.g. access denied).
-            let proc_handle =
-                unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+            let proc_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
             if !proc_handle.is_null() {
                 // Memory info
                 // SAFETY: `pmc` is zero-initialized with `cb` set to the
@@ -698,8 +693,8 @@ fn collect_processes_native() -> Vec<ProcessInfo> {
                     // FILETIME is in 100-nanosecond intervals
                     let user_100ns =
                         (user.dw_high_date_time as u64) << 32 | user.dw_low_date_time as u64;
-                    let kernel_100ns = (kernel.dw_high_date_time as u64) << 32
-                        | kernel.dw_low_date_time as u64;
+                    let kernel_100ns =
+                        (kernel.dw_high_date_time as u64) << 32 | kernel.dw_low_date_time as u64;
                     cpu_user_ms = user_100ns / 10_000;
                     cpu_kernel_ms = kernel_100ns / 10_000;
                 }
@@ -805,11 +800,7 @@ fn collect_system_metrics_native() -> SystemMetrics {
 
     unsafe extern "system" {
         fn GlobalMemoryStatusEx(status: *mut MemoryStatusEx) -> i32;
-        fn GetSystemTimes(
-            idle: *mut Filetime,
-            kernel: *mut Filetime,
-            user: *mut Filetime,
-        ) -> i32;
+        fn GetSystemTimes(idle: *mut Filetime, kernel: *mut Filetime, user: *mut Filetime) -> i32;
         fn GetSystemInfo(info: *mut SystemInfo);
         fn GetTickCount64() -> u64;
     }
@@ -830,12 +821,9 @@ fn collect_system_metrics_native() -> SystemMetrics {
     let mut kernel_ft: Filetime = unsafe { mem::zeroed() };
     let mut user_ft: Filetime = unsafe { mem::zeroed() };
     if unsafe { GetSystemTimes(&mut idle_ft, &mut kernel_ft, &mut user_ft) } != 0 {
-        let idle =
-            (idle_ft.dw_high_date_time as u64) << 32 | idle_ft.dw_low_date_time as u64;
-        let kernel = (kernel_ft.dw_high_date_time as u64) << 32
-            | kernel_ft.dw_low_date_time as u64;
-        let user =
-            (user_ft.dw_high_date_time as u64) << 32 | user_ft.dw_low_date_time as u64;
+        let idle = (idle_ft.dw_high_date_time as u64) << 32 | idle_ft.dw_low_date_time as u64;
+        let kernel = (kernel_ft.dw_high_date_time as u64) << 32 | kernel_ft.dw_low_date_time as u64;
+        let user = (user_ft.dw_high_date_time as u64) << 32 | user_ft.dw_low_date_time as u64;
         // kernel includes idle time
         let total = kernel + user;
         let busy = total - idle;
@@ -851,8 +839,9 @@ fn collect_system_metrics_native() -> SystemMetrics {
     mem_status.dw_length = mem::size_of::<MemoryStatusEx>() as u32;
     if unsafe { GlobalMemoryStatusEx(&mut mem_status) } != 0 {
         metrics.memory_total = mem_status.ull_total_phys;
-        metrics.memory_used =
-            mem_status.ull_total_phys.saturating_sub(mem_status.ull_avail_phys);
+        metrics.memory_used = mem_status
+            .ull_total_phys
+            .saturating_sub(mem_status.ull_avail_phys);
         metrics.memory_percent = mem_status.dw_memory_load as f32;
     }
 
@@ -938,7 +927,10 @@ fn collect_system_metrics_native() -> SystemMetrics {
     let mut metrics = SystemMetrics::default();
 
     // CPU count via sysctl
-    if let Ok(output) = Command::new("sysctl").args(["-n", "hw.logicalcpu"]).output() {
+    if let Ok(output) = Command::new("sysctl")
+        .args(["-n", "hw.logicalcpu"])
+        .output()
+    {
         if output.status.success() {
             let s = String::from_utf8_lossy(&output.stdout);
             metrics.cpu_count = s.trim().parse().unwrap_or(1);

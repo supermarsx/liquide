@@ -1,14 +1,14 @@
 //! Tests for `network` submodule types.
 
-use liquide_apps_task_manager::network::*;
+use liquide_apps_task_manager::network::bandwidth::*;
+use liquide_apps_task_manager::network::capture::*;
 use liquide_apps_task_manager::network::connection::*;
 use liquide_apps_task_manager::network::dns::*;
 use liquide_apps_task_manager::network::firewall::*;
 use liquide_apps_task_manager::network::interface::*;
-use liquide_apps_task_manager::network::bandwidth::*;
-use liquide_apps_task_manager::network::topology::*;
-use liquide_apps_task_manager::network::capture::*;
 use liquide_apps_task_manager::network::protocol::*;
+use liquide_apps_task_manager::network::topology::*;
+use liquide_apps_task_manager::network::*;
 
 // ---------------------------------------------------------------------------
 // NetworkView
@@ -192,7 +192,11 @@ fn firewall_direction_all_variants() {
 
 #[test]
 fn firewall_action_all_variants() {
-    let variants = [FirewallAction::Allow, FirewallAction::Block, FirewallAction::Log];
+    let variants = [
+        FirewallAction::Allow,
+        FirewallAction::Block,
+        FirewallAction::Log,
+    ];
     assert_eq!(variants.len(), 3);
 }
 

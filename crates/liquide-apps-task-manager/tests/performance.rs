@@ -10,9 +10,18 @@ use liquide_apps_task_manager::performance::{
 
 #[test]
 fn cpu_graph_type_as_str_all() {
-    assert_eq!(CpuGraphType::OverallUtilization.as_str(), "Overall Utilization");
-    assert_eq!(CpuGraphType::PerCoreUtilization.as_str(), "Per-Core Utilization");
-    assert_eq!(CpuGraphType::PerCoreFrequency.as_str(), "Per-Core Frequency");
+    assert_eq!(
+        CpuGraphType::OverallUtilization.as_str(),
+        "Overall Utilization"
+    );
+    assert_eq!(
+        CpuGraphType::PerCoreUtilization.as_str(),
+        "Per-Core Utilization"
+    );
+    assert_eq!(
+        CpuGraphType::PerCoreFrequency.as_str(),
+        "Per-Core Frequency"
+    );
     assert_eq!(CpuGraphType::NumaNodeView.as_str(), "NUMA Node View");
     assert_eq!(CpuGraphType::KernelVsUser.as_str(), "Kernel vs User");
     assert_eq!(CpuGraphType::CoreHeatmap.as_str(), "Core Heatmap");
@@ -112,7 +121,10 @@ fn gpu_graph_type_serde_roundtrip() {
 #[test]
 fn network_graph_type_as_str_all() {
     assert_eq!(NetworkGraphType::Throughput.as_str(), "Throughput");
-    assert_eq!(NetworkGraphType::ConnectionCount.as_str(), "Connection Count");
+    assert_eq!(
+        NetworkGraphType::ConnectionCount.as_str(),
+        "Connection Count"
+    );
     assert_eq!(NetworkGraphType::PacketRate.as_str(), "Packet Rate");
 }
 

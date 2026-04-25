@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use crate::aggregator::Aggregator;
 use crate::collector::{CpuTracker, NativeProcessCollector, SystemMetrics};
@@ -151,15 +151,15 @@ impl TaskManagerRuntime {
         self.system_metrics = self.native_collector.collect_system_metrics();
 
         // Update CPU tracker with processor count
-        self.cpu_tracker.set_cpu_count(self.system_metrics.cpu_count);
+        self.cpu_tracker
+            .set_cpu_count(self.system_metrics.cpu_count);
 
         // Compute per-process CPU% from delta
         self.cpu_tracker.update(&mut procs, elapsed);
 
         // Fill in process/thread counts from the live snapshot
         self.system_metrics.process_count = procs.len() as u32;
-        self.system_metrics.thread_count =
-            procs.iter().map(|p| p.threads).sum();
+        self.system_metrics.thread_count = procs.iter().map(|p| p.threads).sum();
 
         // Compute per-process memory% using system total
         if self.system_metrics.memory_total > 0 {
@@ -196,7 +196,11 @@ impl TaskManagerRuntime {
         self.refresh(now_ms);
 
         let mut agg = self.aggregator.write().await;
-        agg.record("cpu.percent", now_ms, self.system_metrics.cpu_percent as f64);
+        agg.record(
+            "cpu.percent",
+            now_ms,
+            self.system_metrics.cpu_percent as f64,
+        );
         let mem_pct = self.system_metrics.memory_percent as f64;
         agg.record("memory.percent", now_ms, mem_pct);
         agg.record(

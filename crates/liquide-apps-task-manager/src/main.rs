@@ -10,7 +10,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use liquide_apps_task_manager::config::TaskManagerConfig;
-use liquide_apps_task_manager::runtime::TaskManagerRuntime;
+use liquide_apps_task_manager::{run_default_app, run_widget_app};
 use liquide_apps_task_manager::ui::TabId;
 
 /// Liquide Task Manager — system monitoring and management tool.
@@ -37,7 +37,6 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     // ── Process management ──────────────────────────────────────
-
     /// Export the current process list.
     Export {
         /// What to export (processes, services, connections).
@@ -61,7 +60,6 @@ enum Command {
     },
 
     // ── File unlocking ──────────────────────────────────────────
-
     /// Unlock a locked file or folder.
     Unlock {
         /// Path to the locked resource.
@@ -75,7 +73,6 @@ enum Command {
     },
 
     // ── Boot timeline ───────────────────────────────────────────
-
     /// Display boot timeline data.
     BootTimeline {
         /// Output format.
@@ -84,7 +81,6 @@ enum Command {
     },
 
     // ── Daemon / headless mode ──────────────────────────────────
-
     /// Run in headless monitoring mode.
     Daemon {
         /// CPU threshold for alerts (%).
@@ -96,7 +92,6 @@ enum Command {
     },
 
     // ── Network subcommands ─────────────────────────────────────
-
     /// List active network connections.
     Connections {
         /// Output format.
@@ -176,7 +171,6 @@ enum Command {
     },
 
     // ── Energy subcommands ──────────────────────────────────────
-
     /// Show current power draw summary.
     PowerSummary,
 
@@ -218,7 +212,6 @@ enum Command {
     },
 
     // ── Audio subcommands ───────────────────────────────────────
-
     /// List audio devices.
     AudioDevices {
         /// Output format.
@@ -265,7 +258,6 @@ enum Command {
     },
 
     // ── Event viewer subcommands ────────────────────────────────────
-
     /// List system events with optional filtering.
     EventLog {
         /// Log source (application, system, security, setup, hardware, all).
@@ -331,10 +323,7 @@ async fn main() -> Result<()> {
         TaskManagerConfig::default()
     };
 
-    let runtime = TaskManagerRuntime::new(config);
-
-    // If a tab was specified, switch to it.
-    if let Some(ref tab_name) = cli.tab {
+    let active_tab = if let Some(ref tab_name) = cli.tab {
         let tab = match tab_name.as_str() {
             "processes" => TabId::Processes,
             "performance" => TabId::Performance,
@@ -352,21 +341,18 @@ async fn main() -> Result<()> {
             "events" | "event_viewer" => TabId::SystemEventViewer,
             other => anyhow::bail!("unknown tab: {other}"),
         };
-        runtime.set_active_tab(tab).await;
-    }
+        Some(tab)
+    } else {
+        None
+    };
 
     match cli.command {
         None => {
             if cli.widget {
-                tracing::info!("starting in floating widget mode");
+                run_widget_app(config, active_tab).await
             } else {
-                tracing::info!(
-                    "starting GUI — active tab: {:?}",
-                    runtime.active_tab().await,
-                );
+                run_default_app(config, active_tab).await
             }
-            // GUI launch point — actual rendering deferred to compositor integration.
-            Ok(())
         }
 
         Some(Command::Export {

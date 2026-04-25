@@ -12,8 +12,7 @@ use crate::ui::{TabId, ViewMode};
 // ── Top-level ──────────────────────────────────────────────────────
 
 /// Complete task-manager configuration, serializable to/from TOML.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TaskManagerConfig {
     #[serde(default)]
     pub general: GeneralConfig,
@@ -52,7 +51,6 @@ pub struct TaskManagerConfig {
     #[serde(default)]
     pub system_events: SystemEventsConfig,
 }
-
 
 // ── §17.1  General ─────────────────────────────────────────────────
 

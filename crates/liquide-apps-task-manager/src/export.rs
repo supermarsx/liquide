@@ -90,9 +90,7 @@ pub fn export_records<T: Exportable>(
     if records.is_empty() {
         return Ok(match config.format {
             ExportFormat::Json => "[]".to_string(),
-            ExportFormat::Html => {
-                "<table>\n</table>".to_string()
-            }
+            ExportFormat::Html => "<table>\n</table>".to_string(),
             ExportFormat::Xml => {
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<records>\n</records>".to_string()
             }
@@ -120,8 +118,12 @@ pub fn export_records<T: Exportable>(
     let headers: Vec<&str> = indices.iter().map(|&i| all_headers[i].as_str()).collect();
 
     match config.format {
-        ExportFormat::Csv => render_separated(records, &headers, &indices, ',', config.include_headers),
-        ExportFormat::Tsv => render_separated(records, &headers, &indices, '\t', config.include_headers),
+        ExportFormat::Csv => {
+            render_separated(records, &headers, &indices, ',', config.include_headers)
+        }
+        ExportFormat::Tsv => {
+            render_separated(records, &headers, &indices, '\t', config.include_headers)
+        }
         ExportFormat::Json => render_json(records, &headers, &indices),
         ExportFormat::Html => render_html(records, &headers, &indices, config.include_headers),
         ExportFormat::Xml => render_xml(records, &headers, &indices),
@@ -291,7 +293,13 @@ fn render_xml<T: Exportable>(
 fn xml_tag_name(header: &str) -> String {
     header
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

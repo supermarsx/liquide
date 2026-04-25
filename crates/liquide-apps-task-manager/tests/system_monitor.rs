@@ -1,7 +1,7 @@
 //! Integration tests for `system_monitor` module.
 
-use liquide_apps_task_manager::system_monitor::*;
 use liquide_apps_task_manager::process::ProcessStatus;
+use liquide_apps_task_manager::system_monitor::*;
 
 // ===========================================================================
 // MonitorProcessInfo
@@ -292,10 +292,30 @@ fn resource_history_last() {
 #[test]
 fn build_tree_three_levels() {
     let procs = vec![
-        MonitorProcessInfo { pid: 1, ppid: 0, name: "systemd".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 10, ppid: 1, name: "sshd".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 20, ppid: 10, name: "bash".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 30, ppid: 20, name: "vim".into(), ..Default::default() },
+        MonitorProcessInfo {
+            pid: 1,
+            ppid: 0,
+            name: "systemd".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 10,
+            ppid: 1,
+            name: "sshd".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 20,
+            ppid: 10,
+            name: "bash".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 30,
+            ppid: 20,
+            name: "vim".into(),
+            ..Default::default()
+        },
     ];
 
     let tree = build_tree(&procs);
@@ -303,14 +323,27 @@ fn build_tree_three_levels() {
     assert_eq!(tree[0].process.name, "systemd");
     assert_eq!(tree[0].children[0].process.name, "sshd");
     assert_eq!(tree[0].children[0].children[0].process.name, "bash");
-    assert_eq!(tree[0].children[0].children[0].children[0].process.name, "vim");
+    assert_eq!(
+        tree[0].children[0].children[0].children[0].process.name,
+        "vim"
+    );
 }
 
 #[test]
 fn build_tree_multiple_roots() {
     let procs = vec![
-        MonitorProcessInfo { pid: 1, ppid: 0, name: "init".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 2, ppid: 0, name: "kthreadd".into(), ..Default::default() },
+        MonitorProcessInfo {
+            pid: 1,
+            ppid: 0,
+            name: "init".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 2,
+            ppid: 0,
+            name: "kthreadd".into(),
+            ..Default::default()
+        },
     ];
 
     let tree = build_tree(&procs);
@@ -320,10 +353,30 @@ fn build_tree_multiple_roots() {
 #[test]
 fn find_in_tree_deep() {
     let procs = vec![
-        MonitorProcessInfo { pid: 1, ppid: 0, name: "root".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 2, ppid: 1, name: "a".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 3, ppid: 2, name: "b".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 4, ppid: 3, name: "target".into(), ..Default::default() },
+        MonitorProcessInfo {
+            pid: 1,
+            ppid: 0,
+            name: "root".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 2,
+            ppid: 1,
+            name: "a".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 3,
+            ppid: 2,
+            name: "b".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 4,
+            ppid: 3,
+            name: "target".into(),
+            ..Default::default()
+        },
     ];
     let tree = build_tree(&procs);
     let found = find_in_tree(&tree, 4);
@@ -334,11 +387,36 @@ fn find_in_tree_deep() {
 #[test]
 fn flatten_tree_preserves_all() {
     let procs = vec![
-        MonitorProcessInfo { pid: 1, ppid: 0, name: "a".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 2, ppid: 1, name: "b".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 3, ppid: 1, name: "c".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 4, ppid: 2, name: "d".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 5, ppid: 0, name: "e".into(), ..Default::default() },
+        MonitorProcessInfo {
+            pid: 1,
+            ppid: 0,
+            name: "a".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 2,
+            ppid: 1,
+            name: "b".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 3,
+            ppid: 1,
+            name: "c".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 4,
+            ppid: 2,
+            name: "d".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 5,
+            ppid: 0,
+            name: "e".into(),
+            ..Default::default()
+        },
     ];
     let tree = build_tree(&procs);
     let flat = flatten_tree(&tree);
@@ -348,9 +426,24 @@ fn flatten_tree_preserves_all() {
 #[test]
 fn count_tree_nodes_multi_level() {
     let procs = vec![
-        MonitorProcessInfo { pid: 1, ppid: 0, name: "a".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 2, ppid: 1, name: "b".into(), ..Default::default() },
-        MonitorProcessInfo { pid: 3, ppid: 2, name: "c".into(), ..Default::default() },
+        MonitorProcessInfo {
+            pid: 1,
+            ppid: 0,
+            name: "a".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 2,
+            ppid: 1,
+            name: "b".into(),
+            ..Default::default()
+        },
+        MonitorProcessInfo {
+            pid: 3,
+            ppid: 2,
+            name: "c".into(),
+            ..Default::default()
+        },
     ];
     let tree = build_tree(&procs);
     assert_eq!(count_tree_nodes(&tree), 3);
@@ -385,14 +478,38 @@ fn system_monitor_network_aggregate_history() {
     let mut m = SystemMonitor::new();
 
     let raw1 = vec![
-        NetworkStats { interface: "eth0".into(), rx_bytes: 0, tx_bytes: 0, ..Default::default() },
-        NetworkStats { interface: "wlan0".into(), rx_bytes: 0, tx_bytes: 0, ..Default::default() },
+        NetworkStats {
+            interface: "eth0".into(),
+            rx_bytes: 0,
+            tx_bytes: 0,
+            ..Default::default()
+        },
+        NetworkStats {
+            interface: "wlan0".into(),
+            rx_bytes: 0,
+            tx_bytes: 0,
+            ..Default::default()
+        },
     ];
     m.record_network(0, raw1);
 
     let raw2 = vec![
-        NetworkStats { interface: "eth0".into(), rx_bytes: 5000, tx_bytes: 3000, rx_packets: 10, tx_packets: 5, ..Default::default() },
-        NetworkStats { interface: "wlan0".into(), rx_bytes: 2000, tx_bytes: 1000, rx_packets: 5, tx_packets: 3, ..Default::default() },
+        NetworkStats {
+            interface: "eth0".into(),
+            rx_bytes: 5000,
+            tx_bytes: 3000,
+            rx_packets: 10,
+            tx_packets: 5,
+            ..Default::default()
+        },
+        NetworkStats {
+            interface: "wlan0".into(),
+            rx_bytes: 2000,
+            tx_bytes: 1000,
+            rx_packets: 5,
+            tx_packets: 3,
+            ..Default::default()
+        },
     ];
     let results = m.record_network(1000, raw2);
 

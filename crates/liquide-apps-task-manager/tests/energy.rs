@@ -1,14 +1,14 @@
 //! Tests for `energy` submodule types.
 
-use liquide_apps_task_manager::energy::*;
 use liquide_apps_task_manager::energy::battery::*;
-use liquide_apps_task_manager::energy::thermal::*;
-use liquide_apps_task_manager::energy::process_energy::*;
 use liquide_apps_task_manager::energy::carbon::*;
 use liquide_apps_task_manager::energy::component::*;
-use liquide_apps_task_manager::energy::power_plan::*;
 use liquide_apps_task_manager::energy::history::*;
+use liquide_apps_task_manager::energy::power_plan::*;
+use liquide_apps_task_manager::energy::process_energy::*;
+use liquide_apps_task_manager::energy::thermal::*;
 use liquide_apps_task_manager::energy::wake_lock::*;
+use liquide_apps_task_manager::energy::*;
 
 // ---------------------------------------------------------------------------
 // EnergyView

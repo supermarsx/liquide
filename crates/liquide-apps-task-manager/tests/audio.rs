@@ -1,14 +1,14 @@
 //! Tests for `audio` submodule types.
 
-use liquide_apps_task_manager::audio::*;
 use liquide_apps_task_manager::audio::device::*;
-use liquide_apps_task_manager::audio::stream::*;
+use liquide_apps_task_manager::audio::diagnostics::*;
 use liquide_apps_task_manager::audio::effects::*;
+use liquide_apps_task_manager::audio::midi::*;
 use liquide_apps_task_manager::audio::routing::*;
 use liquide_apps_task_manager::audio::spatial::*;
-use liquide_apps_task_manager::audio::midi::*;
 use liquide_apps_task_manager::audio::stats::*;
-use liquide_apps_task_manager::audio::diagnostics::*;
+use liquide_apps_task_manager::audio::stream::*;
+use liquide_apps_task_manager::audio::*;
 
 // ---------------------------------------------------------------------------
 // AudioView

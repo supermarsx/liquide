@@ -83,8 +83,14 @@ impl Exportable for TestRecord {
 
 fn sample_records() -> Vec<TestRecord> {
     vec![
-        TestRecord { name: "firefox".into(), value: "12.4".into() },
-        TestRecord { name: "code".into(), value: "3.1".into() },
+        TestRecord {
+            name: "firefox".into(),
+            value: "12.4".into(),
+        },
+        TestRecord {
+            name: "code".into(),
+            value: "3.1".into(),
+        },
     ]
 }
 

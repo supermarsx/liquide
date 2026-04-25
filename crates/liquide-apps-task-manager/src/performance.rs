@@ -476,8 +476,7 @@ impl Default for CpuStats {
 // ---------------------------------------------------------------------------
 
 /// Detailed memory statistics displayed in the memory performance panel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MemoryStats {
     /// Physical RAM currently in use (bytes).
     pub in_use_bytes: u64,
@@ -524,7 +523,6 @@ pub struct MemoryStats {
     /// Amount of compressed memory in bytes, if applicable.
     pub compressed_bytes: Option<u64>,
 }
-
 
 // ---------------------------------------------------------------------------
 // DiskStats
@@ -750,8 +748,7 @@ impl Default for GpuStats {
 
 /// Detailed per-adapter network statistics displayed in the network
 /// performance panel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NetworkPerfStats {
     /// Current outbound throughput (bytes per second).
     pub send_bytes_sec: u64,
@@ -811,14 +808,12 @@ pub struct NetworkPerfStats {
     pub discards_out: u64,
 }
 
-
 // ---------------------------------------------------------------------------
 // PowerStats
 // ---------------------------------------------------------------------------
 
 /// Power and battery statistics displayed in the power performance panel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PowerStats {
     /// Whether the system is running on AC power.
     pub ac_power: bool,
@@ -845,7 +840,6 @@ pub struct PowerStats {
     /// Charging rate in watts, if currently charging.
     pub charge_rate_watts: Option<f64>,
 }
-
 
 // ---------------------------------------------------------------------------
 // AudioPerfStats

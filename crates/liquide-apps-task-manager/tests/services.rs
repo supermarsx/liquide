@@ -19,7 +19,10 @@ fn service_status_as_str_all() {
 
 #[test]
 fn service_status_display() {
-    assert_eq!(format!("{}", ServiceStatus::ContinuePending), "Continue Pending");
+    assert_eq!(
+        format!("{}", ServiceStatus::ContinuePending),
+        "Continue Pending"
+    );
 }
 
 #[test]
@@ -45,7 +48,10 @@ fn service_status_clone_eq() {
 #[test]
 fn service_startup_type_as_str_all() {
     assert_eq!(ServiceStartupType::Automatic.as_str(), "Automatic");
-    assert_eq!(ServiceStartupType::AutomaticDelayed.as_str(), "Automatic (Delayed)");
+    assert_eq!(
+        ServiceStartupType::AutomaticDelayed.as_str(),
+        "Automatic (Delayed)"
+    );
     assert_eq!(ServiceStartupType::Manual.as_str(), "Manual");
     assert_eq!(ServiceStartupType::Disabled.as_str(), "Disabled");
     assert_eq!(ServiceStartupType::Boot.as_str(), "Boot");
@@ -83,7 +89,10 @@ fn service_type_as_str_all() {
 
 #[test]
 fn service_type_display() {
-    assert_eq!(format!("{}", ServiceType::FileSystemDriver), "File System Driver");
+    assert_eq!(
+        format!("{}", ServiceType::FileSystemDriver),
+        "File System Driver"
+    );
 }
 
 #[test]

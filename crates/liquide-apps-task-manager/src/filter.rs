@@ -320,7 +320,10 @@ fn find_operator(input: &str, op: &str) -> Option<usize> {
             i += 1;
             continue;
         }
-        if !in_quotes && i + op_bytes.len() <= bytes.len() && &bytes[i..i + op_bytes.len()] == op_bytes {
+        if !in_quotes
+            && i + op_bytes.len() <= bytes.len()
+            && &bytes[i..i + op_bytes.len()] == op_bytes
+        {
             return Some(i);
         }
         i += 1;
@@ -396,7 +399,9 @@ mod tests {
         let expr = parse_filter("NOT status = \"zombie\"").unwrap();
         match expr {
             FilterExpr::Not(inner) => match *inner {
-                FilterExpr::Comparison { ref field, ref op, .. } => {
+                FilterExpr::Comparison {
+                    ref field, ref op, ..
+                } => {
                     assert_eq!(field, "status");
                     assert_eq!(*op, CompareOp::Eq);
                 }

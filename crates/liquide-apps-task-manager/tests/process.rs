@@ -135,7 +135,10 @@ fn scheduling_priority_as_str_all() {
 
 #[test]
 fn scheduling_priority_display() {
-    assert_eq!(format!("{}", SchedulingPriority::AboveNormal), "Above Normal");
+    assert_eq!(
+        format!("{}", SchedulingPriority::AboveNormal),
+        "Above Normal"
+    );
 }
 
 #[test]

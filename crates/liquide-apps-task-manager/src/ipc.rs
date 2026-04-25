@@ -149,7 +149,10 @@ pub enum IpcRequest {
     /// Clear all events in a log source (requires elevation).
     ClearEventLog { source: String },
     /// Export system events in a given format.
-    ExportEventLog { filter_json: Option<String>, format: String },
+    ExportEventLog {
+        filter_json: Option<String>,
+        format: String,
+    },
 
     // -- Subscription requests ----------------------------------------------
     /// Subscribe to a set of event types.

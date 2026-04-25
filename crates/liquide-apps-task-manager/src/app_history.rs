@@ -37,8 +37,7 @@ impl fmt::Display for TimePeriod {
 }
 
 /// Historical resource consumption record for a single application.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppHistoryEntry {
     /// Application name.
     pub name: String,
@@ -77,4 +76,3 @@ pub struct AppHistoryEntry {
     /// Timestamp of when the application was first seen.
     pub first_seen: Option<String>,
 }
-

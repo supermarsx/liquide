@@ -308,7 +308,9 @@ fn parse_not_expression() {
     let expr = parse_filter("NOT status = \"zombie\"").unwrap();
     match expr {
         FilterExpr::Not(inner) => match *inner {
-            FilterExpr::Comparison { ref field, ref op, .. } => {
+            FilterExpr::Comparison {
+                ref field, ref op, ..
+            } => {
                 assert_eq!(field, "status");
                 assert_eq!(*op, CompareOp::Eq);
             }

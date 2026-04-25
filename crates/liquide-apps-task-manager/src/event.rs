@@ -127,7 +127,11 @@ pub enum TaskManagerEvent {
 
     // -- System event log events --------------------------------------------
     /// A critical or error event appeared in the system event log.
-    SystemEventLogAlert { source: String, event_id: u32, message: String },
+    SystemEventLogAlert {
+        source: String,
+        event_id: u32,
+        message: String,
+    },
     /// An event log was cleared.
     EventLogCleared { source: String },
 }
@@ -197,8 +201,7 @@ impl fmt::Display for TaskManagerEvent {
 ///
 /// All fields are optional; when `None` the corresponding dimension is
 /// unfiltered (i.e. all values pass).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EventFilter {
     /// Only emit events whose type name (snake_case) is in this list.
     pub event_types: Option<Vec<String>>,
@@ -207,4 +210,3 @@ pub struct EventFilter {
     /// Only emit events at or above this severity level.
     pub min_severity: Option<String>,
 }
-
