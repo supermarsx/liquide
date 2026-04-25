@@ -53,7 +53,11 @@ impl EditorRuntime {
     /// Open a document from file contents (in-memory, no disk I/O).
     pub fn open_file(&mut self, path: &str, content: &str) -> usize {
         // Check if already open.
-        if let Some(doc) = self.documents.iter().find(|d| d.path.as_deref() == Some(path)) {
+        if let Some(doc) = self
+            .documents
+            .iter()
+            .find(|d| d.path.as_deref() == Some(path))
+        {
             let id = doc.id;
             self.active_id = Some(id);
             return id;
@@ -72,7 +76,11 @@ impl EditorRuntime {
         let path_str = path.to_string_lossy().to_string();
 
         // Check if already open.
-        if let Some(doc) = self.documents.iter().find(|d| d.path.as_deref() == Some(&path_str)) {
+        if let Some(doc) = self
+            .documents
+            .iter()
+            .find(|d| d.path.as_deref() == Some(&path_str))
+        {
             let id = doc.id;
             self.active_id = Some(id);
             return Ok(id);
@@ -88,7 +96,10 @@ impl EditorRuntime {
 
     /// Close a document by ID.
     pub fn close_document(&mut self, id: usize) -> crate::Result<()> {
-        let pos = self.documents.iter().position(|d| d.id == id)
+        let pos = self
+            .documents
+            .iter()
+            .position(|d| d.id == id)
             .ok_or(crate::EditorError::DocumentNotFound { id })?;
         self.documents.remove(pos);
 
@@ -123,14 +134,17 @@ impl EditorRuntime {
     /// Get all document IDs and titles.
     #[must_use]
     pub fn document_list(&self) -> Vec<(usize, String)> {
-        self.documents.iter()
+        self.documents
+            .iter()
             .map(|d| (d.id, d.display_title()))
             .collect()
     }
 
     /// Number of open documents.
     #[must_use]
-    pub fn document_count(&self) -> usize { self.documents.len() }
+    pub fn document_count(&self) -> usize {
+        self.documents.len()
+    }
 
     /// Get a document by ID.
     #[must_use]
@@ -151,7 +165,9 @@ impl EditorRuntime {
 
     /// Get the config.
     #[must_use]
-    pub fn config(&self) -> &EditorConfig { &self.config }
+    pub fn config(&self) -> &EditorConfig {
+        &self.config
+    }
 
     // =======================================================================
     // Keyboard event handling
@@ -194,7 +210,9 @@ impl EditorRuntime {
                 let cursor = doc.cursors.primary_mut();
                 cursor.position = Position::new(new_line, clamped_col);
                 cursor.selection = None;
-                if cursor.sticky_col.is_none() { cursor.sticky_col = Some(pos.col); }
+                if cursor.sticky_col.is_none() {
+                    cursor.sticky_col = Some(pos.col);
+                }
                 false
             }
             ("ArrowDown", false, false) => {
@@ -206,7 +224,9 @@ impl EditorRuntime {
                 let cursor = doc.cursors.primary_mut();
                 cursor.position = Position::new(new_line, clamped_col);
                 cursor.selection = None;
-                if cursor.sticky_col.is_none() { cursor.sticky_col = Some(pos.col); }
+                if cursor.sticky_col.is_none() {
+                    cursor.sticky_col = Some(pos.col);
+                }
                 false
             }
             ("ArrowLeft", false, false) => {
@@ -260,7 +280,9 @@ impl EditorRuntime {
                 let pos = doc.cursors.primary().position;
                 let new_line = pos.line.saturating_sub(30);
                 let clamped_col = pos.col.min(doc.buffer.line_len(new_line));
-                doc.cursors.primary_mut().move_to(Position::new(new_line, clamped_col));
+                doc.cursors
+                    .primary_mut()
+                    .move_to(Position::new(new_line, clamped_col));
                 false
             }
             ("PageDown", false, false) => {
@@ -268,7 +290,9 @@ impl EditorRuntime {
                 let max_line = doc.buffer.line_count().saturating_sub(1);
                 let new_line = (pos.line + 30).min(max_line);
                 let clamped_col = pos.col.min(doc.buffer.line_len(new_line));
-                doc.cursors.primary_mut().move_to(Position::new(new_line, clamped_col));
+                doc.cursors
+                    .primary_mut()
+                    .move_to(Position::new(new_line, clamped_col));
                 false
             }
 
@@ -280,7 +304,9 @@ impl EditorRuntime {
                 let clamped_col = col.min(doc.buffer.line_len(new_line));
                 let new_pos = Position::new(new_line, clamped_col);
                 let cursor = doc.cursors.primary_mut();
-                if cursor.sticky_col.is_none() { cursor.sticky_col = Some(pos.col); }
+                if cursor.sticky_col.is_none() {
+                    cursor.sticky_col = Some(pos.col);
+                }
                 cursor.select_to(new_pos);
                 false
             }
@@ -292,7 +318,9 @@ impl EditorRuntime {
                 let clamped_col = col.min(doc.buffer.line_len(new_line));
                 let new_pos = Position::new(new_line, clamped_col);
                 let cursor = doc.cursors.primary_mut();
-                if cursor.sticky_col.is_none() { cursor.sticky_col = Some(pos.col); }
+                if cursor.sticky_col.is_none() {
+                    cursor.sticky_col = Some(pos.col);
+                }
                 cursor.select_to(new_pos);
                 false
             }
@@ -330,7 +358,9 @@ impl EditorRuntime {
             ("End", false, true) => {
                 let line = doc.cursors.primary().position.line;
                 let len = doc.buffer.line_len(line);
-                doc.cursors.primary_mut().select_to(Position::new(line, len));
+                doc.cursors
+                    .primary_mut()
+                    .select_to(Position::new(line, len));
                 false
             }
             ("Home", true, true) => {
@@ -340,7 +370,9 @@ impl EditorRuntime {
             ("End", true, true) => {
                 let last = doc.buffer.line_count().saturating_sub(1);
                 let len = doc.buffer.line_len(last);
-                doc.cursors.primary_mut().select_to(Position::new(last, len));
+                doc.cursors
+                    .primary_mut()
+                    .select_to(Position::new(last, len));
                 false
             }
 
@@ -349,25 +381,33 @@ impl EditorRuntime {
                 let pos = doc.cursors.primary().position;
                 doc.record_insert_newline(pos.line, pos.col);
                 let _ = doc.buffer.insert_newline(pos.line, pos.col);
-                doc.cursors.primary_mut().move_to(Position::new(pos.line + 1, 0));
+                doc.cursors
+                    .primary_mut()
+                    .move_to(Position::new(pos.line + 1, 0));
                 doc.gutter.update_width(doc.buffer.line_count());
                 true
             }
             ("Backspace", false, false) => {
                 let pos = doc.cursors.primary().position;
                 if pos.col > 0 {
-                    let ch = doc.buffer.line(pos.line)
+                    let ch = doc
+                        .buffer
+                        .line(pos.line)
                         .and_then(|l| l.chars().nth(pos.col - 1))
                         .unwrap_or(' ');
                     doc.record_delete(pos.line, pos.col - 1, ch.to_string());
                     let _ = doc.buffer.delete_char(pos.line, pos.col - 1);
-                    doc.cursors.primary_mut().move_to(Position::new(pos.line, pos.col - 1));
+                    doc.cursors
+                        .primary_mut()
+                        .move_to(Position::new(pos.line, pos.col - 1));
                     true
                 } else if pos.line > 0 {
                     let prev_len = doc.buffer.line_len(pos.line - 1);
                     doc.record_join_line(pos.line - 1, prev_len);
                     let _ = doc.buffer.join_line_up(pos.line);
-                    doc.cursors.primary_mut().move_to(Position::new(pos.line - 1, prev_len));
+                    doc.cursors
+                        .primary_mut()
+                        .move_to(Position::new(pos.line - 1, prev_len));
                     doc.gutter.update_width(doc.buffer.line_count());
                     true
                 } else {
@@ -378,7 +418,9 @@ impl EditorRuntime {
                 let pos = doc.cursors.primary().position;
                 let line_len = doc.buffer.line_len(pos.line);
                 if pos.col < line_len {
-                    let ch = doc.buffer.line(pos.line)
+                    let ch = doc
+                        .buffer
+                        .line(pos.line)
                         .and_then(|l| l.chars().nth(pos.col))
                         .unwrap_or(' ');
                     doc.record_delete(pos.line, pos.col, ch.to_string());
@@ -404,7 +446,9 @@ impl EditorRuntime {
                 for (i, ch) in indent_str.chars().enumerate() {
                     let _ = doc.buffer.insert_char(pos.line, pos.col + i, ch);
                 }
-                doc.cursors.primary_mut().move_to(Position::new(pos.line, pos.col + indent_str.len()));
+                doc.cursors
+                    .primary_mut()
+                    .move_to(Position::new(pos.line, pos.col + indent_str.len()));
                 true
             }
 
@@ -442,7 +486,9 @@ impl EditorRuntime {
         let pos = doc.cursors.primary().position;
         doc.record_insert(pos.line, pos.col, ch.to_string());
         let _ = doc.buffer.insert_char(pos.line, pos.col, ch);
-        doc.cursors.primary_mut().move_to(Position::new(pos.line, pos.col + 1));
+        doc.cursors
+            .primary_mut()
+            .move_to(Position::new(pos.line, pos.col + 1));
         true
     }
 
@@ -474,14 +520,16 @@ impl EditorRuntime {
 
     /// Save the active document. Returns an error if no document is active or no path is set.
     pub fn save_active(&mut self) -> crate::Result<()> {
-        let doc = self.active_document_mut()
+        let doc = self
+            .active_document_mut()
             .ok_or(crate::EditorError::NoActiveDocument)?;
         doc.save()
     }
 
     /// Save the active document to a new path.
     pub fn save_active_as(&mut self, path: &Path) -> crate::Result<()> {
-        let doc = self.active_document_mut()
+        let doc = self
+            .active_document_mut()
             .ok_or(crate::EditorError::NoActiveDocument)?;
         doc.save_as(path)
     }

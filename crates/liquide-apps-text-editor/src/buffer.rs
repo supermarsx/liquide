@@ -11,7 +11,10 @@ impl TextBuffer {
     /// Create an empty buffer with one empty line.
     #[must_use]
     pub fn new() -> Self {
-        Self { lines: vec![String::new()], modified: false }
+        Self {
+            lines: vec![String::new()],
+            modified: false,
+        }
     }
 
     /// Create a buffer from a vector of lines.
@@ -20,7 +23,10 @@ impl TextBuffer {
         if lines.is_empty() {
             lines.push(String::new());
         }
-        Self { lines, modified: false }
+        Self {
+            lines,
+            modified: false,
+        }
     }
 
     /// Create a buffer from text content.
@@ -31,12 +37,17 @@ impl TextBuffer {
         } else {
             text.lines().map(String::from).collect()
         };
-        Self { lines, modified: false }
+        Self {
+            lines,
+            modified: false,
+        }
     }
 
     /// Number of lines.
     #[must_use]
-    pub fn line_count(&self) -> usize { self.lines.len() }
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
 
     /// Get a line by index.
     #[must_use]
@@ -52,22 +63,27 @@ impl TextBuffer {
 
     /// Whether the buffer has been modified since last mark.
     #[must_use]
-    pub fn is_modified(&self) -> bool { self.modified }
+    pub fn is_modified(&self) -> bool {
+        self.modified
+    }
 
     /// Clear the modified flag.
-    pub fn mark_saved(&mut self) { self.modified = false; }
+    pub fn mark_saved(&mut self) {
+        self.modified = false;
+    }
 
     /// Total character count across all lines.
     #[must_use]
     pub fn char_count(&self) -> usize {
-        self.lines.iter().map(|l| l.len()).sum::<usize>()
-            + self.lines.len().saturating_sub(1) // newlines
+        self.lines.iter().map(|l| l.len()).sum::<usize>() + self.lines.len().saturating_sub(1) // newlines
     }
 
     /// Insert a character at the given line and column.
     pub fn insert_char(&mut self, line: usize, col: usize, ch: char) -> crate::Result<()> {
         let total = self.lines.len();
-        let l = self.lines.get_mut(line)
+        let l = self
+            .lines
+            .get_mut(line)
             .ok_or(crate::EditorError::LineOutOfRange { line, total })?;
         if col > l.len() {
             return Err(crate::EditorError::ColumnOutOfRange { col, len: l.len() });
@@ -80,7 +96,9 @@ impl TextBuffer {
     /// Delete a character at the given line and column.
     pub fn delete_char(&mut self, line: usize, col: usize) -> crate::Result<char> {
         let total = self.lines.len();
-        let l = self.lines.get_mut(line)
+        let l = self
+            .lines
+            .get_mut(line)
             .ok_or(crate::EditorError::LineOutOfRange { line, total })?;
         if col >= l.len() {
             return Err(crate::EditorError::ColumnOutOfRange { col, len: l.len() });
@@ -92,8 +110,13 @@ impl TextBuffer {
 
     /// Insert a new line, splitting the current line at the given column.
     pub fn insert_newline(&mut self, line: usize, col: usize) -> crate::Result<()> {
-        let l = self.lines.get(line)
-            .ok_or(crate::EditorError::LineOutOfRange { line, total: self.lines.len() })?;
+        let l = self
+            .lines
+            .get(line)
+            .ok_or(crate::EditorError::LineOutOfRange {
+                line,
+                total: self.lines.len(),
+            })?;
         if col > l.len() {
             return Err(crate::EditorError::ColumnOutOfRange { col, len: l.len() });
         }
@@ -107,7 +130,10 @@ impl TextBuffer {
     /// Delete a line, joining it with the previous line.
     pub fn join_line_up(&mut self, line: usize) -> crate::Result<usize> {
         if line == 0 || line >= self.lines.len() {
-            return Err(crate::EditorError::LineOutOfRange { line, total: self.lines.len() });
+            return Err(crate::EditorError::LineOutOfRange {
+                line,
+                total: self.lines.len(),
+            });
         }
         let removed = self.lines.remove(line);
         let join_col = self.lines[line - 1].len();
@@ -117,9 +143,19 @@ impl TextBuffer {
     }
 
     /// Insert text at a position, handling multi-line inserts.
-    pub fn insert_text(&mut self, line: usize, col: usize, text: &str) -> crate::Result<(usize, usize)> {
-        let l = self.lines.get(line)
-            .ok_or(crate::EditorError::LineOutOfRange { line, total: self.lines.len() })?;
+    pub fn insert_text(
+        &mut self,
+        line: usize,
+        col: usize,
+        text: &str,
+    ) -> crate::Result<(usize, usize)> {
+        let l = self
+            .lines
+            .get(line)
+            .ok_or(crate::EditorError::LineOutOfRange {
+                line,
+                total: self.lines.len(),
+            })?;
         if col > l.len() {
             return Err(crate::EditorError::ColumnOutOfRange { col, len: l.len() });
         }
@@ -156,10 +192,16 @@ impl TextBuffer {
         end_col: usize,
     ) -> crate::Result<String> {
         if start_line >= self.lines.len() {
-            return Err(crate::EditorError::LineOutOfRange { line: start_line, total: self.lines.len() });
+            return Err(crate::EditorError::LineOutOfRange {
+                line: start_line,
+                total: self.lines.len(),
+            });
         }
         if end_line >= self.lines.len() {
-            return Err(crate::EditorError::LineOutOfRange { line: end_line, total: self.lines.len() });
+            return Err(crate::EditorError::LineOutOfRange {
+                line: end_line,
+                total: self.lines.len(),
+            });
         }
 
         if start_line == end_line {
@@ -197,9 +239,13 @@ impl TextBuffer {
 
     /// Get all lines.
     #[must_use]
-    pub fn lines(&self) -> &[String] { &self.lines }
+    pub fn lines(&self) -> &[String] {
+        &self.lines
+    }
 }
 
 impl Default for TextBuffer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

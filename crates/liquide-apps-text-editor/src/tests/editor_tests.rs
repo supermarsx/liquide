@@ -183,6 +183,10 @@ fn test_runtime_has_unsaved_changes() {
     let mut rt = EditorRuntime::new(EditorConfig::default());
     let id = rt.new_document();
     assert!(!rt.has_unsaved_changes());
-    rt.document_mut(id).unwrap().buffer.insert_char(0, 0, 'x').unwrap();
+    rt.document_mut(id)
+        .unwrap()
+        .buffer
+        .insert_char(0, 0, 'x')
+        .unwrap();
     assert!(rt.has_unsaved_changes());
 }

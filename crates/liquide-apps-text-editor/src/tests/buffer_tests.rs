@@ -2,10 +2,10 @@
 
 use crate::buffer::TextBuffer;
 use crate::cursor::{Cursor, MultiCursor, Position, Selection};
-use crate::indent::{auto_indent, detect_indent, indent_level, leading_whitespace, IndentStyle};
+use crate::gutter::{Diagnostic, Gutter};
+use crate::indent::{IndentStyle, auto_indent, detect_indent, indent_level, leading_whitespace};
 use crate::search::SearchReplace;
 use crate::undo::{EditOp, UndoHistory};
-use crate::gutter::{Diagnostic, Gutter};
 
 // ===========================================================================
 // TextBuffer
@@ -246,7 +246,11 @@ fn test_search_clear() {
 fn test_undo_history() {
     let mut h = UndoHistory::new(100);
     assert!(!h.can_undo());
-    h.record(EditOp::Insert { line: 0, col: 0, text: "a".into() });
+    h.record(EditOp::Insert {
+        line: 0,
+        col: 0,
+        text: "a".into(),
+    });
     assert!(h.can_undo());
     assert_eq!(h.undo_depth(), 1);
 }
@@ -254,7 +258,11 @@ fn test_undo_history() {
 #[test]
 fn test_undo_redo() {
     let mut h = UndoHistory::new(100);
-    h.record(EditOp::Insert { line: 0, col: 0, text: "a".into() });
+    h.record(EditOp::Insert {
+        line: 0,
+        col: 0,
+        text: "a".into(),
+    });
     let op = h.undo().unwrap();
     assert!(matches!(op, EditOp::Insert { .. }));
     assert!(h.can_redo());
@@ -266,7 +274,11 @@ fn test_undo_redo() {
 fn test_undo_limit() {
     let mut h = UndoHistory::new(3);
     for i in 0..5 {
-        h.record(EditOp::Insert { line: 0, col: i, text: "x".into() });
+        h.record(EditOp::Insert {
+            line: 0,
+            col: i,
+            text: "x".into(),
+        });
     }
     assert_eq!(h.undo_depth(), 3);
 }
@@ -274,10 +286,18 @@ fn test_undo_limit() {
 #[test]
 fn test_undo_clears_redo() {
     let mut h = UndoHistory::new(100);
-    h.record(EditOp::Insert { line: 0, col: 0, text: "a".into() });
+    h.record(EditOp::Insert {
+        line: 0,
+        col: 0,
+        text: "a".into(),
+    });
     h.undo();
     assert!(h.can_redo());
-    h.record(EditOp::Insert { line: 0, col: 0, text: "b".into() });
+    h.record(EditOp::Insert {
+        line: 0,
+        col: 0,
+        text: "b".into(),
+    });
     assert!(!h.can_redo());
 }
 

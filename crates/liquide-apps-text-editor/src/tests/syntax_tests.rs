@@ -32,7 +32,10 @@ fn test_c_keywords() {
     let lang = Language::from_extension("c").unwrap();
     let h = Highlighter::new(Some(lang));
     let tokens = h.tokenize_line("int main() { return 0; }");
-    let keywords: Vec<_> = tokens.iter().filter(|t| t.kind == TokenKind::Keyword).collect();
+    let keywords: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.kind == TokenKind::Keyword)
+        .collect();
     assert!(keywords.len() >= 2); // int, return
 }
 

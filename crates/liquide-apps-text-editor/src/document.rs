@@ -30,7 +30,9 @@ impl LineEnding {
 }
 
 impl Default for LineEnding {
-    fn default() -> Self { Self::Lf }
+    fn default() -> Self {
+        Self::Lf
+    }
 }
 
 /// Detect the line ending style used in a string.
@@ -98,7 +100,8 @@ impl Document {
     pub fn from_file(id: usize, path: &str, content: &str, undo_limit: usize) -> Self {
         let ext = path.rsplit('.').next().unwrap_or("");
         let lang = Language::from_extension(ext);
-        let title = path.rsplit('/')
+        let title = path
+            .rsplit('/')
             .next()
             .or_else(|| path.rsplit('\\').next())
             .unwrap_or(path)
@@ -128,11 +131,10 @@ impl Document {
         let line_ending = detect_line_ending(&content);
         let lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let lang = Language::from_extension(ext);
-        let title = path.file_name()
+        let title = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("Untitled")
             .to_string();
@@ -158,8 +160,7 @@ impl Document {
 
     /// Save the document to its current path.
     pub fn save(&mut self) -> crate::Result<()> {
-        let path = self.path.clone()
-            .ok_or(crate::EditorError::NoPath)?;
+        let path = self.path.clone().ok_or(crate::EditorError::NoPath)?;
         let eol = self.line_ending.as_str();
         let content = self.buffer.lines().join(eol);
         std::fs::write(&path, &content)?;
@@ -171,28 +172,33 @@ impl Document {
     pub fn save_as(&mut self, path: &Path) -> crate::Result<()> {
         let path_str = path.to_string_lossy().to_string();
         self.path = Some(path_str);
-        self.title = path.file_name()
+        self.title = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("Untitled")
             .to_string();
         // Re-detect language from new extension.
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         self.highlighter.set_language(Language::from_extension(ext));
         self.save()
     }
 
     /// Whether the document has unsaved changes.
     #[must_use]
-    pub fn is_modified(&self) -> bool { self.buffer.is_modified() }
+    pub fn is_modified(&self) -> bool {
+        self.buffer.is_modified()
+    }
 
     /// Mark as saved.
-    pub fn mark_saved(&mut self) { self.buffer.mark_saved(); }
+    pub fn mark_saved(&mut self) {
+        self.buffer.mark_saved();
+    }
 
     /// The language name for this document.
     #[must_use]
-    pub fn language_name(&self) -> &str { self.highlighter.language_name() }
+    pub fn language_name(&self) -> &str {
+        self.highlighter.language_name()
+    }
 
     /// Display title with modification indicator.
     #[must_use]
@@ -237,14 +243,18 @@ impl Document {
 
     /// Undo the last edit, returning true if something was undone.
     pub fn undo(&mut self) -> bool {
-        let Some(op) = self.history.undo() else { return false };
+        let Some(op) = self.history.undo() else {
+            return false;
+        };
         self.apply_undo_op(&op);
         true
     }
 
     /// Redo the last undone edit, returning true if something was redone.
     pub fn redo(&mut self) -> bool {
-        let Some(op) = self.history.redo() else { return false };
+        let Some(op) = self.history.redo() else {
+            return false;
+        };
         self.apply_redo_op(&op);
         true
     }

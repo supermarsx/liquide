@@ -16,15 +16,9 @@ pub enum EditOp {
         text: String,
     },
     /// A newline was inserted (line split).
-    InsertNewline {
-        line: usize,
-        col: usize,
-    },
+    InsertNewline { line: usize, col: usize },
     /// A line was joined with the one above.
-    JoinLine {
-        line: usize,
-        col: usize,
-    },
+    JoinLine { line: usize, col: usize },
 }
 
 /// Undo/redo history with configurable depth.
@@ -69,15 +63,21 @@ impl UndoHistory {
 
     /// Whether undo is available.
     #[must_use]
-    pub fn can_undo(&self) -> bool { !self.undo_stack.is_empty() }
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
 
     /// Whether redo is available.
     #[must_use]
-    pub fn can_redo(&self) -> bool { !self.redo_stack.is_empty() }
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
 
     /// Number of items in undo stack.
     #[must_use]
-    pub fn undo_depth(&self) -> usize { self.undo_stack.len() }
+    pub fn undo_depth(&self) -> usize {
+        self.undo_stack.len()
+    }
 
     /// Clear all history.
     pub fn clear(&mut self) {

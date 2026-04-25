@@ -31,7 +31,9 @@ impl Token {
     }
 
     #[must_use]
-    pub fn end(&self) -> usize { self.start + self.len }
+    pub fn end(&self) -> usize {
+        self.start + self.len
+    }
 }
 
 /// A language definition for syntax highlighting.
@@ -68,18 +70,22 @@ impl Language {
             name: "Rust".into(),
             extensions: vec!["rs".into()],
             keywords: vec![
-                "fn", "let", "mut", "pub", "use", "mod", "struct", "enum", "impl",
-                "trait", "type", "const", "static", "if", "else", "match", "for",
-                "while", "loop", "return", "break", "continue", "where", "async",
-                "await", "move", "ref", "self", "super", "crate", "as", "in",
-                "unsafe", "extern", "dyn",
-            ].into_iter().map(String::from).collect(),
+                "fn", "let", "mut", "pub", "use", "mod", "struct", "enum", "impl", "trait", "type",
+                "const", "static", "if", "else", "match", "for", "while", "loop", "return",
+                "break", "continue", "where", "async", "await", "move", "ref", "self", "super",
+                "crate", "as", "in", "unsafe", "extern", "dyn",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             types: vec![
-                "bool", "u8", "u16", "u32", "u64", "u128", "usize",
-                "i8", "i16", "i32", "i64", "i128", "isize",
-                "f32", "f64", "char", "str", "String", "Vec", "Option",
-                "Result", "Box", "Rc", "Arc", "Self",
-            ].into_iter().map(String::from).collect(),
+                "bool", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64",
+                "i128", "isize", "f32", "f64", "char", "str", "String", "Vec", "Option", "Result",
+                "Box", "Rc", "Arc", "Self",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             line_comment: "//".into(),
             block_comment_start: "/*".into(),
             block_comment_end: "*/".into(),
@@ -92,15 +98,21 @@ impl Language {
             name: "Python".into(),
             extensions: vec!["py".into()],
             keywords: vec![
-                "def", "class", "if", "elif", "else", "for", "while", "return",
-                "import", "from", "as", "try", "except", "finally", "with",
-                "yield", "lambda", "pass", "break", "continue", "raise", "in",
-                "is", "not", "and", "or", "True", "False", "None", "async", "await",
-            ].into_iter().map(String::from).collect(),
+                "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from",
+                "as", "try", "except", "finally", "with", "yield", "lambda", "pass", "break",
+                "continue", "raise", "in", "is", "not", "and", "or", "True", "False", "None",
+                "async", "await",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             types: vec![
-                "int", "float", "str", "bool", "list", "dict", "tuple", "set",
-                "bytes", "object", "type",
-            ].into_iter().map(String::from).collect(),
+                "int", "float", "str", "bool", "list", "dict", "tuple", "set", "bytes", "object",
+                "type",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             line_comment: "#".into(),
             block_comment_start: "\"\"\"".into(),
             block_comment_end: "\"\"\"".into(),
@@ -113,16 +125,63 @@ impl Language {
             name: "JavaScript".into(),
             extensions: vec!["js".into(), "ts".into(), "jsx".into(), "tsx".into()],
             keywords: vec![
-                "function", "var", "let", "const", "if", "else", "for", "while",
-                "do", "switch", "case", "break", "continue", "return", "class",
-                "extends", "new", "this", "super", "import", "export", "default",
-                "from", "try", "catch", "finally", "throw", "async", "await",
-                "yield", "typeof", "instanceof", "in", "of", "delete", "void",
-            ].into_iter().map(String::from).collect(),
+                "function",
+                "var",
+                "let",
+                "const",
+                "if",
+                "else",
+                "for",
+                "while",
+                "do",
+                "switch",
+                "case",
+                "break",
+                "continue",
+                "return",
+                "class",
+                "extends",
+                "new",
+                "this",
+                "super",
+                "import",
+                "export",
+                "default",
+                "from",
+                "try",
+                "catch",
+                "finally",
+                "throw",
+                "async",
+                "await",
+                "yield",
+                "typeof",
+                "instanceof",
+                "in",
+                "of",
+                "delete",
+                "void",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             types: vec![
-                "string", "number", "boolean", "object", "undefined", "null",
-                "symbol", "bigint", "any", "void", "never", "unknown",
-            ].into_iter().map(String::from).collect(),
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "undefined",
+                "null",
+                "symbol",
+                "bigint",
+                "any",
+                "void",
+                "never",
+                "unknown",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             line_comment: "//".into(),
             block_comment_start: "/*".into(),
             block_comment_end: "*/".into(),
@@ -135,16 +194,21 @@ impl Language {
             name: "C".into(),
             extensions: vec!["c".into(), "h".into()],
             keywords: vec![
-                "auto", "break", "case", "char", "const", "continue", "default",
-                "do", "double", "else", "enum", "extern", "float", "for", "goto",
-                "if", "int", "long", "register", "return", "short", "signed",
-                "sizeof", "static", "struct", "switch", "typedef", "union",
-                "unsigned", "void", "volatile", "while",
-            ].into_iter().map(String::from).collect(),
+                "auto", "break", "case", "char", "const", "continue", "default", "do", "double",
+                "else", "enum", "extern", "float", "for", "goto", "if", "int", "long", "register",
+                "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef",
+                "union", "unsigned", "void", "volatile", "while",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             types: vec![
-                "int", "char", "float", "double", "void", "long", "short",
-                "unsigned", "signed", "size_t", "FILE",
-            ].into_iter().map(String::from).collect(),
+                "int", "char", "float", "double", "void", "long", "short", "unsigned", "signed",
+                "size_t", "FILE",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             line_comment: "//".into(),
             block_comment_start: "/*".into(),
             block_comment_end: "*/".into(),
@@ -180,7 +244,8 @@ impl Highlighter {
     /// Detect the language from a file path and create a highlighter.
     #[must_use]
     pub fn detect(path: &std::path::Path) -> Self {
-        let lang = path.extension()
+        let lang = path
+            .extension()
             .and_then(|e| e.to_str())
             .and_then(|ext| Language::from_extension(ext));
         Self::new(lang)
@@ -220,7 +285,9 @@ impl Highlighter {
             // Whitespace.
             if ch.is_whitespace() {
                 let start = i;
-                while i < len && chars[i].is_whitespace() { i += 1; }
+                while i < len && chars[i].is_whitespace() {
+                    i += 1;
+                }
                 tokens.push(Token::new(TokenKind::Whitespace, start, i - start));
                 continue;
             }
@@ -230,10 +297,14 @@ impl Highlighter {
                 let start = i;
                 i += 1;
                 while i < len && chars[i] != ch {
-                    if chars[i] == '\\' { i += 1; } // skip escaped.
+                    if chars[i] == '\\' {
+                        i += 1;
+                    } // skip escaped.
                     i += 1;
                 }
-                if i < len { i += 1; } // closing quote.
+                if i < len {
+                    i += 1;
+                } // closing quote.
                 tokens.push(Token::new(TokenKind::String, start, i - start));
                 continue;
             }
@@ -268,8 +339,12 @@ impl Highlighter {
 
             // Operators and punctuation.
             let kind = match ch {
-                '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '&' | '|' | '^' | '~' => TokenKind::Operator,
-                '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':' | '.' | '@' | '#' => TokenKind::Punctuation,
+                '+' | '-' | '*' | '/' | '%' | '=' | '<' | '>' | '!' | '&' | '|' | '^' | '~' => {
+                    TokenKind::Operator
+                }
+                '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';' | ':' | '.' | '@' | '#' => {
+                    TokenKind::Punctuation
+                }
                 _ => TokenKind::Unknown,
             };
             tokens.push(Token::new(kind, i, 1));

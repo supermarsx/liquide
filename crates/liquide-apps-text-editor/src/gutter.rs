@@ -22,12 +22,24 @@ pub struct Diagnostic {
 impl Diagnostic {
     #[must_use]
     pub fn error(line: usize, message: impl Into<String>, source: impl Into<String>) -> Self {
-        Self { line, col: None, severity: DiagnosticSeverity::Error, message: message.into(), source: source.into() }
+        Self {
+            line,
+            col: None,
+            severity: DiagnosticSeverity::Error,
+            message: message.into(),
+            source: source.into(),
+        }
     }
 
     #[must_use]
     pub fn warning(line: usize, message: impl Into<String>, source: impl Into<String>) -> Self {
-        Self { line, col: None, severity: DiagnosticSeverity::Warning, message: message.into(), source: source.into() }
+        Self {
+            line,
+            col: None,
+            severity: DiagnosticSeverity::Warning,
+            message: message.into(),
+            source: source.into(),
+        }
     }
 }
 
@@ -43,7 +55,11 @@ pub struct Gutter {
 impl Gutter {
     #[must_use]
     pub fn new() -> Self {
-        Self { diagnostics: Vec::new(), breakpoints: Vec::new(), width: 4 }
+        Self {
+            diagnostics: Vec::new(),
+            breakpoints: Vec::new(),
+            width: 4,
+        }
     }
 
     /// Update the gutter width based on total line count.
@@ -53,7 +69,9 @@ impl Gutter {
 
     /// Gutter width in characters.
     #[must_use]
-    pub fn width(&self) -> usize { self.width }
+    pub fn width(&self) -> usize {
+        self.width
+    }
 
     /// Set diagnostics.
     pub fn set_diagnostics(&mut self, diagnostics: Vec<Diagnostic>) {
@@ -68,18 +86,26 @@ impl Gutter {
 
     /// All diagnostics.
     #[must_use]
-    pub fn all_diagnostics(&self) -> &[Diagnostic] { &self.diagnostics }
+    pub fn all_diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
 
     /// Number of errors.
     #[must_use]
     pub fn error_count(&self) -> usize {
-        self.diagnostics.iter().filter(|d| d.severity == DiagnosticSeverity::Error).count()
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Error)
+            .count()
     }
 
     /// Number of warnings.
     #[must_use]
     pub fn warning_count(&self) -> usize {
-        self.diagnostics.iter().filter(|d| d.severity == DiagnosticSeverity::Warning).count()
+        self.diagnostics
+            .iter()
+            .filter(|d| d.severity == DiagnosticSeverity::Warning)
+            .count()
     }
 
     /// Toggle a breakpoint on a line.
@@ -99,7 +125,9 @@ impl Gutter {
 
     /// All breakpoints.
     #[must_use]
-    pub fn breakpoints(&self) -> &[usize] { &self.breakpoints }
+    pub fn breakpoints(&self) -> &[usize] {
+        &self.breakpoints
+    }
 
     /// Clear all diagnostics.
     pub fn clear_diagnostics(&mut self) {
@@ -108,5 +136,7 @@ impl Gutter {
 }
 
 impl Default for Gutter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

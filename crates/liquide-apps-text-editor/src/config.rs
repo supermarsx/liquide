@@ -56,5 +56,7 @@ pub enum WrapMode {
 }
 
 impl Default for WrapMode {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }

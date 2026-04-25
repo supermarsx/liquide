@@ -1,8 +1,10 @@
 use anyhow::Result;
-use tracing::info;
-use liquide_apps_text_editor::{EditorConfig, EditorRuntime};
+use liquide_apps_text_editor::run_default_app;
 
 /// Built-in text editor for the LiquiDE desktop environment.
+///
+/// Wires `EditorRuntime` onto `liquide_app_harness::AppBootstrap`, which
+/// drives the platform event loop, input translation, layout, and paint.
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -11,14 +13,5 @@ fn main() -> Result<()> {
         )
         .init();
 
-    let config = EditorConfig::default();
-    info!(font = %config.font_family, size = config.font_size, "Starting liquid-text-editor");
-
-    let mut rt = EditorRuntime::new(config);
-    let id = rt.new_document();
-    info!(doc_id = id, "New document created");
-
-    println!("liquid-text-editor: {} document(s) open", rt.document_count());
-
-    Ok(())
+    run_default_app()
 }

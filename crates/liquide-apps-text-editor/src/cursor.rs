@@ -9,10 +9,14 @@ pub struct Position {
 
 impl Position {
     #[must_use]
-    pub fn new(line: usize, col: usize) -> Self { Self { line, col } }
+    pub fn new(line: usize, col: usize) -> Self {
+        Self { line, col }
+    }
 
     #[must_use]
-    pub fn zero() -> Self { Self { line: 0, col: 0 } }
+    pub fn zero() -> Self {
+        Self { line: 0, col: 0 }
+    }
 }
 
 /// A text selection (from anchor to cursor).
@@ -31,13 +35,21 @@ impl Selection {
     /// Start of the selection (min position).
     #[must_use]
     pub fn start(&self) -> Position {
-        if self.anchor <= self.cursor { self.anchor } else { self.cursor }
+        if self.anchor <= self.cursor {
+            self.anchor
+        } else {
+            self.cursor
+        }
     }
 
     /// End of the selection (max position).
     #[must_use]
     pub fn end(&self) -> Position {
-        if self.anchor >= self.cursor { self.anchor } else { self.cursor }
+        if self.anchor >= self.cursor {
+            self.anchor
+        } else {
+            self.cursor
+        }
     }
 
     /// Whether the selection is empty (cursor == anchor).
@@ -65,7 +77,11 @@ pub struct Cursor {
 impl Cursor {
     #[must_use]
     pub fn new() -> Self {
-        Self { position: Position::zero(), selection: None, sticky_col: None }
+        Self {
+            position: Position::zero(),
+            selection: None,
+            sticky_col: None,
+        }
     }
 
     /// Move to a specific position, clearing selection.
@@ -106,7 +122,9 @@ impl Cursor {
 }
 
 impl Default for Cursor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Multi-cursor state.
@@ -118,15 +136,21 @@ pub struct MultiCursor {
 impl MultiCursor {
     #[must_use]
     pub fn new() -> Self {
-        Self { cursors: vec![Cursor::new()] }
+        Self {
+            cursors: vec![Cursor::new()],
+        }
     }
 
     /// Get the primary cursor.
     #[must_use]
-    pub fn primary(&self) -> &Cursor { &self.cursors[0] }
+    pub fn primary(&self) -> &Cursor {
+        &self.cursors[0]
+    }
 
     /// Get mutable primary cursor.
-    pub fn primary_mut(&mut self) -> &mut Cursor { &mut self.cursors[0] }
+    pub fn primary_mut(&mut self) -> &mut Cursor {
+        &mut self.cursors[0]
+    }
 
     /// Add an additional cursor.
     pub fn add_cursor(&mut self, pos: Position) {
@@ -142,13 +166,19 @@ impl MultiCursor {
 
     /// Number of active cursors.
     #[must_use]
-    pub fn count(&self) -> usize { self.cursors.len() }
+    pub fn count(&self) -> usize {
+        self.cursors.len()
+    }
 
     /// Get all cursors.
     #[must_use]
-    pub fn all(&self) -> &[Cursor] { &self.cursors }
+    pub fn all(&self) -> &[Cursor] {
+        &self.cursors
+    }
 }
 
 impl Default for MultiCursor {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

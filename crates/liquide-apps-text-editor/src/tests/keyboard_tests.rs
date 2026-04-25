@@ -11,8 +11,7 @@ use crate::runtime::EditorRuntime;
 fn unique_test_dir(name: &str) -> std::path::PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir()
-        .join(format!("{name}_{}_{id}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("{name}_{}_{id}", std::process::id()));
     // Clean up any stale directory from a previous run.
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("failed to create test temp dir");
@@ -159,7 +158,9 @@ fn test_handle_enter() {
 
     // Move cursor to col 5
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 5));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 5));
 
     let modified = rt.handle_key("Enter", false, false);
     assert!(modified);
@@ -182,7 +183,9 @@ fn test_handle_backspace_mid_line() {
     rt.open_file("t.txt", "abc");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 2));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 2));
 
     assert!(rt.handle_key("Backspace", false, false));
 
@@ -197,7 +200,9 @@ fn test_handle_backspace_start_of_line() {
     rt.open_file("t.txt", "ab\ncd");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(1, 0));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(1, 0));
 
     assert!(rt.handle_key("Backspace", false, false));
 
@@ -227,7 +232,9 @@ fn test_handle_delete_mid_line() {
     rt.open_file("t.txt", "abc");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 1));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 1));
 
     assert!(rt.handle_key("Delete", false, false));
 
@@ -241,7 +248,9 @@ fn test_handle_delete_end_of_line() {
     rt.open_file("t.txt", "ab\ncd");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 2));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 2));
 
     assert!(rt.handle_key("Delete", false, false));
 
@@ -260,7 +269,9 @@ fn test_handle_tab_spaces() {
     rt.open_file("t.txt", "x");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 0));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 0));
 
     assert!(rt.handle_key("Tab", false, false));
 
@@ -302,13 +313,21 @@ fn test_home_end() {
     rt.open_file("t.txt", "hello world");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 5));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 5));
 
     rt.handle_key("Home", false, false);
-    assert_eq!(rt.active_document().unwrap().cursors.primary().position.col, 0);
+    assert_eq!(
+        rt.active_document().unwrap().cursors.primary().position.col,
+        0
+    );
 
     rt.handle_key("End", false, false);
-    assert_eq!(rt.active_document().unwrap().cursors.primary().position.col, 11);
+    assert_eq!(
+        rt.active_document().unwrap().cursors.primary().position.col,
+        11
+    );
 }
 
 #[test]
@@ -331,14 +350,33 @@ fn test_ctrl_home_end() {
 fn test_page_up_down() {
     let mut rt = EditorRuntime::new(EditorConfig::default());
     // Create a multi-line doc.
-    let content: String = (0..100).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+    let content: String = (0..100)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     rt.open_file("t.txt", &content);
 
     rt.handle_key("PageDown", false, false);
-    assert_eq!(rt.active_document().unwrap().cursors.primary().position.line, 30);
+    assert_eq!(
+        rt.active_document()
+            .unwrap()
+            .cursors
+            .primary()
+            .position
+            .line,
+        30
+    );
 
     rt.handle_key("PageUp", false, false);
-    assert_eq!(rt.active_document().unwrap().cursors.primary().position.line, 0);
+    assert_eq!(
+        rt.active_document()
+            .unwrap()
+            .cursors
+            .primary()
+            .position
+            .line,
+        0
+    );
 }
 
 // ===========================================================================
@@ -404,7 +442,9 @@ fn test_undo_redo_newline() {
     rt.open_file("t.txt", "hello world");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 5));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 5));
 
     rt.handle_key("Enter", false, false);
     assert_eq!(rt.active_document().unwrap().buffer.line_count(), 2);
@@ -412,7 +452,10 @@ fn test_undo_redo_newline() {
     // Undo.
     rt.handle_key("z", true, false);
     assert_eq!(rt.active_document().unwrap().buffer.line_count(), 1);
-    assert_eq!(rt.active_document().unwrap().buffer.line(0), Some("hello world"));
+    assert_eq!(
+        rt.active_document().unwrap().buffer.line(0),
+        Some("hello world")
+    );
 
     // Redo.
     rt.handle_key("y", true, false);
@@ -425,7 +468,9 @@ fn test_undo_backspace() {
     rt.open_file("t.txt", "abc");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 3));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 3));
 
     rt.handle_key("Backspace", false, false);
     assert_eq!(rt.active_document().unwrap().buffer.line(0), Some("ab"));
@@ -441,7 +486,9 @@ fn test_undo_delete() {
 
     // Cursor at col 1, delete 'b'.
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 1));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 1));
 
     rt.handle_key("Delete", false, false);
     assert_eq!(rt.active_document().unwrap().buffer.line(0), Some("ac"));
@@ -456,7 +503,9 @@ fn test_undo_join_line_via_backspace() {
     rt.open_file("t.txt", "ab\ncd");
 
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(1, 0));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(1, 0));
 
     rt.handle_key("Backspace", false, false);
     assert_eq!(rt.active_document().unwrap().buffer.line_count(), 1);
@@ -482,7 +531,9 @@ fn test_ctrl_s_save() {
 
     // Type a character then Ctrl+S.
     let doc = rt.active_document_mut().unwrap();
-    doc.cursors.primary_mut().move_to(crate::cursor::Position::new(0, 8));
+    doc.cursors
+        .primary_mut()
+        .move_to(crate::cursor::Position::new(0, 8));
     rt.handle_char('!');
     rt.handle_key("s", true, false);
 
@@ -514,7 +565,10 @@ fn test_visible_lines_basic() {
 #[test]
 fn test_visible_lines_scroll_offset() {
     let mut rt = EditorRuntime::new(EditorConfig::default());
-    let content: String = (0..50).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+    let content: String = (0..50)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     rt.open_file("t.txt", &content);
 
     let lines = rt.visible_lines(10, 5);

@@ -61,7 +61,9 @@ pub fn detect_indent(lines: &[String]) -> IndentStyle {
     let mut space_widths: [usize; 9] = [0; 9]; // index 1..8
 
     for line in lines {
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         let first = line.chars().next().unwrap_or(' ');
         if first == '\t' {
             tab_count += 1;
