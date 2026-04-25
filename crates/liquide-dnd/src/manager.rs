@@ -16,27 +16,15 @@ use crate::traits::DropTargetHandler;
 #[derive(Debug, Clone)]
 pub enum DragEvent {
     /// A drag operation started.
-    Started {
-        source_window: Option<u64>,
-    },
+    Started { source_window: Option<u64> },
     /// The drag cursor moved.
-    Moved {
-        x: f32,
-        y: f32,
-    },
+    Moved { x: f32, y: f32 },
     /// The drag entered a new target window.
-    EnteredTarget {
-        window_id: u64,
-        effect: DropEffect,
-    },
+    EnteredTarget { window_id: u64, effect: DropEffect },
     /// The drag left a target window.
-    LeftTarget {
-        window_id: u64,
-    },
+    LeftTarget { window_id: u64 },
     /// The drop effect changed.
-    EffectChanged {
-        effect: DropEffect,
-    },
+    EffectChanged { effect: DropEffect },
     /// The drag completed with a drop.
     Dropped {
         target_window: Option<u64>,
@@ -152,9 +140,8 @@ impl DragManager {
                 if let Some(handler) = self.targets.get_mut(&old_id) {
                     handler.on_drag_leave();
                 }
-                self.events.push(DragEvent::LeftTarget {
-                    window_id: old_id,
-                });
+                self.events
+                    .push(DragEvent::LeftTarget { window_id: old_id });
             }
 
             // Enter new target
@@ -376,19 +363,25 @@ mod tests {
         // Enter target 10
         mgr.update_position(50.0, 50.0, Some(10));
         let events = mgr.drain_events();
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, DragEvent::EnteredTarget { window_id: 10, .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DragEvent::EnteredTarget { window_id: 10, .. }))
+        );
 
         // Move to target 20 (leave 10, enter 20)
         mgr.update_position(150.0, 50.0, Some(20));
         let events = mgr.drain_events();
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, DragEvent::LeftTarget { window_id: 10 })));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, DragEvent::EnteredTarget { window_id: 20, .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DragEvent::LeftTarget { window_id: 10 }))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DragEvent::EnteredTarget { window_id: 20, .. }))
+        );
     }
 
     #[test]
@@ -483,9 +476,11 @@ mod tests {
         // Move within same target — effect stays the same, no EffectChanged
         mgr.update_position(55.0, 55.0, Some(10));
         let events = mgr.drain_events();
-        assert!(!events
-            .iter()
-            .any(|e| matches!(e, DragEvent::EffectChanged { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DragEvent::EffectChanged { .. }))
+        );
     }
 
     #[test]

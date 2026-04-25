@@ -13,19 +13,21 @@
 //! - **Animation support** - Multi-frame animated cursors
 //! - **Serialization** - Full serde support for protocol transmission
 
+mod animation;
+mod renderer;
 mod shape;
 mod state;
 mod theme;
-mod renderer;
-mod animation;
 pub mod themed_cursors;
+pub mod vector_bridge;
 
+pub use animation::{AnimatedCursor, CursorFrame};
+pub use renderer::{CursorRenderer, RenderTarget, SoftwareCursorRenderer};
 pub use shape::{CursorShape, ResizeDirection};
 pub use state::{CursorState, CursorVisibility};
 pub use theme::{CursorTheme, CursorThemeError, ThemeMetadata};
-pub use renderer::{CursorRenderer, RenderTarget, SoftwareCursorRenderer};
-pub use animation::{AnimatedCursor, CursorFrame};
 pub use themed_cursors::{CursorColors, ThemedCursorGenerator};
+pub use vector_bridge::{VectorCursorBackend, VectorCursorBitmap};
 
 /// Result type for cursor operations.
 pub type Result<T> = std::result::Result<T, CursorError>;
@@ -35,10 +37,10 @@ pub type Result<T> = std::result::Result<T, CursorError>;
 pub enum CursorError {
     #[error("invalid cursor image data: {0}")]
     InvalidImage(String),
-    
+
     #[error("cursor theme not found: {0}")]
     ThemeNotFound(String),
-    
+
     #[error("invalid hotspot: ({x}, {y}) outside image bounds {width}x{height}")]
     InvalidHotspot {
         x: u32,
@@ -46,10 +48,10 @@ pub enum CursorError {
         width: u32,
         height: u32,
     },
-    
+
     #[error("unsupported cursor format: {0}")]
     UnsupportedFormat(String),
-    
+
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }

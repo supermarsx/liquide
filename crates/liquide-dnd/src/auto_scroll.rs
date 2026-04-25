@@ -37,10 +37,7 @@ impl ScrollBounds {
     /// Whether the point (px, py) is inside these bounds.
     #[must_use]
     pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x
-            && px < self.x + self.width
-            && py >= self.y
-            && py < self.y + self.height
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
     }
 }
 
@@ -60,10 +57,7 @@ impl AutoScrollZone {
     /// Create a new auto-scroll zone with the given margin.
     #[must_use]
     pub fn new(margin: f32) -> Self {
-        Self {
-            margin,
-            speed: 8.0,
-        }
+        Self { margin, speed: 8.0 }
     }
 
     /// Create a new auto-scroll zone with custom margin and speed.
@@ -115,12 +109,7 @@ impl AutoScrollZone {
     /// Returns a value between 0.0 (at the inner edge of the margin) and
     /// `self.speed` (at the outer edge). Returns 0.0 if not in a scroll zone.
     #[must_use]
-    pub fn scroll_speed(
-        &self,
-        x: f32,
-        y: f32,
-        bounds: ScrollBounds,
-    ) -> f32 {
+    pub fn scroll_speed(&self, x: f32, y: f32, bounds: ScrollBounds) -> f32 {
         if self.margin <= 0.0 || !bounds.contains(x, y) {
             return 0.0;
         }
@@ -363,8 +352,7 @@ impl AutoScrollState {
 
         // Compute speed multiplier from acceleration and dwell time.
         // multiplier = min(1 + (acceleration - 1) * dwell_time, max_multiplier)
-        let accel_factor = 1.0
-            + (self.config.acceleration - 1.0) * self.dwell_time;
+        let accel_factor = 1.0 + (self.config.acceleration - 1.0) * self.dwell_time;
         let multiplier = accel_factor.min(self.config.max_speed_multiplier);
 
         let speed = self.config.scroll_speed * multiplier * dt;
@@ -664,7 +652,10 @@ mod tests {
         let d = state.tick((300.0, 100.0), bounds, 1.0).unwrap();
         // Max multiplier is 2.0, base speed 100.0, dt=1.0, proximity=1.0
         // Expected: 100 * 2.0 * 1.0 * 1.0 = 200.0
-        assert!(d.dy.abs() <= 200.0 + 0.1, "should be capped at max multiplier");
+        assert!(
+            d.dy.abs() <= 200.0 + 0.1,
+            "should be capped at max multiplier"
+        );
     }
 
     #[test]

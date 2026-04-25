@@ -1,5 +1,5 @@
-use crate::queue::EncoderQueueManager;
 use crate::api::HwEncoderApi;
+use crate::queue::EncoderQueueManager;
 
 #[test]
 fn register_and_allocate() {

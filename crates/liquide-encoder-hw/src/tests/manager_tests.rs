@@ -1,5 +1,5 @@
-use crate::manager::*;
 use crate::config::{FallbackConfig, GpuProfile, HwEncoderConfig};
+use crate::manager::*;
 
 #[test]
 fn manager_creation() {

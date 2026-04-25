@@ -1,10 +1,18 @@
 //! NVENC encoder backend (NVIDIA Turing+).
+//!
+//! Real NVENC integration requires the NVIDIA Video Codec SDK (closed-source
+//! headers + `libnvidia-encode.so`/`nvEncodeAPI64.dll`). That wiring is
+//! deferred behind the workspace `real-codecs` Cargo feature. The default
+//! build uses [`NullCodec`](crate::codec::NullCodec) as an in-memory
+//! bitstream emitter — honest framed placeholder bytes, not a compliant
+//! H.264 stream.
 
 use std::time::Instant;
 
 use crate::api::{CodecId, HwEncoderApi};
+use crate::codec::{BitstreamEmitter, NullCodec};
 use crate::framebuffer::{CudaHandle, DmaBufHandle, VulkanHandle, ZeroCopyImport};
-use crate::session::{EncodedPacket, FrameInput, FrameInputData, HwEncoderSession, SessionConfig, SessionState};
+use crate::session::{EncodedPacket, FrameInput, HwEncoderSession, SessionConfig, SessionState};
 
 /// NVENC hardware encoder session.
 pub struct NvencEncoder {
@@ -14,6 +22,7 @@ pub struct NvencEncoder {
     codec: CodecId,
     frame_count: u64,
     pending_output: Vec<EncodedPacket>,
+    emitter: Box<dyn BitstreamEmitter>,
 }
 
 impl NvencEncoder {
@@ -26,7 +35,14 @@ impl NvencEncoder {
             codec: CodecId::H264,
             frame_count: 0,
             pending_output: Vec::new(),
+            emitter: Box::new(NullCodec::new()),
         }
+    }
+
+    /// Install a replacement bitstream emitter (e.g. a real NVENC emitter
+    /// built under the `real-codecs` Cargo feature).
+    pub fn set_emitter(&mut self, emitter: Box<dyn BitstreamEmitter>) {
+        self.emitter = emitter;
     }
 
     #[must_use]
@@ -58,24 +74,17 @@ impl HwEncoderSession for NvencEncoder {
         self.state = SessionState::Encoding;
         let start = Instant::now();
 
-        let raw_bytes = match &input.data {
-            FrameInputData::CpuBuffer(buf) => buf.clone(),
-            _ => vec![0u8; (input.width * input.height * 4) as usize],
-        };
-
-        let mut encoded = Vec::with_capacity(64);
-        encoded.extend_from_slice(&input.width.to_le_bytes());
-        encoded.extend_from_slice(&input.height.to_le_bytes());
-        let sample_len = raw_bytes.len().min(48);
-        encoded.extend_from_slice(&raw_bytes[..sample_len]);
+        let idx = self.frame_count;
+        let data = self.emitter.emit(self.codec, &input, idx)?;
+        let is_keyframe = idx == 0 || idx % 60 == 0;
 
         self.frame_count += 1;
 
         Ok(EncodedPacket {
-            data: encoded,
+            data,
             pts: input.pts,
             dts: input.pts,
-            is_keyframe: self.frame_count == 1 || self.frame_count % 60 == 0,
+            is_keyframe,
             encode_time_us: start.elapsed().as_micros() as u64,
             codec: self.codec,
         })
@@ -101,13 +110,32 @@ impl HwEncoderSession for NvencEncoder {
         self.pending_output.clear();
     }
 
-    fn api(&self) -> HwEncoderApi { HwEncoderApi::Nvenc }
-    fn codec(&self) -> CodecId { self.codec }
-    fn state(&self) -> SessionState { self.state }
+    fn api(&self) -> HwEncoderApi {
+        HwEncoderApi::Nvenc
+    }
+    fn codec(&self) -> CodecId {
+        self.codec
+    }
+    fn state(&self) -> SessionState {
+        self.state
+    }
 }
 
 impl ZeroCopyImport for NvencEncoder {
-    fn import_dmabuf(&mut self, _handle: &DmaBufHandle) -> crate::Result<()> { Ok(()) }
-    fn import_cuda(&mut self, _handle: &CudaHandle) -> crate::Result<()> { Ok(()) }
-    fn import_vulkan(&mut self, _handle: &VulkanHandle) -> crate::Result<()> { Ok(()) }
+    fn import_dmabuf(&mut self, _handle: &DmaBufHandle) -> crate::Result<()> {
+        Err(crate::HwEncoderError::FramebufferImportFailed(
+            "NVENC DMA-BUF import requires CUDA external memory + NVIDIA Video Codec SDK (real-codecs feature)".into(),
+        ))
+    }
+    fn import_cuda(&mut self, _handle: &CudaHandle) -> crate::Result<()> {
+        Err(crate::HwEncoderError::FramebufferImportFailed(
+            "NVENC CUDA zero-copy import requires NVIDIA Video Codec SDK (real-codecs feature)"
+                .into(),
+        ))
+    }
+    fn import_vulkan(&mut self, _handle: &VulkanHandle) -> crate::Result<()> {
+        Err(crate::HwEncoderError::FramebufferImportFailed(
+            "NVENC Vulkan zero-copy import is not supported".into(),
+        ))
+    }
 }

@@ -1,7 +1,7 @@
-use crate::vaapi::VaapiEncoder;
-use crate::session::*;
 use crate::api::{CodecId, HwEncoderApi};
 use crate::config::{QualityPreset, RateControlMode};
+use crate::session::*;
+use crate::vaapi::VaapiEncoder;
 
 fn test_config() -> SessionConfig {
     SessionConfig {

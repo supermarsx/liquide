@@ -58,76 +58,76 @@ impl std::fmt::Display for ResizeDirection {
 pub enum CursorShape {
     /// Default arrow pointer (normal selection).
     Arrow,
-    
+
     /// Four-way move cursor (window dragging).
     Move,
-    
+
     /// Resize cursor for a specific direction/edge.
     Resize(ResizeDirection),
-    
+
     /// Pointing hand (clickable items, links, buttons).
     Pointer,
-    
+
     /// Text selection I-beam (text fields, editors).
     Text,
-    
+
     /// Not-allowed / forbidden (invalid drop targets).
     NotAllowed,
-    
+
     /// Busy / waiting (spinning wheel, hourglass).
     Wait,
-    
+
     /// Progress (arrow + wait, background operation).
     Progress,
-    
+
     /// Help (arrow + question mark).
     Help,
-    
+
     /// Crosshair / precise selection (drawing, cropping).
     Crosshair,
-    
+
     /// Open hand (pan/grab mode).
     Grab,
-    
+
     /// Closed hand (actively grabbing/panning).
     Grabbing,
-    
+
     /// Zoom in (magnifying glass with +).
     ZoomIn,
-    
+
     /// Zoom out (magnifying glass with -).
     ZoomOut,
-    
+
     /// Context menu available (right-click hint).
     ContextMenu,
-    
+
     /// Alias / shortcut (link indicator).
     Alias,
-    
+
     /// Copy operation (drag & drop).
     Copy,
-    
+
     /// No drop / invalid drop target.
     NoDrop,
-    
+
     /// Cell selection (spreadsheets).
     Cell,
-    
+
     /// Vertical text selection (East Asian text).
     VerticalText,
-    
+
     /// Column resize (table columns).
     ColResize,
-    
+
     /// Row resize (table rows).
     RowResize,
-    
+
     /// All-scroll (omnidirectional scrolling).
     AllScroll,
-    
+
     /// Custom cursor with external image data.
     Custom { id: u64 },
-    
+
     /// Hidden / invisible cursor.
     Hidden,
 }
@@ -169,12 +169,12 @@ impl CursorShape {
             Self::Hidden => "none",
         }
     }
-    
+
     /// Returns true if this is a resize cursor.
     pub fn is_resize(&self) -> bool {
         matches!(self, Self::Resize(_))
     }
-    
+
     /// Returns true if this cursor indicates interactivity.
     pub fn is_interactive(&self) -> bool {
         matches!(

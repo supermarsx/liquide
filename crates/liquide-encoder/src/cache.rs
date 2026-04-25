@@ -152,9 +152,7 @@ impl TilePayloadCache {
             }
         }
 
-        let key = cold_key
-            .or(warm_key)
-            .or(oldest_key.map(|(k, _)| k));
+        let key = cold_key.or(warm_key).or(oldest_key.map(|(k, _)| k));
 
         if let Some(k) = key {
             self.entries.remove(&k);

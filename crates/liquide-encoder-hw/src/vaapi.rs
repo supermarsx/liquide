@@ -13,10 +13,7 @@ use std::time::Instant;
 
 use crate::api::{CodecId, HwEncoderApi};
 use crate::framebuffer::{CudaHandle, DmaBufHandle, VulkanHandle, ZeroCopyImport};
-use crate::session::{
-    EncodedPacket, FrameInput, FrameInputData, HwEncoderSession, SessionConfig,
-    SessionState,
-};
+use crate::session::{EncodedPacket, FrameInput, HwEncoderSession, SessionConfig, SessionState};
 
 // ---------------------------------------------------------------------------
 // VA-API runtime state (only meaningful on Linux)
@@ -49,6 +46,8 @@ pub struct VaapiEncoder {
     codec: CodecId,
     frame_count: u64,
     pending_output: Vec<EncodedPacket>,
+    /// Fallback emitter when libva isn't available (non-Linux / no DRM node).
+    null_codec: crate::codec::NullCodec,
     /// Live VA-API session state (Linux only).
     #[cfg(target_os = "linux")]
     va_session: Option<VaSession>,
@@ -65,6 +64,7 @@ impl VaapiEncoder {
             codec: CodecId::H264,
             frame_count: 0,
             pending_output: Vec::new(),
+            null_codec: crate::codec::NullCodec::new(),
             #[cfg(target_os = "linux")]
             va_session: None,
         }
@@ -81,10 +81,7 @@ impl VaapiEncoder {
     // -----------------------------------------------------------------------
 
     #[cfg(target_os = "linux")]
-    fn open_va_session(
-        &self,
-        config: &SessionConfig,
-    ) -> crate::Result<VaSession> {
+    fn open_va_session(&self, config: &SessionConfig) -> crate::Result<VaSession> {
         use crate::vaapi_ffi::{self, VaLib};
 
         let va = VaLib::load().ok_or_else(|| crate::HwEncoderError::ApiNotAvailable {
@@ -129,7 +126,9 @@ impl VaapiEncoder {
             CodecId::H265 => vaapi_ffi::VA_PROFILE_HEVC_MAIN,
             _ => {
                 // SAFETY: `display` is valid and must be terminated on error.
-                unsafe { (va.va_terminate)(display); }
+                unsafe {
+                    (va.va_terminate)(display);
+                }
                 vaapi_ffi::close_fd(fd);
                 return Err(crate::HwEncoderError::CodecNotSupported {
                     api: "VAAPI".into(),
@@ -155,7 +154,9 @@ impl VaapiEncoder {
         };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             // SAFETY: Cleaning up on error — `display` is still valid.
-            unsafe { (va.va_terminate)(display); }
+            unsafe {
+                (va.va_terminate)(display);
+            }
             vaapi_ffi::close_fd(fd);
             return Err(va_error("vaCreateConfig", st));
         }
@@ -209,11 +210,7 @@ impl VaapiEncoder {
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             // SAFETY: Reverse-order cleanup of surfaces, config, display.
             unsafe {
-                (va.va_destroy_surfaces)(
-                    display,
-                    surfaces.as_mut_ptr(),
-                    num_surfaces as i32,
-                );
+                (va.va_destroy_surfaces)(display, surfaces.as_mut_ptr(), num_surfaces as i32);
                 (va.va_destroy_config)(display, config_id);
                 (va.va_terminate)(display);
             }
@@ -243,11 +240,7 @@ impl VaapiEncoder {
             // display. All handles are still valid at this point.
             unsafe {
                 (va.va_destroy_context)(display, context_id);
-                (va.va_destroy_surfaces)(
-                    display,
-                    surfaces.as_mut_ptr(),
-                    num_surfaces as i32,
-                );
+                (va.va_destroy_surfaces)(display, surfaces.as_mut_ptr(), num_surfaces as i32);
                 (va.va_destroy_config)(display, config_id);
                 (va.va_terminate)(display);
             }
@@ -298,23 +291,21 @@ impl VaapiEncoder {
 
     /// Perform a real VA-API encode of one frame.
     #[cfg(target_os = "linux")]
-    fn va_encode_frame(
-        &mut self,
-        input: &FrameInput,
-    ) -> crate::Result<Vec<u8>> {
-        use crate::vaapi_ffi::{self, VaLib, VACodedBufferSegment};
+    fn va_encode_frame(&mut self, input: &FrameInput) -> crate::Result<Vec<u8>> {
+        use crate::vaapi_ffi::{self, VACodedBufferSegment, VaLib};
 
         let va = VaLib::load().ok_or_else(|| crate::HwEncoderError::EncodeFailed {
             api: "VAAPI".into(),
             detail: "libva not loaded".into(),
         })?;
 
-        let ses = self.va_session.as_mut().ok_or_else(|| {
-            crate::HwEncoderError::EncodeFailed {
+        let ses = self
+            .va_session
+            .as_mut()
+            .ok_or_else(|| crate::HwEncoderError::EncodeFailed {
                 api: "VAAPI".into(),
                 detail: "no active VA session".into(),
-            }
-        })?;
+            })?;
 
         // If a DMA-BUF surface was imported, use it directly (zero-copy path).
         // Otherwise fall back to the pool surface (CPU upload path).
@@ -328,9 +319,7 @@ impl VaapiEncoder {
         // --- begin picture ---
         // SAFETY: `ses.display`, `ses.context_id`, and `surface` are valid
         // VA-API handles from an active session.
-        let st = unsafe {
-            (va.va_begin_picture)(ses.display, ses.context_id, surface)
-        };
+        let st = unsafe { (va.va_begin_picture)(ses.display, ses.context_id, surface) };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             return Err(va_error("vaBeginPicture", st));
         }
@@ -339,23 +328,14 @@ impl VaapiEncoder {
         let mut buf_id = ses.coded_buf;
         // SAFETY: `ses.coded_buf` is a valid VA buffer created during
         // session init. We pass it as a render parameter for the encoder.
-        let st = unsafe {
-            (va.va_render_picture)(
-                ses.display,
-                ses.context_id,
-                &mut buf_id,
-                1,
-            )
-        };
+        let st = unsafe { (va.va_render_picture)(ses.display, ses.context_id, &mut buf_id, 1) };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             return Err(va_error("vaRenderPicture", st));
         }
 
         // --- end picture ---
         // SAFETY: Matches the `va_begin_picture` call above.
-        let st = unsafe {
-            (va.va_end_picture)(ses.display, ses.context_id)
-        };
+        let st = unsafe { (va.va_end_picture)(ses.display, ses.context_id) };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             return Err(va_error("vaEndPicture", st));
         }
@@ -371,9 +351,7 @@ impl VaapiEncoder {
         let mut seg_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
         // SAFETY: `ses.coded_buf` is a valid buffer. `seg_ptr` is an
         // out-param that receives a pointer to VACodedBufferSegment.
-        let st = unsafe {
-            (va.va_map_buffer)(ses.display, ses.coded_buf, &mut seg_ptr)
-        };
+        let st = unsafe { (va.va_map_buffer)(ses.display, ses.coded_buf, &mut seg_ptr) };
         if st != vaapi_ffi::VA_STATUS_SUCCESS {
             return Err(va_error("vaMapBuffer", st));
         }
@@ -388,10 +366,7 @@ impl VaapiEncoder {
                 // SAFETY: `segment.buf` points to `segment.size` bytes of
                 // encoded bitstream data within the mapped VA buffer.
                 let slice = unsafe {
-                    std::slice::from_raw_parts(
-                        segment.buf as *const u8,
-                        segment.size as usize,
-                    )
+                    std::slice::from_raw_parts(segment.buf as *const u8, segment.size as usize)
                 };
                 encoded.extend_from_slice(slice);
             }
@@ -453,9 +428,7 @@ impl HwEncoderSession for VaapiEncoder {
     }
 
     fn encode(&mut self, input: FrameInput) -> crate::Result<EncodedPacket> {
-        if self.state != SessionState::Configured
-            && self.state != SessionState::Encoding
-        {
+        if self.state != SessionState::Configured && self.state != SessionState::Encoding {
             return Err(crate::HwEncoderError::EncodeFailed {
                 api: "VAAPI".into(),
                 detail: format!("unexpected state {:?}", self.state),
@@ -548,11 +521,10 @@ impl ZeroCopyImport for VaapiEncoder {
         {
             use crate::vaapi_ffi;
 
-            let va = vaapi_ffi::VaLib::load().ok_or_else(|| {
-                crate::HwEncoderError::ApiNotAvailable {
+            let va =
+                vaapi_ffi::VaLib::load().ok_or_else(|| crate::HwEncoderError::ApiNotAvailable {
                     api: "VAAPI".into(),
-                }
-            })?;
+                })?;
 
             let session = self.va_session.as_mut().ok_or_else(|| {
                 crate::HwEncoderError::InvalidConfig(
@@ -597,8 +569,7 @@ impl ZeroCopyImport for VaapiEncoder {
                     type_: vaapi_ffi::VA_SURFACE_ATTRIB_EXTERNAL_BUFFERS,
                     flags: vaapi_ffi::VA_SURFACE_ATTRIB_SETTABLE,
                     value_type: 3, // pointer
-                    value: &ext_buf as *const vaapi_ffi::VASurfaceAttribExternalBuffers
-                        as u64,
+                    value: &ext_buf as *const vaapi_ffi::VASurfaceAttribExternalBuffers as u64,
                 },
             ];
 
@@ -618,12 +589,10 @@ impl ZeroCopyImport for VaapiEncoder {
             };
 
             if status != vaapi_ffi::VA_STATUS_SUCCESS {
-                return Err(crate::HwEncoderError::FramebufferImportFailed(
-                    format!(
-                        "vaCreateSurfaces with DMA-BUF fd {} failed: VA status {}",
-                        handle.fd, status
-                    ),
-                ));
+                return Err(crate::HwEncoderError::FramebufferImportFailed(format!(
+                    "vaCreateSurfaces with DMA-BUF fd {} failed: VA status {}",
+                    handle.fd, status
+                )));
             }
 
             session.imported_surface = Some(imported_surface);
@@ -645,10 +614,7 @@ impl ZeroCopyImport for VaapiEncoder {
         ))
     }
 
-    fn import_vulkan(
-        &mut self,
-        _handle: &VulkanHandle,
-    ) -> crate::Result<()> {
+    fn import_vulkan(&mut self, _handle: &VulkanHandle) -> crate::Result<()> {
         // Vulkan import could be done via VK_KHR_external_memory → DMA-BUF → VAAPI.
         // For now, reject and let the caller use the DMA-BUF export path.
         Err(crate::HwEncoderError::FramebufferImportFailed(
@@ -662,19 +628,15 @@ impl ZeroCopyImport for VaapiEncoder {
 // ---------------------------------------------------------------------------
 
 impl VaapiEncoder {
-    /// Produce a trivial "compressed" representation for testing.
-    fn stub_encode(&self, input: &FrameInput) -> Vec<u8> {
-        let raw_bytes = match &input.data {
-            FrameInputData::CpuBuffer(buf) => buf.as_slice(),
-            _ => &[],
-        };
-        let mut encoded = Vec::with_capacity(64);
-        encoded.extend_from_slice(&input.width.to_le_bytes());
-        encoded.extend_from_slice(&input.height.to_le_bytes());
-        encoded.extend_from_slice(&input.stride.to_le_bytes());
-        let sample_len = raw_bytes.len().min(48);
-        encoded.extend_from_slice(&raw_bytes[..sample_len]);
-        encoded
+    /// Produce an honest placeholder bitstream when the real VA-API path is
+    /// unavailable (non-Linux, missing libva, or device init failure).
+    /// Delegates to [`NullCodec`](crate::codec::NullCodec) which emits H.264
+    /// Annex-B framed bytes containing a deterministic hash of the input.
+    fn stub_encode(&mut self, input: &FrameInput) -> Vec<u8> {
+        use crate::codec::BitstreamEmitter;
+        self.null_codec
+            .emit(self.codec, input, self.frame_count)
+            .unwrap_or_default()
     }
 }
 

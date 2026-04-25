@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::api::{CodecId, HwEncoderApi};
 use crate::config::FallbackConfig;
+use crate::probe::{EncoderProbeResult, ProbeCapability};
 
 /// Reason for triggering the fallback cascade.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +59,8 @@ pub struct FallbackManager {
     failed_apis: HashSet<HwEncoderApi>,
     failed_codecs: HashMap<HwEncoderApi, HashSet<CodecId>>,
     available_apis: Vec<HwEncoderApi>,
+    /// Probed capability matrix; when present, fallback skips unprobed codecs.
+    probe_matrix: HashMap<HwEncoderApi, HashSet<ProbeCapability>>,
     retry_count: u32,
 }
 
@@ -71,8 +74,34 @@ impl FallbackManager {
             failed_apis: HashSet::new(),
             failed_codecs: HashMap::new(),
             available_apis,
+            probe_matrix: HashMap::new(),
             retry_count: 0,
         }
+    }
+
+    /// Install a probe matrix. Once installed, [`Self::handle_failure`] will
+    /// skip codecs and APIs that the prober reported as unsupported.
+    pub fn set_probe_matrix(&mut self, matrix: &[EncoderProbeResult]) {
+        self.probe_matrix.clear();
+        for r in matrix {
+            if r.supported {
+                self.probe_matrix.insert(r.encoder, r.caps.clone());
+            } else {
+                // Mark unsupported APIs as failed so we never route to them.
+                self.failed_apis.insert(r.encoder);
+            }
+        }
+    }
+
+    /// Whether a codec is permitted on an API given the probed matrix.
+    /// If no matrix has been installed, all codecs are permitted.
+    fn codec_permitted(&self, api: HwEncoderApi, codec: CodecId) -> bool {
+        if self.probe_matrix.is_empty() {
+            return true;
+        }
+        self.probe_matrix
+            .get(&api)
+            .map_or(false, |caps| caps.contains(&ProbeCapability::Codec(codec)))
     }
 
     /// Handle a failure and return the next action to take.
@@ -96,17 +125,16 @@ impl FallbackManager {
         }
 
         // Mark this codec as failed on this API
-        self.failed_codecs
-            .entry(api)
-            .or_default()
-            .insert(codec);
+        self.failed_codecs.entry(api).or_default().insert(codec);
         self.retry_count = 0;
 
-        // Try next codec on the same API
+        // Try next codec on the same API — only consider codecs permitted
+        // by the probe matrix (if installed).
         let all_codecs = [CodecId::H264, CodecId::H265, CodecId::Av1];
         let failed_on_api = self.failed_codecs.get(&api);
         if let Some(next_codec) = all_codecs.iter().find(|c| {
-            failed_on_api.map_or(true, |f| !f.contains(c))
+            let not_failed = failed_on_api.map_or(true, |f| !f.contains(c));
+            not_failed && self.codec_permitted(api, **c)
         }) {
             return FallbackAction::TryNextCodec {
                 api,
@@ -117,12 +145,13 @@ impl FallbackManager {
         // All codecs failed on this API — mark API as failed
         self.failed_apis.insert(api);
 
-        // Try next API
-        if let Some(next_api) = self
-            .available_apis
-            .iter()
-            .find(|a| !self.failed_apis.contains(a))
-        {
+        // Try next API — must not be in failed set and must have at least one
+        // permitted codec if a probe matrix is installed.
+        if let Some(next_api) = self.available_apis.iter().find(|a| {
+            !self.failed_apis.contains(a)
+                && (self.probe_matrix.is_empty()
+                    || all_codecs.iter().any(|c| self.codec_permitted(**a, *c)))
+        }) {
             self.state = FallbackState::FailedOver {
                 from_api: api,
                 to_api: Some(*next_api),

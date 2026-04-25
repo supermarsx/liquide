@@ -200,10 +200,8 @@ mod tests {
 
     #[test]
     fn test_simple_drag_source() {
-        let source = SimpleDragSource::new(
-            DragData::text("hello"),
-            DragPreview::text_label("hello"),
-        );
+        let source =
+            SimpleDragSource::new(DragData::text("hello"), DragPreview::text_label("hello"));
         assert!(source.can_drag());
         let data = source.drag_data();
         assert_eq!(data.get_text(), Some("hello"));
@@ -211,10 +209,8 @@ mod tests {
 
     #[test]
     fn test_simple_drag_source_disabled() {
-        let mut source = SimpleDragSource::new(
-            DragData::text("hello"),
-            DragPreview::text_label("hello"),
-        );
+        let mut source =
+            SimpleDragSource::new(DragData::text("hello"), DragPreview::text_label("hello"));
         source.set_enabled(false);
         assert!(!source.can_drag());
     }

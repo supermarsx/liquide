@@ -126,19 +126,14 @@ pub struct VaLib {
     _drm_handle: *mut c_void,
 
     // --- core libva ---
-    pub va_initialize:
-        unsafe extern "C" fn(VADisplay, *mut i32, *mut i32) -> VAStatus,
+    pub va_initialize: unsafe extern "C" fn(VADisplay, *mut i32, *mut i32) -> VAStatus,
     pub va_terminate: unsafe extern "C" fn(VADisplay) -> VAStatus,
     pub va_max_num_profiles: unsafe extern "C" fn(VADisplay) -> i32,
     pub va_query_config_profiles:
         unsafe extern "C" fn(VADisplay, *mut VAProfile, *mut i32) -> VAStatus,
     pub va_max_num_entrypoints: unsafe extern "C" fn(VADisplay) -> i32,
-    pub va_query_config_entrypoints: unsafe extern "C" fn(
-        VADisplay,
-        VAProfile,
-        *mut VAEntrypoint,
-        *mut i32,
-    ) -> VAStatus,
+    pub va_query_config_entrypoints:
+        unsafe extern "C" fn(VADisplay, VAProfile, *mut VAEntrypoint, *mut i32) -> VAStatus,
     pub va_create_config: unsafe extern "C" fn(
         VADisplay,
         VAProfile,
@@ -147,8 +142,7 @@ pub struct VaLib {
         i32,         // num attribs
         *mut VAConfigID,
     ) -> VAStatus,
-    pub va_destroy_config:
-        unsafe extern "C" fn(VADisplay, VAConfigID) -> VAStatus,
+    pub va_destroy_config: unsafe extern "C" fn(VADisplay, VAConfigID) -> VAStatus,
     pub va_create_context: unsafe extern "C" fn(
         VADisplay,
         VAConfigID,
@@ -159,8 +153,7 @@ pub struct VaLib {
         i32,              // num render targets
         *mut VAContextID,
     ) -> VAStatus,
-    pub va_destroy_context:
-        unsafe extern "C" fn(VADisplay, VAContextID) -> VAStatus,
+    pub va_destroy_context: unsafe extern "C" fn(VADisplay, VAContextID) -> VAStatus,
     pub va_create_surfaces: unsafe extern "C" fn(
         VADisplay,
         u32,              // RT format
@@ -171,8 +164,7 @@ pub struct VaLib {
         *mut c_void,      // attrib list
         u32,              // num attribs
     ) -> VAStatus,
-    pub va_destroy_surfaces:
-        unsafe extern "C" fn(VADisplay, *mut VASurfaceID, i32) -> VAStatus,
+    pub va_destroy_surfaces: unsafe extern "C" fn(VADisplay, *mut VASurfaceID, i32) -> VAStatus,
     pub va_create_buffer: unsafe extern "C" fn(
         VADisplay,
         VAContextID,
@@ -182,27 +174,14 @@ pub struct VaLib {
         *mut c_void, // data (may be null)
         *mut VABufferID,
     ) -> VAStatus,
-    pub va_destroy_buffer:
-        unsafe extern "C" fn(VADisplay, VABufferID) -> VAStatus,
-    pub va_begin_picture:
-        unsafe extern "C" fn(VADisplay, VAContextID, VASurfaceID) -> VAStatus,
-    pub va_render_picture: unsafe extern "C" fn(
-        VADisplay,
-        VAContextID,
-        *mut VABufferID,
-        i32,
-    ) -> VAStatus,
-    pub va_end_picture:
-        unsafe extern "C" fn(VADisplay, VAContextID) -> VAStatus,
-    pub va_sync_surface:
-        unsafe extern "C" fn(VADisplay, VASurfaceID) -> VAStatus,
-    pub va_map_buffer: unsafe extern "C" fn(
-        VADisplay,
-        VABufferID,
-        *mut *mut c_void,
-    ) -> VAStatus,
-    pub va_unmap_buffer:
-        unsafe extern "C" fn(VADisplay, VABufferID) -> VAStatus,
+    pub va_destroy_buffer: unsafe extern "C" fn(VADisplay, VABufferID) -> VAStatus,
+    pub va_begin_picture: unsafe extern "C" fn(VADisplay, VAContextID, VASurfaceID) -> VAStatus,
+    pub va_render_picture:
+        unsafe extern "C" fn(VADisplay, VAContextID, *mut VABufferID, i32) -> VAStatus,
+    pub va_end_picture: unsafe extern "C" fn(VADisplay, VAContextID) -> VAStatus,
+    pub va_sync_surface: unsafe extern "C" fn(VADisplay, VASurfaceID) -> VAStatus,
+    pub va_map_buffer: unsafe extern "C" fn(VADisplay, VABufferID, *mut *mut c_void) -> VAStatus,
+    pub va_unmap_buffer: unsafe extern "C" fn(VADisplay, VABufferID) -> VAStatus,
 
     // --- libva-drm ---
     pub va_get_display_drm: unsafe extern "C" fn(i32) -> VADisplay,
@@ -254,17 +233,13 @@ impl VaLib {
         // --- load libraries ---
         // SAFETY: Library names are valid null-terminated C strings.
         // dlopen returns null on failure, which we check below.
-        let handle = unsafe {
-            dlopen(b"libva.so.2\0".as_ptr(), RTLD_NOW | RTLD_LOCAL)
-        };
+        let handle = unsafe { dlopen(b"libva.so.2\0".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
         if handle.is_null() {
             return None;
         }
 
         // SAFETY: Same as above — valid null-terminated library name.
-        let drm_handle = unsafe {
-            dlopen(b"libva-drm.so.2\0".as_ptr(), RTLD_NOW | RTLD_LOCAL)
-        };
+        let drm_handle = unsafe { dlopen(b"libva-drm.so.2\0".as_ptr(), RTLD_NOW | RTLD_LOCAL) };
         if drm_handle.is_null() {
             // libva-drm is required for `vaGetDisplayDRM`.
             return None;
@@ -295,10 +270,7 @@ impl VaLib {
             va_max_num_profiles: sym!(handle, "vaMaxNumProfiles"),
             va_query_config_profiles: sym!(handle, "vaQueryConfigProfiles"),
             va_max_num_entrypoints: sym!(handle, "vaMaxNumEntrypoints"),
-            va_query_config_entrypoints: sym!(
-                handle,
-                "vaQueryConfigEntrypoints"
-            ),
+            va_query_config_entrypoints: sym!(handle, "vaQueryConfigEntrypoints"),
             va_create_config: sym!(handle, "vaCreateConfig"),
             va_destroy_config: sym!(handle, "vaDestroyConfig"),
             va_create_context: sym!(handle, "vaCreateContext"),

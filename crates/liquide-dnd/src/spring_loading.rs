@@ -79,10 +79,7 @@ impl TargetRect {
     /// Whether the point is inside this rectangle.
     #[must_use]
     pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x
-            && px < self.x + self.width
-            && py >= self.y
-            && py < self.y + self.height
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
     }
 }
 
@@ -311,7 +308,10 @@ mod tests {
 
         // Hover for another 200ms — total 600ms > 500ms delay
         let r2 = state.tick((150.0, 125.0), rect, "/home/folder", 200.0);
-        assert_eq!(r2, Some(SpringLoadAction::OpenFolder("/home/folder".into())));
+        assert_eq!(
+            r2,
+            Some(SpringLoadAction::OpenFolder("/home/folder".into()))
+        );
         assert!(!state.is_pending()); // fired
     }
 

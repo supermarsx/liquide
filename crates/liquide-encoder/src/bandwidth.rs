@@ -7,6 +7,25 @@
 
 use std::collections::VecDeque;
 
+/// Current pressure state for per-frame bandwidth budgeting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetPressure {
+    /// No useful estimate exists yet, so callers should avoid degrading.
+    Warmup,
+    /// Recent traffic is within the current per-frame budget.
+    Nominal,
+    /// Recent traffic exceeded the current per-frame budget.
+    Pressured,
+}
+
+impl BudgetPressure {
+    /// Whether this state should activate budget-aware fallback paths.
+    #[must_use]
+    pub fn is_pressured(self) -> bool {
+        matches!(self, Self::Pressured)
+    }
+}
+
 /// Sliding-window bandwidth estimator.
 ///
 /// Tracks frame sizes and optional RTT measurements over a configurable
@@ -96,6 +115,18 @@ impl BandwidthEstimator {
         self.estimated_rtt_us
     }
 
+    /// Frame interval implied by the estimator's target frame rate.
+    #[must_use]
+    pub fn frame_interval_us(&self) -> u64 {
+        self.frame_interval_us
+    }
+
+    /// Whether the estimator has at least one recorded frame sample.
+    #[must_use]
+    pub fn has_samples(&self) -> bool {
+        !self.frame_sizes.is_empty()
+    }
+
     /// Average frame size over the sliding window.
     #[must_use]
     pub fn average_frame_size(&self) -> f64 {
@@ -118,6 +149,23 @@ impl BandwidthEstimator {
         self.frame_sizes.len()
     }
 
+    /// Seed the estimator with a repeated frame-size sample.
+    pub fn warm_up(&mut self, compressed_bytes: u64, sample_count: usize) {
+        if sample_count == 0 {
+            return;
+        }
+
+        for _ in 0..sample_count {
+            self.record_frame(compressed_bytes);
+        }
+    }
+
+    /// Derive a per-frame budget from the estimator's current state.
+    #[must_use]
+    pub fn frame_budget(&self, safety_margin: f64) -> BandwidthBudget {
+        BandwidthBudget::from_estimator(self, safety_margin)
+    }
+
     /// Set the EMA smoothing factor.
     pub fn set_alpha(&mut self, alpha: f64) {
         self.alpha = alpha.clamp(0.01, 1.0);
@@ -138,21 +186,32 @@ pub struct BandwidthBudget {
     budget_bytes: u64,
     /// Safety margin (0.0–1.0) — fraction of budget to reserve.
     safety_margin: f64,
+    /// Current pressure state derived from observed frame sizes.
+    pressure: BudgetPressure,
 }
 
 impl BandwidthBudget {
     /// Compute a frame budget from the estimator's current state.
     #[must_use]
     pub fn from_estimator(estimator: &BandwidthEstimator, safety_margin: f64) -> Self {
-        let bps = estimator.estimated_bandwidth_bps();
-        let frame_interval_s = estimator.frame_interval_us as f64 / 1_000_000.0;
-        let raw_budget = bps * frame_interval_s;
         let margin = safety_margin.clamp(0.0, 0.5);
+        if !estimator.has_samples() || estimator.estimated_bandwidth_bps() <= 0.0 {
+            return Self {
+                budget_bytes: u64::MAX,
+                safety_margin: margin,
+                pressure: BudgetPressure::Warmup,
+            };
+        }
+
+        let bps = estimator.estimated_bandwidth_bps();
+        let frame_interval_s = estimator.frame_interval_us() as f64 / 1_000_000.0;
+        let raw_budget = bps * frame_interval_s;
         let budget_bytes = (raw_budget * (1.0 - margin)).max(0.0) as u64;
 
         Self {
             budget_bytes,
             safety_margin: margin,
+            pressure: BudgetPressure::Nominal,
         }
     }
 
@@ -162,6 +221,7 @@ impl BandwidthBudget {
         Self {
             budget_bytes,
             safety_margin: safety_margin.clamp(0.0, 0.5),
+            pressure: BudgetPressure::Nominal,
         }
     }
 
@@ -171,7 +231,15 @@ impl BandwidthBudget {
         Self {
             budget_bytes: u64::MAX,
             safety_margin: 0.0,
+            pressure: BudgetPressure::Nominal,
         }
+    }
+
+    /// Refresh the budget bytes from a newer estimator snapshot.
+    pub fn refresh_from_estimator(&mut self, estimator: &BandwidthEstimator) {
+        let next = Self::from_estimator(estimator, self.safety_margin);
+        self.budget_bytes = next.budget_bytes;
+        self.pressure = next.pressure;
     }
 
     /// Target bytes per frame.
@@ -186,16 +254,55 @@ impl BandwidthBudget {
         self.safety_margin
     }
 
+    /// Whether this budget disables pressure-based degradation entirely.
+    #[must_use]
+    pub fn is_unlimited(&self) -> bool {
+        self.budget_bytes == u64::MAX
+    }
+
+    /// Current pressure state for this budget.
+    #[must_use]
+    pub fn pressure(&self) -> BudgetPressure {
+        self.pressure
+    }
+
+    /// Whether the budget currently recommends pressure-aware degradation.
+    #[must_use]
+    pub fn under_pressure(&self) -> bool {
+        self.pressure.is_pressured()
+    }
+
+    /// Compute the pressure state implied by an observed frame size.
+    #[must_use]
+    pub fn pressure_for(&self, batch_compressed_bytes: u64) -> BudgetPressure {
+        if self.is_unlimited() {
+            return BudgetPressure::Nominal;
+        }
+
+        if batch_compressed_bytes > self.budget_bytes {
+            BudgetPressure::Pressured
+        } else {
+            BudgetPressure::Nominal
+        }
+    }
+
+    /// Update the current pressure state from an observed frame size.
+    pub fn observe(&mut self, batch_compressed_bytes: u64) -> BudgetPressure {
+        let pressure = self.pressure_for(batch_compressed_bytes);
+        self.pressure = pressure;
+        pressure
+    }
+
     /// Check if a batch size exceeds the budget and degradation is needed.
     #[must_use]
     pub fn should_degrade(&self, batch_compressed_bytes: u64) -> bool {
-        batch_compressed_bytes > self.budget_bytes
+        self.pressure_for(batch_compressed_bytes).is_pressured()
     }
 
     /// Fraction of the budget used by this batch (> 1.0 means over budget).
     #[must_use]
     pub fn utilization(&self, batch_compressed_bytes: u64) -> f64 {
-        if self.budget_bytes == 0 || self.budget_bytes == u64::MAX {
+        if self.budget_bytes == 0 || self.is_unlimited() {
             return 0.0;
         }
         batch_compressed_bytes as f64 / self.budget_bytes as f64

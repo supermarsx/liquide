@@ -46,7 +46,8 @@ impl HwEncoderManager {
         }
 
         for (idx, result) in results.iter().enumerate() {
-            self.queue.register_gpu(idx, result.api, result.max_sessions, result.vram_total_mb);
+            self.queue
+                .register_gpu(idx, result.api, result.max_sessions, result.vram_total_mb);
         }
 
         self.gpu_profile = GpuProfile::GpuFull;
@@ -55,13 +56,17 @@ impl HwEncoderManager {
 
     /// Create a new encoding session on the best available GPU.
     pub fn create_session(&mut self, _config: SessionConfig) -> crate::Result<u64> {
-        let gpu = self.queue.best_gpu().ok_or(crate::HwEncoderError::NoHardwareEncoder)?;
+        let gpu = self
+            .queue
+            .best_gpu()
+            .ok_or(crate::HwEncoderError::NoHardwareEncoder)?;
         let vram_estimate = 64; // MB estimate per session
         self.queue.allocate_session(gpu, vram_estimate)?;
 
         let id = self.next_session_id;
         self.next_session_id += 1;
-        self.metrics.set_active_sessions(self.queue.total_active_sessions());
+        self.metrics
+            .set_active_sessions(self.queue.total_active_sessions());
 
         Ok(id)
     }
@@ -76,7 +81,8 @@ impl HwEncoderManager {
                 break;
             }
         }
-        self.metrics.set_active_sessions(self.queue.total_active_sessions());
+        self.metrics
+            .set_active_sessions(self.queue.total_active_sessions());
         Ok(())
     }
 

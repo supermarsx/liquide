@@ -96,8 +96,7 @@ impl DataTransfer {
 
     /// Add a payload.
     pub fn add(&mut self, payload: DataPayload) {
-        self.payloads
-            .insert(payload.mime_type.0.clone(), payload);
+        self.payloads.insert(payload.mime_type.0.clone(), payload);
     }
 
     /// Get a payload by MIME type.

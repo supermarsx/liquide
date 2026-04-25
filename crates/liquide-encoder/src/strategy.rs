@@ -15,7 +15,7 @@ use crate::delta;
 use liquide_compositor::damage::DamageClass;
 
 /// Compression method for a tile payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompressionMethod {
     /// Zstd compression at a given level (1–22). Better ratio, higher latency.
     Zstd { level: i32 },
@@ -103,7 +103,9 @@ pub fn choose_strategy(
 
     // 3. Copy: another tile in this frame has the same CRC
     if let Some(&source_idx) = copy_index.get(&current_crc) {
-        return EncodingStrategy::Copy { source_index: source_idx };
+        return EncodingStrategy::Copy {
+            source_index: source_idx,
+        };
     }
 
     // 4. Delta vs Full: compare change ratio
@@ -133,9 +135,13 @@ pub fn choose_compression(
 ) -> CompressionMethod {
     match damage_class {
         DamageClass::CursorOnly if config.use_lz4_for_cursor => CompressionMethod::Lz4,
-        DamageClass::TextGlyph => CompressionMethod::Zstd { level: config.zstd_level },
+        DamageClass::TextGlyph => CompressionMethod::Zstd {
+            level: config.zstd_level,
+        },
         DamageClass::BitmapRegion if under_budget_pressure => CompressionMethod::Lz4,
-        _ => CompressionMethod::Zstd { level: config.zstd_level },
+        _ => CompressionMethod::Zstd {
+            level: config.zstd_level,
+        },
     }
 }
 

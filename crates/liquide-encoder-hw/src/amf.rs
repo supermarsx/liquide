@@ -1,9 +1,17 @@
 //! AMF encoder backend (AMD RDNA+).
+//!
+//! Real AMF integration requires the AMD Advanced Media Framework SDK
+//! (`libamf.so` / `amfrt64.dll`). That wiring is deferred behind the
+//! workspace `real-codecs` Cargo feature. The default build uses
+//! [`NullCodec`](crate::codec::NullCodec) as an honest in-memory bitstream
+//! emitter — framed placeholder bytes, not a compliant H.264/HEVC stream.
 
 use std::time::Instant;
 
 use crate::api::{CodecId, HwEncoderApi};
-use crate::session::{EncodedPacket, FrameInput, FrameInputData, HwEncoderSession, SessionConfig, SessionState};
+use crate::codec::{BitstreamEmitter, NullCodec};
+use crate::framebuffer::{CudaHandle, DmaBufHandle, VulkanHandle, ZeroCopyImport};
+use crate::session::{EncodedPacket, FrameInput, HwEncoderSession, SessionConfig, SessionState};
 
 /// AMF hardware encoder session.
 pub struct AmfEncoder {
@@ -13,6 +21,7 @@ pub struct AmfEncoder {
     codec: CodecId,
     frame_count: u64,
     pending_output: Vec<EncodedPacket>,
+    emitter: Box<dyn BitstreamEmitter>,
 }
 
 impl AmfEncoder {
@@ -25,7 +34,13 @@ impl AmfEncoder {
             codec: CodecId::H264,
             frame_count: 0,
             pending_output: Vec::new(),
+            emitter: Box::new(NullCodec::new()),
         }
+    }
+
+    /// Install a replacement bitstream emitter.
+    pub fn set_emitter(&mut self, emitter: Box<dyn BitstreamEmitter>) {
+        self.emitter = emitter;
     }
 
     #[must_use]
@@ -56,25 +71,15 @@ impl HwEncoderSession for AmfEncoder {
         }
         self.state = SessionState::Encoding;
         let start = Instant::now();
-
-        let raw_bytes = match &input.data {
-            FrameInputData::CpuBuffer(buf) => buf.clone(),
-            _ => vec![0u8; (input.width * input.height * 4) as usize],
-        };
-
-        let mut encoded = Vec::with_capacity(64);
-        encoded.extend_from_slice(&input.width.to_le_bytes());
-        encoded.extend_from_slice(&input.height.to_le_bytes());
-        let sample_len = raw_bytes.len().min(48);
-        encoded.extend_from_slice(&raw_bytes[..sample_len]);
-
+        let idx = self.frame_count;
+        let data = self.emitter.emit(self.codec, &input, idx)?;
+        let is_keyframe = idx == 0 || idx % 60 == 0;
         self.frame_count += 1;
-
         Ok(EncodedPacket {
-            data: encoded,
+            data,
             pts: input.pts,
             dts: input.pts,
-            is_keyframe: self.frame_count == 1 || self.frame_count % 60 == 0,
+            is_keyframe,
             encode_time_us: start.elapsed().as_micros() as u64,
             codec: self.codec,
         })
@@ -100,7 +105,31 @@ impl HwEncoderSession for AmfEncoder {
         self.pending_output.clear();
     }
 
-    fn api(&self) -> HwEncoderApi { HwEncoderApi::Amf }
-    fn codec(&self) -> CodecId { self.codec }
-    fn state(&self) -> SessionState { self.state }
+    fn api(&self) -> HwEncoderApi {
+        HwEncoderApi::Amf
+    }
+    fn codec(&self) -> CodecId {
+        self.codec
+    }
+    fn state(&self) -> SessionState {
+        self.state
+    }
+}
+
+impl ZeroCopyImport for AmfEncoder {
+    fn import_dmabuf(&mut self, _handle: &DmaBufHandle) -> crate::Result<()> {
+        Err(crate::HwEncoderError::FramebufferImportFailed(
+            "AMF DMA-BUF import requires AMD AMF SDK (real-codecs feature)".into(),
+        ))
+    }
+    fn import_cuda(&mut self, _handle: &CudaHandle) -> crate::Result<()> {
+        Err(crate::HwEncoderError::FramebufferImportFailed(
+            "AMF cannot import CUDA memory".into(),
+        ))
+    }
+    fn import_vulkan(&mut self, _handle: &VulkanHandle) -> crate::Result<()> {
+        Err(crate::HwEncoderError::FramebufferImportFailed(
+            "AMF Vulkan import requires AMD AMF SDK (real-codecs feature)".into(),
+        ))
+    }
 }

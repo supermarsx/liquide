@@ -39,10 +39,7 @@ pub enum DropTargetEvent {
         y: f32,
     },
     /// Drag moved within the target area.
-    DragOver {
-        x: f32,
-        y: f32,
-    },
+    DragOver { x: f32, y: f32 },
     /// Drag left the target area.
     DragLeave,
     /// Data was dropped.
@@ -121,7 +118,12 @@ impl DropTarget {
     }
 
     /// Handle drag entering the target area.
-    pub fn handle_drag_enter(&mut self, offered_types: Vec<MimeType>, x: f32, y: f32) -> DropEffect {
+    pub fn handle_drag_enter(
+        &mut self,
+        offered_types: Vec<MimeType>,
+        x: f32,
+        y: f32,
+    ) -> DropEffect {
         if self.can_accept(&offered_types) {
             self.drag_over = true;
             self.effect = DropEffect::Copy;
@@ -159,12 +161,8 @@ impl DropTarget {
         self.effect = DropEffect::None;
 
         if accepted {
-            self.events.push(DropTargetEvent::Drop {
-                data,
-                action,
-                x,
-                y,
-            });
+            self.events
+                .push(DropTargetEvent::Drop { data, action, x, y });
         }
         accepted
     }
@@ -244,7 +242,14 @@ pub struct DropTargetRegion {
 impl DropTargetRegion {
     /// Create a new drop target region.
     #[must_use]
-    pub fn new(id: u64, x: f32, y: f32, width: f32, height: f32, accepted_types: Vec<String>) -> Self {
+    pub fn new(
+        id: u64,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        accepted_types: Vec<String>,
+    ) -> Self {
         Self {
             id,
             x,
@@ -278,7 +283,9 @@ impl DropTargetRegion {
     #[must_use]
     pub fn accepts_any(&self, types: &[String]) -> bool {
         self.enabled
-            && types.iter().any(|t| self.accepted_types.iter().any(|a| a == t))
+            && types
+                .iter()
+                .any(|t| self.accepted_types.iter().any(|a| a == t))
     }
 }
 
@@ -580,8 +587,8 @@ mod tests {
 
     #[test]
     fn test_region_with_action() {
-        let r = DropTargetRegion::new(1, 0.0, 0.0, 10.0, 10.0, vec![])
-            .with_action(DropAction::Move);
+        let r =
+            DropTargetRegion::new(1, 0.0, 0.0, 10.0, 10.0, vec![]).with_action(DropAction::Move);
         assert_eq!(r.preferred_action, DropAction::Move);
     }
 
@@ -752,7 +759,13 @@ mod tests {
         ));
         reg.update_hover(50.0, 40.0, &["text/plain".into()]);
         match reg.drop_indicator() {
-            DropIndicator::HighlightBorder { x, y, width, height, .. } => {
+            DropIndicator::HighlightBorder {
+                x,
+                y,
+                width,
+                height,
+                ..
+            } => {
                 assert!((x - 10.0).abs() < f32::EPSILON);
                 assert!((y - 20.0).abs() < f32::EPSILON);
                 assert!((width - 100.0).abs() < f32::EPSILON);

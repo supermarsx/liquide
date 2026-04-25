@@ -10,12 +10,15 @@ use std::time::Instant;
 use liquide_compositor::damage::{DamageClass, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
 
+use crate::bandwidth::BandwidthBudget;
 use crate::cache::TilePayloadCache;
 use crate::compress;
 use crate::delta;
 use crate::hash;
 use crate::strategy::{self, CompressionMethod, EncodingStrategy, StrategyConfig};
-use crate::tile::{FrameStats, TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate};
+use crate::tile::{
+    FrameStats, TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate,
+};
 
 /// The tile encoder — stateful across frames for delta and cache.
 pub struct TileEncoder {
@@ -33,6 +36,8 @@ pub struct TileEncoder {
     strategy_config: StrategyConfig,
     /// Frame sequence counter.
     sequence: u64,
+    /// Monotonic fragment sequence counter across all fragmented batches.
+    fragment_sequence: u64,
     /// Statistics from the most recently encoded frame.
     last_stats: Option<FrameStats>,
     /// Reusable scratch buffer for current frame tiles (avoids per-frame allocation).
@@ -55,6 +60,7 @@ impl TileEncoder {
             cache: TilePayloadCache::new(2048),
             strategy_config: StrategyConfig::default(),
             sequence: 0,
+            fragment_sequence: 0,
             last_stats: None,
             current_tiles_buf: vec![None; total],
             damaged_set: HashMap::new(),
@@ -68,7 +74,23 @@ impl TileEncoder {
         fb: &FrameBuffer,
         damage_tiles: &[DamageTile],
     ) -> crate::Result<TileBatch> {
+        self.encode_frame_with_budget_hint(fb, damage_tiles, None)
+    }
+
+    /// Encode one frame with an optional per-frame budget hint.
+    ///
+    /// When `budget_hint` is `None`, or when the provided budget is not
+    /// currently under pressure, compression follows the existing no-pressure
+    /// path. A pressured budget only changes compression policy for
+    /// `BitmapRegion` tiles.
+    pub fn encode_frame_with_budget_hint(
+        &mut self,
+        fb: &FrameBuffer,
+        damage_tiles: &[DamageTile],
+        budget_hint: Option<&BandwidthBudget>,
+    ) -> crate::Result<TileBatch> {
         let frame_start = Instant::now();
+        let under_budget_pressure = budget_hint.is_some_and(BandwidthBudget::under_pressure);
 
         self.sequence = self.sequence.saturating_add(1);
         self.cache.advance_frame();
@@ -141,7 +163,10 @@ impl TileEncoder {
             // Deduplicate: if two damage tiles map to the same index, only encode once.
             // Duplicate indices would cause the second write to silently overwrite the first.
             let mut seen = std::collections::HashSet::with_capacity(work.len());
-            let work: Vec<(usize, u32, u32)> = work.into_iter().filter(|(idx, _, _)| seen.insert(*idx)).collect();
+            let work: Vec<(usize, u32, u32)> = work
+                .into_iter()
+                .filter(|(idx, _, _)| seen.insert(*idx))
+                .collect();
 
             // Shared read-only references for the thread pool.
             let codec = &self.codec;
@@ -178,7 +203,10 @@ impl TileEncoder {
                             }
                         }
                         Err(e) => {
-                            tracing::error!("tile encoder thread panicked: {:?}", e.downcast_ref::<&str>());
+                            tracing::error!(
+                                "tile encoder thread panicked: {:?}",
+                                e.downcast_ref::<&str>()
+                            );
                             // Mark all tiles from this chunk as needing fallback.
                             // We'll handle missing tiles below with an empty tile fallback.
                         }
@@ -203,7 +231,11 @@ impl TileEncoder {
                 None => {
                     // Tile extraction failed (thread panic). Use empty tile as fallback
                     // and skip encoding to avoid sending corrupted data.
-                    tracing::warn!("tile ({}, {}): extraction missing, using fallback", dt.x, dt.y);
+                    tracing::warn!(
+                        "tile ({}, {}): extraction missing, using fallback",
+                        dt.x,
+                        dt.y
+                    );
                     empty_tile = vec![0u8; self.codec.config().tile_bytes()];
                     &empty_tile
                 }
@@ -220,7 +252,11 @@ impl TileEncoder {
                 Some(self.prev_tiles[idx].as_slice())
             };
 
-            let damage_class = self.damaged_set.get(&(dt.x, dt.y)).copied().unwrap_or(DamageClass::UiPrimitive);
+            let damage_class = self
+                .damaged_set
+                .get(&(dt.x, dt.y))
+                .copied()
+                .unwrap_or(DamageClass::UiPrimitive);
 
             let strat = strategy::choose_strategy(
                 current,
@@ -236,7 +272,7 @@ impl TileEncoder {
             let compression = strategy::choose_compression(
                 damage_class,
                 &self.strategy_config,
-                false, // budget pressure evaluated externally
+                under_budget_pressure,
             );
 
             let (encoding, payload) = encode_tile(current, previous, &strat, &compression)?;
@@ -281,7 +317,9 @@ impl TileEncoder {
         batch.stats = FrameStats {
             encode_time_us: encode_time.as_micros() as u64,
             tiles_encoded,
-            bytes_saved: batch.uncompressed_bytes.saturating_sub(batch.compressed_bytes),
+            bytes_saved: batch
+                .uncompressed_bytes
+                .saturating_sub(batch.compressed_bytes),
             compression_ratio: batch.compression_ratio(),
             lz4_tiles,
             zstd_tiles,
@@ -329,6 +367,34 @@ impl TileEncoder {
         self.strategy_config = config;
     }
 
+    /// Encode a frame and return fragments sized to fit within
+    /// `max_payload_bytes` once CBOR-encoded and wrapped in the standard
+    /// Liquide frame header. Fragments carry monotonic `sequence` numbers
+    /// across all frames produced by this encoder instance, so transports
+    /// can detect gaps/drops without state-tracking.
+    ///
+    /// Returns `Err(EncoderError::Internal)` if `max_payload_bytes == 0`.
+    pub fn encode_frame_with_mtu(
+        &mut self,
+        fb: &FrameBuffer,
+        damage_tiles: &[DamageTile],
+        max_payload_bytes: usize,
+    ) -> crate::Result<Vec<crate::fragment::BatchFragment>> {
+        if max_payload_bytes == 0 {
+            return Err(crate::EncoderError::Internal(
+                "max_payload_bytes must be > 0".into(),
+            ));
+        }
+        let batch = self.encode_frame_with_budget_hint(fb, damage_tiles, None)?;
+        let starting_seq = self.fragment_sequence;
+        let fragments = crate::fragment::fragment_batch(&batch, max_payload_bytes, starting_seq)
+            .map_err(|e| crate::EncoderError::Internal(format!("fragment: {e}")))?;
+        self.fragment_sequence = self
+            .fragment_sequence
+            .saturating_add(fragments.len() as u64);
+        Ok(fragments)
+    }
+
     /// Encode a frame from raw pixel bytes, avoiding `FrameBuffer` construction
     /// when the caller only has a pixel slice (e.g. from a `RenderedFrame`).
     ///
@@ -341,6 +407,19 @@ impl TileEncoder {
         stride: u32,
         damage_tiles: &[DamageTile],
     ) -> crate::Result<TileBatch> {
+        self.encode_frame_raw_with_budget_hint(pixels, width, height, stride, damage_tiles, None)
+    }
+
+    /// Encode a raw pixel frame with an optional per-frame budget hint.
+    pub fn encode_frame_raw_with_budget_hint(
+        &mut self,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        damage_tiles: &[DamageTile],
+        budget_hint: Option<&BandwidthBudget>,
+    ) -> crate::Result<TileBatch> {
         let fb = FrameBuffer {
             memory: liquide_compositor::framebuffer::FrameMemory::Cpu(pixels.to_vec()),
             width,
@@ -348,7 +427,7 @@ impl TileEncoder {
             stride,
             format: liquide_compositor::pixel::PixelFormat::Bgra8,
         };
-        self.encode_frame(&fb, damage_tiles)
+        self.encode_frame_with_budget_hint(&fb, damage_tiles, budget_hint)
     }
 
     /// Resize the encoder for new frame buffer dimensions.
@@ -376,12 +455,17 @@ fn encode_tile(
 
         EncodingStrategy::Solid { bgra } => Ok((TileEncoding::Solid, bgra.to_vec())),
 
-        EncodingStrategy::Copy { source_index } => {
-            Ok((TileEncoding::Copy { source_index: *source_index }, Vec::new()))
-        }
+        EncodingStrategy::Copy { source_index } => Ok((
+            TileEncoding::Copy {
+                source_index: *source_index,
+            },
+            Vec::new(),
+        )),
 
         EncodingStrategy::Delta => {
-            let prev = previous.ok_or_else(|| crate::EncoderError::Internal("delta requires previous tile data".into()))?;
+            let prev = previous.ok_or_else(|| {
+                crate::EncoderError::Internal("delta requires previous tile data".into())
+            })?;
             let xor = delta::xor_delta(current, prev);
             let compressed = compress_with_method(&xor, compression)?;
             Ok((TileEncoding::Delta, compressed))

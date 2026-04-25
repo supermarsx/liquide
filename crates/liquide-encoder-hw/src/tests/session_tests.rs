@@ -1,6 +1,6 @@
-use crate::session::*;
 use crate::api::CodecId;
 use crate::config::{QualityPreset, RateControlMode};
+use crate::session::*;
 
 #[test]
 fn session_state_values() {
@@ -15,7 +15,10 @@ fn session_config_construction() {
         width: 1920,
         height: 1080,
         fps: 60,
-        rate_control: RateControlMode::Vbr { target_kbps: 5000, max_kbps: 10000 },
+        rate_control: RateControlMode::Vbr {
+            target_kbps: 5000,
+            max_kbps: 10000,
+        },
         quality_preset: QualityPreset::Balanced,
         enable_bframes: false,
         lookahead: 2,

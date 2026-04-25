@@ -1,9 +1,39 @@
-use crate::strategy::*;
 use crate::hash::crc32c;
+use crate::strategy::*;
 
 use std::collections::HashMap;
 
 use liquide_compositor::damage::DamageClass;
+
+#[test]
+fn t16_encoder_compression_invariants_hold_per_damage_class() {
+    let config = StrategyConfig::default();
+
+    assert!(matches!(
+        choose_compression(DamageClass::TextGlyph, &config, false),
+        CompressionMethod::Zstd { .. }
+    ));
+    assert!(matches!(
+        choose_compression(DamageClass::TextGlyph, &config, true),
+        CompressionMethod::Zstd { .. }
+    ));
+    assert_eq!(
+        choose_compression(DamageClass::CursorOnly, &config, false),
+        CompressionMethod::Lz4
+    );
+    assert_eq!(
+        choose_compression(DamageClass::CursorOnly, &config, true),
+        CompressionMethod::Lz4
+    );
+    assert!(matches!(
+        choose_compression(DamageClass::BitmapRegion, &config, false),
+        CompressionMethod::Zstd { .. }
+    ));
+    assert_eq!(
+        choose_compression(DamageClass::BitmapRegion, &config, true),
+        CompressionMethod::Lz4
+    );
+}
 
 #[test]
 fn detect_solid_uniform() {
@@ -46,7 +76,12 @@ fn strategy_solid() {
         DamageClass::UiPrimitive,
         &StrategyConfig::default(),
     );
-    assert_eq!(strategy, EncodingStrategy::Solid { bgra: [0xFF, 0x00, 0x00, 0xFF] });
+    assert_eq!(
+        strategy,
+        EncodingStrategy::Solid {
+            bgra: [0xFF, 0x00, 0x00, 0xFF]
+        }
+    );
 }
 
 #[test]
@@ -152,7 +187,7 @@ fn strategy_copy_when_duplicate_crc() {
         &data,
         None,
         crc_val,
-        None,    // no prev_crc → won't skip
+        None, // no prev_crc → won't skip
         &copy_index,
         DamageClass::UiPrimitive,
         &StrategyConfig::default(),

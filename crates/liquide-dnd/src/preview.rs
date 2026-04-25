@@ -216,10 +216,7 @@ impl PreviewRect {
     /// Whether the point (px, py) is inside this rect.
     #[must_use]
     pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x
-            && px < self.x + self.width
-            && py >= self.y
-            && py < self.y + self.height
+        px >= self.x && px < self.x + self.width && py >= self.y && py < self.y + self.height
     }
 }
 
@@ -258,8 +255,7 @@ fn compute_icon_preview(data: &DragData) -> DragPreviewConfig {
         } else {
             format!("{count} items")
         };
-        let mut cfg = DragPreviewConfig::new(DragPreview::icon(icon_name))
-            .with_label(label);
+        let mut cfg = DragPreviewConfig::new(DragPreview::icon(icon_name)).with_label(label);
         if count > 1 {
             cfg = cfg.with_badge(count as u32);
         }
@@ -268,18 +264,13 @@ fn compute_icon_preview(data: &DragData) -> DragPreviewConfig {
         let snippet = text_snippet(text, 24);
         DragPreviewConfig::new(DragPreview::text_label(&snippet))
             .with_label(snippet)
-            .with_size(
-                (text.len().min(24) as f32 * 7.0 + 16.0).max(48.0),
-                32.0,
-            )
+            .with_size((text.len().min(24) as f32 * 7.0 + 16.0).max(48.0), 32.0)
     } else if data.has_uri() {
         let uri = data.get_uri().unwrap_or("link");
         let label = text_snippet(uri, 30);
-        DragPreviewConfig::new(DragPreview::icon("text-x-uri"))
-            .with_label(label)
+        DragPreviewConfig::new(DragPreview::icon("text-x-uri")).with_label(label)
     } else if data.has_image() {
-        DragPreviewConfig::new(DragPreview::icon("image-x-generic"))
-            .with_label("Image")
+        DragPreviewConfig::new(DragPreview::icon("image-x-generic")).with_label("Image")
     } else {
         DragPreviewConfig::new(DragPreview::icon("application-x-generic"))
     }
@@ -325,19 +316,12 @@ fn thumbnail_size(w: u32, h: u32, max_side: u32) -> (u32, u32) {
 
 /// Extract the file basename from a path.
 fn file_basename(path: &str) -> String {
-    path.rsplit('/')
-        .next()
-        .unwrap_or(path)
-        .to_string()
+    path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
 /// Choose an icon name based on file extension.
 fn file_icon_for_path(path: &str) -> &'static str {
-    let ext = path
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
         "txt" | "md" | "log" | "csv" => "text-plain",
         "rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "java" | "go" | "rb" => "text-x-source",

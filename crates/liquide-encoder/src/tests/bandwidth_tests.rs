@@ -1,6 +1,51 @@
 use crate::bandwidth::*;
 
 #[test]
+fn t16_encoder_budget_from_cold_estimator_starts_unlimited() {
+    let est = BandwidthEstimator::new(10, 60);
+
+    let budget = BandwidthBudget::from_estimator(&est, 0.1);
+
+    assert!(budget.is_unlimited());
+    assert_eq!(budget.pressure(), BudgetPressure::Warmup);
+    assert!(!budget.under_pressure());
+}
+
+#[test]
+fn t16_encoder_estimator_warm_up_seeds_budget() {
+    let mut est = BandwidthEstimator::new(10, 60);
+    est.warm_up(12_000, 4);
+
+    let budget = est.frame_budget(0.1);
+
+    assert_eq!(est.sample_count(), 4);
+    assert!(!budget.is_unlimited());
+    assert_eq!(budget.pressure(), BudgetPressure::Nominal);
+    assert!(budget.budget_bytes() > 10_000);
+    assert!(budget.budget_bytes() < 12_000);
+}
+
+#[test]
+fn t16_encoder_budget_pressure_toggles_with_observed_usage() {
+    let mut budget = BandwidthBudget::new(10_000, 0.1);
+
+    assert_eq!(budget.pressure(), BudgetPressure::Nominal);
+    assert_eq!(budget.observe(12_000), BudgetPressure::Pressured);
+    assert!(budget.under_pressure());
+    assert_eq!(budget.observe(8_000), BudgetPressure::Nominal);
+    assert!(!budget.under_pressure());
+}
+
+#[test]
+fn t16_encoder_unlimited_budget_never_enters_pressure() {
+    let mut budget = BandwidthBudget::unlimited();
+
+    assert_eq!(budget.observe(u64::MAX), BudgetPressure::Nominal);
+    assert!(!budget.under_pressure());
+    assert!(!budget.should_degrade(u64::MAX));
+}
+
+#[test]
 fn estimator_records_frames() {
     let mut est = BandwidthEstimator::new(10, 60);
     assert_eq!(est.sample_count(), 0);
@@ -45,7 +90,10 @@ fn estimator_rtt_tracking() {
 
     // Should be somewhere between 5000 and 7000
     let rtt = est.estimated_rtt_us();
-    assert!(rtt > 4000.0 && rtt < 8000.0, "expected smoothed RTT: got {rtt}");
+    assert!(
+        rtt > 4000.0 && rtt < 8000.0,
+        "expected smoothed RTT: got {rtt}"
+    );
 }
 
 #[test]

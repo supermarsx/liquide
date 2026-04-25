@@ -1,5 +1,5 @@
-use crate::tile::*;
 use crate::strategy::CompressionMethod;
+use crate::tile::*;
 
 use liquide_compositor::damage::DamageClass;
 
@@ -77,7 +77,10 @@ fn tile_batch_stats() {
 fn tile_grid_edge_tiles() {
     // 100x100 pixels with tile_size=64 gives 2x2 grid
     // Edge tiles (col 1, row 1) cover pixels 64..99 = 36 pixels wide/tall
-    let config = TileConfig { tile_size: 64, bpp: 4 };
+    let config = TileConfig {
+        tile_size: 64,
+        bpp: 4,
+    };
     let grid = TileGrid::new(100, 100, config.clone());
     assert_eq!(grid.cols, 2);
     assert_eq!(grid.rows, 2);
@@ -103,7 +106,9 @@ fn tile_grid_edge_tiles() {
         );
         // Padding region should be zero
         assert!(
-            tile[off + row_valid_bytes..off + 64 * 4].iter().all(|&b| b == 0),
+            tile[off + row_valid_bytes..off + 64 * 4]
+                .iter()
+                .all(|&b| b == 0),
             "row {row}: padding should be zero"
         );
     }

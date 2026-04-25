@@ -1,5 +1,5 @@
-use crate::config::*;
 use crate::api::HwEncoderApi;
+use crate::config::*;
 
 #[test]
 fn hw_encoder_config_defaults() {

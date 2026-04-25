@@ -109,7 +109,10 @@ impl TileBatch {
     /// Number of non-skip tiles.
     #[must_use]
     pub fn dirty_count(&self) -> usize {
-        self.tiles.iter().filter(|t| t.encoding != TileEncoding::Skip).count()
+        self.tiles
+            .iter()
+            .filter(|t| t.encoding != TileEncoding::Skip)
+            .count()
     }
 
     /// Compression ratio (compressed / uncompressed). Returns 0.0 if uncompressed is zero.

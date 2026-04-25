@@ -43,3 +43,30 @@ fn prober_default_impl() {
     // Just verify it constructs without panic.
     let _ = prober.probe_all();
 }
+
+#[test]
+fn probe_matrix_covers_every_encoder_with_structured_result() {
+    use crate::probe::EncoderProbeResult;
+    let prober = EncoderProber::new();
+    let matrix: Vec<EncoderProbeResult> = prober.probe_matrix();
+    // Every known encoder appears exactly once.
+    let mut kinds: Vec<_> = matrix.iter().map(|r| r.encoder).collect();
+    kinds.sort_by_key(|k| format!("{k:?}"));
+    kinds.dedup();
+    assert_eq!(kinds.len(), 4, "probe_matrix must cover all 4 encoder APIs");
+    for r in &matrix {
+        if !r.supported {
+            assert!(
+                r.error.is_some(),
+                "unsupported encoders must carry a reason"
+            );
+            assert!(
+                r.caps.is_empty(),
+                "unsupported encoders must have empty caps"
+            );
+        } else {
+            assert!(r.error.is_none(), "supported encoders have no error");
+            assert!(!r.caps.is_empty(), "supported encoders must advertise caps");
+        }
+    }
+}

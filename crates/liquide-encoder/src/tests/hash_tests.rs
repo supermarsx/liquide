@@ -16,8 +16,22 @@ fn crc32c_known_value() {
 fn crc32c_tile_basic() {
     // 4x4 pixel buffer, 4 bpp, tile_size=2
     let pixels = vec![0xABu8; 4 * 4 * 4];
-    let r1 = TileRegion { tile_x: 0, tile_y: 0, tile_size: 2, fb_width: 4, fb_height: 4, bpp: 4 };
-    let r2 = TileRegion { tile_x: 1, tile_y: 1, tile_size: 2, fb_width: 4, fb_height: 4, bpp: 4 };
+    let r1 = TileRegion {
+        tile_x: 0,
+        tile_y: 0,
+        tile_size: 2,
+        fb_width: 4,
+        fb_height: 4,
+        bpp: 4,
+    };
+    let r2 = TileRegion {
+        tile_x: 1,
+        tile_y: 1,
+        tile_size: 2,
+        fb_width: 4,
+        fb_height: 4,
+        bpp: 4,
+    };
     let h1 = crc32c_tile(&pixels, 4 * 4, &r1);
     let h2 = crc32c_tile(&pixels, 4 * 4, &r2);
     // Same data → same hash
@@ -27,7 +41,14 @@ fn crc32c_tile_basic() {
 #[test]
 fn crc32c_detects_change() {
     let mut pixels = vec![0u8; 4 * 4 * 4];
-    let region = TileRegion { tile_x: 0, tile_y: 0, tile_size: 2, fb_width: 4, fb_height: 4, bpp: 4 };
+    let region = TileRegion {
+        tile_x: 0,
+        tile_y: 0,
+        tile_size: 2,
+        fb_width: 4,
+        fb_height: 4,
+        bpp: 4,
+    };
     let h1 = crc32c_tile(&pixels, 4 * 4, &region);
     pixels[0] = 0xFF;
     let h2 = crc32c_tile(&pixels, 4 * 4, &region);

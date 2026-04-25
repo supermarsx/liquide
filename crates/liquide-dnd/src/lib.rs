@@ -17,6 +17,7 @@
 //! and this unified API.
 
 pub mod auto_scroll;
+pub mod cursor_link;
 pub mod data_transfer;
 pub mod drag_data;
 pub mod drag_source;
@@ -27,11 +28,17 @@ pub mod session;
 pub mod spring_loading;
 pub mod traits;
 
-pub use auto_scroll::{AutoScrollConfig, AutoScrollState, AutoScrollZone, ScrollBounds, ScrollDelta, ScrollDirection};
+pub use auto_scroll::{
+    AutoScrollConfig, AutoScrollState, AutoScrollZone, ScrollBounds, ScrollDelta, ScrollDirection,
+};
+pub use cursor_link::{BufferedCursorLink, CursorLink, DndCursorShape, NullCursorLink};
 pub use data_transfer::{DataPayload, DataTransfer, MimeType};
 pub use drag_data::{DragData, DragDataStore, DragFormat};
 pub use drag_source::{DragAction, DragImage, DragOperation, DragSource, DragSourceEvent};
-pub use drop_target::{DropAction, DropEffect, DropIndicator, DropResult, DropTarget, DropTargetEvent, DropTargetRegion, DropTargetRegistry};
+pub use drop_target::{
+    DropAction, DropEffect, DropIndicator, DropResult, DropTarget, DropTargetEvent,
+    DropTargetRegion, DropTargetRegistry,
+};
 pub use manager::{DragEvent, DragManager};
 pub use preview::{DragPreview, DragPreviewConfig, DragPreviewStyle, PreviewRect};
 pub use session::DragSession;
@@ -80,7 +87,12 @@ mod tests {
         let _store = DragDataStore::new();
         let _pcfg = DragPreviewConfig::new(DragPreview::icon("test"));
         let _style = DragPreviewStyle::Icon;
-        let _rect = PreviewRect { x: 0.0, y: 0.0, width: 1.0, height: 1.0 };
+        let _rect = PreviewRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        };
         let _result = DropResult::Rejected;
         let _action = DropAction::Copy;
         let _indicator = DropIndicator::None;

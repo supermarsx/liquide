@@ -314,17 +314,51 @@ impl ThemedCursorGenerator {
         let cy = s * 0.12;
 
         // Index finger
-        fill_rounded_rect(&mut buf, size, cx - s * 0.06, cy, s * 0.12, s * 0.45, s * 0.04, self.colors.body);
+        fill_rounded_rect(
+            &mut buf,
+            size,
+            cx - s * 0.06,
+            cy,
+            s * 0.12,
+            s * 0.45,
+            s * 0.04,
+            self.colors.body,
+        );
         // Palm
-        fill_rounded_rect(&mut buf, size, s * 0.18, s * 0.40, s * 0.52, s * 0.48, s * 0.08, self.colors.body);
+        fill_rounded_rect(
+            &mut buf,
+            size,
+            s * 0.18,
+            s * 0.40,
+            s * 0.52,
+            s * 0.48,
+            s * 0.08,
+            self.colors.body,
+        );
         // Other fingers
         for i in 0..3 {
             let fx = s * 0.22 + i as f32 * s * 0.14;
-            fill_rounded_rect(&mut buf, size, fx, s * 0.30, s * 0.10, s * 0.22, s * 0.04, self.colors.body);
+            fill_rounded_rect(
+                &mut buf,
+                size,
+                fx,
+                s * 0.30,
+                s * 0.10,
+                s * 0.22,
+                s * 0.04,
+                self.colors.body,
+            );
         }
 
         // Accent on fingertip
-        fill_circle(&mut buf, size, cx, cy + s * 0.04, s * 0.04, self.colors.pointer);
+        fill_circle(
+            &mut buf,
+            size,
+            cx,
+            cy + s * 0.04,
+            s * 0.04,
+            self.colors.pointer,
+        );
 
         (buf, (s * 0.42) as u32, (s * 0.06) as u32)
     }
@@ -337,15 +371,39 @@ impl ThemedCursorGenerator {
         let cx = s * 0.50;
 
         // Serif top
-        draw_line(&mut buf, size, cx - s * 0.15, s * 0.12, cx + s * 0.15, s * 0.12, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            cx - s * 0.15,
+            s * 0.12,
+            cx + s * 0.15,
+            s * 0.12,
+            self.colors.body,
+        );
         // Vertical bar
         draw_line(&mut buf, size, cx, s * 0.12, cx, s * 0.88, self.colors.body);
         // Serif bottom
-        draw_line(&mut buf, size, cx - s * 0.15, s * 0.88, cx + s * 0.15, s * 0.88, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            cx - s * 0.15,
+            s * 0.88,
+            cx + s * 0.15,
+            s * 0.88,
+            self.colors.body,
+        );
 
         // Thicken by drawing adjacent lines
         for d in [-1.0_f32, 1.0] {
-            draw_line(&mut buf, size, cx + d, s * 0.14, cx + d, s * 0.86, self.colors.body);
+            draw_line(
+                &mut buf,
+                size,
+                cx + d,
+                s * 0.14,
+                cx + d,
+                s * 0.86,
+                self.colors.body,
+            );
         }
 
         (buf, (s * 0.50) as u32, (s * 0.50) as u32)
@@ -420,10 +478,33 @@ impl ThemedCursorGenerator {
         let cy = s * 0.68;
         fill_circle(&mut buf, size, cx, cy, s * 0.20, self.colors.accent);
         // "?" stem
-        draw_line(&mut buf, size, cx, cy - s * 0.06, cx + s * 0.06, cy - s * 0.12, self.colors.body);
-        draw_line(&mut buf, size, cx + s * 0.06, cy - s * 0.12, cx, cy - s * 0.16, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            cx,
+            cy - s * 0.06,
+            cx + s * 0.06,
+            cy - s * 0.12,
+            self.colors.body,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx + s * 0.06,
+            cy - s * 0.12,
+            cx,
+            cy - s * 0.16,
+            self.colors.body,
+        );
         // dot
-        fill_circle(&mut buf, size, cx, cy + s * 0.06, s * 0.025, self.colors.body);
+        fill_circle(
+            &mut buf,
+            size,
+            cx,
+            cy + s * 0.06,
+            s * 0.025,
+            self.colors.body,
+        );
 
         (buf, (s * 0.06) as u32, (s * 0.02) as u32)
     }
@@ -458,19 +539,83 @@ impl ThemedCursorGenerator {
 
         // Up arrow
         draw_line(&mut buf, size, cx, cy - arm, cx, cy + arm, self.colors.body);
-        draw_line(&mut buf, size, cx - head, cy - arm + head, cx, cy - arm, self.colors.body);
-        draw_line(&mut buf, size, cx + head, cy - arm + head, cx, cy - arm, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            cx - head,
+            cy - arm + head,
+            cx,
+            cy - arm,
+            self.colors.body,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx + head,
+            cy - arm + head,
+            cx,
+            cy - arm,
+            self.colors.body,
+        );
 
         // Down arrow
-        draw_line(&mut buf, size, cx - head, cy + arm - head, cx, cy + arm, self.colors.body);
-        draw_line(&mut buf, size, cx + head, cy + arm - head, cx, cy + arm, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            cx - head,
+            cy + arm - head,
+            cx,
+            cy + arm,
+            self.colors.body,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx + head,
+            cy + arm - head,
+            cx,
+            cy + arm,
+            self.colors.body,
+        );
 
         // Left-right line
         draw_line(&mut buf, size, cx - arm, cy, cx + arm, cy, self.colors.body);
-        draw_line(&mut buf, size, cx - arm + head, cy - head, cx - arm, cy, self.colors.body);
-        draw_line(&mut buf, size, cx - arm + head, cy + head, cx - arm, cy, self.colors.body);
-        draw_line(&mut buf, size, cx + arm - head, cy - head, cx + arm, cy, self.colors.body);
-        draw_line(&mut buf, size, cx + arm - head, cy + head, cx + arm, cy, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            cx - arm + head,
+            cy - head,
+            cx - arm,
+            cy,
+            self.colors.body,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx - arm + head,
+            cy + head,
+            cx - arm,
+            cy,
+            self.colors.body,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx + arm - head,
+            cy - head,
+            cx + arm,
+            cy,
+            self.colors.body,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx + arm - head,
+            cy + head,
+            cx + arm,
+            cy,
+            self.colors.body,
+        );
 
         (buf, (s * 0.50) as u32, (s * 0.50) as u32)
     }
@@ -482,13 +627,40 @@ impl ThemedCursorGenerator {
         let s = size as f32;
 
         // Simplified open-hand: palm + spread fingers
-        fill_rounded_rect(&mut buf, size, s * 0.20, s * 0.40, s * 0.55, s * 0.45, s * 0.10, self.colors.body);
+        fill_rounded_rect(
+            &mut buf,
+            size,
+            s * 0.20,
+            s * 0.40,
+            s * 0.55,
+            s * 0.45,
+            s * 0.10,
+            self.colors.body,
+        );
         for i in 0..4 {
             let fx = s * 0.22 + i as f32 * s * 0.135;
-            fill_rounded_rect(&mut buf, size, fx, s * 0.15, s * 0.09, s * 0.30, s * 0.03, self.colors.body);
+            fill_rounded_rect(
+                &mut buf,
+                size,
+                fx,
+                s * 0.15,
+                s * 0.09,
+                s * 0.30,
+                s * 0.03,
+                self.colors.body,
+            );
         }
         // Thumb
-        fill_rounded_rect(&mut buf, size, s * 0.12, s * 0.34, s * 0.14, s * 0.20, s * 0.04, self.colors.body);
+        fill_rounded_rect(
+            &mut buf,
+            size,
+            s * 0.12,
+            s * 0.34,
+            s * 0.14,
+            s * 0.20,
+            s * 0.04,
+            self.colors.body,
+        );
 
         (buf, (s * 0.45) as u32, (s * 0.35) as u32)
     }
@@ -500,11 +672,29 @@ impl ThemedCursorGenerator {
         let s = size as f32;
 
         // Fist: palm
-        fill_rounded_rect(&mut buf, size, s * 0.20, s * 0.30, s * 0.55, s * 0.50, s * 0.10, self.colors.body);
+        fill_rounded_rect(
+            &mut buf,
+            size,
+            s * 0.20,
+            s * 0.30,
+            s * 0.55,
+            s * 0.50,
+            s * 0.10,
+            self.colors.body,
+        );
         // Folded fingers
         for i in 0..4 {
             let fx = s * 0.24 + i as f32 * s * 0.12;
-            fill_rounded_rect(&mut buf, size, fx, s * 0.25, s * 0.08, s * 0.14, s * 0.03, self.colors.body);
+            fill_rounded_rect(
+                &mut buf,
+                size,
+                fx,
+                s * 0.25,
+                s * 0.08,
+                s * 0.14,
+                s * 0.03,
+                self.colors.body,
+            );
         }
 
         (buf, (s * 0.45) as u32, (s * 0.40) as u32)
@@ -526,14 +716,42 @@ impl ThemedCursorGenerator {
             let y = cy + rad.sin() * r;
             put(&mut buf, size, x as i32, y as i32, self.colors.danger);
             // Thicken
-            put(&mut buf, size, (x + 1.0) as i32, y as i32, self.colors.danger);
-            put(&mut buf, size, x as i32, (y + 1.0) as i32, self.colors.danger);
+            put(
+                &mut buf,
+                size,
+                (x + 1.0) as i32,
+                y as i32,
+                self.colors.danger,
+            );
+            put(
+                &mut buf,
+                size,
+                x as i32,
+                (y + 1.0) as i32,
+                self.colors.danger,
+            );
         }
 
         // Diagonal slash
         let diag = r * 0.707;
-        draw_line(&mut buf, size, cx - diag, cy - diag, cx + diag, cy + diag, self.colors.danger);
-        draw_line(&mut buf, size, cx - diag + 1.0, cy - diag, cx + diag + 1.0, cy + diag, self.colors.danger);
+        draw_line(
+            &mut buf,
+            size,
+            cx - diag,
+            cy - diag,
+            cx + diag,
+            cy + diag,
+            self.colors.danger,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx - diag + 1.0,
+            cy - diag,
+            cx + diag + 1.0,
+            cy + diag,
+            self.colors.danger,
+        );
 
         (buf, (s * 0.50) as u32, (s * 0.50) as u32)
     }
@@ -561,17 +779,57 @@ impl ThemedCursorGenerator {
         let x1 = cx + dx * arm;
         let y1 = cy + dy * arm;
         draw_line(&mut buf, size, x0, y0, x1, y1, self.colors.resize);
-        draw_line(&mut buf, size, x0 + 1.0, y0, x1 + 1.0, y1, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            x0 + 1.0,
+            y0,
+            x1 + 1.0,
+            y1,
+            self.colors.resize,
+        );
 
         // Arrowheads
         let perp_x = -dy;
         let perp_y = dx;
         // Head at end 1
-        draw_line(&mut buf, size, x0, y0, x0 + dx * head + perp_x * head, y0 + dy * head + perp_y * head, self.colors.resize);
-        draw_line(&mut buf, size, x0, y0, x0 + dx * head - perp_x * head, y0 + dy * head - perp_y * head, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            x0,
+            y0,
+            x0 + dx * head + perp_x * head,
+            y0 + dy * head + perp_y * head,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            x0,
+            y0,
+            x0 + dx * head - perp_x * head,
+            y0 + dy * head - perp_y * head,
+            self.colors.resize,
+        );
         // Head at end 2
-        draw_line(&mut buf, size, x1, y1, x1 - dx * head + perp_x * head, y1 - dy * head + perp_y * head, self.colors.resize);
-        draw_line(&mut buf, size, x1, y1, x1 - dx * head - perp_x * head, y1 - dy * head - perp_y * head, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            x1,
+            y1,
+            x1 - dx * head + perp_x * head,
+            y1 - dy * head + perp_y * head,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            x1,
+            y1,
+            x1 - dx * head - perp_x * head,
+            y1 - dy * head - perp_y * head,
+            self.colors.resize,
+        );
 
         (buf, (s * 0.50) as u32, (s * 0.50) as u32)
     }
@@ -584,17 +842,73 @@ impl ThemedCursorGenerator {
         let cy = s * 0.50;
 
         // Vertical divider
-        draw_line(&mut buf, size, s * 0.50, s * 0.20, s * 0.50, s * 0.80, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.50,
+            s * 0.20,
+            s * 0.50,
+            s * 0.80,
+            self.colors.resize,
+        );
 
         // Left arrow
-        draw_line(&mut buf, size, s * 0.15, cy, s * 0.45, cy, self.colors.resize);
-        draw_line(&mut buf, size, s * 0.15, cy, s * 0.25, cy - s * 0.08, self.colors.resize);
-        draw_line(&mut buf, size, s * 0.15, cy, s * 0.25, cy + s * 0.08, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.15,
+            cy,
+            s * 0.45,
+            cy,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.15,
+            cy,
+            s * 0.25,
+            cy - s * 0.08,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.15,
+            cy,
+            s * 0.25,
+            cy + s * 0.08,
+            self.colors.resize,
+        );
 
         // Right arrow
-        draw_line(&mut buf, size, s * 0.55, cy, s * 0.85, cy, self.colors.resize);
-        draw_line(&mut buf, size, s * 0.85, cy, s * 0.75, cy - s * 0.08, self.colors.resize);
-        draw_line(&mut buf, size, s * 0.85, cy, s * 0.75, cy + s * 0.08, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.55,
+            cy,
+            s * 0.85,
+            cy,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.85,
+            cy,
+            s * 0.75,
+            cy - s * 0.08,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.85,
+            cy,
+            s * 0.75,
+            cy + s * 0.08,
+            self.colors.resize,
+        );
 
         (buf, (s * 0.50) as u32, (s * 0.50) as u32)
     }
@@ -607,17 +921,73 @@ impl ThemedCursorGenerator {
         let cx = s * 0.50;
 
         // Horizontal divider
-        draw_line(&mut buf, size, s * 0.20, s * 0.50, s * 0.80, s * 0.50, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.20,
+            s * 0.50,
+            s * 0.80,
+            s * 0.50,
+            self.colors.resize,
+        );
 
         // Up arrow
-        draw_line(&mut buf, size, cx, s * 0.15, cx, s * 0.45, self.colors.resize);
-        draw_line(&mut buf, size, cx, s * 0.15, cx - s * 0.08, s * 0.25, self.colors.resize);
-        draw_line(&mut buf, size, cx, s * 0.15, cx + s * 0.08, s * 0.25, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            cx,
+            s * 0.15,
+            cx,
+            s * 0.45,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx,
+            s * 0.15,
+            cx - s * 0.08,
+            s * 0.25,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx,
+            s * 0.15,
+            cx + s * 0.08,
+            s * 0.25,
+            self.colors.resize,
+        );
 
         // Down arrow
-        draw_line(&mut buf, size, cx, s * 0.55, cx, s * 0.85, self.colors.resize);
-        draw_line(&mut buf, size, cx, s * 0.85, cx - s * 0.08, s * 0.75, self.colors.resize);
-        draw_line(&mut buf, size, cx, s * 0.85, cx + s * 0.08, s * 0.75, self.colors.resize);
+        draw_line(
+            &mut buf,
+            size,
+            cx,
+            s * 0.55,
+            cx,
+            s * 0.85,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx,
+            s * 0.85,
+            cx - s * 0.08,
+            s * 0.75,
+            self.colors.resize,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            cx,
+            s * 0.85,
+            cx + s * 0.08,
+            s * 0.75,
+            self.colors.resize,
+        );
 
         (buf, (s * 0.50) as u32, (s * 0.50) as u32)
     }
@@ -642,16 +1012,52 @@ impl ThemedCursorGenerator {
         // Handle
         let handle_start_x = cx + r * 0.707;
         let handle_start_y = cy + r * 0.707;
-        draw_line(&mut buf, size, handle_start_x, handle_start_y, s * 0.82, s * 0.82, self.colors.body);
-        draw_line(&mut buf, size, handle_start_x + 1.0, handle_start_y, s * 0.83, s * 0.82, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            handle_start_x,
+            handle_start_y,
+            s * 0.82,
+            s * 0.82,
+            self.colors.body,
+        );
+        draw_line(
+            &mut buf,
+            size,
+            handle_start_x + 1.0,
+            handle_start_y,
+            s * 0.83,
+            s * 0.82,
+            self.colors.body,
+        );
 
         // +/- inside lens
-        let sign_color = if zoom_in { self.colors.accent } else { self.colors.danger };
+        let sign_color = if zoom_in {
+            self.colors.accent
+        } else {
+            self.colors.danger
+        };
         // Horizontal bar (always)
-        draw_line(&mut buf, size, cx - s * 0.10, cy, cx + s * 0.10, cy, sign_color);
+        draw_line(
+            &mut buf,
+            size,
+            cx - s * 0.10,
+            cy,
+            cx + s * 0.10,
+            cy,
+            sign_color,
+        );
         if zoom_in {
             // Vertical bar for +
-            draw_line(&mut buf, size, cx, cy - s * 0.10, cx, cy + s * 0.10, sign_color);
+            draw_line(
+                &mut buf,
+                size,
+                cx,
+                cy - s * 0.10,
+                cx,
+                cy + s * 0.10,
+                sign_color,
+            );
         }
 
         (buf, (s * 0.38) as u32, (s * 0.38) as u32)
@@ -740,9 +1146,25 @@ impl ThemedCursorGenerator {
         let cy = s * 0.50;
 
         // Horizontal I-beam (rotated text cursor)
-        draw_line(&mut buf, size, s * 0.12, cy - s * 0.15, s * 0.12, cy + s * 0.15, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.12,
+            cy - s * 0.15,
+            s * 0.12,
+            cy + s * 0.15,
+            self.colors.body,
+        );
         draw_line(&mut buf, size, s * 0.12, cy, s * 0.88, cy, self.colors.body);
-        draw_line(&mut buf, size, s * 0.88, cy - s * 0.15, s * 0.88, cy + s * 0.15, self.colors.body);
+        draw_line(
+            &mut buf,
+            size,
+            s * 0.88,
+            cy - s * 0.15,
+            s * 0.88,
+            cy + s * 0.15,
+            self.colors.body,
+        );
 
         (buf, (s * 0.50) as u32, (s * 0.50) as u32)
     }

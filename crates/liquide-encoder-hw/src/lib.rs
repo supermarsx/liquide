@@ -6,6 +6,7 @@
 
 pub mod amf;
 pub mod api;
+pub mod codec;
 pub mod config;
 pub mod fallback;
 pub mod framebuffer;
@@ -85,6 +86,7 @@ pub type Result<T> = std::result::Result<T, HwEncoderError>;
 // Re-exports
 pub use amf::AmfEncoder;
 pub use api::{CodecCapability, CodecId, EncoderCapabilities, HwEncoderApi};
+pub use codec::{BitstreamEmitter, NullCodec, NullCodecFrame, parse_null_codec_frame};
 pub use config::{
     ApiPreference, FallbackConfig, GpuProfile, HwEncoderConfig, QualityPreset, RateControlMode,
 };
@@ -96,7 +98,7 @@ pub use hdr::{
 pub use manager::{HwEncoderManager, HwVideoEncoder};
 pub use metrics::{EncoderMetrics, GpuMetrics, MetricsSnapshot};
 pub use nvenc::NvencEncoder;
-pub use probe::{EncoderProber, ProbeResult};
+pub use probe::{EncoderProbeResult, EncoderProber, ProbeCapability, ProbeResult};
 pub use queue::{EncoderQueueManager, GpuSlot};
 pub use rate_control::{QualityAdjustment, QualityController};
 pub use session::{

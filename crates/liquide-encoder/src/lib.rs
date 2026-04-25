@@ -8,6 +8,7 @@ pub mod cache;
 pub mod compress;
 pub mod delta;
 pub mod encoder;
+pub mod fragment;
 pub mod hash;
 pub mod header;
 pub mod strategy;
@@ -52,9 +53,10 @@ pub use cache::TilePayloadCache;
 pub use compress::{compress_lz4, compress_zstd, decompress_lz4, decompress_zstd};
 pub use delta::{xor_apply, xor_delta};
 pub use encoder::TileEncoder;
+pub use fragment::{BatchFragment, FragmentError, fragment_batch, reassemble_batch};
 pub use hash::crc32c;
 pub use header::CompressedTileHeader;
-pub use strategy::{choose_strategy, CompressionMethod, EncodingStrategy, StrategyConfig};
+pub use strategy::{CompressionMethod, EncodingStrategy, StrategyConfig, choose_strategy};
 pub use tile::{FrameStats, TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate};
 
 #[cfg(test)]

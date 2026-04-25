@@ -6,6 +6,142 @@
 
 use serde::{Deserialize, Serialize};
 
+fn is_windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn hex_digit(value: u8) -> char {
+    match value {
+        0..=9 => (b'0' + value) as char,
+        10..=15 => (b'A' + (value - 10)) as char,
+        _ => unreachable!(),
+    }
+}
+
+fn percent_encode_uri_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        match *byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b'/'
+            | b':' => encoded.push(*byte as char),
+            _ => {
+                encoded.push('%');
+                encoded.push(hex_digit(byte >> 4));
+                encoded.push(hex_digit(byte & 0x0F));
+            }
+        }
+    }
+    encoded
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn percent_decode(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() {
+                return None;
+            }
+            let hi = hex_value(bytes[index + 1])?;
+            let lo = hex_value(bytes[index + 2])?;
+            decoded.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn strip_file_scheme(uri: &str) -> Option<&str> {
+    if uri.len() < 7 || !uri[..7].eq_ignore_ascii_case("file://") {
+        return None;
+    }
+    Some(&uri[7..])
+}
+
+fn file_path_to_uri(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    if normalized.starts_with("//") {
+        let host_path = normalized.trim_start_matches('/');
+        format!("file://{}", percent_encode_uri_path(host_path))
+    } else if is_windows_drive_path(&normalized) {
+        format!("file:///{}", percent_encode_uri_path(&normalized))
+    } else {
+        format!("file://{}", percent_encode_uri_path(&normalized))
+    }
+}
+
+fn file_uri_to_path(uri: &str) -> Option<String> {
+    let remainder = strip_file_scheme(uri)?;
+    if remainder.is_empty() {
+        return None;
+    }
+
+    if is_windows_drive_path(remainder) {
+        return Some(percent_decode(remainder)?.replace('/', "\\"));
+    }
+
+    if remainder.starts_with('/') {
+        let decoded = percent_decode(remainder)?;
+        if decoded.len() > 2 && decoded.starts_with('/') && is_windows_drive_path(&decoded[1..]) {
+            return Some(decoded[1..].replace('/', "\\"));
+        }
+        return Some(decoded);
+    }
+
+    let (host, path_part) = remainder.split_once('/').unwrap_or((remainder, ""));
+    if host.eq_ignore_ascii_case("localhost") {
+        let decoded = percent_decode(&format!("/{path_part}"))?;
+        if decoded.len() > 2 && decoded.starts_with('/') && is_windows_drive_path(&decoded[1..]) {
+            return Some(decoded[1..].replace('/', "\\"));
+        }
+        return Some(decoded);
+    }
+    if path_part.is_empty() {
+        return None;
+    }
+
+    let decoded_path = percent_decode(path_part)?;
+    Some(format!(r"\\{}\{}", host, decoded_path.replace('/', "\\")))
+}
+
+fn parse_file_uri_list(text: &str) -> Option<Vec<String>> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut paths = Vec::with_capacity(lines.len());
+    for line in lines {
+        paths.push(file_uri_to_path(line)?);
+    }
+    Some(paths)
+}
+
 /// A single typed format for drag data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DragFormat {
@@ -22,10 +158,7 @@ pub enum DragFormat {
         data: Vec<u8>,
     },
     /// Arbitrary data identified by MIME type.
-    Custom {
-        mime_type: String,
-        data: Vec<u8>,
-    },
+    Custom { mime_type: String, data: Vec<u8> },
 }
 
 impl DragFormat {
@@ -236,10 +369,7 @@ impl DragFormat {
         match self {
             DragFormat::Text(s) => s.as_bytes().to_vec(),
             DragFormat::FilePaths(paths) => {
-                let uris: Vec<String> = paths
-                    .iter()
-                    .map(|p| format!("file://{p}"))
-                    .collect();
+                let uris: Vec<String> = paths.iter().map(|path| file_path_to_uri(path)).collect();
                 uris.join("\r\n").into_bytes()
             }
             DragFormat::Uri(u) => u.as_bytes().to_vec(),
@@ -317,23 +447,11 @@ impl DragDataStore {
                 DragFormat::Text(text)
             }
             "text/uri-list" => {
-                let text = String::from_utf8_lossy(bytes);
-                let paths: Vec<String> = text
-                    .lines()
-                    .filter(|l| !l.starts_with('#')) // skip comments per RFC 2483
-                    .map(|l| {
-                        l.trim()
-                            .strip_prefix("file://")
-                            .unwrap_or(l.trim())
-                            .to_string()
-                    })
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if paths.is_empty() {
-                    // Treat as URI if no file:// paths
-                    DragFormat::Uri(text.trim().to_string())
-                } else {
+                let text = String::from_utf8_lossy(bytes).into_owned();
+                if let Some(paths) = parse_file_uri_list(&text) {
                     DragFormat::FilePaths(paths)
+                } else {
+                    DragFormat::Uri(text.trim().to_string())
                 }
             }
             mime if mime.starts_with("image/") => DragFormat::Image {
@@ -548,11 +666,23 @@ mod tests {
 
     #[test]
     fn test_format_to_bytes_file_paths() {
-        let bytes =
-            DragFormat::FilePaths(vec!["/home/a.txt".into(), "/home/b.txt".into()]).to_bytes();
+        let bytes = DragFormat::FilePaths(vec![
+            "/home/My File #1.txt".into(),
+            "/home/b.txt".into(),
+        ])
+        .to_bytes();
         let text = String::from_utf8(bytes).unwrap();
-        assert!(text.contains("file:///home/a.txt"));
+        assert!(text.contains("file:///home/My%20File%20%231.txt"));
         assert!(text.contains("file:///home/b.txt"));
+    }
+
+    #[test]
+    fn test_format_to_bytes_file_paths_windows_drive_format() {
+        let bytes = DragFormat::FilePaths(vec![r"C:\Users\Alice Smith\notes #1.txt".into()])
+            .to_bytes();
+        let text = String::from_utf8(bytes).unwrap();
+
+        assert_eq!(text, "file:///C:/Users/Alice%20Smith/notes%20%231.txt");
     }
 
     // ---- DragDataStore tests ----
@@ -623,10 +753,7 @@ mod tests {
     fn test_store_preferred_type() {
         let data = DragData::text("hello");
         let store = DragDataStore::from_drag_data(&data);
-        let pref = store.preferred_type(&[
-            "image/png".to_string(),
-            "text/plain".to_string(),
-        ]);
+        let pref = store.preferred_type(&["image/png".to_string(), "text/plain".to_string()]);
         assert_eq!(pref, Some("text/plain".to_string()));
     }
 
@@ -645,10 +772,7 @@ mod tests {
         let store = DragDataStore::from_drag_data(&data);
 
         // Both accepted — source preference wins (text/plain first)
-        let pref = store.preferred_type(&[
-            "text/uri-list".to_string(),
-            "text/plain".to_string(),
-        ]);
+        let pref = store.preferred_type(&["text/uri-list".to_string(), "text/plain".to_string()]);
         assert_eq!(pref, Some("text/plain".to_string()));
     }
 
@@ -698,5 +822,41 @@ mod tests {
         assert_eq!(paths.len(), 2);
         assert_eq!(paths[0], "/home/a.txt");
         assert_eq!(paths[1], "/home/b.txt");
+    }
+
+    #[test]
+    fn test_store_uri_list_decodes_percent_encoded_paths() {
+        let mut store = DragDataStore::new();
+        let uri_list = "file:///home/My%20Folder/%E2%9C%93.txt\r\n";
+        store.set("text/uri-list", uri_list.as_bytes().to_vec());
+
+        let result = store.get_data("text/uri-list").unwrap();
+        let paths = result.get_file_paths().unwrap();
+
+        assert_eq!(paths, &["/home/My Folder/✓.txt".to_string()]);
+    }
+
+    #[test]
+    fn test_store_uri_list_parses_windows_drive_paths() {
+        let mut store = DragDataStore::new();
+        let uri_list = "file:///C:/Users/Alice%20Smith/notes%20%231.txt\r\n";
+        store.set("text/uri-list", uri_list.as_bytes().to_vec());
+
+        let result = store.get_data("text/uri-list").unwrap();
+        let paths = result.get_file_paths().unwrap();
+
+        assert_eq!(paths, &[r"C:\Users\Alice Smith\notes #1.txt".to_string()]);
+    }
+
+    #[test]
+    fn test_store_uri_list_parses_windows_unc_paths() {
+        let mut store = DragDataStore::new();
+        let uri_list = "file://server/share/My%20File.txt\r\n";
+        store.set("text/uri-list", uri_list.as_bytes().to_vec());
+
+        let result = store.get_data("text/uri-list").unwrap();
+        let paths = result.get_file_paths().unwrap();
+
+        assert_eq!(paths, &[r"\\server\share\My File.txt".to_string()]);
     }
 }

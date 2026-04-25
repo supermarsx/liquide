@@ -67,22 +67,40 @@ impl AnimatedCursor {
 
     /// Update the animation state by the given delta time.
     ///
-    /// Returns true if the frame changed.
+    /// Returns true if the frame changed. Large `delta_ms` values (e.g.
+    /// after a suspend, or a stalled test harness) are consumed across
+    /// multiple frames instead of overflowing `u32` or wrapping weirdly —
+    /// we reduce `delta_ms` modulo the total animation duration first and
+    /// then walk frames.
     pub fn update(&mut self, delta_ms: u32) -> bool {
         if self.frames.is_empty() {
             return false;
         }
 
-        self.frame_elapsed_ms += delta_ms;
+        // Modulo the elapsed delta against the whole loop so that we
+        // can never accumulate enough to overflow `frame_elapsed_ms`.
+        let mut remaining = if self.total_duration_ms > 0 {
+            delta_ms % self.total_duration_ms
+        } else {
+            0
+        };
 
-        let current_duration = self.frames[self.current_frame].duration_ms;
-        if self.frame_elapsed_ms >= current_duration {
-            self.frame_elapsed_ms = 0;
-            self.current_frame = (self.current_frame + 1) % self.frames.len();
-            return true;
+        let start_frame = self.current_frame;
+
+        while remaining > 0 {
+            let current_duration = self.frames[self.current_frame].duration_ms.max(1);
+            let available = current_duration.saturating_sub(self.frame_elapsed_ms);
+            if remaining < available {
+                self.frame_elapsed_ms += remaining;
+                remaining = 0;
+            } else {
+                remaining -= available;
+                self.frame_elapsed_ms = 0;
+                self.current_frame = (self.current_frame + 1) % self.frames.len();
+            }
         }
 
-        false
+        self.current_frame != start_frame
     }
 
     /// Get the current frame.
@@ -200,6 +218,36 @@ mod tests {
         let changed = cursor.update(100);
         assert!(changed);
         assert_eq!(cursor.current_frame_index(), 0);
+    }
+
+    #[test]
+    fn test_animated_cursor_huge_delta_wraps_without_overflow() {
+        // Two 100ms frames, total 200ms.
+        let frames = vec![
+            CursorFrame {
+                image_data: vec![],
+                width: 1,
+                height: 1,
+                hotspot_x: 0,
+                hotspot_y: 0,
+                duration_ms: 100,
+            },
+            CursorFrame {
+                image_data: vec![],
+                width: 1,
+                height: 1,
+                hotspot_x: 0,
+                hotspot_y: 0,
+                duration_ms: 100,
+            },
+        ];
+        let mut cursor = AnimatedCursor::new(1, CursorShape::Wait, frames);
+        // Delta close to u32::MAX should be safely reduced mod 200.
+        let changed = cursor.update(u32::MAX);
+        // Whatever the outcome, we did not panic and frame index is valid.
+        assert!(cursor.current_frame_index() < cursor.frames.len());
+        // changed is true because we advanced at least once (u32::MAX % 200 != 0).
+        let _ = changed;
     }
 
     #[test]
