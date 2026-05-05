@@ -102,7 +102,10 @@ impl Thumbnail {
 
     /// Resize the thumbnail when the source window geometry changes.
     pub fn resize(&mut self, width: u32, height: u32, scale: f32) {
-        if self.width == width && self.height == height && (self.scale - scale).abs() <= f32::EPSILON {
+        if self.width == width
+            && self.height == height
+            && (self.scale - scale).abs() <= f32::EPSILON
+        {
             return;
         }
 
@@ -259,10 +262,34 @@ fn downscale_4tap(src: &[u8], src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) ->
         for dx in 0..dw {
             let center_x = (dx as f64 + 0.5) * scale_x - 0.5;
             let taps = [
-                sample_bilinear(src, sw, sh, center_x - tap_offset_x, center_y - tap_offset_y),
-                sample_bilinear(src, sw, sh, center_x + tap_offset_x, center_y - tap_offset_y),
-                sample_bilinear(src, sw, sh, center_x - tap_offset_x, center_y + tap_offset_y),
-                sample_bilinear(src, sw, sh, center_x + tap_offset_x, center_y + tap_offset_y),
+                sample_bilinear(
+                    src,
+                    sw,
+                    sh,
+                    center_x - tap_offset_x,
+                    center_y - tap_offset_y,
+                ),
+                sample_bilinear(
+                    src,
+                    sw,
+                    sh,
+                    center_x + tap_offset_x,
+                    center_y - tap_offset_y,
+                ),
+                sample_bilinear(
+                    src,
+                    sw,
+                    sh,
+                    center_x - tap_offset_x,
+                    center_y + tap_offset_y,
+                ),
+                sample_bilinear(
+                    src,
+                    sw,
+                    sh,
+                    center_x + tap_offset_x,
+                    center_y + tap_offset_y,
+                ),
             ];
 
             let dst_i = (dy * dw + dx) * 4;
@@ -291,13 +318,13 @@ fn downscale_with_quality(
     }
 }
 
-fn compute_thumbnail_geometry(config: &ThumbnailConfig, source_w: u32, source_h: u32) -> (u32, u32, f32) {
-    let (thumb_w, thumb_h) = compute_thumbnail_size(
-        source_w,
-        source_h,
-        config.max_width,
-        config.max_height,
-    );
+fn compute_thumbnail_geometry(
+    config: &ThumbnailConfig,
+    source_w: u32,
+    source_h: u32,
+) -> (u32, u32, f32) {
+    let (thumb_w, thumb_h) =
+        compute_thumbnail_size(source_w, source_h, config.max_width, config.max_height);
     let scale = thumb_w as f32 / source_w.max(1) as f32;
     (thumb_w, thumb_h, scale)
 }
@@ -329,7 +356,8 @@ impl ThumbnailRegistry {
     /// If a thumbnail already exists for this window, the existing entry is
     /// resized in place when the source geometry changed.
     pub fn create(&mut self, window_id: u64, source_w: u32, source_h: u32) -> ThumbnailId {
-        let (thumb_w, thumb_h, scale) = compute_thumbnail_geometry(&self.config, source_w, source_h);
+        let (thumb_w, thumb_h, scale) =
+            compute_thumbnail_geometry(&self.config, source_w, source_h);
 
         // Return existing if present.
         if let Some(t) = self
@@ -386,7 +414,8 @@ impl ThumbnailRegistry {
         source_h: u32,
         now_ms: u64,
     ) -> bool {
-        let (thumb_w, thumb_h, scale) = compute_thumbnail_geometry(&self.config, source_w, source_h);
+        let (thumb_w, thumb_h, scale) =
+            compute_thumbnail_geometry(&self.config, source_w, source_h);
         let quality = self.config.quality;
         let thumb = match self
             .thumbnails

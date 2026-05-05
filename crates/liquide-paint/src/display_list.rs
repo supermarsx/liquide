@@ -558,6 +558,15 @@ impl DisplayList {
         }
     }
 
+    /// Create a display list from an existing owned item buffer.
+    pub fn from_items(items: Vec<DisplayItem>) -> Self {
+        Self {
+            items,
+            spatial_index: Vec::new(),
+            spatial_dirty: true,
+        }
+    }
+
     /// Create with pre-allocated capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {

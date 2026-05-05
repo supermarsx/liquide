@@ -86,7 +86,7 @@ fn test_direct_touch_ended_during_drag_produces_drag_end() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     // Start a drag via gesture.
     let g = gesture(GestureKind::LongPress, 50.0, 60.0);
-    translator.translate_gesture(&g);
+    let _ = translator.translate_gesture(&g);
     assert!(translator.is_dragging());
 
     let event = tap_event(1, 70.0, 80.0, TouchPhase::Ended, 100);
@@ -128,7 +128,7 @@ fn test_long_press_starts_drag() {
 fn test_long_press_drag_continues_drag() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
     // First start the drag.
-    translator.translate_gesture(&gesture(GestureKind::LongPress, 10.0, 20.0));
+    let _ = translator.translate_gesture(&gesture(GestureKind::LongPress, 10.0, 20.0));
     // Now drag move.
     let g = gesture(GestureKind::LongPressDrag, 30.0, 40.0);
     let action = translator.translate_gesture(&g);
@@ -202,7 +202,7 @@ fn test_pan_in_trackpad_mode_moves_cursor() {
 #[test]
 fn test_end_drag_when_dragging() {
     let mut translator = InputTranslator::new(TouchMode::Direct);
-    translator.translate_gesture(&gesture(GestureKind::LongPress, 10.0, 20.0));
+    let _ = translator.translate_gesture(&gesture(GestureKind::LongPress, 10.0, 20.0));
     let action = translator.end_drag(30.0, 40.0);
     assert_eq!(action, Some(MouseAction::DragEnd { x: 30.0, y: 40.0 }));
     assert!(!translator.is_dragging());

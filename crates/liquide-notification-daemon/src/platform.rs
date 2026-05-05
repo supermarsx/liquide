@@ -324,7 +324,9 @@ $notifier.Show($toast)
             let xml = build_toast_xml(&notification);
 
             assert!(xml.contains("<text>&lt;sync &amp; save&gt;</text>"));
-            assert!(xml.contains("<text>Body with &lt;b&gt;markup&lt;/b&gt; &amp; &apos;quotes&apos;</text>"));
+            assert!(xml.contains(
+                "<text>Body with &lt;b&gt;markup&lt;/b&gt; &amp; &apos;quotes&apos;</text>"
+            ));
             assert!(xml.contains("content='Open &lt;Now&gt;'"));
             assert!(xml.contains("arguments='open&amp;launch'"));
             assert!(!xml.contains("<text><sync & save></text>"));

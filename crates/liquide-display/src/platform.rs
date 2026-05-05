@@ -169,7 +169,6 @@ fn parse_windows_json(json_str: &str) -> Result<Vec<DisplayInfo>, PlatformError>
         let connector = v["connector"].as_str().unwrap_or("").to_string();
         let w = v["w"].as_u64().unwrap_or(0) as u32;
         let h = v["h"].as_u64().unwrap_or(0) as u32;
-        let hz = v["hz"].as_u64().unwrap_or(60) as f32;
         let x = v["x"].as_i64().unwrap_or(0) as i32;
         let y = v["y"].as_i64().unwrap_or(0) as i32;
         let rot_val = v["rot"].as_u64().unwrap_or(0);
@@ -204,6 +203,8 @@ fn parse_windows_json(json_str: &str) -> Result<Vec<DisplayInfo>, PlatformError>
             }
         }
 
+        let hz = current_windows_refresh_rate(v, w, h, &available_refresh_rates);
+
         displays.push(DisplayInfo {
             id,
             name,
@@ -223,6 +224,40 @@ fn parse_windows_json(json_str: &str) -> Result<Vec<DisplayInfo>, PlatformError>
     }
 
     Ok(displays)
+}
+
+#[cfg(target_os = "windows")]
+fn current_windows_refresh_rate(
+    value: &serde_json::Value,
+    width: u32,
+    height: u32,
+    available_refresh_rates: &[f32],
+) -> f32 {
+    value["hz"]
+        .as_u64()
+        .map(|hz| hz as f32)
+        .filter(|hz| *hz > 0.0)
+        .or_else(|| {
+            value["modes"].as_array().and_then(|modes| {
+                modes
+                    .iter()
+                    .filter_map(|mode| {
+                        let mode_width = mode["w"].as_u64().unwrap_or(0) as u32;
+                        let mode_height = mode["h"].as_u64().unwrap_or(0) as u32;
+                        let mode_hz = mode["hz"].as_u64().unwrap_or(0) as f32;
+                        (mode_width == width && mode_height == height && mode_hz > 0.0)
+                            .then_some(mode_hz)
+                    })
+                    .max_by(|a, b| a.total_cmp(b))
+            })
+        })
+        .or_else(|| {
+            available_refresh_rates
+                .iter()
+                .copied()
+                .max_by(|a, b| a.total_cmp(b))
+        })
+        .unwrap_or(0.0)
 }
 
 // ---------------------------------------------------------------------------

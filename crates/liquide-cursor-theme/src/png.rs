@@ -129,20 +129,25 @@ fn expand_gray_to_rgba(g: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// Minimal 1×1 opaque-red RGBA PNG.
-    const RED_1X1_RGBA_PNG: &[u8] = &[
-        0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, // IHDR
-        0x00, 0x00, 0x00, 0x0D, b'I', b'H', b'D', b'R', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-        0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, // IDAT
-        0x00, 0x00, 0x00, 0x0F, b'I', b'D', b'A', b'T', 0x78, 0x9C, 0x62, 0xF8, 0xCF, 0xC0, 0x00,
-        0x00, 0x00, 0x04, 0x00, 0x01, 0x27, 0x18, 0xE3, 0x66, 0x3E, 0x85, 0xD6, 0xE5,
-        // IEND
-        0x00, 0x00, 0x00, 0x00, b'I', b'E', b'N', b'D', 0xAE, 0x42, 0x60, 0x82,
-    ];
+    /// Build a minimal 1×1 opaque-red RGBA PNG using the `png` encoder so
+    /// the byte stream is always valid (and not a hand-rolled literal that
+    /// can drift out of sync with the upstream decoder's strictness).
+    fn red_1x1_rgba_png() -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, 1, 1);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            let mut writer = enc.write_header().expect("png header");
+            writer.write_image_data(&[255, 0, 0, 255]).expect("png data");
+        }
+        out
+    }
 
     #[test]
     fn decode_tiny_rgba_png() {
-        let (px, w, h) = decode_rgba8(RED_1X1_RGBA_PNG).expect("decode");
+        let bytes = red_1x1_rgba_png();
+        let (px, w, h) = decode_rgba8(&bytes).expect("decode");
         assert_eq!(w, 1);
         assert_eq!(h, 1);
         assert_eq!(px.len(), 4);

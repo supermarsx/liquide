@@ -14,14 +14,14 @@ pub fn blend_scanline_src_over(dst: &mut [u8], src: &[u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         if crate::detect::has_avx512() {
-            unsafe { blend_scanline_src_over_avx512(dst, src) }
+            unsafe { return blend_scanline_src_over_avx512(dst, src) }
         }
         if crate::detect::has_avx2() {
             // SAFETY: AVX2 detected at runtime
-            unsafe { blend_scanline_src_over_avx2(dst, src) }
+            unsafe { return blend_scanline_src_over_avx2(dst, src) }
         }
         // SSE2 is always available on x86-64
-        unsafe { blend_scanline_src_over_sse2(dst, src) }
+        unsafe { return blend_scanline_src_over_sse2(dst, src) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     blend_scanline_src_over_scalar(dst, src);
@@ -269,9 +269,9 @@ pub fn blend_scanline_multiply(dst: &mut [u8], src: &[u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         if crate::detect::has_avx2() {
-            unsafe { blend_scanline_multiply_avx2(dst, src) }
+            unsafe { return blend_scanline_multiply_avx2(dst, src) }
         }
-        unsafe { blend_scanline_multiply_sse2(dst, src) }
+        unsafe { return blend_scanline_multiply_sse2(dst, src) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     blend_scanline_multiply_scalar(dst, src);
@@ -538,9 +538,9 @@ pub fn blend_scanline_darken(dst: &mut [u8], src: &[u8]) {
     #[cfg(target_arch = "x86_64")]
     {
         if crate::detect::has_avx512() {
-            unsafe { blend_scanline_darken_avx512(dst, src) }
+            unsafe { return blend_scanline_darken_avx512(dst, src) }
         }
-        unsafe { blend_scanline_darken_sse2(dst, src) }
+        unsafe { return blend_scanline_darken_sse2(dst, src) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -572,7 +572,7 @@ unsafe fn blend_scanline_darken_avx512(dst: &mut [u8], src: &[u8]) {
         let s = _mm512_loadu_si512(s_ptr);
         let rgb_blend = _mm512_min_epu8(d, s); // min for BGR
         let alpha_blend = _mm512_max_epu8(d, s); // max for alpha
-                                                 // Select: alpha bytes from alpha_blend, RGB bytes from rgb_blend
+        // Select: alpha bytes from alpha_blend, RGB bytes from rgb_blend
         let result = _mm512_or_si512(
             _mm512_and_si512(alpha_mask, alpha_blend),
             _mm512_andnot_si512(alpha_mask, rgb_blend),
@@ -907,7 +907,7 @@ pub fn invert_scanline(buf: &mut [u8]) {
             buf[off] = 255 - buf[off]; // B
             buf[off + 1] = 255 - buf[off + 1]; // G
             buf[off + 2] = 255 - buf[off + 2]; // R
-                                               // alpha unchanged
+            // alpha unchanged
         }
     }
 }

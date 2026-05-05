@@ -295,18 +295,17 @@ fn rects_intersect(a: Rect, b: Rect) -> bool {
 fn clip_contains_point(node: &ClipNode, x: f32, y: f32) -> bool {
     match &node.clip_type {
         ClipType::Rect => node.clip_rect.contains(x, y),
-        ClipType::RoundedRect { radii } => rounded_rect_contains_point(node.clip_rect, *radii, x, y),
-        ClipType::CircleEllipse { cx, cy, rx, ry } => ellipse_contains_point(*cx, *cy, *rx, *ry, x, y),
+        ClipType::RoundedRect { radii } => {
+            rounded_rect_contains_point(node.clip_rect, *radii, x, y)
+        }
+        ClipType::CircleEllipse { cx, cy, rx, ry } => {
+            ellipse_contains_point(*cx, *cy, *rx, *ry, x, y)
+        }
         ClipType::Path(points) => path_contains_point(points, x, y),
     }
 }
 
-fn rounded_rect_contains_point(
-    rect: Rect,
-    radii: (f32, f32, f32, f32),
-    x: f32,
-    y: f32,
-) -> bool {
+fn rounded_rect_contains_point(rect: Rect, radii: (f32, f32, f32, f32), x: f32, y: f32) -> bool {
     if !rect.contains(x, y) {
         return false;
     }
@@ -318,7 +317,14 @@ fn rounded_rect_contains_point(
     let bottom_left = radii.3.clamp(0.0, max_radius);
 
     if x < rect.x + top_left && y < rect.y + top_left {
-        return ellipse_contains_point(rect.x + top_left, rect.y + top_left, top_left, top_left, x, y);
+        return ellipse_contains_point(
+            rect.x + top_left,
+            rect.y + top_left,
+            top_left,
+            top_left,
+            x,
+            y,
+        );
     }
     if x >= rect.right() - top_right && y < rect.y + top_right {
         return ellipse_contains_point(

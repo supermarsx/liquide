@@ -727,7 +727,10 @@ mod tests {
         let payload = build_windows_hdrop_payload(&paths).unwrap();
         let header = unsafe { &*(payload.as_ptr() as *const DropFilesHeader) };
 
-        assert_eq!(header.p_files as usize, std::mem::size_of::<DropFilesHeader>());
+        assert_eq!(
+            header.p_files as usize,
+            std::mem::size_of::<DropFilesHeader>()
+        );
         assert_eq!(header.f_wide, 1);
         assert_eq!(decode_hdrop_payload(&payload), paths);
     }

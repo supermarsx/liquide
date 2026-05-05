@@ -562,8 +562,20 @@ fn flatten_cubic(
     y3: f32,
     depth: u32,
 ) {
-    // Guard against infinite recursion and NaN propagation.
-    if depth >= 16 || x0.is_nan() || y0.is_nan() || x3.is_nan() || y3.is_nan() {
+    // Guard against infinite recursion and NaN propagation. We must check
+    // *all* coordinates: NaN in any control point taints the flatness
+    // estimator (`d2`), and NaN comparisons return `false`, so the curve
+    // would never be considered flat and we'd recurse forever.
+    if depth >= 16
+        || x0.is_nan()
+        || y0.is_nan()
+        || x1.is_nan()
+        || y1.is_nan()
+        || x2.is_nan()
+        || y2.is_nan()
+        || x3.is_nan()
+        || y3.is_nan()
+    {
         out.push(PathSegment {
             x1: x0,
             y1: y0,

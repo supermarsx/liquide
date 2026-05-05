@@ -266,7 +266,7 @@ fn bubbling_events_list() {
 
 #[test]
 fn mouse_move_generates_enter_leave_events() {
-    let (mut doc, engine, root, child) = simple_setup();
+    let (mut doc, engine, _root, _child) = simple_setup();
     let mut dispatcher = EventDispatcher::new();
 
     // Move to child
@@ -298,7 +298,7 @@ fn mouse_move_generates_enter_leave_events() {
 
 #[test]
 fn mouse_move_updates_hover_chain() {
-    let (mut doc, engine, root, child) = simple_setup();
+    let (mut doc, engine, _root, child) = simple_setup();
     let mut dispatcher = EventDispatcher::new();
 
     // Initially empty
@@ -327,7 +327,7 @@ fn mouse_move_updates_hover_chain() {
 
 #[test]
 fn mouse_down_up_generates_click() {
-    let (mut doc, engine, root, child) = simple_setup();
+    let (mut doc, engine, _root, _child) = simple_setup();
     let mut dispatcher = EventDispatcher::new();
 
     // Move to the child first to establish hover chain
@@ -365,7 +365,7 @@ fn mouse_down_up_generates_click() {
 
 #[test]
 fn click_event_targets_correct_node() {
-    let (mut doc, engine, root, child) = simple_setup();
+    let (mut doc, engine, _root, child) = simple_setup();
     let mut dispatcher = EventDispatcher::new();
 
     dispatcher.dispatch_mouse_move(Point::new(150.0, 150.0), &mut doc, &engine);
@@ -397,7 +397,7 @@ fn click_event_targets_correct_node() {
 
 #[test]
 fn handler_receives_events_for_target() {
-    let (mut doc, engine, root, child) = simple_setup();
+    let (mut doc, engine, _root, child) = simple_setup();
     let mut dispatcher = EventDispatcher::new();
 
     let counter = Arc::new(Mutex::new(0u32));
@@ -430,7 +430,7 @@ fn focus_is_initially_none() {
 
 #[test]
 fn mouse_down_sets_focus() {
-    let (mut doc, engine, root, child) = simple_setup();
+    let (mut doc, engine, _root, child) = simple_setup();
     let mut dispatcher = EventDispatcher::new();
 
     dispatcher.dispatch_mouse_move(Point::new(150.0, 150.0), &mut doc, &engine);

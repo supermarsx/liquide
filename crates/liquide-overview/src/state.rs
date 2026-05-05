@@ -200,7 +200,11 @@ impl OverviewState {
         self.grid_cols = compute_grid_cols(self.slots.len());
 
         if let Some(window_id) = selected_window_id {
-            if let Some(new_idx) = self.slots.iter().position(|slot| slot.window_id == window_id) {
+            if let Some(new_idx) = self
+                .slots
+                .iter()
+                .position(|slot| slot.window_id == window_id)
+            {
                 self.selected_index = Some(new_idx);
                 return;
             }
@@ -242,7 +246,11 @@ impl OverviewState {
     }
 
     fn is_interactable(&self) -> bool {
-        self.active && !matches!(self.animator.phase, OverviewPhase::Exiting | OverviewPhase::Hidden)
+        self.active
+            && !matches!(
+                self.animator.phase,
+                OverviewPhase::Exiting | OverviewPhase::Hidden
+            )
     }
 }
 
@@ -448,6 +456,9 @@ mod tests {
         state.on_key(OverviewKey::Char('b'));
 
         assert_eq!(state.selected_index, Some(0));
-        assert_eq!(state.on_key(OverviewKey::Enter), OverviewAction::SelectWindow(2));
+        assert_eq!(
+            state.on_key(OverviewKey::Enter),
+            OverviewAction::SelectWindow(2)
+        );
     }
 }

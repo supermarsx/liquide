@@ -52,9 +52,7 @@ impl HotCornerDetector {
     pub fn on_mouse_move(&mut self, x: f32, y: f32, dt_ms: f32) -> Option<Corner> {
         let corner = self.detect_corner(x, y);
         match (corner, self.current_corner) {
-            (Some(c), Some(prev)) if c == prev => {
-                self.advance_dwell(dt_ms)
-            }
+            (Some(c), Some(prev)) if c == prev => self.advance_dwell(dt_ms),
             (Some(c), _) => {
                 // Entered a (different) corner — start fresh.
                 self.current_corner = Some(c);

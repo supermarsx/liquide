@@ -20,7 +20,11 @@ pub struct TouchPoint {
 #[derive(Debug, Clone, Copy)]
 struct Finger {
     id: u64,
+    /// Captured at touch-down for future swipe-from-start delta logic; not yet read.
+    #[allow(dead_code)]
     start_x: f64,
+    /// Captured at touch-down for future swipe-from-start delta logic; not yet read.
+    #[allow(dead_code)]
     start_y: f64,
     cur_x: f64,
     cur_y: f64,

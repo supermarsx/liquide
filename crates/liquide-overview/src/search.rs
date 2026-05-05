@@ -168,7 +168,9 @@ fn map_folded_range(
     folded_start: usize,
     folded_end: usize,
 ) -> Option<(usize, usize)> {
-    let first = segments.iter().find(|segment| segment.folded_end > folded_start)?;
+    let first = segments
+        .iter()
+        .find(|segment| segment.folded_end > folded_start)?;
     let last = segments
         .iter()
         .rfind(|segment| segment.folded_start < folded_end)?;

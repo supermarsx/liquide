@@ -240,7 +240,9 @@ impl PropertyTreeSet {
             };
 
             if bounds.contains(local_x, local_y)
-                && self.clip_tree.contains_point(mapping.clip_id, (local_x, local_y))
+                && self
+                    .clip_tree
+                    .contains_point(mapping.clip_id, (local_x, local_y))
             {
                 hits.push((element_id, (local_x, local_y)));
             }

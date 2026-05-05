@@ -23,15 +23,9 @@ fn percent_encode_uri_path(path: &str) -> String {
     let mut encoded = String::with_capacity(path.len());
     for byte in path.as_bytes() {
         match *byte {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'.'
-            | b'_'
-            | b'~'
-            | b'/'
-            | b':' => encoded.push(*byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                encoded.push(*byte as char)
+            }
             _ => {
                 encoded.push('%');
                 encoded.push(hex_digit(byte >> 4));
@@ -666,11 +660,9 @@ mod tests {
 
     #[test]
     fn test_format_to_bytes_file_paths() {
-        let bytes = DragFormat::FilePaths(vec![
-            "/home/My File #1.txt".into(),
-            "/home/b.txt".into(),
-        ])
-        .to_bytes();
+        let bytes =
+            DragFormat::FilePaths(vec!["/home/My File #1.txt".into(), "/home/b.txt".into()])
+                .to_bytes();
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.contains("file:///home/My%20File%20%231.txt"));
         assert!(text.contains("file:///home/b.txt"));
@@ -678,8 +670,8 @@ mod tests {
 
     #[test]
     fn test_format_to_bytes_file_paths_windows_drive_format() {
-        let bytes = DragFormat::FilePaths(vec![r"C:\Users\Alice Smith\notes #1.txt".into()])
-            .to_bytes();
+        let bytes =
+            DragFormat::FilePaths(vec![r"C:\Users\Alice Smith\notes #1.txt".into()]).to_bytes();
         let text = String::from_utf8(bytes).unwrap();
 
         assert_eq!(text, "file:///C:/Users/Alice%20Smith/notes%20%231.txt");

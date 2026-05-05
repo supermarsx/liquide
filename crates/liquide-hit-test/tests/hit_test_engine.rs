@@ -5,13 +5,13 @@
 //! and absolute-coordinate resolution.
 
 use liquide_dom::NodeId;
-use liquide_hit_test::engine::{HitTestEngine, HitTestResult};
+use liquide_hit_test::engine::HitTestEngine;
 use liquide_layout::geometry::{Point, Rect};
-use liquide_layout::tree::{BoxType, LayoutBox, LayoutTree};
+use liquide_layout::tree::{BoxType, LayoutTree};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
     ComputedStyle, ContentVisibility, Display, Overflow, PointerEvents, Position, Transform,
-    TransformOrigin, Visibility,
+    Visibility,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
