@@ -1762,7 +1762,7 @@ Each `.bin` file is accompanied by a `.json` description file:
 | **Version-tagged** | Each vector specifies the minimum protocol version that supports it. |
 | **CI-gated** | `cargo test --package liquide-protocol -- test_vector` runs all test vectors. New vectors MUST be added when new message types are introduced. |
 | **Cross-platform** | Test vectors MUST produce identical parse results on all target platforms (x86_64, ARM64, WASM). |
-| **Fuzz corpus seed** | Golden captures are automatically added to the fuzz corpus for frame parser and CBOR decoder targets. |
+| **Fuzz corpus seed** | Golden captures are the planned seed source for frame parser and CBOR decoder corpora once corpus generation is wired. |
 
 ### 14.4 Compatibility Test Matrix
 
@@ -1921,13 +1921,20 @@ For each scenario, verify:
 
 ## 17) Fuzzing Targets
 
-The following components are fuzzing targets for security and robustness:
+The repository currently keeps focused `cargo-fuzz` harnesses under `tests/fuzz/` for parser and decoder robustness. These harnesses must call production parser/decoder code paths rather than discarding input bytes.
+
+Live targets:
 
 | Target | Fuzzer Input | Goal |
 |--------|-------------|------|
 | Frame parser | Random bytes as frame data | No crash, no undefined behavior |
 | CBOR decoder | Random bytes as CBOR payload | No crash, correct error returns |
-| Video decoder (all codecs) | Malformed encoded bitstreams | No crash, graceful error |
+| Video decoder (in-tree null-codec decoder) | Malformed encoded bitstreams | No crash, graceful error |
+
+Roadmap targets, not yet release/CI fuzz gates:
+
+| Target | Fuzzer Input | Goal |
+|--------|-------------|------|
 | Clipboard parser | Arbitrary MIME data | No crash, correct MIME validation |
 | Protocol state machine | Random message sequences | No invalid state transitions |
 | TLS handshake | Malformed TLS records | No crash, correct TLS error |
@@ -1936,8 +1943,8 @@ The following components are fuzzing targets for security and robustness:
 ### 17.1 Fuzzing Infrastructure
 
 - Fuzzing uses `cargo-fuzz` (libFuzzer) for Rust components.
-- Corpus seeded from protocol conformance test recordings.
-- CI runs fuzzing for a minimum of 1 hour per target on every release.
+- Corpus seeding from protocol conformance recordings is planned but not automated yet.
+- CI/release workflows currently do not run time-budgeted fuzzing; release fuzz gates require an explicit workflow job before they can be claimed as coverage.
 - Crashes are triaged as security issues (P0) until proven otherwise.
 
 ---
@@ -1992,15 +1999,22 @@ The following components are fuzzing targets for security and robustness:
 
 ### 18.2 Conformance Test Runner
 
-A standalone conformance test tool (`liquide-conformance`) can be run against any LiquiDE server to verify protocol compliance:
+A standalone conformance test tool (`liquide-conformance`) contains offline
+protocol validators and a reserved live-server conformance mode:
 
 ```bash
-liquide-conformance --server <address> --username <user> --password <pass> --suite all
+liquide-conformance --mode offline --suite all
+liquide-conformance --mode live --server <address> \
+    --username <user> --password <pass> --suite all
 ```
 
-Outputs a pass/fail report per test case.
+Offline mode validates local protocol rules only, does not contact the target
+server, and produces an indeterminate report rather than certifying server
+conformance. Live mode is the only mode that may produce `CONFORMANT`; until
+live probes are implemented and mandatory cases receive server evidence, it must
+fail closed as indeterminate.
 
-The conformance runner also includes a `--wayland-fuzz` mode that sends randomized Wayland wire format messages to the compositor's internal protocol parser. This is separate from the client-server protocol fuzzing and targets the Wayland compositor's `wl_display` message dispatch. It validates that malformed Wayland messages do not cause crashes, undefined behavior, or state corruption in the compositor.
+Roadmap: the conformance runner should add a `--wayland-fuzz` mode that sends randomized Wayland wire format messages to the compositor's internal protocol parser. This would be separate from the client-server protocol fuzzing and target the Wayland compositor's `wl_display` message dispatch. Until that mode exists and is wired into validation, malformed Wayland-message fuzzing is not claimed as release coverage.
 
 ---
 

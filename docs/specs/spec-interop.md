@@ -1028,13 +1028,13 @@ These custom protocols are versioned and documented separately. Applications are
 **Every PR:**
 - weston-test-suite core: run core Wayland protocol conformance tests against the LiquiDE compositor.
 - GTK4 smoke: launch GNOME Text Editor, Nautilus, GNOME Terminal — verify no crashes or protocol errors.
-- Fuzz corpus replay: replay stored corpus of valid/semi-valid Wayland wire messages, verify no crashes.
+- Roadmap fuzz corpus replay: replay stored corpus of valid/semi-valid Wayland wire messages, verify no crashes once the corpus and runner are wired.
 - xdg_shell lifecycle: map/unmap/close cycles with 10 concurrent toplevels.
 
 **Nightly:**
 - Full weston-test-suite: all protocol tests, including extension protocol tests.
 - Application launch matrix: start each Tier 1/2 application from the smoke matrix, perform scripted interactions, check for crashes and visual artifacts.
-- Protocol parser fuzz: 10,000 randomized Wayland wire format messages to the compositor. Verify no crashes, no undefined behavior.
+- Roadmap protocol parser fuzz: 10,000 randomized Wayland wire format messages to the compositor. Verify no crashes and no undefined behavior once the Wayland fuzz runner is implemented.
 - Layer shell / fractional scale edge cases: mixed anchoring, dynamic scale changes, exclusive zone overlaps.
 - wp_color_management: attach P3/sRGB profiles, verify composited output pixel accuracy (within tolerance).
 

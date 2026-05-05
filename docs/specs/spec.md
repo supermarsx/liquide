@@ -8250,7 +8250,7 @@ A release may proceed if:
   - Bandwidth caps (1Mbps, 5Mbps, 20Mbps, 100Mbps).
 
 ### Reliability
-- Fuzz protocol decoding.
+- Fuzz protocol decoding through the live `tests/fuzz/` harnesses; time-budgeted workflow gates remain roadmap.
 - Long-run session soak tests (24h+).
 - Worker task cancellation and replacement tests.
 - Transport failover tests.
@@ -8273,7 +8273,7 @@ Tests verifying that the LiquiDE compositor correctly implements all supported W
 - Clipboard (wl_data_device): set selection → request data → verify MIME types and content match.
 - Primary selection: set selection → middle-click paste → verify content.
 - weston-test-suite core subset: run `weston-test-suite` against LiquiDE compositor, core protocol tests only.
-- Fuzz corpus replay: replay stored corpus of valid Wayland wire messages, verify no crashes.
+- Roadmap fuzz corpus replay: replay stored corpus of valid Wayland wire messages, verify no crashes once the corpus and runner are wired.
 
 **Nightly (Tier 2 protocols + extended Tier 1):**
 - Full weston-test-suite: all protocol tests, including edge cases.
@@ -8286,7 +8286,7 @@ Tests verifying that the LiquiDE compositor correctly implements all supported W
 - wp_pointer_constraints_unstable_v1: lock pointer → generate motion → verify confined to region → unlock.
 - zwp_relative_pointer_v1: enable relative motion → move mouse → verify raw deltas reported.
 - wp_color_management_v1: attach sRGB profile to surface → verify composited output matches (pixelwise, with tolerance).
-- Protocol parser fuzz: 10,000 randomized Wayland wire messages → verify no crashes, no undefined behavior, appropriate protocol errors.
+- Roadmap protocol parser fuzz: 10,000 randomized Wayland wire messages → verify no crashes, no undefined behavior, appropriate protocol errors once the Wayland fuzz runner is implemented.
 - xdg_decoration: negotiate SSD → verify server draws decorations. Negotiate CSD → verify server omits decorations.
 
 **Per-release (Tier 3 + full integration):**

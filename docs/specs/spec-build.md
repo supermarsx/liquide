@@ -370,7 +370,8 @@ Runs after merge to main.
 | Full build (all targets including tier 3) | <20min |
 | Full test suite | <15min |
 | `liquide-bench --suite ci-nightly` | <2h |
-| Fuzzing (1h per target) | <8h |
+| Fuzz harness build/check | <10min |
+| Time-budgeted fuzzing (roadmap) | Target-specific |
 | Dependency update check (`cargo outdated`) | <1min |
 | SAST scan (semgrep or similar) | <10min |
 | License compliance check | <1min |
@@ -395,7 +396,7 @@ Triggered on git tag `v*`.
 | Unit tests | Inline in each crate (`#[cfg(test)]` modules) | `cargo test` |
 | Integration tests | `tests/integration/` | `cargo test --test <name>` |
 | End-to-end tests | `tests/e2e/` | `cargo test --test <name>` (requires full server + client setup) |
-| Fuzz tests | `tests/fuzz/` | `cargo fuzz run <target>` |
+| Fuzz tests | `tests/fuzz/<target>/` | `cargo fuzz run <target>` from the target manifest directory; CI time-budgeted runs are roadmap |
 | Benchmarks | `benches/` | `cargo bench` (criterion) |
 | Performance benchmarks | `crates/liquide-bench/` | `liquide-bench` binary |
 | Conformance tests | `crates/liquide-conformance/` | `liquide-conformance` binary |
