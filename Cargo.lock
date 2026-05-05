@@ -3513,6 +3513,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-shell-services"
+version = "0.1.0"
+dependencies = [
+ "liquide-xdg",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "liquide-shm"
 version = "0.1.0"
 dependencies = [

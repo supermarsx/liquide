@@ -25,6 +25,7 @@ members = [
     "crates/liquide-context-menu",
     "crates/liquide-dock",
     "crates/liquide-shell",
+    "crates/liquide-shell-services",
     "crates/liquide-cursor",
     "crates/liquide-cursor-vector",
     "crates/liquide-theme-css",
@@ -408,6 +409,7 @@ liquide-fonts = { path = "crates/liquide-fonts" }
 liquide-context-menu = { path = "crates/liquide-context-menu" }
 liquide-dock = { path = "crates/liquide-dock" }
 liquide-shell = { path = "crates/liquide-shell" }
+liquide-shell-services = { path = "crates/liquide-shell-services" }
 liquide-plugin-host = { path = "crates/liquide-plugin-host" }
 liquide-plugin-abi = { path = "crates/liquide-plugin-abi" }
 liquide-session = { path = "crates/liquide-session" }
@@ -480,6 +482,7 @@ liquide-overview = { path = "crates/liquide-overview" }
 liquide-compositor-anim = { path = "crates/liquide-compositor-anim" }
 liquide-shortcut-manager = { path = "crates/liquide-shortcut-manager" }
 liquide-telemetry-viewer = { path = "crates/liquide-telemetry-viewer" }
+liquide-xdg = { path = "crates/liquide-xdg" }
 
 [dev-dependencies]
 bytes.workspace = true
