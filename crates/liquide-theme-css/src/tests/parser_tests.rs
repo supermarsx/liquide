@@ -1,9 +1,8 @@
 use super::*;
 use crate::error::ThemeError;
 use crate::value::{
-    CssMathExpr, Gradient, GradientPositionComponent, GradientStopPosition,
-    HorizontalGradientSide, LengthUnit, PropertyValue, RadialGradientExtent,
-    RadialGradientShape, VerticalGradientSide,
+    CssMathExpr, Gradient, GradientPositionComponent, GradientStopPosition, HorizontalGradientSide,
+    LengthUnit, PropertyValue, RadialGradientExtent, RadialGradientShape, VerticalGradientSide,
 };
 
 fn parse_background_gradient(css_value: &str) -> lightningcss::values::gradient::Gradient {
@@ -314,7 +313,10 @@ fn test_custom_property_tokens_round_trip_as_css() {
 fn test_unitless_numbers_and_nested_math_parse_correctly() {
     let parser = ThemeParser::new();
 
-    assert_eq!(parser.parse_value_string("1.25"), PropertyValue::Number(1.25));
+    assert_eq!(
+        parser.parse_value_string("1.25"),
+        PropertyValue::Number(1.25)
+    );
 
     let division_value = parser.parse_value_string("calc(10px / 2)");
     assert_eq!(division_value.resolve_px(16.0, 1000.0, 800.0), Some(5.0));
@@ -468,14 +470,15 @@ fn test_conic_gradients_normalize_angles_and_stop_units() {
 #[test]
 fn test_parse_errors_preserve_source_location() {
     let parser = ThemeParser::new();
-    let err = parser
-        .parse_str("button {\n  color: red;\n}}")
-        .unwrap_err();
+    let err = parser.parse_str("button {\n  color: red;\n}}").unwrap_err();
 
     match err {
         ThemeError::ParseError { location, .. } => {
             assert_ne!(location, "unknown");
-            assert!(location.starts_with("<inline>:"), "unexpected location: {location}");
+            assert!(
+                location.starts_with("<inline>:"),
+                "unexpected location: {location}"
+            );
         }
         other => panic!("expected parse error, got {:?}", other),
     }
@@ -564,7 +567,10 @@ fn test_parser_preserves_layered_background_and_raw_shorthand_text() {
     assert!(background_image.contains("url("));
     assert!(background_image.contains("linear-gradient("));
 
-    let font = props.get("font").and_then(PropertyValue::as_string).unwrap();
+    let font = props
+        .get("font")
+        .and_then(PropertyValue::as_string)
+        .unwrap();
     assert!(font.contains("16px"));
     assert!(font.contains("Fira Sans"));
     assert!(!font.contains("Font("));
@@ -575,4 +581,26 @@ fn test_parser_preserves_layered_background_and_raw_shorthand_text() {
         .unwrap();
     assert!(animation.contains("steps(4, end)"));
     assert!(!animation.contains("Animation("));
+}
+
+#[test]
+fn test_parser_converts_single_gradient_background_to_structured_value() {
+    let css = r#"
+        statusbar {
+            background: linear-gradient(180deg, rgba(18, 22, 48, 0.88), rgba(12, 16, 38, 0.82));
+        }
+    "#;
+
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let props = &sheet.rules()[0].properties;
+
+    assert!(matches!(
+        props.get("background"),
+        Some(PropertyValue::Gradient(Gradient::Linear { stops, .. })) if stops.len() == 2
+    ));
+    assert!(matches!(
+        props.get("background-image"),
+        Some(PropertyValue::Gradient(Gradient::Linear { stops, .. })) if stops.len() == 2
+    ));
 }

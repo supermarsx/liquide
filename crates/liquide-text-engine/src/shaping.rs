@@ -397,6 +397,34 @@ fn char_advance(ch: char, base: f32, space: f32) -> f32 {
 mod tests {
     use super::*;
 
+    struct StyleEchoBackend;
+
+    impl ShaperBackend for StyleEchoBackend {
+        fn shape(
+            &self,
+            text: &str,
+            _font_id: FontId,
+            _size: f32,
+            _direction: Direction,
+            config: &ShaperConfig,
+        ) -> Option<Vec<ShapedGlyph>> {
+            Some(
+                text.char_indices()
+                    .map(|(byte_idx, ch)| ShapedGlyph {
+                        glyph_id: ch as u32,
+                        cluster: byte_idx as u32,
+                        x_advance: 10.0
+                            + config.letter_spacing
+                            + if ch == ' ' { config.word_spacing } else { 0.0 },
+                        y_advance: 0.0,
+                        x_offset: config.features.len() as f32,
+                        y_offset: 0.0,
+                    })
+                    .collect(),
+            )
+        }
+    }
+
     #[test]
     fn test_basic_shaping() {
         let shaper = TextShaper::new();
@@ -456,6 +484,48 @@ mod tests {
         let run_normal = shaper_default.shape("Hello", FontId(1), 16.0, Direction::Ltr);
 
         assert!(run_spaced.width() > run_normal.width());
+    }
+
+    #[test]
+    fn backend_restyle_letter_spacing_changes_glyph_advances() {
+        let zero = TextShaper::with_backend(
+            ShaperConfig {
+                letter_spacing: 0.0,
+                ..ShaperConfig::default()
+            },
+            Box::new(StyleEchoBackend),
+        );
+        let spaced = TextShaper::with_backend(
+            ShaperConfig {
+                letter_spacing: 2.0,
+                ..ShaperConfig::default()
+            },
+            Box::new(StyleEchoBackend),
+        );
+
+        let zero_run = zero.shape("AB", FontId(1), 16.0, Direction::Ltr);
+        let spaced_run = spaced.shape("AB", FontId(1), 16.0, Direction::Ltr);
+
+        assert_eq!(zero_run.glyphs.len(), spaced_run.glyphs.len());
+        assert_eq!(zero_run.glyphs[0].x_advance, 10.0);
+        assert_eq!(spaced_run.glyphs[0].x_advance, 12.0);
+        assert!(spaced_run.width() > zero_run.width());
+    }
+
+    #[test]
+    fn backend_receives_word_spacing_and_feature_identity() {
+        let config = ShaperConfig {
+            features: vec![ShapingFeature::Ligatures, ShapingFeature::SmallCaps],
+            letter_spacing: 1.0,
+            word_spacing: 4.0,
+        };
+        let shaper = TextShaper::with_backend(config, Box::new(StyleEchoBackend));
+
+        let run = shaper.shape("A B", FontId(1), 16.0, Direction::Ltr);
+
+        assert_eq!(run.glyphs[0].x_offset, 2.0);
+        assert_eq!(run.glyphs[1].cluster, 1);
+        assert_eq!(run.glyphs[1].x_advance, 15.0);
     }
 
     #[test]

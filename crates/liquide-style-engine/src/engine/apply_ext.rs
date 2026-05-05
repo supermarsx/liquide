@@ -16,9 +16,7 @@ impl StyleEngine {
         inherited_style: &ComputedStyle,
         scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
     ) {
-        fn css_wide_keyword(
-            val: &liquide_theme_css::value::PropertyValue,
-        ) -> Option<&'static str> {
+        fn css_wide_keyword(val: &liquide_theme_css::value::PropertyValue) -> Option<&'static str> {
             let text = val.as_string()?.trim().to_ascii_lowercase();
             if text.contains("revert-layer") {
                 Some("revert-layer")

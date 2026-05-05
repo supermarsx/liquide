@@ -72,11 +72,7 @@ fn split_top_level(input: &str, delimiter: char) -> Vec<String> {
                 brace_depth = brace_depth.saturating_sub(1);
                 current.push(ch);
             }
-            _ if ch == delimiter
-                && paren_depth == 0
-                && bracket_depth == 0
-                && brace_depth == 0 =>
-            {
+            _ if ch == delimiter && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
                 let part = current.trim();
                 if !part.is_empty() {
                     parts.push(part.to_string());
@@ -149,11 +145,7 @@ fn split_top_level_once(input: &str, delimiter: char) -> Option<(String, String)
                 brace_depth = brace_depth.saturating_sub(1);
                 current.push(ch);
             }
-            _ if ch == delimiter
-                && paren_depth == 0
-                && bracket_depth == 0
-                && brace_depth == 0 =>
-            {
+            _ if ch == delimiter && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
                 let left = current.trim().to_string();
                 let right = input[current.len() + ch.len_utf8()..].trim().to_string();
                 return Some((left, right));
@@ -274,13 +266,8 @@ fn parse_length_token(token: &str) -> Option<PropertyValue> {
 }
 
 fn parse_number_or_length_token(token: &str) -> Option<PropertyValue> {
-    parse_length_token(token).or_else(|| {
-        token
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(PropertyValue::Number)
-    })
+    parse_length_token(token)
+        .or_else(|| token.trim().parse::<f32>().ok().map(PropertyValue::Number))
 }
 
 fn parse_shorthand_token(token: &str) -> PropertyValue {
@@ -312,7 +299,10 @@ fn is_transition_behavior(value: &str) -> bool {
 }
 
 fn is_animation_direction(value: &str) -> bool {
-    matches!(value, "normal" | "reverse" | "alternate" | "alternate-reverse")
+    matches!(
+        value,
+        "normal" | "reverse" | "alternate" | "alternate-reverse"
+    )
 }
 
 fn is_animation_fill_mode(value: &str) -> bool {
@@ -608,14 +598,8 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
                 } else {
                     "none"
                 };
-                out.push((
-                    "font-synthesis-weight",
-                    PropertyValue::Keyword(w.into()),
-                ));
-                out.push((
-                    "font-synthesis-style",
-                    PropertyValue::Keyword(s.into()),
-                ));
+                out.push(("font-synthesis-weight", PropertyValue::Keyword(w.into())));
+                out.push(("font-synthesis-style", PropertyValue::Keyword(s.into())));
                 out.push((
                     "font-synthesis-small-caps",
                     PropertyValue::Keyword(sc.into()),
@@ -631,14 +615,8 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
                 _ => return None,
             };
             Some(vec![
-                (
-                    "font-variant-ligatures",
-                    PropertyValue::Keyword(kw.clone()),
-                ),
-                (
-                    "font-variant-position",
-                    PropertyValue::Keyword(kw.clone()),
-                ),
+                ("font-variant-ligatures", PropertyValue::Keyword(kw.clone())),
+                ("font-variant-position", PropertyValue::Keyword(kw.clone())),
                 (
                     "font-variant-east-asian",
                     PropertyValue::Keyword(kw.clone()),
@@ -672,20 +650,11 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
                     if has_color {
                         let style_val = parts[..parts.len() - 1].join(" ");
                         Some(vec![
-                            (
-                                "text-emphasis-style",
-                                PropertyValue::Keyword(style_val),
-                            ),
-                            (
-                                "text-emphasis-color",
-                                PropertyValue::Keyword(last.into()),
-                            ),
+                            ("text-emphasis-style", PropertyValue::Keyword(style_val)),
+                            ("text-emphasis-color", PropertyValue::Keyword(last.into())),
                         ])
                     } else {
-                        Some(vec![(
-                            "text-emphasis-style",
-                            PropertyValue::Keyword(text),
-                        )])
+                        Some(vec![("text-emphasis-style", PropertyValue::Keyword(text))])
                     }
                 }
             }
@@ -700,14 +669,8 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
             let parts = split_whitespace_top_level(&text);
             if parts.len() == 2 {
                 Some(vec![
-                    (
-                        "text-wrap-mode",
-                        PropertyValue::Keyword(parts[0].clone()),
-                    ),
-                    (
-                        "text-wrap-style",
-                        PropertyValue::Keyword(parts[1].clone()),
-                    ),
+                    ("text-wrap-mode", PropertyValue::Keyword(parts[0].clone())),
+                    ("text-wrap-style", PropertyValue::Keyword(parts[1].clone())),
                 ])
             } else {
                 // Single value: determines mode
@@ -724,10 +687,7 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
             let parts = split_whitespace_top_level(&text);
             if parts.len() >= 2 {
                 Some(vec![
-                    (
-                        "text-box-trim",
-                        PropertyValue::Keyword(parts[0].clone()),
-                    ),
+                    ("text-box-trim", PropertyValue::Keyword(parts[0].clone())),
                     (
                         "text-box-edge",
                         PropertyValue::Keyword(parts[1..].join(" ")),
@@ -753,10 +713,7 @@ pub fn expand_shorthand(name: &str, value: &PropertyValue) -> Option<Expanded> {
             let text = css_text(value)?.to_string();
             if let Some((name, ctype)) = split_top_level_once(&text, '/') {
                 Some(vec![
-                    (
-                        "container-name",
-                        PropertyValue::Keyword(name.trim().into()),
-                    ),
+                    ("container-name", PropertyValue::Keyword(name.trim().into())),
                     (
                         "container-type",
                         PropertyValue::Keyword(ctype.trim().into()),
@@ -1143,10 +1100,7 @@ fn expand_flex_flow(value: &PropertyValue) -> Expanded {
 /// Expand `overflow: <x> <y>` (1 or 2 values).
 fn expand_overflow(value: &PropertyValue) -> Expanded {
     if let Some(items) = tokenize_value_items(value) {
-        let x = items
-            .first()
-            .cloned()
-            .unwrap_or(keyword("visible"));
+        let x = items.first().cloned().unwrap_or(keyword("visible"));
         let y = items.get(1).cloned().unwrap_or(x.clone());
         vec![("overflow-x", x), ("overflow-y", y)]
     } else {
@@ -1274,7 +1228,10 @@ fn expand_font(value: &PropertyValue) -> Expanded {
         ) {
             return vec![
                 ("font-size", PropertyValue::Length(LengthUnit::Px(14.0))),
-                ("font-family", PropertyValue::String("sans-serif".to_string())),
+                (
+                    "font-family",
+                    PropertyValue::String("sans-serif".to_string()),
+                ),
             ];
         }
 
@@ -1753,7 +1710,8 @@ fn expand_border_image(text: &str) -> Expanded {
     let slash_sections = split_top_level(trimmed, '/');
 
     // First section: may contain <source> and <slice> tokens
-    let first_parts = split_whitespace_top_level(slash_sections.first().map(String::as_str).unwrap_or(""));
+    let first_parts =
+        split_whitespace_top_level(slash_sections.first().map(String::as_str).unwrap_or(""));
     let mut slice_tokens = Vec::new();
     for part in &first_parts {
         if part.starts_with("url(") || part.contains("gradient(") || part.starts_with("image(") {
@@ -2237,10 +2195,7 @@ mod tests {
 
     #[test]
     fn overflow_two_values() {
-        let val = PropertyValue::List(vec![
-            keyword("hidden"),
-            keyword("scroll"),
-        ]);
+        let val = PropertyValue::List(vec![keyword("hidden"), keyword("scroll")]);
         let expanded = expand_shorthand("overflow", &val).unwrap();
         assert_eq!(expanded.len(), 2);
         assert_eq!(expanded[0].0, "overflow-x");
@@ -2323,26 +2278,14 @@ mod tests {
             PropertyValue::Keyword("spin 2s linear 0.5s infinite reverse forwards paused".into());
         let expanded = expand_shorthand("animation", &val).unwrap();
         assert_eq!(expanded.len(), 8);
-        assert_eq!(
-            expanded[0],
-            ("animation-name", keyword("spin"))
-        );
+        assert_eq!(expanded[0], ("animation-name", keyword("spin")));
         assert_eq!(
             expanded[4],
             ("animation-iteration-count", keyword("infinite"))
         );
-        assert_eq!(
-            expanded[5],
-            ("animation-direction", keyword("reverse"))
-        );
-        assert_eq!(
-            expanded[6],
-            ("animation-fill-mode", keyword("forwards"))
-        );
-        assert_eq!(
-            expanded[7],
-            ("animation-play-state", keyword("paused"))
-        );
+        assert_eq!(expanded[5], ("animation-direction", keyword("reverse")));
+        assert_eq!(expanded[6], ("animation-fill-mode", keyword("forwards")));
+        assert_eq!(expanded[7], ("animation-play-state", keyword("paused")));
     }
 
     #[test]
@@ -2350,10 +2293,7 @@ mod tests {
         let val = PropertyValue::Keyword("opacity 0.3s ease 0s allow-discrete".into());
         let expanded = expand_shorthand("transition", &val).unwrap();
         assert_eq!(expanded.len(), 5);
-        assert_eq!(
-            expanded[0],
-            ("transition-property", keyword("opacity"))
-        );
+        assert_eq!(expanded[0], ("transition-property", keyword("opacity")));
         assert_eq!(
             expanded[4],
             ("transition-behavior", keyword("allow-discrete"))
@@ -2398,18 +2338,9 @@ mod tests {
             expanded[0],
             ("mask-image", PropertyValue::Keyword("url(mask.svg)".into()))
         );
-        assert_eq!(
-            expanded[1],
-            ("mask-mode", keyword("luminance"))
-        );
-        assert_eq!(
-            expanded[4],
-            ("mask-repeat", keyword("no-repeat"))
-        );
-        assert_eq!(
-            expanded[5],
-            ("mask-origin", keyword("padding-box"))
-        );
+        assert_eq!(expanded[1], ("mask-mode", keyword("luminance")));
+        assert_eq!(expanded[4], ("mask-repeat", keyword("no-repeat")));
+        assert_eq!(expanded[5], ("mask-origin", keyword("padding-box")));
     }
 
     #[test]
@@ -2417,14 +2348,8 @@ mod tests {
         let val = keyword("none");
         let expanded = expand_shorthand("border-image", &val).unwrap();
         assert_eq!(expanded.len(), 5);
-        assert_eq!(
-            expanded[0],
-            ("border-image-source", keyword("none"))
-        );
-        assert_eq!(
-            expanded[4],
-            ("border-image-repeat", keyword("stretch"))
-        );
+        assert_eq!(expanded[0], ("border-image-source", keyword("none")));
+        assert_eq!(expanded[4], ("border-image-repeat", keyword("stretch")));
     }
 
     #[test]
@@ -2450,10 +2375,7 @@ mod tests {
             expanded[3],
             ("border-image-outset", PropertyValue::Keyword("5px".into()))
         );
-        assert_eq!(
-            expanded[4],
-            ("border-image-repeat", keyword("round"))
-        );
+        assert_eq!(expanded[4], ("border-image-repeat", keyword("round")));
     }
 
     #[test]
@@ -2480,36 +2402,23 @@ mod tests {
             expanded[1],
             ("offset-distance", PropertyValue::Keyword("50%".into()))
         );
-        assert_eq!(
-            expanded[2],
-            ("offset-rotate", keyword("auto"))
-        );
-        assert_eq!(
-            expanded[3],
-            ("offset-anchor", keyword("center"))
-        );
+        assert_eq!(expanded[2], ("offset-rotate", keyword("auto")));
+        assert_eq!(expanded[3], ("offset-anchor", keyword("center")));
     }
 
     #[test]
     fn transition_splitting_is_token_aware() {
         let val = PropertyValue::Keyword(
-            "opacity 200ms cubic-bezier(0.1, 0.2, 0.3, 0.4), transform 300ms steps(4, end)"
-                .into(),
+            "opacity 200ms cubic-bezier(0.1, 0.2, 0.3, 0.4), transform 300ms steps(4, end)".into(),
         );
         let expanded = expand_shorthand("transition", &val).unwrap();
         assert_eq!(
             expanded[0],
-            (
-                "transition-property",
-                keyword("opacity, transform")
-            )
+            ("transition-property", keyword("opacity, transform"))
         );
         assert_eq!(
             expanded[1],
-            (
-                "transition-duration",
-                keyword("200ms, 300ms")
-            )
+            ("transition-duration", keyword("200ms, 300ms"))
         );
         assert_eq!(
             expanded[2],
@@ -2526,20 +2435,8 @@ mod tests {
             "fade 1s steps(4, end), slide 2s cubic-bezier(0.2, 0.4, 0.6, 1)".into(),
         );
         let expanded = expand_shorthand("animation", &val).unwrap();
-        assert_eq!(
-            expanded[0],
-            (
-                "animation-name",
-                keyword("fade, slide")
-            )
-        );
-        assert_eq!(
-            expanded[1],
-            (
-                "animation-duration",
-                keyword("1s, 2s")
-            )
-        );
+        assert_eq!(expanded[0], ("animation-name", keyword("fade, slide")));
+        assert_eq!(expanded[1], ("animation-duration", keyword("1s, 2s")));
         assert_eq!(
             expanded[2],
             (
@@ -2551,17 +2448,12 @@ mod tests {
 
     #[test]
     fn font_keyword_expands_without_disappearing() {
-        let val = PropertyValue::Keyword(
-            "italic 700 16px/1.4 \"Fira Sans\", sans-serif".into(),
-        );
+        let val = PropertyValue::Keyword("italic 700 16px/1.4 \"Fira Sans\", sans-serif".into());
         let expanded = expand_shorthand("font", &val).unwrap();
 
         assert!(expanded.contains(&("font-style", keyword("italic"))));
         assert!(expanded.contains(&("font-weight", PropertyValue::Number(700.0))));
-        assert!(expanded.contains(&(
-            "font-size",
-            PropertyValue::Length(LengthUnit::Px(16.0)),
-        )));
+        assert!(expanded.contains(&("font-size", PropertyValue::Length(LengthUnit::Px(16.0)),)));
         assert!(expanded.contains(&("line-height", PropertyValue::Number(1.4))));
         assert!(expanded.contains(&(
             "font-family",
@@ -2593,10 +2485,7 @@ mod tests {
         let expanded = expand_shorthand("mask", &val).unwrap();
         assert_eq!(
             expanded[0],
-            (
-                "mask-image",
-                keyword("url(data:image/svg+xml;base64,AAAA)")
-            )
+            ("mask-image", keyword("url(data:image/svg+xml;base64,AAAA)"))
         );
         assert_eq!(expanded[3], ("mask-size", keyword("contain")));
         assert_eq!(expanded[4], ("mask-repeat", keyword("no-repeat")));

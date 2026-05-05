@@ -40,7 +40,9 @@ fn each_runnable_area_has_negative_or_recovery_coverage() {
             .get(area)
             .unwrap_or_else(|| panic!("missing fixture kinds for {:?}", area));
         assert!(
-            kinds.iter().any(|kind| !matches!(kind, crate::css::CssCaseKind::Positive)),
+            kinds
+                .iter()
+                .any(|kind| !matches!(kind, crate::css::CssCaseKind::Positive)),
             "expected at least one negative or recovery case for {:?}",
             area
         );
@@ -52,6 +54,14 @@ fn theme_runtime_gap_is_tracked_explicitly() {
     assert_eq!(EXTERNAL_CSS_COVERAGE.len(), 1);
     let theme_runtime = &EXTERNAL_CSS_COVERAGE[0];
     assert_eq!(theme_runtime.meta.area, CssCoverageArea::ThemeRuntime);
-    assert!(theme_runtime.validating_suite.contains("liquide-theme-engine"));
-    assert!(theme_runtime.note.contains("outside this executor's writable test scope"));
+    assert!(
+        theme_runtime
+            .validating_suite
+            .contains("liquide-theme-engine")
+    );
+    assert!(
+        theme_runtime
+            .note
+            .contains("outside this executor's writable test scope")
+    );
 }

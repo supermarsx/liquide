@@ -349,8 +349,8 @@ mod tests {
         parent.window.titlebar_height = 99.0;
         mgr.register_theme(parent);
 
-        let parsed = parse_theme_source("[metadata]\nid = \"child\"\nparent = \"parent\"\n")
-            .unwrap();
+        let parsed =
+            parse_theme_source("[metadata]\nid = \"child\"\nparent = \"parent\"\n").unwrap();
         let child = parsed.definition().clone();
         mgr.register_parsed_theme(parsed);
 

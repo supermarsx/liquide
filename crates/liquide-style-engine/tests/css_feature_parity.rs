@@ -317,19 +317,19 @@ fn border_radius_individual() {
         "x { border-top-left-radius: 4px; border-top-right-radius: 8px; border-bottom-right-radius: 12px; border-bottom-left-radius: 16px; }",
         "x",
     );
-    assert!((s.border_radius.top_left - 4.0).abs() < 0.1);
-    assert!((s.border_radius.top_right - 8.0).abs() < 0.1);
-    assert!((s.border_radius.bottom_right - 12.0).abs() < 0.1);
-    assert!((s.border_radius.bottom_left - 16.0).abs() < 0.1);
+    assert!((s.border_radius.top_left.max_axis() - 4.0).abs() < 0.1);
+    assert!((s.border_radius.top_right.max_axis() - 8.0).abs() < 0.1);
+    assert!((s.border_radius.bottom_right.max_axis() - 12.0).abs() < 0.1);
+    assert!((s.border_radius.bottom_left.max_axis() - 16.0).abs() < 0.1);
 }
 
 #[test]
 fn border_radius_shorthand() {
     let s = style_for("x { border-radius: 10px; }", "x");
-    assert!((s.border_radius.top_left - 10.0).abs() < 0.1);
-    assert!((s.border_radius.top_right - 10.0).abs() < 0.1);
-    assert!((s.border_radius.bottom_right - 10.0).abs() < 0.1);
-    assert!((s.border_radius.bottom_left - 10.0).abs() < 0.1);
+    assert!((s.border_radius.top_left.max_axis() - 10.0).abs() < 0.1);
+    assert!((s.border_radius.top_right.max_axis() - 10.0).abs() < 0.1);
+    assert!((s.border_radius.bottom_right.max_axis() - 10.0).abs() < 0.1);
+    assert!((s.border_radius.bottom_left.max_axis() - 10.0).abs() < 0.1);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

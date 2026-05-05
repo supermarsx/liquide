@@ -802,7 +802,8 @@ impl StyleSheet {
 
         for import in imports {
             let import_path = base_dir.join(Self::strip_import_url(&import.url));
-            let mut imported = Self::load_root_with_imports(parser, &import_path, visiting, depth + 1)?;
+            let mut imported =
+                Self::load_root_with_imports(parser, &import_path, visiting, depth + 1)?;
             imported.apply_import_context(&import);
             combined.merge(&imported);
         }
@@ -877,41 +878,31 @@ impl StyleSheet {
 
     fn apply_media_gate(&mut self, outer_condition: &str) {
         for rule in &mut self.rules {
-            rule.media_condition = Self::combine_gate_conditions(
-                outer_condition,
-                rule.media_condition.as_deref(),
-            );
+            rule.media_condition =
+                Self::combine_gate_conditions(outer_condition, rule.media_condition.as_deref());
         }
         for container_rule in &mut self.container_rules {
             for rule in &mut container_rule.rules {
-                rule.media_condition = Self::combine_gate_conditions(
-                    outer_condition,
-                    rule.media_condition.as_deref(),
-                );
+                rule.media_condition =
+                    Self::combine_gate_conditions(outer_condition, rule.media_condition.as_deref());
             }
         }
         for scope_rule in &mut self.scope_rules {
             for rule in &mut scope_rule.rules {
-                rule.media_condition = Self::combine_gate_conditions(
-                    outer_condition,
-                    rule.media_condition.as_deref(),
-                );
+                rule.media_condition =
+                    Self::combine_gate_conditions(outer_condition, rule.media_condition.as_deref());
             }
         }
         for rule in &mut self.starting_style_rules {
-            rule.media_condition = Self::combine_gate_conditions(
-                outer_condition,
-                rule.media_condition.as_deref(),
-            );
+            rule.media_condition =
+                Self::combine_gate_conditions(outer_condition, rule.media_condition.as_deref());
         }
     }
 
     fn apply_supports_gate(&mut self, outer_condition: &str) {
         for rule in &mut self.rules {
-            rule.supports_condition = Self::combine_gate_conditions(
-                outer_condition,
-                rule.supports_condition.as_deref(),
-            );
+            rule.supports_condition =
+                Self::combine_gate_conditions(outer_condition, rule.supports_condition.as_deref());
         }
         for container_rule in &mut self.container_rules {
             for rule in &mut container_rule.rules {
@@ -930,10 +921,8 @@ impl StyleSheet {
             }
         }
         for rule in &mut self.starting_style_rules {
-            rule.supports_condition = Self::combine_gate_conditions(
-                outer_condition,
-                rule.supports_condition.as_deref(),
-            );
+            rule.supports_condition =
+                Self::combine_gate_conditions(outer_condition, rule.supports_condition.as_deref());
         }
     }
 
@@ -1131,7 +1120,9 @@ impl StyleSheet {
                 .all(|part| self.evaluate_supports_condition(part, env));
         }
 
-        let inner = Self::strip_wrapping_parens(condition).unwrap_or(condition).trim();
+        let inner = Self::strip_wrapping_parens(condition)
+            .unwrap_or(condition)
+            .trim();
 
         if let Some(colon_index) = Self::find_top_level_delimiter(inner, ':') {
             let property = inner[..colon_index].trim();

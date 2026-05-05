@@ -4,9 +4,9 @@
 //! handling direction parsing, color stop extraction, and position normalisation.
 
 use crate::value::{
-    Color, ColorStop, Gradient, GradientPosition, GradientPositionComponent,
-    GradientStopPosition, HorizontalGradientSide, LengthUnit, RadialGradientExtent,
-    RadialGradientShape, VerticalGradientSide,
+    Color, ColorStop, Gradient, GradientPosition, GradientPositionComponent, GradientStopPosition,
+    HorizontalGradientSide, LengthUnit, RadialGradientExtent, RadialGradientShape,
+    VerticalGradientSide,
 };
 
 use super::ThemeParser;
@@ -190,7 +190,8 @@ impl ThemeParser {
     }
 
     fn convert_length_css(&self, css: &str) -> Option<LengthUnit> {
-        self.parse_length_value(css).and_then(|value| value.as_length())
+        self.parse_length_value(css)
+            .and_then(|value| value.as_length())
     }
 
     fn convert_length(&self, value: &lightningcss::values::length::Length) -> Option<LengthUnit> {

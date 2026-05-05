@@ -102,7 +102,9 @@ impl ThemeManager {
     }
 
     fn registered_theme(&self, id: &str) -> Option<&RegisteredTheme> {
-        self.themes.iter().find(|theme| theme.definition.metadata.id == id)
+        self.themes
+            .iter()
+            .find(|theme| theme.definition.metadata.id == id)
     }
 
     fn refresh_active_theme(&self) {
@@ -273,7 +275,10 @@ impl ThemeManager {
     }
 
     fn normalize_theme(&self, mut theme: ThemeDefinition) -> ThemeDefinition {
-        theme.metadata.variant = theme.metadata.variant.resolve_auto(self.system_theme_variant);
+        theme.metadata.variant = theme
+            .metadata
+            .variant
+            .resolve_auto(self.system_theme_variant);
         theme
     }
 
@@ -512,8 +517,16 @@ impl ThemeManager {
             "notification-border-radius",
             &format!("{}px", n.border_radius),
         );
-        write_var(&mut css, "notification-spacing", &format!("{}px", n.spacing));
-        write_var(&mut css, "notification-padding", &format!("{}px", n.padding));
+        write_var(
+            &mut css,
+            "notification-spacing",
+            &format!("{}px", n.spacing),
+        );
+        write_var(
+            &mut css,
+            "notification-padding",
+            &format!("{}px", n.padding),
+        );
         write_var(
             &mut css,
             "notification-action-bg",

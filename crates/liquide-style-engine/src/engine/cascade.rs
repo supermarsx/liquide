@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use liquide_dom::{Document, NodeId};
 
-use super::content::consume_remaining_properties;
 use super::StyleEngine;
+use super::content::consume_remaining_properties;
 use crate::cascade::{CascadeDeclaration, CascadeMap, CascadePriority};
 use crate::computed::*;
 use crate::style_map::StyleMap;
@@ -346,7 +346,13 @@ impl StyleEngine {
             let inherited_style = style.clone();
 
             for (prop, val) in &resolved {
-                self.apply_cascaded_property(prop, val, &mut style, &inherited_style, effective_vars);
+                self.apply_cascaded_property(
+                    prop,
+                    val,
+                    &mut style,
+                    &inherited_style,
+                    effective_vars,
+                );
             }
 
             Self::assemble_text_decoration(&mut style);
@@ -534,7 +540,13 @@ impl StyleEngine {
             let inherited_style = style.clone();
 
             for (prop, val) in &resolved {
-                self.apply_cascaded_property(prop, val, &mut style, &inherited_style, effective_vars);
+                self.apply_cascaded_property(
+                    prop,
+                    val,
+                    &mut style,
+                    &inherited_style,
+                    effective_vars,
+                );
             }
 
             // Assemble TextDecoration composite from longhands if set
@@ -601,13 +613,7 @@ impl StyleEngine {
             if is_shadow {
                 // Shadow roots inherit from their host but don't match host
                 // document author rules. Pass parent style for inheritance.
-                self.restyle_node(
-                    doc,
-                    child_id,
-                    Some(&style),
-                    map,
-                    &ScopeVars::new(),
-                );
+                self.restyle_node(doc, child_id, Some(&style), map, &ScopeVars::new());
             } else {
                 self.restyle_node(doc, child_id, Some(&style), map, scope_vars);
             }
@@ -792,7 +798,9 @@ impl StyleEngine {
         resolved: &[(String, liquide_theme_css::value::PropertyValue)],
         inherited_scope: &ScopeVars,
     ) -> Option<ScopeVars> {
-        let has_custom_props = resolved.iter().any(|(property, _)| property.starts_with("--"));
+        let has_custom_props = resolved
+            .iter()
+            .any(|(property, _)| property.starts_with("--"));
         let needs_property_overrides = !self.registered_properties.is_empty();
         if !has_custom_props && !needs_property_overrides {
             return None;
@@ -889,7 +897,12 @@ impl StyleEngine {
             .unwrap_or_else(|| inherited_scope.clone())
     }
 
-    fn inherited_scope_for_node(&self, doc: &Document, node_id: NodeId, map: &StyleMap) -> ScopeVars {
+    fn inherited_scope_for_node(
+        &self,
+        doc: &Document,
+        node_id: NodeId,
+        map: &StyleMap,
+    ) -> ScopeVars {
         if doc
             .get(node_id)
             .map(|node| matches!(node.data, liquide_dom::node::NodeData::ShadowRoot))

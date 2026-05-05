@@ -193,13 +193,19 @@ impl StyleEngine {
             return !self.evaluate_supports_condition(inner.trim());
         }
         if let Some(parts) = Self::split_top_level_keyword(condition, "or") {
-            return parts.iter().any(|part| self.evaluate_supports_condition(part));
+            return parts
+                .iter()
+                .any(|part| self.evaluate_supports_condition(part));
         }
         if let Some(parts) = Self::split_top_level_keyword(condition, "and") {
-            return parts.iter().all(|part| self.evaluate_supports_condition(part));
+            return parts
+                .iter()
+                .all(|part| self.evaluate_supports_condition(part));
         }
 
-        let inner = Self::strip_wrapping_parens(condition).unwrap_or(condition).trim();
+        let inner = Self::strip_wrapping_parens(condition)
+            .unwrap_or(condition)
+            .trim();
         if let Some(colon_index) = Self::find_top_level_delimiter(inner, ':') {
             let property = inner[..colon_index].trim();
             let value = inner[colon_index + 1..].trim();
@@ -669,15 +675,32 @@ impl StyleEngine {
         let tokens: Vec<&str> = feature.split_whitespace().collect();
         match tokens.as_slice() {
             [lhs, op, rhs] if Self::is_media_comparison_operator(op) => {
-                Self::evaluate_media_comparison_pair(lhs, op, rhs, self.viewport.width, self.viewport.height)
+                Self::evaluate_media_comparison_pair(
+                    lhs,
+                    op,
+                    rhs,
+                    self.viewport.width,
+                    self.viewport.height,
+                )
             }
             [lhs, op1, mid, op2, rhs]
                 if Self::is_media_comparison_operator(op1)
                     && Self::is_media_comparison_operator(op2) =>
             {
                 Some(
-                    Self::evaluate_media_comparison_pair(lhs, op1, mid, self.viewport.width, self.viewport.height)?
-                        && Self::evaluate_media_comparison_pair(mid, op2, rhs, self.viewport.width, self.viewport.height)?,
+                    Self::evaluate_media_comparison_pair(
+                        lhs,
+                        op1,
+                        mid,
+                        self.viewport.width,
+                        self.viewport.height,
+                    )? && Self::evaluate_media_comparison_pair(
+                        mid,
+                        op2,
+                        rhs,
+                        self.viewport.width,
+                        self.viewport.height,
+                    )?,
                 )
             }
             _ => None,
@@ -709,13 +732,15 @@ impl StyleEngine {
     ) -> Option<bool> {
         let tokens: Vec<&str> = feature.split_whitespace().collect();
         match tokens.as_slice() {
-            [lhs, op, rhs] if Self::is_media_comparison_operator(op) => Self::evaluate_container_comparison_pair(
-                lhs,
-                op,
-                rhs,
-                container_width,
-                container_height,
-            ),
+            [lhs, op, rhs] if Self::is_media_comparison_operator(op) => {
+                Self::evaluate_container_comparison_pair(
+                    lhs,
+                    op,
+                    rhs,
+                    container_width,
+                    container_height,
+                )
+            }
             [lhs, op1, mid, op2, rhs]
                 if Self::is_media_comparison_operator(op1)
                     && Self::is_media_comparison_operator(op2) =>
@@ -747,8 +772,10 @@ impl StyleEngine {
         container_width: f32,
         container_height: f32,
     ) -> Option<bool> {
-        let lhs_value = Self::container_dimension_value(lhs.trim(), container_width, container_height)?;
-        let rhs_value = Self::container_dimension_value(rhs.trim(), container_width, container_height)?;
+        let lhs_value =
+            Self::container_dimension_value(lhs.trim(), container_width, container_height)?;
+        let rhs_value =
+            Self::container_dimension_value(rhs.trim(), container_width, container_height)?;
         Some(match op {
             "<=" => lhs_value <= rhs_value,
             ">=" => lhs_value >= rhs_value,
@@ -758,7 +785,11 @@ impl StyleEngine {
         })
     }
 
-    fn media_dimension_value(token: &str, viewport_width: f32, viewport_height: f32) -> Option<f32> {
+    fn media_dimension_value(
+        token: &str,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> Option<f32> {
         match token {
             "width" => Some(viewport_width),
             "height" => Some(viewport_height),

@@ -10,7 +10,8 @@ fn temp_dir(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("liquide-{label}-{}-{unique}", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("liquide-{label}-{}-{unique}", std::process::id()));
     fs::create_dir_all(&path).unwrap();
     path
 }

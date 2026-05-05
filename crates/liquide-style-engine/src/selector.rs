@@ -335,11 +335,9 @@ impl CompoundSelector {
             PseudoClassSelector::Is(selectors) | PseudoClassSelector::Where(selectors) => {
                 selectors.iter().any(|s| s.matches(doc, node.id))
             }
-            PseudoClassSelector::Has(selectors) => {
-                selectors
-                    .iter()
-                    .any(|selector| selector.matches_relative_to_anchor(doc, node.id))
-            }
+            PseudoClassSelector::Has(selectors) => selectors
+                .iter()
+                .any(|selector| selector.matches_relative_to_anchor(doc, node.id)),
             PseudoClassSelector::NthOfType(anb) => {
                 if let Some(parent_id) = node.parent {
                     let my_tag = node.tag_name();
@@ -655,16 +653,17 @@ impl ComplexSelector {
 
     fn matches_relative_to_anchor(&self, doc: &Document, anchor_id: NodeId) -> bool {
         let relation = self.leading_combinator.unwrap_or(Combinator::Descendant);
-        let mut predicate = |candidate| {
-            self.matches_with_anchor(doc, candidate, Some((anchor_id, relation)))
-        };
+        let mut predicate =
+            |candidate| self.matches_with_anchor(doc, candidate, Some((anchor_id, relation)));
 
         match relation {
             Combinator::Descendant | Combinator::Child => {
                 any_descendant(doc, anchor_id, &mut predicate)
             }
             Combinator::NextSibling => immediate_next_element_sibling(doc, anchor_id)
-                .map_or(false, |sibling_id| any_in_subtree(doc, sibling_id, &mut predicate)),
+                .map_or(false, |sibling_id| {
+                    any_in_subtree(doc, sibling_id, &mut predicate)
+                }),
             Combinator::SubsequentSibling => {
                 for sibling_id in following_element_siblings(doc, anchor_id) {
                     if any_in_subtree(doc, sibling_id, &mut predicate) {
@@ -717,7 +716,14 @@ impl ComplexSelector {
                 while let Some(anc_id) = anc {
                     if let Some(anc_node) = doc.get(anc_id) {
                         if next_compound.matches_node(anc_node, doc)
-                            && Self::match_rest(compounds, combinators, idx + 1, anc_id, doc, anchor)
+                            && Self::match_rest(
+                                compounds,
+                                combinators,
+                                idx + 1,
+                                anc_id,
+                                doc,
+                                anchor,
+                            )
                         {
                             return true;
                         }
@@ -774,7 +780,14 @@ impl ComplexSelector {
                     if let Some(sib) = doc.get(sib_id) {
                         if sib.is_element()
                             && next_compound.matches_node(sib, doc)
-                            && Self::match_rest(compounds, combinators, idx + 1, sib_id, doc, anchor)
+                            && Self::match_rest(
+                                compounds,
+                                combinators,
+                                idx + 1,
+                                sib_id,
+                                doc,
+                                anchor,
+                            )
                         {
                             return true;
                         }
@@ -1302,7 +1315,12 @@ fn is_identifier_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '-' || ch == '_'
 }
 
-fn extract_enclosed(chars: &[char], start: usize, open: char, close: char) -> Option<(String, usize)> {
+fn extract_enclosed(
+    chars: &[char],
+    start: usize,
+    open: char,
+    close: char,
+) -> Option<(String, usize)> {
     if chars.get(start).copied()? != open {
         return None;
     }
@@ -1416,14 +1434,17 @@ fn find_attribute_operator(input: &str) -> Option<(usize, &'static str)> {
             '"' | '\'' => quote = Some(ch),
             '~' | '|' | '^' | '$' | '*' => {
                 if let Some((_, '=')) = chars.get(index + 1).copied() {
-                    return Some((byte_idx, match ch {
-                        '~' => "~=",
-                        '|' => "|=",
-                        '^' => "^=",
-                        '$' => "$=",
-                        '*' => "*=",
-                        _ => unreachable!(),
-                    }));
+                    return Some((
+                        byte_idx,
+                        match ch {
+                            '~' => "~=",
+                            '|' => "|=",
+                            '^' => "^=",
+                            '$' => "$=",
+                            '*' => "*=",
+                            _ => unreachable!(),
+                        },
+                    ));
                 }
             }
             '=' => return Some((byte_idx, "=")),
@@ -1502,7 +1523,9 @@ fn anchor_relation_matches(
             false
         }
         Combinator::Child => doc.parent(current_id) == Some(anchor_id),
-        Combinator::NextSibling => immediate_next_element_sibling(doc, anchor_id) == Some(current_id),
+        Combinator::NextSibling => {
+            immediate_next_element_sibling(doc, anchor_id) == Some(current_id)
+        }
         Combinator::SubsequentSibling => following_element_siblings(doc, anchor_id)
             .into_iter()
             .any(|sibling_id| sibling_id == current_id),
@@ -1716,10 +1739,8 @@ mod tests {
 
     #[test]
     fn nested_selector_lists_parse_without_splitting_inside_arguments() {
-        let sel = ComplexSelector::parse(
-            r#"button:not(:is(.active, [data-state="open,now"]))"#,
-        )
-        .unwrap();
+        let sel =
+            ComplexSelector::parse(r#"button:not(:is(.active, [data-state="open,now"]))"#).unwrap();
 
         match &sel.compounds[0].pseudo_classes[0] {
             PseudoClassSelector::Not(selectors) => {

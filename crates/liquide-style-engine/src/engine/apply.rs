@@ -3,17 +3,21 @@
 use std::sync::Arc;
 
 use liquide_compositor::pixel::Color;
+use liquide_compositor::scene::{
+    BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec, GradientSpec,
+};
+use liquide_theme_css::value::{
+    ColorStop as CssColorStop, Gradient as CssGradient, GradientStopPosition, LengthUnit,
+};
 
-use super::content::evaluate_content_value;
 use super::StyleEngine;
+use super::content::evaluate_content_value;
 use crate::computed::*;
 use crate::dimension::Dimension;
 use crate::dimension::Sides;
 use crate::value_resolve::{parse_inline_value, *};
 
-fn css_wide_keyword(
-    val: &liquide_theme_css::value::PropertyValue,
-) -> Option<&'static str> {
+fn css_wide_keyword(val: &liquide_theme_css::value::PropertyValue) -> Option<&'static str> {
     let text = val.as_string()?.trim().to_ascii_lowercase();
     if text.contains("revert-layer") {
         Some("revert-layer")
@@ -27,6 +31,86 @@ fn css_wide_keyword(
         Some("initial")
     } else {
         None
+    }
+}
+
+fn background_spec_for_gradient(gradient: &CssGradient, color: Option<Color>) -> BackgroundSpec {
+    BackgroundSpec {
+        color,
+        image: Some(BackgroundImage::Gradient(gradient_to_spec(gradient))),
+        size: BackgroundSize::Auto,
+        position: (0.0, 0.0),
+        repeat: BackgroundRepeat::NoRepeat,
+    }
+}
+
+fn gradient_to_spec(gradient: &CssGradient) -> GradientSpec {
+    match gradient {
+        CssGradient::Linear { angle, stops } | CssGradient::RepeatingLinear { angle, stops } => {
+            let radians = angle.to_radians();
+            let dx = radians.cos() * 0.5;
+            let dy = radians.sin() * 0.5;
+            GradientSpec::Linear {
+                start_x: 0.5 - dx,
+                start_y: 0.5 - dy,
+                end_x: 0.5 + dx,
+                end_y: 0.5 + dy,
+                stops: convert_gradient_stops(stops),
+            }
+        }
+        CssGradient::Radial { stops, .. } | CssGradient::RepeatingRadial { stops, .. } => {
+            GradientSpec::Radial {
+                center_x: 0.5,
+                center_y: 0.5,
+                radius: 0.5,
+                radius_y: 0.5,
+                stops: convert_gradient_stops(stops),
+            }
+        }
+        CssGradient::Conic {
+            from_angle, stops, ..
+        }
+        | CssGradient::RepeatingConic {
+            from_angle, stops, ..
+        } => GradientSpec::Conic {
+            center_x: 0.5,
+            center_y: 0.5,
+            start_angle: *from_angle,
+            stops: convert_gradient_stops(stops),
+        },
+    }
+}
+
+fn convert_gradient_stops(stops: &[CssColorStop]) -> Vec<(f32, Color)> {
+    if stops.is_empty() {
+        return vec![(0.0, Color::TRANSPARENT), (1.0, Color::TRANSPARENT)];
+    }
+
+    let last = stops.len().saturating_sub(1).max(1) as f32;
+    stops
+        .iter()
+        .enumerate()
+        .map(|(index, stop)| {
+            let offset = stop
+                .position
+                .as_ref()
+                .and_then(stop_position_to_unit)
+                .unwrap_or(index as f32 / last)
+                .clamp(0.0, 1.0);
+            (
+                offset,
+                Color::new(stop.color.r, stop.color.g, stop.color.b, stop.color.a),
+            )
+        })
+        .collect()
+}
+
+fn stop_position_to_unit(position: &GradientStopPosition) -> Option<f32> {
+    match position {
+        GradientStopPosition::Length(LengthUnit::Percent(percent)) => Some(*percent / 100.0),
+        GradientStopPosition::Length(LengthUnit::Px(px)) => Some(*px / 100.0),
+        GradientStopPosition::Length(_) => None,
+        GradientStopPosition::Angle(degrees) => Some(*degrees / 360.0),
     }
 }
 
@@ -407,9 +491,19 @@ impl StyleEngine {
             "text-indent" => style.text_indent = resolve_number(val),
 
             // Visual
-            "background-color" | "background" => {
+            "background-color" => {
                 if let Some(c) = resolve_color_with_current(val, style.color) {
                     style.background_color = c;
+                }
+            }
+            "background" => {
+                if let Some(c) = resolve_color_with_current(val, style.color) {
+                    style.background_color = c;
+                } else if let liquide_theme_css::value::PropertyValue::Gradient(gradient) = val {
+                    style.background = vec![background_spec_for_gradient(
+                        gradient,
+                        Some(style.background_color),
+                    )];
                 }
             }
             "opacity" => style.opacity = resolve_number(val),
@@ -1485,13 +1579,26 @@ impl StyleEngine {
                     style.background_repeat = Some(kw.clone());
                 }
             }
-            "background-image" => {
-                if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
+            "background-image" => match val {
+                liquide_theme_css::value::PropertyValue::Gradient(gradient) => {
+                    style.background = vec![background_spec_for_gradient(
+                        gradient,
+                        if style.background_color.a > 0 {
+                            Some(style.background_color)
+                        } else {
+                            None
+                        },
+                    )];
+                    style.background_image = None;
+                }
+                liquide_theme_css::value::PropertyValue::Keyword(kw) => {
                     style.background_image = if kw == "none" { None } else { Some(kw.clone()) };
-                } else if let liquide_theme_css::value::PropertyValue::String(s) = val {
+                }
+                liquide_theme_css::value::PropertyValue::String(s) => {
                     style.background_image = Some(s.clone());
                 }
-            }
+                _ => {}
+            },
 
             // ── Filter ──
             "filter" => {

@@ -1,5 +1,5 @@
-use liquide_dom::dirty::DirtySet;
 use liquide_dom::Document;
+use liquide_dom::dirty::DirtySet;
 use liquide_style_engine::StyleEngine;
 
 #[path = "../../liquide-conformance/src/css.rs"]
@@ -93,7 +93,11 @@ fn css_conformance_style_engine_fixtures() {
                     &format!("{} {}", fixture.meta.id, fixture.meta.title),
                 );
                 assert_rgb(
-                    (plain_style.color.r, plain_style.color.g, plain_style.color.b),
+                    (
+                        plain_style.color.r,
+                        plain_style.color.g,
+                        plain_style.color.b,
+                    ),
                     (255, 0, 0),
                     &format!("{} {}", fixture.meta.id, fixture.meta.title),
                 );
@@ -131,15 +135,30 @@ fn css_conformance_style_engine_fixtures() {
                 let engine = StyleEngine::default();
                 let label = format!("{} {}", fixture.meta.id, fixture.meta.title);
 
-                assert!(!engine.evaluate_supports_condition("selector(:has(*))"), "{label}");
+                assert!(
+                    !engine.evaluate_supports_condition("selector(:has(*))"),
+                    "{label}"
+                );
                 assert!(
                     !engine.evaluate_supports_condition("(display: definitely-not-real)"),
                     "{label}"
                 );
-                assert!(engine.evaluate_media_condition("(hover: hover) or (pointer: coarse)"), "{label}");
-                assert!(engine.evaluate_media_condition("(400px < width < 2400px)"), "{label}");
-                assert!(!engine.evaluate_media_condition("(400px < width < 1200px)"), "{label}");
-                assert!(!engine.evaluate_media_condition("(totally-unknown: 1)"), "{label}");
+                assert!(
+                    engine.evaluate_media_condition("(hover: hover) or (pointer: coarse)"),
+                    "{label}"
+                );
+                assert!(
+                    engine.evaluate_media_condition("(400px < width < 2400px)"),
+                    "{label}"
+                );
+                assert!(
+                    !engine.evaluate_media_condition("(400px < width < 1200px)"),
+                    "{label}"
+                );
+                assert!(
+                    !engine.evaluate_media_condition("(totally-unknown: 1)"),
+                    "{label}"
+                );
             }
             StyleEngineScenario::ScopeEndBounds => {
                 let mut engine = StyleEngine::default();
@@ -215,7 +234,11 @@ fn css_conformance_style_engine_fixtures() {
                 engine.invalidate(&doc, &[target], &mut styles);
                 let invalidated = styles.get(target).unwrap();
                 assert_rgb(
-                    (invalidated.color.r, invalidated.color.g, invalidated.color.b),
+                    (
+                        invalidated.color.r,
+                        invalidated.color.g,
+                        invalidated.color.b,
+                    ),
                     (255, 0, 0),
                     &format!("{} {} invalidate", fixture.meta.id, fixture.meta.title),
                 );
@@ -225,7 +248,11 @@ fn css_conformance_style_engine_fixtures() {
                 engine.restyle_dirty(&doc, &dirty, &mut styles);
                 let dirty_style = styles.get(target).unwrap();
                 assert_rgb(
-                    (dirty_style.color.r, dirty_style.color.g, dirty_style.color.b),
+                    (
+                        dirty_style.color.r,
+                        dirty_style.color.g,
+                        dirty_style.color.b,
+                    ),
                     (255, 0, 0),
                     &format!("{} {} dirty", fixture.meta.id, fixture.meta.title),
                 );
@@ -263,7 +290,11 @@ fn css_conformance_style_engine_fixtures() {
                 engine.invalidate(&doc, &[inner], &mut styles);
                 let incremental = styles.get(inner).unwrap();
                 assert_rgb(
-                    (incremental.color.r, incremental.color.g, incremental.color.b),
+                    (
+                        incremental.color.r,
+                        incremental.color.g,
+                        incremental.color.b,
+                    ),
                     (0, 255, 0),
                     &format!("{} {} incremental", fixture.meta.id, fixture.meta.title),
                 );

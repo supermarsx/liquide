@@ -10,6 +10,7 @@ use lightningcss::properties::Property;
 use lightningcss::stylesheet::PrinterOptions;
 use lightningcss::traits::ToCss;
 use lightningcss::values::color::CssColor;
+use lightningcss::values::image::Image;
 use lightningcss::values::length::LengthPercentageOrAuto;
 
 use super::ThemeParser;
@@ -29,9 +30,21 @@ impl ThemeParser {
             }
             Property::Background(backgrounds) => {
                 let background_css = self.to_css_string(backgrounds);
-                let background_value = match self.parse_value_string(&background_css) {
-                    PropertyValue::Color(color) => PropertyValue::Color(color),
-                    _ => PropertyValue::Keyword(background_css),
+                let single_gradient = if backgrounds.len() == 1 {
+                    backgrounds.first().and_then(|layer| match &layer.image {
+                        Image::Gradient(gradient) => self.convert_gradient(gradient),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
+                let background_value = if let Some(gradient) = single_gradient.clone() {
+                    PropertyValue::Gradient(gradient)
+                } else {
+                    match self.parse_value_string(&background_css) {
+                        PropertyValue::Color(color) => PropertyValue::Color(color),
+                        _ => PropertyValue::Keyword(background_css),
+                    }
                 };
                 properties.insert("background".into(), background_value.clone());
 
@@ -58,7 +71,9 @@ impl ThemeParser {
                     properties.insert("background-color".into(), background_value);
                 }
 
-                if layer_count == 1 && image_values.first().map(|value| value.as_str()) == Some("none") {
+                if layer_count == 1
+                    && image_values.first().map(|value| value.as_str()) == Some("none")
+                {
                     if let Some(color) = backgrounds
                         .first()
                         .and_then(|layer| self.convert_color(&layer.color))
@@ -67,7 +82,9 @@ impl ThemeParser {
                     }
                 }
 
-                if layer_count > 1 || image_values.iter().any(|value| value != "none") {
+                if let Some(gradient) = single_gradient {
+                    properties.insert("background-image".into(), PropertyValue::Gradient(gradient));
+                } else if layer_count > 1 || image_values.iter().any(|value| value != "none") {
                     properties.insert(
                         "background-image".into(),
                         PropertyValue::Keyword(image_values.join(", ")),
@@ -178,7 +195,8 @@ impl ThemeParser {
                     properties.insert("border-left-color".into(), v.clone());
                 }
 
-                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                if let (Some(top), Some(right), Some(bottom), Some(left)) =
+                    (top, right, bottom, left)
                 {
                     properties.insert(
                         "border-color".into(),
@@ -349,7 +367,8 @@ impl ThemeParser {
                     properties.insert("padding-left".into(), v.clone());
                 }
 
-                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                if let (Some(top), Some(right), Some(bottom), Some(left)) =
+                    (top, right, bottom, left)
                 {
                     properties.insert(
                         "padding".into(),
@@ -398,7 +417,8 @@ impl ThemeParser {
                     properties.insert("margin-left".into(), v.clone());
                 }
 
-                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                if let (Some(top), Some(right), Some(bottom), Some(left)) =
+                    (top, right, bottom, left)
                 {
                     properties.insert(
                         "margin".into(),
@@ -849,7 +869,8 @@ impl ThemeParser {
                     properties.insert("border-left-width".into(), v.clone());
                 }
 
-                if let (Some(top), Some(right), Some(bottom), Some(left)) = (top, right, bottom, left)
+                if let (Some(top), Some(right), Some(bottom), Some(left)) =
+                    (top, right, bottom, left)
                 {
                     properties.insert(
                         "border-width".into(),

@@ -191,12 +191,18 @@ fn invalidate_preserves_inherited_custom_property_scope() {
 
     let mut styles = engine.restyle_all(&doc);
     let initial = styles.get(target).unwrap();
-    assert_eq!((initial.color.r, initial.color.g, initial.color.b), (255, 0, 0));
+    assert_eq!(
+        (initial.color.r, initial.color.g, initial.color.b),
+        (255, 0, 0)
+    );
 
     engine.invalidate(&doc, &[target], &mut styles);
 
     let updated = styles.get(target).unwrap();
-    assert_eq!((updated.color.r, updated.color.g, updated.color.b), (255, 0, 0));
+    assert_eq!(
+        (updated.color.r, updated.color.g, updated.color.b),
+        (255, 0, 0)
+    );
 }
 
 #[test]
@@ -231,7 +237,10 @@ fn restyle_dirty_rebuilds_ancestor_custom_property_scope() {
     engine.restyle_dirty(&doc, &dirty, &mut styles);
 
     let updated = styles.get(target).unwrap();
-    assert_eq!((updated.color.r, updated.color.g, updated.color.b), (255, 0, 0));
+    assert_eq!(
+        (updated.color.r, updated.color.g, updated.color.b),
+        (255, 0, 0)
+    );
 }
 
 #[test]
@@ -269,7 +278,14 @@ fn shadow_root_custom_property_scope_stays_isolated() {
 
     engine.invalidate(&doc, &[inner], &mut styles);
     let incremental = styles.get(inner).unwrap();
-    assert_eq!((incremental.color.r, incremental.color.g, incremental.color.b), (0, 255, 0));
+    assert_eq!(
+        (
+            incremental.color.r,
+            incremental.color.g,
+            incremental.color.b
+        ),
+        (0, 255, 0)
+    );
 }
 
 #[ignore = "public pseudo-rule ingestion still depends on selector/stylesheet routing outside this validation path"]
@@ -327,7 +343,14 @@ fn all_initial_resets_inherited_properties_to_initial_values() {
 
     let styles = engine.restyle_all(&doc);
     let child_style = styles.get(child).unwrap();
-    assert_eq!((child_style.color.r, child_style.color.g, child_style.color.b), (0, 0, 0));
+    assert_eq!(
+        (
+            child_style.color.r,
+            child_style.color.g,
+            child_style.color.b
+        ),
+        (0, 0, 0)
+    );
 }
 
 #[test]
@@ -354,7 +377,14 @@ fn all_revert_restores_parent_inherited_values() {
 
     let styles = engine.restyle_all(&doc);
     let child_style = styles.get(child).unwrap();
-    assert_eq!((child_style.color.r, child_style.color.g, child_style.color.b), (255, 0, 0));
+    assert_eq!(
+        (
+            child_style.color.r,
+            child_style.color.g,
+            child_style.color.b
+        ),
+        (255, 0, 0)
+    );
 }
 
 #[test]

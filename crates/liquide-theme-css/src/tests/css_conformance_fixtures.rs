@@ -111,9 +111,7 @@ fn css_parser_conformance_fixtures() {
                     }
                     other => panic!(
                         "{} {} expected clamp expression, got {:?}",
-                        fixture.meta.id,
-                        fixture.meta.title,
-                        other
+                        fixture.meta.id, fixture.meta.title, other
                     ),
                 }
             }
@@ -139,7 +137,12 @@ fn css_parser_conformance_fixtures() {
                     .get("background")
                     .and_then(PropertyValue::as_string)
                     .unwrap();
-                assert!(background.contains("url("), "{} {}", fixture.meta.id, fixture.meta.title);
+                assert!(
+                    background.contains("url("),
+                    "{} {}",
+                    fixture.meta.id,
+                    fixture.meta.title
+                );
                 assert!(
                     background.contains("linear-gradient("),
                     "{} {}",
@@ -164,15 +167,28 @@ fn css_parser_conformance_fixtures() {
                     fixture.meta.title
                 );
 
-                let font = props.get("font").and_then(PropertyValue::as_string).unwrap();
-                assert!(font.contains("16px"), "{} {}", fixture.meta.id, fixture.meta.title);
+                let font = props
+                    .get("font")
+                    .and_then(PropertyValue::as_string)
+                    .unwrap();
+                assert!(
+                    font.contains("16px"),
+                    "{} {}",
+                    fixture.meta.id,
+                    fixture.meta.title
+                );
                 assert!(
                     font.contains("Fira Sans"),
                     "{} {}",
                     fixture.meta.id,
                     fixture.meta.title
                 );
-                assert!(!font.contains("Font("), "{} {}", fixture.meta.id, fixture.meta.title);
+                assert!(
+                    !font.contains("Font("),
+                    "{} {}",
+                    fixture.meta.id,
+                    fixture.meta.title
+                );
 
                 let animation = props
                     .get("animation")
@@ -287,9 +303,7 @@ fn css_stylesheet_conformance_fixtures() {
 #[test]
 fn css_fixture_parse_errors_keep_source_locations() {
     let parser = ThemeParser::new();
-    let err = parser
-        .parse_str("button {\n  color: red;\n}}")
-        .unwrap_err();
+    let err = parser.parse_str("button {\n  color: red;\n}}").unwrap_err();
 
     match err {
         ThemeError::ParseError { location, .. } => {

@@ -53,10 +53,7 @@ fn font_shorthand_and_background_layers_are_preserved() {
     .unwrap();
     assert!(font.contains(&("font-style", keyword("italic"))));
     assert!(font.contains(&("font-weight", PropertyValue::Number(700.0))));
-    assert!(font.contains(&(
-        "font-size",
-        PropertyValue::Length(LengthUnit::Px(16.0)),
-    )));
+    assert!(font.contains(&("font-size", PropertyValue::Length(LengthUnit::Px(16.0)),)));
     assert!(font.contains(&("line-height", PropertyValue::Number(1.4))));
     assert!(font.contains(&(
         "font-family",
@@ -87,10 +84,7 @@ fn slash_sensitive_shorthands_ignore_nested_url_contents() {
     .unwrap();
     assert_eq!(
         mask[0],
-        (
-            "mask-image",
-            keyword("url(data:image/svg+xml;base64,AAAA)"),
-        )
+        ("mask-image", keyword("url(data:image/svg+xml;base64,AAAA)"),)
     );
     assert_eq!(mask[3], ("mask-size", keyword("contain")));
     assert_eq!(mask[4], ("mask-repeat", keyword("no-repeat")));

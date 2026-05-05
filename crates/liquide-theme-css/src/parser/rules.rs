@@ -8,8 +8,8 @@
 use crate::error::Result;
 use crate::selector::Selector;
 use crate::stylesheet::{
-    ImportLayer, ImportRule, StructuralCondition, StructuralContainerConstraint, StyleSheet,
-    STRUCTURAL_CONDITION_SENTINEL,
+    ImportLayer, ImportRule, STRUCTURAL_CONDITION_SENTINEL, StructuralCondition,
+    StructuralContainerConstraint, StyleSheet,
 };
 use crate::value::{FontFaceRule, FontSource, Keyframe, KeyframesRule};
 
@@ -78,7 +78,10 @@ impl ThemeParser {
                         Some(name) => ImportLayer::Named(self.to_css_string(name)),
                         None => ImportLayer::Anonymous,
                     }),
-                    supports_condition: import.supports.as_ref().map(|cond| self.to_css_string(cond)),
+                    supports_condition: import
+                        .supports
+                        .as_ref()
+                        .map(|cond| self.to_css_string(cond)),
                     media_condition: if import.media.media_queries.is_empty() {
                         None
                     } else {
@@ -357,7 +360,10 @@ impl ThemeParser {
                 let resolved_layer = self.resolve_layer_name(
                     stylesheet,
                     context.layer_name.as_deref(),
-                    layer_block.name.as_ref().map(|name| self.to_css_string(name)),
+                    layer_block
+                        .name
+                        .as_ref()
+                        .map(|name| self.to_css_string(name)),
                 );
                 let mut next = context.clone();
                 next.layer_name = Some(resolved_layer);
@@ -389,8 +395,14 @@ impl ThemeParser {
             }
             CssRule::Scope(scope) => {
                 let mut next = context.clone();
-                next.scope_start = scope.scope_start.as_ref().map(|selector| self.to_css_string(selector));
-                next.scope_end = scope.scope_end.as_ref().map(|selector| self.to_css_string(selector));
+                next.scope_start = scope
+                    .scope_start
+                    .as_ref()
+                    .map(|selector| self.to_css_string(selector));
+                next.scope_end = scope
+                    .scope_end
+                    .as_ref()
+                    .map(|selector| self.to_css_string(selector));
                 for nested_rule in &scope.rules.0 {
                     self.process_rule_in_context(nested_rule, stylesheet, &next, parent_selectors)?;
                 }
@@ -481,7 +493,10 @@ impl ThemeParser {
                 resolved.push(selector_str);
             } else {
                 for parent_selector in parent_selectors {
-                    resolved.push(Self::resolve_nesting_selector(&selector_str, parent_selector));
+                    resolved.push(Self::resolve_nesting_selector(
+                        &selector_str,
+                        parent_selector,
+                    ));
                 }
             }
         }

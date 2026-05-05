@@ -5,8 +5,10 @@
 
 use std::path::Path;
 
-use liquide_theme_css::stylesheet::{StructuralCondition, StyleRule, STRUCTURAL_CONDITION_SENTINEL};
 use liquide_theme_css::ThemeParser;
+use liquide_theme_css::stylesheet::{
+    STRUCTURAL_CONDITION_SENTINEL, StructuralCondition, StyleRule,
+};
 
 use super::{
     ContainerCondition, PreparedFontFace, PreparedRule, PreparedSheet, RegisteredPropertyDef,
@@ -185,13 +187,18 @@ impl StyleEngine {
         name: Option<&str>,
         condition: &str,
     ) -> (Option<ContainerCondition>, Option<String>) {
-        if let Some(structural) = liquide_theme_css::StyleSheet::decode_structural_condition(name, condition) {
+        if let Some(structural) =
+            liquide_theme_css::StyleSheet::decode_structural_condition(name, condition)
+        {
             let scope_prefix = structural.scope_start.clone();
-            let needs_structural_runtime = structural.scope_end.is_some() || structural.containers.len() > 1;
+            let needs_structural_runtime =
+                structural.scope_end.is_some() || structural.containers.len() > 1;
             let container_condition = if needs_structural_runtime {
                 Some(ContainerCondition {
                     name: Some(STRUCTURAL_CONDITION_SENTINEL.to_string()),
-                    condition: liquide_theme_css::StyleSheet::encode_structural_condition(&structural),
+                    condition: liquide_theme_css::StyleSheet::encode_structural_condition(
+                        &structural,
+                    ),
                 })
             } else if let Some(container) = structural.containers.into_iter().next() {
                 Some(ContainerCondition {
@@ -215,7 +222,10 @@ impl StyleEngine {
     }
 
     fn prefix_scope(scope_prefix: Option<&str>, selector: &str) -> String {
-        match scope_prefix.map(str::trim).filter(|prefix| !prefix.is_empty()) {
+        match scope_prefix
+            .map(str::trim)
+            .filter(|prefix| !prefix.is_empty())
+        {
             Some(prefix) => format!("{prefix} {selector}"),
             None => selector.to_string(),
         }
@@ -228,14 +238,16 @@ impl StyleEngine {
     /// cannot be read. Individual file errors are logged as warnings and
     /// skipped.
     pub fn load_stylesheet_dir(&mut self, dir: &std::path::Path) -> Result<usize, String> {
-        let stylesheet = liquide_theme_css::StyleSheet::load_paths_with_imports(&[dir.to_path_buf()])
-            .map_err(|e| {
-                format!(
-                    "Failed to load stylesheet directory {}: {}",
-                    dir.display(),
-                    e
-                )
-            })?;
+        let stylesheet =
+            liquide_theme_css::StyleSheet::load_paths_with_imports(&[dir.to_path_buf()]).map_err(
+                |e| {
+                    format!(
+                        "Failed to load stylesheet directory {}: {}",
+                        dir.display(),
+                        e
+                    )
+                },
+            )?;
         let loaded = Self::count_css_files(dir).map_err(|e| {
             format!(
                 "Failed to count stylesheet files in {}: {}",
@@ -246,11 +258,7 @@ impl StyleEngine {
 
         self.compile_stylesheet(&stylesheet);
 
-        tracing::info!(
-            "Loaded {} stylesheet files from {}",
-            loaded,
-            dir.display()
-        );
+        tracing::info!("Loaded {} stylesheet files from {}", loaded, dir.display());
         Ok(loaded)
     }
 
