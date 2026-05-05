@@ -311,7 +311,10 @@ fn enumerate_connector(fd: i32, connector_id: u32) -> Result<Option<ConnectorInf
 }
 
 #[cfg(target_os = "linux")]
-fn build_connector_info(request: &DrmModeGetConnector, raw_modes: &[RawDrmModeInfo]) -> ConnectorInfo {
+fn build_connector_info(
+    request: &DrmModeGetConnector,
+    raw_modes: &[RawDrmModeInfo],
+) -> ConnectorInfo {
     let modes = raw_modes
         .iter()
         .take(request.count_modes as usize)

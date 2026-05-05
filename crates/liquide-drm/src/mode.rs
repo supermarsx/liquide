@@ -116,6 +116,43 @@ pub fn launchable_mode(modes: &[DrmMode]) -> Option<&DrmMode> {
         .or_else(|| modes.iter().find(|mode| mode.is_usable()))
 }
 
+/// Returns the first usable mode whose `width × height` exactly matches the
+/// requested dimensions. Returns `None` if no usable mode matches.
+pub fn match_mode_by_dimensions(modes: &[DrmMode], width: u32, height: u32) -> Option<&DrmMode> {
+    modes
+        .iter()
+        .find(|m| m.is_usable() && m.width == width && m.height == height)
+}
+
+/// Returns the usable mode with the highest pixel area (`width * height`),
+/// breaking ties by higher `refresh_hz`. Returns `None` if no mode is usable.
+pub fn highest_resolution_mode(modes: &[DrmMode]) -> Option<&DrmMode> {
+    modes
+        .iter()
+        .filter(|m| m.is_usable())
+        .max_by(|a, b| {
+            let area_a = (a.width as u64) * (a.height as u64);
+            let area_b = (b.width as u64) * (b.height as u64);
+            area_a
+                .cmp(&area_b)
+                .then_with(|| a.refresh_hz.cmp(&b.refresh_hz))
+        })
+}
+
+/// Returns the usable mode whose `refresh_hz` is closest to `target_hz`.
+/// Ties are broken by higher refresh. Returns `None` if no mode is usable.
+pub fn closest_refresh_mode(modes: &[DrmMode], target_hz: u32) -> Option<&DrmMode> {
+    modes
+        .iter()
+        .filter(|m| m.is_usable())
+        .min_by_key(|m| {
+            let delta = (m.refresh_hz as i64 - target_hz as i64).abs();
+            // Tie-break by negative refresh so that on equal delta the higher
+            // refresh wins (smaller min_by_key key when negated).
+            (delta, -(m.refresh_hz as i64))
+        })
+}
+
 #[cfg(any(test, target_os = "linux"))]
 pub(crate) fn from_raw_mode_info(raw: &RawDrmModeInfo) -> Option<DrmMode> {
     let width = u32::from(raw.hdisplay);

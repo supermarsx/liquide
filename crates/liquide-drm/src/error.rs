@@ -22,7 +22,9 @@ pub enum DrmError {
     VblankWait(String),
     #[error("DRM event buffer malformed at offset {offset}: {reason}")]
     EventBufferMalformed { offset: usize, reason: String },
-    #[error("DRM event buffer truncated at offset {offset}: expected {expected} bytes, got {actual}")]
+    #[error(
+        "DRM event buffer truncated at offset {offset}: expected {expected} bytes, got {actual}"
+    )]
     EventBufferTruncated {
         offset: usize,
         expected: usize,

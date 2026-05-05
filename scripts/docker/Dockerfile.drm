@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.6
+#
+# Test container for liquide-drm. Provides a stable Linux toolchain + libc dev
+# headers needed to compile and run the DRM crates against the kernel uapi.
+#
+# This image deliberately does NOT include any GPU/Mesa userspace — DRM tests
+# only need /dev/dri/card0 (or vkms) and the libc ioctl interface. Pass the
+# device into the container at run-time with `--device=/dev/dri/card0` (or
+# whichever vkms-allocated card node the host exposes).
+#
+# Build:
+#     docker build -f scripts/docker/Dockerfile.drm -t liquide-drm-test .
+#
+# See scripts/docker/run-drm-tests.sh for the canonical run incantation.
+
+FROM rust:1.82-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# libc headers + pkg-config for the few crates that probe at build time.
+# kmod gives us `lsmod` so the in-container smoke can verify vkms is visible.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        pkg-config \
+        libc6-dev \
+        libdrm-dev \
+        kmod \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Match the workspace's pinned toolchain. The base image already supplies
+# stable + clippy + rustfmt, but rust-toolchain.toml overrides will pick up
+# the right channel automatically when cargo runs inside /workspace.
+RUN rustup component add clippy rustfmt
+
+WORKDIR /workspace
+
+# Default entry: run the full liquide-drm suite (host-safe + Linux-only tests).
+# Override with `docker run ... liquide-drm-test cargo <whatever>` to do other
+# work (e.g. clippy, build, run a single integration test).
+CMD ["cargo", "test", "-p", "liquide-drm", "--all-features", "--", "--nocapture"]
