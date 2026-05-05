@@ -1,4 +1,4 @@
-use crate::smartcard::{ApduCommand, ApduResponse, SmartCardReader, SmartCardReaderState};
+use crate::smartcard::{ApduCommand, SmartCardReader, SmartCardReaderState};
 
 fn make_reader() -> SmartCardReader {
     SmartCardReader::new("Virtual Reader 0".to_string())

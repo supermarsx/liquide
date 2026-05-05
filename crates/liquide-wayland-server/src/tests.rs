@@ -3,7 +3,6 @@ mod tests {
     use crate::buffer::{BufferRef, BufferSource};
     use crate::client::{ClientConnection, ClientId, ClientState};
     use crate::display::WaylandDisplay;
-    use crate::global::{Global, GlobalId};
     use crate::registry::GlobalRegistry;
     use crate::seat_manager::SeatManager;
     use crate::shell_manager::ShellManager;

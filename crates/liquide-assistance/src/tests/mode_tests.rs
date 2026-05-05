@@ -1,4 +1,4 @@
-use crate::mode::{AssistanceMode, ModeCapabilities, Restriction};
+use crate::mode::AssistanceMode;
 
 #[test]
 fn test_view_only_capabilities() {

@@ -4,7 +4,7 @@
 //! white-space modes, letter-spacing, word-spacing, text-transform,
 //! empty text, whitespace-only text, and edge cases.
 
-use liquide_layout::{DefaultTextMeasurer, TextMeasurer, TextMetrics, TextProperties};
+use liquide_layout::{DefaultTextMeasurer, TextMeasurer, TextProperties};
 use liquide_style_engine::computed::{LineHeight, WhiteSpace};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -399,7 +399,7 @@ fn measure_text_indent_only_affects_first_line() {
     let m = measurer();
     let text = "The quick brown fox jumps over the lazy dog and other things";
 
-    let mut props_no_indent = default_props();
+    let props_no_indent = default_props();
     let result_no_indent = m.measure(
         text,
         FONT_SIZE,

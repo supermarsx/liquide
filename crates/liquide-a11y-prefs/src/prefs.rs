@@ -38,12 +38,6 @@ impl CursorSize {
     }
 }
 
-impl Default for CursorSize {
-    fn default() -> Self {
-        CursorSize::Normal
-    }
-}
-
 /// Collected accessibility preferences from the operating system.
 ///
 /// Use [`crate::platform::detect()`] to read the current values, or

@@ -62,7 +62,7 @@ fn test_round_robin_routing() {
 
     let d1 = router.route("192.168.1.1", &registry, None).unwrap();
     let d2 = router.route("192.168.1.2", &registry, None).unwrap();
-    let d3 = router.route("192.168.1.3", &registry, None).unwrap();
+    let _d3 = router.route("192.168.1.3", &registry, None).unwrap();
     let d4 = router.route("192.168.1.4", &registry, None).unwrap();
 
     // After 3 routes we should cycle back, so d4 should match d1.

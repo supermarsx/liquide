@@ -41,6 +41,7 @@ impl Client {
     }
 
     /// The server address this client is configured to connect to.
+    #[allow(dead_code)]
     pub fn server(&self) -> &str {
         &self.server
     }
@@ -109,6 +110,7 @@ impl Client {
     }
 
     /// Send a DELETE request to the server API.
+    #[allow(dead_code)]
     pub async fn delete<T: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let url = build_url(&self.server, path);
         let resp = self
@@ -156,6 +158,7 @@ impl Client {
     }
 
     /// Check connectivity to the server.
+    #[allow(dead_code)]
     pub async fn ping(&self) -> Result<()> {
         let url = build_url(&self.server, "/health");
         let resp = self
