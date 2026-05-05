@@ -4,14 +4,14 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
+[workspace]
+
 [package.metadata]
 cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-
-# TODO: add the workspace crate that contains the CBOR decoder
-# liquid-protocol = { path = "../../../crates/liquid-protocol" }
+liquide-protocol = { path = "../../../crates/liquide-protocol" }
 
 [[bin]]
 name = "fuzz_cbor_decoder"
