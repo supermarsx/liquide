@@ -8,7 +8,7 @@ This directory is the canonical home for project documentation.
 - `docs/ARCHITECTURE.md` - High-level system architecture.
 - `docs/RENDERING_PIPELINE.md` - End-to-end rendering stages.
 - `docs/GAP_ANALYSIS.md` - Current implementation gap and completion status.
-- `docs/ROADMAP_FEB_2026.md` - Current roadmap and sequencing.
+- `docs/production-readiness.md` - Current readiness notes and remaining risk areas.
 
 ## Specifications
 
