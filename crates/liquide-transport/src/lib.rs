@@ -22,6 +22,7 @@ pub mod priority;
 pub mod sendbuf;
 pub mod stats;
 pub mod tcp;
+pub mod tile_channel;
 #[cfg(feature = "tls")]
 pub mod tls;
 pub mod udp;

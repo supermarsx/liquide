@@ -18,6 +18,7 @@ dangerous_insecure_quic = []
 liquide-common.workspace = true
 liquide-protocol.workspace = true
 liquide-crypto.workspace = true
+liquide-encoder.workspace = true
 tokio.workspace = true
 bytes.workspace = true
 tracing.workspace = true

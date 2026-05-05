@@ -1,5 +1,7 @@
 //! Tile decoder — decompresses and reconstructs tiles from encoded updates.
 
+use std::sync::Arc;
+
 use liquide_encoder::compress::{decompress_lz4, decompress_zstd};
 use liquide_encoder::delta::xor_apply;
 use liquide_encoder::strategy::CompressionMethod;
@@ -15,7 +17,8 @@ use crate::ClientRendererError;
 pub struct TileDecoder {
     config: TileConfig,
     /// Cached tile data from previous commits, indexed by `ty * cols + tx`.
-    previous_tiles: Vec<Option<Vec<u8>>>,
+    previous_tiles: Vec<Option<Arc<[u8]>>>,
+    zero_tile: Arc<[u8]>,
     cols: u32,
     rows: u32,
 }
@@ -25,9 +28,11 @@ impl TileDecoder {
     #[must_use]
     pub fn new(cols: u32, rows: u32, config: TileConfig) -> Self {
         let total = (cols * rows) as usize;
+        let zero_tile: Arc<[u8]> = vec![0u8; config.tile_bytes()].into();
         Self {
             config,
             previous_tiles: vec![None; total],
+            zero_tile,
             cols,
             rows,
         }
@@ -37,7 +42,7 @@ impl TileDecoder {
     ///
     /// The returned data is `tile_size * tile_size * bpp` bytes, suitable
     /// for writing directly into a [`RenderSurface`](crate::RenderSurface).
-    pub fn decode_tile(&self, update: &TileUpdate) -> crate::Result<Vec<u8>> {
+    pub fn decode_tile(&self, update: &TileUpdate) -> crate::Result<Arc<[u8]>> {
         if update.tx >= self.cols || update.ty >= self.rows {
             return Err(ClientRendererError::InvalidTileCoords {
                 tx: update.tx,
@@ -54,8 +59,8 @@ impl TileDecoder {
             TileEncoding::Skip => {
                 // Reuse the previously committed tile data.
                 match &self.previous_tiles[idx] {
-                    Some(data) => Ok(data.clone()),
-                    None => Ok(vec![0u8; tile_bytes]),
+                    Some(data) => Ok(Arc::clone(data)),
+                    None => Ok(Arc::clone(&self.zero_tile)),
                 }
             }
 
@@ -68,21 +73,22 @@ impl TileDecoder {
                         got: raw.len(),
                     });
                 }
-                Ok(raw)
+                Ok(raw.into())
             }
 
             TileEncoding::Delta => {
                 // Decompress delta, then XOR-apply against previous tile.
                 let delta = self.decompress(&update.payload, &update.compression)?;
-                let zeros = vec![0u8; tile_bytes];
-                let previous = self.previous_tiles[idx].as_deref().unwrap_or(&zeros);
+                let previous = self.previous_tiles[idx]
+                    .as_deref()
+                    .unwrap_or(self.zero_tile.as_ref());
                 if delta.len() != previous.len() {
                     return Err(ClientRendererError::FrameSizeMismatch {
                         expected: previous.len(),
                         got: delta.len(),
                     });
                 }
-                Ok(xor_apply(previous, &delta))
+                Ok(xor_apply(previous, &delta).into())
             }
 
             TileEncoding::Solid => {
@@ -108,7 +114,7 @@ impl TileDecoder {
                 for chunk in buf.chunks_exact_mut(4) {
                     chunk.copy_from_slice(&color);
                 }
-                Ok(buf)
+                Ok(buf.into())
             }
 
             TileEncoding::Copy { source_index } => {
@@ -123,13 +129,13 @@ impl TileDecoder {
                     });
                 }
                 match &self.previous_tiles[src] {
-                    Some(data) => Ok(data.clone()),
+                    Some(data) => Ok(Arc::clone(data)),
                     None => {
                         tracing::debug!(
                             "copy tile: source index {} not yet committed, using zeros",
                             source_index,
                         );
-                        Ok(vec![0u8; tile_bytes])
+                        Ok(Arc::clone(&self.zero_tile))
                     }
                 }
             }
@@ -140,7 +146,7 @@ impl TileDecoder {
     ///
     /// This must be called after [`decode_tile`](Self::decode_tile) so that
     /// subsequent delta and copy operations can reference this tile.
-    pub fn commit_tile(&mut self, tx: u32, ty: u32, data: Vec<u8>) {
+    pub fn commit_tile(&mut self, tx: u32, ty: u32, data: Arc<[u8]>) {
         let idx = (ty * self.cols + tx) as usize;
         if idx < self.previous_tiles.len() {
             self.previous_tiles[idx] = Some(data);
@@ -160,6 +166,7 @@ impl TileDecoder {
         self.rows = rows;
         let total = (cols * rows) as usize;
         self.previous_tiles = vec![None; total];
+        self.zero_tile = vec![0u8; self.config.tile_bytes()].into();
     }
 
     /// Number of tile columns.

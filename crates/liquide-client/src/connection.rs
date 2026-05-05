@@ -5,7 +5,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use rustls::pki_types::ServerName;
+use rustls::pki_types::{CertificateDer, ServerName};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
@@ -95,66 +95,31 @@ impl ConnectionQuality {
     }
 }
 
-// ---------------------------------------------------------------------------
-// TLS certificate verification
-// ---------------------------------------------------------------------------
-
-/// Certificate verifier that accepts any server certificate.
-///
-/// **Development only.** Production deployments must configure proper CA
-/// verification by supplying a `rustls::ClientConfig` with a populated root
-/// certificate store.
-#[derive(Debug)]
-struct InsecureCertVerifier(Arc<rustls::crypto::CryptoProvider>);
-
-impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.0.signature_verification_algorithms.supported_schemes()
-    }
-}
-
 /// Build a `rustls::ClientConfig` for the connection.
-///
-/// Currently uses an insecure certificate verifier (accepts any cert).
-/// Replace with proper CA verification for production.
-fn build_client_tls_config() -> Arc<rustls::ClientConfig> {
+fn build_client_tls_config(
+    additional_roots: &[CertificateDer<'static>],
+) -> Result<Arc<rustls::ClientConfig>> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+    let mut root_store = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+
+    for cert in additional_roots {
+        root_store
+            .add(cert.clone())
+            .map_err(|e| ClientError::ConfigError {
+                detail: format!("invalid trusted TLS certificate: {e}"),
+            })?;
+    }
+
+    let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .expect("TLS protocol versions")
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(InsecureCertVerifier(provider)))
+        .map_err(|e| ClientError::ConfigError {
+            detail: format!("TLS protocol versions: {e}"),
+        })?
+        .with_root_certificates(root_store)
         .with_no_client_auth();
-    Arc::new(config)
+    Ok(Arc::new(config))
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +170,7 @@ pub struct ConnectionManager {
     max_reconnect_attempts: u32,
     /// Active TLS connection to the server.
     stream: Option<TlsStream<TcpStream>>,
+    trusted_server_certificates: Vec<CertificateDer<'static>>,
     /// Session ID from the server after successful handshake.
     session_id: Option<String>,
 }
@@ -224,8 +190,18 @@ impl ConnectionManager {
             reconnect_attempts: 0,
             max_reconnect_attempts,
             stream: None,
+            trusted_server_certificates: Vec::new(),
             session_id: None,
         }
+    }
+
+    /// Trust an additional certificate authority or pinned server certificate.
+    ///
+    /// The default connection path uses the standard WebPKI root store. This
+    /// method is for deployments with a private CA and for tests with a
+    /// generated self-signed server certificate.
+    pub fn add_trusted_server_certificate(&mut self, certificate: CertificateDer<'static>) {
+        self.trusted_server_certificates.push(certificate);
     }
 
     /// Initiate a connection to the given server.
@@ -268,7 +244,7 @@ impl ConnectionManager {
         tracing::info!(server = %server, "TCP connected");
 
         // --- TLS handshake ---
-        let tls_config = build_client_tls_config();
+        let tls_config = build_client_tls_config(&self.trusted_server_certificates)?;
         let connector = TlsConnector::from(tls_config);
 
         let server_name = ServerName::try_from(addr.ip().to_string()).map_err(|e| {
@@ -605,25 +581,33 @@ mod tests {
         (vec![cert_der], key_der)
     }
 
-    fn server_tls_config() -> Arc<rustls::ServerConfig> {
+    fn server_tls_config() -> (Arc<rustls::ServerConfig>, CertificateDer<'static>) {
         let (certs, key) = self_signed_cert_and_key();
+        let trust_cert = certs[0].clone();
         let provider = Arc::new(rustls::crypto::ring::default_provider());
-        Arc::new(
+        let config = Arc::new(
             rustls::ServerConfig::builder_with_provider(provider)
                 .with_safe_default_protocol_versions()
                 .expect("protocol versions")
                 .with_no_client_auth()
                 .with_single_cert(certs, key)
                 .expect("server config"),
-        )
+        );
+        (config, trust_cert)
     }
 
     /// Run a mock TLS server that performs the Liquide handshake.
     /// Returns (listener_addr, join_handle).
-    async fn mock_tls_server(auth_result: bool) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    async fn mock_tls_server(
+        auth_result: bool,
+    ) -> (
+        SocketAddr,
+        CertificateDer<'static>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = tcp.local_addr().unwrap();
-        let tls_cfg = server_tls_config();
+        let (tls_cfg, trust_cert) = server_tls_config();
         let acceptor = tokio_rustls::TlsAcceptor::from(tls_cfg);
 
         let handle = tokio::spawn(async move {
@@ -711,7 +695,7 @@ mod tests {
             let _ = tls.shutdown().await;
         });
 
-        (addr, handle)
+        (addr, trust_cert, handle)
     }
 
     async fn send_msg<W: AsyncWriteExt + Unpin, T: serde::Serialize>(w: &mut W, msg: &T) {
@@ -780,8 +764,9 @@ mod tests {
 
     #[tokio::test]
     async fn connect_full_handshake() {
-        let (addr, server) = mock_tls_server(true).await;
+        let (addr, trust_cert, server) = mock_tls_server(true).await;
         let mut mgr = ConnectionManager::new(3);
+        mgr.add_trusted_server_certificate(trust_cert);
         mgr.connect_with_credential(&addr.to_string(), "user", "pass")
             .await
             .unwrap();
@@ -795,8 +780,9 @@ mod tests {
 
     #[tokio::test]
     async fn connect_auth_failure() {
-        let (addr, server) = mock_tls_server(false).await;
+        let (addr, trust_cert, server) = mock_tls_server(false).await;
         let mut mgr = ConnectionManager::new(3);
+        mgr.add_trusted_server_certificate(trust_cert);
         let result = mgr
             .connect_with_credential(&addr.to_string(), "bad", "creds")
             .await;
@@ -817,9 +803,21 @@ mod tests {
 
     #[test]
     fn tls_config_builds_successfully() {
-        let config = build_client_tls_config();
+        let config = build_client_tls_config(&[]).unwrap();
         // Smoke test — config should support TLS 1.3
         assert!(config.alpn_protocols.is_empty());
+    }
+
+    #[tokio::test]
+    async fn production_tls_rejects_untrusted_self_signed_server() {
+        let (addr, _trust_cert, server) = mock_tls_server(true).await;
+        let mut mgr = ConnectionManager::new(3);
+        let result = mgr
+            .connect_with_credential(&addr.to_string(), "user", "pass")
+            .await;
+
+        assert!(matches!(result, Err(ClientError::ConnectionFailed { .. })));
+        let _ = server.await;
     }
 
     #[test]
@@ -894,7 +892,7 @@ mod tests {
         // Stand up a mock server that sends a length prefix > 16 MiB.
         let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = tcp.local_addr().unwrap();
-        let tls_cfg = server_tls_config();
+        let (tls_cfg, trust_cert) = server_tls_config();
         let acceptor = tokio_rustls::TlsAcceptor::from(tls_cfg);
 
         let handle = tokio::spawn(async move {
@@ -973,6 +971,7 @@ mod tests {
         });
 
         let mut mgr = ConnectionManager::new(3);
+        mgr.add_trusted_server_certificate(trust_cert);
         mgr.connect_with_credential(&addr.to_string(), "u", "p")
             .await
             .unwrap();
@@ -988,8 +987,9 @@ mod tests {
 
     #[tokio::test]
     async fn connect_resets_reconnect_attempts() {
-        let (addr, server) = mock_tls_server(true).await;
+        let (addr, trust_cert, server) = mock_tls_server(true).await;
         let mut mgr = ConnectionManager::new(3);
+        mgr.add_trusted_server_certificate(trust_cert);
         mgr.reconnect_attempts = 2;
         mgr.connect_with_credential(&addr.to_string(), "u", "p")
             .await

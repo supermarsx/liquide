@@ -45,8 +45,8 @@ impl std::fmt::Display for NullPresenter {
 /// re-allocate on every present — a common case when switching between
 /// monitors at different scales.
 pub struct BufferPresenter {
-    /// The most recently captured buffer (cloned view of active pool slot).
-    buffer: Vec<u8>,
+    /// Key for the most recently captured frame in `pool`.
+    last_key: Option<(u32, u32, PixelFormat)>,
     width: u32,
     height: u32,
     format: PixelFormat,
@@ -68,7 +68,7 @@ impl BufferPresenter {
     #[must_use]
     pub fn with_pool_capacity(pool_capacity: usize) -> Self {
         Self {
-            buffer: Vec::new(),
+            last_key: None,
             width: 0,
             height: 0,
             format: PixelFormat::Bgra8,
@@ -81,7 +81,10 @@ impl BufferPresenter {
     /// The most recently captured frame data.
     #[must_use]
     pub fn buffer(&self) -> &[u8] {
-        &self.buffer
+        match self.last_key {
+            Some(key) => self.pool.get(&key).map(|buf| buf.as_slice()).unwrap_or(&[]),
+            None => &[],
+        }
     }
 
     /// Width of the last captured frame.
@@ -142,7 +145,7 @@ impl Presenter for BufferPresenter {
         slot.clear();
         slot.extend_from_slice(src);
 
-        self.buffer = slot.clone();
+        self.last_key = Some(key);
         self.width = surface.width();
         self.height = surface.height();
         self.format = surface.format();

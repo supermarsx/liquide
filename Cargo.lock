@@ -2619,6 +2619,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-subscriber",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -2631,6 +2632,7 @@ dependencies = [
  "liquide-compositor",
  "liquide-encoder",
  "liquide-encoder-hw",
+ "liquide-transport",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3434,6 +3436,7 @@ dependencies = [
  "clap",
  "liquide-a11y",
  "liquide-audio",
+ "liquide-client-renderer",
  "liquide-clipboard",
  "liquide-common",
  "liquide-compositor",
@@ -3710,6 +3713,7 @@ dependencies = [
  "futures-util",
  "liquide-common",
  "liquide-crypto",
+ "liquide-encoder",
  "liquide-protocol",
  "quinn",
  "rcgen",

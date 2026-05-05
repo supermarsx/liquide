@@ -76,7 +76,7 @@ impl FrameAssembler {
         // Phase 1: Decode all tiles (no state mutation).
         // If any tile fails to decode, we return early without committing
         // partial results, keeping the decoder in a consistent state.
-        let mut decoded: Vec<(u32, u32, Vec<u8>)> = Vec::with_capacity(batch.tiles.len());
+        let mut decoded = Vec::with_capacity(batch.tiles.len());
         for update in &batch.tiles {
             let data = self.decoder.decode_tile(update)?;
 

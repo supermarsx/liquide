@@ -22,17 +22,22 @@ fn self_signed_cert_and_key() -> (
     (vec![cert_der], key_der)
 }
 
-fn server_tls_config() -> Arc<rustls::ServerConfig> {
+fn server_tls_config() -> (
+    Arc<rustls::ServerConfig>,
+    rustls::pki_types::CertificateDer<'static>,
+) {
     let (certs, key) = self_signed_cert_and_key();
+    let trust_cert = certs[0].clone();
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    Arc::new(
+    let config = Arc::new(
         rustls::ServerConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()
             .expect("protocol versions")
             .with_no_client_auth()
             .with_single_cert(certs, key)
             .expect("server config"),
-    )
+    );
+    (config, trust_cert)
 }
 
 async fn send_msg<W: AsyncWriteExt + Unpin, T: serde::Serialize>(w: &mut W, msg: &T) {
@@ -46,10 +51,16 @@ async fn send_msg<W: AsyncWriteExt + Unpin, T: serde::Serialize>(w: &mut W, msg:
 
 /// Spin up a mock TLS server that performs the Liquide handshake.
 /// Returns (listener_addr, join_handle).
-pub async fn mock_tls_server(auth_result: bool) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+pub async fn mock_tls_server(
+    auth_result: bool,
+) -> (
+    SocketAddr,
+    rustls::pki_types::CertificateDer<'static>,
+    tokio::task::JoinHandle<()>,
+) {
     let tcp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp.local_addr().unwrap();
-    let tls_cfg = server_tls_config();
+    let (tls_cfg, trust_cert) = server_tls_config();
     let acceptor = tokio_rustls::TlsAcceptor::from(tls_cfg);
 
     let handle = tokio::spawn(async move {
@@ -136,5 +147,5 @@ pub async fn mock_tls_server(auth_result: bool) -> (SocketAddr, tokio::task::Joi
         let _ = tls.shutdown().await;
     });
 
-    (addr, handle)
+    (addr, trust_cert, handle)
 }

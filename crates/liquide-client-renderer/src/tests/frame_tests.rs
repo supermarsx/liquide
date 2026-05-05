@@ -280,3 +280,64 @@ fn test_assembler_display() {
     let display = format!("{a}");
     assert!(display.contains("1920x1080"));
 }
+
+#[test]
+fn t47_frame_assembler_receives_from_transport_channel() {
+    use liquide_transport::tile_channel::tile_channel;
+
+    let config = TileConfig {
+        tile_size: 8,
+        bpp: 4,
+    };
+    let tile_bytes = config.tile_bytes();
+
+    // Create a transport channel
+    let (tx, rx) = tile_channel();
+
+    // Simulate sender: encode and send batches
+    let raw_a = vec![0xAA; tile_bytes];
+    let raw_b = vec![0xBB; tile_bytes];
+    let compressed_a = compress_lz4(&raw_a);
+    let compressed_b = compress_lz4(&raw_b);
+
+    let batch_0 = make_batch(
+        0,
+        vec![make_update(
+            0,
+            0,
+            TileEncoding::Full,
+            compressed_a,
+            CompressionMethod::Lz4,
+        )],
+    );
+    let batch_1 = make_batch(
+        1,
+        vec![make_update(
+            0,
+            0,
+            TileEncoding::Full,
+            compressed_b,
+            CompressionMethod::Lz4,
+        )],
+    );
+
+    tx.send(batch_0).unwrap();
+    tx.send(batch_1).unwrap();
+
+    // Receiver: decode batches
+    let mut assembler = FrameAssembler::new(16, 16, PixelFormat::Bgra8, config);
+
+    let recv_0 = rx.recv().expect("receive batch 0");
+    assert_eq!(recv_0.sequence, 0);
+    assembler.apply_batch(&recv_0).unwrap();
+
+    let recv_1 = rx.recv().expect("receive batch 1");
+    assert_eq!(recv_1.sequence, 1);
+    assembler.apply_batch(&recv_1).unwrap();
+
+    assert_eq!(assembler.frame_count(), 2);
+
+    // Verify surface has been updated
+    let pixels = assembler.surface().pixels();
+    assert_eq!(pixels.len(), (16 * 16 * 4) as usize);
+}

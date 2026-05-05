@@ -18,6 +18,7 @@ serde_json.workspace = true
 bytes.workspace = true
 
 [dev-dependencies]
+liquide-transport.workspace = true
 criterion.workspace = true
 
 [features]

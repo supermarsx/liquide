@@ -32,6 +32,7 @@ serde.workspace = true
 dirs.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 tokio-rustls.workspace = true
+webpki-roots.workspace = true
 ciborium.workspace = true
 
 [dev-dependencies]

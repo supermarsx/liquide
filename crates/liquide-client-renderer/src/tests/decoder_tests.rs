@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use liquide_compositor::damage::DamageClass;
 use liquide_encoder::compress::{compress_lz4, compress_zstd};
 use liquide_encoder::delta::xor_delta;
@@ -56,7 +58,7 @@ fn test_decode_full_zstd() {
     );
 
     let decoded = d.decode_tile(&update).unwrap();
-    assert_eq!(decoded, raw);
+    assert_eq!(decoded.as_ref(), raw.as_slice());
 }
 
 #[test]
@@ -70,7 +72,7 @@ fn test_decode_full_lz4() {
     let update = make_update(0, 0, TileEncoding::Full, compressed, CompressionMethod::Lz4);
 
     let decoded = d.decode_tile(&update).unwrap();
-    assert_eq!(decoded, raw);
+    assert_eq!(decoded.as_ref(), raw.as_slice());
 }
 
 #[test]
@@ -79,12 +81,12 @@ fn test_decode_skip_with_previous() {
     let mut d = TileDecoder::new(2, 2, config.clone());
     let tile_bytes = config.tile_bytes();
     let previous = vec![0xCC; tile_bytes];
-    d.commit_tile(0, 0, previous.clone());
+    d.commit_tile(0, 0, Arc::<[u8]>::from(previous.clone()));
 
     let update = make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4);
 
     let decoded = d.decode_tile(&update).unwrap();
-    assert_eq!(decoded, previous);
+    assert_eq!(decoded.as_ref(), previous.as_slice());
 }
 
 #[test]
@@ -96,7 +98,7 @@ fn test_decode_skip_without_previous() {
     let update = make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4);
 
     let decoded = d.decode_tile(&update).unwrap();
-    assert_eq!(decoded, vec![0u8; tile_bytes]);
+    assert_eq!(decoded.as_ref(), vec![0u8; tile_bytes].as_slice());
 }
 
 #[test]
@@ -107,7 +109,7 @@ fn test_decode_delta() {
 
     let previous = vec![0x10; tile_bytes];
     let current = vec![0x30; tile_bytes];
-    d.commit_tile(1, 0, previous.clone());
+    d.commit_tile(1, 0, Arc::<[u8]>::from(previous.clone()));
 
     let delta = xor_delta(&current, &previous);
     let compressed = compress_zstd(&delta, 3).unwrap();
@@ -121,7 +123,7 @@ fn test_decode_delta() {
     );
 
     let decoded = d.decode_tile(&update).unwrap();
-    assert_eq!(decoded, current);
+    assert_eq!(decoded.as_ref(), current.as_slice());
 }
 
 #[test]
@@ -154,7 +156,7 @@ fn test_decode_copy() {
     let source_data = vec![0x42; tile_bytes];
 
     // Commit a tile at linear index 5 (tx=1, ty=1 in a 4-col grid)
-    d.commit_tile(1, 1, source_data.clone());
+    d.commit_tile(1, 1, Arc::<[u8]>::from(source_data.clone()));
 
     let update = make_update(
         2,
@@ -165,7 +167,7 @@ fn test_decode_copy() {
     );
 
     let decoded = d.decode_tile(&update).unwrap();
-    assert_eq!(decoded, source_data);
+    assert_eq!(decoded.as_ref(), source_data.as_slice());
 }
 
 #[test]
@@ -194,7 +196,7 @@ fn test_commit_and_delta_cycle() {
         CompressionMethod::Lz4,
     );
     let decoded1 = d.decode_tile(&update1).unwrap();
-    assert_eq!(decoded1, frame1);
+    assert_eq!(decoded1.as_ref(), frame1.as_slice());
     d.commit_tile(0, 0, decoded1);
 
     // Frame 2: delta
@@ -209,7 +211,7 @@ fn test_commit_and_delta_cycle() {
         CompressionMethod::Lz4,
     );
     let decoded2 = d.decode_tile(&update2).unwrap();
-    assert_eq!(decoded2, frame2);
+    assert_eq!(decoded2.as_ref(), frame2.as_slice());
 }
 
 #[test]
@@ -217,7 +219,7 @@ fn test_reset() {
     let config = default_config();
     let mut d = TileDecoder::new(2, 2, config.clone());
     let tile_bytes = config.tile_bytes();
-    d.commit_tile(0, 0, vec![0xFF; tile_bytes]);
+    d.commit_tile(0, 0, Arc::<[u8]>::from(vec![0xFF; tile_bytes]));
     d.reset();
 
     // After reset, skip should return zeros
@@ -229,10 +231,42 @@ fn test_reset() {
 #[test]
 fn test_resize_decoder() {
     let mut d = TileDecoder::new(2, 2, default_config());
-    d.commit_tile(0, 0, vec![0xFF; 64]);
+    d.commit_tile(0, 0, Arc::<[u8]>::from(vec![0xFF; 64]));
     d.resize(4, 4);
     assert_eq!(d.cols(), 4);
     assert_eq!(d.rows(), 4);
+}
+
+#[test]
+fn test_skip_reuses_shared_tile_buffer() {
+    let config = default_config();
+    let mut d = TileDecoder::new(2, 2, config.clone());
+    let previous: Arc<[u8]> = vec![0xAB; config.tile_bytes()].into();
+    d.commit_tile(0, 0, Arc::clone(&previous));
+
+    let update = make_update(0, 0, TileEncoding::Skip, Vec::new(), CompressionMethod::Lz4);
+
+    let decoded = d.decode_tile(&update).unwrap();
+    assert!(Arc::ptr_eq(&decoded, &previous));
+}
+
+#[test]
+fn test_copy_reuses_shared_tile_buffer() {
+    let config = default_config();
+    let mut d = TileDecoder::new(4, 4, config.clone());
+    let source: Arc<[u8]> = vec![0x3C; config.tile_bytes()].into();
+    d.commit_tile(1, 0, Arc::clone(&source));
+
+    let update = make_update(
+        0,
+        1,
+        TileEncoding::Copy { source_index: 1 },
+        Vec::new(),
+        CompressionMethod::Lz4,
+    );
+
+    let decoded = d.decode_tile(&update).unwrap();
+    assert!(Arc::ptr_eq(&decoded, &source));
 }
 
 #[test]

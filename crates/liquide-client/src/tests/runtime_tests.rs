@@ -17,8 +17,9 @@ fn test_initial_state_disconnected() {
 
 #[tokio::test]
 async fn test_connect_and_disconnect() {
-    let (addr, server) = super::helpers::mock_tls_server(true).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(true).await;
     let mut runtime = make_runtime();
+    runtime.add_trusted_server_certificate_for_tests(trust_cert);
     runtime.connect(&addr.to_string()).await.unwrap();
     assert_eq!(runtime.state(), ConnectionState::Connected);
 
@@ -29,8 +30,9 @@ async fn test_connect_and_disconnect() {
 
 #[tokio::test]
 async fn test_audit_events_on_connect() {
-    let (addr, server) = super::helpers::mock_tls_server(true).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(true).await;
     let mut runtime = make_runtime();
+    runtime.add_trusted_server_certificate_for_tests(trust_cert);
     runtime.connect(&addr.to_string()).await.unwrap();
 
     let events = runtime.drain_audit_events();
@@ -44,8 +46,9 @@ async fn test_audit_events_on_connect() {
 
 #[tokio::test]
 async fn test_drain_clears_events() {
-    let (addr, server) = super::helpers::mock_tls_server(true).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(true).await;
     let mut runtime = make_runtime();
+    runtime.add_trusted_server_certificate_for_tests(trust_cert);
     runtime.connect(&addr.to_string()).await.unwrap();
     let events1 = runtime.drain_audit_events();
     assert!(!events1.is_empty());

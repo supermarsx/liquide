@@ -52,6 +52,22 @@ fn test_buffer_presenter_multiple_frames() {
 }
 
 #[test]
+fn test_buffer_presenter_reuses_pool_slot_without_extra_clone() {
+    let mut p = BufferPresenter::with_pool_capacity(2);
+
+    let s1 = RenderSurface::new(10, 10, PixelFormat::Bgra8);
+    p.present(&s1).unwrap();
+    assert_eq!(p.pool_len(), 1);
+
+    let mut s2 = RenderSurface::new(10, 10, PixelFormat::Bgra8);
+    s2.set_pixel(0, 0, &[9, 8, 7, 6]);
+    p.present(&s2).unwrap();
+
+    assert_eq!(p.pool_len(), 1);
+    assert_eq!(&p.buffer()[0..4], &[9, 8, 7, 6]);
+}
+
+#[test]
 fn test_buffer_presenter_default() {
     let p = BufferPresenter::default();
     assert_eq!(p.frame_count(), 0);

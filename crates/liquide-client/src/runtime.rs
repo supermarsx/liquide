@@ -105,6 +105,15 @@ impl ClientRuntime {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn add_trusted_server_certificate_for_tests(
+        &mut self,
+        certificate: rustls::pki_types::CertificateDer<'static>,
+    ) {
+        self.connection_manager
+            .add_trusted_server_certificate(certificate);
+    }
+
     /// Disconnect from the current server.
     pub async fn disconnect(&mut self) {
         let server = "(current)".to_string();

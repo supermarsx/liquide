@@ -131,8 +131,9 @@ fn test_connection_state_display() {
 
 #[tokio::test]
 async fn test_connect_transitions_to_connected() {
-    let (addr, server) = super::helpers::mock_tls_server(true).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(true).await;
     let mut mgr = ConnectionManager::new(5);
+    mgr.add_trusted_server_certificate(trust_cert);
     mgr.connect_with_credential(&addr.to_string(), "user", "pass")
         .await
         .unwrap();
@@ -144,8 +145,9 @@ async fn test_connect_transitions_to_connected() {
 
 #[tokio::test]
 async fn test_disconnect_returns_to_disconnected() {
-    let (addr, server) = super::helpers::mock_tls_server(true).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(true).await;
     let mut mgr = ConnectionManager::new(5);
+    mgr.add_trusted_server_certificate(trust_cert);
     mgr.connect_with_credential(&addr.to_string(), "user", "pass")
         .await
         .unwrap();
@@ -180,16 +182,18 @@ async fn test_reconnect_fails_when_no_server() {
 
 #[tokio::test]
 async fn test_connect_replaces_existing_connection() {
-    let (addr1, server1) = super::helpers::mock_tls_server(true).await;
-    let (addr2, server2) = super::helpers::mock_tls_server(true).await;
+    let (addr1, trust_cert1, server1) = super::helpers::mock_tls_server(true).await;
+    let (addr2, trust_cert2, server2) = super::helpers::mock_tls_server(true).await;
 
     let mut mgr = ConnectionManager::new(5);
+    mgr.add_trusted_server_certificate(trust_cert1);
     mgr.connect_with_credential(&addr1.to_string(), "u", "p")
         .await
         .unwrap();
     assert_eq!(mgr.state(), ConnectionState::Connected);
 
     // Connecting again should disconnect the first and connect to second.
+    mgr.add_trusted_server_certificate(trust_cert2);
     mgr.connect_with_credential(&addr2.to_string(), "u", "p")
         .await
         .unwrap();
@@ -202,8 +206,9 @@ async fn test_connect_replaces_existing_connection() {
 
 #[tokio::test]
 async fn test_connect_auth_failure() {
-    let (addr, server) = super::helpers::mock_tls_server(false).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(false).await;
     let mut mgr = ConnectionManager::new(3);
+    mgr.add_trusted_server_certificate(trust_cert);
     let result = mgr
         .connect_with_credential(&addr.to_string(), "bad", "creds")
         .await;
@@ -246,8 +251,9 @@ async fn test_recv_message_when_not_connected() {
 
 #[tokio::test]
 async fn test_take_stream_after_connect() {
-    let (addr, server) = super::helpers::mock_tls_server(true).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(true).await;
     let mut mgr = ConnectionManager::new(5);
+    mgr.add_trusted_server_certificate(trust_cert);
     mgr.connect_with_credential(&addr.to_string(), "u", "p")
         .await
         .unwrap();
@@ -259,8 +265,9 @@ async fn test_take_stream_after_connect() {
 
 #[tokio::test]
 async fn test_quality_after_connect() {
-    let (addr, server) = super::helpers::mock_tls_server(true).await;
+    let (addr, trust_cert, server) = super::helpers::mock_tls_server(true).await;
     let mut mgr = ConnectionManager::new(5);
+    mgr.add_trusted_server_certificate(trust_cert);
     mgr.connect_with_credential(&addr.to_string(), "u", "p")
         .await
         .unwrap();
