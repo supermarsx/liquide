@@ -384,15 +384,15 @@ fn scene_flattening_includes_all_visible_window_types() {
     // Count different node kinds
     let shadows = flat
         .iter()
-        .filter(|n| matches!(n.kind, SceneNodeKind::Shadow { .. }))
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Shadow { .. }))
         .count();
     let decorations = flat
         .iter()
-        .filter(|n| matches!(n.kind, SceneNodeKind::Decoration { .. }))
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Decoration { .. }))
         .count();
     let backgrounds = flat
         .iter()
-        .filter(|n| matches!(n.kind, SceneNodeKind::Background { .. }))
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Background { .. }))
         .count();
 
     assert!(
@@ -455,12 +455,9 @@ fn window_title_appears_in_decoration_nodes() {
     let scene = shell.build_scene();
     let flat = scene.flatten();
 
-    let decoration = flat.iter().find(|n| {
-        if let SceneNodeKind::Decoration { title, .. } = &n.kind {
-            title.as_deref() == Some("My Custom Title")
-        } else {
-            false
-        }
+    let decoration = flat.iter().find(|n| match n.kind_ref() {
+        SceneNodeKind::Decoration { title, .. } => title.as_deref() == Some("My Custom Title"),
+        _ => false,
     });
 
     assert!(

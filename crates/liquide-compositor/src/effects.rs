@@ -101,47 +101,69 @@ pub struct EffectBudget {
 }
 
 impl EffectBudget {
+    fn default_target_fps(profile: QualityProfile) -> u32 {
+        match profile {
+            QualityProfile::Minimal => 30,
+            QualityProfile::Quality | QualityProfile::Balanced | QualityProfile::Performance => 60,
+        }
+    }
+
+    fn with_scaled_budgets(
+        profile: QualityProfile,
+        base_target_fps: u32,
+        base_total_effects_budget_ms: f64,
+        base_total_frame_budget_ms: f64,
+        base_blur_budget_ms: f64,
+        base_shadow_budget_ms: f64,
+        base_text_budget_ms: f64,
+        target_fps: u32,
+    ) -> Self {
+        let target_fps = if target_fps == 0 {
+            base_target_fps
+        } else {
+            target_fps
+        };
+        let scale = base_target_fps as f64 / target_fps as f64;
+
+        Self {
+            profile,
+            total_effects_budget_ms: base_total_effects_budget_ms * scale,
+            total_frame_budget_ms: base_total_frame_budget_ms * scale,
+            target_fps,
+            blur_budget_ms: base_blur_budget_ms * scale,
+            shadow_budget_ms: base_shadow_budget_ms * scale,
+            text_budget_ms: base_text_budget_ms * scale,
+        }
+    }
+
     /// Return the budget for a given quality profile at L0 (no degradation).
     #[must_use]
     pub fn for_profile(profile: QualityProfile) -> Self {
+        Self::for_profile_with_target_fps(profile, Self::default_target_fps(profile))
+    }
+
+    /// Return the budget for a given quality profile retargeted to a specific fps.
+    #[must_use]
+    pub fn for_profile_with_target_fps(profile: QualityProfile, target_fps: u32) -> Self {
         match profile {
-            QualityProfile::Quality => Self {
-                profile,
-                total_effects_budget_ms: 10.0,
-                total_frame_budget_ms: 16.67, // 60 fps
-                target_fps: 60,
-                blur_budget_ms: 4.0,
-                shadow_budget_ms: 1.0,
-                text_budget_ms: 3.0,
-            },
-            QualityProfile::Balanced => Self {
-                profile,
-                total_effects_budget_ms: 6.0,
-                total_frame_budget_ms: 12.0,
-                target_fps: 60,
-                blur_budget_ms: 3.0,
-                shadow_budget_ms: 0.8,
-                text_budget_ms: 3.0,
-            },
-            QualityProfile::Performance => Self {
-                profile,
-                total_effects_budget_ms: 3.0,
-                total_frame_budget_ms: 8.0,
-                target_fps: 60,
-                blur_budget_ms: 1.5,
-                shadow_budget_ms: 0.5,
-                text_budget_ms: 3.0,
-            },
-            QualityProfile::Minimal => Self {
-                profile,
-                total_effects_budget_ms: 1.0,
-                total_frame_budget_ms: 5.0,
-                target_fps: 30,
-                blur_budget_ms: 0.0,
-                shadow_budget_ms: 0.0,
-                text_budget_ms: 3.0,
-            },
+            QualityProfile::Quality => {
+                Self::with_scaled_budgets(profile, 60, 10.0, 16.67, 4.0, 1.0, 3.0, target_fps)
+            }
+            QualityProfile::Balanced => {
+                Self::with_scaled_budgets(profile, 60, 6.0, 12.0, 3.0, 0.8, 3.0, target_fps)
+            }
+            QualityProfile::Performance => {
+                Self::with_scaled_budgets(profile, 60, 3.0, 8.0, 1.5, 0.5, 3.0, target_fps)
+            }
+            QualityProfile::Minimal => {
+                Self::with_scaled_budgets(profile, 30, 1.0, 5.0, 0.0, 0.0, 3.0, target_fps)
+            }
         }
+    }
+
+    /// Retarget this budget to a different fps while preserving the profile ratios.
+    pub fn set_target_fps(&mut self, target_fps: u32) {
+        *self = Self::for_profile_with_target_fps(self.profile, target_fps);
     }
 
     /// Remaining budget given elapsed time.

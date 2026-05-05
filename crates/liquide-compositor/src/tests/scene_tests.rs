@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::geometry::Rect;
 use crate::pixel::Color;
 use crate::scene::*;
@@ -94,6 +96,22 @@ fn scene_node_flatten_with_children() {
     assert_eq!(flat[0].id, 1); // Background
     assert_eq!(flat[1].id, 2); // Surface
     assert!((flat[1].absolute_bounds.x - 100.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn flatten_reuses_shared_kind_handles_across_calls() {
+    let tree = build_test_tree();
+
+    let first = tree.flatten();
+    let second = tree.flatten();
+
+    let first_bg = first.iter().find(|node| node.id == 1).unwrap();
+    let second_bg = second.iter().find(|node| node.id == 1).unwrap();
+    let first_surface = first.iter().find(|node| node.id == 3).unwrap();
+    let second_surface = second.iter().find(|node| node.id == 3).unwrap();
+
+    assert!(Arc::ptr_eq(&first_bg.kind, &second_bg.kind));
+    assert!(Arc::ptr_eq(&first_surface.kind, &second_surface.kind));
 }
 
 #[test]

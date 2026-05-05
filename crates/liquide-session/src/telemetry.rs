@@ -93,6 +93,14 @@ impl FrameMetrics {
         }
     }
 
+    fn set_target_fps(&mut self, target_fps: u32) {
+        self.target_frame_ms = if target_fps > 0 {
+            1000.0 / target_fps as f64
+        } else {
+            0.0
+        };
+    }
+
     fn record_frame(&mut self, frame_ms: f64) {
         self.frame_times.push_back(frame_ms);
         if self.frame_times.len() > MAX_HISTORY {
@@ -192,6 +200,12 @@ impl Telemetry {
     /// Record a complete frame render.
     pub fn record_frame(&mut self, frame_ms: f64) {
         self.frames.record_frame(frame_ms);
+        self.update_health();
+    }
+
+    /// Update the configured target FPS used for missed-frame tracking.
+    pub fn set_target_fps(&mut self, target_fps: u32) {
+        self.frames.set_target_fps(target_fps);
         self.update_health();
     }
 

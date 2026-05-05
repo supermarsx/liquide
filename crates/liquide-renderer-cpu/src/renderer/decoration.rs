@@ -25,7 +25,7 @@ impl SoftwareRenderer {
             button_state,
             button_colors,
             button_layout,
-        } = &node.kind
+        } = node.kind_ref()
         {
             // Check if this is a skeleton node (window being dragged)
             let is_skeleton = self.is_skeleton_node(node.id);

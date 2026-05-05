@@ -305,6 +305,32 @@ impl DesktopCompositor {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
-        self.shell.tick(now_us)
+        let tick = self.shell.tick_detailed(now_us);
+        if !tick.dirty {
+            return false;
+        }
+
+        if tick.windows_dirty || tick.notifications_dirty || self.devtools_panel_visible() {
+            self.dirty_damage = None;
+        } else if tick.status_bar_dirty || tick.auto_hide_dirty {
+            let height = self.shell.status_bar().config().height.ceil().max(1.0);
+            self.mark_rect_dirty(liquide_compositor::geometry::Rect::new(
+                0.0,
+                0.0,
+                self.width as f32,
+                height + 4.0,
+            ));
+        } else {
+            self.dirty_damage = None;
+        }
+
+        true
+    }
+
+    fn devtools_panel_visible(&self) -> bool {
+        self.dt
+            .devtools
+            .as_ref()
+            .is_some_and(|devtools| devtools.is_visible())
     }
 }

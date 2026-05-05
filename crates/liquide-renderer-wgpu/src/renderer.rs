@@ -5,8 +5,9 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use liquide_compositor::damage::{DamageSet, DamageTile};
+use liquide_compositor::damage::{DamageClass, DamageSet, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
+use liquide_compositor::geometry::Rect;
 use liquide_compositor::{RenderResult, Renderer};
 
 use crate::device::{GpuBackend, WgpuDevice};
@@ -16,7 +17,10 @@ use crate::{Result, WgpuError};
 
 use bytemuck::{Pod, Zeroable};
 use liquide_compositor::Color;
-use liquide_compositor::scene::{FlatNode, ImageFit};
+use liquide_compositor::scene::{
+    BackgroundImage, BackgroundSpec, BorderSides, FlatNode, GradientSpec, ImageFit, OutlineSpec,
+    SceneNodeKind,
+};
 use wgpu::util::DeviceExt;
 
 // ── Glyph atlas types ───────────────────────────────────────────────────
@@ -427,6 +431,7 @@ fn color_to_f32(c: &Color) -> [f32; 4] {
 }
 
 /// Convert a `BlendMode` to the u32 index used by the blend compute shader.
+#[allow(dead_code)] // wired in once the blend-mode dispatch path lands.
 fn blend_mode_to_gpu(mode: &liquide_compositor::pixel::BlendMode) -> u32 {
     use liquide_compositor::pixel::BlendMode;
     match mode {
@@ -520,6 +525,387 @@ fn compute_image_uv_rect(
     }
 }
 
+// ── Scene-kind coverage contract ───────────────────────────────────────
+
+/// Scene-kind support level for a renderer backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneKindSupport {
+    /// The backend emits pixels for this kind when the node carries drawable content.
+    Rendered,
+    /// The kind is a container/marker/no-op for this backend and is safe to skip.
+    Structural,
+    /// The backend cannot render this kind correctly yet.
+    Unsupported,
+}
+
+/// CPU-vs-wgpu coverage decision for one scene kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WgpuSceneKindCoverage {
+    pub kind: &'static str,
+    pub cpu: SceneKindSupport,
+    pub wgpu: SceneKindSupport,
+    pub reason: &'static str,
+}
+
+fn coverage(
+    kind: &'static str,
+    cpu: SceneKindSupport,
+    wgpu: SceneKindSupport,
+    reason: &'static str,
+) -> WgpuSceneKindCoverage {
+    WgpuSceneKindCoverage {
+        kind,
+        cpu,
+        wgpu,
+        reason,
+    }
+}
+
+/// Return the declared CPU-vs-wgpu coverage for a `SceneNodeKind` payload.
+///
+/// This is intentionally data-sensitive for variants where the wgpu backend
+/// can render a strict subset correctly, such as tint-only glass or no-op
+/// render-layer markers.
+#[must_use]
+pub fn scene_kind_coverage(kind: &SceneNodeKind) -> WgpuSceneKindCoverage {
+    use SceneKindSupport::{Rendered, Structural, Unsupported};
+    use liquide_compositor::pixel::BlendMode;
+
+    match kind {
+        SceneNodeKind::Root => coverage("Root", Structural, Structural, "scene root marker"),
+        SceneNodeKind::Background { .. } => {
+            coverage("Background", Rendered, Rendered, "solid rect pipeline")
+        }
+        SceneNodeKind::BlurCache => coverage(
+            "BlurCache",
+            Rendered,
+            Unsupported,
+            "requires region-scoped cached backdrop blur",
+        ),
+        SceneNodeKind::Workspace { .. } => {
+            coverage("Workspace", Structural, Structural, "container marker")
+        }
+        SceneNodeKind::Surface { .. } => coverage(
+            "Surface",
+            Rendered,
+            Rendered,
+            "surface texture blit pipeline",
+        ),
+        SceneNodeKind::Shadow { .. } => {
+            coverage("Shadow", Rendered, Rendered, "shadow SDF pipeline")
+        }
+        SceneNodeKind::Decoration { .. } => coverage(
+            "Decoration",
+            Rendered,
+            Unsupported,
+            "window chrome requires title/button/vector decoration drawing",
+        ),
+        SceneNodeKind::ChildSurface { .. } => coverage(
+            "ChildSurface",
+            Rendered,
+            Rendered,
+            "surface texture blit pipeline",
+        ),
+        SceneNodeKind::Overlay => coverage("Overlay", Structural, Structural, "container marker"),
+        SceneNodeKind::Glass(params)
+            if params.blur_radius == 0 && !params.inner_glow && !params.parallax =>
+        {
+            coverage(
+                "Glass",
+                Rendered,
+                Rendered,
+                "tint-only glass is a solid rect",
+            )
+        }
+        SceneNodeKind::Glass(_) => coverage(
+            "Glass",
+            Rendered,
+            Unsupported,
+            "glass blur, inner glow, and parallax need a correct backdrop pass",
+        ),
+        SceneNodeKind::BlurBackdrop => coverage(
+            "BlurBackdrop",
+            Rendered,
+            Unsupported,
+            "requires region-scoped backdrop blur instead of whole-frame blur",
+        ),
+        SceneNodeKind::Tint { .. } => coverage("Tint", Rendered, Rendered, "solid rect pipeline"),
+        SceneNodeKind::Content => coverage("Content", Structural, Structural, "container marker"),
+        SceneNodeKind::ShellLayer => {
+            coverage("ShellLayer", Structural, Structural, "container marker")
+        }
+        SceneNodeKind::Cursor { .. } => coverage(
+            "Cursor",
+            Rendered,
+            Unsupported,
+            "software cursor shapes need vector or bitmap cursor rendering",
+        ),
+        SceneNodeKind::Text { .. } => coverage("Text", Rendered, Rendered, "glyph atlas pipeline"),
+        SceneNodeKind::Icon { .. } => coverage(
+            "Icon",
+            Rendered,
+            Unsupported,
+            "built-in vector icon atlas/path rendering is not wired to wgpu",
+        ),
+        SceneNodeKind::RenderLayer {
+            blend_mode: BlendMode::SrcOver,
+            isolate: false,
+        } => coverage(
+            "RenderLayer",
+            Rendered,
+            Structural,
+            "default SrcOver non-isolated marker has no extra GPU work",
+        ),
+        SceneNodeKind::RenderLayer { .. } => coverage(
+            "RenderLayer",
+            Rendered,
+            Unsupported,
+            "non-default blend/isolation needs pre-children layer snapshots",
+        ),
+        SceneNodeKind::ClipPath { .. } => coverage(
+            "ClipPath",
+            Rendered,
+            Unsupported,
+            "path/shape clipping requires a mask or stencil pass",
+        ),
+        SceneNodeKind::Filter { filters } if filters.is_empty() => coverage(
+            "Filter",
+            Structural,
+            Structural,
+            "empty filter chain is a no-op",
+        ),
+        SceneNodeKind::Filter { .. } => coverage(
+            "Filter",
+            Rendered,
+            Unsupported,
+            "filter chains need offscreen subtree rendering and scoped post-processing",
+        ),
+        SceneNodeKind::BackdropFilter { filters } if filters.is_empty() => coverage(
+            "BackdropFilter",
+            Structural,
+            Structural,
+            "empty backdrop-filter chain is a no-op",
+        ),
+        SceneNodeKind::BackdropFilter { .. } => coverage(
+            "BackdropFilter",
+            Rendered,
+            Unsupported,
+            "backdrop filters need a region-scoped backdrop snapshot",
+        ),
+        SceneNodeKind::Image { .. } => {
+            coverage("Image", Rendered, Rendered, "image texture pipeline")
+        }
+        SceneNodeKind::GradientFill { gradient } if gradient_is_supported(gradient) => coverage(
+            "GradientFill",
+            Rendered,
+            Rendered,
+            "linear/radial/conic gradient pipeline",
+        ),
+        SceneNodeKind::GradientFill { .. } => coverage(
+            "GradientFill",
+            Rendered,
+            Unsupported,
+            "mesh gradients are not implemented on wgpu",
+        ),
+        SceneNodeKind::SvgPath { .. } => coverage(
+            "SvgPath",
+            Rendered,
+            Unsupported,
+            "SVG path tessellation/stroking is not implemented on wgpu",
+        ),
+        SceneNodeKind::BackgroundFill { background } => background_fill_coverage(background),
+        SceneNodeKind::Outline { outline } if outline_is_noop(outline) => coverage(
+            "Outline",
+            Structural,
+            Structural,
+            "empty outline is a no-op",
+        ),
+        SceneNodeKind::Outline { .. } => coverage(
+            "Outline",
+            Rendered,
+            Unsupported,
+            "outline stroke styles are not implemented on wgpu",
+        ),
+        SceneNodeKind::BoxShadows { .. } => {
+            coverage("BoxShadows", Rendered, Rendered, "shadow SDF pipeline")
+        }
+        SceneNodeKind::Mask { .. } => coverage(
+            "Mask",
+            Rendered,
+            Unsupported,
+            "mask image/gradient application requires a mask compositing pass",
+        ),
+        SceneNodeKind::Border { sides, .. } if border_is_noop(sides) => {
+            coverage("Border", Structural, Structural, "empty border is a no-op")
+        }
+        SceneNodeKind::Border { .. } => coverage(
+            "Border",
+            Rendered,
+            Unsupported,
+            "per-side border styles and radii are not implemented on wgpu",
+        ),
+        SceneNodeKind::BorderImage { .. } => coverage(
+            "BorderImage",
+            Rendered,
+            Unsupported,
+            "border-image slicing/repeat is not implemented on wgpu",
+        ),
+        SceneNodeKind::TextCaret { .. } => {
+            coverage("TextCaret", Rendered, Rendered, "solid caret rect")
+        }
+        SceneNodeKind::SelectionOverlay { .. } => coverage(
+            "SelectionOverlay",
+            Rendered,
+            Rendered,
+            "filled rect plus simple border rects",
+        ),
+        SceneNodeKind::LockScreen => coverage(
+            "LockScreen",
+            Rendered,
+            Unsupported,
+            "lockscreen blur/dim overlay requires a correct backdrop pass",
+        ),
+        SceneNodeKind::CrashScreen => coverage(
+            "CrashScreen",
+            Rendered,
+            Rendered,
+            "emergency overlay is a solid rect",
+        ),
+    }
+}
+
+/// Return the coverage for a flattened node, including clip/opacity state that
+/// lives outside the `SceneNodeKind` payload.
+#[must_use]
+pub fn flat_node_scene_kind_coverage(node: &FlatNode) -> WgpuSceneKindCoverage {
+    use SceneKindSupport::{Rendered, Unsupported};
+
+    if node.clip.is_some() || rounded_clip_radius_is_active(node.clip_radius) {
+        return coverage(
+            "Clip",
+            Rendered,
+            Unsupported,
+            "flat-node clip rectangles or rounded clip radii are not applied by wgpu",
+        );
+    }
+
+    match node.kind_ref() {
+        SceneNodeKind::Content | SceneNodeKind::Overlay | SceneNodeKind::ShellLayer
+            if node.opacity < 1.0 =>
+        {
+            coverage(
+                "LayerOpacity",
+                Rendered,
+                Unsupported,
+                "container opacity needs scoped alpha modulation of existing pixels",
+            )
+        }
+        _ => scene_kind_coverage(node.kind_ref()),
+    }
+}
+
+/// Collect unsupported scene-kind decisions for a flattened scene.
+#[must_use]
+pub fn unsupported_wgpu_scene_kind_coverage<'a>(
+    nodes: impl IntoIterator<Item = &'a FlatNode>,
+) -> Vec<WgpuSceneKindCoverage> {
+    let mut unsupported = Vec::new();
+    for node in nodes {
+        let decision = flat_node_scene_kind_coverage(node);
+        if decision.wgpu == SceneKindSupport::Unsupported
+            && !unsupported
+                .iter()
+                .any(|seen: &WgpuSceneKindCoverage| seen.kind == decision.kind)
+        {
+            unsupported.push(decision);
+        }
+    }
+    unsupported
+}
+
+/// Validate that all flattened nodes are safe for the wgpu renderer.
+pub fn validate_wgpu_scene_kind_coverage<'a>(
+    nodes: impl IntoIterator<Item = &'a FlatNode>,
+) -> std::result::Result<(), String> {
+    let unsupported = unsupported_wgpu_scene_kind_coverage(nodes);
+    if unsupported.is_empty() {
+        return Ok(());
+    }
+
+    let details = unsupported
+        .iter()
+        .map(|decision| format!("{} ({})", decision.kind, decision.reason))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Err(format!(
+        "unsupported SceneNodeKind(s) for wgpu renderer: {details}"
+    ))
+}
+
+fn gradient_is_supported(gradient: &GradientSpec) -> bool {
+    !matches!(gradient, GradientSpec::Mesh { .. })
+}
+
+fn background_fill_coverage(background: &BackgroundSpec) -> WgpuSceneKindCoverage {
+    use SceneKindSupport::{Rendered, Structural, Unsupported};
+
+    match &background.image {
+        None if background.color.is_some() => coverage(
+            "BackgroundFill",
+            Rendered,
+            Rendered,
+            "background color maps to solid rect",
+        ),
+        None => coverage(
+            "BackgroundFill",
+            Structural,
+            Structural,
+            "empty background is a no-op",
+        ),
+        Some(BackgroundImage::Gradient(gradient)) if gradient_is_supported(gradient) => coverage(
+            "BackgroundFill",
+            Rendered,
+            Rendered,
+            "background gradient maps to gradient pipeline",
+        ),
+        Some(BackgroundImage::Gradient(_)) => coverage(
+            "BackgroundFill",
+            Rendered,
+            Unsupported,
+            "mesh background gradients are not implemented on wgpu",
+        ),
+        Some(BackgroundImage::ImageId(_)) | Some(BackgroundImage::Url(_)) => coverage(
+            "BackgroundFill",
+            Rendered,
+            Unsupported,
+            "background image sizing/repeat/loading is not implemented on wgpu",
+        ),
+    }
+}
+
+fn border_is_noop(sides: &BorderSides) -> bool {
+    use liquide_compositor::scene::BorderSideStyle;
+
+    [&sides.top, &sides.right, &sides.bottom, &sides.left]
+        .iter()
+        .all(|side| {
+            side.width <= 0.0
+                || side.color.a == 0
+                || matches!(side.style, BorderSideStyle::None | BorderSideStyle::Hidden)
+        })
+}
+
+fn outline_is_noop(outline: &OutlineSpec) -> bool {
+    use liquide_compositor::scene::OutlineStyle;
+
+    outline.width <= 0.0 || outline.color.a == 0 || outline.style == OutlineStyle::None
+}
+
+fn rounded_clip_radius_is_active(radius: (f32, f32, f32, f32)) -> bool {
+    radius.0 > 0.0 || radius.1 > 0.0 || radius.2 > 0.0 || radius.3 > 0.0
+}
+
 // ── Main renderer ───────────────────────────────────────────────────────
 
 /// The main GPU renderer.
@@ -541,12 +927,6 @@ pub struct WgpuRenderer {
     sampler: wgpu::Sampler,
     /// Flag set when the GPU device is lost; triggers CPU fallback.
     device_lost: Arc<AtomicBool>,
-    /// `SceneNodeKind`s that have already produced an "unhandled" warning
-    /// in this renderer's lifetime. Used to avoid log spam when the same
-    /// unimplemented kind appears in every frame.
-    warned_kinds: std::sync::Mutex<
-        std::collections::HashSet<std::mem::Discriminant<liquide_compositor::scene::SceneNodeKind>>,
-    >,
 }
 
 impl WgpuRenderer {
@@ -582,7 +962,6 @@ impl WgpuRenderer {
             texture_cache,
             sampler,
             device_lost,
-            warned_kinds: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -685,6 +1064,8 @@ impl WgpuRenderer {
             return Err(WgpuError::RenderFailed("GPU device lost".into()));
         }
 
+        validate_wgpu_scene_kind_coverage(nodes.iter()).map_err(WgpuError::RenderFailed)?;
+
         let output = self
             .output_texture
             .as_ref()
@@ -717,131 +1098,262 @@ impl WgpuRenderer {
 
         let mut draw_calls = 0u32;
 
-        // Process each flat node
+        // Process each flat node.
         for node in nodes {
-            use liquide_compositor::scene::SceneNodeKind;
-            match &node.kind {
-                SceneNodeKind::Background { color } => {
-                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
-                }
-                SceneNodeKind::Tint { color } => {
-                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
-                }
-                SceneNodeKind::Glass(params) => {
-                    draw_calls +=
-                        self.render_rect_node(&mut encoder, output, node, &params.tint_color, 0.0);
-                }
-                SceneNodeKind::Shadow {
-                    spread,
-                    blur_radius,
-                    color,
-                    corner_radius,
-                } => {
-                    draw_calls += self.render_shadow_node(
-                        &mut encoder,
-                        output,
-                        node,
-                        [0.0, 0.0],
-                        *blur_radius,
-                        *spread,
-                        color,
-                        *corner_radius,
-                        false,
-                    );
-                }
-                SceneNodeKind::BoxShadows { shadows } => {
-                    for s in shadows {
-                        draw_calls += self.render_shadow_node(
-                            &mut encoder,
-                            output,
-                            node,
-                            [s.offset_x, s.offset_y],
-                            s.blur_radius,
-                            s.spread_radius,
-                            &s.color,
-                            node.corner_radius.0,
-                            s.inset,
-                        );
-                    }
-                }
-                SceneNodeKind::GradientFill { gradient } => {
-                    draw_calls += self.render_gradient_node(&mut encoder, output, node, gradient);
-                }
-                SceneNodeKind::Filter { filters } => {
-                    draw_calls += self.render_blur_node(&mut encoder, node, filters);
-                }
-                SceneNodeKind::BackdropFilter { filters } => {
-                    draw_calls += self.render_backdrop_blur_node(&mut encoder, node, filters);
-                }
-                SceneNodeKind::RenderLayer { blend_mode, .. } => {
-                    draw_calls += self.render_blend_node(&mut encoder, blend_mode);
-                }
-                SceneNodeKind::Surface { buffer, .. }
-                | SceneNodeKind::ChildSurface { buffer, .. } => {
-                    if let Some(buf) = buffer {
-                        draw_calls += self.render_surface_node(&mut encoder, output, node, buf);
-                    }
-                }
-                SceneNodeKind::Text {
-                    text,
-                    color,
-                    font_size,
-                    font_family,
-                    font_weight,
-                    font_style_italic,
-                    scale,
-                    ..
-                } => {
-                    draw_calls += self.render_text_node(
-                        &mut encoder,
-                        output,
-                        node,
-                        text,
-                        color,
-                        *font_size,
-                        font_family,
-                        *font_weight,
-                        *font_style_italic,
-                        *scale,
-                    );
-                }
-                SceneNodeKind::Image {
-                    image_id,
-                    width: img_w,
-                    height: img_h,
-                    fit,
-                } => {
-                    draw_calls += self.render_image_node(
-                        &mut encoder,
-                        output,
-                        node,
-                        *image_id,
-                        *img_w,
-                        *img_h,
-                        fit,
-                    );
-                }
-                // Structural / container kinds with no direct draw — children were
-                // flattened before reaching us, so we silently skip these.
-                SceneNodeKind::Root
-                | SceneNodeKind::Workspace { .. }
-                | SceneNodeKind::Overlay
-                | SceneNodeKind::Content
-                | SceneNodeKind::ShellLayer => {}
-                // Kinds the wgpu backend does not yet implement — warn so
-                // missing visuals are discoverable in telemetry rather than
-                // silently dropped. Downgraded to trace! on repeat to avoid
-                // log spam when the same kind appears in every frame.
-                other => {
-                    self.warn_unhandled_kind(other);
-                }
-            }
+            draw_calls += self.render_supported_node(&mut encoder, output, node);
         }
 
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         self.frame_count += 1;
 
         Ok(draw_calls)
+    }
+
+    /// Dispatch one already-validated scene node through the wgpu pipelines.
+    fn render_supported_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+    ) -> u32 {
+        match node.kind_ref() {
+            SceneNodeKind::Background { color } => {
+                self.render_rect_node(encoder, output, node, color, 0.0)
+            }
+            SceneNodeKind::Tint { color } => {
+                self.render_rect_node(encoder, output, node, color, 0.0)
+            }
+            SceneNodeKind::Glass(params) => {
+                self.render_rect_node(encoder, output, node, &params.tint_color, 0.0)
+            }
+            SceneNodeKind::Shadow {
+                spread,
+                blur_radius,
+                color,
+                corner_radius,
+            } => self.render_shadow_node(
+                encoder,
+                output,
+                node,
+                [0.0, 0.0],
+                *blur_radius,
+                *spread,
+                color,
+                *corner_radius,
+                false,
+            ),
+            SceneNodeKind::BoxShadows { shadows } => shadows
+                .iter()
+                .map(|shadow| {
+                    self.render_shadow_node(
+                        encoder,
+                        output,
+                        node,
+                        [shadow.offset_x, shadow.offset_y],
+                        shadow.blur_radius,
+                        shadow.spread_radius,
+                        &shadow.color,
+                        node.corner_radius.0,
+                        shadow.inset,
+                    )
+                })
+                .sum(),
+            SceneNodeKind::GradientFill { gradient } => {
+                self.render_gradient_node(encoder, output, node, gradient)
+            }
+            SceneNodeKind::BackgroundFill { background } => {
+                self.render_background_fill_node(encoder, output, node, background)
+            }
+            SceneNodeKind::Filter { filters } => self.render_blur_node(encoder, node, filters),
+            SceneNodeKind::BackdropFilter { filters } => {
+                self.render_backdrop_blur_node(encoder, node, filters)
+            }
+            SceneNodeKind::RenderLayer { blend_mode, .. } => {
+                self.render_blend_node(encoder, blend_mode)
+            }
+            SceneNodeKind::Surface { buffer, .. } | SceneNodeKind::ChildSurface { buffer, .. } => {
+                buffer.as_ref().map_or(0, |buf| {
+                    self.render_surface_node(encoder, output, node, buf)
+                })
+            }
+            SceneNodeKind::Text {
+                text,
+                color,
+                font_size,
+                font_family,
+                font_weight,
+                font_style_italic,
+                scale,
+                ..
+            } => self.render_text_node(
+                encoder,
+                output,
+                node,
+                text,
+                color,
+                *font_size,
+                font_family,
+                *font_weight,
+                *font_style_italic,
+                *scale,
+            ),
+            SceneNodeKind::Image {
+                image_id,
+                width: img_w,
+                height: img_h,
+                fit,
+            } => self.render_image_node(encoder, output, node, *image_id, *img_w, *img_h, fit),
+            SceneNodeKind::TextCaret { color, width } => {
+                self.render_text_caret_node(encoder, output, node, color, *width)
+            }
+            SceneNodeKind::SelectionOverlay {
+                fill,
+                border_color,
+                border_width,
+            } => self.render_selection_overlay_node(
+                encoder,
+                output,
+                node,
+                fill,
+                border_color,
+                *border_width,
+            ),
+            SceneNodeKind::CrashScreen => self.render_solid_rect(
+                encoder,
+                output,
+                &node.absolute_bounds,
+                &Color::new(180, 0, 0, 200),
+                node.opacity,
+                0.0,
+            ),
+            SceneNodeKind::Root
+            | SceneNodeKind::BlurCache
+            | SceneNodeKind::Workspace { .. }
+            | SceneNodeKind::Decoration { .. }
+            | SceneNodeKind::Overlay
+            | SceneNodeKind::BlurBackdrop
+            | SceneNodeKind::Content
+            | SceneNodeKind::ShellLayer
+            | SceneNodeKind::Cursor { .. }
+            | SceneNodeKind::Icon { .. }
+            | SceneNodeKind::ClipPath { .. }
+            | SceneNodeKind::SvgPath { .. }
+            | SceneNodeKind::Outline { .. }
+            | SceneNodeKind::Mask { .. }
+            | SceneNodeKind::Border { .. }
+            | SceneNodeKind::BorderImage { .. }
+            | SceneNodeKind::LockScreen => 0,
+        }
+    }
+
+    fn render_background_fill_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+        background: &BackgroundSpec,
+    ) -> u32 {
+        let mut draw_calls = 0;
+        if let Some(color) = &background.color {
+            draw_calls += self.render_rect_node(encoder, output, node, color, 0.0);
+        }
+        if let Some(BackgroundImage::Gradient(gradient)) = &background.image {
+            draw_calls += self.render_gradient_node(encoder, output, node, gradient);
+        }
+        draw_calls
+    }
+
+    fn render_text_caret_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+        color: &Color,
+        width: f32,
+    ) -> u32 {
+        if width <= 0.0 || color.a == 0 {
+            return 0;
+        }
+        let bounds = Rect::new(
+            node.absolute_bounds.x,
+            node.absolute_bounds.y,
+            width.min(node.absolute_bounds.width),
+            node.absolute_bounds.height,
+        );
+        self.render_solid_rect(encoder, output, &bounds, color, node.opacity, 0.0)
+    }
+
+    fn render_selection_overlay_node(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        node: &FlatNode,
+        fill: &Color,
+        border_color: &Color,
+        border_width: f32,
+    ) -> u32 {
+        let mut draw_calls = 0;
+        if fill.a > 0 {
+            draw_calls += self.render_solid_rect(
+                encoder,
+                output,
+                &node.absolute_bounds,
+                fill,
+                node.opacity,
+                0.0,
+            );
+        }
+        if border_width > 0.0 && border_color.a > 0 {
+            draw_calls += self.render_rect_stroke(
+                encoder,
+                output,
+                &node.absolute_bounds,
+                border_width,
+                border_color,
+                node.opacity,
+            );
+        }
+        draw_calls
+    }
+
+    fn render_rect_stroke(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        bounds: &Rect,
+        width: f32,
+        color: &Color,
+        opacity: f32,
+    ) -> u32 {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 || width <= 0.0 {
+            return 0;
+        }
+
+        let stroke = width.min(bounds.width * 0.5).min(bounds.height * 0.5);
+        let top = Rect::new(bounds.x, bounds.y, bounds.width, stroke);
+        let bottom = Rect::new(
+            bounds.x,
+            bounds.y + bounds.height - stroke,
+            bounds.width,
+            stroke,
+        );
+        let left = Rect::new(
+            bounds.x,
+            bounds.y + stroke,
+            stroke,
+            bounds.height - stroke * 2.0,
+        );
+        let right = Rect::new(
+            bounds.x + bounds.width - stroke,
+            bounds.y + stroke,
+            stroke,
+            bounds.height - stroke * 2.0,
+        );
+
+        [&top, &bottom, &left, &right]
+            .iter()
+            .map(|rect| self.render_solid_rect(encoder, output, rect, color, opacity, 0.0))
+            .sum()
     }
 
     // ── Rect fill dispatch (Background / Tint / Glass) ──────────────────
@@ -856,16 +1368,26 @@ impl WgpuRenderer {
         corner_radius: f32,
     ) -> u32 {
         let bounds = &node.absolute_bounds;
-        if bounds.width <= 0.0 || bounds.height <= 0.0 {
-            return 0;
-        }
-
-        // Use per-node corner radius if the arg is 0
         let cr = if corner_radius > 0.0 {
             corner_radius
         } else {
             node.corner_radius.0
         };
+        self.render_solid_rect(encoder, output, bounds, color, node.opacity, cr)
+    }
+
+    fn render_solid_rect(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &GpuTexture,
+        bounds: &Rect,
+        color: &Color,
+        opacity: f32,
+        corner_radius: f32,
+    ) -> u32 {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return 0;
+        }
 
         let quad_uniforms = QuadUniforms {
             dst_rect: [bounds.x, bounds.y, bounds.width, bounds.height],
@@ -884,8 +1406,8 @@ impl WgpuRenderer {
         let rect_uniforms = RectUniforms {
             color: color_to_f32(color),
             bounds: [0.0, 0.0, bounds.width, bounds.height],
-            corner_radius: cr,
-            opacity: node.opacity,
+            corner_radius,
+            opacity,
             _pad: [0.0; 2],
         };
         let rect_buf = self
@@ -1120,22 +1642,7 @@ impl WgpuRenderer {
                 [0.0, 0.0],
                 stops.as_slice(),
             ),
-            GradientSpec::Mesh { rows, cols, .. } => {
-                // Mesh gradients are not implemented on the GPU path yet.
-                // Warn once per instance so callers can observe the drop
-                // instead of silently getting a blank fill.
-                let disc = std::mem::discriminant(gradient);
-                let mut seen = self.warned_kinds.lock().unwrap_or_else(|e| e.into_inner());
-                // Reuse the unhandled-kind set: insert a stable sentinel via
-                // a debug-only path. Simpler: just warn unconditionally at
-                // trace level; lifted to warn! once.
-                drop(seen);
-                tracing::warn!(
-                    rows = *rows,
-                    cols = *cols,
-                    "GradientSpec::Mesh not implemented in wgpu renderer; skipping"
-                );
-                let _ = disc;
+            GradientSpec::Mesh { .. } => {
                 return 0;
             }
         };
@@ -2072,6 +2579,127 @@ impl WgpuRenderer {
         (self.width, self.height)
     }
 
+    /// Classify scene node kind to damage class for tile encoding.
+    ///
+    /// This mapping MUST match `liquide-renderer-cpu` for cross-renderer parity.
+    fn classify_node_kind(kind: &SceneNodeKind) -> Option<DamageClass> {
+        match kind {
+            SceneNodeKind::Cursor { .. } => Some(DamageClass::CursorOnly),
+            SceneNodeKind::Text { .. } | SceneNodeKind::TextCaret { .. } => {
+                Some(DamageClass::TextGlyph)
+            }
+            SceneNodeKind::Surface { .. }
+            | SceneNodeKind::ChildSurface { .. }
+            | SceneNodeKind::Image { .. }
+            | SceneNodeKind::BlurCache => Some(DamageClass::BitmapRegion),
+            SceneNodeKind::Root
+            | SceneNodeKind::Workspace { .. }
+            | SceneNodeKind::Overlay
+            | SceneNodeKind::Content
+            | SceneNodeKind::ShellLayer
+            | SceneNodeKind::RenderLayer { .. }
+            | SceneNodeKind::ClipPath { .. }
+            | SceneNodeKind::Filter { .. }
+            | SceneNodeKind::BackdropFilter { .. } => None,
+            _ => Some(DamageClass::UiPrimitive),
+        }
+    }
+
+    /// Classify damage tiles according to scene node content.
+    ///
+    /// This logic MUST match the CPU renderer's classification for
+    /// cross-renderer damage parity. Session tile encoding relies on
+    /// these classifications to apply appropriate compression strategies.
+    fn classify_damage_tiles(
+        &self,
+        nodes: &[FlatNode],
+        damage: &DamageSet,
+        width: u32,
+        height: u32,
+    ) -> Vec<DamageTile> {
+        if damage.is_empty() {
+            return Vec::new();
+        }
+
+        let expanded_damage_tiles = if damage.is_full() {
+            damage.materialize_tiles()
+        } else {
+            damage.tiles.clone()
+        };
+
+        use std::collections::HashMap;
+        let mut damage_tiles: HashMap<(u32, u32), DamageClass> =
+            HashMap::with_capacity(expanded_damage_tiles.len());
+        for tile in &expanded_damage_tiles {
+            damage_tiles
+                .entry((tile.x, tile.y))
+                .and_modify(|existing| {
+                    if tile.class.priority() < existing.priority() {
+                        *existing = tile.class;
+                    }
+                })
+                .or_insert(tile.class);
+        }
+
+        let mut classified: HashMap<(u32, u32), DamageClass> =
+            HashMap::with_capacity(damage_tiles.len());
+
+        let fb_bounds = Rect::new(0.0, 0.0, width as f32, height as f32);
+        let tile_size = damage.tile_size as f32;
+        let max_tx = width.div_ceil(damage.tile_size);
+        let max_ty = height.div_ceil(damage.tile_size);
+
+        for node in nodes {
+            let Some(node_class) = Self::classify_node_kind(node.kind_ref()) else {
+                continue;
+            };
+
+            let clipped_bounds = node
+                .clip
+                .as_ref()
+                .map_or(Some(node.absolute_bounds), |clip| {
+                    node.absolute_bounds.intersection(clip)
+                })
+                .and_then(|bounds| bounds.intersection(&fb_bounds));
+
+            let Some(bounds) = clipped_bounds else {
+                continue;
+            };
+
+            let tx_start = (bounds.x.max(0.0) / tile_size).floor() as u32;
+            let ty_start = (bounds.y.max(0.0) / tile_size).floor() as u32;
+            let tx_end = (bounds.right().max(0.0) / tile_size).ceil() as u32;
+            let ty_end = (bounds.bottom().max(0.0) / tile_size).ceil() as u32;
+
+            for ty in ty_start..ty_end.min(max_ty) {
+                for tx in tx_start..tx_end.min(max_tx) {
+                    if damage_tiles.contains_key(&(tx, ty)) {
+                        classified
+                            .entry((tx, ty))
+                            .and_modify(|existing| {
+                                if node_class.priority() < existing.priority() {
+                                    *existing = node_class;
+                                }
+                            })
+                            .or_insert(node_class);
+                    }
+                }
+            }
+        }
+
+        // Fallback to original classification for tiles without explicit classification
+        for (&coords, &fallback_class) in &damage_tiles {
+            classified.entry(coords).or_insert(fallback_class);
+        }
+
+        let mut tiles: Vec<DamageTile> = classified
+            .into_iter()
+            .map(|((x, y), class)| DamageTile { x, y, class })
+            .collect();
+        tiles.sort_by_key(|tile| (tile.class.priority(), tile.y, tile.x));
+        tiles
+    }
+
     /// Render into a CPU `FrameBuffer` (Renderer-compatible interface).
     ///
     /// Renders on GPU, then reads back to CPU memory. In future,
@@ -2086,14 +2714,27 @@ impl WgpuRenderer {
             self.resize(fb.width, fb.height)?;
         }
 
-        let _draw_calls = self.render_frame_with_damage(nodes, damage)?;
+        if damage.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let promoted_damage;
+        let render_damage = if damage.is_full() {
+            damage
+        } else {
+            promoted_damage = promote_partial_damage_to_full_frame(damage, fb.width, fb.height);
+            &promoted_damage
+        };
+
+        let _draw_calls = self.render_frame_with_damage(nodes, render_damage)?;
 
         let pixels = self.read_back()?;
         let fb_pixels = fb.pixels_mut().expect("CPU framebuffer required");
         let copy_len = fb_pixels.len().min(pixels.len());
         fb_pixels[..copy_len].copy_from_slice(&pixels[..copy_len]);
 
-        Ok(damage.tiles.clone())
+        // Classify damage tiles according to scene content for session tile encoding
+        Ok(self.classify_damage_tiles(nodes, render_damage, fb.width, fb.height))
     }
 
     /// Render only the nodes intersecting damaged regions.
@@ -2102,15 +2743,31 @@ impl WgpuRenderer {
         nodes: &[FlatNode],
         damage: &DamageSet,
     ) -> Result<u32> {
-        if damage.tiles.is_empty() {
+        if damage.is_empty() {
             return Ok(0);
         }
+
+        validate_wgpu_scene_kind_coverage(nodes.iter()).map_err(WgpuError::RenderFailed)?;
+
         let ts = damage.tile_size as f32;
         let padding = 32.0_f32;
-        let dx0 = damage.tiles.iter().map(|t| t.x).min().unwrap_or(0) as f32 * ts - padding;
-        let dy0 = damage.tiles.iter().map(|t| t.y).min().unwrap_or(0) as f32 * ts - padding;
-        let dx1 = (damage.tiles.iter().map(|t| t.x).max().unwrap_or(0) as f32 + 1.0) * ts + padding;
-        let dy1 = (damage.tiles.iter().map(|t| t.y).max().unwrap_or(0) as f32 + 1.0) * ts + padding;
+        let (dx0, dy0, dx1, dy1) = if let Some((grid_width, grid_height, _)) =
+            damage.full_grid_dimensions()
+        {
+            (
+                -padding,
+                -padding,
+                grid_width as f32 * ts + padding,
+                grid_height as f32 * ts + padding,
+            )
+        } else {
+            (
+                damage.tiles.iter().map(|t| t.x).min().unwrap_or(0) as f32 * ts - padding,
+                damage.tiles.iter().map(|t| t.y).min().unwrap_or(0) as f32 * ts - padding,
+                (damage.tiles.iter().map(|t| t.x).max().unwrap_or(0) as f32 + 1.0) * ts + padding,
+                (damage.tiles.iter().map(|t| t.y).max().unwrap_or(0) as f32 + 1.0) * ts + padding,
+            )
+        };
 
         let visible: Vec<&FlatNode> = nodes
             .iter()
@@ -2128,6 +2785,9 @@ impl WgpuRenderer {
         if self.device_lost.load(Ordering::Acquire) {
             return Err(WgpuError::RenderFailed("GPU device lost".into()));
         }
+
+        validate_wgpu_scene_kind_coverage(nodes.iter().copied())
+            .map_err(WgpuError::RenderFailed)?;
 
         let output = self
             .output_texture
@@ -2162,165 +2822,29 @@ impl WgpuRenderer {
         // Dispatch each damage-visible node through the same pipelines
         // as render_frame(). The only difference is the pre-filtered set.
         for node in nodes {
-            use liquide_compositor::scene::SceneNodeKind;
-            match &node.kind {
-                SceneNodeKind::Background { color } => {
-                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
-                }
-                SceneNodeKind::Tint { color } => {
-                    draw_calls += self.render_rect_node(&mut encoder, output, node, color, 0.0);
-                }
-                SceneNodeKind::Glass(params) => {
-                    draw_calls +=
-                        self.render_rect_node(&mut encoder, output, node, &params.tint_color, 0.0);
-                }
-                SceneNodeKind::Shadow {
-                    spread,
-                    blur_radius,
-                    color,
-                    corner_radius,
-                } => {
-                    draw_calls += self.render_shadow_node(
-                        &mut encoder,
-                        output,
-                        node,
-                        [0.0, 0.0],
-                        *blur_radius,
-                        *spread,
-                        color,
-                        *corner_radius,
-                        false,
-                    );
-                }
-                SceneNodeKind::BoxShadows { shadows } => {
-                    for s in shadows {
-                        draw_calls += self.render_shadow_node(
-                            &mut encoder,
-                            output,
-                            node,
-                            [s.offset_x, s.offset_y],
-                            s.blur_radius,
-                            s.spread_radius,
-                            &s.color,
-                            node.corner_radius.0,
-                            s.inset,
-                        );
-                    }
-                }
-                SceneNodeKind::GradientFill { gradient } => {
-                    draw_calls += self.render_gradient_node(&mut encoder, output, node, gradient);
-                }
-                SceneNodeKind::Filter { filters } => {
-                    draw_calls += self.render_blur_node(&mut encoder, node, filters);
-                }
-                SceneNodeKind::BackdropFilter { filters } => {
-                    draw_calls += self.render_backdrop_blur_node(&mut encoder, node, filters);
-                }
-                SceneNodeKind::RenderLayer { blend_mode, .. } => {
-                    draw_calls += self.render_blend_node(&mut encoder, blend_mode);
-                }
-                SceneNodeKind::Surface { buffer, .. }
-                | SceneNodeKind::ChildSurface { buffer, .. } => {
-                    if let Some(buf) = buffer {
-                        draw_calls += self.render_surface_node(&mut encoder, output, node, buf);
-                    }
-                }
-                SceneNodeKind::Text {
-                    text,
-                    color,
-                    font_size,
-                    font_family,
-                    font_weight,
-                    font_style_italic,
-                    scale,
-                    ..
-                } => {
-                    draw_calls += self.render_text_node(
-                        &mut encoder,
-                        output,
-                        node,
-                        text,
-                        color,
-                        *font_size,
-                        font_family,
-                        *font_weight,
-                        *font_style_italic,
-                        *scale,
-                    );
-                }
-                SceneNodeKind::Image {
-                    image_id,
-                    width: img_w,
-                    height: img_h,
-                    fit,
-                } => {
-                    draw_calls += self.render_image_node(
-                        &mut encoder,
-                        output,
-                        node,
-                        *image_id,
-                        *img_w,
-                        *img_h,
-                        fit,
-                    );
-                }
-                SceneNodeKind::Root
-                | SceneNodeKind::Workspace { .. }
-                | SceneNodeKind::Overlay
-                | SceneNodeKind::Content
-                | SceneNodeKind::ShellLayer => {}
-                other => {
-                    self.warn_unhandled_kind(other);
-                }
-            }
+            draw_calls += self.render_supported_node(&mut encoder, output, node);
         }
 
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         self.frame_count += 1;
         Ok(draw_calls)
     }
+}
 
-    /// Emit a `warn!` the first time we see each unhandled `SceneNodeKind`
-    /// in this renderer instance, and `trace!` on repeats. The catch-all is
-    /// intentional — new SceneNodeKinds added upstream won't break compile,
-    /// they'll just surface as runtime warnings.
-    fn warn_unhandled_kind(&self, kind: &liquide_compositor::scene::SceneNodeKind) {
-        use liquide_compositor::scene::SceneNodeKind;
-        let name: &'static str = match kind {
-            SceneNodeKind::BlurCache => "BlurCache",
-            SceneNodeKind::Decoration { .. } => "Decoration",
-            SceneNodeKind::BlurBackdrop => "BlurBackdrop",
-            SceneNodeKind::Cursor { .. } => "Cursor",
-            SceneNodeKind::Icon { .. } => "Icon",
-            SceneNodeKind::ClipPath { .. } => "ClipPath",
-            SceneNodeKind::SvgPath { .. } => "SvgPath",
-            SceneNodeKind::BackgroundFill { .. } => "BackgroundFill",
-            SceneNodeKind::Outline { .. } => "Outline",
-            SceneNodeKind::Mask { .. } => "Mask",
-            SceneNodeKind::Border { .. } => "Border",
-            SceneNodeKind::BorderImage { .. } => "BorderImage",
-            SceneNodeKind::TextCaret { .. } => "TextCaret",
-            SceneNodeKind::SelectionOverlay { .. } => "SelectionOverlay",
-            SceneNodeKind::LockScreen => "LockScreen",
-            SceneNodeKind::CrashScreen => "CrashScreen",
-            // Structural containers were handled above; anything reaching here
-            // is genuinely a future/unknown kind.
-            _ => "Unknown",
-        };
-        let disc = std::mem::discriminant(kind);
-        let mut seen = self.warned_kinds.lock().unwrap_or_else(|e| e.into_inner());
-        if seen.insert(disc) {
-            tracing::warn!(
-                "SceneNodeKind::{} not yet implemented in wgpu renderer",
-                name
-            );
-        } else {
-            tracing::trace!(
-                "SceneNodeKind::{} not yet implemented in wgpu renderer (repeat)",
-                name
-            );
-        }
-    }
+fn promote_partial_damage_to_full_frame(damage: &DamageSet, width: u32, height: u32) -> DamageSet {
+    let class = damage
+        .tiles
+        .iter()
+        .map(|tile| tile.class)
+        .min_by_key(DamageClass::priority)
+        .unwrap_or(DamageClass::UiPrimitive);
+    let tile_size = damage.tile_size.max(1);
+    DamageSet::full(
+        damage.tile_size,
+        width.div_ceil(tile_size),
+        height.div_ceil(tile_size),
+        class,
+    )
 }
 
 // ── Renderer trait implementation ────────────────────────────────────
@@ -2356,17 +2880,214 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use liquide_compositor::geometry::Affine2D;
     use liquide_compositor::pixel::BlendMode;
-    use liquide_compositor::scene::{GlassParams, GradientSpec};
+    use liquide_compositor::scene::{
+        BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec, ClipPathKind,
+        CursorShape, GlassParams, GradientSpec, MaskMode, MaskSpec, SceneNodeKind,
+    };
     use liquide_compositor::{BackdropFilterSpec, BoxShadowSpec, FilterSpec};
 
+    fn test_gradient() -> GradientSpec {
+        GradientSpec::Linear {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 1.0,
+            end_y: 1.0,
+            stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
+        }
+    }
+
+    fn background_with_image(image: Option<BackgroundImage>) -> BackgroundSpec {
+        BackgroundSpec {
+            color: Some(Color::new(10, 20, 30, 255)),
+            image,
+            size: BackgroundSize::Auto,
+            position: (0.0, 0.0),
+            repeat: BackgroundRepeat::NoRepeat,
+        }
+    }
+
+    fn flat_node(kind: SceneNodeKind) -> FlatNode {
+        FlatNode {
+            id: 1,
+            kind: Arc::new(kind),
+            absolute_bounds: Rect::new(0.0, 0.0, 32.0, 32.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
     // ── Uniform struct layout tests ─────────────────────────────────────
+
+    #[test]
+    fn scene_kind_coverage_allows_safe_wgpu_subsets() {
+        let tint_only_glass = SceneNodeKind::Glass(GlassParams {
+            blur_radius: 0,
+            tint_color: Color::new(255, 255, 255, 32),
+            inner_glow: false,
+            parallax: false,
+        });
+        assert_eq!(
+            scene_kind_coverage(&tint_only_glass).wgpu,
+            SceneKindSupport::Rendered
+        );
+
+        let gradient_background = SceneNodeKind::BackgroundFill {
+            background: background_with_image(Some(BackgroundImage::Gradient(test_gradient()))),
+        };
+        assert_eq!(
+            scene_kind_coverage(&gradient_background).wgpu,
+            SceneKindSupport::Rendered
+        );
+
+        let no_op_layer = SceneNodeKind::RenderLayer {
+            blend_mode: BlendMode::SrcOver,
+            isolate: false,
+        };
+        assert_eq!(
+            scene_kind_coverage(&no_op_layer).wgpu,
+            SceneKindSupport::Structural
+        );
+    }
+
+    #[test]
+    fn scene_kind_coverage_rejects_partial_or_unimplemented_kinds() {
+        let unsupported = vec![
+            SceneNodeKind::Glass(GlassParams::default()),
+            SceneNodeKind::Filter {
+                filters: vec![FilterSpec::Brightness(1.2)],
+            },
+            SceneNodeKind::BackdropFilter {
+                filters: vec![BackdropFilterSpec::Blur { radius: 8.0 }],
+            },
+            SceneNodeKind::RenderLayer {
+                blend_mode: BlendMode::Multiply,
+                isolate: false,
+            },
+            SceneNodeKind::Cursor {
+                shape: CursorShape::Arrow,
+            },
+            SceneNodeKind::Icon {
+                icon_id: 7,
+                color: Color::WHITE,
+            },
+            SceneNodeKind::Mask {
+                mask: MaskSpec::Gradient {
+                    gradient: test_gradient(),
+                    mode: MaskMode::Alpha,
+                },
+            },
+            SceneNodeKind::ClipPath {
+                clip_kind: ClipPathKind::RoundedRect { corner_radius: 4.0 },
+            },
+            SceneNodeKind::SvgPath {
+                d: "M0 0 L1 1".to_string(),
+                fill: Some(Color::WHITE),
+                stroke: Color::BLACK,
+                stroke_width: 1.0,
+            },
+        ];
+
+        for kind in unsupported {
+            assert_eq!(
+                scene_kind_coverage(&kind).wgpu,
+                SceneKindSupport::Unsupported,
+                "{kind:?} should be explicitly unsupported on wgpu"
+            );
+        }
+    }
+
+    #[test]
+    fn flat_node_coverage_rejects_clip_and_container_opacity() {
+        let mut clipped = flat_node(SceneNodeKind::Background {
+            color: Color::WHITE,
+        });
+        clipped.clip = Some(Rect::new(4.0, 4.0, 8.0, 8.0));
+        let clipped_coverage = flat_node_scene_kind_coverage(&clipped);
+        assert_eq!(clipped_coverage.kind, "Clip");
+        assert_eq!(clipped_coverage.wgpu, SceneKindSupport::Unsupported);
+
+        let mut translucent_layer = flat_node(SceneNodeKind::Content);
+        translucent_layer.opacity = 0.5;
+        let layer_coverage = flat_node_scene_kind_coverage(&translucent_layer);
+        assert_eq!(layer_coverage.kind, "LayerOpacity");
+        assert_eq!(layer_coverage.wgpu, SceneKindSupport::Unsupported);
+    }
+
+    #[test]
+    fn validate_wgpu_scene_kind_coverage_reports_unsupported_names() {
+        let nodes = vec![
+            flat_node(SceneNodeKind::Background {
+                color: Color::BLACK,
+            }),
+            flat_node(SceneNodeKind::Cursor {
+                shape: CursorShape::Arrow,
+            }),
+            flat_node(SceneNodeKind::Filter {
+                filters: vec![FilterSpec::Contrast(1.2)],
+            }),
+        ];
+
+        let err = validate_wgpu_scene_kind_coverage(nodes.iter()).unwrap_err();
+        assert!(err.contains("Cursor"));
+        assert!(err.contains("Filter"));
+        assert!(err.contains("unsupported SceneNodeKind"));
+    }
+
+    #[test]
+    fn mesh_gradient_and_background_images_are_unsupported_on_wgpu() {
+        let mesh = SceneNodeKind::GradientFill {
+            gradient: GradientSpec::Mesh {
+                rows: 2,
+                cols: 2,
+                colors: vec![Color::WHITE; 4],
+            },
+        };
+        assert_eq!(
+            scene_kind_coverage(&mesh).wgpu,
+            SceneKindSupport::Unsupported
+        );
+
+        let image_background = SceneNodeKind::BackgroundFill {
+            background: background_with_image(Some(BackgroundImage::ImageId(9))),
+        };
+        assert_eq!(
+            scene_kind_coverage(&image_background).wgpu,
+            SceneKindSupport::Unsupported
+        );
+    }
 
     #[test]
     fn rect_uniforms_size_and_alignment() {
         // Must be 48 bytes: color(16) + bounds(16) + corner_radius(4) + opacity(4) + pad(8).
         assert_eq!(std::mem::size_of::<RectUniforms>(), 48);
         assert_eq!(std::mem::align_of::<RectUniforms>(), 4);
+    }
+
+    #[test]
+    fn partial_damage_promotes_to_full_frame_for_cpu_readback() {
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 1,
+            y: 0,
+            class: DamageClass::TextGlyph,
+        });
+
+        let promoted = promote_partial_damage_to_full_frame(&damage, 128, 96);
+
+        assert!(promoted.is_full());
+        assert_eq!(
+            promoted.full_grid_dimensions(),
+            Some((2, 2, DamageClass::TextGlyph))
+        );
+        assert_eq!(promoted.materialize_tiles().len(), 4);
     }
 
     #[test]

@@ -9,6 +9,7 @@ description = "Multi-threaded render coordinator for Liquide compositor"
 # Internal
 liquide-common.workspace = true
 liquide-compositor.workspace = true
+liquide-renderer-cpu.workspace = true
 liquide-render-thread.workspace = true
 
 # Async runtime

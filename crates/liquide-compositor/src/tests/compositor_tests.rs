@@ -71,7 +71,7 @@ fn compositor_resize() {
 #[test]
 fn compositor_begin_frame() {
     let mut comp = Compositor::new(800, 600, 64, QualityProfile::Balanced);
-    comp.begin_frame();
+    comp.prepare_frame();
     let budget = comp.effect_budget();
     assert_eq!(budget.profile, QualityProfile::Balanced);
     assert!(budget.total_frame_budget_ms > 0.0);

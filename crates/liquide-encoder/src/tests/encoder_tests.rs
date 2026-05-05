@@ -12,12 +12,7 @@ fn patterned_framebuffer(width: u32, height: u32) -> FrameBuffer {
     for y in 0..height {
         for x in 0..width {
             let seed = (x + y * width) as u8;
-            pixels.extend_from_slice(&[
-                seed,
-                seed.wrapping_mul(3),
-                seed.wrapping_mul(5),
-                255,
-            ]);
+            pixels.extend_from_slice(&[seed, seed.wrapping_mul(3), seed.wrapping_mul(5), 255]);
         }
     }
 
@@ -46,11 +41,19 @@ fn t16_encoder_default_entry_point_matches_no_pressure_hint() {
     }];
 
     let plain_batch = plain.encode_frame(&fb, &damage).unwrap();
-    let hinted_batch = hinted.encode_frame_with_budget_hint(&fb, &damage, None).unwrap();
+    let hinted_batch = hinted
+        .encode_frame_with_budget_hint(&fb, &damage, None)
+        .unwrap();
 
     assert_eq!(plain_batch.tiles.len(), 1);
-    assert_eq!(plain_batch.tiles[0].encoding, hinted_batch.tiles[0].encoding);
-    assert_eq!(plain_batch.tiles[0].compression, hinted_batch.tiles[0].compression);
+    assert_eq!(
+        plain_batch.tiles[0].encoding,
+        hinted_batch.tiles[0].encoding
+    );
+    assert_eq!(
+        plain_batch.tiles[0].compression,
+        hinted_batch.tiles[0].compression
+    );
 }
 
 #[test]
@@ -70,7 +73,9 @@ fn t16_encoder_budget_hint_switches_bitmap_tiles_to_lz4() {
     let mut budget = BandwidthBudget::new(64, 0.1);
     budget.observe(128);
 
-    let normal_batch = normal.encode_frame_with_budget_hint(&fb, &damage, None).unwrap();
+    let normal_batch = normal
+        .encode_frame_with_budget_hint(&fb, &damage, None)
+        .unwrap();
     let pressured_batch = pressured
         .encode_frame_raw_with_budget_hint(
             fb.pixels(),
@@ -82,7 +87,10 @@ fn t16_encoder_budget_hint_switches_bitmap_tiles_to_lz4() {
         )
         .unwrap();
 
-    assert!(matches!(normal_batch.tiles[0].compression, CompressionMethod::Zstd { .. }));
+    assert!(matches!(
+        normal_batch.tiles[0].compression,
+        CompressionMethod::Zstd { .. }
+    ));
     assert_eq!(pressured_batch.tiles[0].compression, CompressionMethod::Lz4);
 }
 

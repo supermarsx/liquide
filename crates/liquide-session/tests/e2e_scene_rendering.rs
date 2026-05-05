@@ -50,6 +50,23 @@ fn scene_contains_workspace_node() {
     );
 }
 
+#[test]
+fn desktop_backdrop_has_native_accent_layers() {
+    let mut shell = new_shell();
+    let scene = shell.build_scene();
+    let flat = scene.flatten();
+
+    let backdrop_layers = flat
+        .iter()
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Background { .. }))
+        .count();
+
+    assert!(
+        backdrop_layers >= 3,
+        "desktop backdrop should include cheap native accent layers, got {backdrop_layers}"
+    );
+}
+
 // ── Window Scene Nodes ──────────────────────────────────────────────────────
 
 #[test]
@@ -114,7 +131,7 @@ fn decorated_window_has_decoration_node() {
 
     let has_decoration = flat
         .iter()
-        .any(|n| matches!(n.kind, SceneNodeKind::Decoration { .. }));
+        .any(|n| matches!(n.kind_ref(), SceneNodeKind::Decoration { .. }));
 
     assert!(
         has_decoration,
@@ -133,7 +150,7 @@ fn window_has_shadow_node() {
 
     let has_shadow = flat
         .iter()
-        .any(|n| matches!(n.kind, SceneNodeKind::Shadow { .. }));
+        .any(|n| matches!(n.kind_ref(), SceneNodeKind::Shadow { .. }));
 
     assert!(has_shadow, "window should have a shadow node");
 }
@@ -149,7 +166,7 @@ fn window_has_glass_titlebar() {
 
     let has_glass = flat
         .iter()
-        .any(|n| matches!(n.kind, SceneNodeKind::Glass(_)));
+        .any(|n| matches!(n.kind_ref(), SceneNodeKind::Glass(_)));
 
     assert!(has_glass, "window title bar should have a Glass node");
 }

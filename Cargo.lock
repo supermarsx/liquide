@@ -3334,6 +3334,7 @@ dependencies = [
  "liquide-common",
  "liquide-compositor",
  "liquide-render-thread",
+ "liquide-renderer-cpu",
  "metrics",
  "rayon",
  "serde",

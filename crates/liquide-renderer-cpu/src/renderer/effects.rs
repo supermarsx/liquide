@@ -23,7 +23,7 @@ impl SoftwareRenderer {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
-        if let SceneNodeKind::Glass(params) = &node.kind {
+        if let SceneNodeKind::Glass(params) = node.kind_ref() {
             if self.blur_enabled && lod_level != LodLevel::Low {
                 let radius = params.blur_radius.min(30);
                 let lod_radius = (radius as f32 * quality_factor) as u32;
@@ -66,7 +66,7 @@ impl SoftwareRenderer {
             blur_radius,
             color,
             corner_radius,
-        } = &node.kind
+        } = node.kind_ref()
         {
             if lod_level == LodLevel::Low {
                 return;
@@ -131,7 +131,7 @@ impl SoftwareRenderer {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
-        if let SceneNodeKind::BoxShadows { shadows } = &node.kind {
+        if let SceneNodeKind::BoxShadows { shadows } = node.kind_ref() {
             if lod_level == LodLevel::Low {
                 return;
             }
@@ -241,7 +241,7 @@ impl SoftwareRenderer {
     ) {
         let bounds = node.absolute_bounds;
 
-        if let SceneNodeKind::BackdropFilter { filters } = &node.kind {
+        if let SceneNodeKind::BackdropFilter { filters } = node.kind_ref() {
             use liquide_compositor::scene::BackdropFilterSpec;
             for filter in filters {
                 match filter {
@@ -302,7 +302,7 @@ impl SoftwareRenderer {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
-        if let SceneNodeKind::Filter { filters } = &node.kind {
+        if let SceneNodeKind::Filter { filters } = node.kind_ref() {
             use liquide_compositor::scene::FilterSpec;
             for filter in filters {
                 match filter {

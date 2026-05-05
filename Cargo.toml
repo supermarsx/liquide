@@ -500,6 +500,10 @@ harness = false
 name = "transport_throughput"
 harness = false
 
+[[bench]]
+name = "compositor_render"
+harness = false
+
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"

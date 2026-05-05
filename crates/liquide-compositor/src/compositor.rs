@@ -180,6 +180,11 @@ impl Compositor {
         self.degradation.report_frame_time(frame_ms, budget_ms);
     }
 
+    /// Retarget effect-budget bookkeeping to a specific fps.
+    pub fn set_target_fps(&mut self, target_fps: u32) {
+        self.effect_budget.set_target_fps(target_fps);
+    }
+
     /// Update cursor state.
     pub fn set_cursor(&mut self, update: CursorUpdate) {
         self.cursor = Some(update);

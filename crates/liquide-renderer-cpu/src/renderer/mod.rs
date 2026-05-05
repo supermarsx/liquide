@@ -561,8 +561,17 @@ impl Renderer for SoftwareRenderer {
         // Compute damage bounding box in pixel coordinates for early culling.
         // Nodes fully outside the damaged region are skipped since only damaged
         // tiles will be blitted to the final output.
-        let damage_bbox = if damage.tiles.is_empty() {
+        let damage_bbox = if damage.is_empty() {
             None
+        } else if let Some((grid_width, grid_height, _)) = damage.full_grid_dimensions() {
+            let ts = damage.tile_size as f32;
+            let padding = 32.0_f32;
+            Some((
+                -padding,
+                -padding,
+                grid_width as f32 * ts + padding,
+                grid_height as f32 * ts + padding,
+            ))
         } else {
             let ts = damage.tile_size as f32;
             // Padding accounts for effects (blur, shadow) that extend beyond
@@ -651,13 +660,19 @@ impl SoftwareRenderer {
         damage: &DamageSet,
         fb: &FrameBuffer,
     ) -> Vec<DamageTile> {
-        if damage.tiles.is_empty() {
+        if damage.is_empty() {
             return Vec::new();
         }
 
+        let expanded_damage_tiles = if damage.is_full() {
+            damage.materialize_tiles()
+        } else {
+            damage.tiles.clone()
+        };
+
         let mut damage_tiles: HashMap<(u32, u32), DamageClass> =
-            HashMap::with_capacity(damage.tiles.len());
-        for tile in &damage.tiles {
+            HashMap::with_capacity(expanded_damage_tiles.len());
+        for tile in &expanded_damage_tiles {
             damage_tiles
                 .entry((tile.x, tile.y))
                 .and_modify(|existing| {
@@ -677,7 +692,7 @@ impl SoftwareRenderer {
         let max_ty = fb.height.div_ceil(damage.tile_size);
 
         for node in nodes {
-            let Some(node_class) = Self::classify_node_kind(&node.kind) else {
+            let Some(node_class) = Self::classify_node_kind(node.kind_ref()) else {
                 continue;
             };
 
@@ -767,7 +782,7 @@ impl SoftwareRenderer {
         // Apply LOD quality factor to certain effects
         let quality_factor = lod_level.quality_factor();
 
-        match &node.kind {
+        match node.kind_ref() {
             SceneNodeKind::Background { color } => {
                 let mut c = *color;
                 if opacity < 1.0 {

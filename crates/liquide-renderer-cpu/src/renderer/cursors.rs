@@ -13,7 +13,7 @@ impl SoftwareRenderer {
     /// Render a cursor node.
     pub(crate) fn render_cursor_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
-        if let liquide_compositor::scene::SceneNodeKind::Cursor { shape } = &node.kind {
+        if let liquide_compositor::scene::SceneNodeKind::Cursor { shape } = node.kind_ref() {
             let cx = bounds.x;
             let cy = bounds.y;
             let s = (bounds.width / 16.0).max(1.0);

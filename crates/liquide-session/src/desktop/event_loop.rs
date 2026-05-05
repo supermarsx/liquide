@@ -146,7 +146,7 @@ impl DesktopCompositor {
             while let Some(event) = platform.poll_event() {
                 had_event = true;
                 if self.handle_event(&event) {
-                    self.dirty = true;
+                    self.mark_full_dirty();
                 }
             }
 

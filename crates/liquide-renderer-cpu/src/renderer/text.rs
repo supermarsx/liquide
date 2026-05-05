@@ -35,7 +35,7 @@ impl SoftwareRenderer {
             text_indent,
             text_decoration,
             text_shadows,
-        } = &node.kind
+        } = node.kind_ref()
         {
             let mut c = *color;
             if opacity < 1.0 {
@@ -134,7 +134,7 @@ impl SoftwareRenderer {
                 let estimated_advance = glyph_height as f32 * 0.55;
 
                 // Word-wrap aware line splitting
-                let white_space_val = node.kind.text_white_space().unwrap_or(0);
+                let white_space_val = node.kind_ref().text_white_space().unwrap_or(0);
                 let allows_wrap = matches!(white_space_val, 0 | 3 | 4 | 5);
                 let max_line_width = bounds.width;
 

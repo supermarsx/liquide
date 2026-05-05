@@ -66,6 +66,16 @@ fn effect_budget_quality() {
 }
 
 #[test]
+fn effect_budget_retargets_to_high_refresh() {
+    let budget = EffectBudget::for_profile_with_target_fps(QualityProfile::Quality, 1000);
+
+    assert_eq!(budget.target_fps, 1000);
+    assert!((budget.total_frame_budget_ms - 1.0002).abs() < 0.01);
+    assert!(budget.total_effects_budget_ms > 0.0);
+    assert!(budget.total_effects_budget_ms < 1.0);
+}
+
+#[test]
 fn degradation_from_u8_invalid() {
     assert_eq!(DegradationLevel::from_u8(14), None);
     assert_eq!(DegradationLevel::from_u8(255), None);

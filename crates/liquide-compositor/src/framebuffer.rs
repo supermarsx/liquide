@@ -191,6 +191,28 @@ impl FrameBuffer {
         self.pixels().len()
     }
 
+    /// Deterministic fingerprint of the buffer shape and current pixel bytes.
+    #[must_use]
+    pub fn content_hash(&self) -> u64 {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+        fn mix(hash: &mut u64, bytes: &[u8]) {
+            for byte in bytes {
+                *hash ^= u64::from(*byte);
+                *hash = hash.wrapping_mul(FNV_PRIME);
+            }
+        }
+
+        let mut hash = FNV_OFFSET;
+        mix(&mut hash, &self.width.to_le_bytes());
+        mix(&mut hash, &self.height.to_le_bytes());
+        mix(&mut hash, &self.stride.to_le_bytes());
+        mix(&mut hash, self.format.wire_name().as_bytes());
+        mix(&mut hash, self.pixels());
+        hash
+    }
+
     /// Get the BGRA pixel at `(x, y)` as a [`Color`].
     ///
     /// Assumes `Bgra8` format. For other formats the result is approximate.
@@ -455,6 +477,18 @@ mod pool_tests {
     use super::*;
 
     #[test]
+    fn framebuffer_content_hash_tracks_pixel_changes() {
+        let mut fb = FrameBuffer::new(4, 4, PixelFormat::Bgra8);
+        let initial = fb.content_hash();
+
+        fb.set_pixel(1, 1, Color::new(40, 80, 120, 255));
+        let changed = fb.content_hash();
+
+        assert_ne!(initial, changed);
+        assert_eq!(changed, fb.content_hash());
+    }
+
+    #[test]
     fn pool_reuses_buffer() {
         let mut pool = FrameMemoryPool::new();
         let fb1 = pool.acquire(100, 100, PixelFormat::Bgra8);
@@ -480,14 +514,25 @@ mod pool_tests {
     #[test]
     fn pool_bucket_cap() {
         let mut pool = FrameMemoryPool::with_capacity(2);
+        // Allocate 4 fresh buffers, then release them all so the bucket
+        // sees 4 distinct returns; with cap=2 only the first two are retained.
+        let mut fbs = Vec::with_capacity(4);
         for _ in 0..4 {
-            let fb = pool.acquire(10, 10, PixelFormat::Bgra8);
+            fbs.push(pool.acquire(10, 10, PixelFormat::Bgra8));
+        }
+        assert_eq!(pool.allocations(), 4);
+        assert_eq!(pool.reuses(), 0);
+        for fb in fbs {
             pool.release(fb);
         }
         // Only 2 retained; the remaining releases are discarded.
         let _fb = pool.acquire(10, 10, PixelFormat::Bgra8);
         let _fb2 = pool.acquire(10, 10, PixelFormat::Bgra8);
         // Two reuses from the cap-2 bucket.
+        assert_eq!(pool.reuses(), 2);
+        // Third acquire must allocate fresh because the bucket was capped.
+        let _fb3 = pool.acquire(10, 10, PixelFormat::Bgra8);
+        assert_eq!(pool.allocations(), 5);
         assert_eq!(pool.reuses(), 2);
     }
 }

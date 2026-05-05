@@ -35,3 +35,23 @@ fn blit_region_opaque() {
     assert_eq!(c.r, 255);
     assert_eq!(c.g, 0);
 }
+
+#[test]
+fn blit_region_src_copies_rows_directly() {
+    let mut dst = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
+    let mut src = FrameBuffer::new(6, 4, PixelFormat::Bgra8);
+    src.clear(Color::new(12, 34, 56, 255));
+
+    blit_region(
+        &mut dst,
+        &src,
+        Rect::new(0.0, 0.0, 6.0, 4.0),
+        3,
+        5,
+        BlendMode::Src,
+        1.0,
+    );
+
+    assert_eq!(dst.get_pixel(3, 5), Color::new(12, 34, 56, 255));
+    assert_eq!(dst.get_pixel(8, 8), Color::new(12, 34, 56, 255));
+}

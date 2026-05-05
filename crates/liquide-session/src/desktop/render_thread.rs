@@ -8,15 +8,15 @@ use std::time::{Duration, Instant};
 
 use liquide_compositor::Renderer;
 use liquide_compositor::damage::{DamageClass, DamageSet, DamageTracker};
-use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
+use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::PixelFormat;
 use liquide_compositor::scene::{CursorShape, FlatNode, NodeProperties, SceneNode, SceneNodeKind};
 use liquide_compositor::{Compositor, CompositorContract};
 use tracing::{debug, info, warn};
 
-use super::cursor_state::CURSOR_SIZE;
 use super::DesktopCompositor;
+use super::cursor_state::CURSOR_SIZE;
 use super::scene_split::{SplitScene, split_flat_nodes};
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,8 @@ pub(super) struct RenderJob {
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) tile_size: u32,
+    /// Optional tile damage hint. None means render the full frame.
+    pub(super) damage: Option<DamageSet>,
     /// Window ID being dragged (for skeleton rendering - outline only).
     pub(super) dragged_window: Option<u64>,
     /// When true, the OS renders the cursor — skip the software cursor node.
@@ -47,14 +49,12 @@ pub(super) struct RenderedFrame {
     pub(super) format: PixelFormat,
     pub(super) render_ms: f64,
     pub(super) blur_enabled: bool,
-    /// `true` when the renderer had text nodes whose glyphs were still
-    /// being rasterised.  The main thread uses this to schedule a quick
-    /// follow-up render so the real TrueType glyphs appear without delay.
-    pub(super) has_pending_glyphs: bool,
     /// Per-component node count breakdown for telemetry.
     pub(super) scene_split: SplitScene,
     /// Tile-level damage for incremental encoding (None = full damage).
     pub(super) damage: Option<DamageSet>,
+    /// Fingerprint of the rendered pixel snapshot handed to present.
+    pub(super) content_hash: u64,
 }
 
 /// A lightweight cursor-only update that reuses the cached scene.
@@ -87,7 +87,7 @@ fn classified_damage_or_fallback(
     render_result: liquide_compositor::RenderResult<Vec<liquide_compositor::damage::DamageTile>>,
 ) -> DamageSet {
     let mut damage = match render_result {
-        Ok(tiles) if !tiles.is_empty() => DamageSet { tile_size, tiles },
+        Ok(tiles) if !tiles.is_empty() => DamageSet::from_tiles(tile_size, tiles),
         Ok(_) => fallback,
         Err(err) => {
             warn!("renderer damage classification failed: {err}");
@@ -148,8 +148,16 @@ fn trim_damage_to_changed_tiles(
     mut classified_damage: DamageSet,
     changed_damage: &DamageSet,
 ) -> DamageSet {
-    if classified_damage.tiles.is_empty() || changed_damage.tiles.is_empty() {
+    if classified_damage.is_empty() || changed_damage.is_empty() {
         classified_damage.clear();
+        return classified_damage;
+    }
+
+    if classified_damage.is_full() {
+        return changed_damage.clone();
+    }
+
+    if changed_damage.is_full() {
         return classified_damage;
     }
 
@@ -162,6 +170,74 @@ fn trim_damage_to_changed_tiles(
         .tiles
         .retain(|tile| changed_tiles.contains(&(tile.x, tile.y)));
     classified_damage
+}
+
+fn full_damage(tile_size: u32, width: u32, height: u32) -> DamageSet {
+    let grid_w = width.div_ceil(tile_size);
+    let grid_h = height.div_ceil(tile_size);
+    DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive)
+}
+
+fn damage_covers_frame(damage: &DamageSet, width: u32, height: u32) -> bool {
+    if damage.is_full() {
+        return true;
+    }
+    let grid_w = width.div_ceil(damage.tile_size);
+    let grid_h = height.div_ceil(damage.tile_size);
+    damage.tiles.len() as u32 >= grid_w.saturating_mul(grid_h)
+}
+
+fn clear_damage_tiles(framebuf: &mut FrameBuffer, damage: &DamageSet) {
+    use liquide_compositor::pixel::Color;
+
+    if damage_covers_frame(damage, framebuf.width, framebuf.height) {
+        framebuf.clear(Color::new(0, 0, 0, 255));
+        return;
+    }
+
+    let bpp = framebuf.format.bytes_per_pixel() as usize;
+    let stride = framebuf.stride as usize;
+    let width = framebuf.width;
+    let height = framebuf.height;
+    let Some(pixels) = framebuf.pixels_mut() else {
+        return;
+    };
+
+    for tile in &damage.tiles {
+        let x0 = tile.x.saturating_mul(damage.tile_size).min(width);
+        let y0 = tile.y.saturating_mul(damage.tile_size).min(height);
+        let x1 = x0.saturating_add(damage.tile_size).min(width);
+        let y1 = y0.saturating_add(damage.tile_size).min(height);
+
+        for y in y0..y1 {
+            let start = y as usize * stride + x0 as usize * bpp;
+            let end = y as usize * stride + x1 as usize * bpp;
+            pixels[start..end].fill(0);
+            for px in pixels[start..end].chunks_exact_mut(bpp) {
+                if bpp >= 4 {
+                    px[3] = 255;
+                }
+            }
+        }
+    }
+}
+
+fn cursor_flat_node(cursor_x: f32, cursor_y: f32, cursor_shape: CursorShape) -> FlatNode {
+    let bounds = Rect::new(cursor_x, cursor_y, CURSOR_SIZE, CURSOR_SIZE);
+    FlatNode {
+        id: 999_999,
+        kind: SceneNodeKind::Cursor {
+            shape: cursor_shape,
+        }
+        .into(),
+        absolute_bounds: bounds,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 9999,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +366,8 @@ impl DesktopCompositor {
         if let (Some(renderer), Some(compositor)) = (&mut self.renderer, &mut self.compositor) {
             let fb = compositor.frame_buffer_mut();
             let _ = renderer.render(&flat_nodes, fb, &damage);
+            compositor.end_frame();
+            compositor.present_frame();
         }
 
         // 7. Present.
@@ -300,19 +378,29 @@ impl DesktopCompositor {
 
             if let Some(compositor) = self.compositor.as_ref() {
                 let fb = compositor.frame_buffer();
-                match platform.present_frame(
+                let metadata = liquide_platform::FramePresentationMetadata::new(
+                    self.frame_count.saturating_add(1),
+                    fb.content_hash(),
+                );
+                match platform.present_frame_with_metadata(
                     handle,
                     fb.pixels(),
                     fb.width,
                     fb.height,
                     fb.stride,
                     fb.format,
+                    metadata,
                 ) {
                     Ok(()) => {
                         let _ = self.refresh_present_pacing(platform);
                     }
                     Err(error) => {
-                        warn!(%error, "failed to present synchronous desktop frame");
+                        warn!(
+                            %error,
+                            frame_sequence = metadata.frame_sequence,
+                            frame_content_hash = format!("{:016x}", metadata.content_hash),
+                            "failed to present synchronous desktop frame"
+                        );
                         let _ = self.refresh_present_pacing(platform);
                         return;
                     }
@@ -325,6 +413,53 @@ impl DesktopCompositor {
         let frame_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
         if let Some(ref mut compositor) = self.compositor {
             compositor.report_frame_time(frame_ms);
+        }
+    }
+
+    pub(super) fn mark_full_dirty(&mut self) {
+        self.dirty = true;
+        self.dirty_damage = None;
+    }
+
+    pub(super) fn mark_rect_dirty(&mut self, rect: Rect) {
+        let full_repaint_already_pending = self.dirty && self.dirty_damage.is_none();
+        self.dirty = true;
+
+        let Some((x, y, width, height)) = self.clamp_damage_rect(rect) else {
+            return;
+        };
+
+        let tile_size = self.tiles.tile_size;
+        let grid_w = self.width.div_ceil(tile_size);
+        let grid_h = self.height.div_ceil(tile_size);
+        let mut rect_damage = DamageSet::new(tile_size);
+        rect_damage.mark_rect(x, y, width, height, grid_w, grid_h);
+        rect_damage.dedup();
+
+        match &mut self.dirty_damage {
+            Some(existing) => existing.merge(&rect_damage),
+            None if full_repaint_already_pending => {
+                // A full repaint is already pending; keep that stronger hint.
+            }
+            None => self.dirty_damage = Some(rect_damage),
+        }
+    }
+
+    fn clamp_damage_rect(&self, rect: Rect) -> Option<(u32, u32, u32, u32)> {
+        let x0 = rect.x.max(0.0).min(self.width as f32).floor() as u32;
+        let y0 = rect.y.max(0.0).min(self.height as f32).floor() as u32;
+        let x1 = (rect.x + rect.width).max(0.0).min(self.width as f32).ceil() as u32;
+        let y1 = (rect.y + rect.height)
+            .max(0.0)
+            .min(self.height as f32)
+            .ceil() as u32;
+
+        let width = x1.saturating_sub(x0);
+        let height = y1.saturating_sub(y0);
+        if width == 0 || height == 0 {
+            None
+        } else {
+            Some((x0, y0, width, height))
         }
     }
 
@@ -369,17 +504,25 @@ impl DesktopCompositor {
             width: self.width,
             height: self.height,
             tile_size: self.tiles.tile_size,
+            damage: self.dirty_damage.take(),
             dragged_window: dragged_window.map(|wid| wid.0),
             hardware_cursor: self.cursor.use_hardware,
         };
 
         if let Some(ref tx) = self.render_tx {
-            if tx.send(RenderMsg::Job(job)).is_ok() {
-                self.render_in_flight = true;
-                self.render_metrics.record_submission();
-                // Update previous cursor position so subsequent cursor-only
-                // renders know where the cursor was in this full frame.
-                self.cursor.sync_prev();
+            match tx.send(RenderMsg::Job(job)) {
+                Ok(()) => {
+                    self.render_in_flight = true;
+                    self.render_metrics.record_submission();
+                    // Update previous cursor position so subsequent cursor-only
+                    // renders know where the cursor was in this full frame.
+                    self.cursor.sync_prev();
+                }
+                Err(err) => {
+                    if let RenderMsg::Job(job) = err.0 {
+                        self.dirty_damage = job.damage;
+                    }
+                }
             }
         }
     }
@@ -440,20 +583,41 @@ impl DesktopCompositor {
                 let render_duration = std::time::Duration::from_secs_f64(frame.render_ms / 1000.0);
                 self.render_metrics.record_completion(render_duration, true);
 
+                // Encode tiles for remote transmission from the completed
+                // frame snapshot before handing those same pixels to the
+                // platform present path.
+                self.tiles.encode_frame(
+                    &frame.pixels,
+                    frame.width,
+                    frame.height,
+                    frame.stride,
+                    frame.damage.as_ref(),
+                );
+
                 // Present the rendered pixels.
                 let t4 = Instant::now();
                 if let Some(handle) = self.window_handle {
-                    if let Err(error) = platform.present_frame(
+                    let metadata = liquide_platform::FramePresentationMetadata::new(
+                        self.frame_count.saturating_add(1),
+                        frame.content_hash,
+                    );
+                    if let Err(error) = platform.present_frame_with_metadata(
                         handle,
                         &frame.pixels,
                         frame.width,
                         frame.height,
                         frame.stride,
                         frame.format,
+                        metadata,
                     ) {
-                        warn!(%error, "failed to present threaded frame");
+                        warn!(
+                            %error,
+                            frame_sequence = metadata.frame_sequence,
+                            frame_content_hash = format!("{:016x}", metadata.content_hash),
+                            "failed to present threaded frame"
+                        );
                         let _ = self.refresh_present_pacing(platform);
-                        self.dirty = true;
+                        self.mark_full_dirty();
                         return false;
                     }
                     let _ = self.refresh_present_pacing(platform);
@@ -477,6 +641,8 @@ impl DesktopCompositor {
                     let s = &frame.scene_split;
                     debug!(
                         frame = self.frame_count,
+                        frame_sequence = self.frame_count,
+                        frame_content_hash = format!("{:016x}", frame.content_hash),
                         render_ms = format!("{:.2}", frame.render_ms),
                         present_ms = format!("{:.2}", present_ms),
                         blur = frame.blur_enabled,
@@ -489,37 +655,48 @@ impl DesktopCompositor {
                 if frame.render_ms > 100.0 {
                     warn!(
                         frame = self.frame_count,
+                        frame_sequence = self.frame_count,
+                        frame_content_hash = format!("{:016x}", frame.content_hash),
                         render_ms = format!("{:.1}", frame.render_ms),
                         present_ms = format!("{:.1}", present_ms),
                         "slow frame detected"
                     );
                 }
 
-                // Encode tiles for remote transmission.
-                self.tiles.encode_frame(
-                    &frame.pixels,
-                    frame.width,
-                    frame.height,
-                    frame.stride,
-                    frame.damage.as_ref(),
-                );
-
-                // If the renderer still has glyphs being rasterised,
-                // schedule an immediate follow-up render so the real
-                // TrueType glyphs appear without visible delay.
-                if frame.has_pending_glyphs {
-                    self.dirty = true;
-                }
-
                 true
             }
             Err(mpsc::TryRecvError::Empty) => false,
             Err(mpsc::TryRecvError::Disconnected) => {
-                warn!("render thread disconnected");
-                self.render_in_flight = false;
+                if self.handle_render_thread_disconnected() {
+                    warn!("render thread disconnected");
+                }
                 false
             }
         }
+    }
+
+    /// Mark the render thread as gone and tear down stale channel state.
+    ///
+    /// A disconnected frame receiver means the render worker has exited and no
+    /// future frames can arrive. Leaving the receiver installed makes the main
+    /// loop log the same terminal condition on every tick.
+    fn handle_render_thread_disconnected(&mut self) -> bool {
+        let had_frame_rx = self.frame_rx.take().is_some();
+        let had_render_tx = self.render_tx.take().is_some();
+        let had_render_thread = self.render_thread.is_some();
+        let had_in_flight = self.render_in_flight;
+        let had_render_state = had_frame_rx || had_render_tx || had_render_thread || had_in_flight;
+
+        if let Some(handle) = self.render_thread.take() {
+            let _ = handle.join();
+        }
+
+        self.render_in_flight = false;
+        self.dirty = false;
+        self.dirty_damage = None;
+        self.running = false;
+
+        had_render_state
     }
 
     /// Spawn the background render thread.
@@ -568,7 +745,7 @@ impl DesktopCompositor {
         let mut fb: Option<FrameBuffer> = None;
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         // Cache the last scene (without cursor) for cursor-only updates.
-        let mut cached_scene: Option<SceneNode> = None;
+        let mut cached_flat_nodes: Option<Vec<FlatNode>> = None;
         // Reusable buffer for flattened scene nodes (avoids allocation per frame).
         let mut flat_nodes_buf: Vec<FlatNode> = Vec::with_capacity(512);
 
@@ -614,7 +791,7 @@ impl DesktopCompositor {
                             &mut compositor,
                             &mut fb,
                             &mut tile_hash_tracker,
-                            &mut cached_scene,
+                            &mut cached_flat_nodes,
                             &mut flat_nodes_buf,
                             &tx,
                         );
@@ -622,38 +799,21 @@ impl DesktopCompositor {
                     }
 
                     // Reuse cached scene — just update cursor position.
-                    let scene = match cached_scene.as_ref() {
-                        Some(s) => s.clone(),
+                    let cached = match cached_flat_nodes.as_ref() {
+                        Some(nodes) => nodes,
                         None => continue, // No cached scene yet, skip
                     };
 
                     let t_total = Instant::now();
 
-                    // Add cursor to cloned scene.
-                    let mut scene = scene;
-                    let cursor_bounds = Rect::new(
+                    compositor.prepare_frame();
+                    flat_nodes_buf.clear();
+                    flat_nodes_buf.extend(cached.iter().cloned());
+                    flat_nodes_buf.push(cursor_flat_node(
                         cursor_job.cursor_x,
                         cursor_job.cursor_y,
-                        CURSOR_SIZE,
-                        CURSOR_SIZE,
-                    );
-                    scene.add_child(SceneNode::new(
-                        999_999,
-                        SceneNodeKind::Cursor {
-                            shape: cursor_job.cursor_shape,
-                        },
-                        NodeProperties::new(cursor_bounds).with_z_order(9999),
+                        cursor_job.cursor_shape,
                     ));
-
-                    // Submit to compositor and flatten.
-                    let _ = compositor.submit_scene(scene);
-                    compositor.prepare_frame();
-
-                    if let Some(s) = compositor.scene() {
-                        s.flatten_into(&mut flat_nodes_buf);
-                    } else {
-                        flat_nodes_buf.clear();
-                    }
                     let flat_nodes = &flat_nodes_buf;
 
                     // Ensure framebuffer matches.
@@ -676,40 +836,51 @@ impl DesktopCompositor {
                     };
 
                     // Targeted damage: only the old and new cursor tile regions.
+                    // If the backing framebuffer was recreated, fall back to a
+                    // full frame because there are no previous pixels to reuse.
                     let mut damage = DamageSet::new(cursor_job.tile_size);
                     let grid_w = cursor_job.width.div_ceil(cursor_job.tile_size);
                     let grid_h = cursor_job.height.div_ceil(cursor_job.tile_size);
                     let ts = cursor_job.tile_size as f32;
 
-                    // Damage old cursor region.
-                    let old_tx_start = (cursor_job.prev_cursor_x / ts) as u32;
-                    let old_ty_start = (cursor_job.prev_cursor_y / ts) as u32;
-                    let old_tx_end = ((cursor_job.prev_cursor_x + CURSOR_SIZE) / ts) as u32;
-                    let old_ty_end = ((cursor_job.prev_cursor_y + CURSOR_SIZE) / ts) as u32;
+                    if needs_new {
+                        damage.mark_all(grid_w, grid_h);
+                    } else {
+                        // Damage old cursor region.
+                        let old_tx_start = (cursor_job.prev_cursor_x / ts) as u32;
+                        let old_ty_start = (cursor_job.prev_cursor_y / ts) as u32;
+                        let old_tx_end = ((cursor_job.prev_cursor_x + CURSOR_SIZE) / ts) as u32;
+                        let old_ty_end = ((cursor_job.prev_cursor_y + CURSOR_SIZE) / ts) as u32;
 
-                    for ty in old_ty_start..=old_ty_end.min(grid_h.saturating_sub(1)) {
-                        for tx_idx in old_tx_start..=old_tx_end.min(grid_w.saturating_sub(1)) {
-                            damage.mark_tile(tx_idx, ty);
+                        for ty in old_ty_start..=old_ty_end.min(grid_h.saturating_sub(1)) {
+                            for tx_idx in old_tx_start..=old_tx_end.min(grid_w.saturating_sub(1)) {
+                                damage.mark_tile(tx_idx, ty);
+                            }
+                        }
+
+                        // Damage new cursor region.
+                        let new_tx_start = (cursor_job.cursor_x / ts) as u32;
+                        let new_ty_start = (cursor_job.cursor_y / ts) as u32;
+                        let new_tx_end = ((cursor_job.cursor_x + CURSOR_SIZE) / ts) as u32;
+                        let new_ty_end = ((cursor_job.cursor_y + CURSOR_SIZE) / ts) as u32;
+
+                        for ty in new_ty_start..=new_ty_end.min(grid_h.saturating_sub(1)) {
+                            for tx_idx in new_tx_start..=new_tx_end.min(grid_w.saturating_sub(1)) {
+                                damage.mark_tile(tx_idx, ty);
+                            }
                         }
                     }
 
-                    // Damage new cursor region.
-                    let new_tx_start = (cursor_job.cursor_x / ts) as u32;
-                    let new_ty_start = (cursor_job.cursor_y / ts) as u32;
-                    let new_tx_end = ((cursor_job.cursor_x + CURSOR_SIZE) / ts) as u32;
-                    let new_ty_end = ((cursor_job.cursor_y + CURSOR_SIZE) / ts) as u32;
-
-                    for ty in new_ty_start..=new_ty_end.min(grid_h.saturating_sub(1)) {
-                        for tx_idx in new_tx_start..=new_tx_end.min(grid_w.saturating_sub(1)) {
-                            damage.mark_tile(tx_idx, ty);
-                        }
-                    }
-
+                    clear_damage_tiles(framebuf, &damage);
                     let render_result = renderer.render(&flat_nodes, framebuf, &damage);
+                    compositor.end_frame();
+                    compositor.present_frame();
                     let mut damage =
                         classified_damage_or_fallback(cursor_job.tile_size, damage, render_result);
-                    for tile in &mut damage.tiles {
-                        tile.class = DamageClass::CursorOnly;
+                    if !needs_new {
+                        for tile in &mut damage.tiles {
+                            tile.class = DamageClass::CursorOnly;
+                        }
                     }
                     let damage =
                         tile_hash_tracker.trim_damage(cursor_job.tile_size, framebuf, damage);
@@ -718,8 +889,8 @@ impl DesktopCompositor {
                     renderer.report_render_time(total_ms);
                     compositor.report_frame_time(total_ms);
 
-                    let pixel_data =
-                        std::mem::take(framebuf.pixels_mut().expect("CPU framebuffer required"));
+                    let content_hash = framebuf.content_hash();
+                    let pixel_data = framebuf.pixels().to_vec();
                     let result = RenderedFrame {
                         pixels: Arc::new(pixel_data),
                         width: framebuf.width,
@@ -728,14 +899,10 @@ impl DesktopCompositor {
                         format: framebuf.format,
                         render_ms: total_ms,
                         blur_enabled: renderer.blur_enabled(),
-                        has_pending_glyphs: renderer.has_pending_glyphs(),
                         scene_split: SplitScene::default(), // cursor-only: scene unchanged
                         damage: Some(damage),
+                        content_hash,
                     };
-                    // Re-allocate pixel buffer for next frame.
-                    framebuf.memory =
-                        FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);
-
                     if tx.send(result).is_err() {
                         break;
                     }
@@ -766,7 +933,7 @@ impl DesktopCompositor {
                         &mut compositor,
                         &mut fb,
                         &mut tile_hash_tracker,
-                        &mut cached_scene,
+                        &mut cached_flat_nodes,
                         &mut flat_nodes_buf,
                         &tx,
                     );
@@ -782,36 +949,18 @@ impl DesktopCompositor {
         compositor: &mut Compositor,
         fb: &mut Option<FrameBuffer>,
         tile_hash_tracker: &mut FrameTileHashTracker,
-        cached_scene: &mut Option<SceneNode>,
+        cached_flat_nodes: &mut Option<Vec<FlatNode>>,
         flat_nodes_buf: &mut Vec<FlatNode>,
         tx: &mpsc::Sender<RenderedFrame>,
     ) {
         let t_total = Instant::now();
 
-        // Cache the scene (without cursor) for cursor-only updates.
-        *cached_scene = Some(latest_job.scene.clone());
-
         // 1. Add software cursor to scene (skip if hardware cursor is active).
-        let mut scene = latest_job.scene;
-        if !latest_job.hardware_cursor {
-            let cursor_bounds = Rect::new(
-                latest_job.cursor_x,
-                latest_job.cursor_y,
-                CURSOR_SIZE,
-                CURSOR_SIZE,
-            );
-            scene.add_child(SceneNode::new(
-                999_999,
-                SceneNodeKind::Cursor {
-                    shape: latest_job.cursor_shape,
-                },
-                NodeProperties::new(cursor_bounds).with_z_order(9999),
-            ));
-        }
+        let scene = latest_job.scene;
 
         // 2. Submit to compositor and flatten.
         let _ = compositor.submit_scene(scene);
-    compositor.prepare_frame();
+        compositor.prepare_frame();
 
         if let Some(s) = compositor.scene() {
             s.flatten_into(flat_nodes_buf);
@@ -832,12 +981,22 @@ impl DesktopCompositor {
 
                 if is_dragged_window_node {
                     // For dragged window: only keep basic decoration border
-                    matches!(node.kind, SceneNodeKind::Decoration { .. })
+                    matches!(node.kind_ref(), SceneNodeKind::Decoration { .. })
                 } else {
                     // All other windows and UI elements: render normally
                     true
                 }
             });
+        }
+
+        *cached_flat_nodes = Some(flat_nodes_buf.clone());
+
+        if !latest_job.hardware_cursor {
+            flat_nodes_buf.push(cursor_flat_node(
+                latest_job.cursor_x,
+                latest_job.cursor_y,
+                latest_job.cursor_shape,
+            ));
         }
 
         // 4. Ensure framebuffer matches requested dimensions.
@@ -854,17 +1013,19 @@ impl DesktopCompositor {
         }
         let framebuf = fb.as_mut().expect("framebuffer was just allocated above");
 
-        // 4b. Clear framebuffer to opaque black before rendering.
-        // Without this, any region not covered by a scene node retains stale
-        // data (or transparent black on the first frame), producing visible
-        // artifacts — most commonly a "black bar" below the statusbar.
-        framebuf.clear(liquide_compositor::pixel::Color::new(0, 0, 0, 255));
-
         // 5. Build damage set.
-        let mut damage = DamageSet::new(latest_job.tile_size);
-        let grid_w = latest_job.width.div_ceil(latest_job.tile_size);
-        let grid_h = latest_job.height.div_ceil(latest_job.tile_size);
-        damage.mark_all(grid_w, grid_h);
+        let mut damage = if needs_new {
+            full_damage(latest_job.tile_size, latest_job.width, latest_job.height)
+        } else {
+            latest_job.damage.unwrap_or_else(|| {
+                full_damage(latest_job.tile_size, latest_job.width, latest_job.height)
+            })
+        };
+        damage.dedup();
+
+        // 5b. Clear only the damaged tiles. The framebuffer is intentionally
+        // preserved between frames so partial damage has valid previous pixels.
+        clear_damage_tiles(framebuf, &damage);
 
         // 6. Render with performance optimizations for dragging.
         let t_render = Instant::now();
@@ -881,6 +1042,8 @@ impl DesktopCompositor {
         renderer.set_skeleton_window(latest_job.dragged_window);
 
         let render_result = renderer.render(flat_nodes_buf, framebuf, &damage);
+        compositor.end_frame();
+        compositor.present_frame();
         let damage = classified_damage_or_fallback(latest_job.tile_size, damage, render_result);
         let damage = tile_hash_tracker.trim_damage(latest_job.tile_size, framebuf, damage);
 
@@ -906,7 +1069,8 @@ impl DesktopCompositor {
         let scene_split = split_flat_nodes(flat_nodes_buf);
 
         // Send completed frame back — move pixels into Arc (zero-copy).
-        let pixel_data = std::mem::take(framebuf.pixels_mut().expect("CPU framebuffer required"));
+        let content_hash = framebuf.content_hash();
+        let pixel_data = framebuf.pixels().to_vec();
         let result = RenderedFrame {
             pixels: Arc::new(pixel_data),
             width: framebuf.width,
@@ -915,13 +1079,10 @@ impl DesktopCompositor {
             format: framebuf.format,
             render_ms: total_ms,
             blur_enabled: renderer.blur_enabled(),
-            has_pending_glyphs: renderer.has_pending_glyphs(),
             scene_split,
             damage: Some(damage),
+            content_hash,
         };
-        // Re-allocate pixel buffer for next frame.
-        framebuf.memory = FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);
-
         let _ = tx.send(result);
     }
 }
@@ -930,10 +1091,144 @@ impl DesktopCompositor {
 mod tests {
     use super::*;
 
+    struct NoopRenderer;
+
+    impl Renderer for NoopRenderer {
+        fn render(
+            &mut self,
+            _nodes: &[FlatNode],
+            _fb: &mut FrameBuffer,
+            _damage: &DamageSet,
+        ) -> liquide_compositor::RenderResult<Vec<liquide_compositor::DamageTile>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingRenderer {
+        damages: Vec<DamageSet>,
+    }
+
+    impl Renderer for RecordingRenderer {
+        fn render(
+            &mut self,
+            _nodes: &[FlatNode],
+            _fb: &mut FrameBuffer,
+            damage: &DamageSet,
+        ) -> liquide_compositor::RenderResult<Vec<liquide_compositor::DamageTile>> {
+            self.damages.push(damage.clone());
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Default)]
+    struct PaintingRenderer {
+        next_value: u8,
+    }
+
+    impl Renderer for PaintingRenderer {
+        fn render(
+            &mut self,
+            _nodes: &[FlatNode],
+            fb: &mut FrameBuffer,
+            _damage: &DamageSet,
+        ) -> liquide_compositor::RenderResult<Vec<liquide_compositor::DamageTile>> {
+            self.next_value = self.next_value.wrapping_add(1);
+            fb.set_pixel(
+                0,
+                0,
+                liquide_compositor::pixel::Color::new(
+                    self.next_value,
+                    self.next_value.wrapping_mul(2),
+                    self.next_value.wrapping_mul(3),
+                    255,
+                ),
+            );
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct RecordedPresent {
+        metadata: liquide_platform::FramePresentationMetadata,
+        first_pixel: [u8; 4],
+    }
+
+    #[derive(Default)]
+    struct RecordingPresentPlatform {
+        inner: liquide_platform::NullPlatform,
+        presents: Vec<RecordedPresent>,
+    }
+
+    impl liquide_platform::PlatformBackend for RecordingPresentPlatform {
+        fn display(&self) -> &dyn liquide_platform::DisplayBackend {
+            <liquide_platform::NullPlatform as liquide_platform::PlatformBackend>::display(
+                &self.inner,
+            )
+        }
+
+        fn window_host(&mut self) -> &mut dyn liquide_platform::NativeWindowHost {
+            <liquide_platform::NullPlatform as liquide_platform::PlatformBackend>::window_host(
+                &mut self.inner,
+            )
+        }
+
+        fn taskbar(&mut self) -> &mut dyn liquide_platform::TaskbarIntegration {
+            <liquide_platform::NullPlatform as liquide_platform::PlatformBackend>::taskbar(
+                &mut self.inner,
+            )
+        }
+
+        fn tray(&mut self) -> &mut dyn liquide_platform::NativeTray {
+            <liquide_platform::NullPlatform as liquide_platform::PlatformBackend>::tray(
+                &mut self.inner,
+            )
+        }
+
+        fn notifications(&mut self) -> &mut dyn liquide_platform::NativeNotifications {
+            <liquide_platform::NullPlatform as liquide_platform::PlatformBackend>::notifications(
+                &mut self.inner,
+            )
+        }
+
+        fn drag_drop(&mut self) -> &mut dyn liquide_platform::NativeDragDrop {
+            <liquide_platform::NullPlatform as liquide_platform::PlatformBackend>::drag_drop(
+                &mut self.inner,
+            )
+        }
+
+        fn keymap(&self) -> &dyn liquide_platform::KeymapTranslator {
+            <liquide_platform::NullPlatform as liquide_platform::PlatformBackend>::keymap(
+                &self.inner,
+            )
+        }
+
+        fn platform_name(&self) -> &str {
+            "recording-present"
+        }
+
+        fn present_frame_with_metadata(
+            &mut self,
+            _handle: liquide_platform::NativeWindowHandle,
+            pixels: &[u8],
+            _width: u32,
+            _height: u32,
+            _stride: u32,
+            _format: PixelFormat,
+            metadata: liquide_platform::FramePresentationMetadata,
+        ) -> liquide_platform::PlatformResult<()> {
+            let mut first_pixel = [0; 4];
+            first_pixel.copy_from_slice(&pixels[..4]);
+            self.presents.push(RecordedPresent {
+                metadata,
+                first_pixel,
+            });
+            Ok(())
+        }
+    }
+
     fn full_damage(tile_size: u32, grid_width: u32, grid_height: u32) -> DamageSet {
-        let mut damage = DamageSet::new(tile_size);
-        damage.mark_all(grid_width, grid_height);
-        damage
+        DamageSet::full(tile_size, grid_width, grid_height, DamageClass::UiPrimitive)
     }
 
     fn cursor_damage(tile_size: u32, tiles: &[(u32, u32)]) -> DamageSet {
@@ -948,6 +1243,47 @@ mod tests {
         damage
     }
 
+    fn test_render_job(id: u64) -> RenderJob {
+        RenderJob {
+            scene: SceneNode::new(
+                id,
+                SceneNodeKind::Root,
+                NodeProperties::new(Rect::new(0.0, 0.0, 64.0, 64.0)),
+            ),
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            cursor_shape: CursorShape::Arrow,
+            width: 64,
+            height: 64,
+            tile_size: 64,
+            damage: None,
+            dragged_window: None,
+            hardware_cursor: true,
+        }
+    }
+
+    fn test_rendered_frame(seed: u8, content_hash: u64) -> RenderedFrame {
+        let width = 64;
+        let height = 64;
+        let mut pixels = vec![0; (width * height * 4) as usize];
+        for (index, pixel) in pixels.iter_mut().enumerate() {
+            *pixel = seed.wrapping_add(index as u8);
+        }
+
+        RenderedFrame {
+            pixels: Arc::new(pixels),
+            width,
+            height,
+            stride: width * 4,
+            format: PixelFormat::Bgra8,
+            render_ms: 1.0,
+            blur_enabled: false,
+            scene_split: SplitScene::default(),
+            damage: None,
+            content_hash,
+        }
+    }
+
     #[test]
     fn t16_render_first_frame_full_damage() {
         let tile_size = 64;
@@ -957,7 +1293,12 @@ mod tests {
         let damage = tracker.trim_damage(tile_size, &fb, full_damage(tile_size, 2, 2));
 
         assert_eq!(damage.len(), 4);
-        assert!(damage.tiles.iter().all(|tile| tile.class == DamageClass::UiPrimitive));
+        assert!(
+            damage
+                .tiles
+                .iter()
+                .all(|tile| tile.class == DamageClass::UiPrimitive)
+        );
     }
 
     #[test]
@@ -986,8 +1327,11 @@ mod tests {
         let damage = tracker.trim_damage(tile_size, &resized_fb, full_damage(tile_size, 1, 1));
 
         assert_eq!(damage.len(), 1);
-        assert_eq!(damage.tiles[0].x, 0);
-        assert_eq!(damage.tiles[0].y, 0);
+        assert!(damage.is_full());
+        assert_eq!(
+            damage.full_grid_dimensions(),
+            Some((1, 1, DamageClass::UiPrimitive))
+        );
     }
 
     #[test]
@@ -1009,5 +1353,199 @@ mod tests {
         let repeated_damage =
             tracker.trim_damage(tile_size, &fb, cursor_damage(tile_size, &[(0, 0)]));
         assert!(repeated_damage.is_empty());
+    }
+
+    #[test]
+    fn render_full_job_completes_compositor_lifecycle_between_frames() {
+        let mut renderer = NoopRenderer;
+        let mut compositor =
+            Compositor::new(64, 64, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, rx) = mpsc::channel();
+
+        DesktopCompositor::render_full_job(
+            test_render_job(1),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+        assert_eq!(
+            compositor.lifecycle(),
+            liquide_compositor::FrameLifecycle::Presented
+        );
+
+        DesktopCompositor::render_full_job(
+            test_render_job(2),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+        assert_eq!(
+            compositor.lifecycle(),
+            liquide_compositor::FrameLifecycle::Presented
+        );
+        assert_eq!(rx.try_iter().count(), 2);
+    }
+
+    #[test]
+    fn render_full_job_uses_partial_damage_hint_after_framebuffer_exists() {
+        let mut renderer = RecordingRenderer::default();
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, _rx) = mpsc::channel();
+
+        let mut first = test_render_job(1);
+        first.width = 128;
+        first.height = 128;
+        DesktopCompositor::render_full_job(
+            first,
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+
+        let mut partial = DamageSet::new(64);
+        partial.mark_tile(1, 0);
+
+        let mut second = test_render_job(2);
+        second.width = 128;
+        second.height = 128;
+        second.damage = Some(partial);
+        DesktopCompositor::render_full_job(
+            second,
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+
+        assert_eq!(renderer.damages[0].len(), 4);
+        assert_eq!(renderer.damages[1].len(), 1);
+        assert_eq!(renderer.damages[1].tiles[0].x, 1);
+        assert_eq!(renderer.damages[1].tiles[0].y, 0);
+    }
+
+    #[test]
+    fn t47_rapid_full_jobs_emit_distinct_frame_snapshots() {
+        let mut renderer = PaintingRenderer::default();
+        let mut compositor =
+            Compositor::new(64, 64, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, rx) = mpsc::channel();
+
+        for id in 1..=4 {
+            DesktopCompositor::render_full_job(
+                test_render_job(id),
+                &mut renderer,
+                &mut compositor,
+                &mut fb,
+                &mut tile_hash_tracker,
+                &mut cached_flat_nodes,
+                &mut flat_nodes_buf,
+                &tx,
+            );
+        }
+
+        let frames: Vec<_> = rx.try_iter().collect();
+        assert_eq!(frames.len(), 4);
+        for pair in frames.windows(2) {
+            assert_ne!(
+                pair[0].content_hash, pair[1].content_hash,
+                "rapid render loop re-presented a stale pixel snapshot"
+            );
+            assert_ne!(pair[0].pixels[0], pair[1].pixels[0]);
+        }
+    }
+
+    #[test]
+    fn t47_try_present_forwards_monotonic_sequence_metadata() {
+        let mut desktop = DesktopCompositor::new(64, 64);
+        let (tx, rx) = mpsc::channel();
+        tx.send(test_rendered_frame(11, 0x1111)).unwrap();
+        tx.send(test_rendered_frame(29, 0x2222)).unwrap();
+
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.frame_rx = Some(rx);
+
+        let mut platform = RecordingPresentPlatform::default();
+
+        assert!(desktop.try_present(&mut platform));
+        assert!(desktop.try_present(&mut platform));
+
+        assert_eq!(desktop.frame_count(), 2);
+        assert_eq!(platform.presents.len(), 2);
+        assert_eq!(platform.presents[0].metadata.frame_sequence, 1);
+        assert_eq!(platform.presents[1].metadata.frame_sequence, 2);
+        assert!(
+            platform.presents[1].metadata.frame_sequence
+                > platform.presents[0].metadata.frame_sequence
+        );
+        assert_eq!(platform.presents[0].metadata.content_hash, 0x1111);
+        assert_eq!(platform.presents[1].metadata.content_hash, 0x2222);
+        assert_ne!(
+            platform.presents[0].first_pixel,
+            platform.presents[1].first_pixel
+        );
+    }
+
+    #[test]
+    fn render_thread_disconnect_clears_channels_and_stops_loop() {
+        let mut desktop = DesktopCompositor::new(64, 64);
+        let (render_tx, _render_rx) = mpsc::channel::<RenderMsg>();
+        let (_frame_tx, frame_rx) = mpsc::channel::<RenderedFrame>();
+
+        desktop.render_tx = Some(render_tx);
+        desktop.frame_rx = Some(frame_rx);
+        desktop.render_in_flight = true;
+        desktop.running = true;
+        desktop.dirty = true;
+        desktop.dirty_damage = Some(DamageSet::new(64));
+
+        assert!(desktop.handle_render_thread_disconnected());
+        assert!(desktop.render_tx.is_none());
+        assert!(desktop.frame_rx.is_none());
+        assert!(desktop.render_thread.is_none());
+        assert!(!desktop.render_in_flight);
+        assert!(!desktop.running);
+        assert!(!desktop.dirty);
+        assert!(desktop.dirty_damage.is_none());
+    }
+
+    #[test]
+    fn render_thread_disconnect_is_one_shot_after_cleanup() {
+        let mut desktop = DesktopCompositor::new(64, 64);
+        let (_frame_tx, frame_rx) = mpsc::channel::<RenderedFrame>();
+
+        desktop.frame_rx = Some(frame_rx);
+        desktop.render_in_flight = true;
+        desktop.running = true;
+
+        assert!(desktop.handle_render_thread_disconnected());
+        assert!(!desktop.handle_render_thread_disconnected());
     }
 }

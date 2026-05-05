@@ -1,8 +1,13 @@
 //! Render task definitions and execution
 
+use liquide_compositor::damage::DamageTile;
+use liquide_compositor::scene::FlatNode;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// Default tile size used for first-pass full-frame rendering.
+pub const DEFAULT_TILE_SIZE: u32 = 64;
 
 /// Priority level for render tasks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -113,6 +118,114 @@ pub enum RenderDataFormat {
     CommandBuffer,
 }
 
+impl RenderDataFormat {
+    /// Whether this format can back a CPU framebuffer render target.
+    pub fn is_cpu_framebuffer_format(self) -> bool {
+        matches!(self, Self::Rgba8 | Self::Bgra8)
+    }
+}
+
+/// Output target for a render task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderTarget {
+    /// Target width in pixels.
+    pub width: u32,
+    /// Target height in pixels.
+    pub height: u32,
+    /// Tile size used for damage classification.
+    pub tile_size: u32,
+    /// CPU framebuffer pixel format.
+    pub format: RenderDataFormat,
+}
+
+impl RenderTarget {
+    /// Create a BGRA8 render target with the default tile size.
+    pub fn new(width: u32, height: u32) -> Self {
+        Self {
+            width,
+            height,
+            tile_size: DEFAULT_TILE_SIZE,
+            format: RenderDataFormat::Bgra8,
+        }
+    }
+
+    /// Set tile size.
+    pub fn with_tile_size(mut self, tile_size: u32) -> Self {
+        self.tile_size = tile_size;
+        self
+    }
+
+    /// Set pixel format.
+    pub fn with_format(mut self, format: RenderDataFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Validate this target can be rendered by the CPU path.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.width == 0 || self.height == 0 {
+            return Err(format!(
+                "render target dimensions must be non-zero, got {}x{}",
+                self.width, self.height
+            ));
+        }
+
+        if self.tile_size == 0 {
+            return Err("render target tile_size must be non-zero".to_string());
+        }
+
+        if !self.format.is_cpu_framebuffer_format() {
+            return Err(format!(
+                "render target format {:?} is not CPU-framebuffer renderable",
+                self.format
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// Flattened scene input for a render task.
+#[derive(Clone)]
+pub struct RenderScene {
+    target: RenderTarget,
+    nodes: Arc<Vec<FlatNode>>,
+}
+
+impl RenderScene {
+    /// Create a scene using the default BGRA8 target.
+    pub fn new(width: u32, height: u32, nodes: Vec<FlatNode>) -> Self {
+        Self::with_target(RenderTarget::new(width, height), nodes)
+    }
+
+    /// Create a scene with an explicit target.
+    pub fn with_target(target: RenderTarget, nodes: Vec<FlatNode>) -> Self {
+        Self {
+            target,
+            nodes: Arc::new(nodes),
+        }
+    }
+
+    /// Return the render target.
+    pub fn target(&self) -> RenderTarget {
+        self.target
+    }
+
+    /// Borrow flattened scene nodes.
+    pub fn nodes(&self) -> &[FlatNode] {
+        &self.nodes
+    }
+}
+
+impl std::fmt::Debug for RenderScene {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderScene")
+            .field("target", &self.target)
+            .field("nodes", &self.nodes.len())
+            .finish()
+    }
+}
+
 /// A render task to be executed
 #[derive(Debug, Clone)]
 pub struct RenderTask {
@@ -127,6 +240,9 @@ pub struct RenderTask {
 
     /// Render data
     pub data: Option<RenderData>,
+
+    /// Flattened scene and render target for real renderer invocation.
+    pub scene: Option<RenderScene>,
 
     /// Task creation timestamp
     pub created_at: Instant,
@@ -144,6 +260,7 @@ impl RenderTask {
             kind,
             priority,
             data: None,
+            scene: None,
             created_at: Instant::now(),
             deadline: None,
         }
@@ -158,6 +275,12 @@ impl RenderTask {
     /// Set render data
     pub fn with_data(mut self, data: RenderData) -> Self {
         self.data = Some(data);
+        self
+    }
+
+    /// Set flattened scene input.
+    pub fn with_scene(mut self, scene: RenderScene) -> Self {
+        self.scene = Some(scene);
         self
     }
 
@@ -178,6 +301,23 @@ impl RenderTask {
     }
 }
 
+/// Metadata describing a rendered frame returned from a task.
+#[derive(Debug, Clone)]
+pub struct RenderOutputMetadata {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Bytes per row.
+    pub stride: u32,
+    /// Pixel format of the returned byte buffer.
+    pub format: RenderDataFormat,
+    /// Tile size used for damage classification.
+    pub tile_size: u32,
+    /// Damage tiles reported by the renderer for this pass.
+    pub damage_tiles: Vec<DamageTile>,
+}
+
 /// Output from a completed render task
 #[derive(Debug, Clone)]
 pub struct RenderOutput {
@@ -186,6 +326,9 @@ pub struct RenderOutput {
 
     /// Rendered data
     pub data: Option<RenderData>,
+
+    /// Rendered frame metadata.
+    pub metadata: Option<RenderOutputMetadata>,
 
     /// Render duration
     pub duration: Duration,
@@ -203,6 +346,24 @@ impl RenderOutput {
         Self {
             task_id,
             data,
+            metadata: None,
+            duration,
+            success: true,
+            error: None,
+        }
+    }
+
+    /// Create a successful output with frame metadata.
+    pub fn success_with_metadata(
+        task_id: u64,
+        data: RenderData,
+        metadata: RenderOutputMetadata,
+        duration: Duration,
+    ) -> Self {
+        Self {
+            task_id,
+            data: Some(data),
+            metadata: Some(metadata),
             duration,
             success: true,
             error: None,
@@ -214,6 +375,7 @@ impl RenderOutput {
         Self {
             task_id,
             data: None,
+            metadata: None,
             duration,
             success: false,
             error: Some(error),
@@ -321,5 +483,23 @@ mod tests {
         let data = RenderData::new(vec![1, 2, 3, 4], RenderDataFormat::Rgba8);
         assert_eq!(data.format(), RenderDataFormat::Rgba8);
         assert_eq!(data.data().len(), 4);
+    }
+
+    #[test]
+    fn test_render_target_validation() {
+        assert!(RenderTarget::new(32, 24).validate().is_ok());
+        assert!(RenderTarget::new(0, 24).validate().is_err());
+        assert!(
+            RenderTarget::new(32, 24)
+                .with_tile_size(0)
+                .validate()
+                .is_err()
+        );
+        assert!(
+            RenderTarget::new(32, 24)
+                .with_format(RenderDataFormat::Compressed)
+                .validate()
+                .is_err()
+        );
     }
 }

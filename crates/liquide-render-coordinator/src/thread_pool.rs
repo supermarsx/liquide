@@ -1,8 +1,18 @@
 //! Dedicated render thread pool
 
 use crate::error::{RenderError, Result};
-use crate::render_task::{RenderOutput, RenderTask, RenderTaskKind};
+use crate::render_task::{
+    RenderData, RenderDataFormat, RenderOutput, RenderOutputMetadata, RenderScene, RenderTarget,
+    RenderTask, RenderTaskKind,
+};
 use crossbeam_channel::{Receiver, Sender, bounded};
+use liquide_compositor::Renderer;
+use liquide_compositor::damage::{DamageClass, DamageSet};
+use liquide_compositor::framebuffer::FrameBuffer;
+use liquide_compositor::geometry::{Affine2D, Rect};
+use liquide_compositor::pixel::{Color, PixelFormat};
+use liquide_compositor::scene::{FlatNode, SceneNodeKind};
+use liquide_renderer_cpu::SoftwareRenderer;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::panic::AssertUnwindSafe;
@@ -286,6 +296,7 @@ impl RenderThread {
         info!("Render thread '{}' started", config.name);
 
         let mut priority_queue: BinaryHeap<PrioritizedTask> = BinaryHeap::new();
+        let mut renderer = SoftwareRenderer::new();
 
         while !shutdown.load(AtomicOrdering::Relaxed) {
             if config.priority_scheduling {
@@ -310,13 +321,18 @@ impl RenderThread {
 
                 // Process the highest-priority task
                 if let Some(prioritized) = priority_queue.pop() {
-                    Self::execute_task_safe(prioritized.task, &output_tx, &task_counter);
+                    Self::execute_task_safe(
+                        prioritized.task,
+                        &mut renderer,
+                        &output_tx,
+                        &task_counter,
+                    );
                 }
             } else {
                 // Without priority scheduling, block until a task arrives
                 match task_rx.recv_timeout(Duration::from_millis(50)) {
                     Ok(task) => {
-                        Self::execute_task_safe(task, &output_tx, &task_counter);
+                        Self::execute_task_safe(task, &mut renderer, &output_tx, &task_counter);
                     }
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
                     Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -329,12 +345,12 @@ impl RenderThread {
 
         // Process remaining tasks in priority queue
         while let Some(prioritized) = priority_queue.pop() {
-            Self::execute_task_safe(prioritized.task, &output_tx, &task_counter);
+            Self::execute_task_safe(prioritized.task, &mut renderer, &output_tx, &task_counter);
         }
 
         // Drain any remaining tasks from the channel
         while let Ok(task) = task_rx.try_recv() {
-            Self::execute_task_safe(task, &output_tx, &task_counter);
+            Self::execute_task_safe(task, &mut renderer, &output_tx, &task_counter);
         }
 
         info!("Render thread '{}' stopped", config.name);
@@ -346,12 +362,13 @@ impl RenderThread {
     /// task.  The thread itself continues processing subsequent tasks.
     fn execute_task_safe(
         task: RenderTask,
+        renderer: &mut SoftwareRenderer,
         output_tx: &Sender<RenderOutput>,
         task_counter: &Arc<AtomicU64>,
     ) {
         let task_id = task.id;
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            Self::execute_task(task, output_tx, task_counter);
+            Self::execute_task(task, renderer, output_tx, task_counter);
         }));
 
         if let Err(payload) = result {
@@ -366,10 +383,12 @@ impl RenderThread {
     /// Execute a single render task
     fn execute_task(
         task: RenderTask,
+        renderer: &mut SoftwareRenderer,
         output_tx: &Sender<RenderOutput>,
         task_counter: &Arc<AtomicU64>,
     ) {
         let start = Instant::now();
+        let task_id = task.id;
 
         debug!(
             "Executing task {} (kind: {:?}, priority: {:?})",
@@ -407,14 +426,133 @@ impl RenderThread {
                     debug!("Compositing {} layers", layer_ids.len());
                 }
             }
-            RenderOutput::success(task.id, task.data, start.elapsed())
+            Self::render_task_output(task, renderer, start)
         };
 
         if let Err(e) = output_tx.send(output) {
-            error!("Failed to send output for task {}: {}", task.id, e);
+            error!("Failed to send output for task {}: {}", task_id, e);
         }
 
         task_counter.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+
+    fn render_task_output(
+        task: RenderTask,
+        renderer: &mut SoftwareRenderer,
+        start: Instant,
+    ) -> RenderOutput {
+        let scene = task
+            .scene
+            .unwrap_or_else(|| default_scene_for_task(&task.kind));
+        let target = scene.target();
+
+        if let Err(error) = target.validate() {
+            return RenderOutput::failure(task.id, start.elapsed(), error);
+        }
+
+        let Some(pixel_format) = pixel_format_for_render_data(target.format) else {
+            return RenderOutput::failure(
+                task.id,
+                start.elapsed(),
+                format!("unsupported render data format {:?}", target.format),
+            );
+        };
+
+        let mut framebuffer = FrameBuffer::new(target.width, target.height, pixel_format);
+        framebuffer.clear(Color::BLACK);
+
+        let tile_size = target.tile_size.max(1);
+        let damage = DamageSet::full(
+            tile_size,
+            target.width.div_ceil(tile_size),
+            target.height.div_ceil(tile_size),
+            DamageClass::UiPrimitive,
+        );
+
+        let damage_tiles = match renderer.render(scene.nodes(), &mut framebuffer, &damage) {
+            Ok(tiles) if !tiles.is_empty() => tiles,
+            Ok(_) => damage.materialize_tiles(),
+            Err(error) => {
+                return RenderOutput::failure(
+                    task.id,
+                    start.elapsed(),
+                    format!("CPU renderer failed: {error}"),
+                );
+            }
+        };
+
+        let pixels = framebuffer.pixels().to_vec();
+        if pixels.is_empty() {
+            return RenderOutput::failure(
+                task.id,
+                start.elapsed(),
+                "CPU renderer produced an empty framebuffer".to_string(),
+            );
+        }
+
+        let metadata = RenderOutputMetadata {
+            width: framebuffer.width,
+            height: framebuffer.height,
+            stride: framebuffer.stride,
+            format: target.format,
+            tile_size,
+            damage_tiles,
+        };
+
+        RenderOutput::success_with_metadata(
+            task.id,
+            RenderData::new(pixels, target.format),
+            metadata,
+            start.elapsed(),
+        )
+    }
+}
+
+fn pixel_format_for_render_data(format: RenderDataFormat) -> Option<PixelFormat> {
+    match format {
+        RenderDataFormat::Bgra8 => Some(PixelFormat::Bgra8),
+        RenderDataFormat::Rgba8 => Some(PixelFormat::Rgba8),
+        RenderDataFormat::Compressed | RenderDataFormat::CommandBuffer => None,
+    }
+}
+
+fn default_scene_for_task(kind: &RenderTaskKind) -> RenderScene {
+    let color = match kind {
+        RenderTaskKind::Window { is_focused, .. } => {
+            if *is_focused {
+                Color::new(42, 117, 255, 255)
+            } else {
+                Color::new(76, 86, 106, 255)
+            }
+        }
+        RenderTaskKind::Dock => Color::new(26, 42, 72, 255),
+        RenderTaskKind::StatusBar => Color::new(16, 24, 40, 255),
+        RenderTaskKind::Background => Color::new(10, 14, 28, 255),
+        RenderTaskKind::Wallpaper { frame } => {
+            let accent = (*frame as u8).wrapping_mul(13).max(32);
+            Color::new(accent, 48, 118, 255)
+        }
+        RenderTaskKind::Composite { layer_ids } => {
+            let accent = (layer_ids.len() as u8).saturating_mul(40).max(64);
+            Color::new(48, accent, 128, 255)
+        }
+    };
+
+    let target = RenderTarget::new(64, 64);
+    RenderScene::with_target(target, vec![background_node(1, 64.0, 64.0, color)])
+}
+
+fn background_node(id: u64, width: f32, height: f32, color: Color) -> FlatNode {
+    FlatNode {
+        id,
+        kind: Arc::new(SceneNodeKind::Background { color }),
+        absolute_bounds: Rect::new(0.0, 0.0, width, height),
+        absolute_transform: Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
     }
 }
 
@@ -516,6 +654,14 @@ mod tests {
     use super::*;
     use crate::render_task::RenderTaskKind;
 
+    fn test_scene(width: u32, height: u32, color: Color) -> RenderScene {
+        RenderScene::new(
+            width,
+            height,
+            vec![background_node(1, width as f32, height as f32, color)],
+        )
+    }
+
     #[test]
     fn test_thread_creation() {
         let config = ThreadConfig::default();
@@ -529,12 +675,26 @@ mod tests {
         let config = ThreadConfig::default();
         let thread = RenderThread::new(config).unwrap();
 
-        let task = RenderTask::new(1, RenderTaskKind::Dock);
+        let task = RenderTask::new(1, RenderTaskKind::Dock).with_scene(test_scene(
+            16,
+            16,
+            Color::new(0, 120, 200, 255),
+        ));
         thread.submit(task).unwrap();
 
         let output = thread.recv_output(Duration::from_secs(1)).unwrap();
         assert_eq!(output.task_id, 1);
         assert!(output.success);
+        assert_eq!(
+            output.metadata.as_ref().map(|m| (m.width, m.height)),
+            Some((16, 16))
+        );
+        assert!(
+            output
+                .data
+                .as_ref()
+                .is_some_and(|data| !data.data().is_empty())
+        );
 
         thread.shutdown().unwrap();
     }
@@ -559,7 +719,11 @@ mod tests {
         let config = ThreadConfig::default();
         let thread = RenderThread::new(config).unwrap();
         for i in 1..=5 {
-            let task = RenderTask::new(i, RenderTaskKind::Dock);
+            let task = RenderTask::new(i, RenderTaskKind::Dock).with_scene(test_scene(
+                8,
+                8,
+                Color::new(i as u8, 60, 120, 255),
+            ));
             thread.submit(task).unwrap();
         }
         let mut received = Vec::new();

@@ -53,6 +53,8 @@ use render_thread::{RenderMsg, RenderedFrame};
 use tile_state::TileEncoderState;
 use window_render::WindowRenderManager;
 
+const DEFAULT_TARGET_FPS: u32 = 60;
+
 #[derive(Debug, Clone, Copy, Default)]
 struct PresentPacingState {
     awaiting_ack: bool,
@@ -81,6 +83,11 @@ pub struct DesktopCompositor {
     frame_count: u64,
     running: bool,
     dirty: bool,
+    /// Optional accumulated damage for the pending dirty frame.
+    ///
+    /// `None` means the next full-scene job must repaint the whole frame.
+    /// `Some` means the renderer can use those tiles as a damage hint.
+    dirty_damage: Option<liquide_compositor::damage::DamageSet>,
     last_render: Instant,
     loading: bool,
     /// Minimum interval between frames. 0 = unlimited.
@@ -191,16 +198,17 @@ impl DesktopCompositor {
             frame_count: 0,
             running: true,
             dirty: true,
+            dirty_damage: None,
             last_render: Instant::now(),
             loading: true,
-            frame_interval: Duration::from_millis(16), // ~60fps default
+            frame_interval: Duration::from_micros(1_000_000 / DEFAULT_TARGET_FPS as u64),
             debug_perf: false,
             render_tx: None,
             frame_rx: None,
             render_thread: None,
             render_in_flight: false,
             present_pacing: PresentPacingState::default(),
-            telemetry: create_telemetry(60), // 60fps target
+            telemetry: create_telemetry(DEFAULT_TARGET_FPS),
             cursor: CursorState::new(width as f32 / 2.0, height as f32 / 2.0),
             dt: DevToolsState::new(),
             tiles: TileEncoderState::new(width, height, tile_size),
@@ -234,6 +242,18 @@ impl DesktopCompositor {
         } else {
             Duration::from_micros(1_000_000 / fps as u64)
         };
+
+        if let Ok(mut telemetry) = self.telemetry.write() {
+            telemetry.set_target_fps(fps);
+        }
+
+        if let Some(compositor) = self.compositor.as_mut() {
+            compositor.set_target_fps(fps);
+        }
+
+        self.tiles.set_target_fps(fps);
+        self.shell
+            .set_frame_delta_ms(if fps > 0 { 1000.0 / fps as f32 } else { 16.667 });
     }
 
     /// Enable or disable per-frame perf timing output.
@@ -284,20 +304,31 @@ impl DesktopCompositor {
     ///
     /// Any CSS found is appended to the shell's stylesheet pipeline.
     fn load_external_css(shell: &mut Shell) {
-        // Try theme CSS from assets directory
-        let theme_names = ["night", "liquid-glass", "sunset", "midday"];
-        for name in &theme_names {
-            let candidate = std::path::Path::new("assets")
-                .join("themes")
-                .join(format!("{}.css", name));
-            if candidate.exists() {
-                if let Ok(css) = std::fs::read_to_string(&candidate) {
-                    info!(
-                        theme = name,
-                        "loaded external CSS theme from {:?}", candidate
-                    );
-                    shell.add_stylesheet(&css);
-                }
+        // Load exactly one packaged theme. Appending every theme makes the UI
+        // a cascade mashup and forces extra style work on every scene rebuild.
+        let theme_name =
+            std::env::var("LIQUIDE_THEME").unwrap_or_else(|_| "liquid-glass".to_string());
+        let theme_name = match theme_name.as_str() {
+            "liquid-glass" | "night" | "sunset" | "midday" => theme_name,
+            invalid => {
+                tracing::warn!(
+                    theme = invalid,
+                    "unknown LIQUIDE_THEME, falling back to liquid-glass"
+                );
+                "liquid-glass".to_string()
+            }
+        };
+        let candidate = std::path::Path::new("assets")
+            .join("themes")
+            .join(format!("{}.css", theme_name));
+        if candidate.exists() {
+            if let Ok(css) = std::fs::read_to_string(&candidate) {
+                info!(
+                    theme = theme_name,
+                    "loaded external CSS theme from {:?}", candidate
+                );
+                shell.load_css_theme(&candidate);
+                shell.add_stylesheet(&css);
             }
         }
 

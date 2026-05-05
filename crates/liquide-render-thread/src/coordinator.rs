@@ -8,6 +8,41 @@ use crate::content_thread::ContentThread;
 use crate::message::{DamageRect, FrameComplete, FrameId};
 use liquide_compositor::scene::FlatNode;
 
+#[derive(Debug, Clone, Copy, Default)]
+struct DamageBacklog {
+    union: Option<DamageRect>,
+}
+
+impl DamageBacklog {
+    fn absorb(&mut self, rect: DamageRect) {
+        self.union = Some(match self.union {
+            Some(existing) => union_damage_rect(existing, rect),
+            None => rect,
+        });
+    }
+
+    fn drain_with(&mut self, current: DamageRect) -> Vec<DamageRect> {
+        let merged = match self.union.take() {
+            Some(existing) => union_damage_rect(existing, current),
+            None => current,
+        };
+        vec![merged]
+    }
+}
+
+fn union_damage_rect(a: DamageRect, b: DamageRect) -> DamageRect {
+    let x0 = a.x.min(b.x);
+    let y0 = a.y.min(b.y);
+    let x1 = a.x.saturating_add(a.width).max(b.x.saturating_add(b.width));
+    let y1 = a.y.saturating_add(a.height).max(b.y.saturating_add(b.height));
+    DamageRect {
+        x: x0,
+        y: y0,
+        width: x1.saturating_sub(x0),
+        height: y1.saturating_sub(y0),
+    }
+}
+
 /// Frame pacing strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FramePacing {
@@ -59,8 +94,8 @@ pub struct RenderCoordinator {
     /// thread, its damage rectangles are unioned into this buffer and
     /// merged into the next `request_frame` so that a damaged region
     /// never goes un-rendered just because back-pressure was applied.
-    pending_chrome_damage: Vec<DamageRect>,
-    pending_content_damage: Vec<DamageRect>,
+    pending_chrome_damage: DamageBacklog,
+    pending_content_damage: DamageBacklog,
 }
 
 impl RenderCoordinator {
@@ -82,8 +117,8 @@ impl RenderCoordinator {
             total_render_time_us: 0,
             pending_chrome_completion: None,
             pending_content_completion: None,
-            pending_chrome_damage: Vec::new(),
-            pending_content_damage: Vec::new(),
+            pending_chrome_damage: DamageBacklog::default(),
+            pending_content_damage: DamageBacklog::default(),
         }
     }
 
@@ -168,17 +203,15 @@ impl RenderCoordinator {
                 if chrome_busy || content_busy {
                     // Skip both — accumulate damage for recovery.
                     self.frames_skipped += 1;
-                    self.pending_chrome_damage.push(chrome_full);
-                    self.pending_content_damage.push(content_full);
+                    self.pending_chrome_damage.absorb(chrome_full);
+                    self.pending_content_damage.absorb(content_full);
                     return Ok((None, None));
                 }
 
                 // Both threads idle — submit identical frame with any
                 // accumulated damage merged in.
-                let mut chrome_damage = std::mem::take(&mut self.pending_chrome_damage);
-                chrome_damage.push(chrome_full);
-                let mut content_damage = std::mem::take(&mut self.pending_content_damage);
-                content_damage.push(content_full);
+                let chrome_damage = self.pending_chrome_damage.drain_with(chrome_full);
+                let content_damage = self.pending_content_damage.drain_with(content_full);
 
                 let chrome_id = self
                     .chrome
@@ -193,8 +226,7 @@ impl RenderCoordinator {
                 Ok((Some(chrome_id), Some(content_id)))
             }
             (Some(_), None) => {
-                let mut damage = std::mem::take(&mut self.pending_chrome_damage);
-                damage.push(chrome_full);
+                let damage = self.pending_chrome_damage.drain_with(chrome_full);
                 let id = self
                     .chrome
                     .as_mut()
@@ -203,8 +235,7 @@ impl RenderCoordinator {
                 Ok((Some(id), None))
             }
             (None, Some(_)) => {
-                let mut damage = std::mem::take(&mut self.pending_content_damage);
-                damage.push(content_full);
+                let damage = self.pending_content_damage.drain_with(content_full);
                 let id = self
                     .content
                     .as_mut()
@@ -263,7 +294,7 @@ impl RenderCoordinator {
                         // Chrome is behind — it dropped a frame; treat as
                         // skipped and schedule full damage recovery.
                         self.frames_skipped += 1;
-                        self.pending_chrome_damage.push(DamageRect {
+                        self.pending_chrome_damage.absorb(DamageRect {
                             x: 0,
                             y: 0,
                             width: c.width,
@@ -284,7 +315,7 @@ impl RenderCoordinator {
                     (Some(_), Some(x)) => {
                         // Content is behind.
                         self.frames_skipped += 1;
-                        self.pending_content_damage.push(DamageRect {
+                        self.pending_content_damage.absorb(DamageRect {
                             x: 0,
                             y: 0,
                             width: x.width,
@@ -332,6 +363,10 @@ impl RenderCoordinator {
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), crate::RenderThreadError> {
         self.width = width;
         self.height = height;
+        self.pending_chrome_damage = DamageBacklog::default();
+        self.pending_content_damage = DamageBacklog::default();
+        self.pending_chrome_completion = None;
+        self.pending_content_completion = None;
 
         if let Some(chrome) = &mut self.chrome {
             chrome.resize(width, height)?;
@@ -542,6 +577,7 @@ mod tests {
 
     #[test]
     fn test_coordinator_dropped_frame() {
+        let mut coord = RenderCoordinator::new(800, 600);
         let (chrome, _chrome_rx, chrome_comp_tx) = ChromeThread::new(800, 600);
         coord.attach_chrome(chrome);
         chrome_comp_tx
@@ -557,5 +593,56 @@ mod tests {
             .unwrap();
         let _ = coord.poll_completions();
         assert_eq!(coord.frames_dropped(), 1);
+    }
+
+    #[test]
+    fn skipped_frames_coalesce_pending_damage() {
+        let mut coord = RenderCoordinator::new(800, 600);
+        let (chrome, _chrome_rx, _chrome_comp_tx) = ChromeThread::new(800, 600);
+        let (content, _content_rx, _content_comp_tx) = ContentThread::new(800, 600);
+        coord.attach_chrome(chrome);
+        coord.attach_content(content);
+
+        // First request drives both threads into Rendering.
+        let _ = coord.request_frame(vec![], vec![]).unwrap();
+        // Subsequent requests are uniformly skipped and must not grow the backlog.
+        let _ = coord.request_frame(vec![], vec![]).unwrap();
+        let _ = coord.request_frame(vec![], vec![]).unwrap();
+
+        assert_eq!(coord.frames_skipped(), 2);
+        let chrome_pending = coord.pending_chrome_damage.union.unwrap();
+        assert_eq!(chrome_pending.x, 0);
+        assert_eq!(chrome_pending.y, 0);
+        assert_eq!(chrome_pending.width, 800);
+        assert_eq!(chrome_pending.height, 600);
+
+        let content_pending = coord.pending_content_damage.union.unwrap();
+        assert_eq!(content_pending.x, 0);
+        assert_eq!(content_pending.y, 0);
+        assert_eq!(content_pending.width, 800);
+        assert_eq!(content_pending.height, 600);
+    }
+
+    #[test]
+    fn damage_backlog_unions_overlapping_rects() {
+        let mut backlog = DamageBacklog::default();
+        backlog.absorb(DamageRect {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+        });
+        backlog.absorb(DamageRect {
+            x: 25,
+            y: 15,
+            width: 50,
+            height: 25,
+        });
+
+        let merged = backlog.union.unwrap();
+        assert_eq!(merged.x, 10);
+        assert_eq!(merged.y, 15);
+        assert_eq!(merged.width, 65);
+        assert_eq!(merged.height, 45);
     }
 }

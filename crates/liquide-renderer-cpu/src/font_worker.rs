@@ -251,7 +251,7 @@ impl FontWorker {
                 {
                     return RasterizedGlyph {
                         key: req.key,
-                        bitmap: glyph_bitmap.pixels,
+                        bitmap: glyph_bitmap.pixels.to_vec(),
                         metrics: GlyphMetrics {
                             width: glyph_bitmap.width,
                             height: glyph_bitmap.height,

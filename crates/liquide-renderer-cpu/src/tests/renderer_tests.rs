@@ -28,7 +28,8 @@ fn render_background() {
         id: 1,
         kind: SceneNodeKind::Background {
             color: Color::new(0, 100, 200, 255),
-        },
+        }
+        .into(),
         absolute_bounds: Rect::new(0.0, 0.0, 128.0, 128.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -61,7 +62,8 @@ fn render_surface_node() {
         kind: SceneNodeKind::Surface {
             surface_id: 1,
             buffer: None,
-        },
+        }
+        .into(),
         absolute_bounds: Rect::new(0.0, 0.0, 64.0, 64.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -95,7 +97,7 @@ fn render_glass_node() {
 
     let node = FlatNode {
         id: 20,
-        kind: SceneNodeKind::Glass(liquide_compositor::scene::GlassParams::default()),
+        kind: SceneNodeKind::Glass(liquide_compositor::scene::GlassParams::default()).into(),
         absolute_bounds: Rect::new(0.0, 0.0, 64.0, 64.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -134,7 +136,8 @@ fn render_decoration_node() {
             button_state: liquide_compositor::scene::DecorationButtons::default(),
             button_colors: liquide_compositor::scene::DecorationColors::default(),
             button_layout: liquide_compositor::scene::DecorationLayout::default(),
-        },
+        }
+        .into(),
         absolute_bounds: Rect::new(0.0, 0.0, 64.0, 32.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -191,7 +194,7 @@ fn render_lock_screen_node() {
 
     let node = FlatNode {
         id: 40,
-        kind: SceneNodeKind::LockScreen,
+        kind: SceneNodeKind::LockScreen.into(),
         absolute_bounds: Rect::new(0.0, 0.0, 128.0, 128.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -230,7 +233,8 @@ fn render_classifies_cursor_and_surface_damage() {
         id: 100,
         kind: SceneNodeKind::Cursor {
             shape: liquide_compositor::scene::CursorShape::Arrow,
-        },
+        }
+        .into(),
         absolute_bounds: Rect::new(0.0, 0.0, 24.0, 24.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -244,7 +248,8 @@ fn render_classifies_cursor_and_surface_damage() {
         kind: SceneNodeKind::Surface {
             surface_id: 1,
             buffer: None,
-        },
+        }
+        .into(),
         absolute_bounds: Rect::new(64.0, 0.0, 64.0, 64.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -254,7 +259,9 @@ fn render_classifies_cursor_and_surface_damage() {
         clip_radius: (0.0, 0.0, 0.0, 0.0),
     };
 
-    let classified = renderer.render(&[cursor, surface], &mut fb, &damage).unwrap();
+    let classified = renderer
+        .render(&[cursor, surface], &mut fb, &damage)
+        .unwrap();
     let classes: std::collections::HashMap<(u32, u32), DamageClass> = classified
         .into_iter()
         .map(|tile| ((tile.x, tile.y), tile.class))
@@ -280,7 +287,8 @@ fn render_text_damage_overrides_bitmap_damage_on_same_tile() {
         kind: SceneNodeKind::Surface {
             surface_id: 2,
             buffer: None,
-        },
+        }
+        .into(),
         absolute_bounds: Rect::new(0.0, 0.0, 64.0, 64.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -294,7 +302,8 @@ fn render_text_damage_overrides_bitmap_damage_on_same_tile() {
         kind: SceneNodeKind::TextCaret {
             color: Color::WHITE,
             width: 2.0,
-        },
+        }
+        .into(),
         absolute_bounds: Rect::new(8.0, 8.0, 2.0, 24.0),
         absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
         clip: None,
@@ -304,7 +313,9 @@ fn render_text_damage_overrides_bitmap_damage_on_same_tile() {
         clip_radius: (0.0, 0.0, 0.0, 0.0),
     };
 
-    let classified = renderer.render(&[surface, caret], &mut fb, &damage).unwrap();
+    let classified = renderer
+        .render(&[surface, caret], &mut fb, &damage)
+        .unwrap();
     assert_eq!(classified.len(), 1);
     assert_eq!(classified[0].class, DamageClass::TextGlyph);
 }

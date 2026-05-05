@@ -17,7 +17,7 @@ pub use decoration::*;
 pub use effects::*;
 pub use text::*;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::geometry::{Affine2D, Rect};
 use crate::pixel::{Color, PixelFormat};
@@ -326,16 +326,35 @@ impl SceneNodeKind {
 const MAX_SCENE_DEPTH: u32 = 512;
 
 /// A node in the compositor's scene graph.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SceneNode {
     /// Unique node identifier.
     pub id: NodeId,
     /// The type-specific payload.
     pub kind: SceneNodeKind,
+    /// Shared handle reused by flattening so repeated frames avoid deep-cloning
+    /// heavy payloads like text strings and filter vectors.
+    kind_shared: OnceLock<Arc<SceneNodeKind>>,
     /// Common visual properties.
     pub properties: NodeProperties,
     /// Child nodes (rendered in z-order).
     pub children: Vec<SceneNode>,
+}
+
+impl Clone for SceneNode {
+    fn clone(&self) -> Self {
+        let kind_shared = OnceLock::new();
+        if let Some(kind) = self.kind_shared.get() {
+            let _ = kind_shared.set(Arc::clone(kind));
+        }
+        Self {
+            id: self.id,
+            kind: self.kind.clone(),
+            kind_shared,
+            properties: self.properties.clone(),
+            children: self.children.clone(),
+        }
+    }
 }
 
 impl SceneNode {
@@ -345,9 +364,20 @@ impl SceneNode {
         Self {
             id,
             kind,
+            kind_shared: OnceLock::new(),
             properties,
             children: Vec::new(),
         }
+    }
+
+    /// Replace the node kind and invalidate the shared flatten cache.
+    pub fn set_kind(&mut self, kind: SceneNodeKind) {
+        self.kind = kind;
+        self.kind_shared = OnceLock::new();
+    }
+
+    fn kind_handle(&self) -> Arc<SceneNodeKind> {
+        Arc::clone(self.kind_shared.get_or_init(|| Arc::new(self.kind.clone())))
     }
 
     /// Append a child node.
@@ -648,6 +678,7 @@ impl SceneNode {
     /// caller-provided `Vec` instead of allocating a new one each frame.
     pub fn flatten_into(&self, output: &mut Vec<FlatNode>) {
         output.clear();
+        let mut sorted_indices_scratch = Vec::new();
         self.flatten_walk(
             &Affine2D::identity(),
             1.0,
@@ -655,6 +686,7 @@ impl SceneNode {
             (0.0, 0.0, 0.0, 0.0),
             output,
             0,
+            &mut sorted_indices_scratch,
         );
     }
 
@@ -668,6 +700,7 @@ impl SceneNode {
         parent_clip_radius: (f32, f32, f32, f32),
         output: &mut Vec<FlatNode>,
         depth: u32,
+        sorted_indices_scratch: &mut Vec<usize>,
     ) {
         const MAX_SCENE_DEPTH: u32 = 512;
         if depth >= MAX_SCENE_DEPTH {
@@ -727,7 +760,7 @@ impl SceneNode {
 
             output.push(FlatNode {
                 id: self.id,
-                kind: self.kind.clone(),
+                kind: self.kind_handle(),
                 absolute_bounds: abs_bounds,
                 absolute_transform: abs_transform,
                 clip: effective_clip,
@@ -749,6 +782,7 @@ impl SceneNode {
                     effective_clip_radius,
                     output,
                     depth + 1,
+                    sorted_indices_scratch,
                 );
             }
         } else if n <= 16 {
@@ -775,10 +809,13 @@ impl SceneNode {
                     effective_clip_radius,
                     output,
                     depth + 1,
+                    sorted_indices_scratch,
                 );
             }
         } else {
-            let mut sorted_indices: Vec<usize> = (0..n).collect();
+            let mut sorted_indices = std::mem::take(sorted_indices_scratch);
+            sorted_indices.clear();
+            sorted_indices.extend(0..n);
             sorted_indices.sort_by(|&a, &b| {
                 self.children[a]
                     .properties
@@ -794,8 +831,10 @@ impl SceneNode {
                     effective_clip_radius,
                     output,
                     depth + 1,
+                    sorted_indices_scratch,
                 );
             }
+            *sorted_indices_scratch = sorted_indices;
         }
     }
 }
@@ -806,7 +845,7 @@ pub struct FlatNode {
     /// The node's unique identifier.
     pub id: NodeId,
     /// The type-specific payload.
-    pub kind: SceneNodeKind,
+    pub kind: Arc<SceneNodeKind>,
     /// Bounding rectangle in absolute (screen) coordinates.
     pub absolute_bounds: Rect,
     /// Accumulated absolute transform.
@@ -821,4 +860,12 @@ pub struct FlatNode {
     pub corner_radius: (f32, f32, f32, f32),
     /// Per-corner clip radius for rounded overflow clipping.
     pub clip_radius: (f32, f32, f32, f32),
+}
+
+impl FlatNode {
+    /// Borrow the flattened node kind.
+    #[must_use]
+    pub fn kind_ref(&self) -> &SceneNodeKind {
+        self.kind.as_ref()
+    }
 }

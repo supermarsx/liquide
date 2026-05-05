@@ -1,8 +1,10 @@
 //! Encoding strategy selection for tile encoding.
 //!
 //! Given the current and previous tile data, CRC-32C hash, and damage class,
-//! this module determines the best encoding strategy: Skip, Delta, Full,
-//! Copy (content-addressable), or Solid.
+//! this module determines the best encoding strategy: Skip, Delta, Full, or
+//! Solid. The `Copy` strategy is intentionally disabled until the wire protocol
+//! explicitly defines whether copy references target previous-frame or
+//! same-frame tile state.
 //!
 //! Additionally selects the compression method (Zstd vs LZ4) based on
 //! the damage class of each tile: cursor-only tiles use LZ4 for lower
@@ -39,7 +41,7 @@ pub enum EncodingStrategy {
     Delta,
     /// Send full tile data.
     Full,
-    /// Copy from another tile in this frame (by CRC index).
+    /// Reserved for explicit copy-reference semantics.
     Copy { source_index: u32 },
     /// Tile is a single solid color (4 bytes).
     Solid { bgra: [u8; 4] },
@@ -76,7 +78,7 @@ impl Default for StrategyConfig {
 /// - `previous`: previous frame's tile data (same coordinates), or `None` for first frame
 /// - `current_crc`: CRC-32C of the current tile
 /// - `prev_crc`: CRC-32C of the previous tile at the same coordinates
-/// - `copy_index`: maps CRC → linear tile index for content-addressable copy
+/// - `_copy_index`: reserved CRC → linear tile index for future copy semantics
 /// - `damage_class`: the damage classification for this tile
 /// - `config`: strategy selection thresholds
 #[must_use]
@@ -85,7 +87,7 @@ pub fn choose_strategy(
     previous: Option<&[u8]>,
     current_crc: u32,
     prev_crc: Option<u32>,
-    copy_index: &HashMap<u32, u32>,
+    _copy_index: &HashMap<u32, u32>,
     _damage_class: DamageClass,
     config: &StrategyConfig,
 ) -> EncodingStrategy {
@@ -101,14 +103,7 @@ pub fn choose_strategy(
         return EncodingStrategy::Solid { bgra: color };
     }
 
-    // 3. Copy: another tile in this frame has the same CRC
-    if let Some(&source_idx) = copy_index.get(&current_crc) {
-        return EncodingStrategy::Copy {
-            source_index: source_idx,
-        };
-    }
-
-    // 4. Delta vs Full: compare change ratio
+    // 3. Delta vs Full: compare change ratio
     if let Some(prev) = previous {
         let xor = delta::xor_delta(current, prev);
         let ratio = delta::change_ratio(&xor);
@@ -117,7 +112,7 @@ pub fn choose_strategy(
         }
     }
 
-    // 5. Default: full tile
+    // 4. Default: full tile
     EncodingStrategy::Full
 }
 

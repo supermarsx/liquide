@@ -3,10 +3,7 @@
 //! This example shows how to use layout caching, texture caching, dirty rectangles,
 //! object pooling, and level of detail together for maximum performance.
 
-use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::scene::FlatNode;
-use liquide_renderer_cpu::Renderer as _;
 use liquide_renderer_cpu::lod::PerformanceMode;
 use liquide_renderer_cpu::renderer::SoftwareRenderer;
 
@@ -91,7 +88,7 @@ impl TextureManager {
     }
 
     /// Simulate expensive texture decoding.
-    fn decode_texture(texture_id: &str) -> Option<(Vec<u8>, u32, u32)> {
+    fn decode_texture(_texture_id: &str) -> Option<(Vec<u8>, u32, u32)> {
         // In real code, this would use image::load_from_memory or similar
         std::thread::sleep(std::time::Duration::from_millis(5));
 
@@ -171,7 +168,7 @@ fn optimized_render_loop() {
             processed_elements += 1;
 
             // Use object pool for temporary buffer
-            let mut temp_buffer = renderer.acquire_buffer(1920 * 1080 * 4);
+            let temp_buffer = renderer.acquire_buffer(1920 * 1080 * 4);
             // ... render to temp buffer ...
             renderer.release_buffer(temp_buffer);
         }

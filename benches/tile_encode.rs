@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use criterion::{
-    BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group,
-    criterion_main,
+    BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
 
 use liquide_compositor::damage::{DamageClass, DamageTile};
@@ -209,14 +208,15 @@ fn build_sparse_ui_delta() -> EncodeScenario {
 
     for (index, tile) in trimmed_damage.iter().enumerate() {
         match tile.class {
-            DamageClass::TextGlyph => paint_text_tile(&mut current, tile.x, tile.y, 48 + index as u8),
-            DamageClass::UiPrimitive => paint_ui_tile(&mut current, tile.x, tile.y, 72 + index as u8),
-            DamageClass::BitmapRegion => paint_bitmap_tile(
-                &mut current,
-                tile.x,
-                tile.y,
-                10_000 + index as u64,
-            ),
+            DamageClass::TextGlyph => {
+                paint_text_tile(&mut current, tile.x, tile.y, 48 + index as u8)
+            }
+            DamageClass::UiPrimitive => {
+                paint_ui_tile(&mut current, tile.x, tile.y, 72 + index as u8)
+            }
+            DamageClass::BitmapRegion => {
+                paint_bitmap_tile(&mut current, tile.x, tile.y, 10_000 + index as u64)
+            }
             DamageClass::CursorOnly => {}
         }
     }
@@ -242,12 +242,7 @@ fn build_bitmap_heavy_damage() -> EncodeScenario {
                 y: ty,
                 class: DamageClass::BitmapRegion,
             });
-            paint_bitmap_tile(
-                &mut current,
-                tx,
-                ty,
-                50_000 + (ty as u64 * 31) + tx as u64,
-            );
+            paint_bitmap_tile(&mut current, tx, ty, 50_000 + (ty as u64 * 31) + tx as u64);
         }
     }
 
@@ -339,7 +334,14 @@ fn make_desktop_frame(seed: u8) -> FrameBuffer {
     }
 
     fill_rect(&mut frame, 0, 0, FRAME_WIDTH, 44, [52, 56, 64, 255]);
-    fill_rect(&mut frame, 0, FRAME_HEIGHT - 76, FRAME_WIDTH, 76, [36, 38, 46, 255]);
+    fill_rect(
+        &mut frame,
+        0,
+        FRAME_HEIGHT - 76,
+        FRAME_WIDTH,
+        76,
+        [36, 38, 46, 255],
+    );
     fill_rect(&mut frame, 72, 84, 360, 220, [72, 78, 92, 255]);
     fill_rect(&mut frame, 84, 96, 336, 20, [98, 132, 182, 255]);
     fill_rect(&mut frame, 560, 120, 288, 184, [58, 64, 76, 255]);
@@ -352,10 +354,36 @@ fn paint_ui_tile(frame: &mut FrameBuffer, tx: u32, ty: u32, accent: u8) {
     let width = x1.saturating_sub(x0);
     let height = y1.saturating_sub(y0);
     fill_rect(frame, x0, y0, width, height, [56, 60, 74, 255]);
-    fill_rect(frame, x0, y0, width, 8, [accent, accent.wrapping_add(22), accent.wrapping_add(48), 255]);
-    fill_rect(frame, x0 + 8, y0 + 16, width.saturating_sub(16), 10, [214, 214, 220, 255]);
+    fill_rect(
+        frame,
+        x0,
+        y0,
+        width,
+        8,
+        [
+            accent,
+            accent.wrapping_add(22),
+            accent.wrapping_add(48),
+            255,
+        ],
+    );
+    fill_rect(
+        frame,
+        x0 + 8,
+        y0 + 16,
+        width.saturating_sub(16),
+        10,
+        [214, 214, 220, 255],
+    );
     fill_rect(frame, x0 + 8, y0 + 32, width / 2, 12, [96, 142, 196, 255]);
-    fill_rect(frame, x0 + 8, y0 + 48, width.saturating_sub(24), 8, [96, 102, 118, 255]);
+    fill_rect(
+        frame,
+        x0 + 8,
+        y0 + 48,
+        width.saturating_sub(24),
+        8,
+        [96, 102, 118, 255],
+    );
 }
 
 fn paint_text_tile(frame: &mut FrameBuffer, tx: u32, ty: u32, accent: u8) {
@@ -363,7 +391,19 @@ fn paint_text_tile(frame: &mut FrameBuffer, tx: u32, ty: u32, accent: u8) {
     let width = x1.saturating_sub(x0);
     let height = y1.saturating_sub(y0);
     fill_rect(frame, x0, y0, width, height, [46, 50, 64, 255]);
-    fill_rect(frame, x0, y0, width, 8, [accent, accent.wrapping_add(12), accent.wrapping_add(42), 255]);
+    fill_rect(
+        frame,
+        x0,
+        y0,
+        width,
+        8,
+        [
+            accent,
+            accent.wrapping_add(12),
+            accent.wrapping_add(42),
+            255,
+        ],
+    );
     for (row, line_width) in [width - 18, width - 24, width - 28, width - 20]
         .into_iter()
         .enumerate()
@@ -398,12 +438,7 @@ fn paint_bitmap_tile(frame: &mut FrameBuffer, tx: u32, ty: u32, seed: u64) {
                 stride,
                 x,
                 y,
-                [
-                    noise,
-                    noise.rotate_left(2),
-                    noise.rotate_left(5),
-                    255,
-                ],
+                [noise, noise.rotate_left(2), noise.rotate_left(5), 255],
             );
         }
     }
@@ -425,13 +460,29 @@ fn draw_cursor_layer(frame: &mut FrameBuffer, origin_x: u32, origin_y: u32, colo
     for dy in 0..18 {
         let row_width = dy.min(7) + 1;
         for dx in 0..row_width {
-            write_pixel_safe(pixels, stride, width, height, origin_x + dx, origin_y + dy, color);
+            write_pixel_safe(
+                pixels,
+                stride,
+                width,
+                height,
+                origin_x + dx,
+                origin_y + dy,
+                color,
+            );
         }
     }
 
     for dy in 10..18 {
         for dx in 4..8 {
-            write_pixel_safe(pixels, stride, width, height, origin_x + dx, origin_y + dy, color);
+            write_pixel_safe(
+                pixels,
+                stride,
+                width,
+                height,
+                origin_x + dx,
+                origin_y + dy,
+                color,
+            );
         }
     }
 }

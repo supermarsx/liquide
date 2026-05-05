@@ -47,6 +47,23 @@ fn damage_tracker_detects_change() {
 }
 
 #[test]
+fn damage_tracker_preserves_requested_damage_class() {
+    let mut fb = crate::framebuffer::FrameBuffer::new(128, 128, PixelFormat::Bgra8);
+    let mut tracker = DamageTracker::new(64, 128, 128);
+
+    let first = tracker.compute_damage_with_class(&fb, DamageClass::BitmapRegion);
+    assert_eq!(
+        first.full_grid_dimensions(),
+        Some((2, 2, DamageClass::BitmapRegion))
+    );
+
+    fb.set_pixel(65, 5, Color::WHITE);
+    let damage = tracker.compute_damage_with_class(&fb, DamageClass::TextGlyph);
+    assert_eq!(damage.len(), 1);
+    assert_eq!(damage.tiles[0].class, DamageClass::TextGlyph);
+}
+
+#[test]
 fn damage_set_sort_priority() {
     let mut ds = DamageSet::new(64);
     ds.add(DamageTile {
@@ -233,6 +250,14 @@ fn damage_set_mark_tile_uses_cursor_only() {
     assert_eq!(ds.tiles[0].class, DamageClass::CursorOnly);
 }
 
+#[test]
+fn damage_set_mark_tile_with_class_preserves_class() {
+    let mut ds = DamageSet::new(64);
+    ds.mark_tile_with_class(5, 10, DamageClass::TextGlyph);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds.tiles[0].class, DamageClass::TextGlyph);
+}
+
 // ── DamageSet mark_rect ─────────────────────────────────────────────────
 
 #[test]
@@ -256,6 +281,18 @@ fn damage_set_mark_rect_spanning_tiles() {
     assert!(coords.contains(&(1, 0)));
     assert!(coords.contains(&(0, 1)));
     assert!(coords.contains(&(1, 1)));
+}
+
+#[test]
+fn damage_set_mark_rect_with_class_preserves_class() {
+    let mut ds = DamageSet::new(64);
+    ds.mark_rect_with_class(60, 60, 10, 10, 4, 4, DamageClass::BitmapRegion);
+    assert_eq!(ds.len(), 4);
+    assert!(
+        ds.tiles
+            .iter()
+            .all(|tile| tile.class == DamageClass::BitmapRegion)
+    );
 }
 
 #[test]
@@ -396,8 +433,9 @@ fn damage_set_merge_preserves_both() {
 }
 
 #[test]
-fn damage_set_merge_allows_duplicates() {
-    // merge doesn't deduplicate — verify that behavior
+fn damage_set_merge_dedupes_identical_tiles() {
+    // `merge` deduplicates by (x, y) and keeps the highest-priority class.
+    // This guards the contract documented on `DamageSet::merge`.
     let mut a = DamageSet::new(64);
     a.add(DamageTile {
         x: 0,
@@ -411,7 +449,8 @@ fn damage_set_merge_allows_duplicates() {
         class: DamageClass::TextGlyph,
     });
     a.merge(&b);
-    assert_eq!(a.len(), 2);
+    assert_eq!(a.len(), 1);
+    assert_eq!(a.tiles[0].class, DamageClass::TextGlyph);
 }
 
 // ── DamageSet sort_by_priority ──────────────────────────────────────────

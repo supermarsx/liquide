@@ -277,6 +277,7 @@ impl BlurWorker {
 
     /// Current frame number (for diagnostics).
     #[cfg(test)]
+    #[allow(dead_code)]
     #[must_use]
     pub fn frame(&self) -> u64 {
         self.frame

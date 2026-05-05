@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use liquide_compositor::Renderer;
 use liquide_compositor::damage::DamageSet;
-use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
+use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::pixel::PixelFormat;
 use liquide_compositor::scene::FlatNode;
 
@@ -213,26 +213,18 @@ pub fn content_worker(
 
                 let elapsed = start.elapsed();
 
-                // Extract pixels and send back.
-                let pixel_data = match framebuf.pixels_mut() {
-                    Some(pixels) => std::mem::take(pixels),
-                    None => {
-                        tracing::error!("CPU framebuffer pixel data unavailable, frame dropped");
-                        continue;
-                    }
-                };
+                // Copy the rendered frame out while keeping the framebuffer's
+                // backing store attached for reuse on the next frame.
+                let pixel_data = Arc::new(framebuf.pixels().to_vec());
                 let result = FrameComplete {
                     frame_id,
                     render_time_us: elapsed.as_micros() as u64,
                     dropped: false,
-                    pixels: Some(Arc::new(pixel_data)),
+                    pixels: Some(pixel_data),
                     width: framebuf.width,
                     height: framebuf.height,
                     stride: framebuf.stride,
                 };
-                // Re-allocate pixel buffer for next frame.
-                framebuf.memory =
-                    FrameMemory::Cpu(vec![0u8; (framebuf.stride * framebuf.height) as usize]);
 
                 if completion_tx.send(result).is_err() {
                     break;

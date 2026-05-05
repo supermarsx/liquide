@@ -1,6 +1,6 @@
 //! Tile encoding state — manages tile-based frame encoding for remote transmission.
 
-use liquide_compositor::damage::DamageSet;
+use liquide_compositor::damage::{DamageClass, DamageSet};
 use liquide_encoder::encoder::TileEncoder;
 use liquide_encoder::tile::{TileBatch, TileConfig};
 use liquide_encoder::{BandwidthBudget, BandwidthEstimator};
@@ -8,7 +8,7 @@ use tracing::warn;
 
 const BANDWIDTH_ESTIMATOR_WINDOW: usize = 10;
 const BANDWIDTH_SAFETY_MARGIN: f64 = 0.1;
-const SESSION_TARGET_FPS: u32 = 60;
+const DEFAULT_SESSION_TARGET_FPS: u32 = 60;
 
 /// Tile encoding for remote frame transmission.
 pub(super) struct TileEncoderState {
@@ -18,11 +18,13 @@ pub(super) struct TileEncoderState {
     current_budget: BandwidthBudget,
     last_batch_compressed_bytes: Option<u64>,
     pub(super) tile_size: u32,
+    target_fps: u32,
 }
 
 impl TileEncoderState {
     pub(super) fn new(width: u32, height: u32, tile_size: u32) -> Self {
-        let bandwidth_estimator = Self::new_bandwidth_estimator();
+        let target_fps = DEFAULT_SESSION_TARGET_FPS;
+        let bandwidth_estimator = Self::new_bandwidth_estimator(target_fps);
         Self {
             encoder: Some(Self::new_encoder(width, height, tile_size)),
             pending_batches: Vec::new(),
@@ -30,6 +32,7 @@ impl TileEncoderState {
             bandwidth_estimator,
             last_batch_compressed_bytes: None,
             tile_size,
+            target_fps,
         }
     }
 
@@ -44,14 +47,26 @@ impl TileEncoderState {
         )
     }
 
-    fn new_bandwidth_estimator() -> BandwidthEstimator {
-        BandwidthEstimator::new(BANDWIDTH_ESTIMATOR_WINDOW, SESSION_TARGET_FPS)
+    fn new_bandwidth_estimator(target_fps: u32) -> BandwidthEstimator {
+        BandwidthEstimator::new(BANDWIDTH_ESTIMATOR_WINDOW, target_fps)
     }
 
     fn reset_bandwidth_state(&mut self) {
-        self.bandwidth_estimator = Self::new_bandwidth_estimator();
-        self.current_budget = self.bandwidth_estimator.frame_budget(BANDWIDTH_SAFETY_MARGIN);
+        self.bandwidth_estimator = Self::new_bandwidth_estimator(self.target_fps);
+        self.current_budget = self
+            .bandwidth_estimator
+            .frame_budget(BANDWIDTH_SAFETY_MARGIN);
         self.last_batch_compressed_bytes = None;
+    }
+
+    /// Update the assumed session target FPS used for per-frame bandwidth budgeting.
+    pub(super) fn set_target_fps(&mut self, target_fps: u32) {
+        self.target_fps = if target_fps == 0 {
+            DEFAULT_SESSION_TARGET_FPS
+        } else {
+            target_fps
+        };
+        self.reset_bandwidth_state();
     }
 
     fn refresh_budget_hint(&mut self) {
@@ -93,15 +108,19 @@ impl TileEncoderState {
 
         // Use provided damage or fall back to full-frame damage.
         let owned_damage;
+        let owned_tiles;
         let tiles = if let Some(d) = damage {
-            &d.tiles
+            if d.is_full() {
+                owned_tiles = d.materialize_tiles();
+                &owned_tiles
+            } else {
+                &d.tiles
+            }
         } else {
-            owned_damage = {
-                let mut d = DamageSet::new(self.tile_size);
-                d.mark_all(grid_w, grid_h);
-                d
-            };
-            &owned_damage.tiles
+            owned_damage =
+                DamageSet::full(self.tile_size, grid_w, grid_h, DamageClass::UiPrimitive);
+            owned_tiles = owned_damage.materialize_tiles();
+            &owned_tiles
         };
 
         let (encoder, budget_hint) = (&mut self.encoder, &self.current_budget);
@@ -244,5 +263,59 @@ mod tests {
         assert!(state.current_budget.is_unlimited());
         assert_eq!(state.current_budget.pressure(), BudgetPressure::Warmup);
         assert_eq!(state.last_batch_compressed_bytes, None);
+    }
+
+    #[test]
+    fn t16_tile_target_fps_updates_bandwidth_interval() {
+        let mut state = TileEncoderState::new(64, 64, 64);
+
+        state.set_target_fps(1000);
+
+        assert_eq!(state.bandwidth_estimator.frame_interval_us(), 1_000);
+        assert_eq!(state.bandwidth_estimator.sample_count(), 0);
+        assert!(state.current_budget.is_unlimited());
+    }
+
+    #[test]
+    fn t47_tile_batches_can_drain_and_transport() {
+        let width = 128;
+        let height = 128;
+        let tile_size = 64;
+        let mut state = TileEncoderState::new(width, height, tile_size);
+
+        // Use full damage for first frame (all tiles dirty)
+        let grid_w = width.div_ceil(tile_size);
+        let grid_h = height.div_ceil(tile_size);
+        let damage = DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive);
+
+        // Encode one frame
+        let frame_1 = patterned_pixels(width, height, 10);
+        state.encode_frame(&frame_1, width, height, width * 4, Some(&damage));
+
+        // Drain batches
+        let batches = state.drain_batches();
+        assert!(!batches.is_empty(), "should have at least one batch");
+        assert!(batches[0].tiles.len() > 0, "batch should have tiles");
+        assert!(
+            batches[0].compressed_bytes > 0,
+            "batch should have compressed bytes"
+        );
+
+        // After drain, pending should be empty
+        assert!(
+            state.drain_batches().is_empty(),
+            "second drain should be empty"
+        );
+
+        // Encode another frame
+        let frame_2 = patterned_pixels(width, height, 20);
+        state.encode_frame(&frame_2, width, height, width * 4, Some(&damage));
+
+        let batches_2 = state.drain_batches();
+        assert!(!batches_2.is_empty(), "should have a second batch");
+        assert!(
+            batches_2[0].sequence > batches[0].sequence,
+            "sequences should advance"
+        );
     }
 }

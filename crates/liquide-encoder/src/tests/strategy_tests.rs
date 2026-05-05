@@ -174,7 +174,7 @@ fn compression_cursor_disabled_uses_zstd() {
 }
 
 #[test]
-fn strategy_copy_when_duplicate_crc() {
+fn strategy_duplicate_crc_uses_full_until_copy_semantics_are_explicit() {
     // Build data that is not solid (so solid detection won't trigger)
     let data: Vec<u8> = (0..64).map(|i| (i * 7 + 3) as u8).collect();
     let crc_val = crc32c(&data);
@@ -192,7 +192,7 @@ fn strategy_copy_when_duplicate_crc() {
         DamageClass::UiPrimitive,
         &StrategyConfig::default(),
     );
-    assert_eq!(strategy, EncodingStrategy::Copy { source_index: 5 });
+    assert_eq!(strategy, EncodingStrategy::Full);
 }
 
 #[test]

@@ -22,7 +22,7 @@ impl SoftwareRenderer {
             width,
             height,
             fit,
-        } = &node.kind
+        } = node.kind_ref()
         {
             let texture_key = image_texture_key(*image_id);
 
@@ -119,7 +119,7 @@ impl SoftwareRenderer {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
-        if let SceneNodeKind::BackgroundFill { background } = &node.kind {
+        if let SceneNodeKind::BackgroundFill { background } = node.kind_ref() {
             // Solid color first
             if let Some(bg_color) = background.color {
                 let mut c = bg_color;
@@ -227,7 +227,7 @@ impl SoftwareRenderer {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
-        if let SceneNodeKind::BorderImage { spec } = &node.kind {
+        if let SceneNodeKind::BorderImage { spec } = node.kind_ref() {
             use liquide_compositor::scene::BackgroundImage;
             match &spec.source {
                 BackgroundImage::ImageId(image_id) => {
