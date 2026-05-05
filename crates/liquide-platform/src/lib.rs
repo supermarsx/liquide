@@ -289,6 +289,27 @@ pub struct PresentFeedback {
     pub crtc_id: Option<u32>,
 }
 
+/// Metadata attached by the compositor when a rendered frame is handed to a
+/// platform backend for presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FramePresentationMetadata {
+    /// Monotonic compositor-side frame sequence for presented frames.
+    pub frame_sequence: u64,
+    /// Deterministic fingerprint of the pixel snapshot being presented.
+    pub content_hash: u64,
+}
+
+impl FramePresentationMetadata {
+    /// Create metadata for a frame presentation attempt.
+    #[must_use]
+    pub const fn new(frame_sequence: u64, content_hash: u64) -> Self {
+        Self {
+            frame_sequence,
+            content_hash,
+        }
+    }
+}
+
 /// Unified access to all platform backends.
 ///
 /// Each method returns the corresponding sub-backend.  Implementations
@@ -376,6 +397,24 @@ pub trait PlatformBackend: Send {
         _format: PixelFormat,
     ) -> PlatformResult<()> {
         Ok(())
+    }
+
+    /// Present a rendered frame with compositor-side sequence metadata.
+    ///
+    /// Backends that need stale-frame diagnostics can override this method.
+    /// Existing immediate-copy backends inherit the compatibility path that
+    /// delegates to [`present_frame`](Self::present_frame).
+    fn present_frame_with_metadata(
+        &mut self,
+        handle: NativeWindowHandle,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: PixelFormat,
+        _metadata: FramePresentationMetadata,
+    ) -> PlatformResult<()> {
+        self.present_frame(handle, pixels, width, height, stride, format)
     }
 
     /// Request the window to be repainted.

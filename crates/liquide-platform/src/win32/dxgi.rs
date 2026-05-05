@@ -77,6 +77,90 @@ const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
 const DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING: u32 = 0x00000080;
 const DXGI_PRESENT_ALLOW_TEARING: u32 = 0x00000200;
 
+/// Requested DXGI present behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DxgiPresentMode {
+    /// Do not wait for vblank; use tearing when the swap chain supports it.
+    #[default]
+    Immediate,
+    /// Present with `sync_interval = 1`, allowing DXGI/DWM to align to refresh.
+    RefreshSync,
+}
+
+/// Present capabilities observed for a DXGI swap chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DxgiPresentCapabilities {
+    pub immediate: bool,
+    pub refresh_sync: bool,
+    pub tearing: bool,
+}
+
+impl DxgiPresentCapabilities {
+    pub const IMMEDIATE_ONLY: Self = Self {
+        immediate: true,
+        refresh_sync: false,
+        tearing: false,
+    };
+
+    pub const fn dxgi_swap_chain(tearing: bool) -> Self {
+        Self {
+            immediate: true,
+            refresh_sync: true,
+            tearing,
+        }
+    }
+
+    pub const fn supports(self, mode: DxgiPresentMode) -> bool {
+        match mode {
+            DxgiPresentMode::Immediate => self.immediate,
+            DxgiPresentMode::RefreshSync => self.refresh_sync,
+        }
+    }
+}
+
+impl Default for DxgiPresentCapabilities {
+    fn default() -> Self {
+        Self::IMMEDIATE_ONLY
+    }
+}
+
+/// Parameters passed to `IDXGISwapChain::Present`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DxgiPresentParameters {
+    pub sync_interval: u32,
+    pub flags: u32,
+}
+
+impl DxgiPresentMode {
+    pub const fn resolve(self, capabilities: DxgiPresentCapabilities) -> Self {
+        if capabilities.supports(self) {
+            self
+        } else {
+            Self::Immediate
+        }
+    }
+
+    pub const fn present_parameters(
+        self,
+        capabilities: DxgiPresentCapabilities,
+    ) -> DxgiPresentParameters {
+        match self.resolve(capabilities) {
+            Self::Immediate => DxgiPresentParameters {
+                sync_interval: 0,
+                flags: if capabilities.tearing {
+                    DXGI_PRESENT_ALLOW_TEARING
+                } else {
+                    0
+                },
+            },
+            Self::RefreshSync => DxgiPresentParameters {
+                sync_interval: 1,
+                flags: 0,
+            },
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DXGI / D3D11 structures
 // ---------------------------------------------------------------------------
@@ -221,6 +305,8 @@ pub struct DxgiPresenter {
     width: u32,
     height: u32,
     tearing: bool, // swap chain supports ALLOW_TEARING
+    present_mode: DxgiPresentMode,
+    present_capabilities: DxgiPresentCapabilities,
 }
 
 // Safety: the COM pointers are only accessed from the thread that created
@@ -234,12 +320,30 @@ impl DxgiPresenter {
     /// Returns `Err` if D3D11/DXGI initialization fails (the caller
     /// should fall back to GDI presentation).
     pub fn new(hwnd: ffi::HWND, width: u32, height: u32) -> Result<Self, String> {
-        // SAFETY: Delegates to init() which performs COM initialization.
-        // hwnd must be a valid window handle.
-        unsafe { Self::init(hwnd, width, height) }
+        Self::new_with_present_mode(hwnd, width, height, DxgiPresentMode::Immediate)
     }
 
-    unsafe fn init(hwnd: ffi::HWND, width: u32, height: u32) -> Result<Self, String> {
+    /// Create a new DXGI presenter with the requested present behavior.
+    ///
+    /// If the requested behavior is unavailable for the created swap chain,
+    /// the presenter falls back to immediate mode.
+    pub fn new_with_present_mode(
+        hwnd: ffi::HWND,
+        width: u32,
+        height: u32,
+        present_mode: DxgiPresentMode,
+    ) -> Result<Self, String> {
+        // SAFETY: Delegates to init() which performs COM initialization.
+        // hwnd must be a valid window handle.
+        unsafe { Self::init(hwnd, width, height, present_mode) }
+    }
+
+    unsafe fn init(
+        hwnd: ffi::HWND,
+        width: u32,
+        height: u32,
+        requested_present_mode: DxgiPresentMode,
+    ) -> Result<Self, String> {
         // 1. Create D3D11 device and immediate context.
         let mut device: *mut c_void = ptr::null_mut();
         let mut context: *mut c_void = ptr::null_mut();
@@ -352,6 +456,8 @@ impl DxgiPresenter {
 
         // Determine whether the swap chain was created with tearing support.
         let tearing = hr == S_OK && !swap_chain.is_null();
+        let present_capabilities = DxgiPresentCapabilities::dxgi_swap_chain(tearing);
+        let present_mode = requested_present_mode.resolve(present_capabilities);
 
         // Release factory (no longer needed).
         // SAFETY: factory is a valid COM object.
@@ -366,14 +472,24 @@ impl DxgiPresenter {
             width,
             height,
             tearing,
+            present_mode,
+            present_capabilities,
         })
+    }
+
+    pub fn present_mode(&self) -> DxgiPresentMode {
+        self.present_mode
+    }
+
+    pub fn present_capabilities(&self) -> DxgiPresentCapabilities {
+        self.present_capabilities
     }
 
     /// Present a BGRA8 pixel buffer to the swap chain.
     ///
     /// Uploads `pixels` directly into the swap-chain back buffer via
-    /// `UpdateSubresource`, then calls `Present(0, flags)` for immediate
-    /// presentation (no vsync — the caller handles frame pacing).
+    /// `UpdateSubresource`, then calls `Present` with the present parameters
+    /// selected when the swap chain was created.
     pub fn present(
         &mut self,
         pixels: &[u8],
@@ -461,10 +577,9 @@ impl DxgiPresenter {
             // 3. Release back buffer reference before presenting.
             Self::release(back_buffer);
 
-            // 4. Present immediately (no vsync wait).
-            //    With tearing support, use DXGI_PRESENT_ALLOW_TEARING for
-            //    truly immediate presentation; otherwise present with
-            //    sync_interval = 0 which still skips vsync.
+            // 4. Present with the configured mode. Immediate mode preserves
+            //    existing no-vsync behavior; refresh-sync mode uses
+            //    sync_interval = 1 and never combines with ALLOW_TEARING.
             // IDXGISwapChain::Present = vtable slot 8
             type PresentFn = unsafe extern "system" fn(
                 this: *mut c_void,
@@ -472,12 +587,14 @@ impl DxgiPresenter {
                 flags: u32,
             ) -> HRESULT;
             let present: PresentFn = std::mem::transmute(vtable_fn(self.swap_chain, 8));
-            let present_flags = if self.tearing {
-                DXGI_PRESENT_ALLOW_TEARING
-            } else {
-                0
-            };
-            let hr = present(self.swap_chain, 0, present_flags);
+            let present_parameters = self
+                .present_mode
+                .present_parameters(self.present_capabilities);
+            let hr = present(
+                self.swap_chain,
+                present_parameters.sync_interval,
+                present_parameters.flags,
+            );
             if hr != S_OK {
                 return Err(format!("Present failed: 0x{hr:08X}"));
             }

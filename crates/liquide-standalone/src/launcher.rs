@@ -1,11 +1,11 @@
 //! Standalone compositor launcher — coordinates all subsystems.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::config::StandaloneConfig;
 use crate::display::{DisplayOutput, OutputInfo};
-use liquide_drm::{DrmDevice, enumerate_connectors};
+use liquide_drm::{enumerate_connectors, DrmDevice};
 use liquide_libinput::EvdevEnumerator;
 use liquide_logind::{Privileges, VirtualTerminal, VtMode};
 use liquide_platform::standalone::{
@@ -30,6 +30,7 @@ pub(crate) struct StandaloneLaunchSummary {
     pub(crate) effective_fps_cap: u32,
     pub(crate) present_mode: StandalonePresentMode,
     pub(crate) live_present_feedback_capable: bool,
+    pub(crate) refresh_sync_present_capable: bool,
     pub(crate) output_name: Option<String>,
     pub(crate) fallback_reason: StandaloneLaunchFallbackReason,
 }
@@ -98,6 +99,29 @@ pub(crate) enum StandalonePresentFeedbackFallbackReason {
     NoLiveFeedbackCapability,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct StandalonePresentCapabilities {
+    pub(crate) live_feedback: bool,
+    pub(crate) refresh_sync: bool,
+}
+
+impl StandalonePresentCapabilities {
+    const fn live_feedback(live_feedback: bool) -> Self {
+        Self {
+            live_feedback,
+            refresh_sync: false,
+        }
+    }
+
+    #[cfg(test)]
+    const fn new(live_feedback: bool, refresh_sync: bool) -> Self {
+        Self {
+            live_feedback,
+            refresh_sync,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StandaloneLaunchRuntimeInputs {
     pub(crate) primary_output: Option<OutputInfo>,
@@ -106,7 +130,7 @@ pub(crate) struct StandaloneLaunchRuntimeInputs {
 }
 
 impl StandaloneLaunchRuntimeInputs {
-    fn from_launcher(launcher: &StandaloneLauncher) -> Self {
+    pub(crate) fn from_launcher(launcher: &StandaloneLauncher) -> Self {
         Self {
             primary_output: launcher.display_output.primary().cloned(),
             live_present_feedback_capable: launcher.live_present_feedback_capable(),
@@ -114,11 +138,11 @@ impl StandaloneLaunchRuntimeInputs {
         }
     }
 
-    fn active_live_present_feedback_capability(&self) -> bool {
+    pub(crate) fn active_live_present_feedback_capability(&self) -> bool {
         self.live_present_feedback_capable && self.present_feedback_fd.is_some()
     }
 
-    fn launch_summary(&self, requested_fps_cap: u32) -> StandaloneLaunchSummary {
+    pub(crate) fn launch_summary(&self, requested_fps_cap: u32) -> StandaloneLaunchSummary {
         StandaloneLauncher::build_launch_plan_for_inputs(
             requested_fps_cap,
             self.primary_output.as_ref(),
@@ -144,6 +168,12 @@ impl StandaloneLaunchRuntimeInputs {
             hardware_cursor: true,
             present_mode: summary.present_mode,
             drm_event_fd: self.drm_event_fd_for_summary(&summary),
+            // TODO: install a real DRM page-flip submitter once standalone
+            // owns a scanned-out framebuffer id and selected CRTC at this
+            // handoff. Today queued mode consumes real DRM feedback but the
+            // platform still stores software pixels instead of issuing flips.
+            #[cfg(target_os = "linux")]
+            submitter: None,
         };
         (summary, config)
     }
@@ -179,9 +209,22 @@ impl StandaloneLauncher {
         primary_output: Option<&OutputInfo>,
         live_present_feedback_capable: bool,
     ) -> StandaloneLaunchSummary {
+        Self::build_launch_plan_for_present_capabilities(
+            requested_fps_cap,
+            primary_output,
+            StandalonePresentCapabilities::live_feedback(live_present_feedback_capable),
+        )
+    }
+
+    pub(crate) fn build_launch_plan_for_present_capabilities(
+        requested_fps_cap: u32,
+        primary_output: Option<&OutputInfo>,
+        present_capabilities: StandalonePresentCapabilities,
+    ) -> StandaloneLaunchSummary {
         let width_defaulted = primary_output.map_or(true, |output| output.mode.width == 0);
         let height_defaulted = primary_output.map_or(true, |output| output.mode.height == 0);
-        let refresh_hz_defaulted = primary_output.map_or(true, |output| output.mode.refresh_hz == 0);
+        let refresh_hz_defaulted =
+            primary_output.map_or(true, |output| output.mode.refresh_hz == 0);
 
         let width = primary_output
             .and_then(|output| (output.mode.width > 0).then_some(output.mode.width))
@@ -193,6 +236,7 @@ impl StandaloneLauncher {
             .and_then(|output| (output.mode.refresh_hz > 0).then_some(output.mode.refresh_hz))
             .unwrap_or(DEFAULT_REFRESH_HZ);
 
+        let live_present_feedback_capable = present_capabilities.live_feedback;
         let present_mode = if live_present_feedback_capable {
             StandalonePresentMode::Queued
         } else {
@@ -224,6 +268,7 @@ impl StandaloneLauncher {
             effective_fps_cap,
             present_mode,
             live_present_feedback_capable,
+            refresh_sync_present_capable: present_capabilities.refresh_sync,
             output_name: primary_output.map(|output| output.name.clone()),
             fallback_reason: StandaloneLaunchFallbackReason {
                 geometry,
@@ -238,7 +283,10 @@ impl StandaloneLauncher {
     }
 
     fn live_present_feedback_capable(&self) -> bool {
-        // Keep queued pacing disabled until the launcher can observe real page-flip-backed feedback.
+        // A readable DRM fd is not enough to prove frame-correlated present
+        // feedback. Keep queued pacing disabled until the launcher also owns
+        // a real submitter that issues page flips or vblank waits for each
+        // accepted frame.
         false
     }
 
@@ -414,8 +462,7 @@ impl StandaloneLauncher {
         launch_plan.log_surface_selection();
         launch_plan.log_present_strategy();
 
-        let mut platform = StandalonePlatform::new(platform_config)
-        .map_err(|error| {
+        let mut platform = StandalonePlatform::new(platform_config).map_err(|error| {
             self.running.store(false, Ordering::Release);
             anyhow::anyhow!("failed to create standalone platform backend: {error}")
         })?;
@@ -432,6 +479,7 @@ impl StandaloneLauncher {
             refresh_hz = launch_plan.refresh_hz,
             fps_cap = launch_plan.effective_fps_cap,
             present_mode = ?launch_plan.present_mode,
+            refresh_sync_present_capable = launch_plan.refresh_sync_present_capable,
             "starting standalone desktop handoff"
         );
 
@@ -440,13 +488,78 @@ impl StandaloneLauncher {
         desktop.run(&mut platform);
 
         self.running.store(false, Ordering::Release);
-        info!(frames = desktop.frame_count(), "standalone desktop compositor exited");
+        info!(
+            frames = desktop.frame_count(),
+            "standalone desktop compositor exited"
+        );
         Ok(())
     }
 
     /// Whether the compositor is currently running.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+mod t47_e8_tests {
+    use super::*;
+    use liquide_drm::{DrmMode, ModeFlags};
+
+    fn output(name: &str, width: u32, height: u32, refresh_hz: u32) -> OutputInfo {
+        OutputInfo {
+            connector_id: 1,
+            name: name.to_string(),
+            mode: DrmMode {
+                width,
+                height,
+                refresh_hz,
+                clock_khz: 0,
+                flags: ModeFlags::CURRENT,
+                name: format!("{width}x{height}@{refresh_hz}"),
+            },
+            physical_width_mm: 600,
+            physical_height_mm: 340,
+            primary: true,
+        }
+    }
+
+    #[test]
+    fn refresh_sync_capability_is_reported_without_enabling_queued_feedback() {
+        let output = output("WIN32-1", 3840, 2160, 120);
+        let summary = StandaloneLauncher::build_launch_plan_for_present_capabilities(
+            0,
+            Some(&output),
+            StandalonePresentCapabilities::new(false, true),
+        );
+
+        assert_eq!(summary.width, 3840);
+        assert_eq!(summary.height, 2160);
+        assert_eq!(summary.refresh_hz, 120);
+        assert_eq!(summary.effective_fps_cap, 120);
+        assert_eq!(summary.present_mode, StandalonePresentMode::Immediate);
+        assert!(!summary.live_present_feedback_capable);
+        assert!(summary.refresh_sync_present_capable);
+        assert_eq!(summary.output_name.as_deref(), Some("WIN32-1"));
+        assert_eq!(
+            summary.fallback_reason.present_feedback,
+            Some(StandalonePresentFeedbackFallbackReason::NoLiveFeedbackCapability)
+        );
+    }
+
+    #[test]
+    fn live_feedback_capability_still_selects_queued_mode() {
+        let output = output("DRM-1", 2560, 1440, 144);
+        let summary = StandaloneLauncher::build_launch_plan_for_present_capabilities(
+            0,
+            Some(&output),
+            StandalonePresentCapabilities::new(true, true),
+        );
+
+        assert_eq!(summary.present_mode, StandalonePresentMode::Queued);
+        assert!(summary.live_present_feedback_capable);
+        assert!(summary.refresh_sync_present_capable);
+        assert!(summary.fallback_reason.present_feedback.is_none());
     }
 }
 

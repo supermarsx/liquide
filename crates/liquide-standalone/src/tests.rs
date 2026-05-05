@@ -856,6 +856,45 @@ mod tests {
     }
 
     #[test]
+    fn launcher_without_drm_keeps_live_present_feedback_disabled() {
+        // A freshly-constructed launcher has not yet run `setup_display`, so
+        // it cannot observe real page-flip-backed feedback. Both the plan it
+        // produces from `current_runtime_inputs()` and the underlying
+        // capability flag must stay in the timer-pacing fallback regime.
+        let launcher = StandaloneLauncher::new(StandaloneConfig::default());
+        let runtime_inputs = StandaloneLaunchRuntimeInputs::from_launcher(&launcher);
+        assert!(!runtime_inputs.live_present_feedback_capable);
+        assert!(runtime_inputs.present_feedback_fd.is_none());
+        assert!(!runtime_inputs.active_live_present_feedback_capability());
+
+        let summary = runtime_inputs.launch_summary(0);
+        assert_eq!(summary.present_mode, StandalonePresentMode::Immediate);
+        assert!(!summary.live_present_feedback_capable);
+        assert_eq!(
+            summary.fallback_reason.present_feedback,
+            Some(StandalonePresentFeedbackFallbackReason::NoLiveFeedbackCapability)
+        );
+    }
+
+    #[test]
+    fn feedback_fd_without_submitter_keeps_queued_present_disabled() {
+        let runtime_inputs = StandaloneLaunchRuntimeInputs {
+            primary_output: Some(scripted_output("DP-1", 2560, 1440, 144)),
+            live_present_feedback_capable: false,
+            present_feedback_fd: Some(42),
+        };
+
+        assert!(!runtime_inputs.active_live_present_feedback_capability());
+        let summary = runtime_inputs.launch_summary(0);
+        assert_eq!(summary.present_mode, StandalonePresentMode::Immediate);
+        assert_eq!(summary.effective_fps_cap, 144);
+        assert_eq!(
+            summary.fallback_reason.present_feedback,
+            Some(StandalonePresentFeedbackFallbackReason::NoLiveFeedbackCapability)
+        );
+    }
+
+    #[test]
     fn launcher_plan_uses_output_metadata_without_enabling_queued_present_mode() {
         let display = DisplayOutput::from_connectors(&[scripted_connector(
             7,

@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[cfg(target_os = "linux")]
-use liquide_drm::{drain_pending_events_from_fd, DrmEvent, PageFlipEvent, VblankEvent};
+use liquide_drm::{DrmEvent, PageFlipEvent, VblankEvent, drain_pending_events_from_fd};
 
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::PixelFormat;
@@ -46,6 +46,30 @@ pub enum StandalonePresentMode {
     #[default]
     Immediate,
     Queued,
+}
+
+/// Optional submitter invoked once per accepted frame in queued present mode.
+///
+/// When `None`, the standalone backend's queued mode behaves exactly as today
+/// (drains DRM events from `drm_event_fd`, scripted feedback, etc.). When
+/// `Some`, the backend additionally calls [`Self::submit_present`] before
+/// recording the frame as in-flight so a real page-flip (or other
+/// backend-specific submission) can be issued.
+///
+/// On `Err`, the standalone backend logs the failure and refuses the present
+/// (the frame is *not* recorded as in-flight, so queued pacing is not
+/// deadlocked) and surfaces a `PlatformError::Presentation` to the caller.
+///
+/// Linux-only because `liquide-drm` (and hence `DrmError`) is a Linux-only
+/// dependency of this crate.
+#[cfg(target_os = "linux")]
+pub trait StandalonePresentSubmitter: Send {
+    /// Submit a present for the given frame sequence number.
+    ///
+    /// `frame_seq` is the 1-based sequence assigned to this frame by the
+    /// standalone backend (matching the value `present_count` will hold once
+    /// the frame is recorded).
+    fn submit_present(&mut self, frame_seq: u64) -> Result<(), liquide_drm::DrmError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,12 +249,15 @@ impl StandaloneScriptHandle {
     }
 }
 
-fn lock_shared(shared: &Arc<Mutex<StandaloneSharedState>>) -> MutexGuard<'_, StandaloneSharedState> {
-    shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_shared(
+    shared: &Arc<Mutex<StandaloneSharedState>>,
+) -> MutexGuard<'_, StandaloneSharedState> {
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Configuration for the standalone platform backend.
-#[derive(Debug, Clone)]
 pub struct StandaloneConfig {
     /// Screen width in pixels.
     pub width: u32,
@@ -242,6 +269,13 @@ pub struct StandaloneConfig {
     pub present_mode: StandalonePresentMode,
     /// Optional DRM event fd used to observe queued present acknowledgements.
     pub drm_event_fd: Option<i32>,
+    /// Optional present submitter invoked in queued mode for each accepted
+    /// frame. Defaults to `None`, in which case the backend behaves exactly as
+    /// before (no real page-flip is issued; feedback comes from
+    /// `drm_event_fd` and/or scripted acks). See
+    /// [`StandalonePresentSubmitter`].
+    #[cfg(target_os = "linux")]
+    pub submitter: Option<Box<dyn StandalonePresentSubmitter>>,
 }
 
 impl Default for StandaloneConfig {
@@ -252,7 +286,26 @@ impl Default for StandaloneConfig {
             hardware_cursor: true,
             present_mode: StandalonePresentMode::Immediate,
             drm_event_fd: None,
+            #[cfg(target_os = "linux")]
+            submitter: None,
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl StandaloneConfig {
+    /// Builder-style setter installing a present submitter.
+    ///
+    /// The submitter is only invoked when [`Self::present_mode`] is
+    /// [`StandalonePresentMode::Queued`]. In immediate mode it is carried but
+    /// never called.
+    #[must_use]
+    pub fn with_present_submitter(
+        mut self,
+        submitter: Box<dyn StandalonePresentSubmitter>,
+    ) -> Self {
+        self.submitter = Some(submitter);
+        self
     }
 }
 
@@ -363,6 +416,11 @@ pub struct StandalonePlatform {
     shared: Arc<Mutex<StandaloneSharedState>>,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     drm_event_fd: Option<i32>,
+    /// Optional submitter invoked in queued present mode. `None` in
+    /// production today (launcher does not install one), preserving the
+    /// existing behaviour exactly.
+    #[cfg(target_os = "linux")]
+    submitter: Option<Box<dyn StandalonePresentSubmitter>>,
     /// Screen dimensions.
     width: u32,
     height: u32,
@@ -390,6 +448,8 @@ impl StandalonePlatform {
             keymap: DefaultKeymap,
             shared: Arc::new(Mutex::new(shared)),
             drm_event_fd: config.drm_event_fd,
+            #[cfg(target_os = "linux")]
+            submitter: config.submitter,
             width: config.width,
             height: config.height,
         })
@@ -562,14 +622,45 @@ impl PlatformBackend for StandalonePlatform {
         // Path B: Local display output.
         // Store pixels for DRM scanout. In the full implementation,
         // this would copy to the DRM framebuffer and trigger a page flip.
-        let mut shared = lock_shared(&self.shared);
-        if !shared.can_accept_present() {
-            return Err(PlatformError::Presentation(
-                "standalone present backpressure: previous queued frame has not been acknowledged"
-                    .to_string(),
-            ));
+        let (queued_mode, next_frame_seq) = {
+            let shared = lock_shared(&self.shared);
+            if !shared.can_accept_present() {
+                return Err(PlatformError::Presentation(
+                    "standalone present backpressure: previous queued frame has not been acknowledged"
+                        .to_string(),
+                ));
+            }
+            let queued = matches!(shared.present_mode, StandalonePresentMode::Queued);
+            let next_seq = shared.present_count.saturating_add(1);
+            (queued, next_seq)
+        };
+
+        // In queued mode, invoke the optional submitter BEFORE recording the
+        // frame as in-flight so a real page-flip (or other backend submission)
+        // can be issued. On error, the frame is *not* recorded as in-flight —
+        // this surfaces the failure to the caller without deadlocking pacing
+        // (subsequent `can_accept_present()` calls remain true).
+        #[cfg(target_os = "linux")]
+        {
+            if queued_mode {
+                if let Some(submitter) = self.submitter.as_mut() {
+                    if let Err(err) = submitter.submit_present(next_frame_seq) {
+                        eprintln!(
+                            "liquide-platform: standalone present submitter failed for frame_seq={next_frame_seq}: {err:?}; dropping frame"
+                        );
+                        return Err(PlatformError::Presentation(format!(
+                            "standalone present submitter failed: {err}"
+                        )));
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (queued_mode, next_frame_seq);
         }
 
+        let mut shared = lock_shared(&self.shared);
         shared.record_present_submission(StandalonePresentedFrame {
             width,
             height,
@@ -586,9 +677,11 @@ impl PlatformBackend for StandalonePlatform {
     }
 
     fn request_redraw(&mut self, _handle: NativeWindowHandle) {
-        lock_shared(&self.shared).event_queue.push_back(PlatformEvent::WindowRedraw {
-            handle: NativeWindowHandle(1),
-        });
+        lock_shared(&self.shared)
+            .event_queue
+            .push_back(PlatformEvent::WindowRedraw {
+                handle: NativeWindowHandle(1),
+            });
     }
 
     fn set_cursor_shape(&mut self, _handle: NativeWindowHandle, _shape: &str) -> bool {
@@ -796,6 +889,8 @@ mod tests {
             hardware_cursor: false,
             present_mode: StandalonePresentMode::Queued,
             drm_event_fd: Some(7),
+            #[cfg(target_os = "linux")]
+            submitter: None,
         };
         let platform = StandalonePlatform::new(config).unwrap();
         assert_eq!(platform.dimensions(), (2560, 1440));
@@ -827,6 +922,8 @@ mod tests {
             hardware_cursor: true,
             present_mode: StandalonePresentMode::Immediate,
             drm_event_fd: None,
+            #[cfg(target_os = "linux")]
+            submitter: None,
         };
         let platform = StandalonePlatform::new(config).unwrap();
         let rect = platform.display().virtual_screen_rect();
@@ -919,8 +1016,14 @@ mod tests {
             PlatformEvent::FocusLost { handle },
         ]);
         assert_eq!(script.pending_events(), 2);
-        assert!(matches!(platform.poll_event(), Some(PlatformEvent::FocusGained { .. })));
-        assert!(matches!(platform.poll_event(), Some(PlatformEvent::FocusLost { .. })));
+        assert!(matches!(
+            platform.poll_event(),
+            Some(PlatformEvent::FocusGained { .. })
+        ));
+        assert!(matches!(
+            platform.poll_event(),
+            Some(PlatformEvent::FocusLost { .. })
+        ));
 
         platform
             .present_frame(handle, &[1, 2, 3, 4], 1, 1, 4, PixelFormat::Bgra8)
@@ -986,7 +1089,10 @@ mod tests {
             error,
             PlatformError::Presentation(message) if message.contains("backpressure")
         ));
-        assert_eq!(platform.last_presented_frame().unwrap().pixels, vec![1, 2, 3, 4]);
+        assert_eq!(
+            platform.last_presented_frame().unwrap().pixels,
+            vec![1, 2, 3, 4]
+        );
     }
 
     #[test]
@@ -1088,7 +1194,13 @@ mod tests {
         let mut platform = queued_platform_with_drm_fd(pipe.read_fd());
 
         present_one_queued_frame(&mut platform);
-        pipe.write_all(&build_vblank_like_record(TEST_DRM_EVENT_VBLANK, 11, 125, 91, 4));
+        pipe.write_all(&build_vblank_like_record(
+            TEST_DRM_EVENT_VBLANK,
+            11,
+            125,
+            91,
+            4,
+        ));
 
         assert!(platform.can_accept_present());
         assert_eq!(platform.pending_present_count(), 0);
@@ -1183,5 +1295,201 @@ mod tests {
         let platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
         assert_eq!(platform.keymap().platform_name(), "null");
         assert!(platform.keymap().translate_scancode(42).is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // StandalonePresentSubmitter seam regressions (t30).
+    //
+    // Linux-only because the submitter trait references `liquide_drm::DrmError`,
+    // which is itself a Linux-only dependency of this crate.
+    // ------------------------------------------------------------------
+    #[cfg(target_os = "linux")]
+    pub(crate) struct NoopPresentSubmitter {
+        // Per the requested test-helper shape, kept as a public Vec<u64>; the
+        // mirror below is what the host test inspects after the box is moved
+        // into the platform.
+        #[allow(dead_code)]
+        pub calls: Vec<u64>,
+        // Optional shared mirror so the test owning the platform can still
+        // observe invocation counts after the box has been moved into config.
+        mirror: Option<Arc<Mutex<Vec<u64>>>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl NoopPresentSubmitter {
+        fn with_mirror(mirror: Arc<Mutex<Vec<u64>>>) -> Self {
+            Self {
+                calls: Vec::new(),
+                mirror: Some(mirror),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl StandalonePresentSubmitter for NoopPresentSubmitter {
+        fn submit_present(&mut self, frame_seq: u64) -> Result<(), liquide_drm::DrmError> {
+            self.calls.push(frame_seq);
+            if let Some(mirror) = self.mirror.as_ref() {
+                mirror
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(frame_seq);
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    struct ScriptedSubmitter {
+        shared: Arc<Mutex<ScriptedSubmitterState>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    #[derive(Default)]
+    struct ScriptedSubmitterState {
+        calls: Vec<u64>,
+        next_error: Option<liquide_drm::DrmError>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl StandalonePresentSubmitter for ScriptedSubmitter {
+        fn submit_present(&mut self, frame_seq: u64) -> Result<(), liquide_drm::DrmError> {
+            let mut state = self
+                .shared
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.calls.push(frame_seq);
+            if let Some(err) = state.next_error.take() {
+                return Err(err);
+            }
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn submitter_not_invoked_in_immediate_mode() {
+        let mirror: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let submitter = Box::new(NoopPresentSubmitter::with_mirror(Arc::clone(&mirror)));
+        let config = StandaloneConfig::default().with_present_submitter(submitter);
+        assert_eq!(config.present_mode, StandalonePresentMode::Immediate);
+        let mut platform = StandalonePlatform::new(config).unwrap();
+
+        platform
+            .present_frame(
+                NativeWindowHandle(1),
+                &[1, 2, 3, 4],
+                1,
+                1,
+                4,
+                PixelFormat::Bgra8,
+            )
+            .unwrap();
+
+        let calls = mirror.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        assert!(
+            calls.is_empty(),
+            "submitter must not be invoked in Immediate mode, got {:?}",
+            calls
+        );
+        assert_eq!(platform.present_count(), 1);
+        assert_eq!(platform.acknowledged_present_count(), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn submitter_invoked_in_queued_mode_with_scripted_feedback() {
+        let mirror: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let submitter = Box::new(NoopPresentSubmitter::with_mirror(Arc::clone(&mirror)));
+        let config = StandaloneConfig {
+            present_mode: StandalonePresentMode::Queued,
+            ..StandaloneConfig::default()
+        }
+        .with_present_submitter(submitter);
+        let mut platform = StandalonePlatform::new(config).unwrap();
+        let script = platform.script_handle();
+
+        platform
+            .present_frame(
+                NativeWindowHandle(1),
+                &[5, 6, 7, 8],
+                1,
+                1,
+                4,
+                PixelFormat::Bgra8,
+            )
+            .unwrap();
+
+        let calls = mirror.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        assert_eq!(calls, vec![1u64]);
+        assert_eq!(platform.present_count(), 1);
+        assert_eq!(platform.pending_present_count(), 1);
+        assert_eq!(platform.acknowledged_present_count(), 0);
+
+        // Scripted feedback path still works with a submitter installed.
+        script.push_present_ack(Some(11), Some(22), Some(3));
+        assert!(platform.poll_event().is_none());
+        assert_eq!(platform.acknowledged_present_count(), 1);
+        assert_eq!(platform.pending_present_count(), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn submitter_error_does_not_panic_pacing() {
+        let state = Arc::new(Mutex::new(ScriptedSubmitterState {
+            calls: Vec::new(),
+            next_error: Some(liquide_drm::DrmError::PageFlip("scripted".to_string())),
+        }));
+        let submitter = Box::new(ScriptedSubmitter {
+            shared: Arc::clone(&state),
+        });
+        let config = StandaloneConfig {
+            present_mode: StandalonePresentMode::Queued,
+            ..StandaloneConfig::default()
+        }
+        .with_present_submitter(submitter);
+        let mut platform = StandalonePlatform::new(config).unwrap();
+
+        let result = platform.present_frame(
+            NativeWindowHandle(1),
+            &[1, 2, 3, 4],
+            1,
+            1,
+            4,
+            PixelFormat::Bgra8,
+        );
+
+        assert!(matches!(
+            result,
+            Err(PlatformError::Presentation(ref msg))
+                if msg.contains("standalone present submitter failed")
+        ));
+
+        // Frame is NOT recorded as in-flight on submitter error: pacing is
+        // not deadlocked, and the next call is accepted.
+        assert_eq!(platform.present_count(), 0);
+        assert_eq!(platform.pending_present_count(), 0);
+        assert_eq!(platform.acknowledged_present_count(), 0);
+        assert!(platform.can_accept_present());
+
+        let calls = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .calls
+            .clone();
+        assert_eq!(calls, vec![1u64]);
+
+        // A subsequent successful submission proceeds normally.
+        let result = platform.present_frame(
+            NativeWindowHandle(1),
+            &[9, 9, 9, 9],
+            1,
+            1,
+            4,
+            PixelFormat::Bgra8,
+        );
+        assert!(result.is_ok());
+        assert_eq!(platform.present_count(), 1);
+        assert_eq!(platform.pending_present_count(), 1);
     }
 }

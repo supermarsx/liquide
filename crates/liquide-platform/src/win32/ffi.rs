@@ -176,6 +176,50 @@ impl Default for MONITORINFOEXW {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct DEVMODEW {
+    pub dmDeviceName: [WCHAR; 32],
+    pub dmSpecVersion: WORD,
+    pub dmDriverVersion: WORD,
+    pub dmSize: WORD,
+    pub dmDriverExtra: WORD,
+    pub dmFields: DWORD,
+    pub dmPositionX: LONG,
+    pub dmPositionY: LONG,
+    pub dmDisplayOrientation: DWORD,
+    pub dmDisplayFixedOutput: DWORD,
+    pub dmColor: i16,
+    pub dmDuplex: i16,
+    pub dmYResolution: i16,
+    pub dmTTOption: i16,
+    pub dmCollate: i16,
+    pub dmFormName: [WCHAR; 32],
+    pub dmLogPixels: WORD,
+    pub dmBitsPerPel: DWORD,
+    pub dmPelsWidth: DWORD,
+    pub dmPelsHeight: DWORD,
+    pub dmDisplayFlags: DWORD,
+    pub dmDisplayFrequency: DWORD,
+    pub dmICMMethod: DWORD,
+    pub dmICMIntent: DWORD,
+    pub dmMediaType: DWORD,
+    pub dmDitherType: DWORD,
+    pub dmReserved1: DWORD,
+    pub dmReserved2: DWORD,
+    pub dmPanningWidth: DWORD,
+    pub dmPanningHeight: DWORD,
+}
+
+impl Default for DEVMODEW {
+    fn default() -> Self {
+        // SAFETY: DEVMODEW is a plain-old-data struct; zeroed memory is valid.
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+pub const ENUM_CURRENT_SETTINGS: DWORD = u32::MAX;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct PAINTSTRUCT {
     pub hdc: HDC,
     pub fErase: BOOL,
@@ -708,6 +752,11 @@ unsafe extern "system" {
     ) -> BOOL;
 
     pub fn GetMonitorInfoW(hMonitor: HMONITOR, lpmi: *mut MONITORINFOEXW) -> BOOL;
+    pub fn EnumDisplaySettingsW(
+        lpszDeviceName: LPCWSTR,
+        iModeNum: DWORD,
+        lpDevMode: *mut DEVMODEW,
+    ) -> BOOL;
     pub fn MonitorFromWindow(hwnd: HWND, dwFlags: DWORD) -> HMONITOR;
 
     pub fn SetCapture(hWnd: HWND) -> HWND;

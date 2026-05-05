@@ -8,6 +8,8 @@ pub mod dxgi;
 pub mod ffi;
 pub mod input;
 
+pub use dxgi::{DxgiPresentCapabilities, DxgiPresentMode};
+
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
@@ -27,7 +29,7 @@ use crate::notifications::{NativeNotificationParams, NativeNotifications};
 use crate::taskbar::{JumpListItem, TaskbarIntegration};
 use crate::tray::{NativeTray, NativeTrayHandle, NativeTrayParams, TrayUpdate};
 use crate::window_host::{NativeWindowHandle, NativeWindowHost, NativeWindowParams};
-use crate::{NativeDragDrop, PlatformBackend, PlatformError, PlatformResult};
+use crate::{NativeDragDrop, PlatformBackend, PlatformError, PlatformResult, PresentFeedback};
 
 // ---------------------------------------------------------------------------
 // UTF-16 helper
@@ -49,6 +51,13 @@ fn timestamp_us() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_micros() as u64)
+        .unwrap_or(0)
+}
+
+fn timestamp_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
 }
 
@@ -486,6 +495,7 @@ unsafe extern "system" fn monitor_enum_callback(
     let id = monitors.len() as u32;
     let name = from_wide(&mi.szDevice);
     let primary = (mi.base.dwFlags & ffi::MONITORINFOF_PRIMARY) != 0;
+    let refresh_rate_hz = query_refresh_rate_hz(&mi.szDevice).unwrap_or(60);
 
     let geometry = Rect::new(
         mi.base.rcMonitor.left as f32,
@@ -507,7 +517,7 @@ unsafe extern "system" fn monitor_enum_callback(
         work_area,
         dpi_scale: 1.0, // proper DPI requires shcore; default to 1.0
         primary,
-        refresh_rate_hz: 60, // best-effort default
+        refresh_rate_hz,
     });
 
     ffi::TRUE
@@ -533,6 +543,54 @@ impl DisplayBackend for Win32DisplayBackend {
 // Safety: Win32DisplayBackend has no mutable state; all queries call
 // thread-safe Win32 APIs.
 unsafe impl Send for Win32DisplayBackend {}
+
+pub fn refresh_rate_hz_from_devmode_frequency(frequency: u32) -> Option<u32> {
+    (frequency > 1).then_some(frequency)
+}
+
+fn query_refresh_rate_hz(device_name: &[u16; ffi::CCHDEVICENAME]) -> Option<u32> {
+    let mut dev_mode = ffi::DEVMODEW::default();
+    dev_mode.dmSize = std::mem::size_of::<ffi::DEVMODEW>() as ffi::WORD;
+
+    // SAFETY: device_name is a valid monitor device string returned by
+    // GetMonitorInfoW and dev_mode is a properly sized output buffer.
+    let result = unsafe {
+        ffi::EnumDisplaySettingsW(
+            device_name.as_ptr(),
+            ffi::ENUM_CURRENT_SETTINGS,
+            &mut dev_mode,
+        )
+    };
+
+    (result != 0)
+        .then_some(dev_mode.dmDisplayFrequency)
+        .and_then(refresh_rate_hz_from_devmode_frequency)
+}
+
+#[derive(Debug, Default)]
+struct Win32PresentFeedbackState {
+    submitted_present_count: u64,
+    feedback_queue: VecDeque<PresentFeedback>,
+}
+
+impl Win32PresentFeedbackState {
+    fn record_accepted_present(&mut self, timestamp_ns: u64) {
+        self.submitted_present_count = self.submitted_present_count.saturating_add(1);
+        let acknowledged_present_count = self.submitted_present_count;
+
+        self.feedback_queue.push_back(PresentFeedback {
+            acknowledged_present_count,
+            sequence: (acknowledged_present_count <= u32::MAX as u64)
+                .then_some(acknowledged_present_count as u32),
+            timestamp_ns: Some(timestamp_ns),
+            crtc_id: None,
+        });
+    }
+
+    fn take_feedback(&mut self) -> Option<PresentFeedback> {
+        self.feedback_queue.pop_front()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Win32 window host
@@ -1026,6 +1084,12 @@ pub struct Win32Platform {
 
     /// Hidden message-only window for tray callbacks, etc.
     msg_hwnd: ffi::HWND,
+
+    /// Requested presentation behavior for lazily-created DXGI presenters.
+    present_mode: dxgi::DxgiPresentMode,
+
+    /// Accepted-present metadata surfaced through PlatformBackend feedback.
+    present_feedback: Win32PresentFeedbackState,
 }
 
 // Safety: Win32Platform owns all raw handles and is designed to be used
@@ -1156,7 +1220,21 @@ impl Win32Platform {
             hinstance,
             class_name_wide,
             msg_hwnd,
+            present_mode: dxgi::DxgiPresentMode::Immediate,
+            present_feedback: Win32PresentFeedbackState::default(),
         })
+    }
+
+    /// Create a Win32 backend with an explicit DXGI present mode.
+    pub fn new_with_present_mode(present_mode: dxgi::DxgiPresentMode) -> PlatformResult<Self> {
+        let mut platform = Self::new()?;
+        platform.present_mode = present_mode;
+        Ok(platform)
+    }
+
+    /// Return the requested DXGI present mode for newly-created presenters.
+    pub fn present_mode(&self) -> dxgi::DxgiPresentMode {
+        self.present_mode
     }
 
     /// Pump all pending Win32 messages and dispatch them through the wndproc,
@@ -1311,6 +1389,10 @@ impl PlatformBackend for Win32Platform {
         }
     }
 
+    fn take_present_feedback(&mut self) -> Option<PresentFeedback> {
+        self.present_feedback.take_feedback()
+    }
+
     // ── Frame presentation ───────────────────────────────────────────
 
     fn present_frame(
@@ -1331,6 +1413,7 @@ impl PlatformBackend for Win32Platform {
             )));
         }
 
+        let present_mode = self.present_mode;
         let info = self
             .window_host
             .windows
@@ -1342,7 +1425,7 @@ impl PlatformBackend for Win32Platform {
         // Try DXGI presentation first.
         // Lazily initialize the DXGI presenter on first use.
         if info.dxgi.is_none() {
-            match dxgi::DxgiPresenter::new(hwnd, width, height) {
+            match dxgi::DxgiPresenter::new_with_present_mode(hwnd, width, height, present_mode) {
                 Ok(presenter) => {
                     info.dxgi = Some(presenter);
                 }
@@ -1354,7 +1437,11 @@ impl PlatformBackend for Win32Platform {
 
         if let Some(ref mut presenter) = info.dxgi {
             match presenter.present(pixels, width, height, stride) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.present_feedback
+                        .record_accepted_present(timestamp_ns());
+                    return Ok(());
+                }
                 Err(_) => {
                     // DXGI present failed (device lost, etc.); drop the
                     // presenter and fall through to GDI for this frame.
@@ -1409,6 +1496,8 @@ impl PlatformBackend for Win32Platform {
             ffi::ReleaseDC(hwnd, hdc);
         }
 
+        self.present_feedback
+            .record_accepted_present(timestamp_ns());
         Ok(())
     }
 
@@ -1542,5 +1631,31 @@ mod tests {
     fn timestamp_us_is_nonzero() {
         let ts = timestamp_us();
         assert!(ts > 0);
+    }
+
+    #[test]
+    fn refresh_rate_metadata_filters_windows_default_values() {
+        assert_eq!(refresh_rate_hz_from_devmode_frequency(0), None);
+        assert_eq!(refresh_rate_hz_from_devmode_frequency(1), None);
+        assert_eq!(refresh_rate_hz_from_devmode_frequency(60), Some(60));
+        assert_eq!(refresh_rate_hz_from_devmode_frequency(144), Some(144));
+    }
+
+    #[test]
+    fn present_feedback_state_records_accepted_presents_in_order() {
+        let mut state = Win32PresentFeedbackState::default();
+        state.record_accepted_present(10);
+        state.record_accepted_present(20);
+
+        let first = state.take_feedback().unwrap();
+        let second = state.take_feedback().unwrap();
+
+        assert_eq!(first.acknowledged_present_count, 1);
+        assert_eq!(first.sequence, Some(1));
+        assert_eq!(first.timestamp_ns, Some(10));
+        assert_eq!(second.acknowledged_present_count, 2);
+        assert_eq!(second.sequence, Some(2));
+        assert_eq!(second.timestamp_ns, Some(20));
+        assert!(state.take_feedback().is_none());
     }
 }
