@@ -1,7 +1,15 @@
 use liquide_app_harness::{AppRunReport, FrameCapture};
 
 pub fn assert_basic_launch_report(report: &AppRunReport) -> &FrameCapture {
-    assert!(report.stats.frames >= 1, "expected at least one harness frame");
+    assert!(
+        report.stats.frames >= 1,
+        "expected at least one harness frame"
+    );
+    assert_eq!(
+        report.present_error_count, 0,
+        "expected no platform present errors, last error: {:?}",
+        report.last_present_error
+    );
     assert!(
         report.present_count >= 1,
         "expected at least one presented frame"

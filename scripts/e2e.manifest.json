@@ -1,0 +1,232 @@
+[
+  {
+    "id": "check-app-e2e",
+    "suite": "check",
+    "tier": "preflight",
+    "platforms": ["all"],
+    "description": "Compile the app harness, platform, built-in apps, and workspace e2e harness without running scenarios.",
+    "command": "cargo",
+    "args": [
+      "check",
+      "-p",
+      "liquide-app-harness",
+      "-p",
+      "liquide-platform",
+      "-p",
+      "liquide-apps-files",
+      "-p",
+      "liquide-apps-settings",
+      "-p",
+      "liquide-apps-terminal",
+      "-p",
+      "liquide-apps-text-editor",
+      "-p",
+      "liquide-apps-software-center",
+      "-p",
+      "liquide-apps-task-manager",
+      "-p",
+      "liquide-e2e"
+    ]
+  },
+  {
+    "id": "apps-windows-launch",
+    "suite": "apps",
+    "tier": "smoke",
+    "platforms": ["windows"],
+    "description": "Launch the built-in app set through the Windows-oriented liquide-e2e app launch scenarios.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-e2e",
+      "--test",
+      "windows_app_launch",
+      "--",
+      "--nocapture"
+    ]
+  },
+  {
+    "id": "apps-windows-input-flow",
+    "suite": "apps",
+    "tier": "smoke",
+    "platforms": ["windows"],
+    "description": "Run scripted resize, focus, keyboard, and mouse scenarios for built-in apps on the Windows e2e lane.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-e2e",
+      "--test",
+      "windows_input_flow",
+      "--",
+      "--nocapture"
+    ]
+  },
+  {
+    "id": "apps-windows-full-workspace-smoke",
+    "suite": "apps",
+    "tier": "smoke",
+    "platforms": ["windows"],
+    "description": "Boot all current built-in app scenarios sequentially as the aggregate Windows workspace smoke.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-e2e",
+      "--test",
+      "windows_full_workspace_smoke",
+      "--",
+      "--nocapture"
+    ]
+  },
+  {
+    "id": "shell-e2e",
+    "suite": "shell",
+    "tier": "integration",
+    "platforms": ["all"],
+    "description": "Run the shell integration and e2e rendering, viewport, dispatch, context menu, and font rendering coverage.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-shell",
+      "--test",
+      "integration_rendering",
+      "--test",
+      "e2e_viewport",
+      "--test",
+      "e2e_event_dispatch",
+      "--test",
+      "e2e_context_menu",
+      "--test",
+      "e2e_font_rendering"
+    ]
+  },
+  {
+    "id": "session-e2e",
+    "suite": "session",
+    "tier": "integration",
+    "platforms": ["all"],
+    "description": "Run the session full integration, scene rendering, window management, dock tracking, devtools, and tiling e2e coverage.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-session",
+      "--test",
+      "e2e_full_integration",
+      "--test",
+      "e2e_scene_rendering",
+      "--test",
+      "e2e_window_management",
+      "--test",
+      "e2e_dock_tracking",
+      "--test",
+      "e2e_devtools",
+      "--test",
+      "e2e_alignment_tiling"
+    ]
+  },
+  {
+    "id": "renderer-cpu-smoke",
+    "suite": "renderer",
+    "tier": "smoke",
+    "platforms": ["all"],
+    "description": "Run the CPU renderer background smoke test that verifies a simple scene writes expected pixels.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-renderer-cpu",
+      "--lib",
+      "render_background"
+    ]
+  },
+  {
+    "id": "renderer-coordinator-output-smoke",
+    "suite": "renderer",
+    "tier": "smoke",
+    "platforms": ["all"],
+    "description": "Submit a render-coordinator task and assert the CPU-backed renderer returns nonblank pixel output and metadata.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-render-coordinator",
+      "--test",
+      "real_render_output"
+    ]
+  },
+  {
+    "id": "renderer-wgpu-coverage-smoke",
+    "suite": "renderer",
+    "tier": "smoke",
+    "platforms": ["all"],
+    "description": "Run the host-safe wgpu scene-kind coverage contract checks so unsupported GPU paths fail closed before rendering.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-renderer-wgpu",
+      "--lib",
+      "scene_kind_coverage"
+    ]
+  },
+  {
+    "id": "renderer-stale-frame-smoke",
+    "suite": "renderer",
+    "tier": "smoke",
+    "platforms": ["all"],
+    "description": "Run stale-frame and frame-sequence session regressions that catch repeated pixel snapshots and non-monotonic present metadata.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-session",
+      "--lib",
+      "t47_"
+    ]
+  },
+  {
+    "id": "renderer-remote-transport-smoke",
+    "suite": "renderer",
+    "tier": "smoke",
+    "platforms": ["all"],
+    "description": "Run the session tile loopback smoke covering encode, in-process transport, client decode, and monotonic sequences.",
+    "command": "cargo",
+    "args": [
+      "test",
+      "-p",
+      "liquide-session",
+      "--test",
+      "tile_loopback"
+    ]
+  },
+  {
+    "id": "renderer-bench-tile-encode-no-run",
+    "suite": "renderer",
+    "tier": "bench-compile",
+    "platforms": ["all"],
+    "description": "Compile the tile_encode Criterion benchmark without running measurements.",
+    "command": "cargo",
+    "args": ["bench", "--bench", "tile_encode", "--no-run"]
+  },
+  {
+    "id": "renderer-bench-transport-throughput-no-run",
+    "suite": "renderer",
+    "tier": "bench-compile",
+    "platforms": ["all"],
+    "description": "Compile the transport_throughput Criterion benchmark without running measurements.",
+    "command": "cargo",
+    "args": ["bench", "--bench", "transport_throughput", "--no-run"]
+  },
+  {
+    "id": "renderer-bench-compositor-render-no-run",
+    "suite": "renderer",
+    "tier": "bench-compile",
+    "platforms": ["all"],
+    "description": "Compile the compositor_render Criterion benchmark without running measurements.",
+    "command": "cargo",
+    "args": ["bench", "--bench", "compositor_render", "--no-run"]
+  }
+]

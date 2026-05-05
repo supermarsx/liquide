@@ -128,23 +128,16 @@ jobs:
           restore-keys: |
             windows-e2e-${{ runner.os }}-cargo-
 
-      - name: Check Windows e2e slice
-        run: cargo check -p liquide-app-harness -p liquide-platform -p liquide-apps-files -p liquide-apps-settings -p liquide-apps-terminal -p liquide-apps-text-editor -p liquide-apps-software-center -p liquide-apps-task-manager -p liquide-e2e
+      - name: Run e2e test suite via manifest runner
+        run: pwsh -NoProfile -File scripts/e2e.ps1 -Suite check,apps,shell,session -CargoTargetDir ""
 
-      - name: Run built-in app launch e2e
-        run: cargo test -p liquide-e2e --test windows_app_launch -- --nocapture
-
-      - name: Run scripted input-flow e2e
-        run: cargo test -p liquide-e2e --test windows_input_flow -- --nocapture
-
-      - name: Run full workspace smoke e2e
-        run: cargo test -p liquide-e2e --test windows_full_workspace_smoke -- --nocapture
-
-      - name: Run shell e2e coverage
-        run: cargo test -p liquide-shell --test integration_rendering --test e2e_viewport --test e2e_event_dispatch --test e2e_context_menu --test e2e_font_rendering
-
-      - name: Run session e2e coverage
-        run: cargo test -p liquide-session --test e2e_full_integration --test e2e_scene_rendering --test e2e_window_management --test e2e_dock_tracking --test e2e_devtools --test e2e_alignment_tiling
+      - name: Upload e2e artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-ci-windows
+          path: target/e2e/
+          retention-days: 7
 
   test:
     name: Test

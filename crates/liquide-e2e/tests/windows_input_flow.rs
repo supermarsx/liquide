@@ -5,12 +5,12 @@ fn windows_only_placeholder() {}
 #[cfg(target_os = "windows")]
 mod windows {
     use liquide_apps_task_manager::ui::TabId;
-    use liquide_input::keyboard::{KeyCode, Modifiers};
-    use liquide_input::mouse::MouseButton;
     use liquide_e2e::{
         ScriptedInput, ScriptedScenario, assert_capture_size, run_settings_default,
         run_task_manager_window, run_terminal_stub,
     };
+    use liquide_input::keyboard::{KeyCode, Modifiers};
+    use liquide_input::mouse::MouseButton;
 
     fn input_scenario() -> ScriptedScenario {
         ScriptedScenario::new(2).with_inputs([

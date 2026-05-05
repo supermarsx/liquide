@@ -289,6 +289,7 @@ where
         width: scenario.surface.width,
         height: scenario.surface.height,
         hardware_cursor: false,
+        ..StandaloneConfig::default()
     })
     .context("construct standalone scripted platform")?;
     let script = platform.script_handle();
