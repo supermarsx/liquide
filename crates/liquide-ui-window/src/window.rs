@@ -277,20 +277,32 @@ impl Window {
         let mut new_width = self.resize_start_width;
         let mut new_height = self.resize_start_height;
 
-        if matches!(edge, ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft) {
+        if matches!(
+            edge,
+            ResizeEdge::Left | ResizeEdge::TopLeft | ResizeEdge::BottomLeft
+        ) {
             let candidate_width = right - (self.resize_start_x + dx);
             new_width = candidate_width.clamp(self.min_width, self.max_width);
             new_x = right - new_width;
         }
-        if matches!(edge, ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight) {
+        if matches!(
+            edge,
+            ResizeEdge::Right | ResizeEdge::TopRight | ResizeEdge::BottomRight
+        ) {
             new_width = (self.resize_start_width + dx).clamp(self.min_width, self.max_width);
         }
-        if matches!(edge, ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight) {
+        if matches!(
+            edge,
+            ResizeEdge::Top | ResizeEdge::TopLeft | ResizeEdge::TopRight
+        ) {
             let candidate_height = bottom - (self.resize_start_y + dy);
             new_height = candidate_height.clamp(self.min_height, self.max_height);
             new_y = bottom - new_height;
         }
-        if matches!(edge, ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight) {
+        if matches!(
+            edge,
+            ResizeEdge::Bottom | ResizeEdge::BottomLeft | ResizeEdge::BottomRight
+        ) {
             new_height = (self.resize_start_height + dy).clamp(self.min_height, self.max_height);
         }
 
@@ -534,7 +546,9 @@ impl Widget for Window {
                     let (drag_start_x, drag_start_y) = self.title_bar.drag_offset();
                     let new_x = *x - drag_start_x;
                     let new_y = *y - drag_start_y;
-                    if (new_x - self.x).abs() > f32::EPSILON || (new_y - self.y).abs() > f32::EPSILON {
+                    if (new_x - self.x).abs() > f32::EPSILON
+                        || (new_y - self.y).abs() > f32::EPSILON
+                    {
                         self.x = new_x;
                         self.y = new_y;
                         if let Some(cb) = &mut self.on_move {

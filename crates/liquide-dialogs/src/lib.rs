@@ -56,7 +56,10 @@ mod popup_bridge_tests {
 
     #[test]
     fn input_dialog_popup_bridge_uses_owner_window() {
-        assert_dialog_popup(&InputDialog::new(super::DialogId(1), "Rename", "Name"), WindowId(8));
+        assert_dialog_popup(
+            &InputDialog::new(super::DialogId(1), "Rename", "Name"),
+            WindowId(8),
+        );
     }
 
     #[test]
@@ -67,16 +70,25 @@ mod popup_bridge_tests {
 
     #[test]
     fn color_picker_popup_bridge_uses_owner_window() {
-        assert_dialog_popup(&ColorPickerState::new(super::DialogId(2), "Color"), WindowId(10));
+        assert_dialog_popup(
+            &ColorPickerState::new(super::DialogId(2), "Color"),
+            WindowId(10),
+        );
     }
 
     #[test]
     fn font_picker_popup_bridge_uses_owner_window() {
-        assert_dialog_popup(&FontPickerState::new(super::DialogId(3), "Font"), WindowId(11));
+        assert_dialog_popup(
+            &FontPickerState::new(super::DialogId(3), "Font"),
+            WindowId(11),
+        );
     }
 
     #[test]
     fn progress_dialog_popup_bridge_uses_owner_window() {
-        assert_dialog_popup(&ProgressDialog::new(super::DialogId(4), "Progress", "Working"), WindowId(12));
+        assert_dialog_popup(
+            &ProgressDialog::new(super::DialogId(4), "Progress", "Working"),
+            WindowId(12),
+        );
     }
 }

@@ -99,7 +99,8 @@ impl TextInput {
     /// Set the text programmatically.
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.text = text.into();
-        self.cursor_pos = clamp_to_grapheme_boundary(&self.text, self.cursor_pos.min(self.text.len()));
+        self.cursor_pos =
+            clamp_to_grapheme_boundary(&self.text, self.cursor_pos.min(self.text.len()));
     }
 
     fn insert_char(&mut self, c: char) {
@@ -347,7 +348,8 @@ impl Widget for TextInput {
             // Selection highlight
             if let Some((lo, hi)) = self.selection_range() {
                 let chars_before = grapheme_count_before(&self.text, lo) as f32;
-                let chars_in = UnicodeSegmentation::graphemes(&self.text[lo..hi], true).count() as f32;
+                let chars_in =
+                    UnicodeSegmentation::graphemes(&self.text[lo..hi], true).count() as f32;
                 let sel_x = self.x + padding + chars_before * char_w - self.scroll_offset;
                 let sel_w = chars_in * char_w;
                 let sel_h = theme.font_size + 4.0;

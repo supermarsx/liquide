@@ -244,7 +244,10 @@ mod launch_tests {
 
         assert_eq!(state.mode, TaskManagerLaunchMode::Window);
         assert_eq!(state.active_tab, ui::TabId::Performance);
-        assert_eq!(state.summary, "liquid-taskmanager — active tab: Performance");
+        assert_eq!(
+            state.summary,
+            "liquid-taskmanager — active tab: Performance"
+        );
     }
 
     #[tokio::test]

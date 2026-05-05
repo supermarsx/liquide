@@ -37,6 +37,42 @@ fn pipeline_produces_scene_nodes() {
 }
 
 #[test]
+fn pipeline_converts_gradient_background_to_scene_node() {
+    let config = PipelineConfig {
+        width: 200.0,
+        height: 120.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    pipeline.set_theme(
+        r#"
+        desktop-background {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 200px;
+            height: 120px;
+            background: linear-gradient(180deg, rgb(18, 22, 48), rgb(12, 16, 38));
+        }
+    "#,
+    );
+
+    let mut desktop = DesktopDocument::from_html(r#"<desktop-background id="desktop-bg" />"#);
+    let (nodes, _animations_active) = pipeline.render_to_scene(&mut desktop.doc, 0, 16.0);
+
+    assert!(
+        nodes
+            .iter()
+            .any(|node| matches!(node.kind, SceneNodeKind::GradientFill { .. })),
+        "gradient backgrounds should become native gradient scene nodes"
+    );
+    assert!(
+        pipeline.pending_images().is_empty(),
+        "gradient backgrounds must not be treated as image URLs"
+    );
+}
+
+#[test]
 fn theme_switching() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);

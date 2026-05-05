@@ -164,7 +164,10 @@ mod launch_tests {
     fn files_launch_contract_tracks_default_listing() {
         let contract = prepare_launch(FilesConfig::default());
 
-        assert_eq!(contract.listing_path, FilesConfig::default().initial_directory);
+        assert_eq!(
+            contract.listing_path,
+            FilesConfig::default().initial_directory
+        );
         assert_eq!(contract.entry_count, 0);
     }
 
@@ -172,7 +175,10 @@ mod launch_tests {
     fn files_root_measures_non_zero() {
         let contract = prepare_launch(FilesConfig::default());
         let root = build_root(&contract);
-        let result = root.measure(&Constraints::new(0.0, 0.0, 800.0, 600.0), &UiTheme::default());
+        let result = root.measure(
+            &Constraints::new(0.0, 0.0, 800.0, 600.0),
+            &UiTheme::default(),
+        );
 
         assert!(result.width > 0.0);
         assert!(result.height > 0.0);

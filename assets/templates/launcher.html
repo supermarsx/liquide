@@ -20,7 +20,7 @@
      Pseudo-states: :hover on hovered items
 -->
 
-<launcher-overlay id="launcher-overlay">
+<launcher-overlay id="launcher-overlay" data-state-hash="{{state_hash}}">
   <launcher id="shell-launcher">
     <launcher-search id="launcher-search" data-query="{{query}}">
       {{#if query}}
@@ -32,7 +32,7 @@
 
     <launcher-results>
       {{#each results}}
-      <launcher-item data-app-id="{{app_id}}" data-icon="{{icon}}" data-index="{{index}}" {{#if selected}}class="selected"{{/if}}>
+      <launcher-item data-key="{{key}}" data-app-id="{{app_id}}" data-icon="{{icon}}" data-index="{{index}}" {{#if selected}}class="selected"{{/if}}>
         <launcher-item-icon data-icon="{{icon}}" />
         <launcher-item-label>{{label}}</launcher-item-label>
       </launcher-item>

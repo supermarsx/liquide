@@ -13,6 +13,7 @@ mod launcher_tests;
 mod layout_tests;
 mod notification_panel_tests;
 mod notification_tests;
+mod scene_cache_tests;
 mod screen_time_tests;
 mod seamless_tests;
 mod shell_tests;

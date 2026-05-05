@@ -44,7 +44,7 @@ statusbar {
     color: rgba(220, 230, 255, 0.95);
     font-size: 13;
     font-weight: 500;
-    blur-radius: 32;
+    blur-radius: 12;
     glass-tint: rgba(14, 18, 42, 0.80);
 }
 
@@ -244,7 +244,7 @@ window {
     border-radius: 14;
     box-shadow-color: rgba(10, 30, 100, 0.50);
     glass-tint: rgba(16, 20, 42, 0.68);
-    blur-radius: 20;
+    blur-radius: 10;
     overflow: hidden;
 }
 
@@ -353,7 +353,7 @@ dock {
     background: linear-gradient(0deg, rgba(12, 16, 38, 0.85), rgba(18, 24, 50, 0.78));
     border-top-color: rgba(60, 120, 220, 0.10);
     border-top-width: 1;
-    blur-radius: 32;
+    blur-radius: 12;
     glass-tint: rgba(14, 18, 42, 0.75);
 }
 
@@ -429,7 +429,7 @@ notification {
     background: rgba(18, 24, 50, 0.88);
     border-color: rgba(60, 120, 220, 0.12);
     border-width: 1;
-    blur-radius: 28;
+    blur-radius: 12;
     glass-tint: rgba(16, 22, 46, 0.82);
     box-shadow-color: rgba(15, 40, 120, 0.30);
 }
@@ -501,7 +501,7 @@ launcher {
     background: rgba(14, 18, 42, 0.88);
     border-color: rgba(60, 120, 220, 0.14);
     border-width: 1;
-    blur-radius: 48;
+    blur-radius: 16;
     glass-tint: rgba(14, 18, 42, 0.80);
     box-shadow-color: rgba(20, 50, 140, 0.40);
 }
@@ -571,7 +571,7 @@ context-menu {
     border-color: rgba(60, 120, 220, 0.16);
     border-width: 1;
     border-style: solid;
-    blur-radius: 28;
+    blur-radius: 10;
     glass-tint: rgba(14, 20, 44, 0.86);
     box-shadow-color: rgba(10, 30, 100, 0.40);
     min-width: 160;
@@ -591,7 +591,7 @@ session-menu {
     border-color: rgba(60, 120, 220, 0.16);
     border-width: 1;
     border-style: solid;
-    blur-radius: 28;
+    blur-radius: 10;
     glass-tint: rgba(14, 20, 44, 0.86);
     box-shadow-color: rgba(10, 30, 100, 0.40);
     min-width: 180;
@@ -611,7 +611,7 @@ app-menu {
     border-color: rgba(60, 120, 220, 0.16);
     border-width: 1;
     border-style: solid;
-    blur-radius: 28;
+    blur-radius: 10;
     glass-tint: rgba(14, 20, 44, 0.86);
     box-shadow-color: rgba(10, 30, 100, 0.40);
     min-width: 160;

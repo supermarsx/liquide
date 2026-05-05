@@ -150,7 +150,7 @@ const DEFAULT_WINDOW: &str = r#"<window id="{{id}}" {{#if focused}}class="focuse
 </window>
 "#;
 
-const DEFAULT_NOTIFICATION: &str = r#"<notification id="{{id}}">
+const DEFAULT_NOTIFICATION: &str = r#"<notification id="{{id}}" data-key="{{id}}" data-state-hash="{{state_hash}}">
   <notification-title>{{title}}</notification-title>
   <notification-body>{{body}}</notification-body>
 </notification>
@@ -161,12 +161,12 @@ const DEFAULT_CONTEXT_MENU: &str = r#"<context-menu id="{{id}}" style="left: {{p
 </context-menu>
 "#;
 
-const DEFAULT_LAUNCHER: &str = r#"<launcher-overlay id="launcher-overlay">
+const DEFAULT_LAUNCHER: &str = r#"<launcher-overlay id="launcher-overlay" data-state-hash="{{state_hash}}">
   <launcher id="shell-launcher">
     <launcher-search id="launcher-search" />
     <launcher-results>
       {{#each items}}
-      <launcher-item data-app-id="{{app_id}}" data-icon="{{icon}}">{{label}}</launcher-item>
+            <launcher-item data-key="{{key}}" data-app-id="{{app_id}}" data-icon="{{icon}}">{{label}}</launcher-item>
       {{/each}}
     </launcher-results>
   </launcher>

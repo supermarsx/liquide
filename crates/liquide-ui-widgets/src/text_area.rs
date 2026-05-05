@@ -404,13 +404,15 @@ impl Widget for TextArea {
                 Key::ArrowUp if self.cursor_line > 0 => {
                     let column = self.cursor_grapheme_column();
                     self.cursor_line -= 1;
-                    self.cursor_col = boundary_for_grapheme_column(&self.lines[self.cursor_line], column);
+                    self.cursor_col =
+                        boundary_for_grapheme_column(&self.lines[self.cursor_line], column);
                     EventResponse::Consumed
                 }
                 Key::ArrowDown if self.cursor_line + 1 < self.lines.len() => {
                     let column = self.cursor_grapheme_column();
                     self.cursor_line += 1;
-                    self.cursor_col = boundary_for_grapheme_column(&self.lines[self.cursor_line], column);
+                    self.cursor_col =
+                        boundary_for_grapheme_column(&self.lines[self.cursor_line], column);
                     EventResponse::Consumed
                 }
                 Key::Home => {

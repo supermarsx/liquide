@@ -498,7 +498,8 @@ fn statusbar_positioned_at_top() {
     let statusbar_id = desktop.doc.get_element_by_id("shell-statusbar");
     assert!(statusbar_id.is_some(), "Statusbar should exist in DOM");
 
-    let statusbar_box = canonical_box_id_for_element(&desktop.doc, &output.layout, "shell-statusbar");
+    let statusbar_box =
+        canonical_box_id_for_element(&desktop.doc, &output.layout, "shell-statusbar");
     assert!(statusbar_box.is_some(), "Statusbar should exist in layout");
 
     if let Some(sb) = statusbar_box {

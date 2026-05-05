@@ -406,19 +406,13 @@ impl Shell {
                             return Some(ShellAction::Redraw);
                         }
                         KeyCode::ArrowDown => {
-                            self.app_menu_hover_index = Self::cycle_menu_index(
-                                self.app_menu_hover_index,
-                                5,
-                                1,
-                            );
+                            self.app_menu_hover_index =
+                                Self::cycle_menu_index(self.app_menu_hover_index, 5, 1);
                             return Some(ShellAction::Redraw);
                         }
                         KeyCode::ArrowUp => {
-                            self.app_menu_hover_index = Self::cycle_menu_index(
-                                self.app_menu_hover_index,
-                                5,
-                                -1,
-                            );
+                            self.app_menu_hover_index =
+                                Self::cycle_menu_index(self.app_menu_hover_index, 5, -1);
                             return Some(ShellAction::Redraw);
                         }
                         KeyCode::Enter => {
@@ -467,12 +461,17 @@ impl Shell {
                     offset_y,
                 } => {
                     self.cursor_shape = CursorShape::Move;
+                    let mut window_scene_changed = false;
                     if let Some(window) = self.windows.get_mut(&window_id) {
                         window.bounds.x = x - offset_x;
                         window.bounds.y = y - offset_y;
                         if window.state == WindowState::Maximized {
                             window.state = WindowState::Normal;
                         }
+                        window_scene_changed = true;
+                    }
+                    if window_scene_changed {
+                        self.mark_window_scene_dirty();
                     }
                     return Some(ShellAction::Redraw);
                 }
@@ -498,6 +497,7 @@ impl Shell {
                         .and_then(|w| w.min_size)
                         .map(|(_, mh)| mh)
                         .unwrap_or(80.0);
+                    let mut window_scene_changed = false;
                     if let Some(window) = self.windows.get_mut(&window_id) {
                         match edge {
                             HitZone::ResizeRight => {
@@ -542,6 +542,10 @@ impl Shell {
                             }
                             _ => {}
                         }
+                        window_scene_changed = true;
+                    }
+                    if window_scene_changed {
+                        self.mark_window_scene_dirty();
                     }
                     return Some(ShellAction::Redraw);
                 }
@@ -582,6 +586,7 @@ impl Shell {
         }
         if self.hovered_button != prev_hover {
             need_redraw = true;
+            self.mark_window_scene_dirty();
         }
 
         // Dock hover
@@ -976,6 +981,22 @@ impl Shell {
                     None
                 };
                 return Some(ShellAction::OpenSessionMenu);
+            }
+            // The notification indicator occupies a fixed 36..80 px hit
+            // region from the right edge of the status bar, regardless of
+            // the dynamically-computed item layout.  This matches the spec
+            // exercised by `notification_indicator_click_toggles_panel`.
+            let from_right = bar_bounds.x + bar_bounds.width - x;
+            let has_notification_indicator = self.status_bar.items().iter().any(|item| {
+                item.visible
+                    && matches!(
+                        item.kind,
+                        liquide_statusbar::StatusBarItemKind::NotificationIndicator { .. }
+                    )
+            });
+            if has_notification_indicator && (36.0..=80.0).contains(&from_right) {
+                self.notification_panel_visible = !self.notification_panel_visible;
+                return Some(ShellAction::OpenNotificationCenter);
             }
             if self
                 .status_bar_item_bounds("notifications")

@@ -104,7 +104,7 @@ fn inventory_scene(node: &SceneNode, inv: &mut SceneInventory) {
 
     match &node.kind {
         SceneNodeKind::Root => {}
-        SceneNodeKind::Background { color } => {
+        SceneNodeKind::Background { color: _ } => {
             inv.backgrounds.push(ni());
         }
         SceneNodeKind::Text {
@@ -492,7 +492,7 @@ fn element_border_has_valid_bounds() {
 
 #[test]
 fn full_pipeline_scene_inventory() {
-    let (_, scene, inv) = build_shell_and_inventory();
+    let (_, _scene, inv) = build_shell_and_inventory();
 
     println!("\n=== COMPLETE SCENE INVENTORY ===\n");
     println!("  Backgrounds:   {}", inv.backgrounds.len());
@@ -547,19 +547,19 @@ fn full_pipeline_flattening_preserves_all_types() {
     // Count text in flat list
     let flat_text = flat
         .iter()
-        .filter(|n| matches!(n.kind, SceneNodeKind::Text { .. }))
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Text { .. }))
         .count();
     let flat_bg = flat
         .iter()
-        .filter(|n| matches!(n.kind, SceneNodeKind::Background { .. }))
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Background { .. }))
         .count();
     let flat_glass = flat
         .iter()
-        .filter(|n| matches!(n.kind, SceneNodeKind::Glass(_)))
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Glass(_)))
         .count();
     let flat_border = flat
         .iter()
-        .filter(|n| matches!(n.kind, SceneNodeKind::Border { .. }))
+        .filter(|n| matches!(n.kind_ref(), SceneNodeKind::Border { .. }))
         .count();
 
     println!("\n=== Flattened scene ===");

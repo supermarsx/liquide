@@ -54,6 +54,7 @@ fn gather_text(node: &SceneNode, out: &mut Vec<TextInfo>) {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TextInfo {
     text: String,
     font_family: String,

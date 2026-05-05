@@ -7,14 +7,36 @@
 //! in the DOM.  A per-template cache skips redundant DOM rebuilds when the
 //! rendered HTML hasn't changed.
 
+use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use crate::desktop_dom::DockItemInfo;
 use crate::launcher::SearchResultKind;
+use liquide_dom::NodeId;
 use liquide_dom::html_parser::parse_html_into;
 use liquide_dom::template_registry::TemplateContext;
 use liquide_interop::notification::Urgency;
 use liquide_statusbar::{StatusBarItem, StatusBarItemKind, StatusBarSlot};
 
 use super::{CONTEXT_MENU_WIDTH, MENU_ITEM_HEIGHT, MENU_PADDING, Shell};
+
+const NOTIFICATION_ITEM_CACHE_PREFIX: &str = "notifications:";
+
+fn template_state_hash<T: Hash>(state: &T) -> String {
+    let mut hasher = DefaultHasher::new();
+    state.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn element_inner_html<'a>(html: &'a str, tag: &str) -> Option<&'a str> {
+    let open_start = html.find(&format!("<{tag}"))?;
+    let open_end = html[open_start..].find('>')? + open_start;
+    let inner_start = open_end + 1;
+    let close = format!("</{tag}>");
+    let close_start = html[inner_start..].rfind(&close)? + inner_start;
+    Some(&html[inner_start..close_start])
+}
 
 impl Shell {
     /// Push current shell state into the desktop DOM tree.
@@ -103,7 +125,14 @@ impl Shell {
             ctx.set("badge", icon.badge.as_deref().unwrap_or(""));
             ctx.set("has_menu", !icon.menu_items.is_empty());
             ctx.set("has_icon_data", false);
-            ctx.set("classes", if icon.badge.is_some() { "has-badge" } else { "" });
+            ctx.set(
+                "classes",
+                if icon.badge.is_some() {
+                    "has-badge"
+                } else {
+                    ""
+                },
+            );
             tray_items.push(ctx);
         }
 
@@ -156,42 +185,48 @@ impl Shell {
     // ══════════════════════════════════════════════════════════
 
     fn sync_statusbar_template(&mut self) {
-        let mut ctx = TemplateContext::new();
-        ctx.set("show_branding", self.status_bar.config().show_app_menu);
-        ctx.set("branding_text", "LiquiDE");
+        // The template engine in `liquide-dom` does not support nested
+        // `{{#if}}` / `{{#each}}` blocks, so we build the per-slot HTML
+        // ourselves in Rust and feed it into a flat template via three
+        // raw-string substitutions (`*_items_html`).  This keeps the
+        // dispatch on `StatusBarItemKind` (notification, status, tray,
+        // session, …) entirely in Rust where nesting is natural.
+        let cfg = self.status_bar.config().clone();
 
-        let left_items: Vec<TemplateContext> = self
-            .status_bar
-            .items_in_slot(StatusBarSlot::Left)
-            .into_iter()
-            .filter(|item| item.visible)
-            .map(|item| {
-                let mut item_ctx = TemplateContext::new();
-                item_ctx.set("id", &item.id);
-                item_ctx.set("classes", "");
-                item_ctx.set("text", &self.status_bar_item_text(item));
-                item_ctx
-            })
-            .collect();
-        ctx.set("left_items", left_items);
+        let mut left_html = String::new();
+        for item in self.status_bar.items_in_slot(StatusBarSlot::Left) {
+            if !item.visible {
+                continue;
+            }
+            let text = self.status_bar_item_text(item);
+            left_html.push_str(&format!(
+                "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
+                id = item.id,
+                text = text,
+            ));
+        }
 
-        let mut center_items = Vec::new();
+        let mut center_html = String::new();
         for item in self.status_bar.items_in_slot(StatusBarSlot::Center) {
             if !item.visible {
                 continue;
             }
-            if matches!(&item.kind, StatusBarItemKind::Clock { .. } | StatusBarItemKind::Custom { .. }) {
-                let mut item_ctx = TemplateContext::new();
-                item_ctx.set("id", &item.id);
-                item_ctx.set("classes", "");
-                item_ctx.set("text", &self.status_bar_item_text(item));
-                center_items.push(item_ctx);
+            if !matches!(
+                &item.kind,
+                StatusBarItemKind::Clock { .. } | StatusBarItemKind::Custom { .. }
+            ) {
+                continue;
             }
+            let text = self.status_bar_item_text(item);
+            center_html.push_str(&format!(
+                "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
+                id = item.id,
+                text = text,
+            ));
         }
-        ctx.set("center_items", center_items);
 
-        let mut right_items = Vec::new();
-        let tray_items = self.live_tray_items();
+        let live_tray = self.live_tray_items();
+        let mut right_html = String::new();
         for item in self.status_bar.items_in_slot(StatusBarSlot::Right) {
             if !item.visible {
                 continue;
@@ -201,9 +236,6 @@ impl Shell {
                     unread_count,
                     dnd_active,
                 } => {
-                    let mut ic = TemplateContext::new();
-                    ic.set("id", &item.id);
-                    ic.set("type_notification", true);
                     let cls = if *dnd_active {
                         "dnd"
                     } else if *unread_count > 0 {
@@ -211,16 +243,16 @@ impl Shell {
                     } else {
                         ""
                     };
-                    ic.set("classes", cls);
-                    ic.set("text", &unread_count.to_string());
-                    right_items.push(ic);
+                    right_html.push_str(&format!(
+                        "<notification-indicator id=\"{id}\" class=\"{cls}\">{count}</notification-indicator>",
+                        id = item.id,
+                        cls = cls,
+                        count = unread_count,
+                    ));
                 }
                 StatusBarItemKind::ConnectionQuality {
                     quality_percent, ..
                 } => {
-                    let mut ic = TemplateContext::new();
-                    ic.set("id", &item.id);
-                    ic.set("type_status", true);
                     let cls = if *quality_percent == 0 {
                         "disconnected"
                     } else if *quality_percent < 80 {
@@ -228,35 +260,79 @@ impl Shell {
                     } else {
                         "connected"
                     };
-                    ic.set("classes", cls);
-                    right_items.push(ic);
+                    right_html.push_str(&format!(
+                        "<status-indicator id=\"{id}\" class=\"{cls}\"></status-indicator>",
+                        id = item.id,
+                        cls = cls,
+                    ));
                 }
                 StatusBarItemKind::TrayArea => {
-                    let mut ic = TemplateContext::new();
-                    ic.set("id", &item.id);
-                    ic.set("type_tray", true);
-                    ic.set("tray_items", self.live_tray_items());
-                    ic.set("tray_item_count", tray_items.len().to_string());
-                    right_items.push(ic);
+                    right_html.push_str(&format!(
+                        "<status-tray id=\"{id}\" data-count=\"{count}\">",
+                        id = item.id,
+                        count = live_tray.len(),
+                    ));
+                    for tray in &live_tray {
+                        let source = tray.get_str("source");
+                        let label = tray.get_str("label");
+                        let tooltip = tray.get_str("tooltip");
+                        let icon = tray.get_str("icon");
+                        let badge = tray.get_str("badge");
+                        let classes = tray.get_str("classes");
+                        let has_icon = tray.is_truthy("has_icon");
+                        let has_badge = tray.is_truthy("has_badge");
+                        let has_menu = tray.is_truthy("has_menu");
+                        let has_icon_data = tray.is_truthy("has_icon_data");
+                        let inner_id = tray.get_str("id");
+                        let mut attrs = format!(
+                            " id=\"{inner_id}\" data-source=\"{source}\" data-label=\"{label}\" data-tooltip=\"{tooltip}\""
+                        );
+                        if has_icon {
+                            attrs.push_str(&format!(" data-icon=\"{icon}\""));
+                        }
+                        if has_menu {
+                            attrs.push_str(" data-has-menu=\"true\"");
+                        }
+                        if has_icon_data {
+                            attrs.push_str(" data-has-icon-data=\"true\"");
+                        }
+                        if !classes.is_empty() {
+                            attrs.push_str(&format!(" class=\"{classes}\""));
+                        }
+                        right_html.push_str(&format!("<status-tray-item{attrs}>"));
+                        if has_badge {
+                            right_html.push_str(&format!(
+                                "<status-tray-badge>{badge}</status-tray-badge>"
+                            ));
+                        }
+                        right_html.push_str("</status-tray-item>");
+                    }
+                    right_html.push_str("</status-tray>");
                 }
                 StatusBarItemKind::SessionButton => {
-                    let mut ic = TemplateContext::new();
-                    ic.set("id", &item.id);
-                    ic.set("type_session", true);
-                    ic.set("text", &self.status_bar_item_text(item));
-                    right_items.push(ic);
+                    right_html.push_str(&format!(
+                        "<session-button id=\"{id}\">{text}</session-button>",
+                        id = item.id,
+                        text = self.status_bar_item_text(item),
+                    ));
                 }
                 StatusBarItemKind::Custom { .. } => {
-                    let mut ic = TemplateContext::new();
-                    ic.set("id", &item.id);
-                    ic.set("classes", "");
-                    ic.set("text", &self.status_bar_item_text(item));
-                    right_items.push(ic);
+                    right_html.push_str(&format!(
+                        "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
+                        id = item.id,
+                        text = self.status_bar_item_text(item),
+                    ));
                 }
                 StatusBarItemKind::Clock { .. } => {}
             }
         }
-        ctx.set("right_items", right_items);
+
+        let mut ctx = TemplateContext::new();
+        ctx.set("show_branding", cfg.show_app_menu);
+        ctx.set("branding_text", "LiquiDE");
+        ctx.set("left_items_html", left_html);
+        ctx.set("center_items_html", center_html);
+        ctx.set("right_items_html", right_html);
 
         self.apply_template("statusbar", "shell-statusbar", &ctx);
     }
@@ -321,7 +397,7 @@ impl Shell {
     // ══════════════════════════════════════════════════════════
 
     fn sync_notifications_template(&mut self) {
-        let active = self.notifications.active_notifications();
+        let active = self.notifications.active_notifications().to_vec();
         if active.is_empty() {
             // Clear notification area children
             if let Some(area) = self.desktop_dom.doc.get_element_by_id("notification-area") {
@@ -331,7 +407,7 @@ impl Shell {
                     self.desktop_dom.doc.destroy_node(child);
                 }
             }
-            self.template_cache.remove("notifications");
+            self.clear_notification_template_cache();
             return;
         }
 
@@ -341,10 +417,12 @@ impl Shell {
             None => return,
         };
 
+        let mut rendered_notifications = Vec::with_capacity(active.len());
         let mut html = String::new();
-        for sn in active {
+        for sn in &active {
             let mut nc = TemplateContext::new();
-            nc.set("id", &format!("notif-{}", sn.id));
+            let element_id = format!("notif-{}", sn.id);
+            nc.set("id", &element_id);
             nc.set("title", &sn.notification.summary);
             nc.set("body", &sn.notification.body);
 
@@ -355,6 +433,22 @@ impl Shell {
                 Urgency::Critical => "urgency-critical",
             };
             nc.set("urgency_class", urgency_class);
+
+            let action_state: Vec<_> = sn
+                .notification
+                .actions
+                .iter()
+                .map(|action| (action.key.as_str(), action.label.as_str()))
+                .collect();
+            let state_hash = template_state_hash(&(
+                element_id.as_str(),
+                sn.notification.summary.as_str(),
+                sn.notification.body.as_str(),
+                urgency_class,
+                sn.notification.icon.as_deref().unwrap_or(""),
+                &action_state,
+            ));
+            nc.set("state_hash", &state_hash);
 
             // Optional icon
             if let Some(ref icon) = sn.notification.icon {
@@ -381,6 +475,8 @@ impl Shell {
 
             if let Some(rendered) = self.template_registry.render("notification", &nc) {
                 html.push_str(&rendered);
+                let cache_key = format!("{NOTIFICATION_ITEM_CACHE_PREFIX}{element_id}");
+                rendered_notifications.push((element_id, cache_key, rendered));
             }
         }
 
@@ -390,13 +486,43 @@ impl Shell {
             }
         }
 
-        // Clear and rebuild
-        let children: Vec<_> = self.desktop_dom.doc.children(area).to_vec();
-        for child in children {
-            self.desktop_dom.doc.remove_child(area, child);
-            self.desktop_dom.doc.destroy_node(child);
+        let mut desired_nodes = Vec::with_capacity(rendered_notifications.len());
+        let mut live_cache_keys = HashSet::with_capacity(rendered_notifications.len());
+
+        for (element_id, cache_key, item_html) in rendered_notifications {
+            live_cache_keys.insert(cache_key.clone());
+            let existing = self
+                .desktop_dom
+                .doc
+                .get_element_by_id(&element_id)
+                .filter(|&node| self.desktop_dom.doc.parent(node) == Some(area));
+            let unchanged = self
+                .template_cache
+                .get(&cache_key)
+                .is_some_and(|cached| cached == &item_html);
+
+            let node = if unchanged {
+                existing
+            } else {
+                if let Some(existing) = existing {
+                    self.desktop_dom.doc.remove_child(area, existing);
+                    self.desktop_dom.doc.destroy_node(existing);
+                }
+                parse_html_into(&mut self.desktop_dom.doc, area, &item_html);
+                self.desktop_dom.doc.get_element_by_id(&element_id)
+            };
+
+            if let Some(node) = node {
+                desired_nodes.push(node);
+            }
+            self.template_cache.insert(cache_key, item_html);
         }
-        parse_html_into(&mut self.desktop_dom.doc, area, &html);
+
+        self.remove_stale_template_children(area, &desired_nodes);
+        self.order_template_children(area, &desired_nodes);
+        self.template_cache.retain(|key, _| {
+            !key.starts_with(NOTIFICATION_ITEM_CACHE_PREFIX) || live_cache_keys.contains(key)
+        });
         self.template_cache.insert("notifications".into(), html);
     }
 
@@ -421,6 +547,12 @@ impl Shell {
                     };
                     let mut ic = TemplateContext::new();
                     ic.set("index", &i.to_string());
+                    let key = if app_id.is_empty() {
+                        format!("result-{i}")
+                    } else {
+                        app_id.to_string()
+                    };
+                    ic.set("key", &key);
                     ic.set("app_id", app_id);
                     ic.set("label", &r.title);
                     ic.set("icon", r.icon.as_deref().unwrap_or(""));
@@ -429,6 +561,27 @@ impl Shell {
                 .collect();
             ctx.set("results", items);
 
+            let result_state: Vec<_> = self
+                .launcher
+                .results()
+                .iter()
+                .enumerate()
+                .map(|(i, result)| {
+                    let app_id = match &result.kind {
+                        SearchResultKind::Application { app_id } => app_id.as_str(),
+                        _ => "",
+                    };
+                    (
+                        i,
+                        app_id,
+                        result.title.as_str(),
+                        result.icon.as_deref().unwrap_or(""),
+                    )
+                })
+                .collect();
+            let state_hash = template_state_hash(&(self.launcher.query(), &result_state));
+            ctx.set("state_hash", &state_hash);
+
             if let Some(html) = self.template_registry.render("launcher", &ctx) {
                 if let Some(cached) = self.template_cache.get("launcher") {
                     if *cached == html {
@@ -436,14 +589,22 @@ impl Shell {
                     }
                 }
                 let root = self.desktop_dom.doc.root();
-                // Remove existing launcher overlay
                 if let Some(existing) = self.desktop_dom.doc.get_element_by_id("launcher-overlay") {
-                    if let Some(parent) = self.desktop_dom.doc.parent(existing) {
-                        self.desktop_dom.doc.remove_child(parent, existing);
+                    self.desktop_dom
+                        .doc
+                        .set_attribute(existing, "data-state-hash", &state_hash);
+                    if let Some(inner_html) = element_inner_html(&html, "launcher-overlay") {
+                        self.replace_template_children(existing, inner_html);
+                    } else {
+                        if let Some(parent) = self.desktop_dom.doc.parent(existing) {
+                            self.desktop_dom.doc.remove_child(parent, existing);
+                        }
+                        self.desktop_dom.doc.destroy_node(existing);
+                        parse_html_into(&mut self.desktop_dom.doc, root, &html);
                     }
-                    self.desktop_dom.doc.destroy_node(existing);
+                } else {
+                    parse_html_into(&mut self.desktop_dom.doc, root, &html);
                 }
-                parse_html_into(&mut self.desktop_dom.doc, root, &html);
                 self.template_cache.insert("launcher".into(), html);
             }
         } else {
@@ -519,7 +680,7 @@ impl Shell {
                 .collect();
 
             let mut ctx = TemplateContext::new();
-            ctx.set("id", "ctx-shell");
+            ctx.set("id", "context-menu");
             ctx.set("items", items);
 
             // Position the context menu at the right-click location, clamped to screen.
@@ -533,9 +694,9 @@ impl Shell {
             ctx.set("pos_left", &format!("{}px", clamped_x.round() as i32));
             ctx.set("pos_top", &format!("{}px", clamped_y.round() as i32));
 
-            self.apply_overlay_template("context-menu", "ctx-shell", &ctx);
+            self.apply_overlay_template("context-menu", "context-menu", &ctx);
         } else {
-            self.remove_overlay("ctx-shell");
+            self.remove_overlay("context-menu");
             self.template_cache.remove("context-menu");
         }
     }
@@ -653,6 +814,48 @@ impl Shell {
     // ══════════════════════════════════════════════════════════
     // Helpers
     // ══════════════════════════════════════════════════════════
+
+    fn clear_notification_template_cache(&mut self) {
+        self.template_cache.remove("notifications");
+        self.template_cache
+            .retain(|key, _| !key.starts_with(NOTIFICATION_ITEM_CACHE_PREFIX));
+    }
+
+    fn remove_stale_template_children(&mut self, parent: NodeId, desired_nodes: &[NodeId]) {
+        let desired: HashSet<NodeId> = desired_nodes.iter().copied().collect();
+        let children: Vec<_> = self.desktop_dom.doc.children(parent).to_vec();
+        for child in children {
+            if !desired.contains(&child) {
+                self.desktop_dom.doc.remove_child(parent, child);
+                self.desktop_dom.doc.destroy_node(child);
+            }
+        }
+    }
+
+    fn order_template_children(&mut self, parent: NodeId, desired_nodes: &[NodeId]) {
+        for (index, &node) in desired_nodes.iter().enumerate() {
+            let children: Vec<_> = self.desktop_dom.doc.children(parent).to_vec();
+            if children.get(index).copied() == Some(node) {
+                continue;
+            }
+            if let Some(before) = children.get(index).copied() {
+                if before != node {
+                    self.desktop_dom.doc.insert_before(parent, node, before);
+                }
+            } else {
+                self.desktop_dom.doc.append_child(parent, node);
+            }
+        }
+    }
+
+    fn replace_template_children(&mut self, parent: NodeId, html: &str) {
+        let children: Vec<_> = self.desktop_dom.doc.children(parent).to_vec();
+        for child in children {
+            self.desktop_dom.doc.remove_child(parent, child);
+            self.desktop_dom.doc.destroy_node(child);
+        }
+        parse_html_into(&mut self.desktop_dom.doc, parent, html);
+    }
 
     /// Render a template and replace the children of the element with the given
     /// DOM id.  Skips the DOM rebuild if the rendered HTML hasn't changed.

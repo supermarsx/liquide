@@ -102,7 +102,10 @@ pub fn app_bootstrap() -> AppBootstrap {
 #[must_use]
 pub fn prepare_launch(config: SettingsConfig) -> SettingsLaunchContract {
     let mut runtime = SettingsRuntime::new(config);
-    let disk_load_error = runtime.load_from_disk().err().map(|error| error.to_string());
+    let disk_load_error = runtime
+        .load_from_disk()
+        .err()
+        .map(|error| error.to_string());
 
     SettingsLaunchContract {
         category_count: runtime.category_infos().len(),
@@ -168,7 +171,10 @@ mod launch_tests {
     fn settings_root_measures_non_zero() {
         let contract = prepare_launch(SettingsConfig::default());
         let root = build_root(&contract);
-        let result = root.measure(&Constraints::new(0.0, 0.0, 800.0, 600.0), &UiTheme::default());
+        let result = root.measure(
+            &Constraints::new(0.0, 0.0, 800.0, 600.0),
+            &UiTheme::default(),
+        );
 
         assert!(result.width > 0.0);
         assert!(result.height > 0.0);

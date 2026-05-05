@@ -15,6 +15,7 @@ mod windows;
 
 pub use batch::*;
 pub use hooks::*;
+pub use tick::ShellTickResult;
 
 use std::collections::HashMap;
 
@@ -52,6 +53,45 @@ use liquide_dock::Dock;
 use liquide_dom::template_registry::TemplateRegistry;
 use liquide_hit_test::{EventDispatcher, HitTestEngine};
 use liquide_statusbar::ShellStatusBar;
+
+/// Embedded shell `dock` template — overrides the minimal default in
+/// `liquide-dom` with one that emits `data-badge`, `data-focused`,
+/// `data-needs-attention`, and a `<dock-badge>` child.  Mirrors
+/// `assets/templates/dock.html`.
+const SHELL_DOCK_TEMPLATE: &str = r#"{{#each dock_items}}
+<dock-item data-app-id="{{app_id}}" data-icon="{{icon}}" data-label="{{label}}" data-index="{{index}}" {{#if classes}}class="{{classes}}"{{/if}} {{#if is_focused}}data-focused="true"{{/if}} {{#if needs_attention}}data-needs-attention="true"{{/if}} {{#if has_badge}}data-badge="{{badge_count}}"{{/if}}>
+  <dock-item-icon data-icon="{{icon}}" />
+  <dock-item-label>{{label}}</dock-item-label>
+  {{#if has_badge}}
+  <dock-badge>{{badge_count}}</dock-badge>
+  {{/if}}
+  {{#if needs_attention}}
+  <dock-attention-indicator />
+  {{/if}}
+  {{#if is_running}}
+  <dock-indicator class="running" />
+  {{/if}}
+</dock-item>
+{{/each}}"#;
+
+/// Embedded shell `statusbar` template — overrides the minimal default in
+/// `liquide-dom` with one that gates the branding logo on `show_branding`
+/// and uses raw-string slot HTML produced in Rust.  The `liquide-dom`
+/// template engine doesn't support nested `{{#if}}` / `{{#each}}` blocks,
+/// so the per-item HTML for each slot is constructed in `dom_sync.rs` and
+/// substituted here verbatim.
+const SHELL_STATUSBAR_TEMPLATE: &str = r#"<statusbar-slot class="left" id="statusbar-slot-left">
+  {{#if show_branding}}
+  <statusbar-logo id="logo">{{branding_text}}</statusbar-logo>
+  {{/if}}
+  {{left_items_html}}
+</statusbar-slot>
+<statusbar-slot class="center" id="statusbar-slot-center">
+  {{center_items_html}}
+</statusbar-slot>
+<statusbar-slot class="right" id="statusbar-slot-right">
+  {{right_items_html}}
+</statusbar-slot>"#;
 
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
@@ -198,6 +238,7 @@ pub struct Shell {
     pub(crate) win32_dock: liquide_dock::Win32DockIntegration,
     pub(crate) desktop_dom: DesktopDocument,
     pub(crate) css_pipeline: DesktopPipeline,
+    pub(crate) window_scene_cache: scene::WindowSceneCache,
     pub(crate) dom_dirty: bool,
     pub(crate) event_dispatcher: EventDispatcher,
     pub(crate) hit_test_engine: Option<HitTestEngine>,
@@ -218,6 +259,8 @@ pub struct Shell {
     pub(crate) cursor_blink_on: bool,
     /// Last cursor blink toggle time (microseconds since epoch).
     pub(crate) cursor_blink_time_us: u64,
+    /// Frame delta fed into the CSS pipeline for time-based updates.
+    pub(crate) frame_delta_ms: f32,
 }
 
 impl Shell {
@@ -306,6 +349,7 @@ impl Shell {
             win32_dock: liquide_dock::Win32DockIntegration::new(),
             desktop_dom,
             css_pipeline,
+            window_scene_cache: scene::WindowSceneCache::new(),
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
             hit_test_engine: None,
@@ -319,7 +363,17 @@ impl Shell {
             tooltip_timer_us: 0,
             cursor_blink_on: true,
             cursor_blink_time_us: 0,
+            frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
         }
+    }
+
+    /// Set the frame delta used by the CSS pipeline and scene assembly.
+    pub fn set_frame_delta_ms(&mut self, frame_delta_ms: f32) {
+        self.frame_delta_ms = if frame_delta_ms.is_finite() && frame_delta_ms > 0.0 {
+            frame_delta_ms
+        } else {
+            crate::DEFAULT_FRAME_DELTA_MS
+        };
     }
 
     /// Create a new shell with custom history capacities.
@@ -404,6 +458,7 @@ impl Shell {
             win32_dock: liquide_dock::Win32DockIntegration::new(),
             desktop_dom,
             css_pipeline,
+            window_scene_cache: scene::WindowSceneCache::new(),
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
             hit_test_engine: None,
@@ -417,6 +472,7 @@ impl Shell {
             tooltip_timer_us: 0,
             cursor_blink_on: true,
             cursor_blink_time_us: 0,
+            frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
         }
     }
 
@@ -425,6 +481,14 @@ impl Shell {
     fn init_template_registry() -> TemplateRegistry {
         let mut registry = TemplateRegistry::new();
         registry.register_defaults();
+        // Override the embedded default `dock` and `statusbar` templates with
+        // the richer shell-specific versions that emit data attributes for
+        // badges, focus, attention, and tray children.  These mirror the
+        // on-disk `assets/templates/{dock,statusbar}.html` files but are
+        // built into the binary so they apply regardless of the working
+        // directory at runtime.
+        registry.register("dock", SHELL_DOCK_TEMPLATE);
+        registry.register("statusbar", SHELL_STATUSBAR_TEMPLATE);
         // Try loading from assets/templates on disk (overrides embedded defaults).
         registry.add_search_path("assets/templates");
         registry.load_from_disk();

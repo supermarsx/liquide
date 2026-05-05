@@ -22,6 +22,7 @@ impl Shell {
             .record_at(id, WindowEventKind::Opened, ts);
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowCreated { window_id: id.0 });
+        self.mark_window_scene_dirty();
         id
     }
 
@@ -51,6 +52,7 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowCreated { window_id: id.0 });
+        self.mark_window_scene_dirty();
         id
     }
 
@@ -77,6 +79,7 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowClosed { window_id: id.0 });
+        self.mark_window_scene_dirty();
         Ok(window)
     }
 
@@ -89,9 +92,14 @@ impl Shell {
 
     /// Get a window mutably by ID.
     pub fn window_mut(&mut self, id: WindowId) -> Result<&mut Window> {
-        self.windows
+        if !self.windows.contains_key(&id) {
+            return Err(ShellError::WindowNotFound { id });
+        }
+        self.mark_window_scene_dirty();
+        Ok(self
+            .windows
             .get_mut(&id)
-            .ok_or(ShellError::WindowNotFound { id })
+            .expect("window existence checked before mutable access"))
     }
 
     /// Move a window to a new position.
@@ -112,6 +120,7 @@ impl Shell {
             x: x.round() as i32,
             y: y.round() as i32,
         });
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -133,6 +142,7 @@ impl Shell {
             width: width.round() as u32,
             height: height.round() as u32,
         });
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -169,6 +179,7 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowMinimized { window_id: id.0 });
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -204,6 +215,7 @@ impl Shell {
         );
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowMaximized { window_id: id.0 });
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -253,6 +265,7 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowRestored { window_id: id.0 });
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -295,6 +308,7 @@ impl Shell {
                 ts2,
             );
         }
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -338,6 +352,7 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowActivated { window_id: id.0 });
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -370,10 +385,17 @@ impl Shell {
             .filter_map(|id| self.windows.get(id).cloned())
             .collect();
         self.layout.arrange(&mut window_vec, screen);
+        let mut changed = false;
         for win in window_vec {
             if let Some(existing) = self.windows.get_mut(&win.id) {
+                if existing.bounds != win.bounds {
+                    changed = true;
+                }
                 existing.bounds = win.bounds;
             }
+        }
+        if changed {
+            self.mark_window_scene_dirty();
         }
     }
 
@@ -396,6 +418,7 @@ impl Shell {
             ts,
         );
         self.normalize_z_orders();
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -419,6 +442,7 @@ impl Shell {
             },
             ts,
         );
+        self.mark_window_scene_dirty();
         Ok(())
     }
 
@@ -432,10 +456,18 @@ impl Shell {
             .map(|(id, w)| (*id, w.z_order))
             .collect();
         sorted.sort_by_key(|(_, z)| *z);
+        let mut changed = false;
         for (i, (id, _)) in sorted.iter().enumerate() {
             if let Some(w) = self.windows.get_mut(id) {
-                w.z_order = i as i32;
+                let z_order = i as i32;
+                if w.z_order != z_order {
+                    w.z_order = z_order;
+                    changed = true;
+                }
             }
+        }
+        if changed {
+            self.mark_window_scene_dirty();
         }
     }
 
@@ -478,6 +510,7 @@ impl Shell {
         };
         if let Some(win) = self.windows.get_mut(&id) {
             win.min_size = min;
+            self.mark_window_scene_dirty();
         }
         self.dock.add_running(app_id);
         let _ = self.set_focus(id);

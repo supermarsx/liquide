@@ -171,11 +171,7 @@ impl AppBootstrap {
 
     /// Run for exactly `frames` synthetic ticks and return frame +
     /// present introspection.
-    pub fn run_for_frames_with_report<F>(
-        self,
-        frames: u32,
-        root_builder: F,
-    ) -> Result<AppRunReport>
+    pub fn run_for_frames_with_report<F>(self, frames: u32, root_builder: F) -> Result<AppRunReport>
     where
         F: FnOnce(&mut AppCx) -> Box<dyn Widget>,
     {

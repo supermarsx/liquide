@@ -325,5 +325,8 @@ fn status_bar_format_clock_timestamp_applies_offset_and_seconds() {
     bar.set_clock_show_seconds(true);
 
     let timestamp_us = (13_u64 * 3600 + 5 * 60 + 9) * 1_000_000;
-    assert_eq!(bar.format_clock_timestamp(timestamp_us, "%H:%M"), "14:05:09");
+    assert_eq!(
+        bar.format_clock_timestamp(timestamp_us, "%H:%M"),
+        "14:05:09"
+    );
 }

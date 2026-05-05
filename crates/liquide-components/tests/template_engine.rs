@@ -11,7 +11,7 @@
 //! - `apply` (component-level render via mount_point)
 
 use liquide_components::template::{Component, TemplateNode, TemplateRenderer};
-use liquide_dom::{Document, NodeId, PseudoStateFlags};
+use liquide_dom::{Document, PseudoStateFlags};
 
 // ── Inline styles ────────────────────────────────────────────────────────
 

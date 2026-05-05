@@ -11,12 +11,26 @@ use super::Shell;
 use super::batch::WindowBatch;
 use super::hooks::ShellHookEvent;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShellTickResult {
+    pub dirty: bool,
+    pub status_bar_dirty: bool,
+    pub notifications_dirty: bool,
+    pub windows_dirty: bool,
+    pub auto_hide_dirty: bool,
+}
+
 impl Shell {
     /// Periodic tick — update clock, expire notifications.
     ///
     /// Returns `true` if something visually changed (notification expired,
     /// status bar updated, etc.) and a redraw is needed.
     pub fn tick(&mut self, now_us: u64) -> bool {
+        self.tick_detailed(now_us).dirty
+    }
+
+    /// Periodic tick with a damage-friendly breakdown of what changed.
+    pub fn tick_detailed(&mut self, now_us: u64) -> ShellTickResult {
         self.status_bar.update_clock(now_us);
         self.status_bar
             .update_notification_count(self.notifications.unread_count() as u32);
@@ -30,12 +44,21 @@ impl Shell {
         let mut repatriation_dirty = false;
         if self.config.window_management.auto_repatriate {
             repatriation_dirty = self.repatriate_offscreen_windows();
+            if repatriation_dirty {
+                self.mark_window_scene_dirty();
+            }
         }
 
         // Status bar auto-hide based on cursor position and maximized windows
         let auto_hide_dirty = self.update_status_bar_visibility();
 
-        bar_dirty || !expired.is_empty() || repatriation_dirty || auto_hide_dirty
+        ShellTickResult {
+            dirty: bar_dirty || !expired.is_empty() || repatriation_dirty || auto_hide_dirty,
+            status_bar_dirty: bar_dirty,
+            notifications_dirty: !expired.is_empty(),
+            windows_dirty: repatriation_dirty,
+            auto_hide_dirty,
+        }
     }
 
     /// Check if any windows are off-screen and repatriate them within bounds.
@@ -207,16 +230,25 @@ impl Shell {
                 if let Some(wid) = self.focus.focused() {
                     if let Some(window) = self.windows.get_mut(&wid) {
                         window.flags.toggle(WindowFlags::ALWAYS_ON_TOP);
+                        self.mark_window_scene_dirty();
                     }
                 }
                 true
             }
             ShellAction::SwitchWindowForward => {
+                let previous = self.focus.focused();
                 self.focus.focus_next();
+                if self.focus.focused() != previous {
+                    self.mark_window_scene_dirty();
+                }
                 true
             }
             ShellAction::SwitchWindowBackward => {
+                let previous = self.focus.focused();
                 self.focus.focus_prev();
+                if self.focus.focused() != previous {
+                    self.mark_window_scene_dirty();
+                }
                 true
             }
             ShellAction::TileLeft => {
@@ -245,7 +277,9 @@ impl Shell {
                 if (active.0 as usize) < count - 1 {
                     let from = active.0;
                     let next = crate::workspace::WorkspaceId(active.0 + 1);
-                    let _ = self.workspaces.switch_to(next);
+                    if self.workspaces.switch_to(next).is_ok() {
+                        self.mark_window_scene_dirty();
+                    }
                     self.hook_manager
                         .dispatch(&ShellHookEvent::WorkspaceChanged { from, to: next.0 });
                 }
@@ -256,7 +290,9 @@ impl Shell {
                 if active.0 > 0 {
                     let from = active.0;
                     let prev = crate::workspace::WorkspaceId(active.0 - 1);
-                    let _ = self.workspaces.switch_to(prev);
+                    if self.workspaces.switch_to(prev).is_ok() {
+                        self.mark_window_scene_dirty();
+                    }
                     self.hook_manager
                         .dispatch(&ShellHookEvent::WorkspaceChanged { from, to: prev.0 });
                 }

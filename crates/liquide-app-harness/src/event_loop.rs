@@ -42,8 +42,16 @@ pub struct FrameCapture {
 pub struct AppRunReport {
     pub stats: FrameStats,
     pub window_handles: Vec<NativeWindowHandle>,
+    /// Number of calls made to the platform presenter.
+    pub present_attempt_count: u32,
+    /// Number of presents accepted by the platform presenter.
     pub present_count: u32,
+    /// Number of presenter calls rejected by the platform backend.
+    pub present_error_count: u32,
+    /// Last frame accepted by the platform presenter.
     pub last_present: Option<FrameCapture>,
+    /// Most recent platform presenter error, if any.
+    pub last_present_error: Option<String>,
 }
 
 /// Outcome of processing a single tick.
@@ -61,8 +69,11 @@ pub struct EventLoop {
     stats: FrameStats,
     present_buffer: Vec<u8>,
     window_handles: Vec<NativeWindowHandle>,
+    present_attempt_count: u32,
     present_count: u32,
+    present_error_count: u32,
     last_present: Option<FrameCapture>,
+    last_present_error: Option<String>,
 }
 
 impl EventLoop {
@@ -74,8 +85,11 @@ impl EventLoop {
             stats: FrameStats::default(),
             present_buffer: Vec::new(),
             window_handles: Vec::new(),
+            present_attempt_count: 0,
             present_count: 0,
+            present_error_count: 0,
             last_present: None,
+            last_present_error: None,
         }
     }
 
@@ -193,25 +207,33 @@ impl EventLoop {
             } else {
                 self.present_buffer.fill(0);
             }
-            let _ = self.platform.present_frame(
+            self.present_attempt_count = self.present_attempt_count.saturating_add(1);
+            match self.platform.present_frame(
                 handle,
                 &self.present_buffer,
                 width,
                 height,
                 stride,
                 PixelFormat::Bgra8,
-            );
-            self.present_count = self.present_count.saturating_add(1);
-            self.last_present = Some(FrameCapture {
-                frame_index: self.stats.frames,
-                window: handle,
-                width,
-                height,
-                stride,
-                format: PixelFormat::Bgra8,
-                paint_commands: cmd_count,
-                pixels: self.present_buffer.clone(),
-            });
+            ) {
+                Ok(()) => {
+                    self.present_count = self.present_count.saturating_add(1);
+                    self.last_present = Some(FrameCapture {
+                        frame_index: self.stats.frames,
+                        window: handle,
+                        width,
+                        height,
+                        stride,
+                        format: PixelFormat::Bgra8,
+                        paint_commands: cmd_count,
+                        pixels: self.present_buffer.clone(),
+                    });
+                }
+                Err(error) => {
+                    self.present_error_count = self.present_error_count.saturating_add(1);
+                    self.last_present_error = Some(error.to_string());
+                }
+            }
         }
 
         self.dirty = false;
@@ -273,8 +295,11 @@ impl EventLoop {
         AppRunReport {
             stats: self.stats,
             window_handles: self.window_handles.clone(),
+            present_attempt_count: self.present_attempt_count,
             present_count: self.present_count,
+            present_error_count: self.present_error_count,
             last_present: self.last_present.clone(),
+            last_present_error: self.last_present_error.clone(),
         }
     }
 }
@@ -370,6 +395,7 @@ mod tests {
     use std::sync::{Arc, Mutex, MutexGuard};
 
     use crate::bootstrap::{AppBootstrap, Size};
+    use liquide_compositor::pixel::PixelFormat;
     use liquide_input::keyboard::{
         KeyCode, KeyEvent as NativeKeyEvent, KeyState, Modifiers as NativeMods,
     };
@@ -381,7 +407,7 @@ mod tests {
         StandaloneConfig, StandalonePlatform, StandaloneScriptHandle,
     };
     use liquide_platform::window_host::NativeWindowHandle;
-    use liquide_platform::NullPlatform;
+    use liquide_platform::{NullPlatform, PlatformBackend, PlatformError, PlatformResult};
     use liquide_ui_core::color::UiColor;
     use liquide_ui_core::event::{
         EventResponse, Key as UiKey, Modifiers as UiMods, MouseButton as UiMB,
@@ -411,18 +437,25 @@ mod tests {
     }
 
     fn lock_state(state: &Arc<Mutex<RecordingState>>) -> MutexGuard<'_, RecordingState> {
-        state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn scripted_window() -> NativeWindowHandle {
         NativeWindowHandle(1)
     }
 
-    fn test_bootstrap() -> (AppBootstrap, StandaloneScriptHandle, Arc<Mutex<RecordingState>>) {
+    fn test_bootstrap() -> (
+        AppBootstrap,
+        StandaloneScriptHandle,
+        Arc<Mutex<RecordingState>>,
+    ) {
         let platform = StandalonePlatform::new(StandaloneConfig {
             width: 320,
             height: 240,
             hardware_cursor: false,
+            ..StandaloneConfig::default()
         })
         .expect("standalone platform should construct for tests");
         let script = platform.script_handle();
@@ -431,6 +464,73 @@ mod tests {
             .with_initial_size(Size::new(320, 240))
             .with_platform(Box::new(platform));
         (bootstrap, script, state)
+    }
+
+    struct FailingPresentPlatform {
+        inner: NullPlatform,
+        attempts: Arc<Mutex<u32>>,
+    }
+
+    impl FailingPresentPlatform {
+        fn new(attempts: Arc<Mutex<u32>>) -> Self {
+            Self {
+                inner: NullPlatform::new(),
+                attempts,
+            }
+        }
+    }
+
+    impl PlatformBackend for FailingPresentPlatform {
+        fn display(&self) -> &dyn liquide_platform::DisplayBackend {
+            self.inner.display()
+        }
+
+        fn window_host(&mut self) -> &mut dyn liquide_platform::NativeWindowHost {
+            self.inner.window_host()
+        }
+
+        fn taskbar(&mut self) -> &mut dyn liquide_platform::TaskbarIntegration {
+            self.inner.taskbar()
+        }
+
+        fn tray(&mut self) -> &mut dyn liquide_platform::NativeTray {
+            self.inner.tray()
+        }
+
+        fn notifications(&mut self) -> &mut dyn liquide_platform::NativeNotifications {
+            self.inner.notifications()
+        }
+
+        fn drag_drop(&mut self) -> &mut dyn liquide_platform::NativeDragDrop {
+            self.inner.drag_drop()
+        }
+
+        fn keymap(&self) -> &dyn liquide_platform::KeymapTranslator {
+            self.inner.keymap()
+        }
+
+        fn platform_name(&self) -> &str {
+            "failing-present"
+        }
+
+        fn present_frame(
+            &mut self,
+            _handle: NativeWindowHandle,
+            _pixels: &[u8],
+            _width: u32,
+            _height: u32,
+            _stride: u32,
+            _format: PixelFormat,
+        ) -> PlatformResult<()> {
+            let mut attempts = self
+                .attempts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *attempts = attempts.saturating_add(1);
+            Err(PlatformError::Presentation(
+                "scripted present failure".to_string(),
+            ))
+        }
     }
 
     struct RecordingWidget {
@@ -539,7 +639,10 @@ mod tests {
             .expect("harness should tick cleanly");
 
         assert_eq!(report.stats.frames, 2);
+        assert_eq!(report.present_attempt_count, 2);
         assert_eq!(report.present_count, 2);
+        assert_eq!(report.present_error_count, 0);
+        assert!(report.last_present_error.is_none());
 
         let capture = report
             .last_present
@@ -564,6 +667,38 @@ mod tests {
     }
 
     #[test]
+    fn failed_platform_present_is_not_counted_as_presented() {
+        let attempts = Arc::new(Mutex::new(0u32));
+        let platform = FailingPresentPlatform::new(Arc::clone(&attempts));
+        let state = Arc::new(Mutex::new(RecordingState::default()));
+
+        let report = AppBootstrap::new("com.liquide.test.harness", "Harness Test")
+            .with_initial_size(Size::new(320, 240))
+            .with_platform(Box::new(platform))
+            .run_for_frames_with_report(1, |_cx| Box::new(RecordingWidget::new(state.clone())))
+            .expect("present failure should be recorded in the report");
+
+        assert_eq!(report.stats.frames, 1);
+        assert_eq!(report.present_attempt_count, 1);
+        assert_eq!(report.present_count, 0);
+        assert_eq!(report.present_error_count, 1);
+        assert!(report.last_present.is_none());
+        assert!(
+            report
+                .last_present_error
+                .as_deref()
+                .is_some_and(|message| message.contains("scripted present failure"))
+        );
+        assert_eq!(
+            *attempts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            1
+        );
+        assert_eq!(lock_state(&state).paint_calls, 1);
+    }
+
+    #[test]
     fn scripted_resize_updates_widget_and_capture() {
         let (bootstrap, script, state) = test_bootstrap();
         script.push_event(PlatformEvent::WindowResized {
@@ -582,7 +717,9 @@ mod tests {
             height: 360,
         }));
 
-        let capture = report.last_present.expect("resize run should present a frame");
+        let capture = report
+            .last_present
+            .expect("resize run should present a frame");
         assert_eq!(capture.width, 640);
         assert_eq!(capture.height, 360);
     }
@@ -691,7 +828,9 @@ mod tests {
             .run_for_frames(1, |cx| {
                 let err = cx.spawn_window("secondary").unwrap_err();
                 assert!(err.to_string().contains("spawn_window"));
-                Box::new(RecordingWidget::new(Arc::new(Mutex::new(RecordingState::default()))))
+                Box::new(RecordingWidget::new(Arc::new(Mutex::new(
+                    RecordingState::default(),
+                ))))
             });
         assert!(res.is_ok());
     }

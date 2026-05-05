@@ -520,7 +520,7 @@ fn context_menu_dom_overlay_present_when_visible() {
     shell.handle_platform_event(&mouse_click(500.0, 500.0, MouseButton::Right));
     shell.sync_dom();
 
-    let menu_node = shell.desktop_dom.doc.get_element_by_id("ctx-shell");
+    let menu_node = shell.desktop_dom.doc.get_element_by_id("context-menu");
     assert!(
         menu_node.is_some(),
         "context menu should be in DOM when visible"
@@ -537,7 +537,7 @@ fn context_menu_removed_from_dom_when_hidden() {
         shell
             .desktop_dom
             .doc
-            .get_element_by_id("ctx-shell")
+            .get_element_by_id("context-menu")
             .is_some()
     );
 
@@ -548,7 +548,7 @@ fn context_menu_removed_from_dom_when_hidden() {
         shell
             .desktop_dom
             .doc
-            .get_element_by_id("ctx-shell")
+            .get_element_by_id("context-menu")
             .is_none(),
         "context menu should be removed from DOM when hidden"
     );
@@ -562,9 +562,44 @@ fn context_menu_dom_not_present_initially() {
         shell
             .desktop_dom
             .doc
-            .get_element_by_id("ctx-shell")
+            .get_element_by_id("context-menu")
             .is_none(),
         "context menu should not be in DOM initially"
+    );
+}
+
+#[test]
+fn context_menu_dom_reopen_replaces_existing_overlay() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+
+    shell.handle_platform_event(&mouse_click(500.0, 500.0, MouseButton::Right));
+    shell.sync_dom();
+    shell.handle_platform_event(&mouse_click(600.0, 600.0, MouseButton::Right));
+    shell.sync_dom();
+
+    let root = shell.desktop_dom.doc.root();
+    let overlays = shell
+        .desktop_dom
+        .doc
+        .children(root)
+        .iter()
+        .filter(|node_id| {
+            shell
+                .desktop_dom
+                .doc
+                .tag_name(**node_id)
+                .is_some_and(|tag| tag == "context-menu")
+        })
+        .count();
+
+    assert_eq!(overlays, 1, "context menu should not leave stale overlays");
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("context-menu")
+            .is_some(),
+        "context menu should use its template id as the DOM id"
     );
 }
 
@@ -797,7 +832,11 @@ fn titlebar_app_menu_click_closes_the_clicked_window() {
         + ITEM_H * 2.0
         + ITEM_H * 0.5;
     let action = shell
-        .handle_platform_event(&mouse_click(second_window.x + 24.0, close_item_y, MouseButton::Left))
+        .handle_platform_event(&mouse_click(
+            second_window.x + 24.0,
+            close_item_y,
+            MouseButton::Left,
+        ))
         .expect("app menu action");
     assert_eq!(action, ShellAction::CloseWindow);
 

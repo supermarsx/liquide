@@ -3,16 +3,339 @@
 use std::sync::Arc;
 
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::scene::{DecorationButtons, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::pixel::Color;
+use liquide_compositor::scene::{
+    DecorationButtons, DecorationColors, DecorationLayout, NodeProperties, SceneNode, SceneNodeKind,
+};
 
-use crate::decoration::HitZone;
+use crate::decoration::{DecorationStyle, HitZone};
 use crate::scene_builder::*;
 use crate::theme::ShellTheme;
-use crate::window::{Window, WindowFlags};
+use crate::tiling::SnapZone;
+use crate::window::{Window, WindowFlags, WindowState};
 
 use super::Shell;
 
+/// Lightweight counters for the retained window workspace scene cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowSceneCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub dirty: bool,
+    pub cached: bool,
+}
+
+/// Retains the manually assembled active-workspace/window subtree.
+#[derive(Debug)]
+pub(crate) struct WindowSceneCache {
+    signature: Option<WindowSceneSignature>,
+    node: Option<SceneNode>,
+    hits: u64,
+    misses: u64,
+    dirty: bool,
+}
+
+impl WindowSceneCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            signature: None,
+            node: None,
+            hits: 0,
+            misses: 0,
+            dirty: true,
+        }
+    }
+
+    fn get(&mut self, signature: &WindowSceneSignature) -> Option<SceneNode> {
+        if !self.dirty && self.signature.as_ref() == Some(signature) {
+            if let Some(node) = &self.node {
+                self.hits = self.hits.saturating_add(1);
+                return Some(node.clone());
+            }
+        }
+
+        self.misses = self.misses.saturating_add(1);
+        None
+    }
+
+    fn store(&mut self, signature: WindowSceneSignature, node: SceneNode) {
+        self.signature = Some(signature);
+        self.node = Some(node);
+        self.dirty = false;
+    }
+
+    pub(crate) fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    pub(crate) fn stats(&self) -> WindowSceneCacheStats {
+        WindowSceneCacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            dirty: self.dirty,
+            cached: self.node.is_some(),
+        }
+    }
+}
+
+impl Default for WindowSceneCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct WindowSceneSignature {
+    screen: RectSignature,
+    active_workspace_id: u32,
+    focused_id: Option<u64>,
+    hovered_button: Option<HoveredButtonSignature>,
+    cursor_blink_on: bool,
+    decoration_style: DecorationStyleSignature,
+    decoration_colors: DecorationColorsSignature,
+    decoration_layout: DecorationLayoutSignature,
+    theme: WindowThemeSignature,
+    windows: Vec<WindowRenderSignature>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct HoveredButtonSignature {
+    window_id: u64,
+    zone: HitZone,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct WindowRenderSignature {
+    id: u64,
+    title: String,
+    app_id: String,
+    bounds: RectSignature,
+    state: WindowState,
+    z_order: i32,
+    visible: bool,
+    flags: u8,
+    opacity: u32,
+    tiled: bool,
+    tile_zone: Option<SnapZone>,
+    min_size: Option<SizeSignature>,
+}
+
+impl WindowRenderSignature {
+    fn from_window(window: &Window) -> Self {
+        Self {
+            id: window.id.0,
+            title: window.title.clone(),
+            app_id: window.app_id.clone(),
+            bounds: RectSignature::from_rect(window.bounds),
+            state: window.state,
+            z_order: window.z_order,
+            visible: window.visible,
+            flags: window.flags.bits(),
+            opacity: f32_signature(window.opacity),
+            tiled: window.tiled,
+            tile_zone: window.tile_zone,
+            min_size: window.min_size.map(SizeSignature::from_size),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RectSignature {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+impl RectSignature {
+    fn from_rect(rect: Rect) -> Self {
+        Self {
+            x: f32_signature(rect.x),
+            y: f32_signature(rect.y),
+            width: f32_signature(rect.width),
+            height: f32_signature(rect.height),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SizeSignature {
+    width: u32,
+    height: u32,
+}
+
+impl SizeSignature {
+    fn from_size((width, height): (f32, f32)) -> Self {
+        Self {
+            width: f32_signature(width),
+            height: f32_signature(height),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct DecorationStyleSignature {
+    title_bar_height: u32,
+    border_width: u32,
+    corner_radius: u32,
+    button_size: u32,
+    resize_tolerance: u32,
+    button_width: u32,
+    button_height: u32,
+    button_right_margin: u32,
+}
+
+impl DecorationStyleSignature {
+    fn from_style(style: &DecorationStyle) -> Self {
+        Self {
+            title_bar_height: f32_signature(style.title_bar_height),
+            border_width: f32_signature(style.border_width),
+            corner_radius: f32_signature(style.corner_radius),
+            button_size: f32_signature(style.button_size),
+            resize_tolerance: f32_signature(style.resize_tolerance),
+            button_width: f32_signature(style.button_width),
+            button_height: f32_signature(style.button_height),
+            button_right_margin: f32_signature(style.button_right_margin),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct DecorationLayoutSignature {
+    title_bar_height: u32,
+    button_width: u32,
+    button_height: u32,
+    button_right_margin: u32,
+    button_corner_radius: u32,
+}
+
+impl DecorationLayoutSignature {
+    fn from_layout(layout: &DecorationLayout) -> Self {
+        Self {
+            title_bar_height: f32_signature(layout.title_bar_height),
+            button_width: f32_signature(layout.button_width),
+            button_height: f32_signature(layout.button_height),
+            button_right_margin: f32_signature(layout.button_right_margin),
+            button_corner_radius: f32_signature(layout.button_corner_radius),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct DecorationColorsSignature {
+    close_bg: ColorSignature,
+    close_bg_hover: ColorSignature,
+    close_icon: ColorSignature,
+    maximize_bg: ColorSignature,
+    maximize_bg_hover: ColorSignature,
+    maximize_icon: ColorSignature,
+    minimize_bg: ColorSignature,
+    minimize_bg_hover: ColorSignature,
+    minimize_icon: ColorSignature,
+    pin_bg: ColorSignature,
+    pin_bg_hover: ColorSignature,
+    pin_bg_active: ColorSignature,
+    pin_bg_active_hover: ColorSignature,
+    pin_icon: ColorSignature,
+    pin_icon_active: ColorSignature,
+}
+
+impl DecorationColorsSignature {
+    fn from_colors(colors: &DecorationColors) -> Self {
+        Self {
+            close_bg: ColorSignature::from_color(colors.close_bg),
+            close_bg_hover: ColorSignature::from_color(colors.close_bg_hover),
+            close_icon: ColorSignature::from_color(colors.close_icon),
+            maximize_bg: ColorSignature::from_color(colors.maximize_bg),
+            maximize_bg_hover: ColorSignature::from_color(colors.maximize_bg_hover),
+            maximize_icon: ColorSignature::from_color(colors.maximize_icon),
+            minimize_bg: ColorSignature::from_color(colors.minimize_bg),
+            minimize_bg_hover: ColorSignature::from_color(colors.minimize_bg_hover),
+            minimize_icon: ColorSignature::from_color(colors.minimize_icon),
+            pin_bg: ColorSignature::from_color(colors.pin_bg),
+            pin_bg_hover: ColorSignature::from_color(colors.pin_bg_hover),
+            pin_bg_active: ColorSignature::from_color(colors.pin_bg_active),
+            pin_bg_active_hover: ColorSignature::from_color(colors.pin_bg_active_hover),
+            pin_icon: ColorSignature::from_color(colors.pin_icon),
+            pin_icon_active: ColorSignature::from_color(colors.pin_icon_active),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct WindowThemeSignature {
+    window_title_bar_focused: ColorSignature,
+    window_title_bar_unfocused: ColorSignature,
+    window_title_text: ColorSignature,
+    window_border_focused: ColorSignature,
+    window_border_unfocused: ColorSignature,
+    window_shadow: ColorSignature,
+    window_glass_tint: ColorSignature,
+    window_content_background: ColorSignature,
+    status_bar_text: ColorSignature,
+    app_settings_sidebar_item: ColorSignature,
+    app_terminal_background: ColorSignature,
+    app_terminal_text: ColorSignature,
+    app_browser_urlbar: ColorSignature,
+}
+
+impl WindowThemeSignature {
+    fn from_theme(theme: &ShellTheme) -> Self {
+        Self {
+            window_title_bar_focused: ColorSignature::from_color(theme.window_title_bar_focused),
+            window_title_bar_unfocused: ColorSignature::from_color(
+                theme.window_title_bar_unfocused,
+            ),
+            window_title_text: ColorSignature::from_color(theme.window_title_text),
+            window_border_focused: ColorSignature::from_color(theme.window_border_focused),
+            window_border_unfocused: ColorSignature::from_color(theme.window_border_unfocused),
+            window_shadow: ColorSignature::from_color(theme.window_shadow),
+            window_glass_tint: ColorSignature::from_color(theme.window_glass_tint),
+            window_content_background: ColorSignature::from_color(theme.window_content_background),
+            status_bar_text: ColorSignature::from_color(theme.status_bar_text),
+            app_settings_sidebar_item: ColorSignature::from_color(theme.app_settings_sidebar_item),
+            app_terminal_background: ColorSignature::from_color(theme.app_terminal_background),
+            app_terminal_text: ColorSignature::from_color(theme.app_terminal_text),
+            app_browser_urlbar: ColorSignature::from_color(theme.app_browser_urlbar),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ColorSignature {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+}
+
+impl ColorSignature {
+    fn from_color(color: Color) -> Self {
+        Self {
+            r: color.r,
+            g: color.g,
+            b: color.b,
+            a: color.a,
+        }
+    }
+}
+
+fn f32_signature(value: f32) -> u32 {
+    if value == 0.0 { 0.0 } else { value }.to_bits()
+}
+
 impl Shell {
+    /// Explicitly invalidate the retained manual window subtree.
+    pub fn mark_window_scene_dirty(&mut self) {
+        self.window_scene_cache.mark_dirty();
+    }
+
+    /// Return counters for the retained manual window subtree cache.
+    #[must_use]
+    pub fn window_scene_cache_stats(&self) -> WindowSceneCacheStats {
+        self.window_scene_cache.stats()
+    }
+
     /// Build the complete shell scene graph.
     ///
     /// **CSS pipeline approach**: the CSS pipeline renders ALL shell chrome
@@ -21,8 +344,6 @@ impl Shell {
     /// they require complex interactive state (decoration buttons, hover
     /// indices, z-ordered content surfaces) that the pipeline does not model.
     pub fn build_scene(&mut self) -> SceneNode {
-        use liquide_compositor::scene::GlassParams;
-
         // Toggle cursor blink every 500ms
         let now_us = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -43,7 +364,7 @@ impl Shell {
             self.css_pipeline.render_to_scene_with_output(
                 &mut self.desktop_dom.doc,
                 0, // base z-order
-                crate::DEFAULT_FRAME_DELTA_MS,
+                self.frame_delta_ms,
             );
 
         // Collect threaded fallback nodes. These are composited only when the
@@ -51,7 +372,7 @@ impl Shell {
         let mut threaded_nodes = self
             .thread_coordinator
             .as_ref()
-            .map(|coordinator| coordinator.render_all())
+            .map(|coordinator| coordinator.render_all(self.frame_delta_ms))
             .unwrap_or_default();
         let pipeline_empty = pipeline_nodes.is_empty();
 
@@ -60,8 +381,6 @@ impl Shell {
             Arc::clone(&pipeline_output.layout),
             Arc::clone(&pipeline_output.styles),
         ));
-
-        let theme = &self.theme;
 
         // Resolve decoration button colors and layout from CSS (for windows).
         let button_colors = self
@@ -135,19 +454,93 @@ impl Shell {
             root.add_child(node);
         }
 
+        Self::add_default_backdrop(&mut root, screen, bg_z);
+
         // ── Windows (manual — complex interactive decorations) ────
+        let ws_node = self.cached_window_workspace_node(
+            screen,
+            WORKSPACE_Z_ORDER,
+            &button_colors,
+            &button_layout,
+        );
+        root.add_child(ws_node);
+
+        root
+    }
+
+    fn cached_window_workspace_node(
+        &mut self,
+        screen: Rect,
+        z_order: u32,
+        button_colors: &DecorationColors,
+        button_layout: &DecorationLayout,
+    ) -> SceneNode {
+        let signature = self.window_scene_signature(screen, button_colors, button_layout);
+        if let Some(node) = self.window_scene_cache.get(&signature) {
+            return node;
+        }
+
+        let node = self.build_uncached_window_workspace_node(
+            screen,
+            z_order,
+            button_colors,
+            button_layout,
+        );
+        self.window_scene_cache.store(signature, node.clone());
+        node
+    }
+
+    fn window_scene_signature(
+        &self,
+        screen: Rect,
+        button_colors: &DecorationColors,
+        button_layout: &DecorationLayout,
+    ) -> WindowSceneSignature {
+        let workspace = self.workspaces.active();
+        WindowSceneSignature {
+            screen: RectSignature::from_rect(screen),
+            active_workspace_id: workspace.id.0,
+            focused_id: self.focus.focused().map(|id| id.0),
+            hovered_button: self
+                .hovered_button
+                .map(|(window_id, zone)| HoveredButtonSignature {
+                    window_id: window_id.0,
+                    zone,
+                }),
+            cursor_blink_on: self.cursor_blink_on,
+            decoration_style: DecorationStyleSignature::from_style(&self.decoration_style),
+            decoration_colors: DecorationColorsSignature::from_colors(button_colors),
+            decoration_layout: DecorationLayoutSignature::from_layout(button_layout),
+            theme: WindowThemeSignature::from_theme(&self.theme),
+            windows: self
+                .visible_windows()
+                .into_iter()
+                .map(WindowRenderSignature::from_window)
+                .collect(),
+        }
+    }
+
+    fn build_uncached_window_workspace_node(
+        &self,
+        screen: Rect,
+        z_order: u32,
+        button_colors: &DecorationColors,
+        button_layout: &DecorationLayout,
+    ) -> SceneNode {
+        use liquide_compositor::scene::GlassParams;
+
+        let theme = &self.theme;
         let ws = self.workspaces.active();
         let ws_id = NODE_WORKSPACE_BASE + ws.id.0 as u64;
         let mut ws_node = SceneNode::new(
             ws_id,
             SceneNodeKind::Workspace { index: ws.id.0 },
-            NodeProperties::new(screen).with_z_order(WORKSPACE_Z_ORDER),
+            NodeProperties::new(screen).with_z_order(z_order),
         );
 
         for window in &self.visible_windows() {
             let win_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE;
 
-            // Shadow
             let shadow_bounds = Rect::new(
                 window.bounds.x - 4.0,
                 window.bounds.y - 2.0,
@@ -165,7 +558,6 @@ impl Shell {
                 NodeProperties::new(shadow_bounds).with_z_order(window.z_order.max(0) as u32 * 10),
             ));
 
-            // Decoration with liquid glass title bar
             if window.flags.contains(WindowFlags::DECORATED) {
                 let is_focused = self.focus.focused() == Some(window.id);
                 let title_h = self.decoration_style.title_bar_height;
@@ -226,14 +618,13 @@ impl Shell {
                                 == Some((window.id, HitZone::AlwaysOnTopButton)),
                         },
                         button_colors: button_colors.clone(),
-                        button_layout: button_layout.clone(),
+                        button_layout: *button_layout,
                     },
                     NodeProperties::new(window.bounds)
                         .with_z_order(window.z_order.max(0) as u32 * 10 + 2),
                 ));
             }
 
-            // Content surface
             let title_h = if window.flags.contains(WindowFlags::DECORATED) {
                 self.decoration_style.title_bar_height
             } else {
@@ -247,10 +638,9 @@ impl Shell {
             );
             let z_content = window.z_order.max(0) as u32 * 10 + 3;
 
-            let content_bg = theme.window_content_background;
             ws_node.add_child(solid_rect(
                 win_base + 2,
-                content_bg,
+                theme.window_content_background,
                 content_bounds,
                 z_content,
             ));
@@ -264,9 +654,73 @@ impl Shell {
                 theme,
             );
         }
-        root.add_child(ws_node);
 
-        root
+        ws_node
+    }
+
+    fn add_default_backdrop(root: &mut SceneNode, screen: Rect, base_z: u32) {
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 10,
+            SceneNodeKind::Background {
+                color: Color::new(5, 8, 20, 255),
+            },
+            NodeProperties::new(screen).with_z_order(base_z),
+        ));
+
+        let accent_a = Rect::new(
+            0.0,
+            screen.height * 0.10,
+            screen.width,
+            screen.height * 0.18,
+        );
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 11,
+            SceneNodeKind::Background {
+                color: Color::new(0, 132, 255, 26),
+            },
+            NodeProperties::new(accent_a).with_z_order(base_z + 1),
+        ));
+
+        let accent_b = Rect::new(
+            0.0,
+            screen.height * 0.62,
+            screen.width,
+            screen.height * 0.16,
+        );
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 12,
+            SceneNodeKind::Background {
+                color: Color::new(180, 72, 255, 18),
+            },
+            NodeProperties::new(accent_b).with_z_order(base_z + 2),
+        ));
+
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 13,
+            SceneNodeKind::Background {
+                color: Color::new(255, 255, 255, 10),
+            },
+            NodeProperties::new(Rect::new(
+                screen.width * 0.06,
+                screen.height * 0.11,
+                screen.width * 0.26,
+                1.0,
+            ))
+            .with_z_order(base_z + 3),
+        ));
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 14,
+            SceneNodeKind::Background {
+                color: Color::new(115, 210, 255, 16),
+            },
+            NodeProperties::new(Rect::new(
+                screen.width * 0.60,
+                screen.height * 0.78,
+                screen.width * 0.30,
+                1.0,
+            ))
+            .with_z_order(base_z + 4),
+        ));
     }
 
     fn normalize_threaded_scene_nodes(nodes: &mut Vec<SceneNode>) {

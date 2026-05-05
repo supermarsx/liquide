@@ -734,6 +734,7 @@ impl Shell {
             return;
         }
         batch.optimize();
+        let mut window_scene_changed = false;
 
         for op in batch.ops() {
             match op {
@@ -741,12 +742,14 @@ impl Shell {
                     if let Some(win) = self.windows.get_mut(id) {
                         win.bounds.x = *x;
                         win.bounds.y = *y;
+                        window_scene_changed = true;
                     }
                 }
                 WindowOp::Resize { id, width, height } => {
                     if let Some(win) = self.windows.get_mut(id) {
                         win.bounds.width = *width;
                         win.bounds.height = *height;
+                        window_scene_changed = true;
                     }
                 }
                 WindowOp::MoveResize {
@@ -761,21 +764,27 @@ impl Shell {
                         win.bounds.y = *y;
                         win.bounds.width = *width;
                         win.bounds.height = *height;
+                        window_scene_changed = true;
                     }
                 }
                 WindowOp::SetZOrder { id, position } => {
                     match position {
                         ZOrderOp::Top => {
-                            let _ = self.raise_window(*id);
+                            if self.raise_window(*id).is_ok() {
+                                window_scene_changed = true;
+                            }
                         }
                         ZOrderOp::Bottom => {
-                            let _ = self.lower_window(*id);
+                            if self.lower_window(*id).is_ok() {
+                                window_scene_changed = true;
+                            }
                         }
                         ZOrderOp::Above(ref_id) => {
                             // Place `id` just above `ref_id`.
                             let ref_z = self.windows.get(ref_id).map(|w| w.z_order).unwrap_or(0);
                             if let Some(win) = self.windows.get_mut(id) {
                                 win.z_order = ref_z + 1;
+                                window_scene_changed = true;
                             }
                             self.normalize_z_orders();
                         }
@@ -784,42 +793,57 @@ impl Shell {
                             let ref_z = self.windows.get(ref_id).map(|w| w.z_order).unwrap_or(0);
                             if let Some(win) = self.windows.get_mut(id) {
                                 win.z_order = ref_z - 1;
+                                window_scene_changed = true;
                             }
                             self.normalize_z_orders();
                         }
                     }
                 }
                 WindowOp::Minimize { id } => {
-                    let _ = self.minimize(*id);
+                    if self.minimize(*id).is_ok() {
+                        window_scene_changed = true;
+                    }
                 }
                 WindowOp::Maximize { id } => {
-                    let _ = self.maximize(*id);
+                    if self.maximize(*id).is_ok() {
+                        window_scene_changed = true;
+                    }
                 }
                 WindowOp::Restore { id } => {
-                    let _ = self.restore(*id);
+                    if self.restore(*id).is_ok() {
+                        window_scene_changed = true;
+                    }
                 }
                 WindowOp::Show { id } => {
                     if let Some(win) = self.windows.get_mut(id) {
                         win.visible = true;
+                        window_scene_changed = true;
                     }
                 }
                 WindowOp::Hide { id } => {
                     if let Some(win) = self.windows.get_mut(id) {
                         win.visible = false;
+                        window_scene_changed = true;
                     }
                 }
                 WindowOp::SetTitle { id, title } => {
                     if let Some(win) = self.windows.get_mut(id) {
                         win.title.clone_from(title);
+                        window_scene_changed = true;
                     }
                 }
                 WindowOp::Close { id } => {
-                    let _ = self.close_window(*id);
+                    if self.close_window(*id).is_ok() {
+                        window_scene_changed = true;
+                    }
                 }
             }
         }
 
         // Single dirty-flag update for the entire batch.
+        if window_scene_changed {
+            self.mark_window_scene_dirty();
+        }
         self.dom_dirty = true;
     }
 

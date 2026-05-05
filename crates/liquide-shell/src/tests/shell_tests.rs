@@ -4,6 +4,7 @@ use crate::seamless::{TrayIconInfo, TrayMenuEntry};
 use crate::shell::Shell;
 use crate::window::*;
 use liquide_compositor::geometry::Rect;
+use liquide_interop::notification::{Notification, Urgency};
 
 #[test]
 fn shell_create() {
@@ -162,15 +163,127 @@ fn shell_resize_screen() {
     assert_eq!(shell.screen_rect(), Rect::new(0.0, 0.0, 2560.0, 1440.0));
 }
 
-fn child_by_attr(shell: &Shell, parent: liquide_dom::NodeId, attr: &str, value: &str) -> liquide_dom::NodeId {
+fn child_by_attr(
+    shell: &Shell,
+    parent: liquide_dom::NodeId,
+    attr: &str,
+    value: &str,
+) -> liquide_dom::NodeId {
     shell
         .desktop_dom
         .doc
         .children(parent)
         .iter()
         .copied()
-    .find(|&child| shell.desktop_dom.doc.get_attribute(child, attr).as_deref() == Some(value))
+        .find(|&child| shell.desktop_dom.doc.get_attribute(child, attr).as_deref() == Some(value))
         .expect("child with matching attribute")
+}
+
+fn shell_test_notification(summary: &str) -> Notification {
+    Notification {
+        id: 0,
+        app_name: "test-app".to_string(),
+        summary: summary.to_string(),
+        body: String::new(),
+        icon: None,
+        urgency: Urgency::Normal,
+        timeout_ms: 0,
+        actions: Vec::new(),
+    }
+}
+
+#[test]
+fn shell_sync_dom_reuses_unchanged_notification_nodes() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell
+        .notifications
+        .notify(shell_test_notification("First"), 1_000)
+        .expect("first notification");
+    shell
+        .notifications
+        .notify(shell_test_notification("Second"), 2_000)
+        .expect("second notification");
+
+    shell.sync_dom();
+
+    let first = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("notif-1")
+        .expect("first notification node");
+    let second = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("notif-2")
+        .expect("second notification node");
+    let first_hash = shell
+        .desktop_dom
+        .doc
+        .get_attribute(first, "data-state-hash")
+        .expect("notification state hash");
+
+    shell
+        .notifications
+        .notify(shell_test_notification("Third"), 3_000)
+        .expect("third notification");
+    shell.sync_dom();
+
+    let area = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("notification-area")
+        .expect("notification area");
+    assert_eq!(shell.desktop_dom.doc.children(area).len(), 3);
+    assert_eq!(
+        shell.desktop_dom.doc.get_element_by_id("notif-1"),
+        Some(first)
+    );
+    assert_eq!(
+        shell.desktop_dom.doc.get_element_by_id("notif-2"),
+        Some(second)
+    );
+    assert_eq!(
+        shell
+            .desktop_dom
+            .doc
+            .get_attribute(first, "data-state-hash")
+            .as_deref(),
+        Some(first_hash.as_str())
+    );
+}
+
+#[test]
+fn shell_sync_dom_preserves_launcher_overlay_root() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.launcher.open();
+    shell.launcher.set_query("term");
+
+    shell.sync_dom();
+
+    let overlay = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("launcher-overlay")
+        .expect("launcher overlay");
+    let first_hash = shell
+        .desktop_dom
+        .doc
+        .get_attribute(overlay, "data-state-hash")
+        .expect("launcher state hash");
+
+    shell.launcher.set_query("terminal");
+    shell.sync_dom();
+
+    assert_eq!(
+        shell.desktop_dom.doc.get_element_by_id("launcher-overlay"),
+        Some(overlay)
+    );
+    let next_hash = shell
+        .desktop_dom
+        .doc
+        .get_attribute(overlay, "data-state-hash")
+        .expect("launcher updated state hash");
+    assert_ne!(first_hash, next_hash);
 }
 
 #[test]
@@ -178,7 +291,8 @@ fn shell_sync_dom_formats_clock_from_status_bar_model() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.status_bar.set_clock_offset_minutes(60);
     shell.status_bar.set_clock_show_seconds(true);
-    shell.status_bar
+    shell
+        .status_bar
         .update_clock((13_u64 * 3600 + 5 * 60 + 9) * 1_000_000);
 
     shell.sync_dom();
@@ -211,8 +325,7 @@ fn shell_sync_dom_hides_branding_when_app_menu_is_disabled() {
 fn shell_sync_dom_renders_dock_focus_attention_and_badges() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.dock.set_badge("com.liquide.files", 5);
-    shell.dock
-        .set_needs_attention("com.liquide.terminal", true);
+    shell.dock.set_needs_attention("com.liquide.terminal", true);
 
     let focused = shell.open_window("Browser", Rect::new(120.0, 160.0, 480.0, 320.0));
     shell.window_mut(focused).unwrap().app_id = "com.liquide.browser".into();
@@ -230,10 +343,21 @@ fn shell_sync_dom_renders_dock_focus_attention_and_badges() {
     let terminal = child_by_attr(&shell, dock, "data-app-id", "com.liquide.terminal");
 
     assert_eq!(
-        shell.desktop_dom.doc.get_attribute(files, "data-badge").as_deref(),
+        shell
+            .desktop_dom
+            .doc
+            .get_attribute(files, "data-badge")
+            .as_deref(),
         Some("5")
     );
-    assert!(shell.desktop_dom.doc.get(browser).unwrap().has_class("focused"));
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get(browser)
+            .unwrap()
+            .has_class("focused")
+    );
     assert!(
         shell
             .desktop_dom
@@ -253,7 +377,12 @@ fn shell_sync_dom_renders_dock_focus_attention_and_badges() {
         .expect("dock badge");
     let badge_text = shell.desktop_dom.doc.children(badge)[0];
     assert_eq!(
-        shell.desktop_dom.doc.get(badge_text).unwrap().text_content(),
+        shell
+            .desktop_dom
+            .doc
+            .get(badge_text)
+            .unwrap()
+            .text_content(),
         Some("5")
     );
 }
@@ -264,13 +393,9 @@ fn shell_sync_dom_renders_live_tray_items() {
     let notification_id = shell
         .notifications
         .add_tray_icon("Mail", "Unread mail", "mail-icon", 0);
-    shell.notifications.update_tray_icon(
-        notification_id,
-        None,
-        None,
-        Some(Some("3")),
-        1,
-    );
+    shell
+        .notifications
+        .update_tray_icon(notification_id, None, None, Some(Some("3")), 1);
     shell.notifications.set_tray_menu(
         notification_id,
         vec![TrayMenuItem::new("open", "Open Inbox")],
@@ -302,7 +427,11 @@ fn shell_sync_dom_renders_live_tray_items() {
     let seamless_item = child_by_attr(&shell, tray, "data-source", "seamless");
 
     assert_eq!(
-        shell.desktop_dom.doc.get_attribute(notification_item, "data-label").as_deref(),
+        shell
+            .desktop_dom
+            .doc
+            .get_attribute(notification_item, "data-label")
+            .as_deref(),
         Some("Mail")
     );
     assert_eq!(
@@ -323,11 +452,20 @@ fn shell_sync_dom_renders_live_tray_items() {
         .expect("notification badge");
     let badge_text = shell.desktop_dom.doc.children(notification_badge)[0];
     assert_eq!(
-        shell.desktop_dom.doc.get(badge_text).unwrap().text_content(),
+        shell
+            .desktop_dom
+            .doc
+            .get(badge_text)
+            .unwrap()
+            .text_content(),
         Some("3")
     );
     assert_eq!(
-        shell.desktop_dom.doc.get_attribute(seamless_item, "data-label").as_deref(),
+        shell
+            .desktop_dom
+            .doc
+            .get_attribute(seamless_item, "data-label")
+            .as_deref(),
         Some("remote.app")
     );
     assert_eq!(

@@ -11,9 +11,10 @@
 
 use liquide_compositor::pixel::Color;
 use liquide_theme_css::prelude::PropertyValue;
+use liquide_theme_css::value::{ColorStop, Gradient};
 use liquide_theme_css::{Result as CssResult, ThemeEngine, ThemeParser};
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::theme::ShellTheme;
 use crate::themes;
@@ -262,11 +263,48 @@ fn query_color(
                 css_color.a,
             ))
         }
+        PropertyValue::Gradient(gradient) => representative_gradient_color(gradient),
         _ => {
-            warn!("Property {} is not a color", property);
+            debug!("Property {} is not a color", property);
             None
         }
     }
+}
+
+fn representative_gradient_color(gradient: &Gradient) -> Option<Color> {
+    let stops = match gradient {
+        Gradient::Linear { stops, .. }
+        | Gradient::Radial { stops, .. }
+        | Gradient::Conic { stops, .. }
+        | Gradient::RepeatingLinear { stops, .. }
+        | Gradient::RepeatingRadial { stops, .. }
+        | Gradient::RepeatingConic { stops, .. } => stops,
+    };
+
+    average_stops(stops)
+}
+
+fn average_stops(stops: &[ColorStop]) -> Option<Color> {
+    if stops.is_empty() {
+        return None;
+    }
+
+    let len = stops.len() as u32;
+    let (r, g, b, a) = stops.iter().fold((0u32, 0u32, 0u32, 0u32), |acc, stop| {
+        (
+            acc.0 + stop.color.r as u32,
+            acc.1 + stop.color.g as u32,
+            acc.2 + stop.color.b as u32,
+            acc.3 + stop.color.a as u32,
+        )
+    });
+
+    Some(Color::new(
+        (r / len) as u8,
+        (g / len) as u8,
+        (b / len) as u8,
+        (a / len) as u8,
+    ))
 }
 
 /// Get the default theme CSS (Night theme).
@@ -419,6 +457,27 @@ mod tests {
         assert_eq!(theme.desktop_background.r, 12);
         assert_eq!(theme.desktop_background.g, 14);
         assert_eq!(theme.desktop_background.b, 28);
+    }
+
+    #[test]
+    fn test_gradient_background_contributes_shell_theme_tint() {
+        let parser = ThemeParser::new();
+        let stylesheet = parser
+            .parse_str(
+                r#"
+                statusbar {
+                    background: linear-gradient(180deg, rgba(18, 22, 48, 0.88), rgba(12, 16, 38, 0.82));
+                }
+            "#,
+            )
+            .unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+        let theme = css_to_shell_theme(&engine);
+
+        assert_eq!(theme.status_bar_glass_tint.r, 15);
+        assert_eq!(theme.status_bar_glass_tint.g, 19);
+        assert_eq!(theme.status_bar_glass_tint.b, 43);
+        assert!(theme.status_bar_glass_tint.a > 200);
     }
 
     #[test]

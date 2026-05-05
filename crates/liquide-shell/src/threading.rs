@@ -19,7 +19,10 @@ pub enum ElementMessage {
     /// Update the element's data.
     Update(ElementUpdate),
     /// Request a render with the current state.
-    Render { response: Sender<Vec<SceneNode>> },
+    Render {
+        response: Sender<Vec<SceneNode>>,
+        frame_delta_ms: f32,
+    },
     /// Shutdown the thread.
     Shutdown,
 }
@@ -98,9 +101,12 @@ impl ElementThread {
     }
 
     /// Request a render from the thread (non-blocking).
-    pub fn render(&self) -> Receiver<Vec<SceneNode>> {
+    pub fn render(&self, frame_delta_ms: f32) -> Receiver<Vec<SceneNode>> {
         let (resp_tx, resp_rx) = channel();
-        if let Err(e) = self.tx.send(ElementMessage::Render { response: resp_tx }) {
+        if let Err(e) = self.tx.send(ElementMessage::Render {
+            response: resp_tx,
+            frame_delta_ms,
+        }) {
             error!("Failed to request render from {}: {}", self.name, e);
         }
         resp_rx
@@ -141,13 +147,14 @@ impl ElementThread {
                     debug!("{} received update", name);
                     Self::apply_update(&mut document, update);
                 }
-                Ok(ElementMessage::Render { response }) => {
+                Ok(ElementMessage::Render {
+                    response,
+                    frame_delta_ms,
+                }) => {
                     debug!("{} rendering", name);
-                    let (nodes, _animations_active) = pipeline.render_to_scene(
-                        &mut document.doc,
-                        0,
-                        crate::DEFAULT_FRAME_DELTA_MS,
-                    );
+                    let frame_delta_ms = normalize_frame_delta_ms(frame_delta_ms);
+                    let (nodes, _animations_active) =
+                        pipeline.render_to_scene(&mut document.doc, 0, frame_delta_ms);
                     let _ = response.send(nodes);
                 }
                 Ok(ElementMessage::Shutdown) => {
@@ -196,6 +203,14 @@ impl ElementThread {
                 }
             }
         }
+    }
+}
+
+fn normalize_frame_delta_ms(frame_delta_ms: f32) -> f32 {
+    if frame_delta_ms.is_finite() && frame_delta_ms > 0.0 {
+        frame_delta_ms
+    } else {
+        crate::DEFAULT_FRAME_DELTA_MS
     }
 }
 
@@ -277,17 +292,18 @@ impl ShellThreadCoordinator {
     }
 
     /// Render all elements and collect their scene nodes.
-    pub fn render_all(&self) -> Vec<SceneNode> {
-        let dock_rx = self.dock_thread.render();
-        let statusbar_rx = self.statusbar_thread.render();
-        let launcher_rx = self.launcher_thread.render();
-        let notification_rx = self.notification_thread.render();
+    pub fn render_all(&self, frame_delta_ms: f32) -> Vec<SceneNode> {
+        let frame_delta_ms = normalize_frame_delta_ms(frame_delta_ms);
+        let dock_rx = self.dock_thread.render(frame_delta_ms);
+        let statusbar_rx = self.statusbar_thread.render(frame_delta_ms);
+        let launcher_rx = self.launcher_thread.render(frame_delta_ms);
+        let notification_rx = self.notification_thread.render(frame_delta_ms);
 
         let mut nodes = Vec::new();
 
         // Use a single frame budget so waiting across all workers cannot
         // exceed one frame's target latency.
-        let deadline = Instant::now() + Duration::from_millis(16);
+        let deadline = Instant::now() + Duration::from_secs_f64(frame_delta_ms as f64 / 1000.0);
         for rx in [dock_rx, statusbar_rx, launcher_rx, notification_rx] {
             let now = Instant::now();
             let Some(remaining) = deadline.checked_duration_since(now) else {

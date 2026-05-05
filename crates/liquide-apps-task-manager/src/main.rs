@@ -10,8 +10,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use liquide_apps_task_manager::config::TaskManagerConfig;
-use liquide_apps_task_manager::{run_default_app, run_widget_app};
 use liquide_apps_task_manager::ui::TabId;
+use liquide_apps_task_manager::{run_default_app, run_widget_app};
 
 /// Liquide Task Manager — system monitoring and management tool.
 #[derive(Debug, Parser)]

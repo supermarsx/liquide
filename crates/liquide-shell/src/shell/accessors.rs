@@ -74,7 +74,11 @@ impl Shell {
 
     /// Resize the screen.
     pub fn resize_screen(&mut self, width: f32, height: f32) {
-        self.screen_rect = Rect::new(0.0, 0.0, width, height);
+        let screen_rect = Rect::new(0.0, 0.0, width, height);
+        if self.screen_rect != screen_rect {
+            self.mark_window_scene_dirty();
+        }
+        self.screen_rect = screen_rect;
     }
 
     /// Get the focus manager.
@@ -91,6 +95,7 @@ impl Shell {
 
     /// Get the focus manager mutably.
     pub fn focus_manager_mut(&mut self) -> &mut FocusManager {
+        self.mark_window_scene_dirty();
         &mut self.focus
     }
 
@@ -102,12 +107,14 @@ impl Shell {
 
     /// Get the workspace manager mutably.
     pub fn workspace_manager_mut(&mut self) -> &mut WorkspaceManager {
+        self.mark_window_scene_dirty();
         &mut self.workspaces
     }
 
     /// Set the decoration style.
     pub fn set_decoration_style(&mut self, style: DecorationStyle) {
         self.decoration_style = style;
+        self.mark_window_scene_dirty();
     }
 
     /// Get the window history.
@@ -186,6 +193,7 @@ impl Shell {
 
     /// Get the tiling engine mutably.
     pub fn tiling_mut(&mut self) -> &mut TilingEngine {
+        self.mark_window_scene_dirty();
         &mut self.tiling
     }
 
@@ -260,6 +268,7 @@ impl Shell {
     /// Set the layout policy.
     pub fn set_layout(&mut self, layout: Box<dyn crate::layout::LayoutPolicy>) {
         self.layout = layout;
+        self.mark_window_scene_dirty();
     }
 
     /// Get the hook manager.

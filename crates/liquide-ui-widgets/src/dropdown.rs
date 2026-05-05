@@ -422,7 +422,9 @@ mod tests {
             DropdownItem::new("3", "Three"),
         ]);
         let _ = dropdown.measure(&Constraints::UNBOUNDED, &theme);
-        dropdown.item_height_cache.set(Dropdown::item_height(&theme));
+        dropdown
+            .item_height_cache
+            .set(Dropdown::item_height(&theme));
         dropdown.layout(0.0, 0.0, 160.0, 30.0);
 
         let _ = dropdown.handle_event(&Event::MouseDown {

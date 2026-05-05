@@ -91,7 +91,10 @@ pub fn app_bootstrap() -> AppBootstrap {
         .with_ime(true)
 }
 
-pub fn prepare_launch(config: TerminalConfig, mode: TerminalLaunchMode) -> crate::Result<TerminalLaunchContract> {
+pub fn prepare_launch(
+    config: TerminalConfig,
+    mode: TerminalLaunchMode,
+) -> crate::Result<TerminalLaunchContract> {
     let shell_label = match mode {
         TerminalLaunchMode::PlatformPty if config.shell.is_empty() => "auto".to_string(),
         TerminalLaunchMode::PlatformPty => config.shell.clone(),
@@ -201,7 +204,10 @@ mod launch_tests {
         let contract = prepare_launch(TerminalConfig::default(), TerminalLaunchMode::StubPty)
             .expect("stub PTY launch should succeed");
         let root = build_root(&contract);
-        let result = root.measure(&Constraints::new(0.0, 0.0, 800.0, 600.0), &UiTheme::default());
+        let result = root.measure(
+            &Constraints::new(0.0, 0.0, 800.0, 600.0),
+            &UiTheme::default(),
+        );
 
         assert!(result.width > 0.0);
         assert!(result.height > 0.0);

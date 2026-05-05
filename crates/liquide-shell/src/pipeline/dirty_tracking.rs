@@ -406,6 +406,25 @@ struct NodeSegment {
     children: Vec<NodeId>,
 }
 
+/// Metadata captured when a node segment changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirtySegmentChange {
+    /// The DOM node whose display-list segment changed.
+    pub node: NodeId,
+    /// Number of display items in the previous segment, or 0 for new nodes.
+    pub previous_item_count: usize,
+    /// Number of display items in the new segment.
+    pub new_item_count: usize,
+    /// Number of child segments referenced by the previous segment.
+    pub previous_child_count: usize,
+    /// Number of child segments referenced by the new segment.
+    pub new_child_count: usize,
+    /// Whether the child segment order changed.
+    pub children_changed: bool,
+    /// Dirty tracker generation used to build the new segment.
+    pub generation: u64,
+}
+
 // ─── IncrementalDisplayList ─────────────────────────────────────────────
 
 /// A display list that supports incremental patching.
@@ -444,6 +463,8 @@ pub struct IncrementalDisplayList {
     generation: u64,
     /// Nodes whose segments have changed since the last flatten.
     dirty_nodes: Vec<NodeId>,
+    /// Metadata about changed segments since the last flatten.
+    dirty_segments: Vec<DirtySegmentChange>,
 }
 
 impl IncrementalDisplayList {
@@ -455,6 +476,7 @@ impl IncrementalDisplayList {
             cached_flat: None,
             generation: 0,
             dirty_nodes: Vec::new(),
+            dirty_segments: Vec::new(),
         }
     }
 
@@ -485,6 +507,18 @@ impl IncrementalDisplayList {
         children: Vec<NodeId>,
         generation: u64,
     ) {
+        let previous = self.segments.get(&node);
+        let change = DirtySegmentChange {
+            node,
+            previous_item_count: previous.map(|segment| segment.items.len()).unwrap_or(0),
+            new_item_count: items.len(),
+            previous_child_count: previous.map(|segment| segment.children.len()).unwrap_or(0),
+            new_child_count: children.len(),
+            children_changed: previous
+                .map(|segment| segment.children != children)
+                .unwrap_or(!children.is_empty()),
+            generation,
+        };
         let segment = NodeSegment {
             node,
             items,
@@ -493,6 +527,7 @@ impl IncrementalDisplayList {
         };
         self.segments.insert(node, segment);
         self.dirty_nodes.push(node);
+        self.dirty_segments.push(change);
         self.cached_flat = None;
     }
 
@@ -525,10 +560,26 @@ impl IncrementalDisplayList {
         self.cached_flat = None;
     }
 
+    /// Segment-level changes recorded since the last flatten.
+    pub fn dirty_segment_changes(&self) -> &[DirtySegmentChange] {
+        &self.dirty_segments
+    }
+
     /// Remove the segment for a node (e.g., when the node is removed from DOM).
     pub fn remove_segment(&mut self, node: NodeId) {
-        self.segments.remove(&node);
-        self.cached_flat = None;
+        if let Some(segment) = self.segments.remove(&node) {
+            self.dirty_nodes.push(node);
+            self.dirty_segments.push(DirtySegmentChange {
+                node,
+                previous_item_count: segment.items.len(),
+                new_item_count: 0,
+                previous_child_count: segment.children.len(),
+                new_child_count: 0,
+                children_changed: !segment.children.is_empty(),
+                generation: self.generation,
+            });
+            self.cached_flat = None;
+        }
     }
 
     /// Total number of segments.
@@ -571,12 +622,10 @@ impl IncrementalDisplayList {
         let mut items = Vec::new();
         self.flatten_node(root, &mut items);
 
-        let mut dl = DisplayList::new();
-        for item in items {
-            dl.push(item);
-        }
+        let dl = DisplayList::from_items(items);
 
         self.dirty_nodes.clear();
+        self.dirty_segments.clear();
         self.generation += 1;
         self.cached_flat = Some(dl.clone());
         dl
@@ -642,6 +691,7 @@ impl IncrementalDisplayList {
         self.root = None;
         self.cached_flat = None;
         self.dirty_nodes.clear();
+        self.dirty_segments.clear();
         self.generation += 1;
     }
 
@@ -1230,6 +1280,50 @@ mod tests {
         let dl = idl.flatten();
         // Parent bg + child A + child B = 3 items
         assert_eq!(dl.len(), 3);
+    }
+
+    #[test]
+    fn idl_set_segment_tracks_dirty_segment_metadata() {
+        let mut idl = IncrementalDisplayList::new();
+
+        idl.set_segment(
+            1,
+            vec![fill_rect(0.0, 0.0, 100.0, 100.0, 255, 0, 0)],
+            vec![2],
+            7,
+        );
+
+        let changes = idl.dirty_segment_changes();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].node, 1);
+        assert_eq!(changes[0].previous_item_count, 0);
+        assert_eq!(changes[0].new_item_count, 1);
+        assert_eq!(changes[0].previous_child_count, 0);
+        assert_eq!(changes[0].new_child_count, 1);
+        assert!(changes[0].children_changed);
+        assert_eq!(changes[0].generation, 7);
+
+        idl.set_segment(
+            1,
+            vec![
+                fill_rect(0.0, 0.0, 100.0, 100.0, 0, 255, 0),
+                fill_rect(10.0, 10.0, 20.0, 20.0, 0, 0, 255),
+            ],
+            vec![2, 3],
+            8,
+        );
+
+        let changes = idl.dirty_segment_changes();
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[1].previous_item_count, 1);
+        assert_eq!(changes[1].new_item_count, 2);
+        assert_eq!(changes[1].previous_child_count, 1);
+        assert_eq!(changes[1].new_child_count, 2);
+        assert!(changes[1].children_changed);
+
+        idl.set_root(1);
+        let _ = idl.flatten();
+        assert!(idl.dirty_segment_changes().is_empty());
     }
 
     #[test]
