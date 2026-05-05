@@ -1,8 +1,8 @@
 //! Tests for the conformance runner and report generation.
 
 use crate::case::{CaseResult, Outcome, TestCase, TestCategory};
-use crate::config::ConformanceConfig;
-use crate::report::{ConformanceReport, SuiteResult};
+use crate::config::{ConformanceConfig, ConformanceMode};
+use crate::report::{ConformanceReport, ConformanceStatus, SuiteResult};
 use crate::runner::ConformanceRunner;
 use crate::suite::SuiteName;
 
@@ -53,7 +53,7 @@ fn test_runner_case_ids() {
 }
 
 // ===========================================================================
-// Runner — run all suites passes
+// Runner — offline validator execution
 // ===========================================================================
 
 #[test]
@@ -66,12 +66,15 @@ fn test_run_all_suites_passes() {
     let report = runner.run();
 
     assert_eq!(report.suites.len(), 5);
+    assert_eq!(report.mode, ConformanceMode::OfflineValidation);
+    assert!(!report.server_contacted);
     assert!(
         report.total_failed() == 0,
         "expected 0 failures, got {}",
         report.total_failed()
     );
-    assert!(report.all_passed());
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
+    assert!(!report.all_passed());
 }
 
 #[test]
@@ -86,6 +89,7 @@ fn test_run_handshake_suite_passes() {
     assert_eq!(report.suites.len(), 1);
     assert_eq!(report.suites[0].suite, SuiteName::Handshake);
     assert!(report.suites[0].all_passed());
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
 }
 
 #[test]
@@ -96,7 +100,8 @@ fn test_run_streaming_suite_passes() {
     };
     let runner = ConformanceRunner::new(config);
     let report = runner.run();
-    assert!(report.all_passed());
+    assert!(report.suites[0].all_passed());
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
 }
 
 #[test]
@@ -107,7 +112,8 @@ fn test_run_clipboard_suite_passes() {
     };
     let runner = ConformanceRunner::new(config);
     let report = runner.run();
-    assert!(report.all_passed());
+    assert!(report.suites[0].all_passed());
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
 }
 
 #[test]
@@ -118,7 +124,48 @@ fn test_run_security_suite_passes() {
     };
     let runner = ConformanceRunner::new(config);
     let report = runner.run();
-    assert!(report.all_passed());
+    assert!(report.suites[0].all_passed());
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
+}
+
+#[test]
+fn test_offline_run_does_not_certify_conformance() {
+    let config = ConformanceConfig {
+        mode: ConformanceMode::OfflineValidation,
+        suite: SuiteName::All,
+        ..ConformanceConfig::default()
+    };
+    let runner = ConformanceRunner::new(config);
+    let report = runner.run();
+    let summary = report.summary();
+
+    assert_eq!(report.total_failed(), 0);
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
+    assert!(!report.all_passed());
+    assert!(!summary.contains("Result: CONFORMANT"));
+    assert!(summary.contains("Result: INDETERMINATE"));
+    assert!(summary.contains("Server contact: no"));
+}
+
+#[test]
+fn test_live_mode_fails_closed_until_probe_exists() {
+    let config = ConformanceConfig {
+        mode: ConformanceMode::LiveServer,
+        suite: SuiteName::All,
+        ..ConformanceConfig::default()
+    };
+    let runner = ConformanceRunner::new(config);
+    let case_count = runner.case_count();
+    let report = runner.run();
+
+    assert_eq!(report.mode, ConformanceMode::LiveServer);
+    assert!(!report.server_contacted);
+    assert_eq!(report.total_cases(), case_count);
+    assert_eq!(report.total_skipped(), case_count);
+    assert!(report.total_mandatory_skipped() > 0);
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
+    assert!(!report.all_passed());
+    assert!(report.summary().contains("live server conformance"));
 }
 
 // ===========================================================================
@@ -206,9 +253,35 @@ fn test_suite_result_all_passed() {
     );
 
     let mut suite = SuiteResult::new(SuiteName::Handshake);
+    let optional_case = TestCase::optional(
+        "T-002",
+        "Optional test",
+        SuiteName::Handshake,
+        TestCategory::WireFormat,
+        "desc",
+        "§7",
+    );
+
     suite.add(CaseResult::pass(&case, 10));
-    suite.add(CaseResult::skip(&case, "opt"));
+    suite.add(CaseResult::skip(&optional_case, "opt"));
     assert!(suite.all_passed());
+}
+
+#[test]
+fn test_suite_result_mandatory_skip_blocks_all_passed() {
+    let case = TestCase::mandatory(
+        "T-001",
+        "Test",
+        SuiteName::Handshake,
+        TestCategory::WireFormat,
+        "desc",
+        "§7",
+    );
+
+    let mut suite = SuiteResult::new(SuiteName::Handshake);
+    suite.add(CaseResult::skip(&case, "missing live evidence"));
+    assert_eq!(suite.mandatory_skipped(), 1);
+    assert!(!suite.all_passed());
 }
 
 // ===========================================================================
@@ -241,10 +314,12 @@ fn test_report_json_roundtrip() {
     let json = report.to_json().expect("serialization failed");
     assert!(json.contains("Handshake"));
     assert!(json.contains("HS-001"));
+    assert!(json.contains("OfflineValidation"));
 
     let parsed: ConformanceReport = serde_json::from_str(&json).expect("deserialization failed");
     assert_eq!(parsed.suites.len(), 1);
     assert_eq!(parsed.total_cases(), report.total_cases());
+    assert_eq!(parsed.mode, ConformanceMode::OfflineValidation);
 }
 
 #[test]
@@ -258,13 +333,16 @@ fn test_report_summary_text() {
 
     let summary = report.summary();
     assert!(summary.contains("Conformance Report"));
-    assert!(summary.contains("CONFORMANT"));
+    assert!(summary.contains("Mode: offline protocol validation"));
+    assert!(summary.contains("Result: INDETERMINATE"));
+    assert!(!summary.contains("Result: CONFORMANT"));
     assert!(summary.contains("passed"));
 }
 
 #[test]
 fn test_report_non_conformant() {
-    let mut report = ConformanceReport::new("test:1234", 0);
+    let mut report =
+        ConformanceReport::new_for_run("test:1234", 0, ConformanceMode::LiveServer, true);
     let case = TestCase::mandatory(
         "FAIL-001",
         "Bad test",
@@ -278,8 +356,62 @@ fn test_report_non_conformant() {
     report.add_suite(suite);
 
     assert!(!report.all_passed());
+    assert_eq!(report.status(), ConformanceStatus::NonConformant);
     assert_eq!(report.total_failed(), 1);
     assert!(report.summary().contains("NON-CONFORMANT"));
+}
+
+#[test]
+fn test_report_mandatory_skip_is_indeterminate() {
+    let mut report =
+        ConformanceReport::new_for_run("test:1234", 0, ConformanceMode::LiveServer, true);
+    let case = TestCase::mandatory(
+        "SKIP-001",
+        "Skipped mandatory test",
+        SuiteName::Handshake,
+        TestCategory::WireFormat,
+        "desc",
+        "§7",
+    );
+    let mut suite = SuiteResult::new(SuiteName::Handshake);
+    suite.add(CaseResult::skip(&case, "missing live evidence"));
+    report.add_suite(suite);
+
+    assert_eq!(report.total_mandatory_skipped(), 1);
+    assert_eq!(report.status(), ConformanceStatus::Indeterminate);
+    assert!(!report.all_passed());
+    assert!(report.summary().contains("Result: INDETERMINATE"));
+}
+
+#[test]
+fn test_live_contacted_optional_skip_can_be_conformant() {
+    let mut report =
+        ConformanceReport::new_for_run("test:1234", 0, ConformanceMode::LiveServer, true);
+    let mandatory_case = TestCase::mandatory(
+        "PASS-001",
+        "Mandatory test",
+        SuiteName::Handshake,
+        TestCategory::WireFormat,
+        "desc",
+        "§7",
+    );
+    let optional_case = TestCase::optional(
+        "SKIP-OPT",
+        "Optional test",
+        SuiteName::Handshake,
+        TestCategory::WireFormat,
+        "desc",
+        "§7",
+    );
+    let mut suite = SuiteResult::new(SuiteName::Handshake);
+    suite.add(CaseResult::pass(&mandatory_case, 10));
+    suite.add(CaseResult::skip(&optional_case, "not supported"));
+    report.add_suite(suite);
+
+    assert_eq!(report.total_mandatory_skipped(), 0);
+    assert_eq!(report.status(), ConformanceStatus::Conformant);
+    assert!(report.all_passed());
+    assert!(report.summary().contains("Result: CONFORMANT"));
 }
 
 #[test]
@@ -296,6 +428,7 @@ fn test_report_protocol_version() {
 fn test_config_default() {
     let config = ConformanceConfig::default();
     assert_eq!(config.server, "localhost:3389");
+    assert_eq!(config.mode, ConformanceMode::OfflineValidation);
     assert_eq!(config.suite, SuiteName::All);
     assert_eq!(config.timeout_ms, 5000);
     assert!(!config.verbose);

@@ -15,6 +15,12 @@ pub enum Requirement {
     Optional,
 }
 
+impl Default for Requirement {
+    fn default() -> Self {
+        Self::Mandatory
+    }
+}
+
 impl fmt::Display for Requirement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -163,6 +169,9 @@ pub struct CaseResult {
     pub case_name: String,
     /// Suite this belongs to.
     pub suite: SuiteName,
+    /// Whether this case is mandatory or optional.
+    #[serde(default)]
+    pub requirement: Requirement,
     /// Whether passed, failed, or skipped.
     pub outcome: Outcome,
     /// Duration in microseconds.
@@ -179,6 +188,7 @@ impl CaseResult {
             case_id: case.id.clone(),
             case_name: case.name.clone(),
             suite: case.suite,
+            requirement: case.requirement,
             outcome: Outcome::Pass,
             duration_us,
             message: String::new(),
@@ -192,6 +202,7 @@ impl CaseResult {
             case_id: case.id.clone(),
             case_name: case.name.clone(),
             suite: case.suite,
+            requirement: case.requirement,
             outcome: Outcome::Fail,
             duration_us,
             message: message.into(),
@@ -205,6 +216,7 @@ impl CaseResult {
             case_id: case.id.clone(),
             case_name: case.name.clone(),
             suite: case.suite,
+            requirement: case.requirement,
             outcome: Outcome::Skip,
             duration_us: 0,
             message: reason.into(),

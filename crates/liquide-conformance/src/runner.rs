@@ -1,7 +1,7 @@
 //! Conformance test runner that orchestrates suite execution.
 
 use crate::case::{CaseResult, TestCase};
-use crate::config::ConformanceConfig;
+use crate::config::{ConformanceConfig, ConformanceMode};
 use crate::report::{ConformanceReport, SuiteResult};
 use crate::suite::SuiteName;
 use crate::validator;
@@ -48,14 +48,42 @@ impl ConformanceRunner {
     }
 
     /// Run all conformance tests and return a report.
-    ///
-    /// Since we cannot connect to a real server in unit-test mode, the runner
-    /// executes protocol-level validation checks using synthetic data that
-    /// exercises the validators. Each test case invokes the relevant protocol
-    /// validators and records pass/fail.
     #[must_use]
     pub fn run(&self) -> ConformanceReport {
-        let mut report = ConformanceReport::new(&self.config.server, 0);
+        match self.config.mode {
+            ConformanceMode::OfflineValidation => self.run_offline_validation(),
+            ConformanceMode::LiveServer => self.run_live_server_conformance(),
+        }
+    }
+
+    /// Run protocol-level validators without contacting the target server.
+    fn run_offline_validation(&self) -> ConformanceReport {
+        self.build_report(ConformanceMode::OfflineValidation, false, |case| {
+            self.run_case(case)
+        })
+    }
+
+    /// Live probing is intentionally fail-closed until a real client/server harness exists.
+    fn run_live_server_conformance(&self) -> ConformanceReport {
+        self.build_report(ConformanceMode::LiveServer, false, |case| {
+            CaseResult::skip(
+                case,
+                "live server probing is not implemented; target server was not contacted",
+            )
+        })
+    }
+
+    fn build_report<F>(
+        &self,
+        mode: ConformanceMode,
+        server_contacted: bool,
+        mut run_case: F,
+    ) -> ConformanceReport
+    where
+        F: FnMut(&TestCase) -> CaseResult,
+    {
+        let mut report =
+            ConformanceReport::new_for_run(&self.config.server, 0, mode, server_contacted);
 
         // Group cases by suite.
         let suites = self.config.suite.expand();
@@ -68,7 +96,7 @@ impl ConformanceRunner {
 
             let mut suite_result = SuiteResult::new(suite_name);
             for case in &suite_cases {
-                let result = self.run_case(case);
+                let result = run_case(case);
                 suite_result.add(result);
             }
             report.add_suite(suite_result);
