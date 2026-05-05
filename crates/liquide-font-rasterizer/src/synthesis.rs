@@ -8,6 +8,8 @@
 //!
 //! CSS `font-synthesis` controls which axes can be synthesized.
 
+use std::sync::Arc;
+
 use crate::rasterize::GlyphBitmap;
 
 /// Which synthesis transformations to apply.
@@ -97,7 +99,7 @@ pub fn apply_synthetic_bold(bitmap: &GlyphBitmap, strength_px: f32) -> GlyphBitm
         bearing_x: bitmap.bearing_x,
         bearing_y: bitmap.bearing_y,
         advance: bitmap.advance + strength_px,
-        pixels: new_pixels,
+        pixels: Arc::from(new_pixels),
         is_subpixel: bitmap.is_subpixel,
     }
 }
@@ -141,7 +143,7 @@ pub fn apply_synthetic_oblique(bitmap: &GlyphBitmap, angle_degrees: f32) -> Glyp
         bearing_x: bitmap.bearing_x - (shear * bitmap.height as f32 * 0.5).max(0.0),
         bearing_y: bitmap.bearing_y,
         advance: bitmap.advance,
-        pixels: new_pixels,
+        pixels: Arc::from(new_pixels),
         is_subpixel: bitmap.is_subpixel,
     }
 }
@@ -172,7 +174,7 @@ mod tests {
             bearing_x: 0.0,
             bearing_y: 8.0,
             advance: 8.0,
-            pixels: vec![128u8; 80],
+            pixels: Arc::from(vec![128u8; 80]),
             is_subpixel: false,
         }
     }
@@ -211,7 +213,7 @@ mod tests {
             bearing_x: 0.0,
             bearing_y: 0.0,
             advance: 0.0,
-            pixels: vec![],
+            pixels: Arc::from(Vec::<u8>::new()),
             is_subpixel: false,
         };
         let bold = apply_synthetic_bold(&empty, 1.0);

@@ -18,3 +18,8 @@ tracing.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "glyph_cache_bench"
+harness = false

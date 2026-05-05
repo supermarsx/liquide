@@ -2,6 +2,8 @@
 //!
 //! Supports grayscale and subpixel (LCD) rendering modes.
 
+use std::sync::Arc;
+
 use ab_glyph::{Font, GlyphId, ScaleFont, point};
 
 use crate::database::{FontDatabase, FontFaceId};
@@ -79,7 +81,7 @@ pub struct GlyphBitmap {
     pub advance: f32,
     /// Pixel data. For Grayscale: one byte per pixel (alpha).
     /// For Subpixel: 3 bytes per pixel (R, G, B coverage).
-    pub pixels: Vec<u8>,
+    pub pixels: Arc<[u8]>,
     /// Whether this is a subpixel bitmap.
     pub is_subpixel: bool,
 }
@@ -144,7 +146,7 @@ impl<'a> GlyphRasterizer<'a> {
                 bearing_x: 0.0,
                 bearing_y: 0.0,
                 advance,
-                pixels: Vec::new(),
+                pixels: Vec::new().into(),
                 is_subpixel: false,
             });
         };
@@ -161,7 +163,7 @@ impl<'a> GlyphRasterizer<'a> {
                 bearing_x: bounds.min.x,
                 bearing_y: -bounds.min.y + scaled.ascent(),
                 advance,
-                pixels: Vec::new(),
+                pixels: Vec::new().into(),
                 is_subpixel: false,
             });
         }
@@ -189,7 +191,7 @@ impl<'a> GlyphRasterizer<'a> {
                     bearing_x: bounds.min.x,
                     bearing_y: -bounds.min.y + scaled.ascent(),
                     advance,
-                    pixels,
+                    pixels: pixels.into(),
                     is_subpixel: false,
                 })
             }
@@ -267,7 +269,7 @@ impl<'a> GlyphRasterizer<'a> {
                     bearing_x: bounds.min.x,
                     bearing_y: -bounds.min.y + scaled.ascent(),
                     advance,
-                    pixels,
+                    pixels: pixels.into(),
                     is_subpixel: true,
                 })
             }

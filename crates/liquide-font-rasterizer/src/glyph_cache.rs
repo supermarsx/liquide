@@ -42,10 +42,9 @@ impl GlyphCacheKey {
     }
 }
 
-/// LRU entry with access counter for eviction.
+/// Cache entry payload.
 struct CacheEntry {
     bitmap: GlyphBitmap,
-    last_access: u64,
 }
 
 /// Thread-safe LRU glyph cache.
@@ -55,7 +54,10 @@ pub struct GlyphCache {
 
 struct GlyphCacheInner {
     entries: HashMap<GlyphCacheKey, CacheEntry>,
-    access_counter: u64,
+    prev: HashMap<GlyphCacheKey, GlyphCacheKey>,
+    next: HashMap<GlyphCacheKey, GlyphCacheKey>,
+    head: Option<GlyphCacheKey>,
+    tail: Option<GlyphCacheKey>,
     max_entries: usize,
     /// Total bytes of pixel data stored.
     total_bytes: usize,
@@ -72,7 +74,10 @@ impl GlyphCache {
         Self {
             inner: Mutex::new(GlyphCacheInner {
                 entries: HashMap::with_capacity(max_entries / 2),
-                access_counter: 0,
+                prev: HashMap::with_capacity(max_entries / 2),
+                next: HashMap::with_capacity(max_entries / 2),
+                head: None,
+                tail: None,
                 max_entries,
                 total_bytes: 0,
                 max_bytes,
@@ -92,13 +97,10 @@ impl GlyphCache {
     #[must_use]
     pub fn get(&self, key: &GlyphCacheKey) -> Option<GlyphBitmap> {
         let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
-        inner.access_counter += 1;
-        let counter = inner.access_counter;
-        if let Some(entry) = inner.entries.get_mut(key) {
-            entry.last_access = counter;
-            let bmp = entry.bitmap.clone();
+        if inner.entries.contains_key(key) {
+            inner.touch(key);
             inner.hits += 1;
-            Some(bmp)
+            inner.entries.get(key).map(|entry| entry.bitmap.clone())
         } else {
             inner.misses += 1;
             None
@@ -110,38 +112,21 @@ impl GlyphCache {
         let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
         let pixel_bytes = bitmap.pixels.len();
 
+        let _ = inner.remove(&key);
+
         // Evict if we're at capacity
         while (inner.entries.len() >= inner.max_entries
             || inner.total_bytes + pixel_bytes > inner.max_bytes)
             && !inner.entries.is_empty()
         {
-            // Find the least recently used entry
-            let lru_key = inner
-                .entries
-                .iter()
-                .min_by_key(|(_, e)| e.last_access)
-                .map(|(k, _)| *k);
-            if let Some(lru_key) = lru_key {
-                if let Some(removed) = inner.entries.remove(&lru_key) {
-                    inner.total_bytes = inner
-                        .total_bytes
-                        .saturating_sub(removed.bitmap.pixels.len());
-                }
-            } else {
+            if !inner.evict_lru() {
                 break;
             }
         }
 
-        inner.access_counter += 1;
-        let counter = inner.access_counter;
         inner.total_bytes += pixel_bytes;
-        inner.entries.insert(
-            key,
-            CacheEntry {
-                bitmap,
-                last_access: counter,
-            },
-        );
+        inner.entries.insert(key, CacheEntry { bitmap });
+        inner.push_front(key);
     }
 
     /// Invalidate all cached glyphs for a specific font face (e.g., on font reload).
@@ -154,11 +139,7 @@ impl GlyphCache {
             .copied()
             .collect();
         for key in keys_to_remove {
-            if let Some(removed) = inner.entries.remove(&key) {
-                inner.total_bytes = inner
-                    .total_bytes
-                    .saturating_sub(removed.bitmap.pixels.len());
-            }
+            let _ = inner.remove(&key);
         }
     }
 
@@ -166,6 +147,10 @@ impl GlyphCache {
     pub fn clear(&self) {
         let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
         inner.entries.clear();
+        inner.prev.clear();
+        inner.next.clear();
+        inner.head = None;
+        inner.tail = None;
         inner.total_bytes = 0;
     }
 
@@ -197,9 +182,72 @@ pub struct CacheStats {
     pub hit_rate: f64,
 }
 
+impl GlyphCacheInner {
+    fn unlink(&mut self, key: &GlyphCacheKey) {
+        let prev = self.prev.remove(key);
+        let next = self.next.remove(key);
+        match (prev, next) {
+            (Some(prev), Some(next)) => {
+                self.next.insert(prev, next);
+                self.prev.insert(next, prev);
+            }
+            (Some(prev), None) => {
+                self.next.remove(&prev);
+                self.tail = Some(prev);
+            }
+            (None, Some(next)) => {
+                self.prev.remove(&next);
+                self.head = Some(next);
+            }
+            (None, None) => {
+                if self.head.as_ref() == Some(key) {
+                    self.head = None;
+                }
+                if self.tail.as_ref() == Some(key) {
+                    self.tail = None;
+                }
+            }
+        }
+    }
+
+    fn push_front(&mut self, key: GlyphCacheKey) {
+        if let Some(head) = self.head {
+            self.next.insert(key, head);
+            self.prev.insert(head, key);
+        } else {
+            self.tail = Some(key);
+        }
+        self.head = Some(key);
+    }
+
+    fn touch(&mut self, key: &GlyphCacheKey) {
+        if self.head.as_ref() == Some(key) {
+            return;
+        }
+        self.unlink(key);
+        self.push_front(*key);
+    }
+
+    fn remove(&mut self, key: &GlyphCacheKey) -> Option<CacheEntry> {
+        self.unlink(key);
+        let removed = self.entries.remove(key)?;
+        self.total_bytes = self.total_bytes.saturating_sub(removed.bitmap.pixels.len());
+        Some(removed)
+    }
+
+    fn evict_lru(&mut self) -> bool {
+        let Some(key) = self.tail else {
+            return false;
+        };
+        self.remove(&key).is_some()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
 
     fn dummy_bitmap(glyph_id: u32) -> GlyphBitmap {
         GlyphBitmap {
@@ -209,7 +257,7 @@ mod tests {
             bearing_x: 1.0,
             bearing_y: 10.0,
             advance: 8.0,
-            pixels: vec![128u8; 120],
+            pixels: Arc::from(vec![128u8; 120]),
             is_subpixel: false,
         }
     }
@@ -321,5 +369,17 @@ mod tests {
         assert_eq!(stats.hits, 2);
         assert_eq!(stats.misses, 0);
         assert!((stats.hit_rate - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_cache_hit_reuses_shared_pixels() {
+        let cache = GlyphCache::with_defaults();
+        let key = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.0, 0.0);
+        cache.insert(key, dummy_bitmap(65));
+
+        let first = cache.get(&key).unwrap();
+        let second = cache.get(&key).unwrap();
+
+        assert!(Arc::ptr_eq(&first.pixels, &second.pixels));
     }
 }

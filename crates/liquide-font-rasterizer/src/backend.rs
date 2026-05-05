@@ -167,33 +167,40 @@ impl RustybuzzShaperBackend {
 
     /// Compute an order-independent hash of the enabled shaping features.
     ///
-    /// Uses an XOR-reduce of per-feature FNV-1a hashes so that the same
-    /// set of features produces the same key regardless of declaration
-    /// order in CSS (`font-feature-settings` is a set, not a list).
+    /// The feature list is canonicalized before hashing so declaration order
+    /// and duplicate entries do not create extra cache pressure, while distinct
+    /// feature sets still produce distinct shape-cache identities.
     fn features_hash(features: &[ShapingFeature]) -> u64 {
-        let mut combined: u64 = 0;
-        for feat in features {
-            // Seed with a feature-specific tag so identical payloads on
-            // different variants don't collide.
-            let (tag, payload): (u64, u64) = match feat {
-                ShapingFeature::Ligatures => (1, 0),
-                ShapingFeature::ContextualAlternates => (2, 0),
-                ShapingFeature::Kerning => (3, 0),
-                ShapingFeature::SmallCaps => (4, 0),
-                ShapingFeature::OldstyleFigures => (5, 0),
-                ShapingFeature::TabularFigures => (6, 0),
-                ShapingFeature::Fractions => (7, 0),
-                ShapingFeature::Ordinals => (8, 0),
-                ShapingFeature::StylisticSet(n) => (9, *n as u64),
-            };
-            let mut h: u64 = 0xcbf29ce484222325;
-            for b in tag.to_le_bytes().iter().chain(payload.to_le_bytes().iter()) {
-                h ^= *b as u64;
-                h = h.wrapping_mul(0x100000001b3);
-            }
-            combined ^= h;
+        let mut identities: Vec<(u8, u8)> = features.iter().map(Self::feature_identity).collect();
+        identities.sort_unstable();
+        identities.dedup();
+
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in (identities.len() as u64).to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
         }
-        combined
+        for (tag, payload) in identities {
+            h ^= tag as u64;
+            h = h.wrapping_mul(0x100000001b3);
+            h ^= payload as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    fn feature_identity(feature: &ShapingFeature) -> (u8, u8) {
+        match feature {
+            ShapingFeature::Ligatures => (1, 0),
+            ShapingFeature::ContextualAlternates => (2, 0),
+            ShapingFeature::Kerning => (3, 0),
+            ShapingFeature::SmallCaps => (4, 0),
+            ShapingFeature::OldstyleFigures => (5, 0),
+            ShapingFeature::TabularFigures => (6, 0),
+            ShapingFeature::Fractions => (7, 0),
+            ShapingFeature::Ordinals => (8, 0),
+            ShapingFeature::StylisticSet(n) => (9, (*n).clamp(1, 20)),
+        }
     }
 
     /// Build a cache key from shaping parameters.
@@ -282,7 +289,7 @@ impl ShaperBackend for RustybuzzShaperBackend {
                 ShapingFeature::Fractions => (*b"frac", 1),
                 ShapingFeature::Ordinals => (*b"ordn", 1),
                 ShapingFeature::StylisticSet(n) => {
-                    let n = n.clamp(&1, &20);
+                    let n = (*n).clamp(1, 20);
                     ([b's', b's', b'0' + (n / 10), b'0' + (n % 10)], 1)
                 }
             };
@@ -347,6 +354,19 @@ mod tests {
     }
 
     #[test]
+    fn features_hash_dedupes_without_collapsing_to_empty() {
+        let empty = RustybuzzShaperBackend::features_hash(&[]);
+        let single = RustybuzzShaperBackend::features_hash(&[ShapingFeature::Ligatures]);
+        let duplicate = RustybuzzShaperBackend::features_hash(&[
+            ShapingFeature::Ligatures,
+            ShapingFeature::Ligatures,
+        ]);
+
+        assert_eq!(single, duplicate);
+        assert_ne!(empty, duplicate);
+    }
+
+    #[test]
     fn cache_key_changes_with_letter_spacing() {
         let mut cfg_a = ShaperConfig::default();
         let mut cfg_b = ShaperConfig::default();
@@ -369,6 +389,74 @@ mod tests {
         let ka = RustybuzzShaperBackend::cache_key("hi", FontId(1), 16.0, Direction::Ltr, &cfg_a);
         let kb = RustybuzzShaperBackend::cache_key("hi", FontId(1), 16.0, Direction::Ltr, &cfg_b);
         assert_ne!(ka, kb);
+    }
+
+    fn glyph_with_advance(x_advance: f32) -> ShapedGlyph {
+        ShapedGlyph {
+            glyph_id: 42,
+            cluster: 0,
+            x_advance,
+            y_advance: 0.0,
+            x_offset: 0.0,
+            y_offset: 0.0,
+        }
+    }
+
+    #[test]
+    fn letter_spacing_restyle_does_not_reuse_cached_zero_spacing_positions() {
+        let mut cache = LruShapeCache::new(8);
+        let zero_config = ShaperConfig::default();
+        let spaced_config = ShaperConfig {
+            letter_spacing: 2.0,
+            ..ShaperConfig::default()
+        };
+        let zero_key = RustybuzzShaperBackend::cache_key(
+            "restyle",
+            FontId(1),
+            16.0,
+            Direction::Ltr,
+            &zero_config,
+        );
+        let spaced_key = RustybuzzShaperBackend::cache_key(
+            "restyle",
+            FontId(1),
+            16.0,
+            Direction::Ltr,
+            &spaced_config,
+        );
+
+        cache.insert(zero_key, vec![glyph_with_advance(10.0)]);
+
+        assert!(
+            cache.get(&spaced_key).is_none(),
+            "nonzero letter-spacing must not hit stale zero-spacing glyphs"
+        );
+
+        cache.insert(spaced_key, vec![glyph_with_advance(12.0)]);
+        assert_eq!(cache.get(&zero_key).unwrap()[0].x_advance, 10.0);
+        assert_eq!(cache.get(&spaced_key).unwrap()[0].x_advance, 12.0);
+    }
+
+    #[test]
+    fn expanded_style_keys_remain_capacity_bounded() {
+        let mut cache = LruShapeCache::new(2);
+        let key_for_spacing = |spacing: f32| {
+            let config = ShaperConfig {
+                letter_spacing: spacing,
+                word_spacing: spacing * 0.5,
+                ..ShaperConfig::default()
+            };
+            RustybuzzShaperBackend::cache_key("bounded", FontId(1), 16.0, Direction::Ltr, &config)
+        };
+
+        cache.insert(key_for_spacing(0.0), vec![glyph_with_advance(10.0)]);
+        cache.insert(key_for_spacing(1.0), vec![glyph_with_advance(11.0)]);
+        cache.insert(key_for_spacing(2.0), vec![glyph_with_advance(12.0)]);
+
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get(&key_for_spacing(0.0)).is_none());
+        assert!(cache.get(&key_for_spacing(1.0)).is_some());
+        assert!(cache.get(&key_for_spacing(2.0)).is_some());
     }
 
     #[test]
