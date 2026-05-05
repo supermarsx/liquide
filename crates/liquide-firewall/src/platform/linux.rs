@@ -1,3 +1,5 @@
+#![cfg_attr(all(test, not(target_os = "linux")), allow(dead_code))]
+
 use std::process::Command;
 
 use crate::{
@@ -8,8 +10,9 @@ use crate::{
 /// Linux firewall backend.
 ///
 /// Tries `nft` (nftables) first, falls back to `iptables`, and finally `ufw`.
-/// All rules are placed in a dedicated chain (`liquide_fw`) so they can be
-/// managed independently of the system's own rules.
+/// `nft` and `iptables` profile replacement use LiquiDE-owned tables/chains.
+/// UFW supports individual rule adds/removals only; full profile replacement
+/// fails closed because UFW has no dedicated chain equivalent here.
 pub struct PlatformFirewall {
     backend: LinuxBackend,
 }
@@ -410,14 +413,8 @@ impl FirewallBackend for PlatformFirewall {
                 }
             }
             LinuxBackend::Ufw => {
-                // ufw reset managed rules.
-                let _ = Self::run("ufw", &["--force", "reset"]);
-                for rule in &profile.rules {
-                    if rule.enabled {
-                        self.ufw_add_rule(rule)?;
-                    }
-                }
-                let _ = Self::run("ufw", &["--force", "enable"]);
+                let _ = profile;
+                return Err(FirewallError::NotSupported);
             }
         }
         Ok(())
@@ -595,5 +592,30 @@ impl FirewallBackend for PlatformFirewall {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FirewallBackend, RuleAction};
+
+    #[test]
+    fn ufw_apply_profile_fails_closed_without_global_reset() {
+        let mut firewall = PlatformFirewall {
+            backend: LinuxBackend::Ufw,
+        };
+        let profile = FirewallProfile {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            rules: Vec::new(),
+            default_inbound: RuleAction::Block,
+            default_outbound: RuleAction::Allow,
+        };
+
+        assert!(matches!(
+            firewall.apply_profile(&profile),
+            Err(FirewallError::NotSupported)
+        ));
     }
 }

@@ -546,6 +546,12 @@ fn manager_create_user_enforces_policy() {
 #[test]
 fn manager_change_password_enforces_policy() {
     let mut mgr = UserManager::new(Box::new(StubBackend::new()));
+    let result = mgr.change_password(1000, "", "Str0ngPw");
+    assert!(matches!(
+        result,
+        Err(AccountError::PlatformError(message)) if message.contains("old password")
+    ));
+
     // Weak new password.
     let result = mgr.change_password(1000, "old", "weak");
     assert!(matches!(result, Err(AccountError::WeakPassword(_))));

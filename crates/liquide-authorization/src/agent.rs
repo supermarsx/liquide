@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::action::AuthorizationAction;
 use crate::level::AuthLevel;
-use crate::platform::{self, VerifyResult};
+use crate::platform::{self, CredentialVerificationRequest, VerifyResult};
 use crate::policy::AuthorizationPolicy;
 use crate::store::AuthorizationStore;
 
@@ -52,6 +52,19 @@ impl Clock for SystemClock {
     }
 }
 
+trait CredentialVerifier {
+    fn verify(&mut self, request: &CredentialVerificationRequest) -> VerifyResult;
+}
+
+#[derive(Debug, Default)]
+struct PlatformCredentialVerifier;
+
+impl CredentialVerifier for PlatformCredentialVerifier {
+    fn verify(&mut self, request: &CredentialVerificationRequest) -> VerifyResult {
+        platform::verify_authorization_request(request)
+    }
+}
+
 /// The authorization agent manages the end-to-end flow of requesting,
 /// verifying, and granting privileged actions.
 ///
@@ -69,6 +82,7 @@ pub struct AuthorizationAgent {
     store: AuthorizationStore,
     actions: HashMap<String, AuthorizationAction>,
     clock: Box<dyn Clock>,
+    verifier: Box<dyn CredentialVerifier>,
     /// The username used for credential verification.
     username: String,
 }
@@ -96,6 +110,7 @@ impl AuthorizationAgent {
             store: AuthorizationStore::new(),
             actions: HashMap::new(),
             clock: Box::new(SystemClock),
+            verifier: Box::new(PlatformCredentialVerifier),
             username: username.into(),
         }
     }
@@ -164,11 +179,27 @@ impl AuthorizationAgent {
             };
         }
 
-        // Perform platform credential verification
-        let verify = platform::verify_credentials(effective_level, &self.username);
+        let verification_request = CredentialVerificationRequest::new(
+            action.id.clone(),
+            self.username.clone(),
+            effective_level,
+        );
+        let verify = self.verifier.verify(&verification_request);
 
         match verify {
-            VerifyResult::Success => {
+            VerifyResult::Success { username, level } => {
+                if username != verification_request.username || level != verification_request.level {
+                    return AuthResult::Denied {
+                        reason: format!(
+                            "verification principal mismatch: requested '{}' at {}, got '{}' at {}",
+                            verification_request.username,
+                            verification_request.level,
+                            username,
+                            level
+                        ),
+                    };
+                }
+
                 let keep_alive_until = if rule.allow_keep_alive && rule.keep_alive_seconds > 0 {
                     let expiry = now + u64::from(rule.keep_alive_seconds);
                     self.store.grant(action.id.clone(), expiry);
@@ -234,6 +265,7 @@ impl AuthorizationAgent {
             store: AuthorizationStore::new(),
             actions: HashMap::new(),
             clock: Box::new(clock),
+            verifier: Box::new(PlatformCredentialVerifier),
             username: username.into(),
         };
         (agent, handle)
@@ -291,9 +323,39 @@ impl TestClockHandle {
 mod tests {
     use super::*;
     use crate::policy::PolicyRule;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     fn make_action(id: &str, level: AuthLevel) -> AuthorizationAction {
         AuthorizationAction::new(id, "test action", "please authenticate", level)
+    }
+
+    struct RecordingVerifier {
+        result: VerifyResult,
+        seen: Rc<RefCell<Vec<CredentialVerificationRequest>>>,
+    }
+
+    impl CredentialVerifier for RecordingVerifier {
+        fn verify(&mut self, request: &CredentialVerificationRequest) -> VerifyResult {
+            self.seen.borrow_mut().push(request.clone());
+            self.result.clone()
+        }
+    }
+
+    fn agent_with_verifier(
+        policy: AuthorizationPolicy,
+        username: &str,
+        result: VerifyResult,
+        seen: Rc<RefCell<Vec<CredentialVerificationRequest>>>,
+    ) -> AuthorizationAgent {
+        AuthorizationAgent {
+            policy,
+            store: AuthorizationStore::new(),
+            actions: HashMap::new(),
+            clock: Box::new(TestClock::new(1000)),
+            verifier: Box::new(RecordingVerifier { result, seen }),
+            username: username.to_string(),
+        }
     }
 
     #[test]
@@ -322,6 +384,62 @@ mod tests {
 
         let result = agent.request_authorization(&action);
         assert!(result.is_denied());
+    }
+
+    #[test]
+    fn verifier_receives_action_identity_and_effective_level() {
+        let mut policy = AuthorizationPolicy::new();
+        policy.add_rule(PolicyRule::new(
+            "org.liquide.test",
+            AuthLevel::AdminPassword,
+        ));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let mut agent = agent_with_verifier(
+            policy,
+            "alice",
+            VerifyResult::Success {
+                username: "alice".to_string(),
+                level: AuthLevel::AdminPassword,
+            },
+            seen.clone(),
+        );
+        let action = make_action("org.liquide.test", AuthLevel::UserPassword);
+
+        let result = agent.request_authorization(&action);
+
+        assert!(result.is_granted());
+        let requests = seen.borrow();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].action_id, "org.liquide.test");
+        assert_eq!(requests[0].username, "alice");
+        assert_eq!(requests[0].level, AuthLevel::AdminPassword);
+    }
+
+    #[test]
+    fn mismatched_verifier_success_is_denied() {
+        let mut policy = AuthorizationPolicy::new();
+        policy.add_rule(PolicyRule::new(
+            "org.liquide.test",
+            AuthLevel::UserPassword,
+        ));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let mut agent = agent_with_verifier(
+            policy,
+            "alice",
+            VerifyResult::Success {
+                username: "mallory".to_string(),
+                level: AuthLevel::UserPassword,
+            },
+            seen,
+        );
+        let action = make_action("org.liquide.test", AuthLevel::UserPassword);
+
+        let result = agent.request_authorization(&action);
+
+        assert!(matches!(
+            result,
+            AuthResult::Denied { reason } if reason.contains("principal mismatch")
+        ));
     }
 
     #[test]

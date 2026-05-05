@@ -142,6 +142,12 @@ impl UserManager {
         old_password: &str,
         new_password: &str,
     ) -> Result<(), AccountError> {
+        if old_password.is_empty() {
+            return Err(AccountError::PlatformError(
+                "old password must not be empty".into(),
+            ));
+        }
+
         // Enforce password policy on new password.
         if let Err(violations) = self.password_policy.check(new_password) {
             return Err(AccountError::WeakPassword(violations.join("; ")));

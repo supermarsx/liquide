@@ -67,6 +67,13 @@ type NetLocalGroupGetMembersFn = unsafe extern "system" fn(
     resume: *mut usize,
 ) -> u32;
 
+type NetUserChangePasswordFn = unsafe extern "system" fn(
+    domainname: *const u16,
+    username: *const u16,
+    oldpassword: *const u16,
+    newpassword: *const u16,
+) -> u32;
+
 // ── USER_INFO_3 layout (level 3) ────────────────────────────────────────────
 
 /// Partial layout of USER_INFO_3.
@@ -127,6 +134,13 @@ struct LocalGroupUsersInfo0 {
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const NERR_SUCCESS: u32 = 0;
+const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_INVALID_PASSWORD: u32 = 86;
+const ERROR_PASSWORD_RESTRICTION: u32 = 1325;
+const NERR_USER_NOT_FOUND: u32 = 2221;
+const NERR_PASSWORD_HIST_CONFLICT: u32 = 2244;
+const NERR_PASSWORD_TOO_SHORT: u32 = 2245;
+const NERR_PASSWORD_TOO_RECENT: u32 = 2246;
 const MAX_PREFERRED_LENGTH: u32 = 0xFFFF_FFFF;
 const UF_ACCOUNTDISABLE: u32 = 0x0002;
 const LG_INCLUDE_INDIRECT: u32 = 0x0001;
@@ -161,6 +175,7 @@ struct Netapi32 {
     net_local_group_enum: NetLocalGroupEnumFn,
     net_user_get_local_groups: NetUserGetLocalGroupsFn,
     net_local_group_get_members: NetLocalGroupGetMembersFn,
+    net_user_change_password: NetUserChangePasswordFn,
 }
 
 // SAFETY: The netapi32.dll handle and function pointers are process-wide
@@ -183,6 +198,7 @@ impl Netapi32 {
             let net_local_group_enum = Self::get_proc(module, b"NetLocalGroupEnum\0")?;
             let net_user_get_local_groups = Self::get_proc(module, b"NetUserGetLocalGroups\0")?;
             let net_local_group_get_members = Self::get_proc(module, b"NetLocalGroupGetMembers\0")?;
+            let net_user_change_password = Self::get_proc(module, b"NetUserChangePassword\0")?;
 
             Ok(Self {
                 _module: module,
@@ -191,6 +207,7 @@ impl Netapi32 {
                 net_local_group_enum: std::mem::transmute(net_local_group_enum),
                 net_user_get_local_groups: std::mem::transmute(net_user_get_local_groups),
                 net_local_group_get_members: std::mem::transmute(net_local_group_get_members),
+                net_user_change_password: std::mem::transmute(net_user_change_password),
             })
         }
     }
@@ -210,6 +227,22 @@ impl Netapi32 {
         if !buf.is_null() {
             unsafe { (self.net_api_buffer_free)(buf as *mut c_void) };
         }
+    }
+}
+
+fn password_change_status_to_error(status: u32) -> AccountError {
+    match status {
+        ERROR_ACCESS_DENIED | ERROR_INVALID_PASSWORD => AccountError::PermissionDenied,
+        NERR_USER_NOT_FOUND => AccountError::NotFound,
+        ERROR_PASSWORD_RESTRICTION
+        | NERR_PASSWORD_HIST_CONFLICT
+        | NERR_PASSWORD_TOO_SHORT
+        | NERR_PASSWORD_TOO_RECENT => AccountError::WeakPassword(
+            "Windows password policy rejected the new password".to_string(),
+        ),
+        _ => AccountError::PlatformError(format!(
+            "NetUserChangePassword failed with status {status}"
+        )),
     }
 }
 
@@ -668,25 +701,29 @@ impl PlatformBackend for WindowsBackend {
         new_password: &str,
     ) -> Result<(), AccountError> {
         let username = self.uid_to_username(uid)?;
-
-        // Verify old password by attempting a logon (rudimentary check).
-        // TODO: Use LogonUser or NetUserChangePassword for proper verification.
         if old_password.is_empty() {
             return Err(AccountError::PlatformError(
                 "old password must not be empty".into(),
             ));
         }
 
-        let output = std::process::Command::new("net")
-            .args(["user", &username, new_password])
-            .output()
-            .map_err(|e| AccountError::PlatformError(format!("net user: {e}")))?;
+        let username_wide = to_wide(&username);
+        let old_password_wide = to_wide(old_password);
+        let new_password_wide = to_wide(new_password);
+        let status = unsafe {
+            (self.netapi.net_user_change_password)(
+                std::ptr::null(),
+                username_wide.as_ptr(),
+                old_password_wide.as_ptr(),
+                new_password_wide.as_ptr(),
+            )
+        };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AccountError::PlatformError(format!("net user: {stderr}")));
+        if status == NERR_SUCCESS {
+            Ok(())
+        } else {
+            Err(password_change_status_to_error(status))
         }
-        Ok(())
     }
 
     fn set_auto_login(&mut self, uid: u32, _enabled: bool) -> Result<(), AccountError> {
@@ -906,5 +943,39 @@ impl PlatformBackend for WindowsBackend {
         }
 
         Ok(entries)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_old_password_maps_to_permission_denied() {
+        assert!(matches!(
+            password_change_status_to_error(ERROR_INVALID_PASSWORD),
+            AccountError::PermissionDenied
+        ));
+    }
+
+    #[test]
+    fn windows_password_policy_rejections_remain_user_actionable() {
+        assert!(matches!(
+            password_change_status_to_error(NERR_PASSWORD_TOO_SHORT),
+            AccountError::WeakPassword(message) if message.contains("Windows password policy")
+        ));
+        assert!(matches!(
+            password_change_status_to_error(NERR_PASSWORD_HIST_CONFLICT),
+            AccountError::WeakPassword(message) if message.contains("Windows password policy")
+        ));
+    }
+
+    #[test]
+    fn unexpected_password_change_status_fails_closed() {
+        assert!(matches!(
+            password_change_status_to_error(12_345),
+            AccountError::PlatformError(message)
+                if message.contains("NetUserChangePassword failed")
+        ));
     }
 }

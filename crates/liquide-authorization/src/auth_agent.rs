@@ -16,6 +16,8 @@ use crate::level::AuthLevel;
 /// Credentials supplied by the user in response to an auth prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Credentials {
+    /// Principal the credential belongs to, if the agent can report it.
+    username: Option<String>,
     /// The authentication method that was used.
     pub method: AuthLevel,
     /// Opaque token or password hash (never stored in plain text at rest).
@@ -29,9 +31,30 @@ impl Credentials {
     #[must_use]
     pub fn new(method: AuthLevel, payload: impl Into<String>) -> Self {
         Self {
+            username: None,
             method,
             payload: payload.into(),
         }
+    }
+
+    /// Create credentials bound to a specific principal.
+    #[must_use]
+    pub fn for_username(
+        username: impl Into<String>,
+        method: AuthLevel,
+        payload: impl Into<String>,
+    ) -> Self {
+        Self {
+            username: Some(username.into()),
+            method,
+            payload: payload.into(),
+        }
+    }
+
+    /// Access the principal these credentials claim, if provided.
+    #[must_use]
+    pub fn username(&self) -> Option<&str> {
+        self.username.as_deref()
     }
 
     /// Access the credential payload.
@@ -287,6 +310,15 @@ impl AuthSession {
 
         match agent.show_prompt(&self.prompt, &self.identity) {
             Ok(creds) => {
+                if let Some(username) = creds.username() {
+                    if username != self.identity.username {
+                        self.state = SessionState::Failed;
+                        return Err(AuthAgentError::VerificationFailed(format!(
+                            "credential identity mismatch: expected '{}', got '{}'",
+                            self.identity.username, username
+                        )));
+                    }
+                }
                 self.state = SessionState::Authenticated;
                 Ok(creds)
             }
@@ -398,6 +430,12 @@ impl StubAgent {
         self.responses.push(Ok(Credentials::new(method, payload)));
     }
 
+    /// Queue a successful credential response for a specific principal.
+    pub fn queue_success_for_username(&mut self, username: &str, method: AuthLevel, payload: &str) {
+        self.responses
+            .push(Ok(Credentials::for_username(username, method, payload)));
+    }
+
     /// Queue a cancellation response.
     pub fn queue_cancel(&mut self) {
         self.responses.push(Err(AuthAgentError::Cancelled));
@@ -453,6 +491,15 @@ mod tests {
     #[test]
     fn credentials_new() {
         let c = Credentials::new(AuthLevel::UserPassword, "secret123");
+        assert_eq!(c.username(), None);
+        assert_eq!(c.method, AuthLevel::UserPassword);
+        assert_eq!(c.payload(), "secret123");
+    }
+
+    #[test]
+    fn credentials_for_username() {
+        let c = Credentials::for_username("alice", AuthLevel::UserPassword, "secret123");
+        assert_eq!(c.username(), Some("alice"));
         assert_eq!(c.method, AuthLevel::UserPassword);
         assert_eq!(c.payload(), "secret123");
     }
@@ -632,6 +679,21 @@ mod tests {
         let result = session.begin_auth(&mut agent);
 
         assert!(result.is_err());
+        assert_eq!(session.state(), SessionState::Failed);
+    }
+
+    #[test]
+    fn session_begin_auth_rejects_mismatched_credential_identity() {
+        let mut agent = StubAgent::new("test");
+        agent.queue_success_for_username("mallory", AuthLevel::UserPassword, "pass");
+
+        let mut session = AuthSession::new("org.liquide.test", test_prompt(), test_identity());
+        let result = session.begin_auth(&mut agent);
+
+        assert!(matches!(
+            result,
+            Err(AuthAgentError::VerificationFailed(reason)) if reason.contains("identity mismatch")
+        ));
         assert_eq!(session.state(), SessionState::Failed);
     }
 

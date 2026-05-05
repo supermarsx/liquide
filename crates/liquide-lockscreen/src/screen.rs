@@ -656,9 +656,11 @@ mod tests {
         state.config.allow_user_switch = true;
         let auth = NullAuth::new();
         let events = state.handle_action(LockScreenAction::SwitchUser, &auth);
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, LockScreenEvent::SwitchUser)));
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, LockScreenEvent::SwitchUser))
+        );
     }
 
     #[test]
@@ -667,19 +669,25 @@ mod tests {
         let auth = NullAuth::new();
 
         let shutdown = state.handle_action(LockScreenAction::Shutdown, &auth);
-        assert!(shutdown
-            .iter()
-            .any(|event| matches!(event, LockScreenEvent::Shutdown)));
+        assert!(
+            shutdown
+                .iter()
+                .any(|event| matches!(event, LockScreenEvent::Shutdown))
+        );
 
         let restart = state.handle_action(LockScreenAction::Restart, &auth);
-        assert!(restart
-            .iter()
-            .any(|event| matches!(event, LockScreenEvent::Restart)));
+        assert!(
+            restart
+                .iter()
+                .any(|event| matches!(event, LockScreenEvent::Restart))
+        );
 
         let suspend = state.handle_action(LockScreenAction::Suspend, &auth);
-        assert!(suspend
-            .iter()
-            .any(|event| matches!(event, LockScreenEvent::Suspend)));
+        assert!(
+            suspend
+                .iter()
+                .any(|event| matches!(event, LockScreenEvent::Suspend))
+        );
     }
 
     #[test]

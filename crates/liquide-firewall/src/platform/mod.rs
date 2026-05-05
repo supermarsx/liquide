@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(any(test, target_os = "linux"))]
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::PlatformFirewall;
