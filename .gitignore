@@ -24,6 +24,8 @@ test_shell2.txt
 review_test_output.txt
 /.tmp
 *.log
+commit_stats.txt
+tmp_*.txt
 my_check.txt
 tmp_check.txt
 chk.txt
