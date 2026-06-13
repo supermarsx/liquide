@@ -1,0 +1,22 @@
+Font: Roboto Regular
+Family: Roboto
+Designer: Christian Robertson
+Copyright: Copyright 2015 Google Inc. All Rights Reserved.
+Version: 2.001047; 2015
+License: Apache License, Version 2.0
+License URL: http://www.apache.org/licenses/LICENSE-2.0
+Source: https://github.com/googlefonts/roboto-2 (src/hinted/Roboto-Regular.ttf)
+
+This font file (Roboto-Regular.ttf) is vendored into the
+liquide-font-rasterizer crate and embedded into the binary via
+`include_bytes!` so the desktop environment always has a real
+proportional UI font available as a last-resort fallback, even when
+the on-disk `assets/fonts/` directory is empty (i.e. when
+`scripts/download-fonts.ps1` has not been run).
+
+Roboto is licensed under the Apache License, Version 2.0. The full
+license text is available at the URL above. The font's own `name`
+table also carries this license declaration.
+
+No modifications were made to the font file; it is the upstream
+Apache-2.0 Roboto Regular as published by Google Fonts.

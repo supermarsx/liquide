@@ -3836,6 +3836,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-visual-test"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "liquide-compositor",
+ "liquide-input",
+ "liquide-platform",
+ "liquide-session",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-wayland"
 version = "0.1.0"
 dependencies = [

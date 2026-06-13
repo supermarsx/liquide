@@ -294,6 +294,9 @@ members = [
 
     # Workspace-level end-to-end scenarios
     "crates/liquide-e2e",
+
+    # Headless visual-regression / golden-image harness
+    "crates/liquide-visual-test",
 ]
 
 [package]
@@ -486,6 +489,7 @@ liquide-compositor-anim = { path = "crates/liquide-compositor-anim" }
 liquide-shortcut-manager = { path = "crates/liquide-shortcut-manager" }
 liquide-telemetry-viewer = { path = "crates/liquide-telemetry-viewer" }
 liquide-xdg = { path = "crates/liquide-xdg" }
+liquide-visual-test = { path = "crates/liquide-visual-test" }
 
 [dev-dependencies]
 bytes.workspace = true

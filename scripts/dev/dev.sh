@@ -13,6 +13,7 @@
 #   lint         cargo clippy --all-targets (skips cleanly if clippy is missing)
 #   run          launch the standalone DE binary (liquid-standalone); extra args are forwarded
 #   run-example  run an example target (e.g. run-example optimizations); lists examples if omitted
+#   snapshot     render the headless desktop to a PNG (fast eyeball-debug loop); args forwarded
 #   help         show this help
 #
 # All tasks operate on the whole workspace unless a -p/--package argument is given.
@@ -52,6 +53,7 @@ Tasks:
   lint         cargo clippy --all-targets (skips cleanly if clippy is missing)
   run          launch the standalone DE binary (${STANDALONE_BIN}); extra args forwarded
   run-example  run an example target; lists available examples when none is given
+  snapshot     render the headless desktop to a PNG (fast eyeball-debug loop)
   help         show this help
 
 Examples:
@@ -60,6 +62,12 @@ Examples:
   ./scripts/dev/dev.sh fmt --check
   ./scripts/dev/dev.sh run -- --help
   ./scripts/dev/dev.sh run-example optimizations
+
+Snapshot (no window / GPU; writes target/visual-test/snapshot.png):
+  ./scripts/dev/dev.sh snapshot                          # 1280x720 liquid-glass
+  ./scripts/dev/dev.sh snapshot --theme night --width 800 --height 600
+  ./scripts/dev/dev.sh snapshot --scenario context_menu
+  ./scripts/dev/dev.sh snapshot --scenario status_bar
 
 Windowed mode at 1270x768:
   # --dev-mode opens a resizable host window; --width/--height set its size.
@@ -198,6 +206,18 @@ case "$TASK" in
         fi
         split_run_args "$@"
         cmd=(run -p "$example_crate" --example "$example_name")
+        cmd+=(${BUILD_FLAGS[@]+"${BUILD_FLAGS[@]}"})
+        if [[ ${#PROGRAM_ARGS[@]} -gt 0 ]]; then
+            cmd+=(-- "${PROGRAM_ARGS[@]}")
+        fi
+        run_cargo "${cmd[@]}"
+        ;;
+    snapshot)
+        # Render the headless desktop to a PNG for the fast eyeball-debug loop.
+        # Extra args (--theme/--width/--height/--scenario/--out) are forwarded
+        # to the snapshot bin verbatim.
+        split_run_args "$@"
+        cmd=(run -p liquide-visual-test --bin snapshot)
         cmd+=(${BUILD_FLAGS[@]+"${BUILD_FLAGS[@]}"})
         if [[ ${#PROGRAM_ARGS[@]} -gt 0 ]]; then
             cmd+=(-- "${PROGRAM_ARGS[@]}")

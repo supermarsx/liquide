@@ -13,6 +13,7 @@
 #   lint         cargo clippy --all-targets (skips cleanly if clippy is missing)
 #   run          launch the standalone DE binary (liquid-standalone); extra args are forwarded
 #   run-example  run an example target (e.g. run-example optimizations); lists examples if omitted
+#   snapshot     render the headless desktop to a PNG (fast eyeball-debug loop); args forwarded
 #   help         show this help
 #
 # All tasks operate on the whole workspace unless a -p/--package argument is given.
@@ -53,6 +54,7 @@ function Show-Usage {
     Write-Host "  lint         cargo clippy --all-targets (skips cleanly if clippy is missing)"
     Write-Host "  run          launch the standalone DE binary ($standaloneBin); extra args forwarded"
     Write-Host "  run-example  run an example target; lists available examples when none is given"
+    Write-Host "  snapshot     render the headless desktop to a PNG (fast eyeball-debug loop)"
     Write-Host "  help         show this help"
     Write-Host ""
     Write-Host "Examples:"
@@ -61,6 +63,12 @@ function Show-Usage {
     Write-Host "  ./scripts/dev/dev.ps1 fmt --check"
     Write-Host "  ./scripts/dev/dev.ps1 run -- --help"
     Write-Host "  ./scripts/dev/dev.ps1 run-example optimizations"
+    Write-Host ""
+    Write-Host "Snapshot (no window / GPU; writes target/visual-test/snapshot.png):"
+    Write-Host "  ./scripts/dev/dev.ps1 snapshot                          # 1280x720 liquid-glass"
+    Write-Host "  ./scripts/dev/dev.ps1 snapshot --theme night --width 800 --height 600"
+    Write-Host "  ./scripts/dev/dev.ps1 snapshot --scenario context_menu"
+    Write-Host "  ./scripts/dev/dev.ps1 snapshot --scenario status_bar"
     Write-Host ""
     Write-Host "Windowed mode at 1270x768:"
     Write-Host "  # --dev-mode opens a resizable host window; --width/--height set its size."
@@ -256,6 +264,19 @@ switch ($Task.ToLowerInvariant()) {
 
         $split = Split-RunArguments -Arguments $remaining
         $cargoArgs = @("run", "-p", $match.Crate, "--example", $match.Example)
+        $cargoArgs += $split.BuildFlags
+        if ($split.ProgramArgs.Count -gt 0) {
+            $cargoArgs += "--"
+            $cargoArgs += $split.ProgramArgs
+        }
+        $exitCode = Invoke-Cargo -Arguments $cargoArgs
+    }
+    "snapshot" {
+        # Render the headless desktop to a PNG for the fast eyeball-debug loop.
+        # All extra args (--theme/--width/--height/--scenario/--out) are forwarded
+        # to the snapshot bin verbatim.
+        $split = Split-RunArguments -Arguments $arguments
+        $cargoArgs = @("run", "-p", "liquide-visual-test", "--bin", "snapshot")
         $cargoArgs += $split.BuildFlags
         if ($split.ProgramArgs.Count -gt 0) {
             $cargoArgs += "--"

@@ -9,6 +9,19 @@
 #   - Noto Sans        (accessibility)
 #
 # All fonts are SIL Open Font License (OFL) 1.1.
+#
+# NOTE: Running this script is now OPTIONAL for basic functionality. The desktop
+# environment embeds a fallback UI font (Roboto Regular, Apache-2.0) directly in
+# the binary via include_bytes! (see crates/liquide-font-rasterizer/src/database.rs,
+# EMBEDDED_FALLBACK_FONT). If assets/fonts/ is empty, the DE registers that
+# embedded font so text always renders with a real proportional face instead of
+# the blocky 8x16 bitmap fallback. Run this script to install the full, higher-
+# quality font set (Manrope/Inter/Space Grotesk/JetBrains Mono/Noto Sans), which
+# the loader always PREFERS over the embedded fallback when present.
+#
+# Files are written to the exact names the loader expects
+# (crates/liquide-font-rasterizer/src/database.rs::load_default_fonts), e.g.
+# assets/fonts/Inter/InterVariable.ttf, assets/fonts/SpaceGrotesk/SpaceGrotesk-{weight}.ttf.
 
 param(
     [string]$OutputDir = (Join-Path (Join-Path (Join-Path $PSScriptRoot "..") "assets") "fonts"),
@@ -31,7 +44,9 @@ $fonts = @(
     @{
         Name    = "Inter"
         Url     = "https://github.com/rsms/inter/releases/download/v4.0/Inter-VariableFont_opsz%2Cwght.ttf"
-        File    = "Inter-VariableFont_opsz,wght.ttf"
+        # The loader (database.rs load_default_fonts) reads Inter/InterVariable.ttf,
+        # so save the variable font under exactly that name.
+        File    = "InterVariable.ttf"
         License = "OFL-1.1"
     },
     @{
@@ -39,6 +54,14 @@ $fonts = @(
         Url     = "https://github.com/floriankarsten/space-grotesk/releases/download/3.0.0/SpaceGrotesk%5Bwght%5D.ttf"
         File    = "SpaceGrotesk-VariableFont_wght.ttf"
         License = "OFL-1.1"
+        # The loader expects per-weight static names; this is one variable file,
+        # so copy it to each expected name. The shaper applies the wght variation.
+        StaticCopies = @(
+            "SpaceGrotesk-Light.ttf",
+            "SpaceGrotesk-Regular.ttf",
+            "SpaceGrotesk-Medium.ttf",
+            "SpaceGrotesk-Bold.ttf"
+        )
     },
     @{
         Name    = "JetBrainsMono"
@@ -93,6 +116,18 @@ function Download-Font {
         
         # Clean up
         Remove-Item -Path $extractDir -Recurse -Force
+    }
+
+    # Some fonts ship as a single variable file but the loader expects several
+    # per-weight static filenames. Duplicate the downloaded file under each
+    # expected name so load_default_fonts() picks them up.
+    if ($Font.StaticCopies) {
+        foreach ($copyName in $Font.StaticCopies) {
+            $copyPath = Join-Path $destPath $copyName
+            if (Test-Path $filePath) {
+                Copy-Item -Path $filePath -Destination $copyPath -Force
+            }
+        }
     }
 
     # Write license marker

@@ -1,5 +1,6 @@
 //! Platform event routing — keyboard, mouse, touch, and window events.
 
+use std::cell::RefCell;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use liquide_input::event::InputEvent;
@@ -8,6 +9,109 @@ use liquide_platform::PlatformEvent;
 
 use super::{DesktopCompositor, RenderMsg};
 
+// ---------------------------------------------------------------------------
+// Per-window DPI scale tracking
+// ---------------------------------------------------------------------------
+//
+// Coordinate-space convention
+// ----------------------------
+// The Win32 backend delivers mouse coordinates in *physical* client pixels
+// (`GET_X_LPARAM`/`GET_Y_LPARAM`), and the window's client rect — which drives
+// the compositor/renderer surface size — is also in physical pixels. The
+// shell's layout/hit-test space, however, is authored in *logical* (CSS) pixels.
+// On a display scaled by `s` (e.g. 1.25 at 125%) the two spaces differ by `s`,
+// so a raw physical click at (x, y) lands at logical (x/s, y/s). Without the
+// correction a click misses its target by `(s - 1)`: 25% at 125%, 50% at 150%
+// (e6 DPI input bug — dead context menus / buttons on scaled & remote/RDP
+// displays where DPI reporting differs).
+//
+// Fix: divide incoming mouse coordinates by `dpi_scale` before they reach the
+// shell hit-test and `input_state`, so dispatched coordinates are always in the
+// logical layout space the renderer lays out in. `dpi_scale` is seeded from the
+// window's real DPI at creation and updated on `PlatformEvent::DpiChanged`.
+//
+// The current scale lives here (not on `DesktopCompositor`, whose definition is
+// owned by a peer) keyed by window handle. The desktop event loop is
+// single-threaded, so a thread-local map is sufficient and avoids cross-file
+// struct changes.
+thread_local! {
+    static DPI_SCALES: RefCell<std::collections::HashMap<u64, f32>> =
+        RefCell::new(std::collections::HashMap::new());
+}
+
+/// Record the DPI scale for a window handle (clamped to a sane positive range).
+fn set_dpi_scale(handle_id: u64, dpi_scale: f32) {
+    // Reject non-finite or non-positive values so coordinate division can never
+    // produce NaN/inf; fall back to 1.0 (unscaled) for bad input.
+    let scale = if dpi_scale.is_finite() && dpi_scale > 0.0 {
+        dpi_scale
+    } else {
+        1.0
+    };
+    DPI_SCALES.with(|m| {
+        m.borrow_mut().insert(handle_id, scale);
+    });
+}
+
+/// Current DPI scale for a window handle (defaults to 1.0 if unknown).
+fn dpi_scale_for(handle_id: u64) -> f32 {
+    DPI_SCALES.with(|m| m.borrow().get(&handle_id).copied().unwrap_or(1.0))
+}
+
+/// Convert a physical mouse coordinate pair into logical (CSS-pixel) layout
+/// space for the given window. See the module-level convention note.
+///
+/// `logical = physical / dpi_scale`.
+fn to_logical_coords(handle_id: u64, x: f32, y: f32) -> (f32, f32) {
+    let scale = dpi_scale_for(handle_id);
+    (x / scale, y / scale)
+}
+
+/// Return a copy of `me` with positional coordinates converted from physical to
+/// logical (CSS-pixel) space for the given window. Non-positional fields
+/// (button, state, axis, scroll delta) are preserved unchanged. `Leave` carries
+/// no coordinates and is returned as-is.
+fn scale_mouse_event_to_logical(
+    handle_id: u64,
+    me: &liquide_input::mouse::MouseEvent,
+) -> liquide_input::mouse::MouseEvent {
+    use liquide_input::mouse::MouseEvent;
+    match me {
+        MouseEvent::Move { x, y } => {
+            let (x, y) = to_logical_coords(handle_id, *x, *y);
+            MouseEvent::Move { x, y }
+        }
+        MouseEvent::Button {
+            button,
+            state,
+            x,
+            y,
+        } => {
+            let (x, y) = to_logical_coords(handle_id, *x, *y);
+            MouseEvent::Button {
+                button: *button,
+                state: *state,
+                x,
+                y,
+            }
+        }
+        MouseEvent::Scroll { axis, delta, x, y } => {
+            let (x, y) = to_logical_coords(handle_id, *x, *y);
+            MouseEvent::Scroll {
+                axis: *axis,
+                delta: *delta,
+                x,
+                y,
+            }
+        }
+        MouseEvent::Enter { x, y } => {
+            let (x, y) = to_logical_coords(handle_id, *x, *y);
+            MouseEvent::Enter { x, y }
+        }
+        MouseEvent::Leave => MouseEvent::Leave,
+    }
+}
+
 impl DesktopCompositor {
     /// Handle a platform event: route through shell and input state.
     ///
@@ -15,6 +119,24 @@ impl DesktopCompositor {
     /// Sets `self.cursor.dirty` when only cursor position changed.
     pub fn handle_event(&mut self, event: &PlatformEvent) -> bool {
         let mut needs_redraw = false;
+
+        // Normalize mouse coordinates from physical to logical (CSS-pixel) space
+        // up front, so BOTH the input/devtools routing below AND the shell
+        // hit-test routing at the end see logical coordinates. On a non-scaled
+        // display (dpi_scale == 1.0) this is the identity. See the module-level
+        // coordinate-space convention note. We hold the corrected event in a
+        // local and borrow it for the rest of the function.
+        let normalized;
+        let event: &PlatformEvent = match event {
+            PlatformEvent::MouseInput { event: me, handle } => {
+                normalized = PlatformEvent::MouseInput {
+                    handle: *handle,
+                    event: scale_mouse_event_to_logical(handle.0, me),
+                };
+                &normalized
+            }
+            other => other,
+        };
 
         match event {
             PlatformEvent::WindowResized { width, height, .. } => {
@@ -183,8 +305,15 @@ impl DesktopCompositor {
                 }
                 self.input_state.handle_event(&InputEvent::Keyboard(*ke));
             }
+            PlatformEvent::DpiChanged { handle, dpi_scale } => {
+                // Persist the new per-window DPI scale so subsequent mouse
+                // coordinates are converted into logical layout space (see the
+                // coordinate-space convention note at the top of this module).
+                set_dpi_scale(handle.0, *dpi_scale);
+            }
             PlatformEvent::MouseInput { event: me, .. } => {
-                // Track cursor position for software cursor rendering.
+                // `me` is already in logical (CSS-pixel) space — coordinates were
+                // converted from physical at the top of `handle_event`.
                 use liquide_input::mouse::MouseEvent;
                 match me {
                     MouseEvent::Move { x, y } => {
@@ -332,5 +461,111 @@ impl DesktopCompositor {
             .devtools
             .as_ref()
             .is_some_and(|devtools| devtools.is_visible())
+    }
+}
+
+#[cfg(test)]
+mod dpi_tests {
+    use super::*;
+    use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent, ScrollAxis};
+
+    // Each test uses a distinct window-handle id so the process-wide
+    // thread-local DPI map does not bleed state between cases.
+
+    #[test]
+    fn unknown_window_defaults_to_unscaled() {
+        // A handle we never set must behave as 1.0 (identity).
+        assert_eq!(dpi_scale_for(9001), 1.0);
+        assert_eq!(to_logical_coords(9001, 200.0, 100.0), (200.0, 100.0));
+    }
+
+    #[test]
+    fn physical_click_maps_to_logical_at_125_percent() {
+        // At 125% DPI, a physical click at (250, 125) must hit logical (200, 100).
+        set_dpi_scale(1, 1.25);
+        let (lx, ly) = to_logical_coords(1, 250.0, 125.0);
+        assert!((lx - 200.0).abs() < 1e-3, "x: {lx}");
+        assert!((ly - 100.0).abs() < 1e-3, "y: {ly}");
+    }
+
+    #[test]
+    fn physical_click_maps_to_logical_at_150_percent() {
+        // At 150% DPI, a physical click at (300, 150) maps to logical (200, 100):
+        // the un-scaled click would otherwise miss its target by 50%.
+        set_dpi_scale(2, 1.5);
+        let (lx, ly) = to_logical_coords(2, 300.0, 150.0);
+        assert!((lx - 200.0).abs() < 1e-3, "x: {lx}");
+        assert!((ly - 100.0).abs() < 1e-3, "y: {ly}");
+    }
+
+    #[test]
+    fn button_event_coords_are_scaled_other_fields_preserved() {
+        set_dpi_scale(3, 2.0);
+        let scaled = scale_mouse_event_to_logical(
+            3,
+            &MouseEvent::Button {
+                button: MouseButton::Right,
+                state: ButtonState::Pressed,
+                x: 400.0,
+                y: 200.0,
+            },
+        );
+        match scaled {
+            MouseEvent::Button {
+                button,
+                state,
+                x,
+                y,
+            } => {
+                assert_eq!(button, MouseButton::Right);
+                assert_eq!(state, ButtonState::Pressed);
+                assert!((x - 200.0).abs() < 1e-3);
+                assert!((y - 100.0).abs() < 1e-3);
+            }
+            other => panic!("expected Button, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scroll_event_scales_position_not_delta() {
+        set_dpi_scale(4, 2.0);
+        let scaled = scale_mouse_event_to_logical(
+            4,
+            &MouseEvent::Scroll {
+                axis: ScrollAxis::Vertical,
+                delta: 3.0,
+                x: 100.0,
+                y: 50.0,
+            },
+        );
+        match scaled {
+            MouseEvent::Scroll { axis, delta, x, y } => {
+                assert_eq!(axis, ScrollAxis::Vertical);
+                assert!((delta - 3.0).abs() < 1e-3, "delta must be unchanged");
+                assert!((x - 50.0).abs() < 1e-3);
+                assert!((y - 25.0).abs() < 1e-3);
+            }
+            other => panic!("expected Scroll, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dpi_update_replaces_previous_scale() {
+        set_dpi_scale(5, 1.25);
+        assert_eq!(dpi_scale_for(5), 1.25);
+        // Moving the window to a 200% monitor updates the stored scale.
+        set_dpi_scale(5, 2.0);
+        assert_eq!(dpi_scale_for(5), 2.0);
+        assert_eq!(to_logical_coords(5, 400.0, 200.0), (200.0, 100.0));
+    }
+
+    #[test]
+    fn nonfinite_or_nonpositive_scale_falls_back_to_unscaled() {
+        set_dpi_scale(6, f32::NAN);
+        assert_eq!(dpi_scale_for(6), 1.0);
+        set_dpi_scale(7, 0.0);
+        assert_eq!(dpi_scale_for(7), 1.0);
+        set_dpi_scale(8, -2.0);
+        assert_eq!(dpi_scale_for(8), 1.0);
     }
 }

@@ -12,7 +12,7 @@ use liquide_text_engine::bidi::Direction;
 use liquide_text_engine::font_fallback::FontId;
 use liquide_text_engine::shaping::{ShapedGlyph, ShaperBackend, ShaperConfig, ShapingFeature};
 
-use crate::database::{FontDatabase, FontFaceId};
+use crate::database::{FontDatabase, FontFaceId, VariationAxis};
 use crate::glyph_cache::GlyphCache;
 
 // `FontId` ↔ `FontFaceId` conversions live as `From` impls in `lib.rs`,
@@ -297,6 +297,20 @@ impl RustybuzzShaperBackend {
     }
 }
 
+/// e3-A gating: decide whether a `wght` variation must be applied before shaping.
+///
+/// Returns `Some(weight)` when the requested weight differs from the normal
+/// default (400) AND the face actually exposes a `wght` variation axis (i.e. it
+/// is a variable font). Returns `None` for the default weight or for static
+/// fonts (where `set_variations` would be a no-op anyway).
+fn weight_axis_value(weight: u16, axes: &[VariationAxis]) -> Option<f32> {
+    if weight != 400 && axes.iter().any(|axis| axis.tag == VariationAxis::WEIGHT) {
+        Some(weight as f32)
+    } else {
+        None
+    }
+}
+
 impl ShaperBackend for RustybuzzShaperBackend {
     fn shape(
         &self,
@@ -316,7 +330,18 @@ impl ShaperBackend for RustybuzzShaperBackend {
 
         let face = self.db.get(font_id.into())?;
 
-        let rb_face = rustybuzz::Face::from_slice(&face.raw_data, 0)?;
+        let mut rb_face = rustybuzz::Face::from_slice(&face.raw_data, 0)?;
+
+        // e3-A: apply the variable-font weight axis so font-weight actually renders.
+        // The same variable file (e.g. InterVariable.ttf) is registered at multiple
+        // weights (100-900); without this the face shapes at its file default
+        // (Regular) and bold/light requests are silently lost.
+        if let Some(value) = weight_axis_value(face.weight, &face.variation_axes) {
+            rb_face.set_variations(&[rustybuzz::Variation {
+                tag: rustybuzz::ttf_parser::Tag::from_bytes_lossy(&VariationAxis::WEIGHT),
+                value,
+            }]);
+        }
 
         let upem = rb_face.units_per_em() as f32;
         let scale = size / upem;
@@ -389,6 +414,44 @@ impl ShaperBackend for RustybuzzShaperBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wght_axis() -> VariationAxis {
+        VariationAxis {
+            tag: VariationAxis::WEIGHT,
+            name: "Weight".to_string(),
+            min_value: 100.0,
+            default_value: 400.0,
+            max_value: 900.0,
+        }
+    }
+
+    fn wdth_axis() -> VariationAxis {
+        VariationAxis {
+            tag: VariationAxis::WIDTH,
+            name: "Width".to_string(),
+            min_value: 75.0,
+            default_value: 100.0,
+            max_value: 125.0,
+        }
+    }
+
+    #[test]
+    fn weight_variation_applied_for_bold_variable_face() {
+        // e3-A: a non-default weight on a face that exposes a wght axis must
+        // produce a variation carrying that weight.
+        assert_eq!(weight_axis_value(700, &[wght_axis()]), Some(700.0));
+        assert_eq!(weight_axis_value(100, &[wght_axis()]), Some(100.0));
+        assert_eq!(weight_axis_value(900, &[wght_axis(), wdth_axis()]), Some(900.0));
+    }
+
+    #[test]
+    fn weight_variation_skipped_for_default_or_static_face() {
+        // Default weight 400 -> no variation (the file default already matches).
+        assert_eq!(weight_axis_value(400, &[wght_axis()]), None);
+        // Static font (no wght axis) -> no variation even at bold weight.
+        assert_eq!(weight_axis_value(700, &[]), None);
+        assert_eq!(weight_axis_value(700, &[wdth_axis()]), None);
+    }
 
     #[test]
     fn features_hash_is_order_independent() {

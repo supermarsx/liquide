@@ -11,6 +11,28 @@ use tracing::{debug, info};
 
 use crate::{FontRasterizerError, Result};
 
+/// Raw bytes of the embedded fallback UI font (Roboto Regular, Apache-2.0).
+///
+/// This font is compiled into the binary so the desktop environment **always**
+/// has a real proportional UI font, even on a fresh checkout where
+/// `assets/fonts/` is empty (i.e. `scripts/download-fonts.ps1` was never run).
+/// Without it, zero faces load from disk and the renderer falls back to a blocky
+/// 8x16 bitmap font (root cause H2, see `.orchestration/reports/t56-diagnosis.md`).
+///
+/// Disk-loaded fonts are always preferred; this is only registered when disk
+/// loading yields zero faces. See [`FontDatabase::register_embedded_fallback`].
+///
+/// License: Apache-2.0. See `assets/Roboto-Regular.LICENSE.txt`.
+pub const EMBEDDED_FALLBACK_FONT: &[u8] =
+    include_bytes!("../assets/Roboto-Regular.ttf");
+
+/// Family name the embedded fallback font is registered under.
+///
+/// It is intentionally registered under both this canonical name and the
+/// common generic UI family names so that `resolve("sans-serif", ..)` and the
+/// like succeed when only the embedded fallback is present.
+pub const EMBEDDED_FALLBACK_FAMILY: &str = "Roboto";
+
 /// An opaque handle to a loaded font face.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FontFaceId(pub u32);
@@ -734,9 +756,73 @@ impl FontDatabase {
         self.family_index.keys().cloned().collect()
     }
 
+    /// Register the embedded fallback font (Roboto Regular, Apache-2.0).
+    ///
+    /// Loads [`EMBEDDED_FALLBACK_FONT`] from memory and registers it under its
+    /// canonical family ("Roboto") **and** under every concrete family the
+    /// [`resolve`](Self::resolve) generic-family mapping looks for (Inter,
+    /// Manrope, Noto Sans, JetBrains Mono). Registering under those names means
+    /// `resolve("sans-serif"/"system-ui"/"monospace"/…)` succeeds even when the
+    /// embedded font is the *only* loaded face — so the renderer never falls
+    /// back to its 8x16 bitmap font (root cause H2).
+    ///
+    /// The same bytes are registered at all standard CSS weights (100..=900) so
+    /// weight resolution always finds a face; the embedded font is a single
+    /// static Regular cut, so every weight shares its outlines (no synthetic
+    /// bolding here — that is the rasterizer's concern). Disk fonts, when
+    /// present, are the preferred source and are loaded *before* this is called.
+    ///
+    /// Returns the number of faces registered (each (family, weight) pair counts
+    /// as one face). Returns 0 only if the embedded bytes fail to parse, which
+    /// would indicate a corrupt vendored asset.
+    pub fn register_embedded_fallback(&mut self) -> usize {
+        // Families to register the fallback under: its real name plus every
+        // concrete family the generic-family resolver maps to. Keep this list in
+        // sync with `resolve`'s `concrete_families` mapping.
+        const FALLBACK_FAMILIES: &[&str] = &[
+            EMBEDDED_FALLBACK_FAMILY,
+            "Inter",
+            "Manrope",
+            "Noto Sans",
+            "JetBrains Mono",
+        ];
+        const WEIGHTS: &[u16] = &[100, 200, 300, 400, 500, 600, 700, 800, 900];
+
+        let mut registered = 0;
+        for family in FALLBACK_FAMILIES {
+            for &weight in WEIGHTS {
+                if self
+                    .load_bytes(EMBEDDED_FALLBACK_FONT.to_vec(), *family, weight, false)
+                    .is_ok()
+                {
+                    registered += 1;
+                }
+            }
+        }
+
+        if registered == 0 {
+            // The vendored asset failed to parse — should never happen.
+            tracing::error!(
+                "embedded fallback font failed to parse; text will fall back to the 8x16 bitmap font"
+            );
+        } else {
+            info!(
+                registered,
+                family = EMBEDDED_FALLBACK_FAMILY,
+                "registered embedded fallback font (no disk fonts found)"
+            );
+        }
+        registered
+    }
+
     /// Load the default font set from the assets directory.
     ///
-    /// Loads the primary fonts for each role defined in `liquide-fonts`.
+    /// Loads the primary fonts for each role defined in `liquide-fonts`. If disk
+    /// loading yields **zero** faces (e.g. a fresh checkout where
+    /// `scripts/download-fonts.ps1` was never run), the embedded fallback font is
+    /// registered via [`register_embedded_fallback`](Self::register_embedded_fallback)
+    /// so the desktop environment always has a real proportional UI font. Disk
+    /// fonts are always preferred when present.
     pub fn load_default_fonts(&mut self, assets_dir: impl AsRef<Path>) -> usize {
         let dir = assets_dir.as_ref().join("fonts");
         let mut loaded = 0;
@@ -861,6 +947,20 @@ impl FontDatabase {
         }
 
         info!(loaded, "loaded default font set from {}", dir.display());
+
+        // H2 fallback: if NOTHING loaded from disk, the desktop would otherwise
+        // drop to a blocky 8x16 bitmap font. Register the embedded Roboto
+        // fallback so a real proportional UI font is always available. Disk
+        // fonts, when present, are preferred and we leave them untouched.
+        if loaded == 0 {
+            tracing::warn!(
+                assets_dir = %dir.display(),
+                "no fonts found on disk; registering embedded fallback font \
+                 (run scripts/download-fonts.ps1 to install the full font set)"
+            );
+            loaded += self.register_embedded_fallback();
+        }
+
         loaded
     }
 
@@ -980,6 +1080,53 @@ mod tests {
         let mut db = FontDatabase::new();
         let result = db.load_bytes(vec![0, 1, 2, 3], "BadFont", 400, false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn embedded_fallback_parses_and_registers_faces() {
+        // The vendored Roboto-Regular.ttf must parse and register >= 1 face.
+        let mut db = FontDatabase::new();
+        let registered = db.register_embedded_fallback();
+        assert!(
+            registered >= 1,
+            "embedded fallback font must register at least one face"
+        );
+        assert_eq!(db.face_count(), registered);
+    }
+
+    #[test]
+    fn load_default_fonts_registers_embedded_fallback_when_dir_empty() {
+        // Point load_default_fonts at an EMPTY assets dir (no fonts/ subtree):
+        // disk loading yields 0 faces, so the embedded fallback must kick in and
+        // the database must end up with at least one face (NOT zero — which would
+        // drop the renderer to the 8x16 bitmap font, root cause H2).
+        let dir = unique_temp_dir("empty-assets");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut db = FontDatabase::new();
+        let loaded = db.load_default_fonts(&dir);
+        assert!(
+            loaded >= 1,
+            "empty assets dir must fall back to the embedded font (got {loaded})"
+        );
+        assert!(db.face_count() >= 1);
+
+        // The fallback must satisfy generic-family resolution so the UI text
+        // (which requests e.g. sans-serif / system-ui) actually finds a face.
+        assert!(
+            db.resolve("sans-serif", 400, false).is_some(),
+            "sans-serif must resolve via the embedded fallback"
+        );
+        assert!(
+            db.resolve("system-ui", 700, false).is_some(),
+            "system-ui must resolve via the embedded fallback"
+        );
+        assert!(
+            db.resolve(EMBEDDED_FALLBACK_FAMILY, 400, false).is_some(),
+            "the fallback family must resolve directly"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

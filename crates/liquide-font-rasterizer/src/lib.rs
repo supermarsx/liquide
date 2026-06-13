@@ -33,7 +33,10 @@ pub mod synthesis;
 
 pub use backend::RustybuzzShaperBackend;
 pub use color_fonts::{ColorGlyph, ColorGlyphFormat};
-pub use database::{FontDatabase, FontFaceId, LoadedFace, VariationAxis, VariationSettings};
+pub use database::{
+    EMBEDDED_FALLBACK_FAMILY, EMBEDDED_FALLBACK_FONT, FontDatabase, FontFaceId, LoadedFace,
+    VariationAxis, VariationSettings,
+};
 pub use font_face::{FontDisplay, FontFaceLoader, FontFaceRule, FontLoadState};
 pub use glyph_cache::{CacheStats, GlyphCache, GlyphCacheKey};
 pub use metrics::FontMetricsProvider;

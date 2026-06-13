@@ -31,3 +31,9 @@ tmp_check.txt
 chk.txt
 ci_out.txt
 ci_err.txt
+
+# Visual-regression harness transient artifacts (goldens under golden/ ARE committed)
+target/visual-test/
+*.actual.png
+*.diff.png
+crates/liquide-visual-test/golden/__selftest_*.png

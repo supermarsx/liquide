@@ -54,6 +54,10 @@ use render_thread::{RenderMsg, RenderedFrame};
 use tile_state::TileEncoderState;
 use window_render::WindowRenderManager;
 
+/// A single captured desktop frame returned by
+/// [`DesktopCompositor::capture_once`]. Re-exported for the visual-test harness.
+pub use render_thread::CapturedFrame;
+
 const DEFAULT_TARGET_FPS: u32 = 60;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -133,8 +137,18 @@ impl DesktopCompositor {
         // Load TrueType fonts before creating the renderer so that
         // all text is rendered with the proper typefaces.
         let mut font_db = liquide_font_rasterizer::FontDatabase::new();
-        let font_count = font_db.load_default_fonts("assets");
-        info!(fonts_loaded = font_count, "loaded TrueType font faces");
+        let asset_root = Self::resolve_asset_root();
+        let font_count = font_db.load_default_fonts(&asset_root);
+        if font_count == 0 {
+            tracing::warn!(
+                fonts_dir = ?asset_root.join("fonts"),
+                "no TrueType font faces loaded from disk; text will fall back to \
+                 the embedded/bitmap font (run scripts/download-fonts.ps1 or set \
+                 LIQUIDE_ASSETS_DIR)"
+            );
+        } else {
+            info!(fonts_loaded = font_count, "loaded TrueType font faces");
+        }
 
         let mut shell = Shell::new(width as f32, height as f32);
 
@@ -150,11 +164,11 @@ impl DesktopCompositor {
             for src in &face.sources {
                 match src {
                     FontSource::Url { url, .. } => {
-                        // Resolve relative to assets directory
+                        // Resolve relative to the resolved assets directory
                         let path = if url.starts_with('/') || url.contains("://") {
                             std::path::PathBuf::from(url)
                         } else {
-                            std::path::PathBuf::from("assets").join(url)
+                            asset_root.join(url)
                         };
                         if path.exists() {
                             if font_db
@@ -164,6 +178,12 @@ impl DesktopCompositor {
                                 css_font_count += 1;
                                 break; // First successful source wins
                             }
+                        } else {
+                            tracing::warn!(
+                                family = %face.family,
+                                ?path,
+                                "@font-face source file not found; skipping source"
+                            );
                         }
                     }
                     FontSource::Local(name) => {
@@ -318,10 +338,100 @@ impl DesktopCompositor {
         self.render_metrics.snapshot()
     }
 
+    /// Resolve the directory that contains the packaged `assets/` tree.
+    ///
+    /// Asset loading used to be unconditionally relative to the process CWD,
+    /// which silently failed whenever the binary was launched from anywhere
+    /// other than the repository root (t56-H3). This resolver tries, in order:
+    ///
+    /// 1. `$LIQUIDE_ASSETS_DIR` — explicit operator override (used verbatim).
+    /// 2. `./assets` relative to the current working directory.
+    /// 3. `<exe-dir>/assets` — next to the running executable (installed/dev).
+    /// 4. `<CARGO_MANIFEST_DIR>/../../assets` — the workspace-root `assets/`
+    ///    tree, so the binary finds assets when run from a crate subdirectory
+    ///    or via `cargo run` from anywhere in the tree.
+    ///
+    /// Returns the first candidate whose directory exists. If none exist it
+    /// falls back to `./assets` (preserving the historical behaviour) so the
+    /// caller's `exists()` checks still produce loud, path-named warnings.
+    fn resolve_asset_root() -> std::path::PathBuf {
+        // 1. Explicit override.
+        if let Some(dir) = std::env::var_os("LIQUIDE_ASSETS_DIR") {
+            let candidate = std::path::PathBuf::from(dir);
+            if candidate.is_dir() {
+                return candidate;
+            }
+            tracing::warn!(
+                ?candidate,
+                "LIQUIDE_ASSETS_DIR is set but does not point to a directory; ignoring"
+            );
+        }
+
+        // 2. CWD-relative (the historical default).
+        let cwd_relative = std::path::PathBuf::from("assets");
+        if cwd_relative.is_dir() {
+            return cwd_relative;
+        }
+
+        // 3. Next to the executable.
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let candidate = exe_dir.join("assets");
+                if candidate.is_dir() {
+                    return candidate;
+                }
+            }
+        }
+
+        // 4. Workspace-root assets derived from this crate's manifest dir
+        //    (crates/liquide-session -> ../../assets).
+        let manifest_relative = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("assets");
+        if manifest_relative.is_dir() {
+            return manifest_relative;
+        }
+
+        // Nothing found: return the CWD-relative path so downstream
+        // `exists()` checks log a clear, path-named warning.
+        cwd_relative
+    }
+
+    /// Resolve the packaged theme CSS file for `theme_name`, tolerating the
+    /// hyphen/underscore spelling difference between the requested theme name
+    /// (`liquid-glass`) and the on-disk filename (`liquid_glass.css`) (t56-H1).
+    ///
+    /// Returns the first candidate that exists, or `None` if neither spelling
+    /// is present so the caller can emit a loud warning naming the path tried.
+    fn resolve_theme_file(
+        themes_dir: &std::path::Path,
+        theme_name: &str,
+    ) -> Option<std::path::PathBuf> {
+        // Try the requested spelling first, then both normalized spellings so
+        // `liquid-glass` resolves `liquid_glass.css` and vice versa.
+        let mut spellings = vec![theme_name.to_string()];
+        let hyphenated = theme_name.replace('_', "-");
+        let underscored = theme_name.replace('-', "_");
+        if !spellings.contains(&hyphenated) {
+            spellings.push(hyphenated);
+        }
+        if !spellings.contains(&underscored) {
+            spellings.push(underscored);
+        }
+        for spelling in spellings {
+            let candidate = themes_dir.join(format!("{}.css", spelling));
+            if candidate.exists() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     /// Try loading external CSS theme files and user overrides.
     ///
     /// Search order:
-    /// 1. `assets/themes/{theme_name}.css` — packaged themes
+    /// 1. `<asset-root>/themes/{theme_name}.css` — packaged themes
     /// 2. `~/.config/liquide/custom.css` — user overrides
     ///
     /// Any CSS found is appended to the shell's stylesheet pipeline.
@@ -340,17 +450,33 @@ impl DesktopCompositor {
                 "liquid-glass".to_string()
             }
         };
-        let candidate = std::path::Path::new("assets")
-            .join("themes")
-            .join(format!("{}.css", theme_name));
-        if candidate.exists() {
-            if let Ok(css) = std::fs::read_to_string(&candidate) {
-                info!(
+        let themes_dir = Self::resolve_asset_root().join("themes");
+        match Self::resolve_theme_file(&themes_dir, &theme_name) {
+            Some(candidate) => match std::fs::read_to_string(&candidate) {
+                Ok(css) => {
+                    info!(
+                        theme = theme_name,
+                        "loaded external CSS theme from {:?}", candidate
+                    );
+                    shell.load_css_theme(&candidate);
+                    shell.add_stylesheet(&css);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        theme = theme_name,
+                        ?candidate,
+                        error = %err,
+                        "failed to read external CSS theme file"
+                    );
+                }
+            },
+            None => {
+                tracing::warn!(
                     theme = theme_name,
-                    "loaded external CSS theme from {:?}", candidate
+                    themes_dir = ?themes_dir,
+                    "external CSS theme not found (tried hyphen/underscore spellings); \
+                     using embedded fallback theme"
                 );
-                shell.load_css_theme(&candidate);
-                shell.add_stylesheet(&css);
             }
         }
 

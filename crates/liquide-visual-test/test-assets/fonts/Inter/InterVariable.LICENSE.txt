@@ -1,0 +1,37 @@
+Embedded visual-test font
+==========================
+
+File:    InterVariable.ttf  (in this directory)
+Actual:  Roboto Regular (Roboto-Regular.ttf, byte-identical copy)
+Family:  Roboto / registered to the desktop as the "Inter" family
+Designer: Christian Robertson
+Copyright: Copyright 2015 Google Inc. All Rights Reserved.
+License: Apache License, Version 2.0
+License URL: http://www.apache.org/licenses/LICENSE-2.0
+Source:  https://github.com/googlefonts/roboto-2 (src/hinted/Roboto-Regular.ttf)
+         (vendored in-tree at crates/liquide-font-rasterizer/assets/Roboto-Regular.ttf)
+
+WHY THIS FILE EXISTS
+--------------------
+Golden images must render byte-identically across developer machines and CI.
+The desktop's font loader (liquide_font_rasterizer::FontDatabase::load_default_fonts)
+scans `<assets>/fonts/Inter/InterVariable.ttf` first when populating the primary
+UI family. On a clean checkout `assets/fonts/` is empty, so the runtime falls back
+to the *embedded* Roboto (f2's include_bytes! fallback) -- but a developer who has
+run scripts/download-fonts.ps1 would instead render the real (much larger) Inter
+variable font, and the text goldens would no longer match.
+
+To make golden text reproducible regardless of whether the real fonts have been
+downloaded, the visual-test harness points the compositor at a DEDICATED test
+assets root whose `fonts/Inter/InterVariable.ttf` is THIS file. Because it is
+loaded from disk, it is always preferred over the embedded fallback, so every
+machine renders the exact same glyphs.
+
+This is intentionally SEPARATE from f2's runtime embedded fallback: f2 guarantees
+the shipping DE never drops to the 8x16 bitmap notdef font; this copy guarantees
+the *tests* are deterministic. We reuse the already-vendored, permissively-licensed
+(Apache-2.0) Roboto bytes rather than introducing a new third-party font.
+
+No modifications were made to the font file; it is the upstream Apache-2.0 Roboto
+Regular as published by Google Fonts, copied verbatim and named to match the
+loader's primary-family path.

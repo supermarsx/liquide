@@ -81,6 +81,11 @@ struct WindowData {
     /// Current hardware cursor handle. When non-null, the wndproc uses
     /// this for `WM_SETCURSOR` so the OS renders the cursor shape.
     cursor: std::sync::atomic::AtomicIsize,
+    /// Current DPI scale (1.0 == 96 DPI) for this window, stored as the bit
+    /// pattern of an `f32`. Written by the wndproc on `WM_DPICHANGED` (the
+    /// wndproc has no access to the Rust-side `WindowInfo`, so the live scale
+    /// lives here) and read back through `WindowInfo::dpi_scale`.
+    dpi_scale_bits: std::sync::atomic::AtomicU32,
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +405,11 @@ unsafe extern "system" fn wndproc(
         ffi::WM_DPICHANGED => {
             let new_dpi = ffi::loword(wp) as f32;
             let dpi_scale = new_dpi / 96.0;
+            // Persist the live scale where window state lives so that any path
+            // reading WindowInfo::dpi_scale (e.g. the present-path log) sees the
+            // current value, and notify the session via the event.
+            wd.dpi_scale_bits
+                .store(dpi_scale.to_bits(), std::sync::atomic::Ordering::Relaxed);
             push_event!(PlatformEvent::DpiChanged { handle, dpi_scale });
             // Move / resize window to the suggested rectangle.
             if lp != 0 {
@@ -433,6 +443,32 @@ unsafe extern "system" fn wndproc(
 // Window info stored on the Rust side
 // ---------------------------------------------------------------------------
 
+/// Read a window's effective DPI scale (1.0 == 96 DPI baseline).
+///
+/// Uses `GetDeviceCaps(GetDC(hwnd), LOGPIXELSX)`, which reflects the DPI of the
+/// monitor the window is on under the process's DPI-awareness context. This is
+/// the value the session layer needs to convert physical mouse coordinates back
+/// into the logical (CSS-pixel) coordinate space the layout is authored in.
+///
+/// Returns `1.0` on any failure (e.g. `GetDC` returns null) so callers always
+/// have a sane scale.
+fn query_window_dpi_scale(hwnd: ffi::HWND) -> f32 {
+    if hwnd.is_null() {
+        return 1.0;
+    }
+    // SAFETY: GetDC/GetDeviceCaps/ReleaseDC are standard GDI calls on a valid
+    // HWND. We release the DC immediately after reading the DPI.
+    unsafe {
+        let hdc = ffi::GetDC(hwnd);
+        if hdc.is_null() {
+            return 1.0;
+        }
+        let dpi = ffi::GetDeviceCaps(hdc, ffi::LOGPIXELSX);
+        ffi::ReleaseDC(hwnd, hdc);
+        if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
+    }
+}
+
 /// Metadata for a window managed by the platform backend.
 #[allow(dead_code)]
 struct WindowInfo {
@@ -441,6 +477,25 @@ struct WindowInfo {
     _data: Box<WindowData>,
     /// DXGI swap-chain presenter (lazily initialized on first present).
     dxgi: Option<dxgi::DxgiPresenter>,
+    /// Set once the first present path (DXGI vs GDI/WARP fallback) has been
+    /// logged, so the diagnostic line is emitted exactly once per window.
+    present_path_logged: bool,
+}
+
+impl WindowInfo {
+    /// Current DPI scale for this window (1.0 == 96 DPI). Initialized from the
+    /// window's actual DPI at creation and updated on `WM_DPICHANGED` (the
+    /// wndproc writes the live value into `WindowData::dpi_scale_bits`). The
+    /// session layer also tracks this via the `DpiChanged` event to map
+    /// physical mouse coordinates into logical layout space.
+    #[allow(dead_code)]
+    fn dpi_scale(&self) -> f32 {
+        f32::from_bits(
+            self._data
+                .dpi_scale_bits
+                .load(std::sync::atomic::Ordering::Relaxed),
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -726,6 +781,8 @@ impl NativeWindowHost for Win32WindowHost {
             handle,
             event_queue: self.event_queue,
             cursor: std::sync::atomic::AtomicIsize::new(default_cursor as isize),
+            // Seeded with the actual DPI just below (after the HWND exists).
+            dpi_scale_bits: std::sync::atomic::AtomicU32::new(1.0f32.to_bits()),
         });
 
         // Safety: CreateWindowExW creates a native Win32 window. All
@@ -772,11 +829,21 @@ impl NativeWindowHost for Win32WindowHost {
             ffi::UpdateWindow(hwnd);
         }
 
+        // Read the window's actual DPI at creation so the session starts with
+        // the correct coordinate scale rather than assuming 96 DPI. Win32 does
+        // not reliably send WM_DPICHANGED for the initial DPI, so we seed it
+        // here (into WindowData, which the wndproc updates) and emit a
+        // DpiChanged event below.
+        let dpi_scale = query_window_dpi_scale(hwnd);
+        data.dpi_scale_bits
+            .store(dpi_scale.to_bits(), std::sync::atomic::Ordering::Relaxed);
+
         let info = WindowInfo {
             hwnd,
             handle,
             _data: data,
             dxgi: None,
+            present_path_logged: false,
         };
         self.windows.insert(handle.0, info);
 
@@ -796,6 +863,13 @@ impl NativeWindowHost for Win32WindowHost {
                 width,
                 height,
             });
+            // Seed the session's DPI scale from the window's actual DPI. On a
+            // scaled display this is != 1.0; without it the first frames of
+            // input would be unscaled and clicks would miss (e6 DPI input bug).
+            if (dpi_scale - 1.0).abs() > f32::EPSILON {
+                (*(*self.event_queue).get())
+                    .push_back(PlatformEvent::DpiChanged { handle, dpi_scale });
+            }
         }
 
         Ok(handle)
@@ -1497,6 +1571,25 @@ impl PlatformBackend for Win32Platform {
         if let Some(ref mut presenter) = info.dxgi {
             match presenter.present(pixels, width, height, stride) {
                 Ok(()) => {
+                    // One-time present-path diagnostic. Over RDP, hardware DXGI
+                    // commonly falls back to GDI/WARP; this confirms the active
+                    // path without spamming a per-frame line. Read the DPI from
+                    // the disjoint `_data` field (not via `dpi_scale()`, which
+                    // would borrow all of `info` while `presenter` holds
+                    // `info.dxgi`).
+                    if !info.present_path_logged {
+                        info.present_path_logged = true;
+                        let dpi_scale = f32::from_bits(
+                            info._data
+                                .dpi_scale_bits
+                                .load(std::sync::atomic::Ordering::Relaxed),
+                        );
+                        eprintln!(
+                            "[liquide][win32] present path: hardware DXGI swap-chain \
+                             (window {}, dpi_scale {:.2})",
+                            handle.0, dpi_scale
+                        );
+                    }
                     self.present_feedback
                         .record_accepted_present(timestamp_ns());
                     return Ok(());
@@ -1583,6 +1676,23 @@ impl PlatformBackend for Win32Platform {
                 return Err(PlatformError::Presentation(
                     "SetDIBitsToDevice set 0 scan lines (GDI present failed)".into(),
                 ));
+            }
+        }
+
+        // One-time present-path diagnostic for the GDI/WARP fallback. This is
+        // the path hardware-less / remote (RDP) sessions usually take, so the
+        // line confirms the DE is blitting via GDI rather than DXGI. Re-borrow
+        // the window in its own scope so the borrow ends before we touch
+        // `self.present_feedback` below.
+        if let Some(info) = self.window_host.windows.get_mut(&handle.0) {
+            if !info.present_path_logged {
+                info.present_path_logged = true;
+                eprintln!(
+                    "[liquide][win32] present path: GDI fallback (SetDIBitsToDevice) \
+                     — no hardware DXGI swap-chain (window {}, dpi_scale {:.2})",
+                    handle.0,
+                    info.dpi_scale()
+                );
             }
         }
 

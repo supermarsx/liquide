@@ -334,6 +334,10 @@ pub const DIB_RGB_COLORS: UINT = 0;
 pub const SRCCOPY: DWORD = 0x00CC0020;
 pub const BI_RGB: DWORD = 0;
 
+/// `GetDeviceCaps` index: number of pixels per logical inch along the screen
+/// width. Divided by the 96-DPI baseline this yields the window's DPI scale.
+pub const LOGPIXELSX: i32 = 88;
+
 // ---------------------------------------------------------------------------
 // Cursor constants
 // ---------------------------------------------------------------------------
@@ -815,6 +819,10 @@ unsafe extern "system" {
         iUsage: UINT,
         rop: DWORD,
     ) -> i32;
+
+    /// Retrieve device-specific information for the given DC. Used with
+    /// `LOGPIXELSX` to read a window's effective DPI (logical pixels per inch).
+    pub fn GetDeviceCaps(hdc: HDC, index: i32) -> i32;
 
     pub fn CreateCompatibleDC(hdc: HDC) -> HDC;
     pub fn CreateDIBSection(

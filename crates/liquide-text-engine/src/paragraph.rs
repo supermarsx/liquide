@@ -222,27 +222,22 @@ impl ParagraphLayouter {
         }
 
         // Flatten all glyphs with their font info into a sequence.
-        // Each glyph's byte_offset is computed from the run's start plus the
-        // cluster index (which corresponds to the byte offset within the run's
-        // text for well-formed ASCII/Unicode clusters).
+        // e3-B: `g.cluster` is a UTF-8 *byte offset* within the run's text
+        // (rustybuzz's native convention, now matched by the fallback shaper).
+        // The absolute byte offset is therefore simply `run.start + g.cluster`
+        // — no char-index remap. Clamp to the text length defensively in case a
+        // shaper reports a cluster past the run's text (malformed input).
         let items: Vec<LayoutItem> = runs
             .iter()
             .flat_map(|run| {
-                let run_text = &text[run.start..run.end.min(text.len())];
-                // Build a mapping from cluster index to byte offset within the run.
-                let char_offsets: Vec<usize> = run_text
-                    .char_indices()
-                    .map(|(byte_off, _)| byte_off)
-                    .collect();
                 run.glyphs.iter().map(move |g| {
-                    let cluster_idx = g.cluster as usize;
-                    let local_offset = char_offsets.get(cluster_idx).copied().unwrap_or(0);
+                    let byte_offset = (run.start + g.cluster as usize).min(text.len());
                     LayoutItem {
                         glyph: *g,
                         font_id: run.font_id,
                         size: run.size,
                         metrics: run.metrics,
-                        byte_offset: run.start + local_offset,
+                        byte_offset,
                     }
                 })
             })

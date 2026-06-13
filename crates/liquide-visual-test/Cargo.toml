@@ -1,0 +1,29 @@
+[package]
+name = "liquide-visual-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless deterministic capture + golden-image regression harness for the Liquide desktop"
+
+[lib]
+name = "liquide_visual_test"
+path = "src/lib.rs"
+
+# Fast eyeball-debug loop: render the current desktop to a PNG on demand.
+# Wired into scripts/dev/dev.{ps1,sh} as the `snapshot` task (t56-f7).
+[[bin]]
+name = "snapshot"
+path = "src/bin/snapshot.rs"
+
+[dependencies]
+# Drives the REAL desktop compositor headlessly (capture_once seam).
+liquide-session.workspace = true
+# StandalonePlatform backend + PlatformEvent scripting + StandalonePresentedFrame.
+liquide-platform.workspace = true
+# PixelFormat used by CapturedFrame.
+liquide-compositor.workspace = true
+# MouseEvent / MouseButton / ButtonState for scripted scenario input (t56-f7).
+liquide-input.workspace = true
+# PNG encode/decode for goldens, diffs, and snapshot output.
+image = { version = "0.25", features = ["png"] }
+tracing.workspace = true

@@ -57,6 +57,29 @@ pub(super) struct RenderedFrame {
     pub(super) content_hash: u64,
 }
 
+/// A single captured desktop frame produced by [`DesktopCompositor::capture_once`].
+///
+/// The pixel buffer is a copy of the CPU framebuffer the desktop renderer
+/// produced for the first (deterministic) desktop frame. `format` documents the
+/// channel order: the desktop compositor always renders into a
+/// [`PixelFormat::Bgra8`] buffer (see `Compositor::new`), so callers that need
+/// RGBA must swap the R and B channels. `stride` may exceed `width * 4` if the
+/// backing buffer is padded for alignment, so consumers MUST honour it when
+/// indexing rows.
+#[derive(Debug, Clone)]
+pub struct CapturedFrame {
+    /// Frame width in pixels.
+    pub width: u32,
+    /// Frame height in pixels.
+    pub height: u32,
+    /// Bytes per row (may exceed `width * 4` due to alignment padding).
+    pub stride: u32,
+    /// Pixel format of `pixels` (always `Bgra8` for the desktop path).
+    pub format: PixelFormat,
+    /// Raw pixel bytes, `stride * height` long.
+    pub pixels: Vec<u8>,
+}
+
 /// A lightweight cursor-only update that reuses the cached scene.
 pub(super) struct CursorOnlyJob {
     pub(super) cursor_x: f32,
@@ -414,6 +437,128 @@ impl DesktopCompositor {
         if let Some(ref mut compositor) = self.compositor {
             compositor.report_frame_time(frame_ms);
         }
+    }
+
+    /// Render exactly one deterministic desktop frame synchronously and return a
+    /// copy of the resulting CPU framebuffer.
+    ///
+    /// This is the headless capture seam used by the `liquide-visual-test`
+    /// harness. It runs the same synchronous prologue that
+    /// [`DesktopCompositor::run`] performs before spawning the background render
+    /// thread — create the desktop window, present the loading overlay, drain
+    /// the initial window events, then render the first real desktop frame — but
+    /// it NEVER spawns the render thread, so the captured pixels are produced by
+    /// a single-threaded, time-`t0`, deterministic path (no animation advance,
+    /// no async glyph-upload race).
+    ///
+    /// To keep text goldens deterministic, if the renderer reports that glyphs
+    /// were still being rasterised on the first pass
+    /// ([`Renderer::has_pending_glyphs`]), the desktop frame is re-rendered once
+    /// more so the glyph atlas is fully populated before read-back. The CPU
+    /// software renderer rasterises glyphs into the framebuffer during
+    /// `render()`, so a second pass yields stable text.
+    ///
+    /// Returns `None` only if the compositor framebuffer is unavailable (e.g. a
+    /// GPU-backed buffer with no CPU pixels), which never happens on the desktop
+    /// software path.
+    ///
+    /// The returned [`CapturedFrame::format`] is [`PixelFormat::Bgra8`]; convert
+    /// to RGBA at the call site if needed.
+    pub fn capture_once(
+        &mut self,
+        platform: &mut dyn liquide_platform::PlatformBackend,
+    ) -> Option<CapturedFrame> {
+        self.capture_once_scripted(platform, Vec::new())
+    }
+
+    /// Like [`capture_once`](Self::capture_once) but applies a scripted input
+    /// sequence to the shell *after* the loading prologue completes and *before*
+    /// the captured desktop frame is rendered.
+    ///
+    /// This is the seam the `liquide-visual-test` harness uses for event-driven
+    /// scenarios (e.g. a context menu opened on right-click). It exists because
+    /// platform events drained during the loading prologue are intentionally NOT
+    /// routed to the shell (`handle_event` gates shell routing on `!loading`), so
+    /// events queued before `capture_once` would be silently swallowed. Here the
+    /// scripted events are dispatched once `loading` is `false`, so they reach
+    /// `Shell::handle_platform_event`, mutate shell state (e.g. set
+    /// `context_menu_visible`), and are reflected in the very next synchronous
+    /// desktop render that is read back. Determinism is preserved: still
+    /// single-threaded, no render thread, with the same glyph-reflush pass.
+    pub fn capture_once_scripted(
+        &mut self,
+        platform: &mut dyn liquide_platform::PlatformBackend,
+        scripted_events: Vec<liquide_platform::PlatformEvent>,
+    ) -> Option<CapturedFrame> {
+        // 1. Create the desktop window if one is not already present. We reuse
+        //    the dev-mode windowed params so the requested resolution is kept
+        //    verbatim (run() only resizes to the monitor when !dev_mode).
+        if self.window_handle.is_none() {
+            let params = liquide_platform::NativeWindowParams {
+                title: "Liquide Desktop [CAPTURE]".to_string(),
+                geometry: Rect::new(0.0, 0.0, self.width as f32, self.height as f32),
+                window_type: "normal".to_string(),
+                parent: None,
+                app_id: "com.liquide.desktop.capture".to_string(),
+            };
+            if let Ok(handle) = platform.window_host().create_window(params) {
+                self.window_handle = Some(handle);
+            }
+        }
+
+        // 2. Present the loading overlay synchronously, then drain the initial
+        //    window events (WM_SIZE etc.) exactly as run() does.
+        self.loading = true;
+        self.render_frame_sync(platform);
+        let _ = self.wait_for_present_ready(platform, "capture loading overlay");
+        while let Some(event) = platform.poll_event() {
+            self.handle_event(&event);
+        }
+
+        // 3. Apply the scripted input sequence now that loading is over, so the
+        //    events actually reach the shell (handle_event routes to the shell
+        //    only when `!loading`). This must happen BEFORE the captured desktop
+        //    render so the resulting state (e.g. an open context menu) is in the
+        //    frame we read back.
+        self.loading = false;
+        for event in &scripted_events {
+            let _ = self.handle_event(event);
+        }
+
+        // 4. Render the desktop frame that is read back.
+        self.dirty = true;
+        self.render_frame_sync(platform);
+        let _ = self.wait_for_present_ready(platform, "capture desktop frame");
+        self.dirty = false;
+
+        // 5. Determinism point 5: if glyphs were still rasterising, render once
+        //    more so the atlas is populated before read-back.
+        let pending_glyphs = self
+            .renderer
+            .as_ref()
+            .map(|r| r.has_pending_glyphs())
+            .unwrap_or(false);
+        if pending_glyphs {
+            self.dirty = true;
+            self.render_frame_sync(platform);
+            let _ = self.wait_for_present_ready(platform, "capture glyph reflush");
+            self.dirty = false;
+        }
+
+        // 6. Read back a copy of the CPU framebuffer.
+        let compositor = self.compositor.as_ref()?;
+        let fb = compositor.frame_buffer();
+        let pixels = fb.pixels();
+        if pixels.is_empty() {
+            return None;
+        }
+        Some(CapturedFrame {
+            width: fb.width,
+            height: fb.height,
+            stride: fb.stride,
+            format: fb.format,
+            pixels: pixels.to_vec(),
+        })
     }
 
     pub(super) fn mark_full_dirty(&mut self) {
