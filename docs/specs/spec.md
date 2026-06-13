@@ -8960,11 +8960,11 @@ The crash screen is **never** streamed as encoded video frames from the server. 
 
 ## 27a) Authoritative Configuration Schema
 
-All LiquiDE configuration defaults currently live across multiple spec documents (`server.toml` in spec.md §19, policy keys in §20, client config in spec-client.md, etc.). To prevent implementation drift, a single **machine-readable schema** serves as the authoritative source of truth for all configuration keys.
+All LiquiDE configuration defaults currently live across multiple spec documents (`server.toml` in §19, policy keys in §20, client config in [spec-client.md](spec-client.md), etc.). To prevent implementation drift, the project intends to consolidate them into a single **machine-readable schema** as the authoritative source of truth for all configuration keys.
 
 ### Schema Format
 
-The schema is defined in TOML Schema format (`config-schema.toml`) — a structured document that describes every configuration key:
+The intended schema format is a TOML document, conventionally named `config-schema.toml`, that describes every configuration key:
 
 ```toml
 [[keys]]
@@ -9001,12 +9001,12 @@ policy_merge = "intersection"
 introduced = "1.0.0"
 ```
 
-### Generated Artifacts
+### Generated Artifact Targets
 
-The schema generates (via `tools/gen-config.sh`):
+Once implemented, the schema generator should emit the following artifacts. The paths below are target locations, not a claim that generated files are currently checked in:
 
-| Artifact | Purpose | Generated File |
-|----------|---------|---------------|
+| Artifact | Purpose | Target file |
+|----------|---------|-------------|
 | **Documentation tables** | spec.md §19 config tables, CLI help text | `docs/config-reference.md` |
 | **Config validation** | Runtime config validation in `liquid-desktopd` | `crates/config/src/schema_generated.rs` |
 | **CLI autocompletion** | Shell completions for `liquidctl config set/get` | `completions/{bash,zsh,fish}/liquidctl` |

@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 
-use liquide_font_rasterizer::database::FontDatabase;
+use liquide_font_rasterizer::database::{FontDatabase, FontFaceId};
 use liquide_font_rasterizer::rasterize::{GlyphRasterizer, RasterConfig};
 
 use crate::bitmap_font::BitmapFont;
@@ -41,6 +41,8 @@ use crate::glyph::{GlyphKey, GlyphMetrics};
 /// A request to rasterize a single glyph at a specific size.
 struct GlyphRequest {
     key: GlyphKey,
+    /// Worker generation when this request was enqueued.
+    generation: u64,
     /// Character to rasterize.
     codepoint: char,
     /// Target glyph height in pixels.
@@ -54,6 +56,7 @@ struct GlyphRequest {
 /// A completed rasterized glyph returned from the worker.
 pub(crate) struct RasterizedGlyph {
     pub key: GlyphKey,
+    pub generation: u64,
     /// Alpha-only bitmap data (width × height bytes).
     pub bitmap: Vec<u8>,
     pub metrics: GlyphMetrics,
@@ -84,6 +87,8 @@ pub(crate) struct FontWorker {
     handle: Option<JoinHandle<()>>,
     /// Set of glyph keys currently being processed (avoid duplicate requests).
     pending: HashSet<GlyphKey>,
+    /// Monotonic cache generation used to ignore stale in-flight glyph results.
+    generation: u64,
     /// Shared font database — also held by the worker thread.
     font_db: Arc<Mutex<FontDatabase>>,
 }
@@ -120,6 +125,7 @@ impl FontWorker {
             result_rx: res_rx,
             handle,
             pending: HashSet::new(),
+            generation: 0,
             font_db,
         }
     }
@@ -146,6 +152,7 @@ impl FontWorker {
         }
         let req = GlyphRequest {
             key,
+            generation: self.generation,
             codepoint,
             target_height,
             font_family,
@@ -162,10 +169,102 @@ impl FontWorker {
     pub fn poll_results(&mut self) -> Vec<RasterizedGlyph> {
         let mut results = Vec::new();
         while let Ok(glyph) = self.result_rx.try_recv() {
-            self.pending.remove(&glyph.key);
-            results.push(glyph);
+            if glyph.generation == self.generation {
+                self.pending.remove(&glyph.key);
+                results.push(glyph);
+            }
         }
         results
+    }
+
+    /// Return file-backed font faces whose sources changed since load.
+    pub fn stale_faces(&self) -> Vec<FontFaceId> {
+        let db = self
+            .font_db
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        db.stale_faces()
+    }
+
+    /// Reload the given file-backed faces from disk and invalidate worker-side
+    /// glyph state so subsequent rasterization reads the **fresh** bytes.
+    ///
+    /// Reloading happens on the shared [`FontDatabase`] (the worker thread holds
+    /// the same `Arc`), so the next `Rasterize` batch re-parses the updated
+    /// outlines. Bumping the generation discards any in-flight glyphs that were
+    /// rasterized from the previous bytes, and clearing `pending` lets the
+    /// renderer re-request them. Returns the IDs whose bytes were actually
+    /// replaced (a vanished/corrupt source is skipped, leaving last-good bytes).
+    pub fn reload_faces<I>(&mut self, face_ids: I) -> Vec<FontFaceId>
+    where
+        I: IntoIterator<Item = FontFaceId>,
+    {
+        let face_ids: Vec<FontFaceId> = face_ids.into_iter().collect();
+        if face_ids.is_empty() {
+            return Vec::new();
+        }
+
+        let reloaded = {
+            let mut db = self
+                .font_db
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let mut reloaded = Vec::with_capacity(face_ids.len());
+            for &face_id in &face_ids {
+                match db.reload_face(face_id) {
+                    Ok(true) => reloaded.push(face_id),
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            face_id = face_id.0,
+                            error = %err,
+                            "font face reload failed; keeping last-good bytes"
+                        );
+                    }
+                }
+            }
+            reloaded
+        };
+
+        // Even if a reload failed, still invalidate worker-side state for the
+        // requested faces so stale in-flight glyphs are not committed.
+        self.invalidate_faces(face_ids);
+        reloaded
+    }
+
+    /// Invalidate worker-side state associated with a set of font faces.
+    ///
+    /// Drops any in-flight glyph results (by bumping the generation) and clears
+    /// the pending set so the renderer re-requests glyphs. NOTE: this does not
+    /// itself re-read the font bytes — use [`reload_faces`](Self::reload_faces)
+    /// when the on-disk source changed, otherwise re-rasterization reuses the
+    /// same cached bytes (the t49-e3-F15 trap).
+    pub fn invalidate_faces<I>(&mut self, face_ids: I)
+    where
+        I: IntoIterator<Item = FontFaceId>,
+    {
+        let face_ids: Vec<FontFaceId> = face_ids.into_iter().collect();
+        if face_ids.is_empty() {
+            return;
+        }
+
+        self.pending.clear();
+        self.generation = self.generation.wrapping_add(1);
+        while self.result_rx.try_recv().is_ok() {}
+    }
+
+    /// Check for stale file-backed faces, **reload** their bytes from disk, and
+    /// invalidate worker-side glyph state.
+    ///
+    /// Returns the faces that were detected stale (whether or not every reload
+    /// succeeded). This closes t49-e3-F15: previously the worker re-rasterized
+    /// the same stale bytes forever because nothing re-read the file.
+    pub fn invalidate_stale_faces(&mut self) -> Vec<FontFaceId> {
+        let stale_faces = self.stale_faces();
+        if !stale_faces.is_empty() {
+            self.reload_faces(stale_faces.iter().copied());
+        }
+        stale_faces
     }
 
     /// Whether a specific glyph is currently pending.
@@ -178,6 +277,11 @@ impl FontWorker {
     #[allow(dead_code)]
     pub fn font_db(&self) -> &Arc<Mutex<FontDatabase>> {
         &self.font_db
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_count(&self) -> usize {
+        self.pending.len()
     }
 
     /// The worker thread's main loop.
@@ -251,6 +355,7 @@ impl FontWorker {
                 {
                     return RasterizedGlyph {
                         key: req.key,
+                        generation: req.generation,
                         bitmap: glyph_bitmap.pixels.to_vec(),
                         metrics: GlyphMetrics {
                             width: glyph_bitmap.width,
@@ -329,6 +434,7 @@ impl FontWorker {
 
         RasterizedGlyph {
             key: req.key,
+            generation: req.generation,
             bitmap: alpha_buf,
             metrics: GlyphMetrics {
                 width: target_w,
@@ -347,5 +453,107 @@ impl Drop for FontWorker {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fixture_font_bytes() -> Option<Vec<u8>> {
+        let candidates = [
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
+            "C:\\Windows\\Fonts\\calibri.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ];
+        candidates.iter().find_map(|path| {
+            let data = std::fs::read(path).ok()?;
+            // Validate it parses as a font via the database's own loader so we
+            // don't pull ab_glyph in as a direct dev-dependency here.
+            let mut probe = FontDatabase::new();
+            probe.load_bytes(data.clone(), "probe", 400, false).ok()?;
+            Some(data)
+        })
+    }
+
+    fn write_fixture_font(label: &str) -> Option<(PathBuf, PathBuf)> {
+        let data = fixture_font_bytes()?;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "liquide-font-worker-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join("fixture.ttf");
+        std::fs::write(&path, data).ok()?;
+        Some((dir, path))
+    }
+
+    /// Regression for t49-e3-F15: a stale-face invalidation must *reload* the
+    /// font bytes from disk, not merely bump the worker generation. After
+    /// `invalidate_stale_faces`, the shared database must report the face as
+    /// fresh again (the source stamp was re-captured from the new bytes).
+    #[test]
+    fn invalidate_stale_faces_reloads_bytes_and_clears_staleness() {
+        let Some((dir, path)) = write_fixture_font("reload") else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let face_id = db.load_file(&path, "Fixture", 400, false).unwrap();
+        let original_len = db.get(face_id).unwrap().raw_data.len();
+        let mut worker = FontWorker::with_font_db(db);
+
+        // Bump a generation so we can observe the invalidation side effect.
+        let gen_before = worker.generation;
+        assert!(worker.stale_faces().is_empty());
+
+        // Mutate the source on disk.
+        let mut data = std::fs::read(&path).unwrap();
+        data.extend_from_slice(b"reload-trailer");
+        let new_len = data.len();
+        std::fs::write(&path, &data).unwrap();
+
+        assert_eq!(worker.stale_faces(), vec![face_id]);
+
+        let stale = worker.invalidate_stale_faces();
+        assert_eq!(stale, vec![face_id]);
+
+        // The DB now serves the FRESH bytes and the face is no longer stale.
+        {
+            let dbg = worker.font_db().lock().unwrap();
+            assert_eq!(dbg.get(face_id).unwrap().raw_data.len(), new_len);
+            assert_ne!(new_len, original_len);
+            assert!(dbg.stale_faces().is_empty(), "reloaded face is fresh");
+        }
+        // Worker-side generation advanced so stale in-flight glyphs are dropped.
+        assert_ne!(worker.generation, gen_before);
+        assert_eq!(worker.pending_count(), 0);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// `reload_faces` on a memory-loaded face is a no-op (no path) but still
+    /// invalidates worker state for the requested ids without panicking.
+    #[test]
+    fn reload_faces_handles_memory_face_without_reload() {
+        let Some(data) = fixture_font_bytes() else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let mem_id = db.load_bytes(data, "Memory", 400, false).unwrap();
+        let mut worker = FontWorker::with_font_db(db);
+
+        let reloaded = worker.reload_faces([mem_id]);
+        assert!(reloaded.is_empty(), "memory face has no source to reload");
     }
 }

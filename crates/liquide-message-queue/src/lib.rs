@@ -80,7 +80,7 @@ pub use pump::{MessageHandler, MessagePump};
 pub use queue::{Rect, ThreadQueue};
 pub use sent::SentMessage;
 pub use timer::{TimerEntry, TimerManager};
-pub use wake_bits::WakeBits;
+pub use wake_bits::{WakeBits, WakeDeadlines};
 
 // Re-export lazy paint types.
 pub use lazy_paint::{

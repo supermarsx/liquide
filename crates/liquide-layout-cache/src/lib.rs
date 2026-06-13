@@ -46,6 +46,7 @@ pub mod measure;
 pub mod policy;
 pub mod result;
 pub mod stats;
+pub mod text_measure;
 
 #[cfg(test)]
 mod tests;
@@ -58,3 +59,7 @@ pub use measure::MeasureCache;
 pub use policy::{CachePolicy, DisplayType, PositionType, SizingHints};
 pub use result::{IntrinsicSizes, LayoutResult};
 pub use stats::FrameStatistics;
+pub use text_measure::{
+    TextFontStyle, TextMeasureCache, TextMeasureCacheLimits, TextMeasureCacheStats, TextMeasureKey,
+    TextMeasureValue, TextRunIdentity, TextWrapMode,
+};

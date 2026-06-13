@@ -98,6 +98,7 @@ impl FilePickerState {
             .initial_dir
             .clone()
             .unwrap_or_else(|| dirs_home().unwrap_or_else(|| PathBuf::from("/")));
+        let current_dir_for_history = current_dir.clone();
         Self {
             config,
             current_dir,
@@ -109,7 +110,7 @@ impl FilePickerState {
             sort_ascending: true,
             view_mode: ViewMode::List,
             search_query: String::new(),
-            navigation_history: Vec::new(),
+            navigation_history: vec![current_dir_for_history],
             history_index: 0,
         }
     }
@@ -210,19 +211,35 @@ impl FilePickerState {
         });
     }
 
-    /// Navigate into directory
+    /// Navigate into directory.
+    ///
+    /// Invariant: `navigation_history[history_index]` is always the current
+    /// directory. Navigating drops any forward history, appends the new
+    /// directory, and advances the index to point at it.
     pub fn navigate_to(&mut self, path: PathBuf) -> std::io::Result<()> {
-        // Truncate forward history
+        // Drop any forward history (everything after the current position).
         self.navigation_history.truncate(self.history_index + 1);
-        self.navigation_history.push(self.current_dir.clone());
-        self.history_index = self.navigation_history.len();
+        self.navigation_history.push(path.clone());
+        self.history_index = self.navigation_history.len() - 1;
         self.current_dir = path;
         self.refresh()
     }
 
+    /// Step back one entry in the navigation history, if any.
     pub fn go_back(&mut self) -> std::io::Result<()> {
         if self.history_index > 0 {
             self.history_index -= 1;
+            self.current_dir = self.navigation_history[self.history_index].clone();
+            self.refresh()
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Step forward one entry in the navigation history, if any.
+    pub fn go_forward(&mut self) -> std::io::Result<()> {
+        if self.history_index + 1 < self.navigation_history.len() {
+            self.history_index += 1;
             self.current_dir = self.navigation_history[self.history_index].clone();
             self.refresh()
         } else {
@@ -259,7 +276,10 @@ impl FilePickerState {
     pub fn confirm(&self) -> DialogResult<Vec<PathBuf>> {
         if self.config.mode == FilePickerMode::Save {
             if self.filename_input.is_empty() {
-                return DialogResult::Cancelled;
+                // A missing filename in Save mode is a validation failure, not
+                // a user cancellation — keep the two distinct so hosts that
+                // close on Cancelled don't silently discard the save.
+                return DialogResult::Invalid("Filename required".into());
             }
             return DialogResult::Ok(vec![self.current_dir.join(&self.filename_input)]);
         }
@@ -426,14 +446,95 @@ mod tests {
         };
         let mut state = FilePickerState::new(cfg);
         assert_eq!(state.current_dir, tmp);
+        // Invariant: history is seeded with the starting directory.
+        assert_eq!(state.navigation_history, vec![tmp.clone()]);
+        assert_eq!(state.history_index, 0);
 
         let _ = state.navigate_to(sub.clone());
         assert_eq!(state.current_dir, sub);
-        assert_eq!(state.navigation_history.len(), 1);
-        assert_eq!(state.navigation_history[0], tmp);
+        assert_eq!(state.navigation_history, vec![tmp.clone(), sub.clone()]);
+        assert_eq!(state.history_index, 1);
 
         let _ = state.go_back();
         assert_eq!(state.current_dir, tmp);
+        assert_eq!(state.history_index, 0);
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_history_back_navigate_back_sequence() {
+        // Regression for the history off-by-one (t49-e5-F23): a
+        // back -> navigate -> back sequence must land on the right entries
+        // without dead Back presses or duplicate history entries.
+        let tmp = std::env::temp_dir().join("liquide_dialog_test_hist_seq");
+        let a = tmp.join("a");
+        let b = tmp.join("b");
+        let c = tmp.join("c");
+        for d in [&a, &b, &c] {
+            let _ = fs::create_dir_all(d);
+        }
+
+        let cfg = FilePickerConfig {
+            initial_dir: Some(tmp.clone()),
+            ..Default::default()
+        };
+        let mut state = FilePickerState::new(cfg);
+
+        // tmp -> a -> b
+        state.navigate_to(a.clone()).unwrap();
+        state.navigate_to(b.clone()).unwrap();
+        assert_eq!(state.current_dir, b);
+        assert_eq!(state.history_index, 2);
+
+        // Back lands on a (not a no-op).
+        state.go_back().unwrap();
+        assert_eq!(state.current_dir, a);
+        assert_eq!(state.history_index, 1);
+
+        // Navigate to c: forward history (b) is dropped, c appended.
+        state.navigate_to(c.clone()).unwrap();
+        assert_eq!(state.current_dir, c);
+        assert_eq!(
+            state.navigation_history,
+            vec![tmp.clone(), a.clone(), c.clone()]
+        );
+        assert_eq!(state.history_index, 2);
+
+        // Back lands on a immediately — no dead press.
+        state.go_back().unwrap();
+        assert_eq!(state.current_dir, a);
+        // Back again lands on tmp.
+        state.go_back().unwrap();
+        assert_eq!(state.current_dir, tmp);
+        // Already at the start: another Back is a safe no-op.
+        state.go_back().unwrap();
+        assert_eq!(state.current_dir, tmp);
+        assert_eq!(state.history_index, 0);
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_history_forward() {
+        let tmp = std::env::temp_dir().join("liquide_dialog_test_hist_fwd");
+        let a = tmp.join("a");
+        for d in [&tmp, &a] {
+            let _ = fs::create_dir_all(d);
+        }
+        let cfg = FilePickerConfig {
+            initial_dir: Some(tmp.clone()),
+            ..Default::default()
+        };
+        let mut state = FilePickerState::new(cfg);
+        state.navigate_to(a.clone()).unwrap();
+        state.go_back().unwrap();
+        assert_eq!(state.current_dir, tmp);
+        state.go_forward().unwrap();
+        assert_eq!(state.current_dir, a);
+        // No further forward history.
+        state.go_forward().unwrap();
+        assert_eq!(state.current_dir, a);
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -517,9 +618,26 @@ mod tests {
     }
 
     #[test]
-    fn test_confirm_save_empty_filename() {
+    fn test_confirm_save_empty_filename_is_invalid_not_cancelled() {
+        // Regression for t49-e5-F22: a Save-mode validation failure (missing
+        // filename) must be reported as Invalid, distinct from a user cancel.
         let cfg = FilePickerConfig {
             mode: FilePickerMode::Save,
+            ..Default::default()
+        };
+        let state = FilePickerState::new(cfg);
+        match state.confirm() {
+            DialogResult::Invalid(msg) => assert_eq!(msg, "Filename required"),
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_confirm_open_no_selection_is_cancelled() {
+        // The genuine-cancel path (Open mode, nothing selected) stays Cancelled,
+        // so the failure/cancel distinction is preserved both ways.
+        let cfg = FilePickerConfig {
+            mode: FilePickerMode::Open,
             ..Default::default()
         };
         let state = FilePickerState::new(cfg);

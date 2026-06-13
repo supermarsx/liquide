@@ -42,6 +42,7 @@ use liquide_render_coordinator::metrics::MetricsCollector;
 use liquide_renderer_cpu::SoftwareRenderer;
 use liquide_shell::Shell;
 use liquide_telemetry_viewer::metrics::MetricsRegistry;
+use liquide_transport::tile_channel::TileSender;
 use tracing::info;
 
 use crate::telemetry::{TelemetryHandle, create_telemetry};
@@ -219,7 +220,28 @@ impl DesktopCompositor {
         }
     }
 
+    /// Attach a remote transport sink for encoded tile batches.
+    ///
+    /// When a session is serving a remote client, the caller wires the
+    /// transport [`TileSender`] here. From then on every frame encoded by the
+    /// desktop loop (in `try_present`) is forwarded to the sink, so the
+    /// tile-encode buffer actually drains to the network instead of only being
+    /// bounded by the drop-oldest ring (t55-E8).
+    ///
+    /// On the local-display path no sink is attached, so the bounded ring (cap
+    /// from t50-e18) remains the sole, memory-safe behaviour. If the attached
+    /// transport later disconnects, the encoder transparently falls back to the
+    /// bounded ring — never an unbounded leak.
+    pub fn attach_remote_tile_sink(&mut self, sink: TileSender) {
+        self.tiles.attach_sink(sink);
+    }
+
     /// Drain encoded tile batches ready for network transmission.
+    ///
+    /// This is the pull-style drain retained for callers that poll the encoder
+    /// directly (and for tests). When a transport sink is attached via
+    /// [`Self::attach_remote_tile_sink`], batches are forwarded automatically
+    /// and this returns whatever (if anything) remains buffered.
     pub fn drain_encoded_batches(&mut self) -> Vec<TileBatch> {
         self.tiles.drain_batches()
     }

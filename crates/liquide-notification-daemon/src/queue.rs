@@ -70,25 +70,32 @@ impl NotificationQueue {
 
     /// Enqueues a notification with an explicit timestamp (for testing).
     pub fn enqueue_at(&mut self, mut notification: Notification, now_ms: u64) -> Option<u32> {
-        // Rate-limit check (skip for Critical urgency and for notifications
-        // that replace an existing one — the replacement is conceptually
-        // an update to an already-visible notification and shouldn't count
-        // against the app's per-second budget).
-        let is_replacement = notification.replaces_id != 0;
+        // A notification only counts as a replacement if its `replaces_id`
+        // refers to a notification that is genuinely present in the queue.
+        // Removing it up front establishes that fact: if `remove` finds and
+        // returns the old notification, this is a real update to an
+        // already-tracked one and we reuse its ID. A bogus or stale
+        // `replaces_id` (0, or an id not in any bucket) yields `None` here and
+        // is treated as a brand-new notification — otherwise a flood of fake
+        // `replaces_id` values would bypass the per-app rate limiter.
+        let replacement_id = if notification.replaces_id != 0 {
+            self.remove(notification.replaces_id)
+                .map(|_| notification.replaces_id)
+        } else {
+            None
+        };
+        let is_replacement = replacement_id.is_some();
+
+        // Rate-limit check (skip for Critical urgency and for genuine
+        // replacements — a replacement is conceptually an update to an
+        // already-visible notification and shouldn't count against the app's
+        // per-second budget).
         if !is_replacement
             && notification.urgency() != Urgency::Critical
             && !self.rate_limiter.check(&notification.app_name, now_ms)
         {
             return None;
         }
-
-        // If this notification replaces an existing one, remove the old one.
-        let replacement_id = if is_replacement {
-            self.remove(notification.replaces_id)
-                .map(|_| notification.replaces_id)
-        } else {
-            None
-        };
 
         let id = replacement_id.unwrap_or_else(alloc_id);
         notification.id = id;
@@ -177,5 +184,72 @@ impl NotificationQueue {
 impl Default for NotificationQueue {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spec::Notification;
+
+    fn app_notification(app: &str) -> Notification {
+        Notification::new("summary").with_app_name(app)
+    }
+
+    /// A burst of notifications carrying bogus (non-existent) `replaces_id`
+    /// values must be subject to the rate limiter exactly like brand-new
+    /// notifications — it must NOT bypass throttling.
+    #[test]
+    fn bogus_replaces_id_does_not_bypass_rate_limit() {
+        reset_id_counter();
+        let mut queue = NotificationQueue::with_rate_limit(3);
+
+        // 5 notifications, each claiming to replace a notification that was
+        // never enqueued (ids 9000.. are not present in any bucket).
+        let mut accepted = 0;
+        for i in 0..5 {
+            let n = app_notification("flooder").with_replaces_id(9000 + i);
+            if queue.enqueue_at(n, 0).is_some() {
+                accepted += 1;
+            }
+        }
+
+        // Only the rate-limit budget (3/sec) should have been accepted; the
+        // fake replaces_id must not have waived the limit.
+        assert_eq!(accepted, 3, "bogus replaces_id bypassed the rate limiter");
+        assert_eq!(queue.pending_count(), 3);
+    }
+
+    /// A genuine replacement of a notification that is actually present in the
+    /// queue still bypasses the rate limit, as intended.
+    #[test]
+    fn genuine_replacement_bypasses_rate_limit() {
+        reset_id_counter();
+        let mut queue = NotificationQueue::with_rate_limit(1);
+
+        // First notification consumes the entire 1/sec budget.
+        let first = app_notification("app");
+        let first_id = queue
+            .enqueue_at(first, 0)
+            .expect("first should be accepted");
+
+        // A new notification from the same app at the same instant is
+        // rate-limited.
+        assert!(
+            queue.enqueue_at(app_notification("app"), 0).is_none(),
+            "second new notification should be rate-limited"
+        );
+
+        // But a genuine replacement of the existing notification is waived and
+        // reuses the original id.
+        let replacement = app_notification("app").with_replaces_id(first_id);
+        let replaced_id = queue
+            .enqueue_at(replacement, 0)
+            .expect("genuine replacement should be accepted despite the rate limit");
+        assert_eq!(replaced_id, first_id, "replacement should reuse the old id");
+
+        // The replacement updated the existing notification rather than adding
+        // a new one, so the queue still holds a single notification.
+        assert_eq!(queue.pending_count(), 1);
     }
 }

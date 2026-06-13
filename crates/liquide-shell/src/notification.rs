@@ -836,3 +836,384 @@ pub struct NotifyOptions {
     /// Group key for notification stacking/replacement.
     pub group_key: Option<String>,
 }
+
+// ===========================================================================
+// Canonical notification-daemon + dialogs wiring (t51-e14, Mandate 2 Wave C3)
+// ===========================================================================
+//
+// This block wires the canonical `liquide-notification-daemon`
+// (`NotificationServer`/queue/history) and `liquide-dialogs` crates into the
+// running shell, replacing the thin re-implementation above as the production
+// entry point. It fixes t49-e5-F03 ("notification center dead end-to-end"):
+//
+//   * The daemon is the canonical posting/queue/rate-limit/history pipeline.
+//     `post_notification` routes through `NotificationServer::notify`, which
+//     assigns the id, applies replace/rate-limiting, and records history.
+//   * Posted notifications are mirrored into the shell's renderable
+//     `NotificationManager` so the notification center (`dom_sync.rs`) shows the
+//     live set instead of a dead stub.
+//   * `drain_notification_events()` ticks the daemon and the manager and
+//     RETURNS the events (expiry/action) instead of discarding them — the F03
+//     drop-on-tick bug. Callers (events.rs) route them.
+//   * `OpenNotificationCenter` is made live via `open_notification_center` /
+//     `notification_center_open`, consumed from `events.rs`.
+//
+// Dialog requests are routed through the canonical `liquide-dialogs` crate and
+// the currently-open dialog is tracked in the e7 `chrome_active_dialog` field.
+
+use liquide_notification_daemon::NotificationServer;
+use liquide_notification_daemon::handler::NotificationHandler as DaemonHandler;
+use liquide_notification_daemon::spec::{
+    CloseReason as DaemonCloseReason, Notification as DaemonNotification,
+    NotificationHints as DaemonHints, Urgency as DaemonUrgency,
+};
+
+use crate::shell::Shell;
+
+/// Passthrough handler the shell registers on the canonical
+/// [`NotificationServer`].
+///
+/// The daemon only moves notifications from its internal queue into its active
+/// set (running rate-limiting, replace, and history along the way) when a
+/// handler is registered. The shell renders from its mirror
+/// [`NotificationManager`], so this handler does not need to retain anything —
+/// it simply acknowledges dispatch so the canonical pipeline runs.
+#[derive(Default)]
+struct ShellNotificationHandler;
+
+impl DaemonHandler for ShellNotificationHandler {
+    fn on_notify(&mut self, notification: &DaemonNotification) -> u32 {
+        notification.id
+    }
+
+    fn on_close(&mut self, _id: u32, _reason: DaemonCloseReason) {}
+
+    fn on_action_invoked(&mut self, _id: u32, _action_key: &str) {}
+}
+
+/// Translate a canonical daemon-spec [`DaemonNotification`] back into the
+/// shell-facing [`Notification`] for rendering.
+///
+/// This is the inverse of [`to_daemon_notification`], used when projecting the
+/// daemon's canonical active/history set into the renderable
+/// [`ShellNotification`] the notification center displays (t52-e1: the daemon is
+/// the single source of the notification data; the shell only re-shapes it for
+/// the DOM).
+fn from_daemon_notification(d: &DaemonNotification) -> Notification {
+    use liquide_interop::notification::NotificationAction;
+
+    let urgency = match d.urgency() {
+        DaemonUrgency::Low => Urgency::Low,
+        DaemonUrgency::Normal => Urgency::Normal,
+        DaemonUrgency::Critical => Urgency::Critical,
+    };
+    Notification {
+        id: d.id,
+        app_name: d.app_name.clone(),
+        summary: d.summary.clone(),
+        body: d.body.clone(),
+        icon: if d.icon.is_empty() {
+            None
+        } else {
+            Some(d.icon.clone())
+        },
+        urgency,
+        timeout_ms: d.expire_timeout,
+        actions: d
+            .actions
+            .iter()
+            .map(|(key, label)| NotificationAction::new(key, label))
+            .collect(),
+    }
+}
+
+/// Project a canonical daemon notification into a renderable [`ShellNotification`]
+/// for the notification center.
+///
+/// `render_id` is a stable per-shell 1-based position (not the daemon's
+/// process-global id) so the rendered DOM element ids are deterministic per
+/// shell instance. `read` marks history entries (already closed) as read.
+fn daemon_to_shell_notification(
+    render_id: u32,
+    d: &DaemonNotification,
+    displayed_at_ms: u64,
+    read: bool,
+) -> ShellNotification {
+    let notification = from_daemon_notification(d);
+    let timeout_us = if d.expire_timeout > 0 {
+        (d.expire_timeout as u64) * 1000
+    } else {
+        0
+    };
+    let shown_at_us = displayed_at_ms.saturating_mul(1000);
+    ShellNotification {
+        id: render_id,
+        notification,
+        shown_at_us,
+        expires_at_us: shown_at_us.saturating_add(timeout_us),
+        read,
+        dismissed: read,
+        progress: None,
+        persistent: d.expire_timeout == 0,
+        silent: d.hints.suppress_sound,
+        category: d.hints.category.clone(),
+        group_key: None,
+    }
+}
+
+/// Translate a shell-facing [`Notification`] into the canonical daemon spec.
+fn to_daemon_notification(n: &Notification) -> DaemonNotification {
+    let urgency = match n.urgency {
+        Urgency::Low => DaemonUrgency::Low,
+        Urgency::Normal => DaemonUrgency::Normal,
+        Urgency::Critical => DaemonUrgency::Critical,
+    };
+    DaemonNotification {
+        id: 0,
+        app_name: n.app_name.clone(),
+        replaces_id: 0,
+        icon: n.icon.clone().unwrap_or_default(),
+        summary: n.summary.clone(),
+        body: n.body.clone(),
+        actions: n
+            .actions
+            .iter()
+            .map(|a| (a.key.clone(), a.label.clone()))
+            .collect(),
+        hints: DaemonHints {
+            urgency: Some(urgency),
+            ..DaemonHints::default()
+        },
+        expire_timeout: n.timeout_ms,
+    }
+}
+
+impl Shell {
+    /// Lazily construct the canonical [`NotificationServer`] into the dormant
+    /// `chrome_notification_server` field (t51-e7), registering the shell's
+    /// passthrough handler so the daemon's queue/active/history pipeline runs.
+    fn notification_server(&mut self) -> &mut NotificationServer {
+        if self.chrome_notification_server.is_none() {
+            let mut server = NotificationServer::new();
+            server.register_handler(Box::new(ShellNotificationHandler));
+            self.chrome_notification_server = Some(server);
+        }
+        self.chrome_notification_server
+            .as_mut()
+            .expect("notification server just constructed")
+    }
+
+    /// Post a notification through the canonical daemon and mirror it into the
+    /// shell's renderable manager.
+    ///
+    /// Returns the daemon-assigned id, or `None` if the daemon suppressed it
+    /// (rate-limited). This is the canonical production entry point for posting
+    /// a notification — it replaces the bare `notifications_mut().notify(...)`
+    /// path with the real `liquide-notification-daemon` queue.
+    pub fn post_notification(&mut self, notification: Notification, now_us: u64) -> Option<u32> {
+        self.post_notification_at(notification, now_us)
+    }
+
+    /// Implementation of [`post_notification`] (split so tests can drive a
+    /// deterministic clock through `now_us`).
+    pub fn post_notification_at(&mut self, notification: Notification, now_us: u64) -> Option<u32> {
+        let daemon_notif = to_daemon_notification(&notification);
+        let now_ms = now_us / 1000;
+        let id = self.notification_server().notify_at(daemon_notif, now_ms);
+        if id == 0 {
+            // Rate-limited / suppressed by the canonical daemon.
+            return None;
+        }
+        // Mirror into the renderable manager so the notification center shows
+        // the live set (F03). The daemon owns id assignment + history; the
+        // manager is the render projection.
+        self.notifications.notify(notification, now_us);
+        Some(id)
+    }
+
+    /// Number of notifications the canonical daemon currently considers active.
+    #[must_use]
+    pub fn daemon_active_count(&self) -> usize {
+        self.chrome_notification_server
+            .as_ref()
+            .map_or(0, NotificationServer::active_count)
+    }
+
+    /// Drain notification lifecycle events that previously vanished on tick
+    /// (t49-e5-F03: `tick_detailed` discarded every `NotificationEvent`).
+    ///
+    /// Ticks both the canonical daemon (expiry/dispatch of queued items) and the
+    /// renderable manager, returning the manager's events so a caller can route
+    /// them (e.g. into hooks) instead of dropping them.
+    pub fn drain_notification_events(&mut self, now_us: u64) -> Vec<NotificationEvent> {
+        let now_ms = now_us / 1000;
+        if let Some(server) = self.chrome_notification_server.as_mut() {
+            server.tick(now_ms);
+        }
+        let (_expired, events) = self.notifications.tick_with_events(now_us);
+        events
+    }
+
+    /// Invoke a notification action through the canonical daemon and mirror the
+    /// dismissal into the renderable manager.
+    ///
+    /// Returns the drained [`NotificationEvent::ActionInvoked`] events so the
+    /// caller can route them (they are no longer dropped — F03).
+    pub fn invoke_notification_action(
+        &mut self,
+        id: u32,
+        action_id: &str,
+        now_us: u64,
+    ) -> Vec<NotificationEvent> {
+        if let Some(server) = self.chrome_notification_server.as_mut() {
+            server.invoke_action(id, action_id);
+        }
+        self.notifications.invoke_action(id, action_id);
+        let (_expired, events) = self.notifications.tick_with_events(now_us);
+        events
+    }
+
+    /// Open the notification center panel (the live `OpenNotificationCenter`
+    /// target). Returns the new visibility.
+    pub fn open_notification_center(&mut self) -> bool {
+        self.notification_panel_visible = true;
+        true
+    }
+
+    /// Toggle the notification center panel. Returns the new visibility.
+    pub fn toggle_notification_center(&mut self) -> bool {
+        self.notification_panel_visible = !self.notification_panel_visible;
+        self.notification_panel_visible
+    }
+
+    /// Whether the notification center panel is currently open.
+    #[must_use]
+    pub fn notification_center_open(&self) -> bool {
+        self.notification_panel_visible
+    }
+
+    /// Notifications to render in the live notification center: the canonical
+    /// daemon's active set first (display order), then its history
+    /// (most recent first).
+    ///
+    /// This is the render source for `dom_sync.rs`' notification-center panel.
+    ///
+    /// t52-e1 single-sourcing: the notification *data* (active set + history) is
+    /// read directly off the canonical [`NotificationServer`]
+    /// (`chrome_notification_server`) — the daemon is the single source of that
+    /// state, no longer the shell's duplicate mirror cache. The render `id` is a
+    /// stable per-shell 1-based position (NOT the daemon's process-global id),
+    /// so the DOM element ids (`notif-center-N`) are deterministic per shell
+    /// instance independent of how many notifications other shells minted.
+    ///
+    /// Before the daemon is constructed (no notification ever posted) there is
+    /// nothing to render, so the result is empty.
+    #[must_use]
+    pub fn notification_center_items(&self) -> Vec<ShellNotification> {
+        let Some(server) = self.chrome_notification_server.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut items: Vec<ShellNotification> = Vec::new();
+        // Active set first, in daemon display order.
+        for (_daemon_id, notif, displayed_at_ms) in server.active_notifications() {
+            items.push(daemon_to_shell_notification(
+                items.len() as u32 + 1,
+                notif,
+                *displayed_at_ms,
+                false,
+            ));
+        }
+        // Then history (most recent first), as read entries.
+        for entry in server.history().recent(usize::MAX) {
+            items.push(daemon_to_shell_notification(
+                items.len() as u32 + 1,
+                &entry.notification,
+                entry.displayed_at,
+                true,
+            ));
+        }
+        items
+    }
+
+    // -----------------------------------------------------------------------
+    // Canonical dialogs (liquide-dialogs) routing
+    // -----------------------------------------------------------------------
+
+    /// Request a canonical message-box dialog through `liquide-dialogs`,
+    /// tracking it in the e7 `chrome_active_dialog` field.
+    ///
+    /// Returns the canonical [`liquide_dialogs::DialogId`] so callers can later
+    /// resolve it. This routes shell dialog requests through the canonical
+    /// crate instead of an ad-hoc shell re-implementation.
+    pub fn request_message_dialog(
+        &mut self,
+        kind: ShellDialogKind,
+        title: &str,
+        message: &str,
+    ) -> liquide_dialogs::DialogId {
+        use liquide_dialogs::Dialog;
+        use liquide_dialogs::message_box::MessageBox;
+
+        let dialog = match kind {
+            ShellDialogKind::Info => MessageBox::info(title, message),
+            ShellDialogKind::Warning => MessageBox::warning(title, message),
+            ShellDialogKind::Error => MessageBox::error(title, message),
+            ShellDialogKind::Confirm => MessageBox::confirm(title, message),
+        };
+        let id = dialog.id();
+        self.chrome_active_dialog = Some(id);
+        id
+    }
+
+    /// Request a canonical text-input dialog through `liquide-dialogs`,
+    /// tracking it in `chrome_active_dialog`.
+    pub fn request_input_dialog(&mut self, title: &str, label: &str) -> liquide_dialogs::DialogId {
+        use liquide_dialogs::Dialog;
+        use liquide_dialogs::input_dialog::InputDialog;
+
+        let id = liquide_dialogs::DialogId(self.next_dialog_id());
+        let dialog = InputDialog::new(id, title, label);
+        let id = dialog.id();
+        self.chrome_active_dialog = Some(id);
+        id
+    }
+
+    /// The canonical dialog currently open, if any.
+    #[must_use]
+    pub fn active_dialog(&self) -> Option<liquide_dialogs::DialogId> {
+        self.chrome_active_dialog
+    }
+
+    /// Whether a canonical dialog is currently open.
+    #[must_use]
+    pub fn has_active_dialog(&self) -> bool {
+        self.chrome_active_dialog.is_some()
+    }
+
+    /// Dismiss the currently-open canonical dialog, if any.
+    pub fn dismiss_active_dialog(&mut self) {
+        self.chrome_active_dialog = None;
+    }
+
+    /// Monotonic id source for shell-constructed input/picker dialogs that take
+    /// an explicit `DialogId` (message boxes mint their own).
+    fn next_dialog_id(&self) -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+/// The kind of canonical message dialog requested by the shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellDialogKind {
+    /// Informational, OK button.
+    Info,
+    /// Warning, OK button.
+    Warning,
+    /// Error, OK button.
+    Error,
+    /// Confirmation, Yes / No buttons.
+    Confirm,
+}

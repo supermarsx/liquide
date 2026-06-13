@@ -95,9 +95,12 @@ impl SoftwareRenderer {
                 glyph_height as f32 * 1.2
             };
 
-            // Pre-warm common glyphs
+            // Pre-warm common glyphs when enabled for this renderer.
             let prewarm_key = (font_id, size_px);
-            if !font_family.is_empty() && !self.prewarmed_fonts.contains(&prewarm_key) {
+            if self.common_glyph_prewarm_enabled()
+                && !font_family.is_empty()
+                && !self.prewarmed_fonts.contains(&prewarm_key)
+            {
                 self.prewarmed_fonts.insert(prewarm_key);
                 self.prewarm_glyphs(font_id, size_px, glyph_height, font_family, *font_weight);
             }

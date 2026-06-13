@@ -385,8 +385,23 @@ impl DxgiPresenter {
         }
 
         // 3. Create swap chain.
-        //    Triple-buffer with FLIP_DISCARD and tearing support for
-        //    immediate, non-blocking presentation.
+        //
+        //    Tearing (ALLOW_TEARING) is ONLY requested when the caller asks
+        //    for immediate (no-vsync) presentation. For the windowed/dev CPU
+        //    present path the caller requests `RefreshSync`, in which case we
+        //    must NOT create a tearing-capable swap chain: a flip-model swap
+        //    chain that allows tearing, presented from a per-frame full-surface
+        //    `UpdateSubresource` CPU upload, races DWM composition and reads as
+        //    flicker on screen. Without the tearing flag DWM composites whole
+        //    frames (vsync), which is what the dev window wants.
+        //
+        //    Triple-buffer with FLIP_DISCARD to avoid Present blocking on DWM.
+        let want_tearing = requested_present_mode == DxgiPresentMode::Immediate;
+        let initial_flags = if want_tearing {
+            DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING
+        } else {
+            0
+        };
         let sc_desc = DXGI_SWAP_CHAIN_DESC {
             buffer_desc: DXGI_MODE_DESC {
                 width,
@@ -406,7 +421,7 @@ impl DxgiPresenter {
             output_window: hwnd,
             windowed: ffi::TRUE,
             swap_effect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
-            flags: DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING,
+            flags: initial_flags,
         };
 
         let mut swap_chain: *mut c_void = ptr::null_mut();
@@ -425,14 +440,23 @@ impl DxgiPresenter {
         // SAFETY: Calling CreateSwapChain through the vtable with valid params.
         let hr = unsafe { create_sc(factory, device, &sc_desc, &mut swap_chain) };
 
-        // If flip-discard + tearing fails, try without tearing flag.
+        // Track whether the live swap chain actually carries the ALLOW_TEARING
+        // flag. It is only true if the first (tearing-requesting) attempt
+        // succeeded; every fallback below clears the flag.
+        let mut tearing = want_tearing && hr == S_OK && !swap_chain.is_null();
+
+        // If the first attempt fails, retry without the tearing flag. (When
+        // tearing was not requested in the first place this is the same desc;
+        // the retry then only covers a transient failure.)
         if hr != S_OK || swap_chain.is_null() {
             let mut sc_desc_no_tear = sc_desc;
             sc_desc_no_tear.flags = 0;
             // SAFETY: Retrying CreateSwapChain without tearing flag.
             let hr2 = unsafe { create_sc(factory, device, &sc_desc_no_tear, &mut swap_chain) };
+            tearing = false;
 
-            // If that also fails, try classic discard model.
+            // If that also fails, try classic discard model (BitBlt). This is
+            // the robust path for CPU-upload presentation on older GPUs / RDP.
             if hr2 != S_OK || swap_chain.is_null() {
                 let mut sc_desc_fallback = sc_desc;
                 sc_desc_fallback.swap_effect = DXGI_SWAP_EFFECT_DISCARD;
@@ -454,8 +478,10 @@ impl DxgiPresenter {
             }
         }
 
-        // Determine whether the swap chain was created with tearing support.
-        let tearing = hr == S_OK && !swap_chain.is_null();
+        // `tearing` now reflects whether ALLOW_TEARING is live in the swap
+        // chain. RefreshSync remains available regardless (sync_interval = 1
+        // works on any swap effect); Immediate-with-tearing only when the flag
+        // is present.
         let present_capabilities = DxgiPresentCapabilities::dxgi_swap_chain(tearing);
         let present_mode = requested_present_mode.resolve(present_capabilities);
 
@@ -665,5 +691,76 @@ impl Drop for DxgiPresenter {
             Self::release(self.context);
             Self::release(self.device);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The windowed/dev CPU present path must present with vsync (sync_interval
+    /// = 1) and MUST NOT pass ALLOW_TEARING, so DWM composites whole frames.
+    /// This is the configuration regression guard for the flicker fix (H1):
+    /// even on a tearing-capable swap chain, RefreshSync drops tearing.
+    #[test]
+    fn refresh_sync_presents_with_vsync_and_no_tearing() {
+        let caps = DxgiPresentCapabilities::dxgi_swap_chain(true);
+        let params = DxgiPresentMode::RefreshSync.present_parameters(caps);
+        assert_eq!(params.sync_interval, 1, "RefreshSync must vsync");
+        assert_eq!(
+            params.flags & DXGI_PRESENT_ALLOW_TEARING,
+            0,
+            "RefreshSync must never combine with ALLOW_TEARING"
+        );
+    }
+
+    /// RefreshSync is honored (not downgraded to Immediate) on any DXGI swap
+    /// chain, with or without tearing support.
+    #[test]
+    fn refresh_sync_resolves_on_any_dxgi_swap_chain() {
+        for tearing in [false, true] {
+            let caps = DxgiPresentCapabilities::dxgi_swap_chain(tearing);
+            assert_eq!(
+                DxgiPresentMode::RefreshSync.resolve(caps),
+                DxgiPresentMode::RefreshSync,
+            );
+            assert_eq!(
+                DxgiPresentMode::RefreshSync
+                    .present_parameters(caps)
+                    .sync_interval,
+                1
+            );
+        }
+    }
+
+    /// Immediate mode keeps its prior no-vsync behavior, only emitting
+    /// ALLOW_TEARING when the swap chain actually supports it (so the
+    /// non-windowed/headless path is preserved).
+    #[test]
+    fn immediate_uses_tearing_only_when_supported() {
+        let with = DxgiPresentCapabilities::dxgi_swap_chain(true);
+        let p_with = DxgiPresentMode::Immediate.present_parameters(with);
+        assert_eq!(p_with.sync_interval, 0);
+        assert_eq!(
+            p_with.flags & DXGI_PRESENT_ALLOW_TEARING,
+            DXGI_PRESENT_ALLOW_TEARING
+        );
+
+        let without = DxgiPresentCapabilities::dxgi_swap_chain(false);
+        let p_without = DxgiPresentMode::Immediate.present_parameters(without);
+        assert_eq!(p_without.sync_interval, 0);
+        assert_eq!(p_without.flags & DXGI_PRESENT_ALLOW_TEARING, 0);
+    }
+
+    /// Immediate falls back to no tearing when capabilities lack it.
+    #[test]
+    fn immediate_only_caps_never_tears() {
+        let caps = DxgiPresentCapabilities::IMMEDIATE_ONLY;
+        assert!(!caps.supports(DxgiPresentMode::RefreshSync));
+        let resolved = DxgiPresentMode::RefreshSync.resolve(caps);
+        assert_eq!(resolved, DxgiPresentMode::Immediate);
+        let params = DxgiPresentMode::RefreshSync.present_parameters(caps);
+        assert_eq!(params.sync_interval, 0);
+        assert_eq!(params.flags & DXGI_PRESENT_ALLOW_TEARING, 0);
     }
 }

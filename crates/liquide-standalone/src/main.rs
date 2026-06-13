@@ -49,6 +49,14 @@ struct Cli {
     #[arg(long)]
     no_wayland: bool,
 
+    /// Window width in pixels (windowed/dev mode). Unset = derive from output.
+    #[arg(long)]
+    width: Option<u32>,
+
+    /// Window height in pixels (windowed/dev mode). Unset = derive from output.
+    #[arg(long)]
+    height: Option<u32>,
+
     /// Log to file instead of stderr.
     #[arg(long)]
     log_file: Option<String>,
@@ -90,6 +98,8 @@ async fn run(cli: Cli) -> Result<()> {
         wayland_socket: cli.wayland_socket,
         enable_xwayland: cli.xwayland,
         enable_wayland: !cli.no_wayland,
+        width: cli.width,
+        height: cli.height,
     };
 
     let mut launcher = StandaloneLauncher::new(config.clone());
@@ -100,32 +110,51 @@ async fn run(cli: Cli) -> Result<()> {
         .setup_session()
         .context("Failed to set up session/VT")?;
 
-    // Phase 2: DRM/KMS initialization
-    info!("Phase 2: DRM/KMS setup");
-    launcher
-        .setup_display()
-        .context("Failed to set up DRM/KMS display")?;
-
-    // Phase 3: Input device enumeration
-    info!("Phase 3: Input setup");
-    launcher
-        .setup_input()
-        .context("Failed to set up input devices")?;
-
-    // Phase 4: Wayland server (if enabled)
-    if config.enable_wayland {
-        info!("Phase 4: Wayland server setup");
+    // Phases 2 & 3 (DRM/KMS display + evdev input) belong to the production
+    // DRM path. In dev/windowed mode they are skipped entirely: the host-window
+    // backend (Win32 / X11 / Wayland / Cocoa) provides window, input, and
+    // present, and requesting a DRM device on a host OS would fail (e.g.
+    // "no suitable DRM device found" on Windows).
+    if config.dev_mode {
+        info!("Dev mode: skipping DRM/KMS and evdev setup (host-window backend)");
+    } else {
+        // Phase 2: DRM/KMS initialization
+        info!("Phase 2: DRM/KMS setup");
         launcher
-            .setup_wayland()
-            .context("Failed to set up Wayland server")?;
+            .setup_display()
+            .context("Failed to set up DRM/KMS display")?;
+
+        // Phase 3: Input device enumeration
+        info!("Phase 3: Input setup");
+        launcher
+            .setup_input()
+            .context("Failed to set up input devices")?;
     }
 
-    // Phase 5: XWayland (if enabled)
-    if config.enable_xwayland && config.enable_wayland {
-        info!("Phase 5: XWayland setup");
-        launcher
-            .setup_xwayland()
-            .context("Failed to set up XWayland")?;
+    // Phases 4 & 5 (Wayland server + XWayland) also belong to the production
+    // DRM path: they serve external Wayland/X11 clients against the compositor
+    // and are unsupported on a host OS (e.g. "Failed to set up Wayland server:
+    // not supported on this platform" on Windows). In dev/windowed mode they
+    // are skipped — the dev window hosts the desktop shell for inspection, not
+    // a client-serving session.
+    if config.dev_mode {
+        info!("Dev mode: skipping Wayland/XWayland server setup (host-window backend)");
+    } else {
+        // Phase 4: Wayland server (if enabled)
+        if config.enable_wayland {
+            info!("Phase 4: Wayland server setup");
+            launcher
+                .setup_wayland()
+                .context("Failed to set up Wayland server")?;
+        }
+
+        // Phase 5: XWayland (if enabled)
+        if config.enable_xwayland && config.enable_wayland {
+            info!("Phase 5: XWayland setup");
+            launcher
+                .setup_xwayland()
+                .context("Failed to set up XWayland")?;
+        }
     }
 
     // Phase 6: Run the compositor event loop

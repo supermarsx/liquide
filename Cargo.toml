@@ -11,6 +11,7 @@ members = [
     "crates/liquide-auth",
     "crates/liquide-policy",
     "crates/liquide-authorization",
+    "crates/liquide-authz-runtime",
 
     # Rendering & compositing
     "crates/liquide-simd",
@@ -398,6 +399,7 @@ liquide-transport = { path = "crates/liquide-transport" }
 liquide-crypto = { path = "crates/liquide-crypto" }
 liquide-auth = { path = "crates/liquide-auth" }
 liquide-authorization = { path = "crates/liquide-authorization" }
+liquide-authz-runtime = { path = "crates/liquide-authz-runtime" }
 liquide-policy = { path = "crates/liquide-policy" }
 liquide-compositor = { path = "crates/liquide-compositor" }
 liquide-renderer-cpu = { path = "crates/liquide-renderer-cpu" }
@@ -489,8 +491,12 @@ liquide-xdg = { path = "crates/liquide-xdg" }
 bytes.workspace = true
 criterion.workspace = true
 liquide-compositor.workspace = true
+liquide-dom.workspace = true
 liquide-encoder.workspace = true
+liquide-layout.workspace = true
+liquide-layout-cache.workspace = true
 liquide-protocol.workspace = true
+liquide-style-engine.workspace = true
 
 [[bench]]
 name = "tile_encode"
@@ -502,6 +508,10 @@ harness = false
 
 [[bench]]
 name = "compositor_render"
+harness = false
+
+[[bench]]
+name = "layout_cache"
 harness = false
 
 

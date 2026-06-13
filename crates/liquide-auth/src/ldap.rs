@@ -185,6 +185,23 @@ impl AuthProvider for LdapProvider {
             });
         }
 
+        // Reject empty / whitespace-only passwords BEFORE binding.
+        //
+        // A simple LDAP bind (`ldapwhoami -x`) with a valid DN and an empty
+        // password is, per RFC 4513 §5.1.2, an "unauthenticated authentication
+        // mechanism." Many directory servers accept it and return success, so
+        // `ldapwhoami` would exit 0 and we would report `Success` for a user
+        // who supplied no password (anonymous/unauthenticated bind fail-open).
+        // Whitespace-only passwords are treated the same: a password of only
+        // spaces is not a real credential and some servers strip it. We never
+        // pass such a password to `ldap_bind`, so a bind can never authenticate
+        // an empty credential regardless of how the server is configured.
+        if password.is_empty() || password.trim().is_empty() {
+            return Ok(AuthResult::Failure {
+                reason: "empty password rejected".into(),
+            });
+        }
+
         let bind_dn = self.bind_dn(username);
 
         match self.ldap_bind(&bind_dn, password) {
@@ -308,6 +325,70 @@ mod tests {
         match result {
             AuthResult::Failure { reason } => assert_eq!(reason, "invalid username characters"),
             other => panic!("expected Failure, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_password() {
+        // Regression for t49-e8-F3: an empty password must be rejected BEFORE
+        // any bind, so an unauthenticated/anonymous bind can never report
+        // Success. The guard short-circuits without spawning `ldapwhoami`, so
+        // this is deterministic regardless of host environment.
+        let p = LdapProvider::new("ldaps://ldap.example.com", "dc=example,dc=com");
+        let result = p
+            .authenticate(&Credentials::Password {
+                username: "alice".into(),
+                password: "".into(),
+            })
+            .await
+            .unwrap();
+        match result {
+            AuthResult::Failure { reason } => assert_eq!(reason, "empty password rejected"),
+            other => panic!("expected Failure for empty password, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_whitespace_only_password() {
+        // Whitespace-only passwords are also rejected before binding.
+        let p = LdapProvider::new("ldaps://ldap.example.com", "dc=example,dc=com");
+        let result = p
+            .authenticate(&Credentials::Password {
+                username: "alice".into(),
+                password: "   \t ".into(),
+            })
+            .await
+            .unwrap();
+        match result {
+            AuthResult::Failure { reason } => assert_eq!(reason, "empty password rejected"),
+            other => panic!("expected Failure for whitespace password, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn non_empty_password_passes_guard_to_bind() {
+        // Positive control: a non-empty password must NOT be short-circuited by
+        // the empty-password guard. It reaches `ldap_bind`, which spawns
+        // `ldapwhoami` (absent in the test environment) and therefore surfaces a
+        // BackendUnavailable error rather than the guard's Failure. This proves
+        // the guard does not reject real credentials.
+        let p = LdapProvider::new("ldaps://ldap.example.com", "dc=example,dc=com");
+        let result = p
+            .authenticate(&Credentials::Password {
+                username: "alice".into(),
+                password: "s3cr3t".into(),
+            })
+            .await;
+        match result {
+            // `ldapwhoami` missing -> bind returns Err -> BackendUnavailable.
+            Err(AuthError::BackendUnavailable(_)) => {}
+            // If a host happens to have `ldapwhoami`, it will fail to reach the
+            // (fake) server and report invalid credentials — also acceptable,
+            // and crucially NOT "empty password rejected".
+            Ok(AuthResult::Failure { reason }) => {
+                assert_ne!(reason, "empty password rejected");
+            }
+            other => panic!("unexpected result for non-empty password: {other:?}"),
         }
     }
 

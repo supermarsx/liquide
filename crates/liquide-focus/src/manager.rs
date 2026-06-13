@@ -2,6 +2,15 @@
 //!
 //! Implements the activation sequence: ordered event dispatch,
 //! foreground steal prevention, modal blocking, and focus chain management.
+//!
+//! This is the *focus PROTOCOL* — the genuinely useful, non-duplicated half of
+//! this crate. It has no equivalent in the canonical input path
+//! ([`liquide-message-queue`]) and belongs in the **shell** or a dedicated
+//! focus-protocol layer, **not** in the message queue. It is currently staged
+//! (no production consumers); see the crate root docs and the t51 input plan
+//! (`.orchestration/plans/t51.md`, Mandate 3) for placement context.
+//!
+//! [`liquide-message-queue`]: https://docs.rs/liquide-message-queue
 
 use std::collections::{HashMap, HashSet};
 

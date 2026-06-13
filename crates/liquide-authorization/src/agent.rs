@@ -1,11 +1,16 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use liquide_common::event_log::EventLogService;
+
 use crate::action::AuthorizationAction;
+use crate::audit::{AuditEntry, AuditLog, AuditPolicy};
 use crate::level::AuthLevel;
 use crate::platform::{self, CredentialVerificationRequest, VerifyResult};
 use crate::policy::AuthorizationPolicy;
+use crate::policy_db::AuthDecision;
 use crate::store::AuthorizationStore;
+use crate::subject::{Resource, Subject};
 
 /// The outcome of an authorization request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +90,15 @@ pub struct AuthorizationAgent {
     verifier: Box<dyn CredentialVerifier>,
     /// The username used for credential verification.
     username: String,
+    /// Optional in-memory audit log. When present, every terminal decision
+    /// produced by [`AuthorizationAgent::request_authorization_audited`] is
+    /// recorded here (subject to the log's [`AuditPolicy`]).
+    audit: Option<AuditLog>,
+    /// Optional structured event sink. When present, every terminal decision
+    /// produced by [`AuthorizationAgent::request_authorization_audited`] is
+    /// forwarded as an [`liquide_common::event_log::EventRecord`]. A sink error
+    /// never upgrades a denial to a grant (fail-closed).
+    sink: Option<Box<dyn EventLogService>>,
 }
 
 impl std::fmt::Debug for AuthorizationAgent {
@@ -94,6 +108,8 @@ impl std::fmt::Debug for AuthorizationAgent {
             .field("store", &self.store)
             .field("actions", &self.actions)
             .field("username", &self.username)
+            .field("audit_enabled", &self.audit.is_some())
+            .field("sink_enabled", &self.sink.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -112,7 +128,38 @@ impl AuthorizationAgent {
             clock: Box::new(SystemClock),
             verifier: Box::new(PlatformCredentialVerifier),
             username: username.into(),
+            audit: None,
+            sink: None,
         }
+    }
+
+    /// Attach an in-memory audit log so audited authorization requests record
+    /// every terminal decision. Additive: leaves the bare
+    /// [`AuthorizationAgent::request_authorization`] flow unchanged.
+    #[must_use]
+    pub fn with_audit_log(mut self, audit: AuditLog) -> Self {
+        self.audit = Some(audit);
+        self
+    }
+
+    /// Attach an audit log with the given policy.
+    #[must_use]
+    pub fn with_audit_policy(self, policy: AuditPolicy) -> Self {
+        self.with_audit_log(AuditLog::new(policy))
+    }
+
+    /// Attach a structured event-log sink. Every audited terminal decision is
+    /// forwarded to this sink as an [`liquide_common::event_log::EventRecord`].
+    #[must_use]
+    pub fn with_event_sink(mut self, sink: Box<dyn EventLogService>) -> Self {
+        self.sink = Some(sink);
+        self
+    }
+
+    /// Immutable access to the agent's audit log, if one is attached.
+    #[must_use]
+    pub fn audit_log(&self) -> Option<&AuditLog> {
+        self.audit.as_ref()
     }
 
     /// Create an agent with default policies and all builtin actions registered.
@@ -188,7 +235,8 @@ impl AuthorizationAgent {
 
         match verify {
             VerifyResult::Success { username, level } => {
-                if username != verification_request.username || level != verification_request.level {
+                if username != verification_request.username || level != verification_request.level
+                {
                     return AuthResult::Denied {
                         reason: format!(
                             "verification principal mismatch: requested '{}' at {}, got '{}' at {}",
@@ -213,6 +261,67 @@ impl AuthorizationAgent {
             VerifyResult::Failed(reason) => AuthResult::Denied { reason },
             VerifyResult::Error(msg) => AuthResult::Error(msg),
         }
+    }
+
+    /// Request authorization and record the terminal decision.
+    ///
+    /// This wraps [`AuthorizationAgent::request_authorization`] and, when an
+    /// audit log and/or event sink are attached (via
+    /// [`AuthorizationAgent::with_audit_log`] /
+    /// [`AuthorizationAgent::with_event_sink`]), records every terminal
+    /// grant/deny so privileged decisions are never silent
+    /// (closes t49-e8-F2 / B6a within the crate).
+    ///
+    /// `subject` identifies the requester for the audit record. `resource`, if
+    /// provided, attaches object-scoped context (resource-scoped authorization,
+    /// B6d in-crate slice). `resource_scope` labels the kind of resource
+    /// (`"window"`, `"session"`, `"device"`, ...).
+    ///
+    /// Returns the same [`AuthResult`] as the bare flow. Auditing is purely a
+    /// side effect: a sink error is swallowed and never upgrades a denial to a
+    /// grant (fail-closed).
+    pub fn request_authorization_audited(
+        &mut self,
+        action: &AuthorizationAction,
+        subject: &Subject,
+        resource: Option<(&Resource, &str)>,
+    ) -> AuthResult {
+        let result = self.request_authorization(action);
+        let decision = auth_result_to_decision(&result);
+        let details = auth_result_details(&result);
+
+        // Build a single canonical entry so the in-memory log and the
+        // structured sink agree on the same record.
+        let mut entry = AuditEntry::new(action.id.clone(), subject, decision.clone());
+        if let Some((resource, scope)) = resource {
+            entry = entry.for_resource(resource, scope);
+        }
+        if let Some(details) = &details {
+            entry = entry.with_details(details.clone());
+        }
+
+        if let Some(audit) = self.audit.as_mut() {
+            if let Some((resource, scope)) = resource {
+                audit.record_resource(
+                    &action.id,
+                    subject,
+                    &decision,
+                    resource,
+                    scope,
+                    None,
+                    details.as_deref(),
+                );
+            } else {
+                audit.record(&action.id, subject, &decision, details.as_deref());
+            }
+        }
+
+        if let Some(sink) = self.sink.as_mut() {
+            // Swallow sink errors: auditing must not change the decision.
+            let _ = sink.record_event(entry.to_event_record());
+        }
+
+        result
     }
 
     /// Check whether a previous keep-alive grant is still valid for the
@@ -267,8 +376,33 @@ impl AuthorizationAgent {
             clock: Box::new(clock),
             verifier: Box::new(PlatformCredentialVerifier),
             username: username.into(),
+            audit: None,
+            sink: None,
         };
         (agent, handle)
+    }
+}
+
+/// Map an [`AuthResult`] to an audit-log [`AuthDecision`].
+///
+/// Fail-closed: every non-`Granted` outcome maps to [`AuthDecision::Deny`], so
+/// a cancelled prompt or an error is audited as a denial, never an allow.
+fn auth_result_to_decision(result: &AuthResult) -> AuthDecision {
+    match result {
+        AuthResult::Granted { .. } => AuthDecision::Allow,
+        AuthResult::Denied { .. } | AuthResult::Cancelled | AuthResult::Error(_) => {
+            AuthDecision::Deny
+        }
+    }
+}
+
+/// Human-readable detail string for the audit record, if any.
+fn auth_result_details(result: &AuthResult) -> Option<String> {
+    match result {
+        AuthResult::Granted { .. } => None,
+        AuthResult::Denied { reason } => Some(format!("denied: {reason}")),
+        AuthResult::Cancelled => Some("cancelled by user".to_string()),
+        AuthResult::Error(msg) => Some(format!("error: {msg}")),
     }
 }
 
@@ -355,6 +489,8 @@ mod tests {
             clock: Box::new(TestClock::new(1000)),
             verifier: Box::new(RecordingVerifier { result, seen }),
             username: username.to_string(),
+            audit: None,
+            sink: None,
         }
     }
 
@@ -418,10 +554,7 @@ mod tests {
     #[test]
     fn mismatched_verifier_success_is_denied() {
         let mut policy = AuthorizationPolicy::new();
-        policy.add_rule(PolicyRule::new(
-            "org.liquide.test",
-            AuthLevel::UserPassword,
-        ));
+        policy.add_rule(PolicyRule::new("org.liquide.test", AuthLevel::UserPassword));
         let seen = Rc::new(RefCell::new(Vec::new()));
         let mut agent = agent_with_verifier(
             policy,
@@ -590,5 +723,200 @@ mod tests {
         let dbg = format!("{:?}", agent);
         assert!(dbg.contains("AuthorizationAgent"));
         assert!(dbg.contains("testuser"));
+    }
+
+    // ── Audited authorization (B6a) ─────────────────────────────────
+
+    use crate::audit::AuditPolicy;
+    use crate::policy_db::AuthDecision;
+    use crate::subject::{Resource, Subject};
+    use liquide_common::event_log::{EventCategory, EventLogService, EventRecord};
+
+    /// A sink that records into shared state so tests can assert what the
+    /// agent forwarded.
+    struct SharedSink {
+        records: Rc<RefCell<Vec<EventRecord>>>,
+    }
+
+    impl EventLogService for SharedSink {
+        fn record_event(&mut self, record: EventRecord) -> liquide_common::Result<()> {
+            self.records.borrow_mut().push(record);
+            Ok(())
+        }
+    }
+
+    /// A sink that always fails — proves a sink error never changes the
+    /// decision (fail-closed) and is swallowed.
+    struct FailingSink;
+
+    impl EventLogService for FailingSink {
+        fn record_event(&mut self, _record: EventRecord) -> liquide_common::Result<()> {
+            Err(liquide_common::LiquideError::Internal(
+                "sink down".to_string(),
+            ))
+        }
+    }
+
+    fn audit_subject() -> Subject {
+        Subject::new(1000, 42, "session-audit")
+    }
+
+    #[test]
+    fn audited_grant_is_recorded_to_log_and_sink() {
+        // A NoAuth action grants without verification — exercises the grant
+        // audit path deterministically.
+        let mut policy = AuthorizationPolicy::new();
+        policy.add_rule(PolicyRule::new("org.liquide.system.*", AuthLevel::NoAuth));
+
+        let records = Rc::new(RefCell::new(Vec::new()));
+        let mut agent = AuthorizationAgent::new(policy, "testuser")
+            .with_audit_policy(AuditPolicy::All)
+            .with_event_sink(Box::new(SharedSink {
+                records: records.clone(),
+            }));
+        let action = make_action("org.liquide.system.shutdown", AuthLevel::NoAuth);
+        agent.register_action(action.clone());
+
+        let result = agent.request_authorization_audited(&action, &audit_subject(), None);
+        assert!(result.is_granted());
+
+        // Audit log captured an Allow.
+        let log = agent.audit_log().expect("audit log attached");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log.entries()[0].decision, AuthDecision::Allow);
+        assert_eq!(log.entries()[0].action_id, "org.liquide.system.shutdown");
+
+        // Sink received exactly one authorization event.
+        let sunk = records.borrow();
+        assert_eq!(sunk.len(), 1);
+        assert_eq!(sunk[0].category, EventCategory::Authorization);
+    }
+
+    #[test]
+    fn audited_deny_records_a_denial_negative_path() {
+        // No matching rule → Denied. The denial MUST be audited (privileged
+        // ops are never silent) and forwarded as a Deny.
+        let policy = AuthorizationPolicy::new(); // no rules
+        let records = Rc::new(RefCell::new(Vec::new()));
+        let mut agent = AuthorizationAgent::new(policy, "testuser")
+            .with_audit_policy(AuditPolicy::All)
+            .with_event_sink(Box::new(SharedSink {
+                records: records.clone(),
+            }));
+        let action = make_action("org.liquide.unknown", AuthLevel::AdminPassword);
+
+        let result = agent.request_authorization_audited(&action, &audit_subject(), None);
+        assert!(result.is_denied());
+
+        let log = agent.audit_log().expect("audit log attached");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log.entries()[0].decision, AuthDecision::Deny);
+
+        let sunk = records.borrow();
+        assert_eq!(sunk.len(), 1);
+        // The forwarded event carries the deny context.
+        assert_eq!(
+            sunk[0].context.get("decision").map(String::as_str),
+            Some("Deny")
+        );
+    }
+
+    #[test]
+    fn audited_resource_scope_flows_into_record() {
+        // Resource-scoped authorization: the resource id + scope must reach the
+        // audit entry and the forwarded event.
+        let mut policy = AuthorizationPolicy::new();
+        policy.add_rule(PolicyRule::new("org.liquide.window.*", AuthLevel::NoAuth));
+        let records = Rc::new(RefCell::new(Vec::new()));
+        let mut agent = AuthorizationAgent::new(policy, "testuser")
+            .with_audit_policy(AuditPolicy::All)
+            .with_event_sink(Box::new(SharedSink {
+                records: records.clone(),
+            }));
+        let action = make_action("org.liquide.window.capture", AuthLevel::NoAuth);
+        agent.register_action(action.clone());
+        let resource = Resource::new(1000, "window:42");
+
+        let result = agent.request_authorization_audited(
+            &action,
+            &audit_subject(),
+            Some((&resource, "window")),
+        );
+        assert!(result.is_granted());
+
+        let log = agent.audit_log().expect("audit log attached");
+        assert_eq!(log.entries()[0].resource_id.as_deref(), Some("window:42"));
+        assert_eq!(log.entries()[0].resource_scope.as_deref(), Some("window"));
+
+        let sunk = records.borrow();
+        assert_eq!(sunk[0].resource_id.as_deref(), Some("window:42"));
+        assert_eq!(
+            sunk[0].context.get("resource_scope").map(String::as_str),
+            Some("window")
+        );
+    }
+
+    #[test]
+    fn audited_sink_error_does_not_change_decision() {
+        // A failing sink must NOT turn a grant into a deny, and must NOT panic;
+        // the audit log still records the decision (fail-closed isolation).
+        let mut policy = AuthorizationPolicy::new();
+        policy.add_rule(PolicyRule::new("org.liquide.system.*", AuthLevel::NoAuth));
+        let mut agent = AuthorizationAgent::new(policy, "testuser")
+            .with_audit_policy(AuditPolicy::All)
+            .with_event_sink(Box::new(FailingSink));
+        let action = make_action("org.liquide.system.suspend", AuthLevel::NoAuth);
+        agent.register_action(action.clone());
+
+        let result = agent.request_authorization_audited(&action, &audit_subject(), None);
+        assert!(
+            result.is_granted(),
+            "a sink error must not downgrade a grant"
+        );
+        assert_eq!(agent.audit_log().expect("log").len(), 1);
+    }
+
+    #[test]
+    fn audited_without_sink_or_log_is_silent_but_returns_same_result() {
+        // Additive contract: with no audit log and no sink attached, the
+        // audited call behaves exactly like the bare flow.
+        let mut policy = AuthorizationPolicy::new();
+        policy.add_rule(PolicyRule::new("org.liquide.system.*", AuthLevel::NoAuth));
+        let mut agent = AuthorizationAgent::new(policy, "testuser");
+        let action = make_action("org.liquide.system.shutdown", AuthLevel::NoAuth);
+        agent.register_action(action.clone());
+
+        let audited = agent.request_authorization_audited(&action, &audit_subject(), None);
+        assert!(audited.is_granted());
+        assert!(agent.audit_log().is_none());
+    }
+
+    #[test]
+    fn audited_denied_only_policy_skips_grant_records() {
+        // With AuditPolicy::DeniedOnly, a granted decision is NOT recorded in
+        // the log, but the sink still receives the structured event (the sink
+        // is policy-independent — it observes all forwarded decisions).
+        let mut policy = AuthorizationPolicy::new();
+        policy.add_rule(PolicyRule::new("org.liquide.system.*", AuthLevel::NoAuth));
+        let records = Rc::new(RefCell::new(Vec::new()));
+        let mut agent = AuthorizationAgent::new(policy, "testuser")
+            .with_audit_policy(AuditPolicy::DeniedOnly)
+            .with_event_sink(Box::new(SharedSink {
+                records: records.clone(),
+            }));
+        let action = make_action("org.liquide.system.shutdown", AuthLevel::NoAuth);
+        agent.register_action(action.clone());
+
+        agent.request_authorization_audited(&action, &audit_subject(), None);
+        assert_eq!(
+            agent.audit_log().expect("log").len(),
+            0,
+            "DeniedOnly suppresses grant records"
+        );
+        assert_eq!(
+            records.borrow().len(),
+            1,
+            "sink still observes the decision"
+        );
     }
 }

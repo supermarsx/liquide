@@ -15,7 +15,7 @@ This document defines the monorepo layout, crate structure, build matrix, depend
 
 LiquiDE uses a **Cargo workspace monorepo**. All components share a single repository, enabling atomic cross-component changes and unified versioning.
 
-```
+```text
 liquide/
 ├── Cargo.toml                      # workspace root
 ├── Cargo.lock                      # single lockfile for all crates
@@ -86,8 +86,9 @@ liquide/
 │
 ├── benches/                        # criterion benchmarks
 │   ├── compositor_render.rs
+│   ├── blur_simd.rs                # unregistered placeholder; SIMD blur is benchmarked in crate-local benches
+│   ├── layout_cache.rs
 │   ├── tile_encode.rs
-│   ├── blur_simd.rs
 │   ├── transport_throughput.rs
 │   └── ...
 │
@@ -143,7 +144,7 @@ liquide/
 
 The crate dependency graph flows from shared libraries to binaries:
 
-```
+```text
                     liquide-common
                    /      |       \
           liquide-protocol  liquide-crypto  liquide-policy
@@ -177,6 +178,7 @@ The crate dependency graph flows from shared libraries to binaries:
 ### Key Shared Crate: `liquide-protocol`
 
 This crate contains:
+
 - All protocol message type codes and constants.
 - CBOR encode/decode implementations for all message types.
 - Channel ID definitions.
@@ -189,42 +191,54 @@ Both server and client depend on this crate, ensuring protocol compatibility is 
 
 ## 4) Build Matrix
 
+Target tiers are assigned per target triple. If the same target triple is used by more than one product role, it keeps one support tier and one release artifact identity. Current automated coverage is listed in [4.4 Current Workflow Coverage](#44-current-workflow-coverage); a tier does not imply that every workflow builds every target.
+
 ### 4.1 Server Targets
 
 | Target Triple | Tier | Notes |
-|--------------|------|-------|
-| `x86_64-unknown-linux-gnu` | 1 (primary) | Primary development target. Full CI. |
-| `aarch64-unknown-linux-gnu` | 1 | ARM64 server support. Full CI via cross-compilation or ARM runners. |
-| `x86_64-unknown-linux-musl` | 2 | Static binary for container/Alpine deployments. CI build + basic test. |
-| `aarch64-unknown-linux-musl` | 2 | Static ARM64 binary. CI build. |
+| ------------- | ---- | ----- |
+| `x86_64-unknown-linux-gnu` | 1 (primary) | Primary development target. PR Linux release build, nightly build, and release artifact. |
+| `aarch64-unknown-linux-gnu` | 1 | ARM64 Linux server target. Nightly and release cross-build. |
+| `x86_64-unknown-linux-musl` | 2 | Static Linux binary for container/Alpine deployments. Nightly and release build. |
+| `aarch64-unknown-linux-musl` | 2 | Static ARM64 Linux binary. Nightly and release cross-build. |
 
 ### 4.2 Client Targets
 
 | Target Triple | Tier | Notes |
-|--------------|------|-------|
-| `x86_64-unknown-linux-gnu` | 1 | Linux client. Full CI. |
-| `x86_64-pc-windows-msvc` | 1 | Windows client. Full CI. |
-| `aarch64-apple-darwin` | 1 | macOS ARM64 client. Full CI. |
-| `x86_64-apple-darwin` | 2 | macOS Intel client. CI build + basic test. |
-| `aarch64-unknown-linux-gnu` | 2 | Linux ARM64 client. CI build. |
-| `aarch64-pc-windows-msvc` | 2 | Windows ARM64 client. CI build. |
+| ------------- | ---- | ----- |
+| `x86_64-unknown-linux-gnu` | 1 | Linux client. Shares the Tier 1 Linux GNU release target. |
+| `x86_64-pc-windows-msvc` | 1 | Windows client. Windows E2E runs in CI/nightly; release artifact is built on tag pushes. |
+| `aarch64-apple-darwin` | 1 | macOS ARM64 client. Release artifact is built on tag pushes. No current PR/nightly matrix entry. |
+| `x86_64-apple-darwin` | 2 | macOS Intel client. Release artifact is built on tag pushes. No current PR/nightly matrix entry. |
+| `aarch64-unknown-linux-gnu` | 1 | Linux ARM64 client. Same target triple and support tier as the ARM64 Linux server target. |
+| `aarch64-pc-windows-msvc` | 2 | Windows ARM64 client. Release artifact is built on tag pushes. No current PR/nightly matrix entry. |
 
 ### 4.3 Mobile Client Targets
 
-| Target Triple | Platform | Tier | Notes |
-|--------------|----------|------|-------|
-| `aarch64-apple-ios` | iOS / iPadOS | 1 | Mobile core library (.xcframework). Full CI. |
-| `aarch64-apple-ios-sim` | iOS Simulator | 1 | Simulator build for CI testing. |
-| `aarch64-linux-android` | Android ARM64 | 1 | Mobile core library (.so). Full CI. |
-| `x86_64-linux-android` | Android x86_64 | 2 | Emulator build. CI smoke test. |
+Mobile target triples are product targets, but they are not in the current `ci.yml`, `nightly.yml`, or `release.yml` matrices.
+
+| Target Triple | Platform | Current Workflow Coverage | Notes |
+| ------------- | -------- | ------------------------- | ----- |
+| `aarch64-apple-ios` | iOS / iPadOS | Not currently built in GitHub Actions | Mobile core library (.xcframework) target. |
+| `aarch64-apple-ios-sim` | iOS Simulator | Not currently built in GitHub Actions | Simulator build target. |
+| `aarch64-linux-android` | Android ARM64 | Not currently built in GitHub Actions | Mobile core library (.so) target. |
+| `x86_64-linux-android` | Android x86_64 | Not currently built in GitHub Actions | Emulator build target. |
+
+### 4.4 Current Workflow Coverage
+
+| Workflow | Target Coverage | Test / Validation Coverage | Artifacts |
+| -------- | --------------- | -------------------------- | --------- |
+| `ci.yml` | Linux release build for `x86_64-unknown-linux-gnu`; Windows hosted E2E job. No current PR build for macOS, mobile, Windows release binaries, or Tier 2 targets. | Rustfmt, clippy, Ubuntu workspace tests, Ubuntu integration tests, Windows manifest E2E, `cargo deny check`. | Linux `liquid*` binaries and Windows E2E logs. |
+| `nightly.yml` | Linux GNU builds for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`; Linux musl builds for `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`; Windows hosted E2E job. | Ubuntu full workspace tests with all features, integration tests, doc tests, `cargo outdated`, `cargo audit`, `cargo deny check`. | Nightly artifacts are uploaded for Linux GNU targets and Windows E2E logs. |
+| `release.yml` | Release matrix targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `aarch64-apple-darwin`, `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `x86_64-apple-darwin`, and `aarch64-pc-windows-msvc`. Each target appears once. | Ubuntu `cargo test --workspace --all-features` release test job. | One archive artifact per release target plus `SHA256SUMS.txt`. |
 
 ### 4.5 Tier Definitions
 
-| Tier | Build in CI | Tests in CI | Release Artifact | Support Level |
-|------|------------|------------|-----------------|---------------|
-| **Tier 1** | Yes (every PR) | Full test suite | Yes | Fully supported, bugs are P1 |
-| **Tier 2** | Yes (every PR) | Build + basic smoke test | Yes | Best-effort, bugs are P2 |
-| **Tier 3** | Nightly only | Build only | No | Community-supported |
+| Tier | Current Workflow Expectation | Release Artifact | Support Level |
+| ---- | ---------------------------- | ---------------- | ------------- |
+| **Tier 1** | Target is part of the configured release matrix. PR and nightly coverage are explicit in [4.4 Current Workflow Coverage](#44-current-workflow-coverage), not automatic for every Tier 1 target. | Yes, for desktop/server targets listed in `release.yml`. | Fully supported, bugs are P1. |
+| **Tier 2** | Best-effort target. Built where explicitly listed in nightly or release workflows; not built on every PR unless the workflow matrix is widened. | Yes, for desktop/server targets listed in `release.yml`. | Best-effort, bugs are P2. |
+| **Tier 3** | No current GitHub Actions matrix entry unless one is added explicitly. | No. | Community-supported or roadmap. |
 
 ### 4.6 Build Profiles
 
@@ -264,7 +278,7 @@ opt-level = 1                        # some optimization for fuzzing speed
 ### 5.1 Dependency Rules
 
 | Rule | Description |
-|------|-------------|
+| ---- | ----------- |
 | **Minimize** | Prefer Rust standard library over external crates where feasible. Each dependency is a maintenance and supply-chain risk. |
 | **Audit** | All dependencies must pass `cargo-audit` with no known vulnerabilities. CI blocks on advisory-db hits. |
 | **License** | Only MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, and MPL-2.0 licenses accepted. No LGPL or GPL dependencies (copyleft). Exception: system libraries linked dynamically (FreeType, HarfBuzz, Fontconfig — these are LGPL but dynamically linked). |
@@ -276,7 +290,7 @@ opt-level = 1                        # some optimization for fuzzing speed
 ### 5.2 Key Dependencies
 
 | Crate | Purpose | Version Policy |
-|-------|---------|---------------|
+| ----- | ------- | -------------- |
 | `tokio` | Async runtime | Pin major version |
 | `wasmtime` | WASM plugin runtime | Pin minor version (ABI-sensitive) |
 | `quinn` / `s2n-quic` | QUIC implementation | Pin minor version |
@@ -323,81 +337,65 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 
 ### 6.1 PR Pipeline (`ci.yml`)
 
-Runs on every pull request.
+Runs on pull requests to `main` / `release/**` and on pushes to `main`.
 
-```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Lint &      │     │   Build      │     │   Test        │
-│  Format     │────►│  (all tier 1 │────►│  (unit +      │
-│  (clippy,   │     │   targets)   │     │   integration) │
-│   rustfmt)  │     │              │     │               │
-└─────────────┘     └──────────────┘     └──────┬────────┘
-                                                │
-                    ┌──────────────┐     ┌──────▼────────┐
-                    │  Dependency  │     │  Performance  │
-                    │  Audit       │     │  (ci-quick    │
-                    │  (cargo-deny,│     │   benchmark)  │
-                    │   cargo-audit)│     │               │
-                    └──────────────┘     └───────────────┘
-```
+| Job | Host | Current Commands | Blocks PR |
+| --- | ---- | ---------------- | --------- |
+| `lint` | Ubuntu | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Yes |
+| `build` | Ubuntu | `cargo build --release --target x86_64-unknown-linux-gnu` | Yes |
+| `windows-e2e` | Windows | `pwsh -NoProfile -File scripts/e2e.ps1 -Suite check,apps,shell,session -CargoTargetDir ""` | Yes |
+| `test` | Ubuntu | `cargo test --workspace`; `cargo test --workspace --test '*'` | Yes |
+| `audit` | Ubuntu | `cargo deny check` | Yes |
 
-| Step | Duration Target | Blocks PR |
-|------|----------------|-----------|
-| `cargo fmt --check` | <30s | Yes |
-| `cargo clippy -- -D warnings` | <3min | Yes |
-| `cargo build --release` (tier 1 targets) | <10min | Yes |
-| `cargo test` (unit + integration) | <5min | Yes |
-| `cargo deny check` | <30s | Yes |
-| `cargo audit` | <30s | Yes |
-| `liquide-bench --suite ci-quick` | <5min | Yes (on regression) |
-| `cargo build` (tier 2 targets) | <10min | No (warning only) |
+The current PR pipeline does not build macOS targets, mobile targets, Windows release binaries, or Tier 2 targets.
 
 ### 6.2 Merge Pipeline
 
-Runs after merge to main.
+Pushes to `main` run the same `ci.yml` jobs listed above. There is no separate all-target merge workflow or merge-time benchmark workflow at present.
 
-| Step | Duration Target |
-|------|----------------|
-| Full build (all targets) | <15min |
-| Full test suite (unit + integration + e2e) | <15min |
-| `liquide-bench --suite ci-full` | <30min |
-| Update performance baseline | — |
+| Step | Current Coverage |
+| ---- | ---------------- |
+| Linux build | `x86_64-unknown-linux-gnu` release build. |
+| Tests | Ubuntu workspace tests and integration tests, plus Windows manifest E2E. |
+| Dependency policy | `cargo deny check`. |
 
 ### 6.3 Nightly Pipeline (`nightly.yml`)
 
-| Step | Duration Target |
-|------|----------------|
-| Full build (all targets including tier 3) | <20min |
-| Full test suite | <15min |
-| `liquide-bench --suite ci-nightly` | <2h |
-| Fuzz harness build/check | <10min |
-| Time-budgeted fuzzing (roadmap) | Target-specific |
-| Dependency update check (`cargo outdated`) | <1min |
-| SAST scan (semgrep or similar) | <10min |
-| License compliance check | <1min |
+| Job | Current Coverage |
+| --- | ---------------- |
+| `build-tier1` | Builds `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` on Ubuntu. |
+| `build-tier2` | Builds `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` on Ubuntu. |
+| `test-extended` | Runs `cargo test --workspace --all-features`, integration tests, and doc tests on Ubuntu. |
+| `windows-e2e` | Runs the manifest E2E suite on Windows and uploads logs. |
+| `outdated` | Runs `cargo outdated --workspace --exit-code 0`. |
+| `audit` | Runs `cargo audit` and `cargo deny check`. |
+
+Nightly does not currently build macOS, mobile, Windows release binaries, or Tier 3 targets. Fuzzing, benchmark suites, and SAST are roadmap items unless a dedicated workflow is added.
 
 ### 6.4 Release Pipeline (`release.yml`)
 
 Triggered on git tag `v*`.
 
-1. Full CI pipeline (all tests, all targets).
-2. Performance benchmark (`ci-release` suite, all workloads, all network profiles).
-3. Build release artifacts for all tier 1 + tier 2 targets.
-4. Build distribution packages (deb, rpm, Arch, Flatpak, Snap, Homebrew, Nix, AppImage, DMG, Docker).
-5. Generate changelog from git commits.
-6. Publish to release page with checksums (SHA-256).
+1. Run the Ubuntu release test job: `cargo test --workspace --all-features`.
+2. Build one release artifact for each configured release target: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `aarch64-apple-darwin`, `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `x86_64-apple-darwin`, and `aarch64-pc-windows-msvc`.
+3. Generate SHA-256 checksums for the packaged artifacts.
+4. Generate a changelog from git commits.
+5. Publish the GitHub release with artifacts and checksums.
+
+Distribution packages such as deb, rpm, Arch, Flatpak, Snap, Homebrew, Nix, AppImage, DMG, and Docker images are not currently built by `release.yml`.
 
 ---
 
 ## 7) Test Harness Location
 
 | Test Type | Location | Runner |
-|-----------|----------|--------|
+| --------- | -------- | ------ |
 | Unit tests | Inline in each crate (`#[cfg(test)]` modules) | `cargo test` |
 | Integration tests | `tests/integration/` | `cargo test --test <name>` |
 | End-to-end tests | `tests/e2e/` | `cargo test --test <name>` (requires full server + client setup) |
 | Fuzz tests | `tests/fuzz/<target>/` | `cargo fuzz run <target>` from the target manifest directory; CI time-budgeted runs are roadmap |
-| Benchmarks | `benches/` | `cargo bench` (criterion) |
+| Root Criterion benchmarks | `benches/` | `cargo bench --bench <name>` for registered root targets (`compositor_render`, `layout_cache`, `tile_encode`, `transport_throughput`) |
+| Crate-local Criterion benchmarks | `crates/*/benches/` | `cargo bench -p <crate> --bench <name>`; SIMD blur coverage lives in `liquide-simd`'s `simd_bench` and `liquide-renderer-cpu`'s `renderer_bench` |
 | Performance benchmarks | `crates/liquide-bench/` | `liquide-bench` binary |
 | Conformance tests | `crates/liquide-conformance/` | `liquide-conformance` binary |
 | Spec tests | Per spec file (§ Test Plan sections) | Manual or automated (mapped to integration tests) |
@@ -438,7 +436,7 @@ Installed by `dev-setup.sh`:
 ### 8.3 Branch Strategy
 
 | Branch | Purpose | Protection |
-|--------|---------|-----------|
+| ------ | ------- | ---------- |
 | `main` | Stable development. All PRs merge here. | CI must pass. 1 approval required. |
 | `release/X.Y` | Release branch for version X.Y. Cherry-picks from main. | CI must pass. 2 approvals required. |
 | `feature/*` | Feature development branches. | None (developer's branch). |
@@ -449,13 +447,16 @@ Installed by `dev-setup.sh`:
 ## 9) Test Plan
 
 ### Build System
-- Verify `cargo build` succeeds for all tier 1 targets with a clean checkout.
+
+- Verify `cargo build` succeeds for each target in the current release matrix with a clean checkout.
+- Verify the PR `ci.yml` Linux build/test jobs and Windows E2E job pass.
+- Verify the nightly Linux GNU and Linux musl target builds pass.
 - Verify `cargo test` passes for all crates.
 - Verify `cargo clippy -- -D warnings` produces zero warnings.
 - Verify `cargo fmt --check` produces no diffs.
 - Verify `cargo deny check` passes.
 - Verify `cargo audit` reports no vulnerabilities.
 - Verify release profile produces stripped, optimized binaries.
-- Verify cross-compilation for tier 2 targets succeeds.
+- Verify cross-compilation for Tier 2 release matrix targets succeeds.
 - Verify `liquide-protocol` crate is a dependency of both server and client binaries.
 - Verify all binaries are statically linked (musl targets) or have minimal dynamic deps (gnu targets).

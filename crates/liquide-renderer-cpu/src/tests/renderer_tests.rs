@@ -1,16 +1,263 @@
+use crate::glyph::{GlyphKey, GlyphMetrics};
 use crate::renderer::*;
 use liquide_compositor::damage::DamageClass;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{Color, PixelFormat};
+use liquide_compositor::{FrameMemoryKind, RendererBackendKind, RendererRejectReason};
 
 use liquide_compositor::damage::{DamageSet, DamageTile};
-use liquide_compositor::framebuffer::FrameBuffer;
+use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
 use liquide_compositor::scene::{FlatNode, SceneNodeKind};
+use liquide_font_rasterizer::database::FontDatabase;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn text_node(text: &str, font_family: &str) -> FlatNode {
+    FlatNode {
+        id: 1_000,
+        kind: SceneNodeKind::Text {
+            text: text.to_string(),
+            color: Color::WHITE,
+            scale: 1,
+            font_family: font_family.to_string(),
+            font_size: 16.0,
+            font_weight: 400,
+            font_style_italic: false,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            line_height: 0.0,
+            text_align: 0,
+            text_transform: 0,
+            text_overflow: 0,
+            white_space: 0,
+            text_indent: 0.0,
+            text_decoration: None,
+            text_shadows: Vec::new(),
+        }
+        .into(),
+        absolute_bounds: Rect::new(0.0, 0.0, 128.0, 32.0),
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+fn render_text_once(renderer: &mut SoftwareRenderer, node: FlatNode) {
+    let mut fb = FrameBuffer::new(128, 64, PixelFormat::Bgra8);
+    let mut damage = DamageSet::new(64);
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    renderer.render(&[node], &mut fb, &damage).unwrap();
+}
+
+fn unique_temp_dir(label: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "liquide-renderer-cpu-{label}-{}-{unique}",
+        std::process::id()
+    ))
+}
+
+fn fixture_font_bytes() -> Option<Vec<u8>> {
+    let candidates = [
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\calibri.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ];
+
+    candidates.iter().find_map(|path| {
+        let data = std::fs::read(path).ok()?;
+        let mut db = FontDatabase::new();
+        db.load_bytes(data.clone(), "Probe", 400, false).ok()?;
+        Some(data)
+    })
+}
+
+fn write_fixture_font(label: &str) -> Option<(PathBuf, PathBuf)> {
+    let data = fixture_font_bytes()?;
+    let dir = unique_temp_dir(label);
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("fixture.ttf");
+    std::fs::write(&path, data).ok()?;
+    Some((dir, path))
+}
 
 #[test]
 fn renderer_creates() {
     let r = SoftwareRenderer::new();
     assert!(r.glyph_atlas().is_empty());
+}
+
+#[test]
+fn renderer_options_disable_common_glyph_prewarm() {
+    let mut renderer = SoftwareRenderer::with_options(SoftwareRendererOptions {
+        glyph_prewarm: GlyphPrewarmMode::Disabled,
+    });
+
+    render_text_once(&mut renderer, text_node("A", "Inter"));
+
+    assert_eq!(renderer.prewarmed_font_count(), 0);
+    assert_eq!(renderer.pending_glyph_request_count(), 1);
+}
+
+#[test]
+fn renderer_default_options_prewarm_common_glyphs() {
+    let mut renderer = SoftwareRenderer::new();
+
+    render_text_once(&mut renderer, text_node("A", "Inter"));
+
+    assert_eq!(renderer.prewarmed_font_count(), 1);
+    assert!(
+        renderer.pending_glyph_request_count() > 1,
+        "default prewarm should enqueue common glyphs in addition to visible text"
+    );
+}
+
+#[test]
+fn stale_font_invalidation_returns_faces_and_clears_cpu_glyph_state() {
+    let Some((dir, path)) = write_fixture_font("stale-font") else {
+        return;
+    };
+    let mut db = FontDatabase::new();
+    let face_id = db.load_file(&path, "Fixture", 400, false).unwrap();
+    let mut renderer = SoftwareRenderer::with_font_db(db);
+
+    render_text_once(&mut renderer, text_node("A", "Fixture"));
+    renderer
+        .glyph_atlas_mut()
+        .insert(
+            GlyphKey {
+                font_id: 7,
+                glyph_id: 'A' as u32,
+                size_px: 16,
+                subpixel: false,
+            },
+            &[255],
+            &GlyphMetrics {
+                width: 1,
+                height: 1,
+                bearing_x: 0,
+                bearing_y: 1,
+                advance: 1.0,
+            },
+        )
+        .unwrap();
+    assert!(!renderer.glyph_atlas().is_empty());
+    assert_eq!(renderer.prewarmed_font_count(), 1);
+    assert!(renderer.pending_glyph_request_count() > 0);
+    assert!(renderer.invalidate_stale_fonts().is_empty());
+
+    let mut data = std::fs::read(&path).unwrap();
+    data.extend_from_slice(b"stale");
+    std::fs::write(&path, data).unwrap();
+
+    let stale_faces = renderer.invalidate_stale_fonts();
+
+    assert_eq!(stale_faces, vec![face_id]);
+    assert!(renderer.glyph_atlas().is_empty());
+    assert_eq!(renderer.prewarmed_font_count(), 0);
+    assert_eq!(renderer.pending_glyph_request_count(), 0);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn cpu_renderer_reports_backend_capabilities() {
+    let renderer = SoftwareRenderer::new();
+
+    let info = renderer.backend_info();
+    assert_eq!(info.kind, RendererBackendKind::Software);
+    assert_eq!(info.name, "liquide-renderer-cpu");
+    assert_eq!(info.version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+
+    let capabilities = renderer.capabilities();
+    assert!(capabilities.supports_frame_memory(FrameMemoryKind::Cpu));
+    assert!(capabilities.supports_pixel_format(PixelFormat::Bgra8));
+    assert!(capabilities.supports_pixel_format(PixelFormat::Rgba8));
+    assert!(capabilities.supports_pixel_format(PixelFormat::Rgb8));
+    assert!(capabilities.supports_partial_damage);
+    assert!(capabilities.supports_blur);
+    assert!(capabilities.supports_skeleton_window);
+    assert!(capabilities.supports_async_glyphs);
+}
+
+#[test]
+fn cpu_negotiation_accepts_writable_cpu_framebuffers() {
+    let renderer = SoftwareRenderer::new();
+    let fb = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
+    let damage = DamageSet::new(64);
+
+    let negotiation = renderer.negotiate_render(&[], &fb, &damage);
+
+    assert!(negotiation.is_accepted());
+}
+
+#[test]
+fn cpu_negotiation_rejects_gpu_and_unsupported_formats() {
+    let renderer = SoftwareRenderer::new();
+    let damage = DamageSet::new(64);
+    let gpu_fb = FrameBuffer {
+        memory: FrameMemory::Gpu {
+            handle: 1,
+            dmabuf_fd: -1,
+            width: 16,
+            height: 16,
+        },
+        width: 16,
+        height: 16,
+        stride: 64,
+        format: PixelFormat::Bgra8,
+    };
+
+    let gpu_negotiation = renderer.negotiate_render(&[], &gpu_fb, &damage);
+    assert!(matches!(
+        gpu_negotiation.reject_reason(),
+        Some(RendererRejectReason::UnsupportedFrameMemory {
+            memory: FrameMemoryKind::Gpu
+        })
+    ));
+
+    let unsupported_format = FrameBuffer::new(16, 16, PixelFormat::Rgb565);
+    let format_negotiation = renderer.negotiate_render(&[], &unsupported_format, &damage);
+    assert!(matches!(
+        format_negotiation.reject_reason(),
+        Some(RendererRejectReason::UnsupportedPixelFormat {
+            format: PixelFormat::Rgb565
+        })
+    ));
+}
+
+#[test]
+fn cpu_negotiation_rejects_unwritable_cpu_buffers() {
+    let renderer = SoftwareRenderer::new();
+    let damage = DamageSet::new(64);
+    let fb = FrameBuffer {
+        memory: FrameMemory::Cpu(vec![0; 8]),
+        width: 4,
+        height: 4,
+        stride: 16,
+        format: PixelFormat::Bgra8,
+    };
+
+    let negotiation = renderer.negotiate_render(&[], &fb, &damage);
+
+    assert!(matches!(
+        negotiation.reject_reason(),
+        Some(RendererRejectReason::Other(reason)) if reason.contains("requires at least")
+    ));
 }
 
 #[test]

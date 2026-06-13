@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::scene::SceneNode;
+use liquide_shell_services::{
+    ShellApp, ShellAssociationRegistry, ShellExecuteError, ShellExecutePlan, ShellExecuteRequest,
+    ShellTarget, ShellVerb,
+};
+use liquide_xdg::desktop_entry::DesktopEntry;
 
 use crate::calculator::{self, CalcResult};
 
@@ -658,6 +663,67 @@ impl Launcher {
 
         actions.push(ContextAction::AppInfo);
         actions
+    }
+
+    // -- shell-services resolution ------------------------------------------
+
+    /// Build a canonical [`ShellAssociationRegistry`] populated with the
+    /// launcher's registered applications.
+    ///
+    /// Each [`LauncherApp`] is projected onto a [`ShellApp`] backed by a
+    /// [`DesktopEntry`] carrying its `Exec`/`Terminal` metadata, so the
+    /// canonical `liquide-shell-services` planner — not the launcher's own
+    /// ad-hoc `open_app_window` shortcut — resolves verbs/apps into a
+    /// spawn-free command plan.
+    ///
+    /// Apps without an `exec` command are skipped (shell-services requires a
+    /// command to plan).
+    #[must_use]
+    pub fn build_association_registry(&self) -> ShellAssociationRegistry {
+        let mut registry = ShellAssociationRegistry::new();
+        for app in &self.apps {
+            let Some(exec) = app.exec.clone() else {
+                continue;
+            };
+            let entry = DesktopEntry {
+                name: app.name.clone(),
+                comment: app.description.clone(),
+                exec: Some(exec),
+                icon: app.icon.clone(),
+                terminal: app.terminal,
+                no_display: app.no_display,
+                ..DesktopEntry::default()
+            };
+            registry.register_app(ShellApp::new(app.app_id.clone(), entry));
+        }
+        registry
+    }
+
+    /// Resolve a launch of the application with the given id into a canonical
+    /// [`ShellExecutePlan`] via `liquide-shell-services`.
+    ///
+    /// Drives the ShellExecute-style verb/app resolution path: an explicit
+    /// app override (the launcher already knows the target app) plus a target
+    /// and verb are planned through [`ShellAssociationRegistry::plan_execute`].
+    /// Returns the spawn-free command plan, or a [`ShellExecuteError`] if the
+    /// app is unknown / has no command.
+    ///
+    /// `target` is the document/URI the verb acts on; for a bare application
+    /// launch with no document, pass a placeholder target (the registry still
+    /// resolves the command from the app's `Exec` template).
+    pub fn resolve_launch(
+        &self,
+        app_id: &str,
+        target: ShellTarget,
+        verb: ShellVerb,
+    ) -> Result<ShellExecutePlan, ShellExecuteError> {
+        let registry = self.build_association_registry();
+        let request = ShellExecuteRequest {
+            targets: vec![target],
+            verb,
+            app_id_override: Some(app_id.to_owned()),
+        };
+        registry.plan_execute(request)
     }
 
     // -- view ---------------------------------------------------------------

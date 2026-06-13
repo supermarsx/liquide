@@ -1226,6 +1226,73 @@ fn queue_coalesce_mouse_move_empty() {
 }
 
 #[test]
+fn queue_coalesce_mouse_wheel_accumulates_delta() {
+    let mut q = MessageQueue::new();
+    q.post(
+        WindowMessage::MouseWheel { delta: 1.0 },
+        MessagePriority::Normal,
+    );
+    q.post(
+        WindowMessage::MouseWheel { delta: 2.5 },
+        MessagePriority::High,
+    );
+    q.post(WindowMessage::Close, MessagePriority::Normal);
+
+    let removed = q.coalesce_mouse_wheel();
+
+    assert_eq!(removed, 1);
+    assert_eq!(q.len(), 2);
+    assert_eq!(q.get(), Some(WindowMessage::MouseWheel { delta: 3.5 }));
+    assert_eq!(q.get(), Some(WindowMessage::Close));
+}
+
+#[test]
+fn queue_thin_key_repeats_preserves_key_up() {
+    let mut q = MessageQueue::new();
+    q.post_normal(WindowMessage::KeyDown {
+        keycode: 65,
+        modifiers: Modifiers::NONE,
+    });
+    q.post_normal(WindowMessage::KeyDown {
+        keycode: 65,
+        modifiers: Modifiers::NONE,
+    });
+    q.post_normal(WindowMessage::KeyUp {
+        keycode: 65,
+        modifiers: Modifiers::NONE,
+    });
+    q.post_normal(WindowMessage::KeyDown {
+        keycode: 65,
+        modifiers: Modifiers::NONE,
+    });
+
+    let removed = q.thin_key_repeats(1);
+
+    assert_eq!(removed, 1);
+    assert_eq!(
+        q.get(),
+        Some(WindowMessage::KeyDown {
+            keycode: 65,
+            modifiers: Modifiers::NONE,
+        })
+    );
+    assert_eq!(
+        q.get(),
+        Some(WindowMessage::KeyUp {
+            keycode: 65,
+            modifiers: Modifiers::NONE,
+        })
+    );
+    assert_eq!(
+        q.get(),
+        Some(WindowMessage::KeyDown {
+            keycode: 65,
+            modifiers: Modifiers::NONE,
+        })
+    );
+}
+
+#[test]
 fn queue_clear() {
     let mut q = MessageQueue::new();
     q.post_normal(WindowMessage::Paint);

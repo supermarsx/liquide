@@ -112,20 +112,21 @@ impl WakeBits {
 
     // ── Legacy composite aliases ────────────────────────────────────────
 
-    /// Alias for [`INPUT`](Self::INPUT) (legacy: includes KEY + MOUSE + MOUSEMOVE).
-    pub const QS_INPUT: WakeBits =
-        WakeBits(Self::QS_KEY.0 | Self::QS_MOUSE.0 | Self::QS_MOUSEMOVE.0);
+    /// Alias for [`INPUT`](Self::INPUT).
+    ///
+    /// Must remain a TRUE alias of [`INPUT`](Self::INPUT) so it tracks every
+    /// input category — in particular [`SCROLL`](Self::SCROLL). Wheel input was
+    /// rerouted from `QS_MOUSE` to `SCROLL` (see `wake_bits_for_msg` /
+    /// `post_scroll_message` in `queue.rs`); a stale hand-rolled mask here would
+    /// silently starve NT-style waiters of wheel wake bits (regression
+    /// t49-e1-F16). Defining it as the mask itself keeps the alias honest.
+    pub const QS_INPUT: WakeBits = Self::INPUT;
     /// Alias for [`ALL_INPUT`](Self::ALL_INPUT).
-    pub const QS_ALLINPUT: WakeBits = WakeBits(
-        Self::QS_PAINT.0
-            | Self::QS_TIMER.0
-            | Self::QS_KEY.0
-            | Self::QS_MOUSE.0
-            | Self::QS_MOUSEMOVE.0
-            | Self::QS_SENDMESSAGE.0
-            | Self::QS_POSTMESSAGE.0
-            | Self::QS_HOTKEY.0,
-    );
+    ///
+    /// True alias of [`ALL_INPUT`](Self::ALL_INPUT) — see [`QS_INPUT`](Self::QS_INPUT)
+    /// for why this must not be a hand-maintained bit list (it would drop
+    /// [`SCROLL`](Self::SCROLL) and fail to wake on wheel after the SCROLL reroute).
+    pub const QS_ALLINPUT: WakeBits = Self::ALL_INPUT;
 
     /// Create from a raw bitmask.
     #[must_use]
@@ -177,6 +178,101 @@ impl WakeBits {
     #[must_use]
     pub const fn intersection(self, other: WakeBits) -> WakeBits {
         WakeBits(self.0 & other.0)
+    }
+}
+
+/// Tracks how long each wake category has been pending.
+///
+/// **Staging status (t49-e1-F21 / plan B5a):** this aging tracker backs
+/// [`ThreadQueue::wake_bits_older_than`](crate::ThreadQueue::wake_bits_older_than),
+/// the input-starvation/timeout primitive for a future
+/// `MsgWaitForMultipleObjects`-style waiter. It is exercised by tests but is not
+/// yet driven by the runtime pump.
+///
+/// A timestamp of zero means the bit is not currently pending. Non-zero
+/// timestamps are in microseconds and are supplied by callers so tests and
+/// synthetic queues can use deterministic clocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeDeadlines {
+    since_us: [u64; 16],
+}
+
+impl WakeDeadlines {
+    /// Create an empty deadline tracker.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { since_us: [0; 16] }
+    }
+
+    /// Mark bits as pending from `now_us` if they were not already pending.
+    pub fn mark_pending(&mut self, bits: WakeBits, now_us: u64) {
+        let timestamp = now_us.max(1);
+        for index in 0..self.since_us.len() {
+            let bit = 1u32 << index;
+            if bits.bits() & bit != 0 && self.since_us[index] == 0 {
+                self.since_us[index] = timestamp;
+            }
+        }
+    }
+
+    /// Clear pending timestamps for these bits.
+    pub fn clear(&mut self, bits: WakeBits) {
+        for index in 0..self.since_us.len() {
+            let bit = 1u32 << index;
+            if bits.bits() & bit != 0 {
+                self.since_us[index] = 0;
+            }
+        }
+    }
+
+    /// Drop timestamps for bits that are no longer pending.
+    pub fn retain(&mut self, pending: WakeBits) {
+        for index in 0..self.since_us.len() {
+            let bit = 1u32 << index;
+            if pending.bits() & bit == 0 {
+                self.since_us[index] = 0;
+            }
+        }
+    }
+
+    /// Earliest pending timestamp among the requested bits.
+    #[must_use]
+    pub fn pending_since_us(&self, bits: WakeBits) -> Option<u64> {
+        self.since_us
+            .iter()
+            .enumerate()
+            .filter_map(|(index, since_us)| {
+                let bit = 1u32 << index;
+                if bits.bits() & bit != 0 && *since_us != 0 {
+                    Some(*since_us)
+                } else {
+                    None
+                }
+            })
+            .min()
+    }
+
+    /// Return pending bits whose age is at least `timeout_us`.
+    #[must_use]
+    pub fn bits_older_than(&self, pending: WakeBits, now_us: u64, timeout_us: u64) -> WakeBits {
+        let mut aged = WakeBits::NONE;
+        for index in 0..self.since_us.len() {
+            let bit = 1u32 << index;
+            let since_us = self.since_us[index];
+            if pending.bits() & bit != 0
+                && since_us != 0
+                && now_us.saturating_sub(since_us) >= timeout_us
+            {
+                aged.insert(WakeBits::from_raw(bit));
+            }
+        }
+        aged
+    }
+}
+
+impl Default for WakeDeadlines {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

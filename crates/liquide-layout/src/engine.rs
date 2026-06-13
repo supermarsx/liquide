@@ -494,30 +494,52 @@ impl LayoutEngine {
         offset_x: f32,
         offset_y: f32,
     ) -> LayoutBoxId {
-        // ── Cache-accelerated fast path ──────────────────────────────
+        // ── Cache-accelerated fast path (leaf-only, fail-safe) ────────
         //
         // If dirty tracking is active (at least one node has been marked)
         // and this node — plus all its descendants — are clean, try the
-        // cache.  On hit we reconstruct a leaf box and skip the expensive
+        // cache.  On hit we reconstruct the box and skip the expensive
         // recursive layout entirely.
+        //
+        // SAFETY (t49-e3-F2 fix): `CachedLayoutResult` only records child
+        // *offsets*, not child node identities or their box subtrees, so a
+        // cache hit cannot faithfully rebuild a node that produced children
+        // — reconstructing a childless box here would silently DROP the
+        // entire subtree.  We therefore only honor a cache hit when the
+        // stored result describes a true leaf (`child_offsets.is_empty()`);
+        // any node that laid out children falls through to full layout.
+        // This keeps the fast path sound regardless of how dirty/cache keys
+        // are driven (the wiring itself is still staged — see `dirty.rs`).
         if !self.bypass_cache && self.dirty.dirty_count() > 0 {
             let needs_layout = self.dirty.needs_layout(node_id);
             let has_any_dirty = self.dirty.has_dirty_flags(node_id);
             if !needs_layout && !has_any_dirty {
+                // STAGED-KEY LIMITATION (t49-e3-F3/F4): this key only carries the
+                // available width/height — it drops writing-mode, direction, and
+                // font-size, all of which `LayoutConstraints` *can* carry and the
+                // populate-from-tree path also currently omits. While the cache is
+                // not driven in production this is latent, but a future wirer must
+                // build a full key (writing mode + direction + font-size) on both
+                // store and lookup before enabling this path, or a leaf measured
+                // under one writing mode could be returned under another.
                 let constraints = LayoutConstraints::fixed(container_width, container_height);
                 if let Some(cached) = self.cache.lookup(node_id, &constraints) {
-                    let cached: liquide_layout_cache::LayoutResult = cached.clone();
-                    let box_id = tree.alloc(node_id, crate::tree::BoxType::Block);
-                    if let Some(b) = tree.get_mut(box_id) {
-                        let (w, h) = cached.size;
-                        let (mt, mr, mb, ml) = cached.margins;
-                        b.border_rect = Rect::new(offset_x + ml, offset_y + mt, w, h);
-                        b.margin_rect = Rect::new(offset_x, offset_y, ml + w + mr, mt + h + mb);
-                        b.padding_rect = b.border_rect;
-                        b.content_rect = b.border_rect;
-                        b.baseline = cached.baseline;
+                    if cached.child_offsets.is_empty() {
+                        let cached: liquide_layout_cache::LayoutResult = cached.clone();
+                        let box_id = tree.alloc(node_id, crate::tree::BoxType::Block);
+                        if let Some(b) = tree.get_mut(box_id) {
+                            let (w, h) = cached.size;
+                            let (mt, mr, mb, ml) = cached.margins;
+                            b.border_rect = Rect::new(offset_x + ml, offset_y + mt, w, h);
+                            b.margin_rect = Rect::new(offset_x, offset_y, ml + w + mr, mt + h + mb);
+                            b.padding_rect = b.border_rect;
+                            b.content_rect = b.border_rect;
+                            b.baseline = cached.baseline;
+                        }
+                        return box_id;
                     }
-                    return box_id;
+                    // Non-leaf cache entry: cannot faithfully reconstruct the
+                    // subtree from offsets alone — fall through to full layout.
                 }
             }
         }
@@ -1429,5 +1451,125 @@ mod tests {
             .expect("full relayout must include appended child");
         assert!((inc_third.margin_rect.y - full_third.margin_rect.y).abs() < 0.1);
         assert!((inc_third.margin_rect.height - full_third.margin_rect.height).abs() < 0.1);
+    }
+
+    /// Regression for the layout-cache leaf-safety hazard (t49-e3-F2):
+    /// a cache hit on a node WITH children must reconstruct the children —
+    /// the subtree must NOT vanish.  `relayout_subtree` exercises the
+    /// cache-accelerated fast path in `layout_node_in_context`; with the
+    /// pre-fix code a clean non-leaf cache hit dropped every child.
+    #[test]
+    fn cache_hit_on_node_with_children_preserves_subtree() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let container = doc.create_element("div");
+        doc.append_child(root, container);
+        let first = doc.create_element("item");
+        let second = doc.create_element("item");
+        doc.append_child(container, first);
+        doc.append_child(container, second);
+        // An unrelated node we can dirty so dirty tracking is "active"
+        // (dirty_count > 0) while the container itself stays clean — this is
+        // the exact precondition that makes the cache fast path fire.
+        let sibling = doc.create_element("div");
+        doc.append_child(root, sibling);
+
+        let mut style_engine = StyleEngine::new(
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            16.0,
+        );
+        style_engine.add_stylesheet(
+            r#"
+            div { width: 300px; }
+            item { display: block; height: 20px; margin: 0; padding: 0; }
+            "#,
+        );
+
+        let styles = style_engine.restyle_all(&doc);
+        let mut engine = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+
+        // Full layout populates the cache, including a NON-LEAF entry for the
+        // container (its stored `child_offsets` is non-empty).
+        let baseline = engine.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        assert_eq!(
+            baseline
+                .find_by_node(container)
+                .expect("container laid out")
+                .children
+                .len(),
+            2,
+            "precondition: container has two child boxes in full layout",
+        );
+
+        // Activate dirty tracking via an UNRELATED node; leave the container
+        // clean so the cache fast path is taken for it.
+        engine.mark_dirty(sibling, LayoutDirtyFlags::NEEDS_LAYOUT);
+        assert!(engine.dirty().dirty_count() > 0);
+        assert!(!engine.dirty().needs_layout(container));
+        assert!(!engine.dirty().has_dirty_flags(container));
+
+        let input = LayoutInput::new(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let relaid = engine.relayout_subtree(&input, container, &baseline);
+
+        let relaid_container = relaid
+            .find_by_node(container)
+            .expect("container must remain mapped after relayout");
+        assert_eq!(
+            relaid_container.children.len(),
+            2,
+            "cache hit on a node with children must NOT drop the subtree",
+        );
+        assert!(
+            relaid.find_by_node(first).is_some(),
+            "first child box must survive the cache fast path",
+        );
+        assert!(
+            relaid.find_by_node(second).is_some(),
+            "second child box must survive the cache fast path",
+        );
+    }
+
+    /// Companion: a true leaf cache hit is still honored (fast path not
+    /// over-disabled).  A childless node with a clean cache entry should
+    /// reconstruct without re-running layout, and must stay childless.
+    #[test]
+    fn cache_hit_on_true_leaf_is_still_honored() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let leaf = doc.create_element("div");
+        doc.append_child(root, leaf);
+        let sibling = doc.create_element("div");
+        doc.append_child(root, sibling);
+
+        let mut style_engine = StyleEngine::new(
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            16.0,
+        );
+        style_engine.add_stylesheet("div { width: 120px; height: 40px; }");
+
+        let styles = style_engine.restyle_all(&doc);
+        let mut engine = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let baseline = engine.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        engine.mark_dirty(sibling, LayoutDirtyFlags::NEEDS_LAYOUT);
+
+        let input = LayoutInput::new(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let relaid = engine.relayout_subtree(&input, leaf, &baseline);
+
+        let relaid_leaf = relaid
+            .find_by_node(leaf)
+            .expect("leaf must remain mapped after relayout");
+        assert!(
+            relaid_leaf.children.is_empty(),
+            "a true leaf stays childless",
+        );
+        assert!((relaid_leaf.border_rect.width - 120.0).abs() < 0.1);
+        assert!((relaid_leaf.border_rect.height - 40.0).abs() < 0.1);
     }
 }

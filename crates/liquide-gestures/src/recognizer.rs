@@ -133,7 +133,9 @@ enum RecognizerState {
     Tracking,
     Scrolling,
     Pinching,
-    Swiping { fingers: u32 },
+    Swiping {
+        fingers: u32,
+    },
     /// Reserved for the long-press recognizer transition; not yet entered.
     #[allow(dead_code)]
     LongPressing,

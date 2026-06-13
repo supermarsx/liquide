@@ -8,16 +8,14 @@ mod tests {
     use crate::display::{DisplayOutput, OutputInfo};
     use crate::input::InputDeviceSummary;
     use crate::launcher::{
-        StandaloneGeometryFallbackReason, StandaloneLaunchRuntimeInputs,
-        StandaloneLaunchSummary, StandaloneLauncher,
-        StandalonePresentFeedbackFallbackReason,
+        DevWindowBackend, StandaloneGeometryFallbackReason, StandaloneLaunchRuntimeInputs,
+        StandaloneLaunchSummary, StandaloneLauncher, StandalonePresentFeedbackFallbackReason,
+        StandaloneSurfaceOverride,
     };
     use crate::wayland::WaylandServerState;
     use crate::xwayland_bridge::XWaylandBridgeState;
     use liquide_drm::mode::{DrmMode, ModeFlags};
-    use liquide_drm::{
-        ConnectorId, ConnectorInfo, ConnectorStatus, ConnectorType, SubpixelOrder,
-    };
+    use liquide_drm::{ConnectorId, ConnectorInfo, ConnectorStatus, ConnectorType, SubpixelOrder};
     use liquide_platform::standalone::{
         StandaloneConfig as PlatformStandaloneConfig, StandalonePlatform, StandalonePresentMode,
         StandaloneScriptHandle,
@@ -229,6 +227,7 @@ mod tests {
             primary_output: Some(scripted_output("TEST-1", width, height, refresh_hz)),
             live_present_feedback_capable: true,
             present_feedback_fd: Some(present_feedback_fd),
+            ..StandaloneLaunchRuntimeInputs::default()
         }
     }
 
@@ -382,6 +381,49 @@ mod tests {
     }
 
     #[test]
+    fn dev_mode_selects_host_window_backend_for_target_os() {
+        // Regression for t54: `--dev-mode` must run in a host-OS window and
+        // bypass DRM/KMS + evdev (which fail off a real Linux TTY — e.g.
+        // "no suitable DRM device found" on Windows). The backend selection is
+        // per target OS. This is host-safe: it asserts the selection only and
+        // never opens a window or touches a DRM device.
+        let backend = DevWindowBackend::for_target();
+
+        #[cfg(windows)]
+        assert_eq!(backend, DevWindowBackend::Win32);
+        #[cfg(target_os = "linux")]
+        assert_eq!(backend, DevWindowBackend::X11);
+        #[cfg(target_os = "macos")]
+        assert_eq!(backend, DevWindowBackend::MacOS);
+
+        // The selected dev backend is never the DRM/standalone path.
+        assert!(matches!(
+            backend,
+            DevWindowBackend::Win32
+                | DevWindowBackend::X11
+                | DevWindowBackend::Wayland
+                | DevWindowBackend::MacOS
+        ));
+
+        // A dev_mode config carries the windowed flag end-to-end; the launcher
+        // never requires a DRM device for it (setup_display is skipped in
+        // main.rs, and run() dispatches to the host-window path).
+        let config = StandaloneConfig {
+            dev_mode: true,
+            width: Some(1270),
+            height: Some(768),
+            ..StandaloneConfig::default()
+        };
+        assert!(config.dev_mode);
+        let launcher = StandaloneLauncher::new(config);
+        let runtime_inputs = StandaloneLaunchRuntimeInputs::from_launcher(&launcher);
+        // Geometry override reaches the launch plan that sizes the dev window.
+        let summary = runtime_inputs.launch_summary(0);
+        assert_eq!(summary.width, 1270);
+        assert_eq!(summary.height, 768);
+    }
+
+    #[test]
     fn test_standalone_config_default() {
         let config = StandaloneConfig::default();
         assert!(!config.dev_mode);
@@ -391,6 +433,84 @@ mod tests {
         assert_eq!(config.wayland_socket, "wayland-0");
         assert!(config.enable_xwayland);
         assert!(config.enable_wayland);
+        assert!(config.width.is_none());
+        assert!(config.height.is_none());
+    }
+
+    #[test]
+    fn surface_override_applies_width_height_over_fallback_initial_dimensions() {
+        // With no primary output, the launch plan falls back to 1920x1080.
+        // An explicit width/height override (the `--width/--height` flags) must
+        // win over that fallback, becoming the initial compositor/session
+        // dimensions that size the dev-mode host window. An unset dimension
+        // must preserve the existing fallback exactly.
+        let base = StandaloneLaunchRuntimeInputs::default();
+        let baseline = base.launch_summary(0);
+        assert_eq!(baseline.width, 1920);
+        assert_eq!(baseline.height, 1080);
+
+        let overridden = StandaloneLaunchRuntimeInputs {
+            surface_override: StandaloneSurfaceOverride {
+                width: Some(1270),
+                height: Some(768),
+            },
+            ..StandaloneLaunchRuntimeInputs::default()
+        };
+        let summary = overridden.launch_summary(0);
+        // Override applied: these become DesktopCompositor::new(width, height).
+        assert_eq!(summary.width, 1270);
+        assert_eq!(summary.height, 768);
+        // Everything else stays on the existing fallback path untouched.
+        assert_eq!(summary.refresh_hz, 60);
+        assert_eq!(summary.present_mode, StandalonePresentMode::Immediate);
+        assert_eq!(
+            summary.fallback_reason.geometry,
+            Some(StandaloneGeometryFallbackReason::NoOutputMetadata)
+        );
+
+        // Partial override: only width set; height stays on the fallback.
+        let width_only = StandaloneLaunchRuntimeInputs {
+            surface_override: StandaloneSurfaceOverride {
+                width: Some(1270),
+                height: None,
+            },
+            ..StandaloneLaunchRuntimeInputs::default()
+        };
+        let width_only_summary = width_only.launch_summary(0);
+        assert_eq!(width_only_summary.width, 1270);
+        assert_eq!(width_only_summary.height, 1080);
+
+        // Zero is treated as unset, preserving the fallback dimension.
+        let zeroed = StandaloneLaunchRuntimeInputs {
+            surface_override: StandaloneSurfaceOverride {
+                width: Some(0),
+                height: Some(0),
+            },
+            ..StandaloneLaunchRuntimeInputs::default()
+        };
+        let zeroed_summary = zeroed.launch_summary(0);
+        assert_eq!(zeroed_summary.width, 1920);
+        assert_eq!(zeroed_summary.height, 1080);
+    }
+
+    #[test]
+    fn surface_override_threads_through_standalone_config_into_runtime_inputs() {
+        // The CLI flags land in StandaloneConfig.width/height; the launcher must
+        // carry them into the runtime inputs' surface override so they reach the
+        // initial dimensions.
+        let config = StandaloneConfig {
+            width: Some(1270),
+            height: Some(768),
+            ..StandaloneConfig::default()
+        };
+        let launcher = StandaloneLauncher::new(config);
+        let runtime_inputs = StandaloneLaunchRuntimeInputs::from_launcher(&launcher);
+        assert_eq!(runtime_inputs.surface_override.width, Some(1270));
+        assert_eq!(runtime_inputs.surface_override.height, Some(768));
+
+        let summary = runtime_inputs.launch_summary(0);
+        assert_eq!(summary.width, 1270);
+        assert_eq!(summary.height, 768);
     }
 
     #[test]
@@ -422,7 +542,13 @@ mod tests {
             1,
             "HDMI-A-1",
             ConnectorStatus::Connected,
-            vec![scripted_mode(1920, 1080, 60, ModeFlags::empty(), "fallback")],
+            vec![scripted_mode(
+                1920,
+                1080,
+                60,
+                ModeFlags::empty(),
+                "fallback",
+            )],
         );
         let preferred = scripted_connector(
             2,
@@ -451,7 +577,14 @@ mod tests {
         assert_eq!(display.outputs().len(), 3);
         assert_eq!(display.outputs()[1].mode.name, "preferred");
         assert_eq!(display.outputs()[2].mode.name, "current");
-        assert_eq!(display.outputs().iter().filter(|output| output.primary).count(), 1);
+        assert_eq!(
+            display
+                .outputs()
+                .iter()
+                .filter(|output| output.primary)
+                .count(),
+            1
+        );
 
         let primary = display
             .primary()
@@ -775,9 +908,11 @@ mod tests {
                     4,
                 ));
 
-                wait_until("launcher frame after queued backpressure clears", TEST_TIMEOUT, || {
-                    script.present_count() >= 2 && script.acknowledged_present_count() >= 1
-                });
+                wait_until(
+                    "launcher frame after queued backpressure clears",
+                    TEST_TIMEOUT,
+                    || script.present_count() >= 2 && script.acknowledged_present_count() >= 1,
+                );
 
                 assert_eq!(script.present_count(), 2);
                 assert_eq!(script.acknowledged_present_count(), 1);
@@ -882,6 +1017,7 @@ mod tests {
             primary_output: Some(scripted_output("DP-1", 2560, 1440, 144)),
             live_present_feedback_capable: false,
             present_feedback_fd: Some(42),
+            ..StandaloneLaunchRuntimeInputs::default()
         };
 
         assert!(!runtime_inputs.active_live_present_feedback_capability());
@@ -909,8 +1045,7 @@ mod tests {
             )],
         )]);
 
-        let summary =
-            StandaloneLauncher::build_launch_plan_for_inputs(0, display.primary(), false);
+        let summary = StandaloneLauncher::build_launch_plan_for_inputs(0, display.primary(), false);
 
         assert_eq!(summary.width, 2560);
         assert_eq!(summary.height, 1440);
@@ -934,7 +1069,13 @@ mod tests {
                 1,
                 "HDMI-A-1",
                 ConnectorStatus::Disconnected,
-                vec![scripted_mode(1920, 1080, 60, ModeFlags::PREFERRED, "ignored")],
+                vec![scripted_mode(
+                    1920,
+                    1080,
+                    60,
+                    ModeFlags::PREFERRED,
+                    "ignored",
+                )],
             ),
             scripted_connector(
                 2,
@@ -946,8 +1087,7 @@ mod tests {
 
         assert!(display.outputs().is_empty());
 
-        let summary =
-            StandaloneLauncher::build_launch_plan_for_inputs(0, display.primary(), false);
+        let summary = StandaloneLauncher::build_launch_plan_for_inputs(0, display.primary(), false);
 
         assert_eq!(summary.width, 1920);
         assert_eq!(summary.height, 1080);

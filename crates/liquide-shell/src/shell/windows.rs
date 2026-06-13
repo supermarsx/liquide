@@ -1,6 +1,13 @@
 //! Window management — create, close, resize, move, focus, z-order.
 
 use liquide_compositor::geometry::Rect;
+use liquide_window_class::{ClassRegistry, WindowClass};
+use liquide_window_effects::{EffectFrame, EffectManager, Rect as EffectRect};
+use liquide_window_groups::{AutoGroupPolicy, FocusReason, GroupManager};
+use liquide_window_tree::{
+    Rect as TreeRect, WindowExStyle as TreeExStyle, WindowId as TreeWindowId,
+    WindowStyle as TreeStyle, WindowTree,
+};
 
 use crate::history::WindowEventKind;
 use crate::window::{Window, WindowId, WindowState};
@@ -9,7 +16,247 @@ use crate::{Result, ShellError};
 use super::Shell;
 use super::hooks::ShellHookEvent;
 
+/// Module id used for the shell's window classes in the canonical
+/// `liquide-window-class` registry. The shell registers one class per
+/// distinct application (keyed by class name = app id), plus a shared
+/// `"Window"` class for app-less windows.
+const SHELL_CLASS_MODULE_ID: u64 = 0;
+
+/// Class name used for windows that carry no application id.
+const DEFAULT_WINDOW_CLASS: &str = "Window";
+
 impl Shell {
+    /// Map a window's `app_id` to its canonical window-class name.
+    fn class_name_for(app_id: &str) -> &str {
+        if app_id.is_empty() {
+            DEFAULT_WINDOW_CLASS
+        } else {
+            app_id
+        }
+    }
+
+    /// Register a freshly-created window with the canonical chrome managers:
+    /// the `liquide-window-class` instance/class registry and the
+    /// `liquide-window-groups` grouping manager (auto-group by application).
+    /// The managers are constructed lazily on the first window so the shell
+    /// stays inert until windows actually exist.
+    fn register_window_chrome(&mut self, id: WindowId, app_id: &str) {
+        // --- Window class registry: one class per app (instance counting). ---
+        let registry = self
+            .chrome_window_class
+            .get_or_insert_with(ClassRegistry::new);
+        let class_name = Self::class_name_for(app_id);
+        let atom = match registry.find_by_name(class_name, SHELL_CLASS_MODULE_ID) {
+            Some(class) => class.atom,
+            None => registry
+                .register_class(WindowClass::new(class_name, 0, SHELL_CLASS_MODULE_ID))
+                .expect("unique shell window class registers"),
+        };
+        registry.add_instance(atom);
+
+        // --- Grouping: auto-group by application. ---
+        let groups = self.chrome_window_groups.get_or_insert_with(|| {
+            let mut g = GroupManager::new();
+            g.auto_group_policy = AutoGroupPolicy::ByApplication;
+            g
+        });
+        let app = if app_id.is_empty() {
+            None
+        } else {
+            Some(app_id)
+        };
+        groups.auto_group_window(id.0, app, None);
+    }
+
+    /// Unregister a window from the canonical chrome managers on destroy:
+    /// decrement the class instance count and drop it from all groups/tab
+    /// groups.
+    fn unregister_window_chrome(&mut self, id: WindowId, app_id: &str) {
+        if let Some(registry) = self.chrome_window_class.as_mut() {
+            let class_name = Self::class_name_for(app_id);
+            if let Some(class) = registry.find_by_name(class_name, SHELL_CLASS_MODULE_ID) {
+                let atom = class.atom;
+                registry.remove_instance(atom);
+            }
+        }
+        if let Some(groups) = self.chrome_window_groups.as_mut() {
+            groups.unregister_window(id.0);
+        }
+    }
+
+    /// Convert a shell (`f32`) rect into the integer rect the canonical
+    /// `liquide-window-tree` uses.
+    fn tree_rect(bounds: Rect) -> TreeRect {
+        TreeRect::new(
+            bounds.x.round() as i32,
+            bounds.y.round() as i32,
+            bounds.width.round().max(0.0) as i32,
+            bounds.height.round().max(0.0) as i32,
+        )
+    }
+
+    /// Convert a shell (`f32`) rect into the `liquide-window-effects` rect type.
+    fn effect_rect(bounds: Rect) -> EffectRect {
+        EffectRect::new(bounds.x, bounds.y, bounds.width, bounds.height)
+    }
+
+    /// Register a freshly-created window with the canonical
+    /// [`WindowTree`](liquide_window_tree::WindowTree): inserts a top-level node
+    /// mirroring the flat window's bounds/title, records the resulting tree id
+    /// on the [`Window`] so the two models stay in sync, and drives the window
+    /// "open" effect. The tree is lazily constructed on the first window using
+    /// the current screen size as the desktop root.
+    fn register_window_tree(&mut self, id: WindowId) {
+        let (bounds, title) = match self.windows.get(&id) {
+            Some(w) => (w.bounds, w.title.clone()),
+            None => return,
+        };
+        let screen = self.screen_rect;
+        let tree = self.chrome_window_tree.get_or_insert_with(|| {
+            WindowTree::new(
+                screen.width.round().max(1.0) as i32,
+                screen.height.round().max(1.0) as i32,
+            )
+        });
+        let tree_id = tree.create_window(
+            None,
+            0,
+            TreeStyle::OVERLAPPED_WINDOW,
+            TreeExStyle::empty(),
+            Self::tree_rect(bounds),
+            title,
+        );
+        if let Some(w) = self.windows.get_mut(&id) {
+            w.tree_id = Some(tree_id.0);
+        }
+
+        // Drive the canonical open animation.
+        let effects = self
+            .chrome_window_effects
+            .get_or_insert_with(EffectManager::new);
+        effects.open_window(id.0, Self::effect_rect(bounds));
+    }
+
+    /// Look up a window's tree node id, if it has been registered with the tree.
+    fn tree_id_of(&self, id: WindowId) -> Option<TreeWindowId> {
+        self.windows
+            .get(&id)
+            .and_then(|w| w.tree_id)
+            .map(TreeWindowId)
+    }
+
+    /// Map a tree node id back to the shell [`WindowId`] that owns it.
+    fn shell_id_for_tree(&self, tree_id: TreeWindowId) -> Option<WindowId> {
+        self.windows
+            .iter()
+            .find(|(_, w)| w.tree_id == Some(tree_id.0))
+            .map(|(id, _)| *id)
+    }
+
+    /// Remove a window from the canonical [`WindowTree`] on destroy and drive
+    /// the window "close" effect. Takes the tree node id explicitly because the
+    /// flat window record is already gone from `self.windows` by close time.
+    fn unregister_window_tree_node(
+        &mut self,
+        tree_id: Option<TreeWindowId>,
+        id: WindowId,
+        bounds: Rect,
+    ) {
+        if let (Some(tree_id), Some(tree)) = (tree_id, self.chrome_window_tree.as_mut()) {
+            tree.destroy_window(tree_id);
+        }
+        if let Some(effects) = self.chrome_window_effects.as_mut() {
+            effects.close_window(id.0, Self::effect_rect(bounds));
+        }
+    }
+
+    /// Mirror a window's current bounds into its tree node (keeps the tree's
+    /// hit-test geometry consistent after a move/resize/state change).
+    fn sync_tree_bounds(&mut self, id: WindowId) {
+        let (tree_id, bounds) = match (self.tree_id_of(id), self.windows.get(&id)) {
+            (Some(t), Some(w)) => (t, w.bounds),
+            _ => return,
+        };
+        let rect = Self::tree_rect(bounds);
+        if let Some(tree) = self.chrome_window_tree.as_mut() {
+            if let Some(node) = tree.get_mut(tree_id) {
+                node.bounds = rect;
+                node.client_rect = rect;
+            }
+        }
+    }
+
+    /// Mirror a window's shown/hidden state into its tree node so the
+    /// tree-routed hit-test skips minimized windows.
+    fn sync_tree_visibility(&mut self, id: WindowId, visible: bool) {
+        let tree_id = match self.tree_id_of(id) {
+            Some(t) => t,
+            None => return,
+        };
+        if let Some(tree) = self.chrome_window_tree.as_mut() {
+            if let Some(node) = tree.get_mut(tree_id) {
+                if visible {
+                    node.flags.insert(liquide_window_tree::WindowFlags::VISIBLE);
+                } else {
+                    node.flags.remove(liquide_window_tree::WindowFlags::VISIBLE);
+                }
+            }
+        }
+    }
+
+    /// Drive a canonical "transform" effect for a window moving/resizing
+    /// between two rects (maximize, restore, fullscreen, tile).
+    fn drive_transform_effect(&mut self, id: WindowId, from: Rect, to: Rect) {
+        if from == to {
+            return;
+        }
+        let effects = self
+            .chrome_window_effects
+            .get_or_insert_with(EffectManager::new);
+        effects.transform_window(id.0, Self::effect_rect(from), Self::effect_rect(to));
+    }
+
+    /// Topmost window at a screen point, resolved through the canonical
+    /// [`WindowTree`] hit-test (z-order-aware, child-over-parent, skips
+    /// invisible/transparent nodes). Falls back to a flat top-down scan of the
+    /// visible window list when the tree has not been constructed yet.
+    ///
+    /// Returns the shell [`WindowId`] of the hit window, or `None` on a miss.
+    #[must_use]
+    pub fn window_at_point(&self, x: f32, y: f32) -> Option<WindowId> {
+        if let Some(tree) = self.chrome_window_tree.as_ref() {
+            if let Some(tree_id) = tree.window_at_point((x.round() as i32, y.round() as i32)) {
+                return self.shell_id_for_tree(tree_id);
+            }
+            return None;
+        }
+        // Fallback: flat scan, topmost (highest z) first.
+        let pt = liquide_compositor::geometry::Point::new(x, y);
+        self.visible_windows()
+            .into_iter()
+            .rev()
+            .find(|w| w.bounds.contains(pt))
+            .map(|w| w.id)
+    }
+
+    /// Advance all active window effects by one frame and return the per-window
+    /// frames produced. Finished effects are dropped. No-op (empty) when no
+    /// effect manager has been constructed yet.
+    pub fn tick_window_effects(&mut self) -> Vec<EffectFrame> {
+        match self.chrome_window_effects.as_mut() {
+            Some(effects) => effects.tick(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Whether a window currently has an active canonical effect animating.
+    #[must_use]
+    pub fn window_is_animating(&self, id: WindowId) -> bool {
+        self.chrome_window_effects
+            .as_ref()
+            .is_some_and(|e| e.is_animating(id.0))
+    }
+
     /// Open a new window. Returns its ID.
     pub fn open_window(&mut self, title: impl Into<String>, bounds: Rect) -> WindowId {
         let id = WindowId(self.next_window_id);
@@ -17,6 +264,8 @@ impl Shell {
         let window = Window::new(id, title, bounds);
         self.windows.insert(id, window);
         self.workspaces.active_mut().add_window(id);
+        self.register_window_chrome(id, "");
+        self.register_window_tree(id);
         let ts = self.next_timestamp();
         self.window_history
             .record_at(id, WindowEventKind::Opened, ts);
@@ -43,6 +292,8 @@ impl Shell {
         window.app_id = app_id_str.clone();
         self.windows.insert(id, window);
         self.workspaces.active_mut().add_window(id);
+        self.register_window_chrome(id, &app_id_str);
+        self.register_window_tree(id);
         let ts = self.next_timestamp();
         self.window_history
             .record_at(id, WindowEventKind::Opened, ts);
@@ -64,6 +315,8 @@ impl Shell {
             .ok_or(ShellError::WindowNotFound { id })?;
         self.workspaces.active_mut().remove_window(id);
         self.focus.remove_window(id);
+        self.unregister_window_chrome(id, &window.app_id);
+        self.unregister_window_tree_node(window.tree_id.map(TreeWindowId), id, window.bounds);
         let ts = self.next_timestamp();
         self.window_history
             .record_at(id, WindowEventKind::Closed, ts);
@@ -120,6 +373,7 @@ impl Shell {
             x: x.round() as i32,
             y: y.round() as i32,
         });
+        self.sync_tree_bounds(id);
         self.mark_window_scene_dirty();
         Ok(())
     }
@@ -142,6 +396,7 @@ impl Shell {
             width: width.round() as u32,
             height: height.round() as u32,
         });
+        self.sync_tree_bounds(id);
         self.mark_window_scene_dirty();
         Ok(())
     }
@@ -179,6 +434,7 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowMinimized { window_id: id.0 });
+        self.sync_tree_visibility(id, false);
         self.mark_window_scene_dirty();
         Ok(())
     }
@@ -215,6 +471,8 @@ impl Shell {
         );
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowMaximized { window_id: id.0 });
+        self.drive_transform_effect(id, from_bounds, work);
+        self.sync_tree_bounds(id);
         self.mark_window_scene_dirty();
         Ok(())
     }
@@ -265,6 +523,9 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowRestored { window_id: id.0 });
+        self.sync_tree_visibility(id, true);
+        self.drive_transform_effect(id, from_bounds, to_bounds);
+        self.sync_tree_bounds(id);
         self.mark_window_scene_dirty();
         Ok(())
     }
@@ -308,6 +569,8 @@ impl Shell {
                 ts2,
             );
         }
+        self.drive_transform_effect(id, from_bounds, to_bounds);
+        self.sync_tree_bounds(id);
         self.mark_window_scene_dirty();
         Ok(())
     }
@@ -350,10 +613,59 @@ impl Shell {
         if !app_id.is_empty() {
             self.screen_time.feed_focus(&app_id, id, ts2);
         }
+        // Record the focused-window context (app id + activity time) so the
+        // canonical focus-stealing guard can evaluate later, non-user focus
+        // requests against this baseline.
+        let ctx_app = if app_id.is_empty() {
+            None
+        } else {
+            Some(app_id.clone())
+        };
+        self.focus.note_focus_context(ctx_app, ts2);
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowActivated { window_id: id.0 });
+        // Drive the canonical focus-highlight effect.
+        if let Some(bounds) = self.windows.get(&id).map(|w| w.bounds) {
+            let effects = self
+                .chrome_window_effects
+                .get_or_insert_with(EffectManager::new);
+            effects.focus_window(id.0, Self::effect_rect(bounds));
+        }
         self.mark_window_scene_dirty();
         Ok(())
+    }
+
+    /// Request that a window receive focus subject to the canonical
+    /// focus-stealing-prevention policy (`liquide-window-groups`).
+    ///
+    /// Unlike [`Self::set_focus`] (the unconditional, user-driven activation
+    /// path), this consults the focus guard with the supplied [`FocusReason`].
+    /// If the policy denies the steal, focus is left unchanged and `Ok(false)`
+    /// is returned; on allow, focus moves and `Ok(true)` is returned. The
+    /// focused window's group is also raised to the top of focus history so
+    /// focus follows the canonical group policy.
+    pub fn request_window_focus(&mut self, id: WindowId, reason: FocusReason) -> Result<bool> {
+        if !self.windows.contains_key(&id) {
+            return Err(ShellError::WindowNotFound { id });
+        }
+        let app_id = self
+            .windows
+            .get(&id)
+            .map(|w| w.app_id.clone())
+            .unwrap_or_default();
+        let req_app = if app_id.is_empty() {
+            None
+        } else {
+            Some(app_id.clone())
+        };
+        let ts = self.next_timestamp();
+        let decision = self.focus.evaluate_focus_request(id, req_app, reason, ts);
+        if matches!(decision, liquide_window_groups::FocusDecision::Allow) {
+            self.set_focus(id)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Get the number of windows.
@@ -362,10 +674,24 @@ impl Shell {
         self.windows.len()
     }
 
-    /// Get all visible windows, sorted by z_order (ascending).
+    /// Get all visible windows on the **active workspace**, sorted by z_order
+    /// (ascending).
+    ///
+    /// Fixes t49-e5-F01 (cosmetic workspaces): a window is only rendered /
+    /// hit-tested when it is BOTH flagged `visible` AND a member of the active
+    /// workspace. Workspace membership is the canonical decision (see
+    /// `active_workspace_members`, kept in lockstep with the canonical
+    /// `liquide-workspaces` manager by the switch path in `shell/batch.rs`).
+    /// Before this fix the filter ignored membership, so every workspace
+    /// rendered every window and switching was purely cosmetic.
     #[must_use]
     pub fn visible_windows(&self) -> Vec<&Window> {
-        let mut visible: Vec<&Window> = self.windows.values().filter(|w| w.visible).collect();
+        let active = self.workspaces.active();
+        let mut visible: Vec<&Window> = self
+            .windows
+            .values()
+            .filter(|w| w.visible && active.contains(w.id))
+            .collect();
         visible.sort_by_key(|w| w.z_order);
         visible
     }
@@ -418,6 +744,12 @@ impl Shell {
             ts,
         );
         self.normalize_z_orders();
+        // Mirror the restack into the canonical tree z-order.
+        if let Some(tree_id) = self.tree_id_of(id) {
+            if let Some(tree) = self.chrome_window_tree.as_mut() {
+                tree.bring_to_top(tree_id);
+            }
+        }
         self.mark_window_scene_dirty();
         Ok(())
     }
@@ -432,6 +764,12 @@ impl Shell {
             win.z_order = -1;
         }
         self.normalize_z_orders();
+        // Mirror the restack into the canonical tree z-order.
+        if let Some(tree_id) = self.tree_id_of(id) {
+            if let Some(tree) = self.chrome_window_tree.as_mut() {
+                tree.send_to_bottom(tree_id);
+            }
+        }
         let new_z = self.windows.get(&id).map(|w| w.z_order).unwrap_or(0);
         let ts = self.next_timestamp();
         self.window_history.record_at(

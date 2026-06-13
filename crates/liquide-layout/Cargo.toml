@@ -7,6 +7,8 @@ license.workspace = true
 description = "CSS box model layout engine: block, inline, flex, grid, positioned"
 
 [dependencies]
+bitflags = { workspace = true }
+liquide-common = { path = "../liquide-common" }
 liquide-dom = { path = "../liquide-dom" }
 liquide-font-rasterizer = { path = "../liquide-font-rasterizer" }
 liquide-layout-cache = { path = "../liquide-layout-cache" }

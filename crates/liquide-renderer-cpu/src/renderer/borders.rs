@@ -15,7 +15,8 @@ impl SoftwareRenderer {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
 
-        if let liquide_compositor::scene::SceneNodeKind::Border { sides, radius } = node.kind_ref() {
+        if let liquide_compositor::scene::SceneNodeKind::Border { sides, radius } = node.kind_ref()
+        {
             use liquide_compositor::scene::BorderSideStyle;
 
             let (r_tl, r_tr, r_br, r_bl) = *radius;

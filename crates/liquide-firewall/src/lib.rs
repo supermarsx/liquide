@@ -2,6 +2,14 @@ mod platform;
 
 use std::fmt;
 
+use liquide_authz_runtime::AuthorizationRuntime;
+// The authorization runtime's `authorize(...)` entry point takes a `Subject`
+// (who is asking) and an optional `Resource` (the rule/profile target). These
+// types live in `liquide-authorization`; the firewall threads a `Subject` in
+// from its call-site context. Re-exported so callers configuring the manager
+// can name them without depending on the authorization crate directly.
+pub use liquide_authorization::{Resource, Subject};
+
 // ---------------------------------------------------------------------------
 // Core enums
 // ---------------------------------------------------------------------------
@@ -504,6 +512,25 @@ pub struct FirewallManager {
     /// is exceeded.
     pub connection_log: Vec<ConnectionEvent>,
     log_capacity: usize,
+    /// Optional authorization context. When set, every destructive /
+    /// system-state-changing mutation (`add_rule`, `remove_rule`,
+    /// `enable_rule`, `disable_rule`, `set_profile`) is gated through the
+    /// canonical [`AuthorizationRuntime`] facade and **fails closed**: if the
+    /// decision is anything other than `Granted`, the mutation is refused and
+    /// the firewall state is left untouched.
+    ///
+    /// When `None` (the default), the manager behaves exactly as before — no
+    /// gating — so existing embedders and tests are unaffected. A host wires
+    /// enforcement on by calling [`FirewallManager::with_authorization`].
+    authz: Option<FirewallAuthz>,
+}
+
+/// The authorization context threaded into a [`FirewallManager`]: the canonical
+/// runtime facade plus the [`Subject`] (who is requesting the change) drawn
+/// from the call-site / session context.
+struct FirewallAuthz {
+    runtime: AuthorizationRuntime,
+    subject: Subject,
 }
 
 impl FirewallManager {
@@ -523,7 +550,67 @@ impl FirewallManager {
             active_profile_id: "home".into(),
             connection_log: Vec::new(),
             log_capacity: Self::DEFAULT_LOG_CAPACITY,
+            authz: None,
         }
+    }
+
+    /// Attach an authorization context so privileged firewall mutations are
+    /// gated through the canonical [`AuthorizationRuntime`] facade.
+    ///
+    /// `subject` identifies who is requesting changes (threaded from the
+    /// session / call-site context). Once attached, `add_rule`, `remove_rule`,
+    /// `enable_rule`, `disable_rule`, and `set_profile` authorize first and
+    /// **fail closed** — a non-`Granted` decision refuses the mutation and
+    /// leaves firewall state untouched.
+    #[must_use]
+    pub fn with_authorization(mut self, runtime: AuthorizationRuntime, subject: Subject) -> Self {
+        self.authz = Some(FirewallAuthz { runtime, subject });
+        self
+    }
+
+    /// Whether an authorization context is currently attached.
+    #[must_use]
+    pub fn is_authorization_enabled(&self) -> bool {
+        self.authz.is_some()
+    }
+
+    /// Gate a privileged mutation through the authorization facade.
+    ///
+    /// Returns `Ok(())` when the operation may proceed — either because no
+    /// authorization context is attached (ungated host) or because the facade
+    /// granted the request. Returns `Err(FirewallError::PermissionDenied)`
+    /// (fail-closed) for any non-`Granted` decision, so the caller must abort
+    /// the mutation before touching any state.
+    ///
+    /// `action_id` is the catalog key (e.g. `"firewall.add_rule"`); `resource`
+    /// optionally scopes the audit entry to the rule/profile being changed.
+    fn authorize_mutation(
+        &mut self,
+        action_id: &str,
+        resource: Option<Resource>,
+    ) -> Result<(), FirewallError> {
+        let Some(authz) = self.authz.as_mut() else {
+            return Ok(());
+        };
+        let result = authz
+            .runtime
+            .authorize(action_id, &authz.subject, resource.as_ref());
+        if result.is_granted() {
+            Ok(())
+        } else {
+            Err(FirewallError::PermissionDenied)
+        }
+    }
+
+    /// Build the audit [`Resource`] scoping a rule mutation to its rule id.
+    /// Firewall state is system-owned, so the owner uid is 0.
+    fn rule_resource(id: u32) -> Resource {
+        Resource::new(0, format!("firewall/rule/{id}"))
+    }
+
+    /// Build the audit [`Resource`] scoping a profile mutation to its profile id.
+    fn profile_resource(id: &str) -> Resource {
+        Resource::new(0, format!("firewall/profile/{id}"))
     }
 
     /// Set the maximum number of connection-log entries.
@@ -566,6 +653,7 @@ impl FirewallManager {
 
     /// Switch to a different profile by id.
     pub fn set_profile(&mut self, id: &str) -> Result<(), FirewallError> {
+        self.authorize_mutation("firewall.set_profile", Some(Self::profile_resource(id)))?;
         if !self.profiles.iter().any(|p| p.id == id) {
             return Err(FirewallError::ProfileNotFound);
         }
@@ -601,6 +689,7 @@ impl FirewallManager {
     /// Add a rule to the active profile.  If `rule.id` is 0 it will be
     /// auto-assigned.
     pub fn add_rule(&mut self, mut rule: FirewallRule) -> Result<(), FirewallError> {
+        self.authorize_mutation("firewall.add_rule", Some(Self::rule_resource(rule.id)))?;
         let profile = self.active_profile_mut();
         if rule.id == 0 {
             rule.id = profile.next_rule_id();
@@ -613,6 +702,7 @@ impl FirewallManager {
 
     /// Remove a rule from the active profile by id.
     pub fn remove_rule(&mut self, id: u32) -> Result<(), FirewallError> {
+        self.authorize_mutation("firewall.remove_rule", Some(Self::rule_resource(id)))?;
         let profile = self.active_profile_mut();
         let before = profile.rules.len();
         profile.rules.retain(|r| r.id != id);
@@ -625,6 +715,7 @@ impl FirewallManager {
 
     /// Enable a rule.
     pub fn enable_rule(&mut self, id: u32) -> Result<(), FirewallError> {
+        self.authorize_mutation("firewall.enable_rule", Some(Self::rule_resource(id)))?;
         let profile = self.active_profile_mut();
         let rule = profile
             .rules
@@ -637,6 +728,7 @@ impl FirewallManager {
 
     /// Disable a rule.
     pub fn disable_rule(&mut self, id: u32) -> Result<(), FirewallError> {
+        self.authorize_mutation("firewall.disable_rule", Some(Self::rule_resource(id)))?;
         let profile = self.active_profile_mut();
         let rule = profile
             .rules
@@ -1379,6 +1471,141 @@ mod tests {
         let fw = StubFirewall::new();
         assert!(matches!(fw.is_enabled(), Err(FirewallError::NotSupported)));
         assert!(matches!(fw.list_rules(), Err(FirewallError::NotSupported)));
+    }
+
+    // -- authorization gating (t51-e4) --------------------------------------
+
+    use liquide_authz_runtime::AuthorizationRuntime;
+
+    fn test_subject() -> Subject {
+        Subject::new(1000, 42, "session-fw")
+    }
+
+    /// A manager whose firewall mutations are gated and DENIED: the default
+    /// catalog gates `firewall.*` at `AdminPassword`, which fails closed in the
+    /// test environment (no credential verifier available).
+    fn denying_manager() -> FirewallManager {
+        let rt = AuthorizationRuntime::with_defaults("tester");
+        FirewallManager::new().with_authorization(rt, test_subject())
+    }
+
+    /// A manager whose firewall mutations are gated but GRANTED: toggling the
+    /// catalog entries to ungated makes the facade resolve them to `Granted`
+    /// (ungated → allow) deterministically, without a credential verifier.
+    fn granting_manager() -> FirewallManager {
+        let mut rt = AuthorizationRuntime::with_defaults("tester");
+        for key in [
+            "firewall.add_rule",
+            "firewall.remove_rule",
+            "firewall.enable_rule",
+            "firewall.disable_rule",
+            "firewall.set_profile",
+        ] {
+            assert!(rt.catalog_mut().set_gated(key, false));
+        }
+        FirewallManager::new().with_authorization(rt, test_subject())
+    }
+
+    fn sample_rule() -> FirewallRule {
+        FirewallRule {
+            id: 0,
+            name: "Gated".into(),
+            enabled: true,
+            direction: Direction::Inbound,
+            action: RuleAction::Block,
+            protocol: Protocol::TCP,
+            port: PortSpec::Single(4242),
+            remote_address: AddressSpec::Any,
+            application: None,
+            priority: 1,
+        }
+    }
+
+    #[test]
+    fn ungated_manager_allows_all_mutations() {
+        // No authorization context attached → behaves exactly as before.
+        let mut mgr = FirewallManager::new();
+        assert!(!mgr.is_authorization_enabled());
+        assert!(mgr.add_rule(sample_rule()).is_ok());
+        assert!(mgr.set_profile("public").is_ok());
+    }
+
+    #[test]
+    fn denied_auth_blocks_add_rule_and_leaves_state_untouched() {
+        let mut mgr = denying_manager();
+        assert!(mgr.is_authorization_enabled());
+        let before = mgr.active_profile().rules.len();
+        assert_eq!(
+            mgr.add_rule(sample_rule()),
+            Err(FirewallError::PermissionDenied)
+        );
+        // No rule was added — fail-closed.
+        assert_eq!(mgr.active_profile().rules.len(), before);
+        assert!(!mgr.active_profile().rules.iter().any(|r| r.name == "Gated"));
+    }
+
+    #[test]
+    fn denied_auth_blocks_remove_rule() {
+        let mut mgr = denying_manager();
+        let before = mgr.active_profile().rules.len();
+        // home profile has rule id 1.
+        assert_eq!(mgr.remove_rule(1), Err(FirewallError::PermissionDenied));
+        assert_eq!(mgr.active_profile().rules.len(), before);
+        assert!(mgr.get_rule(1).is_some());
+    }
+
+    #[test]
+    fn denied_auth_blocks_enable_and_disable_rule() {
+        let mut mgr = denying_manager();
+        let enabled_before = mgr.get_rule(1).unwrap().enabled;
+        assert_eq!(mgr.disable_rule(1), Err(FirewallError::PermissionDenied));
+        assert_eq!(mgr.enable_rule(1), Err(FirewallError::PermissionDenied));
+        // Rule's enabled flag is unchanged.
+        assert_eq!(mgr.get_rule(1).unwrap().enabled, enabled_before);
+    }
+
+    #[test]
+    fn denied_auth_blocks_set_profile() {
+        let mut mgr = denying_manager();
+        let active_before = mgr.active_profile().id.clone();
+        assert_eq!(
+            mgr.set_profile("public"),
+            Err(FirewallError::PermissionDenied)
+        );
+        // Active profile unchanged.
+        assert_eq!(mgr.active_profile().id, active_before);
+    }
+
+    #[test]
+    fn granted_auth_proceeds_for_all_gated_ops() {
+        let mut mgr = granting_manager();
+        // add_rule proceeds and assigns an id.
+        assert!(mgr.add_rule(sample_rule()).is_ok());
+        let id = mgr.active_profile().rules.last().unwrap().id;
+        assert!(mgr.get_rule(id).is_some());
+        // enable/disable proceed.
+        assert!(mgr.disable_rule(id).is_ok());
+        assert!(!mgr.get_rule(id).unwrap().enabled);
+        assert!(mgr.enable_rule(id).is_ok());
+        assert!(mgr.get_rule(id).unwrap().enabled);
+        // remove proceeds.
+        assert!(mgr.remove_rule(id).is_ok());
+        assert!(mgr.get_rule(id).is_none());
+        // set_profile proceeds.
+        assert!(mgr.set_profile("public").is_ok());
+        assert_eq!(mgr.active_profile().id, "public");
+    }
+
+    #[test]
+    fn granted_auth_still_surfaces_domain_errors() {
+        // Authorization granted, but the underlying op still validates: a
+        // missing rule yields RuleNotFound, not PermissionDenied.
+        let mut mgr = granting_manager();
+        assert_eq!(mgr.remove_rule(9999), Err(FirewallError::RuleNotFound));
+        assert_eq!(
+            mgr.set_profile("nonexistent"),
+            Err(FirewallError::ProfileNotFound)
+        );
     }
 
     #[test]

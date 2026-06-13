@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use liquide_compositor::geometry::Affine2D;
 use liquide_dom::NodeId;
-use liquide_layout::geometry::{Point, Rect};
+use liquide_layout::geometry::{ClipComplexity, Point, Rect};
 use liquide_layout::tree::{LayoutBoxId, LayoutTree};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
@@ -100,13 +100,24 @@ impl HitTestEngine {
 
     /// Hit test a single point. Returns the topmost matching node.
     pub fn hit_test(&self, point: Point) -> Option<HitTestResult> {
-        self.hit_test_box(self.layout.root, point, (0.0, 0.0), None)
+        self.hit_test_box(
+            self.layout.root,
+            point,
+            (0.0, 0.0),
+            &ClipComplexity::Trivial,
+        )
     }
 
     /// Hit test all overlapping nodes at a point (front to back).
     pub fn hit_test_all(&self, point: Point) -> Vec<HitTestResult> {
         let mut results = Vec::new();
-        self.hit_test_box_all(self.layout.root, point, (0.0, 0.0), None, &mut results);
+        self.hit_test_box_all(
+            self.layout.root,
+            point,
+            (0.0, 0.0),
+            &ClipComplexity::Trivial,
+            &mut results,
+        );
         results
     }
 
@@ -151,7 +162,7 @@ impl HitTestEngine {
 
     /// Core hit-test for a single box, returning the topmost match.
     ///
-    /// `clip_rect` is the active overflow clip in absolute coordinates.
+    /// `clip` is the active overflow clip in absolute coordinates.
     /// When a parent has `overflow` != `visible`, it constrains the hit
     /// region for all descendants.
     fn hit_test_box(
@@ -159,7 +170,7 @@ impl HitTestEngine {
         box_id: LayoutBoxId,
         point: Point,
         paint_offset: (f32, f32),
-        clip_rect: Option<Rect>,
+        clip: &ClipComplexity,
     ) -> Option<HitTestResult> {
         let layout_box = self.layout.get(box_id)?;
         let style = self
@@ -213,52 +224,87 @@ impl HitTestEngine {
             point
         };
 
-        // ── Bounds check ──────────────────────────────────────────────
-        let abs_border = layout_box.border_rect.offset(ox, oy);
-        if !abs_border.contains(local_point) {
-            return None;
-        }
-
-        // ── Shape-aware corner cull (border-radius) ──────────────────
-        // Reject points that fall inside the border rect but outside the
-        // rounded-corner quadrants. Leaves the vast majority of nodes
-        // (radius = 0) untouched.
-        if !style.border_radius.top_left.is_zero()
-            || !style.border_radius.top_right.is_zero()
-            || !style.border_radius.bottom_right.is_zero()
-            || !style.border_radius.bottom_left.is_zero()
-        {
-            if !point_inside_rounded_rect(local_point, &abs_border, &style.border_radius) {
-                return None;
-            }
-        }
-
-        // ── Clip check ────────────────────────────────────────────────
-        // If there's an active clip from a parent, reject if outside it.
-        if let Some(ref cr) = clip_rect {
-            if !cr.contains(local_point) {
-                return None;
-            }
-        }
-
-        // ── Compute child clip rect ───────────────────────────────────
-        // If this box has overflow != visible, it establishes a new clip
-        // region (the padding box) for descendants.
-        let child_clip = if matches!(
+        // Does this box clip its descendants? (overflow != visible on either
+        // axis). Used both for the subtree-cull decision (t49-e4-02) and for
+        // building the child clip below.
+        let clips_children = matches!(
             style.overflow_x,
             Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
         ) || matches!(
             style.overflow_y,
             Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
-        ) {
+        );
+
+        // ── Inherited clip check (t49-e4-03) ──────────────────────────
+        // The inherited `clip` was built in this box's *incoming* coordinate
+        // space (the parent's local space) — the same space as `point`. It
+        // must be tested against `point`, NOT `local_point` (which has been
+        // inverse-transformed into this box's own local space). Testing the
+        // ancestor-space clip against the post-transform `local_point` mixes
+        // coordinate spaces and mis-clips transformed descendants.
+        // The inherited clip gates the whole subtree: if `point` is outside
+        // it, neither this box nor any descendant is visible.
+        if !clip.contains(point) {
+            return None;
+        }
+
+        // ── Bounds check (t49-e4-02) ──────────────────────────────────
+        // Whether the point falls inside this box's own border (and rounded
+        // corners). A miss here means this box itself is not a self-hit, but
+        // descendants painted outside the border box (overflow: visible,
+        // absolutely-positioned beyond bounds, negative margins) may still be
+        // hittable — so we only cull the subtree here when this box CLIPS its
+        // children. Non-clipping boxes still recurse.
+        let abs_border = layout_box.border_rect.offset(ox, oy);
+        let mut self_in_bounds = abs_border.contains(local_point);
+
+        // Shape-aware corner cull (border-radius). Reject self-hits that fall
+        // inside the border rect but outside the rounded-corner quadrants.
+        // Leaves the vast majority of nodes (radius = 0) untouched.
+        if self_in_bounds
+            && (!style.border_radius.top_left.is_zero()
+                || !style.border_radius.top_right.is_zero()
+                || !style.border_radius.bottom_right.is_zero()
+                || !style.border_radius.bottom_left.is_zero())
+            && !point_inside_rounded_rect(local_point, &abs_border, &style.border_radius)
+        {
+            self_in_bounds = false;
+        }
+
+        // Subtree cull: a clipping box confines its descendants to its padding
+        // box (⊆ border box), so a border-box miss means nothing inside is
+        // hittable. A non-clipping box must still recurse.
+        if !self_in_bounds && clips_children {
+            return None;
+        }
+
+        // ── Compute child clip rect ───────────────────────────────────
+        // If this box has overflow != visible, it establishes a new clip
+        // region (the padding box) for descendants.
+        //
+        // Coordinate spaces (t49-e4-03): `abs_padding` is in this box's local
+        // space, while the inherited `clip` is in the incoming (ancestor)
+        // space. When a transform is present those spaces differ, so we cannot
+        // intersect them as axis-aligned rects. The inherited clip has already
+        // been enforced for this subtree via `clip.contains(point)` above, so
+        // when this box is transformed we re-base the child clip to local
+        // space starting from this box's own padding box. Without a transform
+        // the two spaces coincide and we intersect as before.
+        let child_clip = if clips_children {
             let abs_padding = layout_box.padding_rect.offset(ox, oy);
-            // Intersect with existing clip
-            Some(match clip_rect {
-                Some(existing) => intersect_rects(&existing, &abs_padding),
-                None => abs_padding,
-            })
+            if style.transform.is_empty() {
+                clip.intersect_rect(abs_padding)
+            } else {
+                ClipComplexity::rect(abs_padding)
+            }
+        } else if style.transform.is_empty() {
+            clip.clone()
         } else {
-            clip_rect
+            // Transform without its own clip: the inherited clip lives in the
+            // ancestor space and cannot be carried across the transform as an
+            // axis-aligned rect. It was already enforced at this level; child
+            // hit-testing proceeds unclipped in local space.
+            ClipComplexity::Trivial
         };
 
         // ── Child offsets (content origin, minus scroll) ──────────────
@@ -329,50 +375,59 @@ impl HitTestEngine {
         // Hit-test in reverse painting order (highest z-index first):
         // 6. Positive z-index (highest first)
         for &(child_id, _) in positive_z.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            if let Some(result) =
+                self.hit_test_box(child_id, local_point, child_offset, &child_clip)
             {
                 return Some(result);
             }
         }
         // 5. Positioned with z-index auto or 0 (reverse DOM order)
         for &child_id in z_auto_or_zero.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            if let Some(result) =
+                self.hit_test_box(child_id, local_point, child_offset, &child_clip)
             {
                 return Some(result);
             }
         }
         // 4. In-flow inline (reverse DOM order)
         for &child_id in in_flow_inline.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            if let Some(result) =
+                self.hit_test_box(child_id, local_point, child_offset, &child_clip)
             {
                 return Some(result);
             }
         }
         // 3. Floats (reverse DOM order)
         for &child_id in floats.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            if let Some(result) =
+                self.hit_test_box(child_id, local_point, child_offset, &child_clip)
             {
                 return Some(result);
             }
         }
         // 2. In-flow block (reverse DOM order)
         for &child_id in in_flow_block.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            if let Some(result) =
+                self.hit_test_box(child_id, local_point, child_offset, &child_clip)
             {
                 return Some(result);
             }
         }
         // 1. Negative z-index (highest-first, so reverse the sorted list)
         for &(child_id, _) in negative_z.iter().rev() {
-            if let Some(result) = self.hit_test_box(child_id, local_point, child_offset, child_clip)
+            if let Some(result) =
+                self.hit_test_box(child_id, local_point, child_offset, &child_clip)
             {
                 return Some(result);
             }
         }
 
         // ── No child matched — this box is the target ─────────────────
-        // But only if visibility is not hidden and pointer-events allows it
-        if style.visibility == Visibility::Hidden || !this_receives_events {
+        // But only if the point is actually within this box's own bounds
+        // (t49-e4-02: a non-clipping box we recursed into for the sake of its
+        // out-of-bounds children is not itself a self-hit), visibility is not
+        // hidden, and pointer-events allows it.
+        if !self_in_bounds || style.visibility == Visibility::Hidden || !this_receives_events {
             return None;
         }
 
@@ -405,7 +460,7 @@ impl HitTestEngine {
         box_id: LayoutBoxId,
         point: Point,
         paint_offset: (f32, f32),
-        clip_rect: Option<Rect>,
+        clip: &ClipComplexity,
         results: &mut Vec<HitTestResult>,
     ) {
         let layout_box = match self.layout.get(box_id) {
@@ -454,32 +509,49 @@ impl HitTestEngine {
             point
         };
 
-        let abs_border = layout_box.border_rect.offset(ox, oy);
-        if !abs_border.contains(local_point) {
+        // Does this box clip its descendants? (overflow != visible). Mirrors
+        // hit_test_box; drives both the subtree-cull decision (t49-e4-02) and
+        // the child clip (t49-e4-03).
+        let clips_children = matches!(
+            style.overflow_x,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
+        ) || matches!(
+            style.overflow_y,
+            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
+        );
+
+        // Inherited clip check (t49-e4-03): the inherited `clip` is in the
+        // incoming (ancestor) coordinate space — the same space as `point` —
+        // so it must be tested against `point`, not the inverse-transformed
+        // `local_point`. It gates the whole subtree.
+        if !clip.contains(point) {
             return;
         }
 
+        // Bounds check (t49-e4-02): a border-box miss means this box itself is
+        // not a self-hit, but its out-of-bounds descendants may still be hit.
+        // Only cull the subtree when this box clips its children.
+        let abs_border = layout_box.border_rect.offset(ox, oy);
+        let mut self_in_bounds = abs_border.contains(local_point);
+
         // Shape-aware corner cull (border-radius).
-        if !style.border_radius.top_left.is_zero()
-            || !style.border_radius.top_right.is_zero()
-            || !style.border_radius.bottom_right.is_zero()
-            || !style.border_radius.bottom_left.is_zero()
+        if self_in_bounds
+            && (!style.border_radius.top_left.is_zero()
+                || !style.border_radius.top_right.is_zero()
+                || !style.border_radius.bottom_right.is_zero()
+                || !style.border_radius.bottom_left.is_zero())
+            && !point_inside_rounded_rect(local_point, &abs_border, &style.border_radius)
         {
-            if !point_inside_rounded_rect(local_point, &abs_border, &style.border_radius) {
-                return;
-            }
+            self_in_bounds = false;
         }
 
-        // Clip check
-        if let Some(ref cr) = clip_rect {
-            if !cr.contains(local_point) {
-                return;
-            }
+        if !self_in_bounds && clips_children {
+            return;
         }
 
-        // Add this box (unless visibility:hidden or pointer-events:none)
-        if style.visibility != Visibility::Hidden && this_receives_events {
-            let abs_border = layout_box.border_rect.offset(ox, oy);
+        // Add this box (only if the point is within its own bounds, and unless
+        // visibility:hidden or pointer-events:none).
+        if self_in_bounds && style.visibility != Visibility::Hidden && this_receives_events {
             let abs_content = layout_box.content_rect.offset(ox, oy);
             let point_in_node =
                 Point::new(local_point.x - abs_content.x, local_point.y - abs_content.y);
@@ -491,21 +563,19 @@ impl HitTestEngine {
             });
         }
 
-        // Child clip
-        let child_clip = if matches!(
-            style.overflow_x,
-            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
-        ) || matches!(
-            style.overflow_y,
-            Overflow::Hidden | Overflow::Scroll | Overflow::Auto | Overflow::Clip
-        ) {
+        // Child clip (t49-e4-03): mirror hit_test_box — re-base to local space
+        // across a transform rather than intersecting across coordinate spaces.
+        let child_clip = if clips_children {
             let abs_padding = layout_box.padding_rect.offset(ox, oy);
-            Some(match clip_rect {
-                Some(existing) => intersect_rects(&existing, &abs_padding),
-                None => abs_padding,
-            })
+            if style.transform.is_empty() {
+                clip.intersect_rect(abs_padding)
+            } else {
+                ClipComplexity::rect(abs_padding)
+            }
+        } else if style.transform.is_empty() {
+            clip.clone()
         } else {
-            clip_rect
+            ClipComplexity::Trivial
         };
 
         let (scroll_x, scroll_y) = layout_box.scroll_offset;
@@ -515,21 +585,12 @@ impl HitTestEngine {
         );
         let children = layout_box.children.clone();
         for &child_id in children.iter().rev() {
-            self.hit_test_box_all(child_id, local_point, child_offset, child_clip, results);
+            self.hit_test_box_all(child_id, local_point, child_offset, &child_clip, results);
         }
     }
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────
-
-/// Intersect two rectangles, returning the overlap region.
-fn intersect_rects(a: &Rect, b: &Rect) -> Rect {
-    let x = a.x.max(b.x);
-    let y = a.y.max(b.y);
-    let right = a.right().min(b.right());
-    let bottom = a.bottom().min(b.bottom());
-    Rect::new(x, y, (right - x).max(0.0), (bottom - y).max(0.0))
-}
 
 /// Resolve a transform-origin dimension to pixels.
 ///

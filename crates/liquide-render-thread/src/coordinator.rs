@@ -34,7 +34,9 @@ fn union_damage_rect(a: DamageRect, b: DamageRect) -> DamageRect {
     let x0 = a.x.min(b.x);
     let y0 = a.y.min(b.y);
     let x1 = a.x.saturating_add(a.width).max(b.x.saturating_add(b.width));
-    let y1 = a.y.saturating_add(a.height).max(b.y.saturating_add(b.height));
+    let y1 =
+        a.y.saturating_add(a.height)
+            .max(b.y.saturating_add(b.height));
     DamageRect {
         x: x0,
         y: y0,

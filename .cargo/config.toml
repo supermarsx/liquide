@@ -14,8 +14,19 @@ inherits = "dev"
 opt-level = 1
 
 # Target-specific linker settings
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native"]
-
+#
+# NOTE: `target-cpu=native` is intentionally NOT set here. Distribution
+# artifacts must target a baseline CPU so they don't SIGILL on older machines,
+# and "native" is meaningless when cross-compiling aarch64 on an x86_64 host.
+# Developers who want it locally can export e.g.
+#   CARGO_BUILD_RUSTFLAGS="-C target-cpu=native"
+# in their own environment.
+#
+# The aarch64 cross linkers below match the `gcc-aarch64-linux-gnu` package
+# the CI workflows install (its linker binary is `aarch64-linux-gnu-gcc`).
+# Both the gnu and musl aarch64 targets cross-link through that same gcc.
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native"]
+linker = "aarch64-linux-gnu-gcc"
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-gnu-gcc"

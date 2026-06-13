@@ -51,6 +51,24 @@ impl MeasureCache {
 }
 
 /// Cache key for text measurement results.
+///
+/// STAGED MIGRATION NOTE (t49-e3-F17 / B2a): this thread-local key is the
+/// *production* measurement cache, and it is deliberately coarse. It keys only
+/// on a text hash, half-px-quantized font size, weight, the first font family
+/// name, and *whether* a `max_width` exists — it ignores `text_props`
+/// (letter/word spacing, white-space/wrap mode, writing direction), the actual
+/// `max_width` value, and the full font family stack. Two runs that differ only
+/// in those dimensions therefore collide and return the same width.
+///
+/// The well-keyed replacement is `liquide_layout_cache::TextMeasureCache`
+/// (`TextMeasureKey` captures all of the above). It is **not yet wired into
+/// production intrinsic measurement**: wiring it requires threading a cache
+/// instance through the `min_content_width` / `max_content_width` call chain
+/// (a cross-file signature change reaching `block.rs`/`flex.rs`/… outside this
+/// module) and proving measure parity. Until that lands behind the
+/// `pipeline.text_measure_cache_v2` flag, this coarse cache remains the source
+/// of truth. Do NOT silently swap keys here without parity evidence — a key
+/// change is a layout-shaping change.
 #[derive(Hash, Eq, PartialEq)]
 struct MeasureCacheKey {
     /// Hash of the text content (avoids storing large strings).

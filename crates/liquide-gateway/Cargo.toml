@@ -30,6 +30,15 @@ rustls = { workspace = true, features = ["ring"] }
 tokio-rustls.workspace = true
 ciborium.workspace = true
 rustls-pemfile.workspace = true
+# CSPRNG (SystemRandom) and SHA-256 digest for session tokens. Already present
+# transitively (pinned in Cargo.lock via rustls/ring); declared directly here so
+# it is linkable. No new crate enters the graph.
+ring = "0.17"
+# Constant-time equality for the session-token hash comparison. `subtle` gives a
+# maintained, side-channel-guaranteed `ConstantTimeEq` (ring's
+# `constant_time::verify_slices_are_equal` is deprecated/"not for external use").
+# Already in Cargo.lock transitively; no new crate enters the graph.
+subtle = "2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

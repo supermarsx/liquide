@@ -1,13 +1,14 @@
 //! Standalone compositor launcher — coordinates all subsystems.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::config::StandaloneConfig;
 use crate::display::{DisplayOutput, OutputInfo};
-use liquide_drm::{enumerate_connectors, DrmDevice};
+use liquide_drm::{DrmDevice, enumerate_connectors};
 use liquide_libinput::EvdevEnumerator;
 use liquide_logind::{Privileges, VirtualTerminal, VtMode};
+use liquide_platform::PlatformBackend;
 use liquide_platform::standalone::{
     StandaloneConfig as StandalonePlatformConfig, StandalonePlatform, StandalonePresentMode,
     StandaloneScriptHandle,
@@ -122,11 +123,38 @@ impl StandalonePresentCapabilities {
     }
 }
 
+/// Explicit width/height override for the initial compositor surface.
+///
+/// When set, these dimensions replace the DRM-derived (or 1920x1080 fallback)
+/// surface size. Their primary purpose is to size the resizable dev-mode host
+/// window, but they also override the fullscreen surface when supplied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct StandaloneSurfaceOverride {
+    pub(crate) width: Option<u32>,
+    pub(crate) height: Option<u32>,
+}
+
+impl StandaloneSurfaceOverride {
+    /// Apply this override to a freshly-built launch summary in place.
+    ///
+    /// Each dimension is overridden independently; an unset (or zero) value
+    /// preserves the existing DRM-derived / fallback dimension exactly.
+    fn apply(self, summary: &mut StandaloneLaunchSummary) {
+        if let Some(width) = self.width.filter(|width| *width > 0) {
+            summary.width = width;
+        }
+        if let Some(height) = self.height.filter(|height| *height > 0) {
+            summary.height = height;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct StandaloneLaunchRuntimeInputs {
     pub(crate) primary_output: Option<OutputInfo>,
     pub(crate) live_present_feedback_capable: bool,
     pub(crate) present_feedback_fd: Option<i32>,
+    pub(crate) surface_override: StandaloneSurfaceOverride,
 }
 
 impl StandaloneLaunchRuntimeInputs {
@@ -135,6 +163,10 @@ impl StandaloneLaunchRuntimeInputs {
             primary_output: launcher.display_output.primary().cloned(),
             live_present_feedback_capable: launcher.live_present_feedback_capable(),
             present_feedback_fd: launcher.present_feedback_fd(),
+            surface_override: StandaloneSurfaceOverride {
+                width: launcher.config.width,
+                height: launcher.config.height,
+            },
         }
     }
 
@@ -143,11 +175,19 @@ impl StandaloneLaunchRuntimeInputs {
     }
 
     pub(crate) fn launch_summary(&self, requested_fps_cap: u32) -> StandaloneLaunchSummary {
-        StandaloneLauncher::build_launch_plan_for_inputs(
+        let mut summary = StandaloneLauncher::build_launch_plan_for_inputs(
             requested_fps_cap,
             self.primary_output.as_ref(),
             self.active_live_present_feedback_capability(),
-        )
+        );
+        // Apply the explicit width/height override (e.g. `--width/--height`)
+        // last, so it wins over the DRM-derived / 1920x1080 fallback while
+        // leaving every other field — refresh, present mode, fallback reason —
+        // untouched. This overridden size feeds both the platform backend
+        // config and `DesktopCompositor::new`, which becomes the dev-mode host
+        // window size in `liquide-session`'s `event_loop.rs`.
+        self.surface_override.apply(&mut summary);
+        summary
     }
 
     fn drm_event_fd_for_summary(&self, summary: &StandaloneLaunchSummary) -> Option<i32> {
@@ -176,6 +216,95 @@ impl StandaloneLaunchRuntimeInputs {
             submitter: None,
         };
         (summary, config)
+    }
+}
+
+/// Identifier for the host-window platform backend selected in dev/windowed
+/// mode, by target OS. Used both to construct the backend and to assert the
+/// selection in host-safe regression tests without opening a window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Each variant is only constructed on its own target OS.
+pub(crate) enum DevWindowBackend {
+    /// Win32 / GDI host window (Windows).
+    Win32,
+    /// X11 host window (Linux). Chosen as the nested/dev backend because it is
+    /// the self-contained windowed backend the codebase treats as the default
+    /// host-window path; Wayland is used when no X server is reachable.
+    X11,
+    /// Wayland host window (Linux fallback when `$DISPLAY` is unavailable).
+    Wayland,
+    /// Cocoa host window (macOS).
+    MacOS,
+}
+
+impl DevWindowBackend {
+    /// The host-window backend this target OS uses for dev/windowed mode.
+    ///
+    /// This is the selection made when `dev_mode` is active: it bypasses
+    /// DRM/KMS and evdev entirely because the host-window backend already
+    /// provides window + input + present.
+    pub(crate) const fn for_target() -> Self {
+        #[cfg(windows)]
+        {
+            Self::Win32
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Self::X11
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Self::MacOS
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            compile_error!("no host-window backend available for this target OS")
+        }
+    }
+}
+
+/// Construct the host-window platform backend for dev/windowed mode.
+///
+/// In dev mode the DRM display setup (`setup_display`) and evdev input setup
+/// (`setup_input`) are skipped entirely — those belong to the production DRM
+/// path. The host-window backend created here supplies window creation, input,
+/// and frame presentation through the host OS windowing system, so the
+/// `DesktopCompositor::run` event loop drives it the same way it drives the
+/// standalone backend. The window itself is created lazily by the event loop
+/// (`platform.window_host().create_window(...)`) at the requested geometry.
+fn create_dev_window_backend() -> anyhow::Result<Box<dyn PlatformBackend>> {
+    #[cfg(windows)]
+    {
+        let platform = liquide_platform::Win32Platform::new()
+            .map_err(|error| anyhow::anyhow!("failed to create Win32 host backend: {error}"))?;
+        Ok(Box::new(platform))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Prefer X11 (the self-contained nested/dev host-window backend); fall
+        // back to Wayland when no X server is reachable.
+        match liquide_platform::X11Platform::new() {
+            Ok(platform) => Ok(Box::new(platform)),
+            Err(x11_error) => {
+                warn!(%x11_error, "X11 host backend unavailable; falling back to Wayland");
+                let platform = liquide_platform::WaylandPlatform::new().map_err(|wl_error| {
+                    anyhow::anyhow!(
+                        "failed to create host-window backend (X11: {x11_error}; Wayland: {wl_error})"
+                    )
+                })?;
+                Ok(Box::new(platform))
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let platform = liquide_platform::MacOSPlatform::new()
+            .map_err(|error| anyhow::anyhow!("failed to create macOS host backend: {error}"))?;
+        Ok(Box::new(platform))
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        anyhow::bail!("no host-window backend available for this target OS")
     }
 }
 
@@ -462,6 +591,15 @@ impl StandaloneLauncher {
         launch_plan.log_surface_selection();
         launch_plan.log_present_strategy();
 
+        // Dev/windowed mode: bypass DRM/KMS and evdev entirely and run the
+        // compositor inside a host-OS window (Win32 / X11 / Wayland / Cocoa).
+        // `setup_display`/`setup_input` are skipped for this path (see
+        // `main.rs`), so no DRM device or evdev enumeration is required —
+        // exactly what makes `--dev-mode` work on Windows.
+        if self.config.dev_mode {
+            return self.run_dev_windowed(launch_plan);
+        }
+
         let mut platform = StandalonePlatform::new(platform_config).map_err(|error| {
             self.running.store(false, Ordering::Release);
             anyhow::anyhow!("failed to create standalone platform backend: {error}")
@@ -491,6 +629,46 @@ impl StandaloneLauncher {
         info!(
             frames = desktop.frame_count(),
             "standalone desktop compositor exited"
+        );
+        Ok(())
+    }
+
+    /// Run the compositor in a host-OS window (dev/windowed mode).
+    ///
+    /// Selects the host-window `PlatformBackend` for the target OS, then drives
+    /// the standard `DesktopCompositor::run` loop. The geometry in `launch_plan`
+    /// (carrying any `--width/--height` override) reaches the dev-mode window
+    /// because it becomes `DesktopCompositor::new(width, height)` → the session
+    /// event loop's resizable-window params.
+    fn run_dev_windowed(&mut self, launch_plan: StandaloneLaunchSummary) -> anyhow::Result<()> {
+        info!(
+            backend = ?DevWindowBackend::for_target(),
+            width = launch_plan.width,
+            height = launch_plan.height,
+            "dev mode: running compositor in host-OS window (DRM/evdev bypassed)"
+        );
+
+        let mut platform = create_dev_window_backend().inspect_err(|_| {
+            self.running.store(false, Ordering::Release);
+        })?;
+
+        let mut desktop = DesktopCompositor::new(launch_plan.width, launch_plan.height);
+        desktop.set_dev_mode(true);
+        desktop.set_fps_cap(launch_plan.effective_fps_cap);
+
+        info!(
+            width = launch_plan.width,
+            height = launch_plan.height,
+            fps_cap = launch_plan.effective_fps_cap,
+            "starting standalone desktop handoff (windowed)"
+        );
+
+        desktop.run(platform.as_mut());
+
+        self.running.store(false, Ordering::Release);
+        info!(
+            frames = desktop.frame_count(),
+            "standalone windowed compositor exited"
         );
         Ok(())
     }

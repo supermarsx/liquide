@@ -637,3 +637,82 @@ fn display_launcher_hidden() {
     let s = format!("{launcher}");
     assert!(s.contains("hidden"));
 }
+
+// ========== Shell-services verb/app resolution (t51-e10) ==========
+
+use liquide_shell_services::{ShellExecuteError, ShellTarget, ShellVerb};
+use std::path::PathBuf;
+
+/// A launcher launch must resolve through the canonical
+/// `liquide-shell-services` planner: the registry built from launcher apps
+/// produces a spawn-free command plan for the requested app/verb.
+#[test]
+fn resolve_launch_drives_shell_services_plan() {
+    let mut launcher = default_launcher();
+    launcher.add_app(make_app("term", "Terminal"));
+
+    let plan = launcher
+        .resolve_launch(
+            "term",
+            ShellTarget::File(PathBuf::from("/tmp/doc.txt")),
+            ShellVerb::Open,
+        )
+        .expect("registered app with exec should resolve");
+
+    // The plan reflects the canonical shell-services resolution, not the
+    // launcher's ad-hoc open_app_window shortcut.
+    assert_eq!(plan.app_id, "term");
+    assert_eq!(plan.app_name, "Terminal");
+    assert_eq!(plan.verb, ShellVerb::Open);
+    // make_app's exec is "/usr/bin/term" (no field codes) → single argv token.
+    assert_eq!(plan.command, vec!["/usr/bin/term".to_string()]);
+}
+
+/// The association registry built from launcher apps registers exactly the
+/// apps that carry an `exec` command (shell-services requires a command).
+#[test]
+fn build_association_registry_registers_exec_apps() {
+    let mut launcher = default_launcher();
+    launcher.add_app(make_app("term", "Terminal"));
+    // An app with no exec must be skipped (cannot be planned).
+    let mut no_exec = make_app("noexec", "No Exec");
+    no_exec.exec = None;
+    launcher.add_app(no_exec);
+
+    let registry = launcher.build_association_registry();
+
+    // The exec app resolves.
+    let plan = registry
+        .plan_execute(liquide_shell_services::ShellExecuteRequest {
+            targets: vec![ShellTarget::Uri("https://example.com".into())],
+            verb: ShellVerb::Open,
+            app_id_override: Some("term".into()),
+        })
+        .expect("term should be registered");
+    assert_eq!(plan.app_id, "term");
+
+    // The no-exec app was skipped → unknown application.
+    let err = registry
+        .plan_execute(liquide_shell_services::ShellExecuteRequest {
+            targets: vec![ShellTarget::Uri("https://example.com".into())],
+            verb: ShellVerb::Open,
+            app_id_override: Some("noexec".into()),
+        })
+        .unwrap_err();
+    assert!(matches!(err, ShellExecuteError::UnknownApplication { .. }));
+}
+
+/// Resolving an app the launcher does not know surfaces the canonical
+/// shell-services error, proving resolution flows through the real planner.
+#[test]
+fn resolve_launch_unknown_app_errors_via_shell_services() {
+    let launcher = default_launcher();
+    let err = launcher
+        .resolve_launch(
+            "ghost",
+            ShellTarget::Uri("https://example.com".into()),
+            ShellVerb::Open,
+        )
+        .unwrap_err();
+    assert!(matches!(err, ShellExecuteError::UnknownApplication { .. }));
+}

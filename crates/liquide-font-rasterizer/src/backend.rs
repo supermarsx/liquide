@@ -5,14 +5,14 @@
 //! `ShaperBackend` trait from `liquide-text-engine`, allowing the text
 //! engine's paragraph layout to use real OpenType shaping.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use liquide_text_engine::bidi::Direction;
 use liquide_text_engine::font_fallback::FontId;
 use liquide_text_engine::shaping::{ShapedGlyph, ShaperBackend, ShaperConfig, ShapingFeature};
 
-use crate::database::FontDatabase;
+use crate::database::{FontDatabase, FontFaceId};
 use crate::glyph_cache::GlyphCache;
 
 // `FontId` ↔ `FontFaceId` conversions live as `From` impls in `lib.rs`,
@@ -133,6 +133,28 @@ impl LruShapeCache {
         self.push_front(k);
     }
 
+    /// Drop every cached shaping result whose key references one of `faces`.
+    ///
+    /// The `FontId` lives at tuple position 1 of [`ShapeCacheKey`]. Returns the
+    /// number of entries removed. Used on font hot-reload so a reloaded face
+    /// re-shapes from its fresh bytes instead of serving stale glyph runs.
+    fn invalidate_faces(&mut self, faces: &HashSet<FontId>) -> usize {
+        if faces.is_empty() || self.map.is_empty() {
+            return 0;
+        }
+        let stale: Vec<ShapeCacheKey> = self
+            .map
+            .keys()
+            .filter(|key| faces.contains(&key.1))
+            .copied()
+            .collect();
+        for key in &stale {
+            self.unlink(key);
+            self.map.remove(key);
+        }
+        stale.len()
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.map.len()
@@ -143,7 +165,13 @@ impl LruShapeCache {
 /// `TextShaper`.
 pub struct RustybuzzShaperBackend {
     db: Arc<FontDatabase>,
-    _cache: Arc<GlyphCache>,
+    /// Shared rasterized-glyph cache.
+    ///
+    /// Held so the backend can invalidate per-face glyph bitmaps in lockstep
+    /// with its own shape cache on font hot-reload (see
+    /// [`RustybuzzShaperBackend::invalidate_faces`]). Previously unused (the
+    /// `_cache` placeholder of t49-e3-F42).
+    glyph_cache: Arc<GlyphCache>,
     /// LRU shaping result cache.
     ///
     /// Key (see [`ShapeCacheKey`]) includes text hash, canonical `FontId`,
@@ -160,9 +188,33 @@ impl RustybuzzShaperBackend {
     pub fn new(db: Arc<FontDatabase>, cache: Arc<GlyphCache>) -> Self {
         Self {
             db,
-            _cache: cache,
+            glyph_cache: cache,
             shape_cache: Mutex::new(LruShapeCache::new(SHAPE_CACHE_CAPACITY)),
         }
+    }
+
+    /// Invalidate every cached shaping result *and* rasterized glyph bitmap for
+    /// the given font faces.
+    ///
+    /// Call this after a face's bytes are reloaded so neither the shape cache
+    /// nor the glyph cache serves stale output. The two caches are flushed
+    /// together because a reloaded face changes both glyph runs (shaping) and
+    /// glyph pixels (rasterization).
+    pub fn invalidate_faces<I>(&self, faces: I)
+    where
+        I: IntoIterator<Item = FontFaceId>,
+    {
+        let face_set: HashSet<FontFaceId> = faces.into_iter().collect();
+        if face_set.is_empty() {
+            return;
+        }
+
+        // Shape cache is keyed by canonical FontId; glyph cache by FontFaceId.
+        let font_ids: HashSet<FontId> = face_set.iter().map(|id| (*id).into()).collect();
+        if let Ok(mut cache) = self.shape_cache.lock() {
+            cache.invalidate_faces(&font_ids);
+        }
+        self.glyph_cache.invalidate_faces(face_set);
     }
 
     /// Compute an order-independent hash of the enabled shaping features.
@@ -457,6 +509,40 @@ mod tests {
         assert!(cache.get(&key_for_spacing(0.0)).is_none());
         assert!(cache.get(&key_for_spacing(1.0)).is_some());
         assert!(cache.get(&key_for_spacing(2.0)).is_some());
+    }
+
+    #[test]
+    fn invalidate_faces_drops_only_matching_face_entries() {
+        let mut cache = LruShapeCache::new(8);
+        // Three entries: two on FontId(1), one on FontId(2).
+        let key = |text_hash: u64, font: FontId| (text_hash, font, 0u32, 0u8, 0u32, 0u32, 0u64);
+        cache.insert(key(1, FontId(1)), vec![glyph_with_advance(1.0)]);
+        cache.insert(key(2, FontId(1)), vec![glyph_with_advance(2.0)]);
+        cache.insert(key(3, FontId(2)), vec![glyph_with_advance(3.0)]);
+        assert_eq!(cache.len(), 3);
+
+        let mut faces = HashSet::new();
+        faces.insert(FontId(1));
+        let removed = cache.invalidate_faces(&faces);
+
+        assert_eq!(removed, 2, "both FontId(1) entries must be dropped");
+        assert_eq!(cache.len(), 1);
+        assert!(cache.get(&key(1, FontId(1))).is_none());
+        assert!(cache.get(&key(2, FontId(1))).is_none());
+        assert!(
+            cache.get(&key(3, FontId(2))).is_some(),
+            "untouched face must survive invalidation"
+        );
+    }
+
+    #[test]
+    fn invalidate_faces_empty_set_is_noop() {
+        let mut cache = LruShapeCache::new(4);
+        let key = (1u64, FontId(7), 0u32, 0u8, 0u32, 0u32, 0u64);
+        cache.insert(key, vec![glyph_with_advance(1.0)]);
+        let removed = cache.invalidate_faces(&HashSet::new());
+        assert_eq!(removed, 0);
+        assert!(cache.get(&key).is_some());
     }
 
     #[test]

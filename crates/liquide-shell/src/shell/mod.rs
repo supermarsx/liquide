@@ -250,17 +250,61 @@ pub struct Shell {
     /// Cache of last rendered HTML per template name to skip redundant DOM rebuilds.
     pub(crate) template_cache: HashMap<String, String>,
     /// Tooltip text to display (e.g. dock item label on hover).
+    ///
+    /// This is the *input* hover state written by the dock-hover path in
+    /// `events.rs`; the canonical `liquide-tooltip` `TooltipManager`
+    /// (`chrome_tooltip`) reads it each frame to drive the show-delay / fade
+    /// lifecycle (t51-e9). It is NOT a duplicate of the manager — it is the
+    /// manager's input channel — so it is retained (t51-e15).
     pub(crate) tooltip_text: Option<String>,
-    /// Screen position for the tooltip (center-top of the hovered element).
+    /// Screen position (anchor) for the tooltip, fed to the canonical manager.
     pub(crate) tooltip_pos: Point,
-    /// Timestamp (microseconds since epoch) when the tooltip was triggered.
-    pub(crate) tooltip_timer_us: u64,
     /// Whether the text cursor is currently visible (blinks on/off).
     pub(crate) cursor_blink_on: bool,
     /// Last cursor blink toggle time (microseconds since epoch).
     pub(crate) cursor_blink_time_us: u64,
     /// Frame delta fed into the CSS pipeline for time-based updates.
     pub(crate) frame_delta_ms: f32,
+    // ── Canonical chrome-crate managers (t51 mandate 2, Wave C0) ────────
+    // Dormant injection points wired to nothing yet; later C1/C2/C3
+    // executors construct/drive these and retire the shell duplicates.
+    // Held as `Option<_>` so the default is `None` (no behavior change).
+    // Workspaces are single-sourced (t52-e5): the canonical
+    // `liquide_workspaces::WorkspaceManager` is now embedded *inside*
+    // `self.workspaces` (the shell `WorkspaceManager` adapter), so the previous
+    // dormant `chrome_workspaces: Option<liquide_workspaces::WorkspaceManager>`
+    // field was removed — there is one manager object per shell.
+    /// Canonical tiling engine (`liquide-tiling`) — replaces the internal
+    /// `tiling.rs` duplicate. Driven by t51-e13.
+    pub(crate) chrome_tiling: Option<liquide_tiling::TilingEngine>,
+    /// Canonical window-tree model (`liquide-window-tree`) — replaces the
+    /// flat `window.rs` model. Driven by t51-e11.
+    pub(crate) chrome_window_tree: Option<liquide_window_tree::WindowTree>,
+    /// Canonical window-grouping manager (`liquide-window-groups`).
+    /// Driven by t51-e8.
+    pub(crate) chrome_window_groups: Option<liquide_window_groups::GroupManager>,
+    /// Canonical window-class registry (`liquide-window-class`).
+    /// Driven by t51-e8.
+    pub(crate) chrome_window_class: Option<liquide_window_class::ClassRegistry>,
+    /// Canonical window-effects manager (`liquide-window-effects`).
+    /// Driven by t51-e11.
+    pub(crate) chrome_window_effects: Option<liquide_window_effects::EffectManager>,
+    /// Canonical lock-screen state (`liquide-lockscreen`) — drives the
+    /// session-menu Lock path. Consumed read-only; driven by t51-e10.
+    pub(crate) chrome_lockscreen: Option<liquide_lockscreen::LockScreenState>,
+    /// Active canonical dialog (`liquide-dialogs`) — file/color/font/input/
+    /// message-box. Driven by t51-e14.
+    pub(crate) chrome_active_dialog: Option<liquide_dialogs::DialogId>,
+    /// Canonical tooltip manager (`liquide-tooltip`) — replaces the inline
+    /// `tooltip_*` fields above. Driven by t51-e9.
+    pub(crate) chrome_tooltip: Option<liquide_tooltip::TooltipManager>,
+    /// Canonical notification server (`liquide-notification-daemon`) —
+    /// replaces the internal `notification.rs` duplicate. Driven by t51-e14.
+    pub(crate) chrome_notification_server: Option<liquide_notification_daemon::NotificationServer>,
+    /// Canonical shell-services association registry
+    /// (`liquide-shell-services`) — ShellExecute-style verb/app resolution.
+    /// Driven by t51-e10.
+    pub(crate) chrome_shell_services: Option<liquide_shell_services::ShellAssociationRegistry>,
 }
 
 impl Shell {
@@ -360,10 +404,21 @@ impl Shell {
             template_cache: HashMap::new(),
             tooltip_text: None,
             tooltip_pos: Point::new(0.0, 0.0),
-            tooltip_timer_us: 0,
             cursor_blink_on: true,
             cursor_blink_time_us: 0,
             frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
+            // Canonical chrome managers: dormant (None) until wired in C1+.
+            // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
+            chrome_tiling: None,
+            chrome_window_tree: None,
+            chrome_window_groups: None,
+            chrome_window_class: None,
+            chrome_window_effects: None,
+            chrome_lockscreen: None,
+            chrome_active_dialog: None,
+            chrome_tooltip: None,
+            chrome_notification_server: None,
+            chrome_shell_services: None,
         }
     }
 
@@ -469,10 +524,21 @@ impl Shell {
             template_cache: HashMap::new(),
             tooltip_text: None,
             tooltip_pos: Point::new(0.0, 0.0),
-            tooltip_timer_us: 0,
             cursor_blink_on: true,
             cursor_blink_time_us: 0,
             frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
+            // Canonical chrome managers: dormant (None) until wired in C1+.
+            // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
+            chrome_tiling: None,
+            chrome_window_tree: None,
+            chrome_window_groups: None,
+            chrome_window_class: None,
+            chrome_window_effects: None,
+            chrome_lockscreen: None,
+            chrome_active_dialog: None,
+            chrome_tooltip: None,
+            chrome_notification_server: None,
+            chrome_shell_services: None,
         }
     }
 

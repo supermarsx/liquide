@@ -358,7 +358,13 @@ impl PropertyTrees {
             } else if let Some(parent) = self.transform_tree.nodes.get(parent_id as usize) {
                 let parent_to_root = parent.to_root;
                 let node = &mut self.transform_tree.nodes[i];
-                node.to_root = parent_to_root.then(&node.local);
+                // local→root maps a node-local point to root space by applying
+                // the node's own `local` transform first, then the parent's
+                // accumulated `to_root`. `Affine2D::then` is "apply self first,
+                // then other", so this must be `local.then(&parent_to_root)`
+                // (matching the scene walker's `local.then(parent_transform)`),
+                // NOT the reverse.
+                node.to_root = node.local.then(&parent_to_root);
             }
         }
     }
@@ -485,6 +491,55 @@ mod tests {
     fn property_trees_combined() {
         let trees = PropertyTrees::new();
         assert_eq!(trees.total_nodes(), 4); // 1 root per tree × 4 trees
+    }
+
+    // Regression for t49-e1-F2: the world-transform cache must compose
+    // `local.then(&parent_to_root)` (local applied first, then the parent's
+    // accumulated transform), matching the scene walker. The previous code
+    // used the reversed order, which only happened to pass because pure
+    // translations commute. Use a scale+translate parent so the reversed
+    // composition gives an observably different result, and assert a known
+    // node-local point maps to the correct root-space coordinate.
+    #[test]
+    fn transform_cache_composes_parent_then_local_not_reversed() {
+        let mut trees = PropertyTrees::new();
+
+        // Parent: scale by (2,3) first, then translate by (10,20).
+        // For a point p this maps to (2*px + 10, 3*py + 20).
+        let parent_local = Affine2D::scale(2.0, 3.0).then(&Affine2D::translation(10.0, 20.0));
+        let parent_id = trees.transform_tree.insert(TransformNode {
+            parent: ROOT_NODE_ID,
+            local: parent_local,
+            ..Default::default()
+        });
+
+        // Child: translate by (5,7), under the parent.
+        let child_local = Affine2D::translation(5.0, 7.0);
+        let child_id = trees.transform_tree.insert(TransformNode {
+            parent: parent_id,
+            local: child_local,
+            ..Default::default()
+        });
+
+        trees.update_transform_cache();
+
+        let child = trees.transform_tree.get(child_id).unwrap();
+        // For node-local point (1,1):
+        //   child translate -> (6, 8)
+        //   parent scale+translate -> (2*6 + 10, 3*8 + 20) = (22, 44)
+        let mapped = child.to_root.transform_point(Point { x: 1.0, y: 1.0 });
+        assert!(
+            (mapped.x - 22.0).abs() < 1e-4 && (mapped.y - 44.0).abs() < 1e-4,
+            "child world transform mapped (1,1) to ({}, {}), expected (22, 44)",
+            mapped.x,
+            mapped.y
+        );
+
+        // Cross-check: the cached world transform must equal the same
+        // composition the scene walker would produce.
+        let expected = child_local.then(&parent_local);
+        let e = expected.transform_point(Point { x: 1.0, y: 1.0 });
+        assert!((mapped.x - e.x).abs() < 1e-4 && (mapped.y - e.y).abs() < 1e-4);
     }
 
     #[test]

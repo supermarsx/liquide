@@ -1,6 +1,7 @@
 # LiquiDE Release Pipeline
-# Triggered on version tag push (v*). Builds release artifacts for all
-# tier 1 and tier 2 targets, generates checksums, and creates a GitHub release.
+# Triggered on version tag push (v*). Builds release artifacts for configured
+# desktop/server tier 1 and tier 2 targets, generates checksums, and creates a
+# GitHub release.
 name: Release
 
 on:
@@ -48,10 +49,6 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
             tier: 2
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            tier: 2
-            cross: true
           - target: aarch64-pc-windows-msvc
             os: windows-latest
             tier: 2
@@ -217,7 +214,12 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          PREV_TAG=$(git tag --sort=-version:refname | head -n 2 | tail -n 1)
+          # Find the most recent tag strictly older than the one being released.
+          # With only one tag (the first release), there is no previous tag, so
+          # PREV_TAG stays empty and we emit the initial-release body. (A naive
+          # `head -n 2 | tail -n 1` would echo the current tag back on the first
+          # release and produce an empty `tag..tag` changelog.)
+          PREV_TAG=$(git tag --sort=-version:refname | grep -vFx "${{ github.ref_name }}" | head -n 1)
           if [ -z "$PREV_TAG" ]; then
             echo "body=Initial release." >> "$GITHUB_OUTPUT"
           else

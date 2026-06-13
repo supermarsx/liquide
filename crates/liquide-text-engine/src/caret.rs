@@ -90,8 +90,10 @@ impl CaretNavigator {
             (MoveDirection::Right, MoveGranularity::Word) => Self::next_word(text, current),
             (MoveDirection::Left, MoveGranularity::Line) => Self::line_start(text, current),
             (MoveDirection::Right, MoveGranularity::Line) => Self::line_end(text, current),
-            (MoveDirection::Up, MoveGranularity::Grapheme) => Self::prev_line(current, lines),
-            (MoveDirection::Down, MoveGranularity::Grapheme) => Self::next_line(current, lines),
+            (MoveDirection::Up, MoveGranularity::Grapheme) => Self::prev_line(text, current, lines),
+            (MoveDirection::Down, MoveGranularity::Grapheme) => {
+                Self::next_line(text, current, lines)
+            }
             (_, MoveGranularity::Document) => match direction {
                 MoveDirection::Left | MoveDirection::Up => TextOffset(0),
                 MoveDirection::Right | MoveDirection::Down => TextOffset(text.len()),
@@ -206,45 +208,50 @@ impl CaretNavigator {
     }
 
     /// Move up one visual line.
+    ///
+    /// Uses x-coordinate-based column targeting: the caret's horizontal
+    /// position on the current line is computed, then the nearest valid
+    /// caret offset at that x on the previous line is chosen. The result is
+    /// always snapped to a grapheme-cluster boundary so that subsequent
+    /// editing slices never land mid-codepoint.
     #[must_use]
-    pub fn prev_line(current: TextOffset, lines: &[LayoutLine]) -> TextOffset {
+    pub fn prev_line(text: &str, current: TextOffset, lines: &[LayoutLine]) -> TextOffset {
         if lines.is_empty() {
-            return current;
+            return snap_to_boundary(text, current.0);
         }
 
         // Find which line the cursor is on.
         let current_line = line_index_for_offset(current.0, lines);
         if current_line == 0 {
             // Already on the first line; move to start.
-            return TextOffset(lines[0].start);
+            return TextOffset(snap_to_boundary(text, lines[0].start).0);
         }
 
-        // Move to the same horizontal position on the previous line.
+        let target_x = caret_x_on_line(&lines[current_line], current.0);
         let prev = &lines[current_line - 1];
-        let target_offset_in_line = current.0.saturating_sub(lines[current_line].start);
-        let new_offset =
-            prev.start + target_offset_in_line.min(prev.end.saturating_sub(prev.start));
-        TextOffset(new_offset)
+        offset_at_x_on_line(text, prev, target_x)
     }
 
     /// Move down one visual line.
+    ///
+    /// Mirror of [`Self::prev_line`]; see its documentation for the
+    /// boundary-safety guarantee.
     #[must_use]
-    pub fn next_line(current: TextOffset, lines: &[LayoutLine]) -> TextOffset {
+    pub fn next_line(text: &str, current: TextOffset, lines: &[LayoutLine]) -> TextOffset {
         if lines.is_empty() {
-            return current;
+            return snap_to_boundary(text, current.0);
         }
 
         let current_line = line_index_for_offset(current.0, lines);
         if current_line >= lines.len() - 1 {
             // Already on the last line; move to end.
-            return TextOffset(lines.last().map(|l| l.end).unwrap_or(0));
+            let end = lines.last().map(|l| l.end).unwrap_or(0);
+            return snap_to_boundary(text, end);
         }
 
+        let target_x = caret_x_on_line(&lines[current_line], current.0);
         let next = &lines[current_line + 1];
-        let target_offset_in_line = current.0.saturating_sub(lines[current_line].start);
-        let new_offset =
-            next.start + target_offset_in_line.min(next.end.saturating_sub(next.start));
-        TextOffset(new_offset)
+        offset_at_x_on_line(text, next, target_x)
     }
 
     /// Move to the previous paragraph boundary (before the preceding blank line).
@@ -292,6 +299,125 @@ fn line_index_for_offset(offset: usize, lines: &[LayoutLine]) -> usize {
         }
     }
     lines.len().saturating_sub(1)
+}
+
+/// Snap a byte offset to the nearest enclosing grapheme-cluster boundary
+/// (rounding down to the start of the cluster that contains `offset`).
+///
+/// The returned offset is guaranteed to be a valid char boundary, so callers
+/// can slice the text at it without panicking. Snapping to grapheme clusters
+/// (rather than bare char boundaries) keeps vertical movement consistent with
+/// the crate's grapheme-granularity horizontal navigation.
+fn snap_to_boundary(text: &str, offset: usize) -> TextOffset {
+    let offset = offset.min(text.len());
+    if offset == 0 || offset == text.len() || text.is_char_boundary(offset) {
+        // Already on a char boundary; align to the enclosing grapheme start.
+        return TextOffset(snap_to_grapheme_start(text, offset));
+    }
+    // Mid-codepoint: round down to the previous char boundary first, then to
+    // the enclosing grapheme start.
+    let mut pos = offset;
+    while pos > 0 && !text.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    TextOffset(snap_to_grapheme_start(text, pos))
+}
+
+/// Given a byte offset that is already on a char boundary, return the start of
+/// the grapheme cluster that contains it (or the offset itself if it is a
+/// cluster boundary or the text end).
+fn snap_to_grapheme_start(text: &str, offset: usize) -> usize {
+    if offset == 0 || offset >= text.len() {
+        return offset.min(text.len());
+    }
+    let clusters = grapheme_clusters(text);
+    for cluster in &clusters {
+        if offset == cluster.start || offset == cluster.end {
+            return offset;
+        }
+        if offset > cluster.start && offset < cluster.end {
+            // Mid-cluster: round down to the cluster start.
+            return cluster.start;
+        }
+    }
+    offset
+}
+
+/// Compute the caret's horizontal x position on `line` for the given global
+/// byte `offset`.
+///
+/// The position is derived from the glyphs' recorded x coordinates. This is a
+/// best-effort horizontal estimate used only to choose a target column on the
+/// adjacent line; correctness of the final offset is guaranteed independently
+/// by [`snap_to_boundary`], so any imprecision here can never produce an
+/// invalid (panicking) offset.
+fn caret_x_on_line(line: &LayoutLine, offset: usize) -> f32 {
+    let local = offset.saturating_sub(line.start);
+    if line.glyphs.is_empty() {
+        return 0.0;
+    }
+    // Find the first glyph whose cluster is at or after the target column; the
+    // caret sits at that glyph's left edge. If none, the caret is past the last
+    // glyph: use the line width.
+    for glyph in &line.glyphs {
+        if (glyph.cluster as usize) >= local {
+            return glyph.x;
+        }
+    }
+    // Caret is after the last glyph on the line.
+    line.glyphs
+        .last()
+        .map(|g| g.x.max(line.width))
+        .unwrap_or(line.width)
+}
+
+/// Choose the caret offset on `line` nearest to horizontal position
+/// `target_x`, then snap it to a grapheme boundary within the line's byte
+/// range.
+///
+/// The candidate offsets are the grapheme-cluster boundaries that fall inside
+/// the line, each evaluated at the x of the glyph that begins it. The result
+/// is always a valid char boundary within `[line.start, line.end]`.
+fn offset_at_x_on_line(text: &str, line: &LayoutLine, target_x: f32) -> TextOffset {
+    let line_start = line.start.min(text.len());
+    let line_end = line.end.min(text.len());
+    if line_start >= line_end {
+        return snap_to_boundary(text, line_start);
+    }
+
+    // Build the set of candidate caret offsets: every grapheme boundary within
+    // the line, paired with the x of the glyph that begins at that boundary.
+    let slice = &text[line_start..line_end];
+    let clusters = grapheme_clusters(slice);
+
+    let mut best_offset = line_start;
+    let mut best_dist = f32::INFINITY;
+
+    // Helper to evaluate a candidate global offset at a given x.
+    let consider = |global_offset: usize, x: f32, best_offset: &mut usize, best_dist: &mut f32| {
+        let dist = (x - target_x).abs();
+        if dist < *best_dist {
+            *best_dist = dist;
+            *best_offset = global_offset;
+        }
+    };
+
+    // Candidate at the start of each cluster.
+    for cluster in &clusters {
+        let global = line_start + cluster.start;
+        let local = cluster.start;
+        let x = line
+            .glyphs
+            .iter()
+            .find(|g| (g.cluster as usize) >= local)
+            .map(|g| g.x)
+            .unwrap_or(line.width);
+        consider(global, x, &mut best_offset, &mut best_dist);
+    }
+    // Candidate at the end of the line (after the last cluster).
+    consider(line_end, line.width, &mut best_offset, &mut best_dist);
+
+    snap_to_boundary(text, best_offset)
 }
 
 /// Character categories for word boundary detection.
@@ -415,5 +541,117 @@ mod tests {
         let offset = CaretNavigator::next_word(text, TextOffset(0));
         // "hello" is a word, then "." is punctuation, then "world"
         assert_eq!(offset.0, 5); // After "hello"
+    }
+
+    // ─── Vertical-movement boundary safety (regression: t49-e3-F13) ──────
+
+    use crate::font_fallback::FontId;
+    use crate::paragraph::PositionedGlyph;
+
+    /// Build a `LayoutLine` whose glyphs carry the given (line-local cluster,
+    /// x) pairs, spanning the global byte range `[start, end)`.
+    fn line(start: usize, end: usize, width: f32, glyphs: &[(u32, f32)]) -> LayoutLine {
+        LayoutLine {
+            glyphs: glyphs
+                .iter()
+                .map(|&(cluster, x)| PositionedGlyph {
+                    glyph_id: 0,
+                    font_id: FontId(1),
+                    size: 16.0,
+                    x,
+                    y: 0.0,
+                    cluster,
+                })
+                .collect(),
+            start,
+            end,
+            baseline_y: 0.0,
+            ascent: 12.0,
+            descent: 4.0,
+            width,
+            hard_break: true,
+        }
+    }
+
+    /// Vertical movement over multi-byte (emoji / CJK / combining) text must
+    /// never land on a byte offset that is not a char boundary — otherwise a
+    /// subsequent edit slices the string mid-codepoint and panics.
+    #[test]
+    fn test_vertical_movement_lands_on_char_boundary() {
+        // Two lines of mixed-width multi-byte text.
+        //   line 0: "a😀b"   bytes: a(1) 😀(4) b(1) → 6 bytes, indices 0,1,5,6
+        //   line 1: "日本語" bytes: 3×3 = 9, indices 0,3,6,9
+        let l0 = "a😀b"; // 6 bytes
+        let l1 = "日本語"; // 9 bytes
+        let text = format!("{l0}\n{l1}");
+        let l0_len = l0.len();
+        let l1_start = l0_len + 1; // skip '\n'
+
+        let lines = [
+            line(0, l0_len, 30.0, &[(0, 0.0), (1, 10.0), (5, 20.0)]),
+            line(
+                l1_start,
+                l1_start + l1.len(),
+                45.0,
+                &[(0, 0.0), (3, 15.0), (6, 30.0)],
+            ),
+        ];
+
+        // From every char boundary on line 0, move down; result must be a valid
+        // char boundary inside the text.
+        for off in [0usize, 1, 5, 6] {
+            let down = CaretNavigator::next_line(&text, TextOffset(off), &lines);
+            assert!(
+                text.is_char_boundary(down.0),
+                "down from {off} landed at {} (not a char boundary)",
+                down.0
+            );
+            // And it must be on the next line's byte range.
+            assert!(down.0 >= l1_start && down.0 <= l1_start + l1.len());
+        }
+
+        // From every char boundary on line 1, move up; result must be valid.
+        for off in [l1_start, l1_start + 3, l1_start + 6, l1_start + 9] {
+            let up = CaretNavigator::prev_line(&text, TextOffset(off), &lines);
+            assert!(
+                text.is_char_boundary(up.0),
+                "up from {off} landed at {} (not a char boundary)",
+                up.0
+            );
+            assert!(up.0 <= l0_len);
+        }
+    }
+
+    /// Even when handed a deliberately bogus mid-codepoint offset, vertical
+    /// movement snaps the result to a valid boundary.
+    #[test]
+    fn test_vertical_movement_snaps_bogus_offset() {
+        let l0 = "😀😀"; // 8 bytes
+        let l1 = "xy"; // 2 bytes
+        let text = format!("{l0}\n{l1}");
+        let l1_start = l0.len() + 1;
+        let lines = [
+            line(0, l0.len(), 20.0, &[(0, 0.0), (4, 10.0)]),
+            line(l1_start, l1_start + l1.len(), 20.0, &[(0, 0.0), (1, 10.0)]),
+        ];
+
+        // Offset 2 is mid-emoji on line 0; moving down must still produce a
+        // valid char boundary.
+        let down = CaretNavigator::next_line(&text, TextOffset(2), &lines);
+        assert!(text.is_char_boundary(down.0));
+
+        // A mid-emoji offset that resolves onto line 0 via prev_line bounds.
+        let up = CaretNavigator::prev_line(&text, TextOffset(l1_start + 1), &lines);
+        assert!(text.is_char_boundary(up.0));
+        assert!(up.0 <= l0.len());
+    }
+
+    #[test]
+    fn test_vertical_movement_empty_lines_is_safe() {
+        let text = "café"; // 5 bytes, é = 2 bytes at 3..5
+        let up = CaretNavigator::prev_line(text, TextOffset(4), &[]);
+        assert!(text.is_char_boundary(up.0));
+        let down = CaretNavigator::next_line(text, TextOffset(4), &[]);
+        assert!(text.is_char_boundary(down.0));
     }
 }

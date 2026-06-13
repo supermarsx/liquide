@@ -44,4 +44,5 @@ pub use events::{
 pub use node::{Node, NodeData, NodeId, PseudoType};
 pub use pseudo::PseudoStateFlags;
 pub use tag::Tag;
+pub use template_registry::escape_html;
 pub use visitor::{MutationObserver, Visitor};

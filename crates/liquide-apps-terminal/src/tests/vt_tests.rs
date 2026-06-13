@@ -275,3 +275,89 @@ fn test_scroll_down() {
     let actions = parse(b"\x1b[2T");
     assert_eq!(actions, vec![Action::CsiDispatch(CsiAction::ScrollDown(2))]);
 }
+
+// ===========================================================================
+// Bounded buffers / malformed-stream recovery (regression for t49-e10-F8)
+// ===========================================================================
+
+#[test]
+fn test_csi_overlong_param_run_aborts_and_recovers() {
+    // A CSI parameter run far longer than any legitimate sequence must not
+    // grow the parser's buffers without bound; the sequence is aborted and the
+    // parser returns to ground so subsequent input still parses.
+    let mut parser = Parser::new();
+    let mut actions = Vec::new();
+
+    // 100_000 bytes of '1' digit parameters: well beyond the internal cap and
+    // never terminated by a final byte.
+    let mut garbage = Vec::with_capacity(100_002);
+    garbage.extend_from_slice(b"\x1b[");
+    garbage.extend(std::iter::repeat(b'1').take(100_000));
+    parser.feed(&garbage, &mut actions);
+
+    // The overlong CSI was discarded: it never dispatched a CSI action. (After
+    // the cap aborts the sequence the parser is back in ground, so trailing
+    // digits print as ordinary characters — bounded, not accumulated.)
+    assert!(
+        !actions.iter().any(|a| matches!(a, Action::CsiDispatch(_))),
+        "overlong CSI must not dispatch a CSI action"
+    );
+
+    // After the garbage, a normal sequence and plain text still parse: proves
+    // the parser recovered to the ground state rather than staying wedged.
+    actions.clear();
+    parser.feed(b"\x1b[3AX", &mut actions);
+    assert_eq!(
+        actions,
+        vec![
+            Action::CsiDispatch(CsiAction::CursorUp(3)),
+            Action::Print('X'),
+        ]
+    );
+}
+
+#[test]
+fn test_osc_unterminated_overlong_aborts_and_recovers() {
+    // An unterminated OSC string fed an enormous run of bytes must be discarded
+    // once it exceeds the cap, and the parser must recover to ground.
+    let mut parser = Parser::new();
+    let mut actions = Vec::new();
+
+    let mut garbage = Vec::with_capacity(200_002);
+    garbage.extend_from_slice(b"\x1b]"); // OSC introducer, never terminated
+    garbage.extend(std::iter::repeat(b'A').take(200_000));
+    parser.feed(&garbage, &mut actions);
+
+    // The overlong unterminated OSC was discarded: no OSC action dispatched.
+    // (After the cap aborts the sequence, trailing bytes print as characters —
+    // bounded, not accumulated into osc_buf.)
+    assert!(
+        !actions.iter().any(|a| matches!(a, Action::OscDispatch(_))),
+        "unterminated overlong OSC must not dispatch an OSC action"
+    );
+
+    // Parser recovered: a well-formed OSC title still parses afterwards.
+    actions.clear();
+    parser.feed(b"\x1b]0;ok\x07", &mut actions);
+    assert_eq!(
+        actions,
+        vec![Action::OscDispatch(OscAction::SetTitle("ok".into()))]
+    );
+}
+
+#[test]
+fn test_normal_length_osc_still_parses_after_cap() {
+    // A long-but-legitimate OSC 8 hyperlink (under the cap) must still parse
+    // correctly — the cap must not be so small as to break real sequences.
+    let url = "https://example.com/".to_string() + &"a".repeat(2000);
+    let mut input = Vec::new();
+    input.extend_from_slice(b"\x1b]8;;");
+    input.extend_from_slice(url.as_bytes());
+    input.push(0x07);
+
+    let actions = parse(&input);
+    assert_eq!(
+        actions,
+        vec![Action::OscDispatch(OscAction::Hyperlink { url, id: None })]
+    );
+}

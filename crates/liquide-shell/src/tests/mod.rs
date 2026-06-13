@@ -1,6 +1,11 @@
 mod app_history_tests;
 mod batch_tests;
 mod calculator_tests;
+mod chrome_notification_dialog_tests;
+mod chrome_tiling_tests;
+mod chrome_window_class_groups_tests;
+mod chrome_window_tree_effects_tests;
+mod chrome_workspaces_tests;
 mod config_tests;
 mod context_menu_tests;
 mod decoration_tests;

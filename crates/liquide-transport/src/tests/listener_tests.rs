@@ -113,7 +113,7 @@ mod ws_listener_tests {
 
     #[tokio::test]
     async fn ws_listener_bind_addr() {
-        let listener = WebSocketListener::bind("127.0.0.1:0".parse().unwrap())
+        let listener = WebSocketListener::bind_plaintext_insecure("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
         let addr = listener.local_addr();
@@ -123,7 +123,7 @@ mod ws_listener_tests {
 
     #[tokio::test]
     async fn ws_listener_accept() {
-        let listener = WebSocketListener::bind("127.0.0.1:0".parse().unwrap())
+        let listener = WebSocketListener::bind_plaintext_insecure("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
         let addr = listener.local_addr();
@@ -139,7 +139,7 @@ mod ws_listener_tests {
                 .unwrap();
         });
 
-        let mut client = WebSocketTransport::new();
+        let mut client = WebSocketTransport::new_plaintext_insecure();
         client.connect(addr).await.unwrap();
         client
             .send(Bytes::from_static(b"ws_listener_test"))
@@ -153,7 +153,7 @@ mod ws_listener_tests {
 
     #[tokio::test]
     async fn ws_listener_accept_multiple() {
-        let listener = WebSocketListener::bind("127.0.0.1:0".parse().unwrap())
+        let listener = WebSocketListener::bind_plaintext_insecure("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
         let addr = listener.local_addr();
@@ -169,7 +169,7 @@ mod ws_listener_tests {
         });
 
         for _ in 0u32..3 {
-            let mut client = WebSocketTransport::new();
+            let mut client = WebSocketTransport::new_plaintext_insecure();
             client.connect(addr).await.unwrap();
             let msg = client.recv().await.unwrap();
             assert_eq!(&msg[..], b"ws_multi");

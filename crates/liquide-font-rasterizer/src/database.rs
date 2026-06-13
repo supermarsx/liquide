@@ -6,6 +6,7 @@
 use ab_glyph::FontArc;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use tracing::{debug, info};
 
 use crate::{FontRasterizerError, Result};
@@ -25,6 +26,46 @@ impl FontFaceId {
     }
 }
 
+/// Filesystem metadata captured when a font face is loaded from disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontSourceStamp {
+    /// Canonical source file path when available.
+    pub path: PathBuf,
+    /// File length in bytes at load time.
+    pub len: u64,
+    /// Last modification timestamp at load time, if the filesystem exposes it.
+    pub modified: Option<SystemTime>,
+}
+
+impl FontSourceStamp {
+    /// Capture a source stamp for an existing file.
+    pub fn from_path(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let path = path.as_ref();
+        let metadata = std::fs::metadata(path)?;
+        let canonical_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        Ok(Self {
+            path: canonical_path,
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        })
+    }
+
+    /// Check whether the file backing this stamp is missing or has changed.
+    #[must_use]
+    pub fn is_stale(&self) -> bool {
+        let Ok(metadata) = std::fs::metadata(&self.path) else {
+            return true;
+        };
+        if metadata.len() != self.len {
+            return true;
+        }
+        match (&self.modified, metadata.modified().ok()) {
+            (Some(loaded_modified), Some(current_modified)) => loaded_modified != &current_modified,
+            _ => false,
+        }
+    }
+}
+
 /// A loaded font face with metadata.
 #[derive(Clone)]
 pub struct LoadedFace {
@@ -38,6 +79,8 @@ pub struct LoadedFace {
     pub italic: bool,
     /// Source file path (if loaded from disk).
     pub path: Option<PathBuf>,
+    /// Source file stamp (if loaded from disk).
+    pub source_stamp: Option<FontSourceStamp>,
     /// Raw font file bytes (needed by rustybuzz for OpenType shaping).
     pub raw_data: Vec<u8>,
     /// Variable font axes available in this face (if it's a variable font).
@@ -189,6 +232,7 @@ impl std::fmt::Debug for LoadedFace {
             .field("weight", &self.weight)
             .field("italic", &self.italic)
             .field("path", &self.path)
+            .field("source_stamp", &self.source_stamp)
             .field("raw_data_len", &self.raw_data.len())
             .field("variation_axes", &self.variation_axes.len())
             .finish()
@@ -245,16 +289,12 @@ impl FontDatabase {
         let path = path.as_ref();
         let family = family.into();
 
-        let data = std::fs::read(path).map_err(|e| FontRasterizerError::IoError {
-            path: path.display().to_string(),
-            source: e,
-        })?;
-
-        let raw_data = data.clone();
-        let font = FontArc::try_from_vec(data).map_err(|_| FontRasterizerError::InvalidFont {
-            path: path.display().to_string(),
-            reason: "failed to parse TrueType/OpenType data".into(),
-        })?;
+        // Read the bytes first, then stamp the file. Stamping *after* the read
+        // means the captured (len, mtime) describe the exact bytes we parsed —
+        // if the file is rewritten between read and stamp, the stamp reflects
+        // the newer state and the face is correctly flagged stale on the next
+        // poll (fixes the stamp-before-read race, t49-e3-F41).
+        let (font, raw_data, source_stamp) = Self::read_and_stamp(path)?;
 
         // Extract variation axes if this is a variable font
         let variation_axes = Self::extract_variation_axes(&raw_data);
@@ -267,7 +307,8 @@ impl FontDatabase {
             family: family.clone(),
             weight,
             italic,
-            path: Some(path.to_owned()),
+            path: Some(source_stamp.path.clone()),
+            source_stamp: Some(source_stamp),
             raw_data,
             variation_axes,
         };
@@ -288,6 +329,32 @@ impl FontDatabase {
         );
 
         Ok(id)
+    }
+
+    /// Read a font file, parse it, and capture its source stamp.
+    ///
+    /// The stamp is taken *after* the bytes are read so it describes the parsed
+    /// content (avoiding the load-time stamp/read race in t49-e3-F41). Used by
+    /// both [`load_file`](Self::load_file) and [`reload_face`](Self::reload_face).
+    fn read_and_stamp(path: &Path) -> Result<(FontArc, Vec<u8>, FontSourceStamp)> {
+        let data = std::fs::read(path).map_err(|e| FontRasterizerError::IoError {
+            path: path.display().to_string(),
+            source: e,
+        })?;
+
+        let raw_data = data.clone();
+        let font = FontArc::try_from_vec(data).map_err(|_| FontRasterizerError::InvalidFont {
+            path: path.display().to_string(),
+            reason: "failed to parse TrueType/OpenType data".into(),
+        })?;
+
+        let source_stamp =
+            FontSourceStamp::from_path(path).map_err(|e| FontRasterizerError::IoError {
+                path: path.display().to_string(),
+                source: e,
+            })?;
+
+        Ok((font, raw_data, source_stamp))
     }
 
     /// Load a font from in-memory bytes.
@@ -318,6 +385,7 @@ impl FontDatabase {
             weight,
             italic,
             path: None,
+            source_stamp: None,
             raw_data,
             variation_axes,
         };
@@ -555,6 +623,105 @@ impl FontDatabase {
         self.faces.get(&id)
     }
 
+    /// Get the source stamp for a file-backed face.
+    #[must_use]
+    pub fn face_source_stamp(&self, face_id: FontFaceId) -> Option<&FontSourceStamp> {
+        self.faces
+            .get(&face_id)
+            .and_then(|face| face.source_stamp.as_ref())
+    }
+
+    /// Check whether a face's file-backed source has become stale.
+    ///
+    /// Memory-loaded faces and unknown face IDs are not stale by definition.
+    #[must_use]
+    pub fn is_face_stale(&self, face_id: FontFaceId) -> bool {
+        self.face_source_stamp(face_id)
+            .is_some_and(FontSourceStamp::is_stale)
+    }
+
+    /// Return all loaded file-backed faces whose source metadata changed.
+    #[must_use]
+    pub fn stale_faces(&self) -> Vec<FontFaceId> {
+        let mut faces: Vec<FontFaceId> = self
+            .faces
+            .iter()
+            .filter_map(|(face_id, face)| {
+                face.source_stamp
+                    .as_ref()
+                    .filter(|stamp| stamp.is_stale())
+                    .map(|_| *face_id)
+            })
+            .collect();
+        faces.sort_by_key(|face_id| face_id.0);
+        faces
+    }
+
+    /// Reload a single file-backed face from its source path.
+    ///
+    /// Re-reads the font file from disk, re-parses it, re-extracts variation
+    /// axes, and re-stamps the source metadata — replacing the cached bytes in
+    /// place under the **same** [`FontFaceId`]. This is the missing piece that
+    /// makes stale-face invalidation actually take effect: before this existed,
+    /// invalidating caches only re-rasterized the *same stale bytes* forever
+    /// (t49-e3-F15).
+    ///
+    /// Returns:
+    /// - `Ok(true)`  — the face was file-backed and its bytes were replaced.
+    /// - `Ok(false)` — the face is unknown or memory-loaded (nothing to reload).
+    /// - `Err(_)`    — the file could not be read or no longer parses; the
+    ///   previously loaded face is left untouched so the renderer keeps working.
+    pub fn reload_face(&mut self, face_id: FontFaceId) -> Result<bool> {
+        let Some(path) = self.faces.get(&face_id).and_then(|face| face.path.clone()) else {
+            // Unknown face or memory-loaded face: nothing to reload.
+            return Ok(false);
+        };
+
+        let (font, raw_data, source_stamp) = Self::read_and_stamp(&path)?;
+        let variation_axes = Self::extract_variation_axes(&raw_data);
+
+        // Only commit once the new bytes parsed successfully (the `?` above):
+        // a failed reload must not corrupt the currently-serving face.
+        let Some(face) = self.faces.get_mut(&face_id) else {
+            return Ok(false);
+        };
+        face.font = font;
+        face.raw_data = raw_data;
+        face.variation_axes = variation_axes;
+        face.path = Some(source_stamp.path.clone());
+        face.source_stamp = Some(source_stamp);
+
+        info!(
+            face_id = face_id.0,
+            family = %face.family,
+            path = %path.display(),
+            "reloaded font face from changed source"
+        );
+
+        Ok(true)
+    }
+
+    /// Reload every file-backed face whose source metadata changed.
+    ///
+    /// Returns the IDs of the faces that were actually reloaded (parsed
+    /// successfully from fresh bytes). Faces whose source vanished or no longer
+    /// parses are skipped and left serving their last-good bytes; callers can
+    /// still discover them via [`stale_faces`](Self::stale_faces).
+    pub fn reload_stale_faces(&mut self) -> Vec<FontFaceId> {
+        let stale = self.stale_faces();
+        let mut reloaded = Vec::with_capacity(stale.len());
+        for face_id in stale {
+            match self.reload_face(face_id) {
+                Ok(true) => reloaded.push(face_id),
+                Ok(false) => {}
+                Err(err) => {
+                    debug!(face_id = face_id.0, error = %err, "stale font face reload failed");
+                }
+            }
+        }
+        reloaded
+    }
+
     /// Number of loaded faces.
     #[must_use]
     pub fn face_count(&self) -> usize {
@@ -731,6 +898,46 @@ impl Default for FontDatabase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "liquide-font-rasterizer-{label}-{}-{unique}",
+            std::process::id()
+        ))
+    }
+
+    fn fixture_font_bytes() -> Option<Vec<u8>> {
+        let candidates = [
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
+            "C:\\Windows\\Fonts\\calibri.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ];
+
+        candidates.iter().find_map(|path| {
+            let data = std::fs::read(path).ok()?;
+            FontArc::try_from_vec(data.clone()).ok()?;
+            Some(data)
+        })
+    }
+
+    fn write_fixture_font(label: &str) -> Option<(PathBuf, PathBuf)> {
+        let data = fixture_font_bytes()?;
+        let dir = unique_temp_dir(label);
+        std::fs::create_dir_all(&dir).ok()?;
+        let path = dir.join("fixture.ttf");
+        std::fs::write(&path, data).ok()?;
+        Some((dir, path))
+    }
 
     #[test]
     fn test_new_database() {
@@ -773,6 +980,204 @@ mod tests {
         let mut db = FontDatabase::new();
         let result = db.load_bytes(vec![0, 1, 2, 3], "BadFont", 400, false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn font_source_stamp_detects_missing_and_length_changes() {
+        let dir = unique_temp_dir("stamp-direct");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("source.bin");
+        std::fs::write(&path, b"font-source").unwrap();
+
+        let stamp = FontSourceStamp::from_path(&path).unwrap();
+        assert_eq!(stamp.len, 11);
+        assert!(!stamp.is_stale());
+
+        std::fs::write(&path, b"font-source-changed").unwrap();
+        assert!(stamp.is_stale());
+
+        let changed_stamp = FontSourceStamp::from_path(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(changed_stamp.is_stale());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn file_loaded_faces_capture_source_stamp_and_start_fresh() {
+        let Some((dir, path)) = write_fixture_font("stamp-load") else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let id = db.load_file(&path, "Fixture", 400, false).unwrap();
+
+        let stamp = db.face_source_stamp(id).unwrap();
+        assert!(stamp.path.is_absolute());
+        assert_eq!(stamp.len, std::fs::metadata(&path).unwrap().len());
+        assert!(!db.is_face_stale(id));
+        assert!(db.stale_faces().is_empty());
+        assert_eq!(db.get(id).unwrap().path.as_ref(), Some(&stamp.path));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn memory_loaded_faces_have_no_source_stamp_and_never_report_stale() {
+        let Some(data) = fixture_font_bytes() else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let id = db.load_bytes(data, "Memory", 400, false).unwrap();
+
+        assert!(db.face_source_stamp(id).is_none());
+        assert!(!db.is_face_stale(id));
+        assert!(db.stale_faces().is_empty());
+    }
+
+    #[test]
+    fn file_backed_face_reports_stale_when_source_length_changes() {
+        let Some((dir, path)) = write_fixture_font("stamp-changed") else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let id = db.load_file(&path, "Fixture", 400, false).unwrap();
+
+        assert!(!db.is_face_stale(id));
+        let mut data = std::fs::read(&path).unwrap();
+        data.extend_from_slice(b"changed");
+        std::fs::write(&path, data).unwrap();
+
+        assert!(db.is_face_stale(id));
+        assert_eq!(db.stale_faces(), vec![id]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn file_backed_face_reports_stale_when_source_disappears() {
+        let Some((dir, path)) = write_fixture_font("stamp-missing") else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let id = db.load_file(&path, "Fixture", 400, false).unwrap();
+
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(db.is_face_stale(id));
+        assert_eq!(db.stale_faces(), vec![id]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reload_face_replaces_stale_bytes_and_clears_staleness() {
+        let Some((dir, path)) = write_fixture_font("reload-bytes") else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let id = db.load_file(&path, "Fixture", 400, false).unwrap();
+
+        let original_len = db.get(id).unwrap().raw_data.len();
+        assert!(!db.is_face_stale(id));
+
+        // Rewrite the source with extra bytes appended; the face is now stale
+        // and still holds the OLD bytes until we reload.
+        let mut data = std::fs::read(&path).unwrap();
+        data.extend_from_slice(b"reloaded-trailer");
+        let new_len = data.len();
+        std::fs::write(&path, &data).unwrap();
+
+        assert!(db.is_face_stale(id), "appended bytes must mark face stale");
+        assert_eq!(
+            db.get(id).unwrap().raw_data.len(),
+            original_len,
+            "pre-reload the face still serves the stale bytes"
+        );
+
+        // Reload: the SAME face id now carries the fresh bytes and is no longer
+        // stale (closes t49-e3-F15 — invalidation that actually re-reads).
+        assert!(db.reload_face(id).unwrap());
+        assert_eq!(
+            db.get(id).unwrap().raw_data.len(),
+            new_len,
+            "reload must replace cached bytes in place"
+        );
+        assert!(
+            !db.is_face_stale(id),
+            "reload re-stamps so face is fresh again"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reload_stale_faces_returns_only_reloaded_ids() {
+        let Some((dir, path)) = write_fixture_font("reload-stale-batch") else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let file_id = db.load_file(&path, "Fixture", 400, false).unwrap();
+        let mem_id = db
+            .load_bytes(std::fs::read(&path).unwrap(), "Memory", 400, false)
+            .unwrap();
+
+        // Nothing stale yet.
+        assert!(db.reload_stale_faces().is_empty());
+
+        // Mutate the file-backed source only.
+        let mut data = std::fs::read(&path).unwrap();
+        data.extend_from_slice(b"x");
+        std::fs::write(&path, &data).unwrap();
+
+        let reloaded = db.reload_stale_faces();
+        assert_eq!(
+            reloaded,
+            vec![file_id],
+            "only the changed file face reloads"
+        );
+        assert!(
+            !db.is_face_stale(file_id),
+            "reloaded face is no longer stale"
+        );
+        // Memory face is never stale and never reloaded.
+        assert!(!db.is_face_stale(mem_id));
+        assert!(db.stale_faces().is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reload_face_is_noop_for_memory_and_unknown_faces() {
+        let Some(data) = fixture_font_bytes() else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let mem_id = db.load_bytes(data, "Memory", 400, false).unwrap();
+
+        // Memory-loaded face has no path → nothing to reload.
+        assert!(!db.reload_face(mem_id).unwrap());
+        // Unknown face id → nothing to reload, no panic.
+        assert!(!db.reload_face(FontFaceId(9999)).unwrap());
+    }
+
+    #[test]
+    fn reload_face_preserves_old_bytes_when_source_disappears() {
+        let Some((dir, path)) = write_fixture_font("reload-missing") else {
+            return;
+        };
+        let mut db = FontDatabase::new();
+        let id = db.load_file(&path, "Fixture", 400, false).unwrap();
+        let original_len = db.get(id).unwrap().raw_data.len();
+
+        std::fs::remove_file(&path).unwrap();
+
+        // Reload fails (file gone) but must NOT drop the currently-serving face.
+        assert!(db.reload_face(id).is_err());
+        assert_eq!(
+            db.get(id).unwrap().raw_data.len(),
+            original_len,
+            "failed reload leaves the last-good bytes intact"
+        );
+        // reload_stale_faces tolerates the missing source and reports nothing.
+        assert!(db.reload_stale_faces().is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

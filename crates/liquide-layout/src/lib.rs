@@ -7,6 +7,7 @@
 pub mod block;
 pub mod container_query;
 pub mod counter;
+pub mod dirty;
 pub mod engine;
 pub mod flex;
 pub mod float;
@@ -22,8 +23,9 @@ pub mod table;
 pub mod tree;
 pub mod writing_mode;
 
+pub use dirty::{LayoutDirty, LayoutDirtyCause, LayoutInvalidationSummary};
 pub use engine::{LayoutEngine, LayoutInput};
-pub use geometry::{Point, Rect, Size};
+pub use geometry::{ClipComplexity, Point, Rect, Size};
 pub use liquide_layout_cache::{DirtyPropagation, LayoutDirtyFlags};
 pub use tree::{AnchorRegistry, BoxType, LayoutBox, LayoutBoxId, LayoutTree, LineBox};
 

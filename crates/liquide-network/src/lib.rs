@@ -1,6 +1,9 @@
 mod platform;
 pub use platform::NetworkManager;
 
+mod gated;
+pub use gated::GatedNetworkManager;
+
 /// Network interface ID
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InterfaceId(pub String);

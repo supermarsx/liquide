@@ -58,6 +58,16 @@ fn append_menu_items(doc: &mut Document, parent: NodeId, menu: &ContextMenu) {
     for (i, item) in menu.items().iter().enumerate() {
         let el = doc.create_element("menu-item");
 
+        // Separators are non-interactive divider rows: emit the documented
+        // `separator` class and skip kind/state classes and label text so the
+        // CSS pipeline can style them as divider lines rather than blank
+        // disabled action rows.
+        if item.separator {
+            doc.add_class(el, "separator");
+            doc.append_child(parent, el);
+            continue;
+        }
+
         // Kind-specific classes
         match &item.kind {
             MenuItemKind::Action(_) => {
@@ -149,5 +159,42 @@ mod tests {
 
         sync_context_menu_dom(&mut doc, menu_node, &menu2);
         assert_eq!(doc.children(menu_node).len(), 3);
+    }
+
+    #[test]
+    fn separator_item_emits_separator_class() {
+        // F26: the DOM renderer must emit the documented `separator` class for
+        // separator items (not `action disabled`).
+        let mut doc = Document::new();
+        let root = doc.root();
+
+        let items = vec![
+            MenuItem::action("Cut", MenuAction(1)),
+            MenuItem::separator(),
+            MenuItem::action("Paste", MenuAction(2)),
+        ];
+        let menu = ContextMenu::new(items);
+        let menu_node = build_context_menu_dom(&mut doc, root, &menu);
+
+        let children = doc.children(menu_node).to_vec();
+        assert_eq!(children.len(), 3, "should have 3 menu items");
+
+        // Exactly one node carries the `separator` class, and it is the middle
+        // item.
+        let sep_nodes = doc.get_elements_by_class("separator").to_vec();
+        assert_eq!(sep_nodes.len(), 1, "exactly one separator node expected");
+        assert_eq!(sep_nodes[0], children[1], "middle item is the separator");
+
+        let sep = doc.get(children[1]).expect("separator node");
+        assert!(sep.has_class("separator"), "separator must carry the class");
+        // Separators must not masquerade as activatable action rows.
+        assert!(
+            !sep.has_class("action"),
+            "separator must not have the `action` class"
+        );
+
+        // Sibling action items must not be tagged as separators.
+        assert!(!doc.get(children[0]).unwrap().has_class("separator"));
+        assert!(!doc.get(children[2]).unwrap().has_class("separator"));
     }
 }

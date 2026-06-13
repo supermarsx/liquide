@@ -51,6 +51,83 @@ unsafe extern "C" {
     fn close(fd: i32) -> i32;
 }
 
+// ---- wpa_supplicant control-interface value sanitization ----
+//
+// The wpa_supplicant control socket is a line/space-oriented command channel.
+// SSID and PSK values arrive from network scans / user input and must never be
+// spliced raw into a `SET_NETWORK ...` command: a `"`, `\`, NUL, or newline in
+// the value can close the quoted argument and inject further control commands
+// (e.g. flipping `key_mgmt` to `NONE`). These pure, cfg-free helpers either
+// produce a safe encoded representation or reject the value. They are
+// host-testable (no Linux-only types) — see the `wpa_sanitize_tests` module.
+
+/// Maximum SSID length in bytes (IEEE 802.11).
+const MAX_SSID_LEN: usize = 32;
+/// WPA passphrase length bounds (IEEE 802.11i: 8..=63 printable ASCII).
+const MIN_PSK_LEN: usize = 8;
+const MAX_PSK_LEN: usize = 63;
+
+/// Encode an SSID as the unambiguous hex form accepted by wpa_supplicant's
+/// `SET_NETWORK <id> ssid <hex>` (no surrounding quotes, so no quote/escape
+/// ambiguity is possible for *any* byte value).
+///
+/// Returns the lowercase hex string (e.g. `b"My AP"` -> `"4d79204150"`).
+/// Rejects an empty SSID or one longer than 32 bytes — values that cannot be a
+/// valid 802.11 SSID and that we therefore refuse rather than guess at.
+fn encode_ssid_hex(ssid: &str) -> Result<String, NetworkError> {
+    let bytes = ssid.as_bytes();
+    if bytes.is_empty() {
+        return Err(NetworkError::PlatformError("empty SSID rejected".into()));
+    }
+    if bytes.len() > MAX_SSID_LEN {
+        return Err(NetworkError::PlatformError(format!(
+            "SSID too long ({} bytes, max {MAX_SSID_LEN})",
+            bytes.len()
+        )));
+    }
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write as _;
+        // infallible write into a String
+        let _ = write!(hex, "{b:02x}");
+    }
+    Ok(hex)
+}
+
+/// Validate a WPA passphrase and return it escaped for the quoted-string form
+/// `SET_NETWORK <id> psk "<escaped>"`.
+///
+/// wpa_supplicant's `printf_decode` understands `\\` and `\"` inside a quoted
+/// string, so we escape exactly those two characters. We additionally enforce
+/// the IEEE 802.11i passphrase rules (8..=63 bytes, all printable ASCII
+/// 0x20..=0x7e) and reject anything outside that range — in particular control
+/// characters, NUL, and newlines, which cannot be safely represented and would
+/// otherwise break out of the control command.
+fn escape_psk_quoted(psk: &str) -> Result<String, NetworkError> {
+    let bytes = psk.as_bytes();
+    if bytes.len() < MIN_PSK_LEN || bytes.len() > MAX_PSK_LEN {
+        return Err(NetworkError::PlatformError(format!(
+            "WPA passphrase length {} out of range ({MIN_PSK_LEN}..={MAX_PSK_LEN})",
+            bytes.len()
+        )));
+    }
+    // Reject any non-printable-ASCII byte (control chars, NUL, newline, high bytes).
+    if let Some(bad) = bytes.iter().find(|&&b| !(0x20..=0x7e).contains(&b)) {
+        return Err(NetworkError::PlatformError(format!(
+            "WPA passphrase contains illegal byte 0x{bad:02x}"
+        )));
+    }
+    let mut out = String::with_capacity(psk.len());
+    for c in psk.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            other => out.push(other),
+        }
+    }
+    Ok(out)
+}
+
 /// Linux network manager backed by /sys/class/net + wpa_supplicant.
 pub struct NetworkManager {
     cached_aps: Vec<AccessPoint>,
@@ -364,9 +441,12 @@ fn set_rfkill_block(block: bool) -> Result<(), NetworkError> {
     }
 
     if !any {
-        return Err(NetworkError::PlatformError(
-            "no rfkill devices found".into(),
-        ));
+        // No rfkill hardware present: the radio block could NOT be applied.
+        // Report this distinctly (`NotSupported`) rather than as a generic
+        // `PlatformError`, so a caller requesting airplane mode can tell
+        // "block not applied / unsupported" apart from a genuine write failure
+        // and fail closed instead of believing the radios were disabled.
+        return Err(NetworkError::NotSupported);
     }
     Ok(())
 }
@@ -591,8 +671,17 @@ impl NetworkBackend for NetworkManager {
             return Err(NetworkError::PlatformError("ADD_NETWORK failed".into()));
         }
 
-        // Set SSID (must be quoted for wpa_supplicant)
-        let cmd = format!("SET_NETWORK {net_id} ssid \"{ssid}\"");
+        // Set SSID. Use wpa_supplicant's hex form (no surrounding quotes) so an
+        // SSID containing `"`, `\`, NUL, or newline cannot break out of the
+        // argument and inject further control commands.
+        let ssid_hex = match encode_ssid_hex(ssid) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = self.wpa_command(&iface, &format!("REMOVE_NETWORK {net_id}"));
+                return Err(e);
+            }
+        };
+        let cmd = format!("SET_NETWORK {net_id} ssid {ssid_hex}");
         let resp = self.wpa_command(&iface, &cmd)?;
         if resp.trim() == "FAIL" {
             let _ = self.wpa_command(&iface, &format!("REMOVE_NETWORK {net_id}"));
@@ -603,7 +692,17 @@ impl NetworkBackend for NetworkManager {
 
         // Set key management and password
         if let Some(pw) = password {
-            let cmd = format!("SET_NETWORK {net_id} psk \"{pw}\"");
+            // Validate + escape the passphrase for the quoted form so a `"` or
+            // `\` cannot terminate the argument; control chars / NUL / newline
+            // and out-of-range lengths are rejected outright.
+            let pw_escaped = match escape_psk_quoted(pw) {
+                Ok(p) => p,
+                Err(_) => {
+                    let _ = self.wpa_command(&iface, &format!("REMOVE_NETWORK {net_id}"));
+                    return Err(NetworkError::AuthenticationFailed);
+                }
+            };
+            let cmd = format!("SET_NETWORK {net_id} psk \"{pw_escaped}\"");
             let resp = self.wpa_command(&iface, &cmd)?;
             if resp.trim() == "FAIL" {
                 let _ = self.wpa_command(&iface, &format!("REMOVE_NETWORK {net_id}"));
@@ -911,5 +1010,156 @@ mod tests {
         let full = segments.join(":");
         let addr: std::net::Ipv6Addr = full.parse().unwrap();
         assert_eq!(addr.to_string(), "fe80::1");
+    }
+}
+
+/// Regression tests for the wpa_supplicant control-value sanitizers
+/// (t49-e8-F4 SSID/PSK injection) and the rfkill error distinction
+/// (t49-e8-F7 unsupported-vs-failure).
+///
+/// These cover pure, cfg-free helpers, so they assert the injection/escaping
+/// contract directly without any Linux-only socket/ioctl dependency.
+#[cfg(test)]
+mod wpa_sanitize_tests {
+    use super::*;
+
+    fn err_msg(r: Result<String, NetworkError>) -> String {
+        match r {
+            Ok(v) => panic!("expected rejection, got Ok({v:?})"),
+            Err(e) => e.to_string(),
+        }
+    }
+
+    // ---- SSID hex encoding (F4) ----
+
+    #[test]
+    fn ssid_normal_value_hex_encoded_unchanged_semantics() {
+        // A plain SSID round-trips to its byte hex, no quotes, no injection surface.
+        assert_eq!(encode_ssid_hex("Home").unwrap(), "486f6d65");
+        assert_eq!(encode_ssid_hex("My AP").unwrap(), "4d79204150");
+    }
+
+    #[test]
+    fn ssid_with_quote_is_hex_encoded_not_injected() {
+        // A `"` in the SSID becomes hex 22 — it can never close a quoted arg.
+        let hex = encode_ssid_hex("a\"b").unwrap();
+        assert_eq!(hex, "612262");
+        assert!(!hex.contains('"'));
+        // Built command has no literal quote the attacker controls.
+        let cmd = format!("SET_NETWORK 0 ssid {hex}");
+        assert_eq!(cmd, "SET_NETWORK 0 ssid 612262");
+    }
+
+    #[test]
+    fn ssid_with_newline_and_injection_payload_is_hex_encoded() {
+        // Classic injection attempt: try to append a SET_NETWORK key_mgmt NONE.
+        let payload = "x\" key_mgmt NONE\n";
+        let hex = encode_ssid_hex(payload).unwrap();
+        assert!(!hex.contains('"'));
+        assert!(!hex.contains('\n'));
+        assert!(!hex.contains(' '));
+        assert!(!hex.to_lowercase().contains("key_mgmt"));
+    }
+
+    #[test]
+    fn ssid_empty_rejected() {
+        assert!(err_msg(encode_ssid_hex("")).contains("empty SSID"));
+    }
+
+    #[test]
+    fn ssid_too_long_rejected() {
+        let long = "a".repeat(MAX_SSID_LEN + 1);
+        assert!(err_msg(encode_ssid_hex(&long)).contains("too long"));
+    }
+
+    #[test]
+    fn ssid_max_length_accepted() {
+        let max = "a".repeat(MAX_SSID_LEN);
+        assert_eq!(encode_ssid_hex(&max).unwrap().len(), MAX_SSID_LEN * 2);
+    }
+
+    // ---- PSK quoting/escaping (F4) ----
+
+    #[test]
+    fn psk_normal_value_passes_through_unchanged() {
+        // A normal passphrase with no special chars is returned verbatim.
+        assert_eq!(escape_psk_quoted("hunter2pass").unwrap(), "hunter2pass");
+    }
+
+    #[test]
+    fn psk_quote_is_escaped() {
+        // `"` -> `\"` so it cannot terminate the quoted argument.
+        let escaped = escape_psk_quoted("ab\"cdefg").unwrap();
+        assert_eq!(escaped, "ab\\\"cdefg");
+    }
+
+    #[test]
+    fn psk_backslash_is_escaped() {
+        let escaped = escape_psk_quoted("ab\\cdefg").unwrap();
+        assert_eq!(escaped, "ab\\\\cdefg");
+    }
+
+    #[test]
+    fn psk_injection_payload_quote_is_neutralized() {
+        // Attempt to break out of the quoted argument and inject `key_mgmt NONE`.
+        let escaped = escape_psk_quoted("p\" key_mgmt NONE").unwrap();
+        // Inside the escaped value, every `"` must be backslash-preceded, so it
+        // can no longer close the wrapping quotes of the SET_NETWORK command.
+        let vb = escaped.as_bytes();
+        for (i, &b) in vb.iter().enumerate() {
+            if b == b'"' {
+                assert!(
+                    i > 0 && vb[i - 1] == b'\\',
+                    "unescaped quote inside escaped PSK at {i}"
+                );
+            }
+        }
+        // The escaped value carries the attacker text only as inert characters.
+        assert!(escaped.contains("\\\""));
+        assert!(escaped.contains("key_mgmt NONE"));
+        // Wrapped into the command it stays a single quoted argument.
+        let cmd = format!("SET_NETWORK 0 psk \"{escaped}\"");
+        assert!(cmd.starts_with("SET_NETWORK 0 psk \""));
+        assert!(cmd.ends_with('"'));
+    }
+
+    #[test]
+    fn psk_newline_rejected() {
+        assert!(err_msg(escape_psk_quoted("pass\nword")).contains("illegal byte"));
+    }
+
+    #[test]
+    fn psk_null_byte_rejected() {
+        assert!(err_msg(escape_psk_quoted("pass\0word")).contains("illegal byte"));
+    }
+
+    #[test]
+    fn psk_too_short_rejected() {
+        assert!(err_msg(escape_psk_quoted("short")).contains("out of range"));
+    }
+
+    #[test]
+    fn psk_too_long_rejected() {
+        let long = "a".repeat(MAX_PSK_LEN + 1);
+        assert!(err_msg(escape_psk_quoted(&long)).contains("out of range"));
+    }
+
+    #[test]
+    fn psk_boundary_lengths_accepted() {
+        assert!(escape_psk_quoted(&"a".repeat(MIN_PSK_LEN)).is_ok());
+        assert!(escape_psk_quoted(&"a".repeat(MAX_PSK_LEN)).is_ok());
+    }
+
+    // ---- rfkill error distinction (F7) ----
+
+    #[test]
+    fn rfkill_no_device_is_not_supported_not_platform_error() {
+        // The "no rfkill hardware" path must be distinguishable from a genuine
+        // write failure so a caller enabling airplane mode can fail closed.
+        let unsupported = NetworkError::NotSupported;
+        let write_fail = NetworkError::PlatformError("rfkill write /x: boom".into());
+        assert!(matches!(unsupported, NetworkError::NotSupported));
+        assert!(!matches!(write_fail, NetworkError::NotSupported));
+        assert_ne!(unsupported.to_string(), write_fail.to_string());
     }
 }

@@ -190,12 +190,49 @@ mod tests {
     use crate::animation::Animation;
     use crate::easing::EasingFunction;
     use crate::keyframe::{Keyframe, KeyframeTrack};
+    use liquide_compositor::{Affine2D, NodeProperties, Rect, SceneNode, SceneNodeKind};
     use std::collections::HashMap;
 
     const EPSILON: f32 = 0.001;
 
     fn approx(a: f32, b: f32) -> bool {
         (a - b).abs() < EPSILON
+    }
+
+    fn assert_matrix_approx(actual: &[f32; 6], expected: &[f32; 6]) {
+        for index in 0..6 {
+            assert!(
+                approx(actual[index], expected[index]),
+                "matrix mismatch at {index}: {} vs {}",
+                actual[index],
+                expected[index]
+            );
+        }
+    }
+
+    fn constant_animation(
+        scheduler: &mut CompositorAnimScheduler,
+        property: &str,
+        value: AnimValue,
+    ) -> AnimationId {
+        let id = scheduler.next_animation_id();
+        let mut tracks = HashMap::new();
+        tracks.insert(
+            property.to_string(),
+            KeyframeTrack::new(vec![
+                Keyframe {
+                    offset: 0.0,
+                    value,
+                    easing: EasingFunction::Linear,
+                },
+                Keyframe {
+                    offset: 1.0,
+                    value,
+                    easing: EasingFunction::Linear,
+                },
+            ]),
+        );
+        scheduler.add_animation(Animation::new(id, tracks, 1000.0))
     }
 
     #[test]
@@ -295,6 +332,82 @@ mod tests {
         let anim = [1.0, 0.0, 0.0, 1.0, 5.0, 0.0];
         let result = apply_to_transform(&base, &anim);
         assert!(approx(result[4], 15.0));
+    }
+
+    #[test]
+    fn apply_to_opacity_multiplies_and_clamps() {
+        assert!(approx(apply_to_opacity(0.5, 0.8), 0.4));
+        assert!(approx(apply_to_opacity(1.5, 0.9), 1.0));
+        assert!(approx(apply_to_opacity(0.8, -0.5), 0.0));
+    }
+
+    #[test]
+    fn apply_layer_state_composes_transform_and_opacity() {
+        let base_transform = [1.0, 0.0, 0.0, 1.0, 10.0, 20.0];
+        let state = LayerAnimState {
+            opacity: Some(0.5),
+            transform: Some([2.0, 0.0, 0.0, 3.0, 4.0, 5.0]),
+            ..LayerAnimState::default()
+        };
+
+        let (transform, opacity) = apply_layer_state(&base_transform, 0.5, &state);
+
+        assert_matrix_approx(&transform, &[2.0, 0.0, 0.0, 3.0, 14.0, 25.0]);
+        assert!(approx(opacity, 0.25));
+    }
+
+    #[test]
+    fn apply_scheduler_to_scene_applies_lookup_animation_and_transition() {
+        let mut scene = SceneNode::new(
+            1,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0))
+                .with_opacity(0.8)
+                .with_transform(Affine2D::translation(10.0, 0.0)),
+        );
+        scene.add_child(SceneNode::new(
+            2,
+            SceneNodeKind::Content,
+            NodeProperties::new(Rect::new(0.0, 0.0, 50.0, 50.0))
+                .with_opacity(0.6)
+                .with_transform(Affine2D::translation(1.0, 2.0)),
+        ));
+
+        let mut scheduler = CompositorAnimScheduler::new();
+        let root_animation = constant_animation(&mut scheduler, "opacity", AnimValue::Float(0.5));
+        scheduler.add_transition(
+            2,
+            "opacity".to_string(),
+            AnimValue::Float(0.0),
+            AnimValue::Float(1.0),
+            200.0,
+            EasingFunction::Linear,
+        );
+        scheduler.add_transition(
+            2,
+            "transform".to_string(),
+            AnimValue::Transform([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            AnimValue::Transform([1.0, 0.0, 0.0, 1.0, 10.0, 20.0]),
+            200.0,
+            EasingFunction::Linear,
+        );
+        scheduler.tick_all(100.0);
+
+        apply_scheduler_to_scene(&mut scene, &scheduler, |node_id| {
+            if node_id == 1 {
+                vec![root_animation]
+            } else {
+                Vec::new()
+            }
+        });
+
+        assert!(approx(scene.properties.opacity, 0.4));
+        assert!(approx(scene.properties.transform.tx, 10.0));
+
+        let child = &scene.children[0];
+        assert!(approx(child.properties.opacity, 0.3));
+        assert!(approx(child.properties.transform.tx, 6.0));
+        assert!(approx(child.properties.transform.ty, 12.0));
     }
 
     #[test]

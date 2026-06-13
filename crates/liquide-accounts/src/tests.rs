@@ -605,6 +605,151 @@ fn manager_custom_policy() {
     assert_eq!(user.username, "bob");
 }
 
+// ── Authorization enforcement (t51-e3) ────────────────────────────
+//
+// These regressions assert the SECURITY contract: when a runtime is
+// attached, a gated account mutation is fail-closed. A denied authorization
+// MUST block the mutation (the backend is never touched); an allowed one MUST
+// proceed.
+//
+// Deny seam: the three gated ops require `AuthLevel::AdminPassword`. In the
+// test environment no credential can be supplied, so the canonical facade
+// resolves them to a non-`Granted` result → `PermissionDenied`, and the
+// backend mutation does not run.
+//
+// Grant seam: the facade's catalog is data-driven; toggling an op's `gated`
+// flag off makes `authorize` return `Granted` without credential verification
+// (it still audits/forwards). That is the grant seam used to prove the allowed
+// path proceeds end-to-end into the backend.
+
+use liquide_authz_runtime::{AuthorizationRuntime, Subject};
+
+/// A subject standing in for the requesting principal in tests.
+fn test_subject() -> Subject {
+    Subject::new(1000, 4242, "test-session")
+}
+
+/// A runtime whose `key` op has been forced ungated, so the facade grants it
+/// without credential verification — the "allowed" seam.
+fn runtime_allowing(key: &str) -> AuthorizationRuntime {
+    let mut runtime = AuthorizationRuntime::with_defaults("test-user");
+    assert!(
+        runtime.catalog_mut().set_gated(key, false),
+        "catalog should contain {key}"
+    );
+    runtime
+}
+
+#[test]
+fn enforcement_denies_create_user_and_does_not_mutate() {
+    let backend = StubBackend::new();
+    let before = backend.list_users().unwrap().len();
+    // Default catalog: accounts.create_user is gated (AdminPassword) and no
+    // credential is available → fail closed.
+    let mut mgr = UserManager::new(Box::new(backend)).with_enforcement(
+        AuthorizationRuntime::with_defaults("test-user"),
+        test_subject(),
+    );
+
+    let result = mgr.create_user("alice", "Alice", AccountType::Standard, "G00dPass");
+    assert!(
+        matches!(result, Err(AccountError::PermissionDenied)),
+        "denied authorization must block create_user, got {result:?}"
+    );
+    // Backend untouched: no user was created.
+    assert_eq!(mgr.list_users().unwrap().len(), before);
+}
+
+#[test]
+fn enforcement_allows_create_user_when_granted() {
+    let mut mgr = UserManager::new(Box::new(StubBackend::new()))
+        .with_enforcement(runtime_allowing("accounts.create_user"), test_subject());
+
+    let user = mgr
+        .create_user("alice", "Alice", AccountType::Standard, "G00dPass")
+        .expect("granted authorization must let create_user proceed");
+    assert_eq!(user.username, "alice");
+}
+
+#[test]
+fn enforcement_denies_delete_user_and_does_not_mutate() {
+    let backend = StubBackend::new();
+    let before = backend.list_users().unwrap().len();
+    let mut mgr = UserManager::new(Box::new(backend)).with_enforcement(
+        AuthorizationRuntime::with_defaults("test-user"),
+        test_subject(),
+    );
+
+    let result = mgr.delete_user(1000, false);
+    assert!(
+        matches!(result, Err(AccountError::PermissionDenied)),
+        "denied authorization must block delete_user, got {result:?}"
+    );
+    // The seeded user is still present.
+    assert_eq!(mgr.list_users().unwrap().len(), before);
+}
+
+#[test]
+fn enforcement_allows_delete_user_when_granted() {
+    let mut mgr = UserManager::new(Box::new(StubBackend::new()))
+        .with_enforcement(runtime_allowing("accounts.delete_user"), test_subject());
+
+    // The stub seeds uid 1000; deleting it should now proceed.
+    mgr.delete_user(1000, false)
+        .expect("granted authorization must let delete_user proceed");
+    assert!(mgr.list_users().unwrap().is_empty());
+}
+
+#[test]
+fn enforcement_denies_change_password_and_does_not_mutate() {
+    let mut mgr = UserManager::new(Box::new(StubBackend::new())).with_enforcement(
+        AuthorizationRuntime::with_defaults("test-user"),
+        test_subject(),
+    );
+
+    // Even with otherwise-valid inputs, the gate blocks BEFORE any policy/
+    // backend work — proving the gate is at the top and fail-closed.
+    let result = mgr.change_password(1000, "old", "Str0ngPw");
+    assert!(
+        matches!(result, Err(AccountError::PermissionDenied)),
+        "denied authorization must block change_password, got {result:?}"
+    );
+}
+
+#[test]
+fn enforcement_allows_change_password_when_granted() {
+    let mut mgr = UserManager::new(Box::new(StubBackend::new()))
+        .with_enforcement(runtime_allowing("accounts.change_password"), test_subject());
+
+    mgr.change_password(1000, "old", "Str0ngPw")
+        .expect("granted authorization must let change_password proceed");
+}
+
+#[test]
+fn enforcement_does_not_gate_cosmetic_ops() {
+    // set_display_name / set_avatar are intentionally NOT gated (Checkpoint A).
+    // They must work even under a default (deny-by-credential) runtime.
+    let mut mgr = UserManager::new(Box::new(StubBackend::new())).with_enforcement(
+        AuthorizationRuntime::with_defaults("test-user"),
+        test_subject(),
+    );
+
+    mgr.set_display_name(1000, "New Name")
+        .expect("set_display_name is ungated and must proceed");
+    mgr.set_avatar(1000, "/tmp/a.png")
+        .expect("set_avatar is ungated and must proceed");
+}
+
+#[test]
+fn no_enforcement_means_no_gating() {
+    // Without a runtime attached, behaviour is unchanged (legacy callers).
+    let mut mgr = UserManager::new(Box::new(StubBackend::new()));
+    let user = mgr
+        .create_user("alice", "Alice", AccountType::Standard, "G00dPass")
+        .expect("no enforcement → create_user proceeds");
+    assert_eq!(user.username, "alice");
+}
+
 #[test]
 fn manager_delegates_lock_unlock() {
     let mut mgr = UserManager::new(Box::new(StubBackend::new()));

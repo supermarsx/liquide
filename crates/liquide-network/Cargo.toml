@@ -2,3 +2,7 @@
 name = "liquide-network"
 version = "0.1.0"
 edition = "2024"
+
+[dependencies]
+# Pre-added by t51-e1 for the Wave A3 authorization seam (t51-e5 adds the calls).
+liquide-authz-runtime.workspace = true

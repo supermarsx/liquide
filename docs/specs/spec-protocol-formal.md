@@ -17,12 +17,12 @@ The LiquiDE protocol is a **multiplexed, multi-channel binary protocol** designe
 
 ### 2.1 Supported Transports
 
-| Transport | Use Case | Properties |
-|-----------|----------|------------|
-| TLS 1.3 over TCP | Control channel, file transfer | Reliable, ordered |
-| DTLS 1.3 over UDP | Video, audio, cursor | Low-latency, unordered, lossy allowed |
-| QUIC (HTTP/3) | Hybrid (all channels) | Reliable + unreliable streams, multiplexed |
-| WebSocket over TLS | Browser client fallback | Reliable, ordered |
+| Transport          | Use Case                       | Properties                                 |
+| ------------------ | ------------------------------ | ------------------------------------------ |
+| TLS 1.3 over TCP   | Control channel, file transfer | Reliable, ordered                          |
+| DTLS 1.3 over UDP  | Video, audio, cursor           | Low-latency, unordered, lossy allowed      |
+| QUIC (HTTP/3)      | Hybrid (all channels)          | Reliable + unreliable streams, multiplexed |
+| WebSocket over TLS | Browser client fallback        | Reliable, ordered                          |
 
 ### 2.2 Transport Negotiation
 
@@ -47,7 +47,7 @@ The LiquiDE protocol is organized into four **stack layers**, each with well-def
 
 ### Layer Model
 
-```
+```text
 ┌──────────────────────────────────────────────┐
 │  Layer 4: Message Layer                      │
 │  CBOR-encoded typed payloads                 │
@@ -67,14 +67,15 @@ The LiquiDE protocol is organized into four **stack layers**, each with well-def
 └──────────────────────────────────────────────┘
 ```
 
-| Layer | Input | Output | Responsibilities |
-|-------|-------|--------|-----------------|
-| **L1 — Transport** | Raw network bytes | Decrypted byte stream or datagrams | TLS/DTLS handshake, encryption, connection management, transport-level multiplexing (QUIC streams). |
-| **L2 — Framing** | Byte stream / datagrams | Typed frames with headers | Frame delimitation (magic + length), sequence numbering, optional CRC-32C, compression/decompression, fragmentation/reassembly. |
-| **L3 — Channel** | Typed frames | Ordered/filtered messages per channel | Channel lifecycle (open/close/suspend/resume), per-channel ordering, duplicate detection, flow control windows, backpressure signaling. |
-| **L4 — Message** | Channel-dispatched frames | Decoded CBOR structures | CBOR decode/encode, schema validation, semantic dispatch to subsystem handlers (compositor, input injector, audio pipeline, etc.). |
+| Layer              | Input                     | Output                                | Responsibilities                                                                                                                        |
+| ------------------ | ------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **L1 — Transport** | Raw network bytes         | Decrypted byte stream or datagrams    | TLS/DTLS handshake, encryption, connection management, transport-level multiplexing (QUIC streams).                                     |
+| **L2 — Framing**   | Byte stream / datagrams   | Typed frames with headers             | Frame delimitation (magic + length), sequence numbering, optional CRC-32C, compression/decompression, fragmentation/reassembly.         |
+| **L3 — Channel**   | Typed frames              | Ordered/filtered messages per channel | Channel lifecycle (open/close/suspend/resume), per-channel ordering, duplicate detection, flow control windows, backpressure signaling. |
+| **L4 — Message**   | Channel-dispatched frames | Decoded CBOR structures               | CBOR decode/encode, schema validation, semantic dispatch to subsystem handlers (compositor, input injector, audio pipeline, etc.).      |
 
 **Layer boundary contracts:**
+
 - L1→L2: L1 delivers complete TLS records or QUIC frames. L2 never sees partial TLS records.
 - L2→L3: L2 delivers complete, decompressed, reassembled frames with verified CRC (if present). L3 never sees fragments or compressed data.
 - L3→L4: L3 delivers frames in per-channel order with duplicates suppressed. L4 never sees out-of-order or duplicate messages.
@@ -84,11 +85,11 @@ The LiquiDE protocol is organized into four **stack layers**, each with well-def
 
 Channels are divided into three **classes** based on their lifecycle and allocation rules:
 
-| Class | Channels | Allocation | Characteristics |
-|-------|----------|-----------|----------------|
-| **Fixed** | Control (0x00), Emergency (0x01), Input (0x50), Cursor (0x11) | Always present. Opened implicitly during handshake. Cannot be closed by either peer. | Core protocol channels required for session operation. Fixed channel IDs are frozen per §15.1. |
+| Class        | Channels                                                                                                               | Allocation                                                                                                                                 | Characteristics                                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| **Fixed**    | Control (0x00), Emergency (0x01), Input (0x50), Cursor (0x11)                                                          | Always present. Opened implicitly during handshake. Cannot be closed by either peer.                                                       | Core protocol channels required for session operation. Fixed channel IDs are frozen per §15.1.                         |
 | **Standard** | Video (0x10), Tile (0x12), Audio (0x20/0x21), Clipboard (0x30), File Transfer (0x31), USB/Device (0x40), Camera (0x60) | Opened on demand via `ChannelOpen`/`ChannelOpenAck`. Subject to capability negotiation (§12.1). May be closed and reopened during session. | Feature channels that activate based on negotiated capabilities and policy. Standard channel IDs are frozen per §15.1. |
-| **Virtual** | Plugin IPC (0xF0+) | Dynamically allocated from the virtual channel range (0xF0–0xFE). Opened via `ChannelOpen` with a `plugin_id` parameter. | Plugin-defined channels for third-party extensions. Subject to virtual channel slot limits (see below). |
+| **Virtual**  | Plugin IPC (0xF0+)                                                                                                     | Dynamically allocated from the virtual channel range (0xF0–0xFE). Opened via `ChannelOpen` with a `plugin_id` parameter.                   | Plugin-defined channels for third-party extensions. Subject to virtual channel slot limits (see below).                |
 
 ### Virtual Channel Slot Cap
 
@@ -109,25 +110,25 @@ The protocol enforces a **hard limit of 15 virtual channel slots** (channel IDs 
 
 Each logical data stream is assigned a **channel ID**. Channels are multiplexed over the underlying transport.
 
-| Channel ID | Name | Direction | Reliability | Ordering | Priority |
-|-----------|------|-----------|-------------|----------|----------|
-| `0x00` | Control | Bidirectional | Reliable | Ordered | Highest |
-| `0x01` | Emergency | Bidirectional | Reliable | Ordered | Highest (parallel to control) |
-| `0x10` | Video | Server → Client | Unreliable (lossy OK) | Ordered per-frame | High |
-| `0x12` | Tile | Server → Client | Reliable | Ordered per-batch | High |
-| `0x11` | Cursor | Server → Client | Unreliable | Latest-wins | Highest media |
-| `0x20` | Audio (playback) | Server → Client | Unreliable | Ordered | High |
-| `0x21` | Audio (capture) | Client → Server | Unreliable | Ordered | High |
-| `0x30` | Clipboard | Bidirectional | Reliable | Ordered | Medium |
-| `0x31` | File Transfer | Bidirectional | Reliable | Ordered | Low |
-| `0x40` | USB/IP | Bidirectional | Reliable | Ordered | Medium |
-| `0x50` | Input | Client → Server | Reliable | Ordered | Highest |
-| `0x60` | Camera | Client → Server | Unreliable | Ordered | Medium |
-| `0xF0` | Plugin IPC | Bidirectional | Reliable | Ordered | Low |
+| Channel ID | Name             | Direction       | Reliability           | Ordering          | Priority                      |
+| ---------- | ---------------- | --------------- | --------------------- | ----------------- | ----------------------------- |
+| `0x00`     | Control          | Bidirectional   | Reliable              | Ordered           | Highest                       |
+| `0x01`     | Emergency        | Bidirectional   | Reliable              | Ordered           | Highest (parallel to control) |
+| `0x10`     | Video            | Server → Client | Unreliable (lossy OK) | Ordered per-frame | High                          |
+| `0x12`     | Tile             | Server → Client | Reliable              | Ordered per-batch | High                          |
+| `0x11`     | Cursor           | Server → Client | Unreliable            | Latest-wins       | Highest media                 |
+| `0x20`     | Audio (playback) | Server → Client | Unreliable            | Ordered           | High                          |
+| `0x21`     | Audio (capture)  | Client → Server | Unreliable            | Ordered           | High                          |
+| `0x30`     | Clipboard        | Bidirectional   | Reliable              | Ordered           | Medium                        |
+| `0x31`     | File Transfer    | Bidirectional   | Reliable              | Ordered           | Low                           |
+| `0x40`     | USB/IP           | Bidirectional   | Reliable              | Ordered           | Medium                        |
+| `0x50`     | Input            | Client → Server | Reliable              | Ordered           | Highest                       |
+| `0x60`     | Camera           | Client → Server | Unreliable            | Ordered           | Medium                        |
+| `0xF0`     | Plugin IPC       | Bidirectional   | Reliable              | Ordered           | Low                           |
 
 ### 3.2 Channel Lifecycle
 
-```
+```text
                     ┌───────────┐
                     │  Closed   │
                     └─────┬─────┘
@@ -157,10 +158,10 @@ Each logical data stream is assigned a **channel ID**. Channels are multiplexed 
 
 On a single TCP/QUIC connection, channels are multiplexed using the frame header's `channel_id` field. On `tcp+udp` transport, the mapping is:
 
-| Transport | Channels |
-|-----------|----------|
-| TCP (TLS) | `0x00` Control, `0x01` Emergency, `0x12` Tile, `0x30` Clipboard, `0x31` File Transfer, `0x40` USB/IP, `0x50` Input, `0xF0` Plugin IPC |
-| UDP (DTLS) | `0x10` Video, `0x11` Cursor, `0x20`/`0x21` Audio, `0x60` Camera |
+| Transport  | Channels                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| TCP (TLS)  | `0x00` Control, `0x01` Emergency, `0x12` Tile, `0x30` Clipboard, `0x31` File Transfer, `0x40` USB/IP, `0x50` Input, `0xF0` Plugin IPC |
+| UDP (DTLS) | `0x10` Video, `0x11` Cursor, `0x20`/`0x21` Audio, `0x60` Camera                                                                       |
 
 On QUIC transport, all channels use QUIC streams. Unreliable channels use QUIC datagrams (RFC 9221) when available.
 
@@ -172,7 +173,7 @@ On QUIC transport, all channels use QUIC streams. Unreliable channels use QUIC d
 
 Every message on the wire is wrapped in a frame:
 
-```
+```text
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 ├─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┼─┤
@@ -195,54 +196,54 @@ Every message on the wire is wrapped in a frame:
 
 ### 4.2 Frame Header Fields
 
-| Field | Size | Description |
-|-------|------|-------------|
-| Magic | 2 bytes | `0x4C44` ("LD" for LiquiDE) |
-| Version | 4 bits | Protocol frame version (`1`) |
-| Flags | 8 bits | See flag table below |
-| Channel ID | 2 bytes | Logical channel (see §3.1) |
-| Sequence Number | 4 bytes | Per-channel monotonic sequence number |
-| Timestamp | 8 bytes | Microseconds since session start (64-bit unsigned) |
-| Message Type | 2 bytes | Message type code (see §5) |
-| Payload Length | 2 bytes | Payload size in bytes (max 65535; for larger payloads, use fragmentation) |
-| Payload | variable | Message-specific payload |
-| CRC-32C | 4 bytes | Optional checksum (Castagnoli CRC) |
+| Field           | Size     | Description                                                               |
+| --------------- | -------- | ------------------------------------------------------------------------- |
+| Magic           | 2 bytes  | `0x4C44` ("LD" for LiquiDE)                                               |
+| Version         | 4 bits   | Protocol frame version (`1`)                                              |
+| Flags           | 8 bits   | See flag table below                                                      |
+| Channel ID      | 2 bytes  | Logical channel (see §3.1)                                                |
+| Sequence Number | 4 bytes  | Per-channel monotonic sequence number                                     |
+| Timestamp       | 8 bytes  | Microseconds since session start (64-bit unsigned)                        |
+| Message Type    | 2 bytes  | Message type code (see §5)                                                |
+| Payload Length  | 2 bytes  | Payload size in bytes (max 65535; for larger payloads, use fragmentation) |
+| Payload         | variable | Message-specific payload                                                  |
+| CRC-32C         | 4 bytes  | Optional checksum (Castagnoli CRC)                                        |
 
 **Total header size**: 20 bytes (without CRC) or 24 bytes (with CRC).
 
 ### 4.3 Frame Flags
 
-| Bit | Name | Description |
-|-----|------|-------------|
-| 0 | `COMPRESSED` | Payload is compressed (see §6) |
-| 1 | `FRAGMENTED` | This frame is part of a multi-frame message |
-| 2 | `CRC` | CRC-32C checksum is appended |
-| 3 | `PRIORITY` | High-priority frame (skip normal queue) |
-| 4 | `RELIABLE` | Promote this frame to reliable delivery (e.g., video keyframe on unreliable transport) |
-| 5 | `ORDERED` | Enforce strict sequence ordering for this frame (receiver must not deliver out of order) |
-| 6 | `KEYFRAME` | This frame contains a keyframe / full refresh (IDR for video, full tile for tile channel) |
-| 7 | `CONGESTION_MARK` | Sender's send queue was >80% full when this frame was enqueued (Early Congestion Notification) |
+| Bit | Name              | Description                                                                                    |
+| --- | ----------------- | ---------------------------------------------------------------------------------------------- |
+| 0   | `COMPRESSED`      | Payload is compressed (see §6)                                                                 |
+| 1   | `FRAGMENTED`      | This frame is part of a multi-frame message                                                    |
+| 2   | `CRC`             | CRC-32C checksum is appended                                                                   |
+| 3   | `PRIORITY`        | High-priority frame (skip normal queue)                                                        |
+| 4   | `RELIABLE`        | Promote this frame to reliable delivery (e.g., video keyframe on unreliable transport)         |
+| 5   | `ORDERED`         | Enforce strict sequence ordering for this frame (receiver must not deliver out of order)       |
+| 6   | `KEYFRAME`        | This frame contains a keyframe / full refresh (IDR for video, full tile for tile channel)      |
+| 7   | `CONGESTION_MARK` | Sender's send queue was >80% full when this frame was enqueued (Early Congestion Notification) |
 
 ### 4.4 Fragmentation
 
 Messages larger than 65535 bytes are fragmented:
 
-| Fragment Type | Flags | Sequence | Payload |
-|--------------|-------|----------|---------|
-| First | `FRAGMENTED` | N | First chunk + `fragment_total` (4 bytes prepended) |
-| Middle | `FRAGMENTED` | N+1, N+2... | Continuation chunks |
-| Last | (no `FRAGMENTED` flag) | N+K | Final chunk |
+| Fragment Type | Flags                  | Sequence    | Payload                                            |
+| ------------- | ---------------------- | ----------- | -------------------------------------------------- |
+| First         | `FRAGMENTED`           | N           | First chunk + `fragment_total` (4 bytes prepended) |
+| Middle        | `FRAGMENTED`           | N+1, N+2... | Continuation chunks                                |
+| Last          | (no `FRAGMENTED` flag) | N+K         | Final chunk                                        |
 
 The receiver reassembles fragments by channel and sequence number. Fragments must arrive in order on reliable channels. On unreliable channels, missing fragments cause the entire message to be dropped.
 
 ### 4.5 Maximum Frame Sizes
 
-| Transport | Max Frame Size | Notes |
-|-----------|---------------|-------|
-| TCP | 65559 bytes | Header (20) + max payload (65535) + CRC (4) |
-| UDP | MTU - DTLS overhead | Typically ~1200 bytes; fragmentation above this |
-| QUIC stream | 65559 bytes | Same as TCP |
-| QUIC datagram | QUIC max_datagram_frame_size | Usually ~1200 bytes |
+| Transport     | Max Frame Size               | Notes                                           |
+| ------------- | ---------------------------- | ----------------------------------------------- |
+| TCP           | 65559 bytes                  | Header (20) + max payload (65535) + CRC (4)     |
+| UDP           | MTU - DTLS overhead          | Typically ~1200 bytes; fragmentation above this |
+| QUIC stream   | 65559 bytes                  | Same as TCP                                     |
+| QUIC datagram | QUIC max_datagram_frame_size | Usually ~1200 bytes                             |
 
 ---
 
@@ -250,90 +251,90 @@ The receiver reassembles fragments by channel and sequence number. Fragments mus
 
 ### 5.1 Control Channel Messages (0x00)
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x0001` | `ClientHello` | C → S | Initial handshake |
-| `0x0002` | `ServerHello` | S → C | Handshake response |
-| `0x0003` | `Ping` | Both | Keepalive / latency measurement |
-| `0x0004` | `Pong` | Both | Ping response |
-| `0x0005` | `ChannelOpen` | Both | Open a logical channel |
-| `0x0006` | `ChannelOpenAck` | Both | Accept channel open |
-| `0x0007` | `ChannelOpenReject` | Both | Reject channel open |
-| `0x0008` | `ChannelClose` | Both | Close a channel |
-| `0x0009` | `ChannelSuspend` | Both | Suspend a channel (pause data) |
-| `0x000A` | `ChannelResume` | Both | Resume a suspended channel |
-| `0x0010` | `LoginPrompt` | S → C | Request authentication input |
-| `0x0011` | `LoginResponse` | C → S | Authentication input from user |
-| `0x0012` | `LoginSuccess` | S → C | Authentication succeeded |
-| `0x0013` | `LoginFailure` | S → C | Authentication failed |
-| `0x0014` | `SessionInfo` | S → C | Session metadata (user, ID, features) |
-| `0x0015` | `Disconnect` | Both | Graceful disconnect with reason |
-| `0x0016` | `ConfigUpdate` | S → C | Server config change notification |
-| `0x0017` | `PolicyUpdate` | S → C | Policy change affecting this session |
-| `0x0018` | `Capabilities` | Both | Feature negotiation (post-handshake) |
-| `0x0019` | `Resize` | C → S | Client viewport resize |
-| `0x001A` | `ResizeAck` | S → C | Server acknowledges resize |
-| `0x001B` | `SessionLock` | S → C | Session locked |
-| `0x001C` | `SessionUnlock` | C → S | Unlock request (with credentials) |
-| `0x0020` | `AssetManifest` | S → C | List of session assets with content hashes (icon/cursor/theme cache) |
-| `0x0021` | `AssetRequest` | C → S | Client requests specific assets (cache misses) |
-| `0x0022` | `AssetData` | S → C | Asset payload (icon, cursor, theme resource) |
-| `0x0023` | `AssetManifestAck` | C → S | Client confirms manifest received with list of cache hits |
-| `0x0030` | `SecureAttention` | C → S | Secure Attention Sequence (privileged command, see below) |
-| `0x0031` | `SecureAttentionAck` | S → C | Server acknowledges SAS command with result |
+| Type Code | Name                 | Direction | Description                                                          |
+| --------- | -------------------- | --------- | -------------------------------------------------------------------- |
+| `0x0001`  | `ClientHello`        | C → S     | Initial handshake                                                    |
+| `0x0002`  | `ServerHello`        | S → C     | Handshake response                                                   |
+| `0x0003`  | `Ping`               | Both      | Keepalive / latency measurement                                      |
+| `0x0004`  | `Pong`               | Both      | Ping response                                                        |
+| `0x0005`  | `ChannelOpen`        | Both      | Open a logical channel                                               |
+| `0x0006`  | `ChannelOpenAck`     | Both      | Accept channel open                                                  |
+| `0x0007`  | `ChannelOpenReject`  | Both      | Reject channel open                                                  |
+| `0x0008`  | `ChannelClose`       | Both      | Close a channel                                                      |
+| `0x0009`  | `ChannelSuspend`     | Both      | Suspend a channel (pause data)                                       |
+| `0x000A`  | `ChannelResume`      | Both      | Resume a suspended channel                                           |
+| `0x0010`  | `LoginPrompt`        | S → C     | Request authentication input                                         |
+| `0x0011`  | `LoginResponse`      | C → S     | Authentication input from user                                       |
+| `0x0012`  | `LoginSuccess`       | S → C     | Authentication succeeded                                             |
+| `0x0013`  | `LoginFailure`       | S → C     | Authentication failed                                                |
+| `0x0014`  | `SessionInfo`        | S → C     | Session metadata (user, ID, features)                                |
+| `0x0015`  | `Disconnect`         | Both      | Graceful disconnect with reason                                      |
+| `0x0016`  | `ConfigUpdate`       | S → C     | Server config change notification                                    |
+| `0x0017`  | `PolicyUpdate`       | S → C     | Policy change affecting this session                                 |
+| `0x0018`  | `Capabilities`       | Both      | Feature negotiation (post-handshake)                                 |
+| `0x0019`  | `Resize`             | C → S     | Client viewport resize                                               |
+| `0x001A`  | `ResizeAck`          | S → C     | Server acknowledges resize                                           |
+| `0x001B`  | `SessionLock`        | S → C     | Session locked                                                       |
+| `0x001C`  | `SessionUnlock`      | C → S     | Unlock request (with credentials)                                    |
+| `0x0020`  | `AssetManifest`      | S → C     | List of session assets with content hashes (icon/cursor/theme cache) |
+| `0x0021`  | `AssetRequest`       | C → S     | Client requests specific assets (cache misses)                       |
+| `0x0022`  | `AssetData`          | S → C     | Asset payload (icon, cursor, theme resource)                         |
+| `0x0023`  | `AssetManifestAck`   | C → S     | Client confirms manifest received with list of cache hits            |
+| `0x0030`  | `SecureAttention`    | C → S     | Secure Attention Sequence (privileged command, see below)            |
+| `0x0031`  | `SecureAttentionAck` | S → C     | Server acknowledges SAS command with result                          |
 
 ### 5.2 Emergency Channel Messages (0x01)
 
 The emergency channel operates *independently* of the control channel. It is designed to function even when the session process has crashed or is unresponsive. The supervisor daemon maintains this channel directly.
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x0101` | `CrashInfo` | S → C | Session crash notification (BSOD data) |
-| `0x0102` | `CrashLogChunk` | S → C | Chunk of crash log text (streamed) |
-| `0x0103` | `CrashLogEnd` | S → C | End of crash log stream |
-| `0x0104` | `CrashReportRequest` | C → S | Client requests full crash report |
-| `0x0105` | `CrashReportChunk` | S → C | Chunk of crash report data |
-| `0x0106` | `CrashReportEnd` | S → C | End of crash report stream |
-| `0x0107` | `SupervisorStatus` | S → C | Supervisor session status update |
-| `0x0108` | `RestartRequest` | C → S | Client requests session restart |
-| `0x0109` | `RestartStatus` | S → C | Session restart progress/result |
-| `0x010A` | `HeartbeatEmergency` | Both | Emergency heartbeat (supervisor ↔ client) |
-| `0x010B` | `ServerShutdown` | S → C | Server is shutting down gracefully |
-| `0x010C` | `SessionLogStream` | S → C | Real-time log forwarding (emergency) |
-| `0x010D` | `DiagnosticRequest` | C → S | Client requests diagnostic data |
-| `0x010E` | `DiagnosticResponse` | S → C | Diagnostic data (memory, CPU, etc.) |
+| Type Code | Name                 | Direction | Description                               |
+| --------- | -------------------- | --------- | ----------------------------------------- |
+| `0x0101`  | `CrashInfo`          | S → C     | Session crash notification (BSOD data)    |
+| `0x0102`  | `CrashLogChunk`      | S → C     | Chunk of crash log text (streamed)        |
+| `0x0103`  | `CrashLogEnd`        | S → C     | End of crash log stream                   |
+| `0x0104`  | `CrashReportRequest` | C → S     | Client requests full crash report         |
+| `0x0105`  | `CrashReportChunk`   | S → C     | Chunk of crash report data                |
+| `0x0106`  | `CrashReportEnd`     | S → C     | End of crash report stream                |
+| `0x0107`  | `SupervisorStatus`   | S → C     | Supervisor session status update          |
+| `0x0108`  | `RestartRequest`     | C → S     | Client requests session restart           |
+| `0x0109`  | `RestartStatus`      | S → C     | Session restart progress/result           |
+| `0x010A`  | `HeartbeatEmergency` | Both      | Emergency heartbeat (supervisor ↔ client) |
+| `0x010B`  | `ServerShutdown`     | S → C     | Server is shutting down gracefully        |
+| `0x010C`  | `SessionLogStream`   | S → C     | Real-time log forwarding (emergency)      |
+| `0x010D`  | `DiagnosticRequest`  | C → S     | Client requests diagnostic data           |
+| `0x010E`  | `DiagnosticResponse` | S → C     | Diagnostic data (memory, CPU, etc.)       |
 
 ### 5.3 Video Channel Messages (0x10)
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x1001` | `FrameHeader` | S → C | Frame metadata (codec, size, damage rects) |
-| `0x1002` | `FrameData` | S → C | Encoded frame data (possibly fragmented) |
-| `0x1003` | `FrameAck` | C → S | Client acknowledge frame receipt |
-| `0x1004` | `QualityHint` | C → S | Client hints about desired quality/fps |
-| `0x1005` | `CodecSwitch` | S → C | Server switching codecs |
-| `0x1006` | `KeyFrameRequest` | C → S | Client requests a key frame (after packet loss) |
+| Type Code | Name              | Direction | Description                                     |
+| --------- | ----------------- | --------- | ----------------------------------------------- |
+| `0x1001`  | `FrameHeader`     | S → C     | Frame metadata (codec, size, damage rects)      |
+| `0x1002`  | `FrameData`       | S → C     | Encoded frame data (possibly fragmented)        |
+| `0x1003`  | `FrameAck`        | C → S     | Client acknowledge frame receipt                |
+| `0x1004`  | `QualityHint`     | C → S     | Client hints about desired quality/fps          |
+| `0x1005`  | `CodecSwitch`     | S → C     | Server switching codecs                         |
+| `0x1006`  | `KeyFrameRequest` | C → S     | Client requests a key frame (after packet loss) |
 
 #### Video Frame Loss Recovery
 
 Keyframes are sacred — loss of a keyframe or corruption of the decoder state results in visual corruption until the next keyframe. The protocol defines explicit recovery mechanisms:
 
-| Scenario | Detection | Recovery | Max Black-Screen Time |
-|----------|-----------|----------|-----------------------|
-| **Delta frame lost** (unreliable transport) | Client detects sequence gap in `FrameHeader.seq` | Client sends `KeyFrameRequest`. Server generates IDR within 1 frame period. Client discards delta frames until IDR arrives. | 1–2 frame periods (~16–66ms) |
-| **Keyframe lost** (unreliable transport) | Client detects gap AND `FrameHeader.is_keyframe = true` in the missing range | Client sends `KeyFrameRequest` with `urgent = true`. Server generates IDR immediately (bypasses encoder queue). | 1 frame period (~16ms) |
-| **Decoder error** (corrupt bitstream) | Client decoder returns error | Client sends `KeyFrameRequest` with `reason = "decode_error"`. Client resets decoder state. Server generates IDR. | 1–2 frame periods |
-| **Prolonged loss** (>500ms without valid frame) | Client timeout on frame arrival | Client sends `KeyFrameRequest`. If no response in 1s, requests transport-level reconnect. Shows "Reconnecting..." overlay after 2s. | 500ms (overlay at 2s) |
-| **Reconnect / resume** | New transport established | Server sends IDR as first frame on reconnect (mandatory). No client request needed. | 0 (first frame is always IDR) |
+| Scenario                                        | Detection                                                                    | Recovery                                                                                                                            | Max Black-Screen Time         |
+| ----------------------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| **Delta frame lost** (unreliable transport)     | Client detects sequence gap in `FrameHeader.seq`                             | Client sends `KeyFrameRequest`. Server generates IDR within 1 frame period. Client discards delta frames until IDR arrives.         | 1–2 frame periods (~16–66ms)  |
+| **Keyframe lost** (unreliable transport)        | Client detects gap AND `FrameHeader.is_keyframe = true` in the missing range | Client sends `KeyFrameRequest` with `urgent = true`. Server generates IDR immediately (bypasses encoder queue).                     | 1 frame period (~16ms)        |
+| **Decoder error** (corrupt bitstream)           | Client decoder returns error                                                 | Client sends `KeyFrameRequest` with `reason = "decode_error"`. Client resets decoder state. Server generates IDR.                   | 1–2 frame periods             |
+| **Prolonged loss** (>500ms without valid frame) | Client timeout on frame arrival                                              | Client sends `KeyFrameRequest`. If no response in 1s, requests transport-level reconnect. Shows "Reconnecting..." overlay after 2s. | 500ms (overlay at 2s)         |
+| **Reconnect / resume**                          | New transport established                                                    | Server sends IDR as first frame on reconnect (mandatory). No client request needed.                                                 | 0 (first frame is always IDR) |
 
 **Keyframe protection strategy by transport:**
 
-| Transport | Keyframe Protection | Rationale |
-|-----------|-------------------|-----------|
-| QUIC (unreliable datagrams) | Keyframes sent on a **reliable QUIC stream** (not datagrams). Delta frames use datagrams. | Keyframes are too large and important to lose. Reliable delivery adds ~1 RTT worst-case but guarantees arrival. |
-| UDP (raw) | Keyframes use **FEC (Forward Error Correction)**: Reed-Solomon with 20% redundancy (configurable). Delta frames have no FEC. | FEC protects against loss without RTT penalty. 20% overhead is acceptable for keyframes (~1/sec). |
-| TCP / TLS-TCP | Inherently reliable — no special handling needed. | TCP retransmits all lost segments. |
-| WebRTC data channels | Keyframes sent on a **reliable** data channel. Delta frames on unreliable channel (`maxRetransmits: 0`). | Same split as QUIC: reliability for keyframes, speed for deltas. |
+| Transport                   | Keyframe Protection                                                                                                          | Rationale                                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| QUIC (unreliable datagrams) | Keyframes sent on a **reliable QUIC stream** (not datagrams). Delta frames use datagrams.                                    | Keyframes are too large and important to lose. Reliable delivery adds ~1 RTT worst-case but guarantees arrival. |
+| UDP (raw)                   | Keyframes use **FEC (Forward Error Correction)**: Reed-Solomon with 20% redundancy (configurable). Delta frames have no FEC. | FEC protects against loss without RTT penalty. 20% overhead is acceptable for keyframes (~1/sec).               |
+| TCP / TLS-TCP               | Inherently reliable — no special handling needed.                                                                            | TCP retransmits all lost segments.                                                                              |
+| WebRTC data channels        | Keyframes sent on a **reliable** data channel. Delta frames on unreliable channel (`maxRetransmits: 0`).                     | Same split as QUIC: reliability for keyframes, speed for deltas.                                                |
 
 **IDR generation constraints:**
 
@@ -348,15 +349,15 @@ Keyframes are sacred — loss of a keyframe or corruption of the decoder state r
 
 The tile channel carries bitmap-based screen updates. It is used when the session (or a region of the session) operates in tile/bitmap mode. The tile channel is **reliable** — tile data must arrive intact because XOR deltas depend on the client having the correct previous tile state.
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x1201` | `TileConfig` | S → C | Tile grid configuration (tile size, grid dimensions, color depth) |
-| `0x1202` | `TileBatch` | S → C | Batch of tile updates for a single frame |
-| `0x1203` | `TileBatchAck` | C → S | Client acknowledges a tile batch (for flow control) |
-| `0x1204` | `TileScroll` | S → C | Scroll optimization: shift the tile grid by a vector |
-| `0x1205` | `TileKeyFrame` | S → C | Full tile grid snapshot (all tiles as full, no deltas) |
-| `0x1206` | `TileKeyFrameRequest` | C → S | Client requests a full tile refresh (after desync or reconnect) |
-| `0x1207` | `TileModeSwitch` | S → C | Server switches region between video and tile mode |
+| Type Code | Name                  | Direction | Description                                                       |
+| --------- | --------------------- | --------- | ----------------------------------------------------------------- |
+| `0x1201`  | `TileConfig`          | S → C     | Tile grid configuration (tile size, grid dimensions, color depth) |
+| `0x1202`  | `TileBatch`           | S → C     | Batch of tile updates for a single frame                          |
+| `0x1203`  | `TileBatchAck`        | C → S     | Client acknowledges a tile batch (for flow control)               |
+| `0x1204`  | `TileScroll`          | S → C     | Scroll optimization: shift the tile grid by a vector              |
+| `0x1205`  | `TileKeyFrame`        | S → C     | Full tile grid snapshot (all tiles as full, no deltas)            |
+| `0x1206`  | `TileKeyFrameRequest` | C → S     | Client requests a full tile refresh (after desync or reconnect)   |
+| `0x1207`  | `TileModeSwitch`      | S → C     | Server switches region between video and tile mode                |
 
 **Message details:**
 
@@ -371,12 +372,12 @@ The tile channel carries bitmap-based screen updates. It is used when the sessio
 
 The tile channel uses a **reliable** transport (ordered, retransmitted) because XOR deltas are stateful — a single lost tile corrupts all subsequent deltas for that grid position. Recovery mechanisms:
 
-| Scenario | Detection | Recovery |
-|----------|-----------|----------|
-| **Transport-level loss** (TCP/QUIC stream retransmit) | Handled by transport | Automatic retransmit. No protocol-level action needed. Adds latency equal to ~1 RTT. |
-| **Tile grid desync** (client state diverges from server's expectation) | Client detects delta that produces visual artifacts (optional CRC check per tile) | Client sends `TileKeyFrameRequest`. Server responds with full `TileKeyFrame` (all tiles as `full`, no deltas). |
-| **Reconnect / resume** | New transport established | Server MUST send `TileConfig` + `TileKeyFrame` as the first tile-channel messages. Client discards all buffered tile state. |
-| **Mode switch (video → tile)** | `TileModeSwitch` received | Server sends full tiles for the switched region (no delta possible since client has no prior tile state for that region). |
+| Scenario                                                               | Detection                                                                         | Recovery                                                                                                                    |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Transport-level loss** (TCP/QUIC stream retransmit)                  | Handled by transport                                                              | Automatic retransmit. No protocol-level action needed. Adds latency equal to ~1 RTT.                                        |
+| **Tile grid desync** (client state diverges from server's expectation) | Client detects delta that produces visual artifacts (optional CRC check per tile) | Client sends `TileKeyFrameRequest`. Server responds with full `TileKeyFrame` (all tiles as `full`, no deltas).              |
+| **Reconnect / resume**                                                 | New transport established                                                         | Server MUST send `TileConfig` + `TileKeyFrame` as the first tile-channel messages. Client discards all buffered tile state. |
+| **Mode switch (video → tile)**                                         | `TileModeSwitch` received                                                         | Server sends full tiles for the switched region (no delta possible since client has no prior tile state for that region).   |
 
 **Tile CRC verification (optional, configurable):**
 
@@ -390,12 +391,12 @@ The tile encoding pipeline follows specific ordering and refresh policies to max
 
 Tiles within a `TileBatch` are ordered by their **damage classification** (highest priority first):
 
-| Priority | Damage Class | Description | Compression |
-|----------|-------------|-------------|-------------|
-| 1 (highest) | `TEXT_GLYPH` | Tiles containing text / glyph rendering | Always Tier 2 lossless |
-| 2 | `UI_PRIMITIVE` | Tiles containing UI elements (buttons, borders, icons) | Always Tier 2 lossless |
-| 3 | `BITMAP_REGION` | Tiles containing photographic or video content | Tier 2 or Tier 3 (configurable) |
-| 4 (lowest) | `CURSOR_ONLY` | Tiles only damaged by cursor overlay | Separate cursor channel — not in tile batch |
+| Priority    | Damage Class    | Description                                            | Compression                                 |
+| ----------- | --------------- | ------------------------------------------------------ | ------------------------------------------- |
+| 1 (highest) | `TEXT_GLYPH`    | Tiles containing text / glyph rendering                | Always Tier 2 lossless                      |
+| 2           | `UI_PRIMITIVE`  | Tiles containing UI elements (buttons, borders, icons) | Always Tier 2 lossless                      |
+| 3           | `BITMAP_REGION` | Tiles containing photographic or video content         | Tier 2 or Tier 3 (configurable)             |
+| 4 (lowest)  | `CURSOR_ONLY`   | Tiles only damaged by cursor overlay                   | Separate cursor channel — not in tile batch |
 
 This ordering ensures that under bandwidth pressure, the most visually important content (text) is transmitted first. If the send budget for a batch is exhausted before all tiles are sent, lower-priority tiles are deferred to the next batch.
 
@@ -411,51 +412,51 @@ When `TileModeSwitch` changes a screen region from video mode to tile mode, ALL 
 
 ### 5.5 Cursor Channel Messages (0x11)
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x1101` | `CursorPosition` | S → C | Cursor position update (x, y) |
-| `0x1102` | `CursorShape` | S → C | Cursor image/shape change |
-| `0x1103` | `CursorVisibility` | S → C | Cursor show/hide |
+| Type Code | Name               | Direction | Description                   |
+| --------- | ------------------ | --------- | ----------------------------- |
+| `0x1101`  | `CursorPosition`   | S → C     | Cursor position update (x, y) |
+| `0x1102`  | `CursorShape`      | S → C     | Cursor image/shape change     |
+| `0x1103`  | `CursorVisibility` | S → C     | Cursor show/hide              |
 
 ### 5.6 Audio Channel Messages (0x20, 0x21)
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x2001` | `AudioConfig` | Both | Audio format negotiation (sample rate, channels, codec) |
-| `0x2002` | `AudioData` | Both | Encoded audio frame |
-| `0x2003` | `AudioMute` | Both | Mute/unmute |
-| `0x2004` | `AudioVolume` | Both | Volume level change |
+| Type Code | Name          | Direction | Description                                             |
+| --------- | ------------- | --------- | ------------------------------------------------------- |
+| `0x2001`  | `AudioConfig` | Both      | Audio format negotiation (sample rate, channels, codec) |
+| `0x2002`  | `AudioData`   | Both      | Encoded audio frame                                     |
+| `0x2003`  | `AudioMute`   | Both      | Mute/unmute                                             |
+| `0x2004`  | `AudioVolume` | Both      | Volume level change                                     |
 
 ### 5.7 Clipboard Channel Messages (0x30)
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x3001` | `ClipboardOffer` | Both | Announce available clipboard formats |
-| `0x3002` | `ClipboardRequest` | Both | Request clipboard data in specific format |
-| `0x3003` | `ClipboardData` | Both | Clipboard content (possibly fragmented) |
-| `0x3004` | `ClipboardDataEnd` | Both | End of clipboard data transfer |
-| `0x3005` | `ClipboardClear` | Both | Clipboard cleared |
-| `0x3006` | `ClipboardProgress` | Both | Transfer progress for large items |
-| `0x3007` | `ClipboardCancel` | Both | Cancel ongoing transfer |
+| Type Code | Name                | Direction | Description                               |
+| --------- | ------------------- | --------- | ----------------------------------------- |
+| `0x3001`  | `ClipboardOffer`    | Both      | Announce available clipboard formats      |
+| `0x3002`  | `ClipboardRequest`  | Both      | Request clipboard data in specific format |
+| `0x3003`  | `ClipboardData`     | Both      | Clipboard content (possibly fragmented)   |
+| `0x3004`  | `ClipboardDataEnd`  | Both      | End of clipboard data transfer            |
+| `0x3005`  | `ClipboardClear`    | Both      | Clipboard cleared                         |
+| `0x3006`  | `ClipboardProgress` | Both      | Transfer progress for large items         |
+| `0x3007`  | `ClipboardCancel`   | Both      | Cancel ongoing transfer                   |
 
 ### 5.8 Input Channel Messages (0x50)
 
-| Type Code | Name | Direction | Description |
-|-----------|------|-----------|-------------|
-| `0x5001` | `KeyDown` | C → S | Key press (scancode + keysym + modifiers) |
-| `0x5002` | `KeyUp` | C → S | Key release |
-| `0x5003` | `MouseMove` | C → S | Mouse position (absolute or relative) |
-| `0x5004` | `MouseButton` | C → S | Mouse button press/release |
-| `0x5005` | `MouseScroll` | C → S | Scroll event (axis, delta, discrete/smooth) |
-| `0x5006` | `TouchDown` | C → S | Touch start (id, x, y) |
-| `0x5007` | `TouchMove` | C → S | Touch move |
-| `0x5008` | `TouchUp` | C → S | Touch end |
-| `0x5009` | `TouchCancel` | C → S | Touch sequence cancelled |
-| `0x500A` | `InputSyncRequest` | C → S | Request input state sync (after reconnect) |
-| `0x500B` | `InputSyncResponse` | S → C | Current modifier/button state |
-| `0x500C` | `TextInput` | C → S | Committed UTF-8 text from client IME (bypasses scancode-to-char mapping) |
-| `0x500D` | `CompositionUpdate` | C → S | IME composition state (start/update/cancel with preedit string + cursor position) |
-| `0x500E` | `CompositionRequest` | S → C | Server requests client to activate/deactivate IME composition (e.g., text field focused) |
+| Type Code | Name                 | Direction | Description                                                                              |
+| --------- | -------------------- | --------- | ---------------------------------------------------------------------------------------- |
+| `0x5001`  | `KeyDown`            | C → S     | Key press (scancode + keysym + modifiers)                                                |
+| `0x5002`  | `KeyUp`              | C → S     | Key release                                                                              |
+| `0x5003`  | `MouseMove`          | C → S     | Mouse position (absolute or relative)                                                    |
+| `0x5004`  | `MouseButton`        | C → S     | Mouse button press/release                                                               |
+| `0x5005`  | `MouseScroll`        | C → S     | Scroll event (axis, delta, discrete/smooth)                                              |
+| `0x5006`  | `TouchDown`          | C → S     | Touch start (id, x, y)                                                                   |
+| `0x5007`  | `TouchMove`          | C → S     | Touch move                                                                               |
+| `0x5008`  | `TouchUp`            | C → S     | Touch end                                                                                |
+| `0x5009`  | `TouchCancel`        | C → S     | Touch sequence cancelled                                                                 |
+| `0x500A`  | `InputSyncRequest`   | C → S     | Request input state sync (after reconnect)                                               |
+| `0x500B`  | `InputSyncResponse`  | S → C     | Current modifier/button state                                                            |
+| `0x500C`  | `TextInput`          | C → S     | Committed UTF-8 text from client IME (bypasses scancode-to-char mapping)                 |
+| `0x500D`  | `CompositionUpdate`  | C → S     | IME composition state (start/update/cancel with preedit string + cursor position)        |
+| `0x500E`  | `CompositionRequest` | S → C     | Server requests client to activate/deactivate IME composition (e.g., text field focused) |
 
 ---
 
@@ -463,25 +464,25 @@ When `TileModeSwitch` changes a screen region from video mode to tile mode, ALL 
 
 ### 6.1 Compression Algorithms
 
-| Algorithm | ID | Use Case | Notes |
-|-----------|----|----------|-------|
-| None | `0x00` | Small messages, already-compressed data | Default for frames < 64 bytes |
-| LZ4 | `0x01` | Control messages, clipboard text | Very fast, moderate ratio |
-| Zstd | `0x02` | File transfer, crash reports | Good ratio, configurable level |
+| Algorithm | ID     | Use Case                                | Notes                          |
+| --------- | ------ | --------------------------------------- | ------------------------------ |
+| None      | `0x00` | Small messages, already-compressed data | Default for frames < 64 bytes  |
+| LZ4       | `0x01` | Control messages, clipboard text        | Very fast, moderate ratio      |
+| Zstd      | `0x02` | File transfer, crash reports            | Good ratio, configurable level |
 
 ### 6.2 Compression Rules
 
-| Channel | Default Compression | Rationale |
-|---------|-------------------|-----------|
-| Control | LZ4 (for messages > 128 bytes) | JSON/CBOR messages benefit from compression |
-| Emergency | LZ4 | Log text compresses well |
-| Video | None | Already codec-compressed |
-| Audio | None | Already codec-compressed |
-| Cursor | None | Small messages |
-| Clipboard (text) | LZ4 | Text compresses well |
-| Clipboard (binary) | None or Zstd | Depends on MIME type |
-| File Transfer | Zstd (level 3) | Good ratio for general files |
-| Input | None | Tiny messages, latency-critical |
+| Channel            | Default Compression            | Rationale                                   |
+| ------------------ | ------------------------------ | ------------------------------------------- |
+| Control            | LZ4 (for messages > 128 bytes) | JSON/CBOR messages benefit from compression |
+| Emergency          | LZ4                            | Log text compresses well                    |
+| Video              | None                           | Already codec-compressed                    |
+| Audio              | None                           | Already codec-compressed                    |
+| Cursor             | None                           | Small messages                              |
+| Clipboard (text)   | LZ4                            | Text compresses well                        |
+| Clipboard (binary) | None or Zstd                   | Depends on MIME type                        |
+| File Transfer      | Zstd (level 3)                 | Good ratio for general files                |
+| Input              | None                           | Tiny messages, latency-critical             |
 
 ### 6.3 Compression Negotiation
 
@@ -493,15 +494,15 @@ Supported compression algorithms are exchanged in `ClientHello`/`ServerHello`. B
 
 ### 7.1 Per-Channel Ordering
 
-| Channel | Ordering | Guarantee |
-|---------|----------|-----------|
-| Control | Strictly ordered | Messages processed in sequence number order |
-| Emergency | Strictly ordered | Independent sequence from control |
-| Video | Frame-ordered | Frames delivered in order; individual packets within a frame may arrive out-of-order on UDP (reassembled before delivery) |
-| Cursor | Latest-wins | Only the most recent cursor position matters; older positions can be dropped |
-| Audio | Stream-ordered | Audio frames delivered in timestamp order; late frames beyond jitter buffer are dropped |
-| Clipboard | Strictly ordered | Operations are sequential |
-| Input | Strictly ordered | Input events must preserve order |
+| Channel   | Ordering         | Guarantee                                                                                                                 |
+| --------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Control   | Strictly ordered | Messages processed in sequence number order                                                                               |
+| Emergency | Strictly ordered | Independent sequence from control                                                                                         |
+| Video     | Frame-ordered    | Frames delivered in order; individual packets within a frame may arrive out-of-order on UDP (reassembled before delivery) |
+| Cursor    | Latest-wins      | Only the most recent cursor position matters; older positions can be dropped                                              |
+| Audio     | Stream-ordered   | Audio frames delivered in timestamp order; late frames beyond jitter buffer are dropped                                   |
+| Clipboard | Strictly ordered | Operations are sequential                                                                                                 |
+| Input     | Strictly ordered | Input events must preserve order                                                                                          |
 
 ### 7.2 Cross-Channel Ordering
 
@@ -542,13 +543,13 @@ ClientHello = {
 
 **Color Capability Keys** (within the `capabilities` map):
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `"color.supported_modes"` | `[+ text]` | Pipeline modes the client supports: `"sdr-srgb"`, `"wcg-sdr"`, `"hdr"` |
-| `"color.display_gamut"` | `text` | Client display gamut: `"srgb"`, `"display-p3"`, `"rec2020"` |
-| `"color.display_hdr"` | `bool` | Client display supports HDR output |
-| `"color.display_max_luminance"` | `uint` | Client display peak luminance in nits (0 = unknown) |
-| `"color.preferred_bit_depth"` | `uint` | Preferred decode bit depth: 8, 10, or 16 |
+| Key                               | Type       | Description                                                                                     |
+| --------------------------------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| `"color.supported_modes"`         | `[+ text]` | Pipeline modes the client supports: `"sdr-srgb"`, `"wcg-sdr"`, `"hdr"`                          |
+| `"color.display_gamut"`           | `text`     | Client display gamut: `"srgb"`, `"display-p3"`, `"rec2020"`                                     |
+| `"color.display_hdr"`             | `bool`     | Client display supports HDR output                                                              |
+| `"color.display_max_luminance"`   | `uint`     | Client display peak luminance in nits (0 = unknown)                                             |
+| `"color.preferred_bit_depth"`     | `uint`     | Preferred decode bit depth: 8, 10, or 16                                                        |
 | `"color.supported_pixel_formats"` | `[+ text]` | Pixel formats the client can decode for tile path (e.g., `["rgb888", "rgba8888", "rgb101010"]`) |
 
 ### 8.2 CBOR Schema: ServerHello
@@ -577,13 +578,13 @@ ChannelConfig = {
 
 **Color Capability Keys** (within `features` or as additional `ServerHello` fields):
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `"color.pipeline_mode"` | `text` | Negotiated mode: `"sdr-srgb"`, `"wcg-sdr"`, `"hdr"` |
-| `"color.compositing_space"` | `text` | Server compositing gamut: `"srgb"`, `"display-p3"`, `"rec2020"` |
-| `"color.bit_depth"` | `uint` | Negotiated bit depth: 8, 10, 16 |
-| `"color.transfer_function"` | `text` | Active transfer function: `"srgb"`, `"pq"`, `"hlg"` |
-| `"color.hdr10_static"` | `HDR10Static` | Mastering display metadata (present when HDR active) |
+| Key                         | Type          | Description                                                     |
+| --------------------------- | ------------- | --------------------------------------------------------------- |
+| `"color.pipeline_mode"`     | `text`        | Negotiated mode: `"sdr-srgb"`, `"wcg-sdr"`, `"hdr"`             |
+| `"color.compositing_space"` | `text`        | Server compositing gamut: `"srgb"`, `"display-p3"`, `"rec2020"` |
+| `"color.bit_depth"`         | `uint`        | Negotiated bit depth: 8, 10, 16                                 |
+| `"color.transfer_function"` | `text`        | Active transfer function: `"srgb"`, `"pq"`, `"hlg"`             |
+| `"color.hdr10_static"`      | `HDR10Static` | Mastering display metadata (present when HDR active)            |
 
 ### 8.3 CBOR Schema: CrashInfo (Emergency Channel)
 
@@ -871,17 +872,18 @@ SecureAttentionAck = {
 
 **SAS Commands:**
 
-| Command | Description | Supervisor Action |
-|---------|-------------|-------------------|
-| `lock_session` | Lock the session (equivalent to Ctrl+Alt+L or Win+L) | Supervisor sends lock signal to session via IPC. Session shows lock screen. |
-| `ctrl_alt_delete` | Send Ctrl+Alt+Delete to the session (SAS on Windows guests, task manager) | Supervisor injects the key combination directly into the session's input queue, bypassing any application-level key grabbing. |
-| `switch_user` | Request user switch (show login screen for another user without terminating session) | Supervisor triggers VT switch or shows greeter. |
-| `terminate_session` | Force-terminate the session process | Supervisor sends SIGTERM → SIGKILL to session. Client shows crash/disconnect screen. |
-| `reboot_session` | Restart the session process | Supervisor terminates and respawns session. Client shows "Restarting..." overlay. |
-| `screenshot` | Capture a screenshot of the current session (admin/support tool) | Supervisor captures framebuffer, returns as PNG in `SecureAttentionAck.data.image`. Policy-gated. |
-| `change_password` | Request password change dialog (handled by supervisor, not session) | Supervisor invokes PAM password change flow. Credentials never pass through session process. |
+| Command             | Description                                                                          | Supervisor Action                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `lock_session`      | Lock the session (equivalent to Ctrl+Alt+L or Win+L)                                 | Supervisor sends lock signal to session via IPC. Session shows lock screen.                                                   |
+| `ctrl_alt_delete`   | Send Ctrl+Alt+Delete to the session (SAS on Windows guests, task manager)            | Supervisor injects the key combination directly into the session's input queue, bypassing any application-level key grabbing. |
+| `switch_user`       | Request user switch (show login screen for another user without terminating session) | Supervisor triggers VT switch or shows greeter.                                                                               |
+| `terminate_session` | Force-terminate the session process                                                  | Supervisor sends SIGTERM → SIGKILL to session. Client shows crash/disconnect screen.                                          |
+| `reboot_session`    | Restart the session process                                                          | Supervisor terminates and respawns session. Client shows "Restarting..." overlay.                                             |
+| `screenshot`        | Capture a screenshot of the current session (admin/support tool)                     | Supervisor captures framebuffer, returns as PNG in `SecureAttentionAck.data.image`. Policy-gated.                             |
+| `change_password`   | Request password change dialog (handled by supervisor, not session)                  | Supervisor invokes PAM password change flow. Credentials never pass through session process.                                  |
 
 **Security properties:**
+
 - SAS commands are **never routed through the session process**. They are delivered to the supervisor daemon via the control channel, which the supervisor owns directly.
 - A compromised session process cannot intercept, block, or forge SAS commands because it has no access to the control channel's transport endpoint.
 - The client triggers SAS via a **dedicated key combination** (default: Ctrl+Alt+End, configurable) that is captured at the client's lowest input layer — before any application-level key handling.
@@ -905,7 +907,7 @@ The emergency channel (`0x01`) is a dedicated reliable channel that operates **i
 
 ### 9.2 Architecture
 
-```
+```text
 Client ◄═══════ Emergency Channel (0x01) ═══════► liquid-desktopd (supervisor)
                                                          │
 Client ◄═══════ Control Channel (0x00) ═════════► liquid-session (user session)
@@ -924,7 +926,7 @@ The key property: the emergency channel is **not** routed through the session pr
 
 ### 9.3 Emergency Channel State Machine
 
-```
+```text
                     ┌─────────────┐
                     │   Idle      │  (session running normally)
                     └──────┬──────┘
@@ -955,7 +957,8 @@ The key property: the emergency channel is **not** routed through the session pr
 After receiving `CrashInfo`, the client can request the crash log:
 
 1. Client sends `CrashReportRequest` on the emergency channel:
-   ```cddl
+
+    ```cddl
    CrashReportRequest = {
        crash_report_id: text,
        include_log_tail: bool,     ; include last N log lines
@@ -966,7 +969,8 @@ After receiving `CrashInfo`, the client can request the crash log:
    ```
 
 2. Server streams the report as chunks:
-   ```cddl
+
+    ```cddl
    CrashReportChunk = {
        crash_report_id: text,
        chunk_index: uint,
@@ -976,7 +980,8 @@ After receiving `CrashInfo`, the client can request the crash log:
    ```
 
 3. Server sends `CrashReportEnd`:
-   ```cddl
+
+    ```cddl
    CrashReportEnd = {
        crash_report_id: text,
        total_size: uint,
@@ -992,6 +997,7 @@ For real-time debugging, the client can request live log forwarding via the emer
 
 1. Client sends `DiagnosticRequest` with `type: "log_stream"`.
 2. Server begins sending `SessionLogStream` messages:
+
    ```cddl
    SessionLogStream = {
        session_id: text,
@@ -1001,6 +1007,7 @@ For real-time debugging, the client can request live log forwarding via the emer
        message: text,
    }
    ```
+
 3. Streaming continues until the client sends another `DiagnosticRequest` with `type: "log_stream_stop"` or the session is restarted.
 
 ### 9.6 Emergency Channel Keepalive
@@ -1017,7 +1024,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 ### 10.1 Control Channel State Machine
 
-```
+```text
                     ┌─────────────┐
                     │ Connecting  │ (TLS handshake in progress)
                     └──────┬──────┘
@@ -1056,7 +1063,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 ### 10.2 Video Channel State Machine
 
-```
+```text
                     ┌────────────┐
                     │  Inactive  │ (channel not opened)
                     └──────┬─────┘
@@ -1092,7 +1099,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 ### 10.3 Tile Channel State Machine
 
-```
+```text
                     ┌────────────┐
                     │  Inactive  │ (channel not opened)
                     └──────┬─────┘
@@ -1129,6 +1136,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 ```
 
 **Key behaviors:**
+
 - On entering **Key Frame** state, the server sends a `TileKeyFrame` containing every tile as `full`. The client replaces its entire tile buffer. This synchronizes client and server tile state.
 - During **Streaming**, the server sends `TileBatch` messages with adaptive delta encoding. `TileScroll` messages can precede a `TileBatch` when a scroll is detected.
 - A `TileKeyFrameRequest` from the client (e.g., after detecting tile corruption or on reconnect) transitions the server back to **Key Frame** state.
@@ -1136,7 +1144,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 ### 10.4 Audio Channel State Machine
 
-```
+```text
                     ┌────────────┐
                     │  Inactive  │
                     └──────┬─────┘
@@ -1163,7 +1171,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 ### 10.5 Clipboard Channel State Machine
 
-```
+```text
                     ┌────────────┐
                     │   Idle     │ (channel open, no transfer active)
                     └──┬──┬──┬──┘
@@ -1198,6 +1206,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 ```
 
 **Key behaviors:**
+
 - The clipboard channel is **bidirectional** — both client and server can send `ClipboardOffer`.
 - Only **one transfer** can be active at a time in each direction. A new `ClipboardOffer` while in **Transferring** state implicitly cancels the current transfer.
 - **Policy enforcement** occurs at two points: (1) when an offer is received, the policy engine checks `clipboard.enabled` and `clipboard.direction`; (2) when data arrives, the policy engine checks `clipboard.max_size` and `clipboard.allowed_mime_types`.
@@ -1207,7 +1216,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 ### 10.6 Input Channel State Machine
 
-```
+```text
                     ┌────────────┐
                     │  Inactive  │
                     └──────┬─────┘
@@ -1240,29 +1249,31 @@ The emergency channel has its own heartbeat independent of the control channel:
 ```
 
 **Key behaviors:**
+
 - On channel open or reconnect, the client sends `InputSyncRequest`. The server responds with `InputSyncResponse` containing current modifier and button state. This prevents phantom keystrokes (e.g., a stuck Ctrl key after reconnect).
 - During **Active** state, the client streams input events (key, mouse, touch) to the server. The server does not acknowledge individual input events (low-latency, fire-and-forget over reliable transport).
 - **Input coalescing**: the server MAY coalesce input events during backpressure according to the following rules:
 
-  | Event Type | Coalescing Behavior | Max Interval | Rationale |
-  |-----------|-------------------|--------------|-----------|
-  | `MouseMove` | Latest position wins. >2 events per frame interval → coalesce to last. | 1 / target_fps | Mouse position is stateless; only latest matters. |
-  | `MouseButton` | **Never coalesced.** Each press/release is delivered. | — | Button state is stateful; missing a release causes stuck button. |
-  | `KeyDown` / `KeyUp` | **Never coalesced.** Each event is delivered in order. | — | Key state is stateful; missing events causes stuck/phantom keys. |
-  | `KeyDown` (repeat) | Auto-repeat events MAY be thinned (skip alternating repeats). | 2 × key repeat interval | Repeat thinning reduces compositor load without losing intent. |
-  | `MouseScroll` | Same-direction scrolls within one frame interval → accumulate delta. | 1 / target_fps | Accumulated delta preserves total scroll distance. |
-  | `TouchMove` | Latest position per touch ID wins (same as MouseMove). | 1 / target_fps | Touch position is stateless per finger. |
-  | `CompositionUpdate` (`phase = "update"`) | Latest preedit string wins if multiple updates arrive within one frame interval. | 1 / target_fps | Only the final preedit state matters for display. |
-  | `CompositionUpdate` (`phase = "begin"` / `"commit"` / `"cancel"`) | **Never coalesced.** These are composition barriers. | — | Begin/commit/cancel define IME transaction boundaries. |
-  | `TextInput` (committed text) | **Never coalesced.** Each committed string is delivered. | — | Committed text is a user action; dropping causes data loss. |
+| Event Type                                                        | Coalescing Behavior                                                              | Max Interval            | Rationale                                                        |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `MouseMove`                                                       | Latest position wins. >2 events per frame interval → coalesce to last.           | 1 / target_fps          | Mouse position is stateless; only latest matters.                |
+| `MouseButton`                                                     | **Never coalesced.** Each press/release is delivered.                            | —                       | Button state is stateful; missing a release causes stuck button. |
+| `KeyDown` / `KeyUp`                                               | **Never coalesced.** Each event is delivered in order.                           | —                       | Key state is stateful; missing events causes stuck/phantom keys. |
+| `KeyDown` (repeat)                                                | Auto-repeat events MAY be thinned (skip alternating repeats).                    | 2 × key repeat interval | Repeat thinning reduces compositor load without losing intent.   |
+| `MouseScroll`                                                     | Same-direction scrolls within one frame interval → accumulate delta.             | 1 / target_fps          | Accumulated delta preserves total scroll distance.               |
+| `TouchMove`                                                       | Latest position per touch ID wins (same as MouseMove).                           | 1 / target_fps          | Touch position is stateless per finger.                          |
+| `CompositionUpdate` (`phase = "update"`)                          | Latest preedit string wins if multiple updates arrive within one frame interval. | 1 / target_fps          | Only the final preedit state matters for display.                |
+| `CompositionUpdate` (`phase = "begin"` / `"commit"` / `"cancel"`) | **Never coalesced.** These are composition barriers.                             | —                       | Begin/commit/cancel define IME transaction boundaries.           |
+| `TextInput` (committed text)                                      | **Never coalesced.** Each committed string is delivered.                         | —                       | Committed text is a user action; dropping causes data loss.      |
 
   **Metric:** `liquide_input_coalesced_events_total` (counter, label: `event_type`) — number of input events coalesced (not delivered).
+
 - **Channel suspension** occurs when the session is locked or the client window is minimized. The server discards input events received during suspension.
 - The input channel is **client-to-server only** for event data. The only server-to-client message is `InputSyncResponse`.
 
 ### 10.7 Cursor Channel State Machine
 
-```
+```text
                     ┌────────────┐
                     │  Inactive  │
                     └──────┬─────┘
@@ -1287,6 +1298,7 @@ The emergency channel has its own heartbeat independent of the control channel:
 ```
 
 **Key behaviors:**
+
 - The cursor channel is **server-to-client only**. The server sends position updates, shape changes, and visibility toggles.
 - Position updates are sent at a higher priority than video frames (low-latency cursor movement).
 - **Cursor shape caching**: the server sends `CursorShape` with a shape hash. If the client has the shape cached, it uses the cache. New shapes include the full image data. The asset cache (§8.7) can pre-load common cursor shapes.
@@ -1297,13 +1309,13 @@ The emergency channel has its own heartbeat independent of the control channel:
 
 The following normative rules govern how channels interact when multiplexed over shared transport:
 
-| Rule | Requirement | Enforcement |
-|------|------------|-------------|
-| **R1: Channel-local ordering** | Message ordering is guaranteed ONLY within a single channel. No cross-channel ordering guarantees exist. Timestamps enable correlation when needed. | Per-channel sequence numbers; receiver reorders within channel only. |
-| **R2: Control never waits behind pixels** | Control channel (0x00) messages MUST complete delivery within 1ms of entering the send queue, regardless of video/tile/audio backlog. | Control uses a separate QUIC stream (or TCP priority in tcp+udp mode). Send queue partitioned so control bypasses data channels. |
-| **R3: Input coalescing parameters** | During backpressure, the server MAY coalesce input events according to the rules in §10.6. Mouse moves coalesce (latest wins); keyboard, button, and IME barrier events MUST NOT coalesce. | Server-side coalescing before compositor injection. See coalescing table in §10.6 for per-event-type rules. |
-| **R4: Priority inversion prevention** | A lower-priority channel (P5/P6) that has occupied the send path MUST yield within 1ms when a higher-priority channel (P0–P3) has data to send. | Pacing algorithm (§7d) preempts bulk data for input/audio/cursor on each 1ms tick. |
-| **R5: IME transactional integrity** | When an IME composition sequence is active (`CompositionUpdate` with `phase = "begin"` received), all events in the composition MUST be delivered atomically to the compositor. Partial delivery (begin without commit) leaves the compositor in an undefined input state. | Composition events are queued server-side until `phase = "commit"` or `phase = "cancel"` is received. The entire sequence is then injected as a batch. If the connection drops mid-composition, the pending composition is cancelled on reconnect. |
+| Rule                                      | Requirement                                                                                                                                                                                                                                                                | Enforcement                                                                                                                                                                                                                                        |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **R1: Channel-local ordering**            | Message ordering is guaranteed ONLY within a single channel. No cross-channel ordering guarantees exist. Timestamps enable correlation when needed.                                                                                                                        | Per-channel sequence numbers; receiver reorders within channel only.                                                                                                                                                                               |
+| **R2: Control never waits behind pixels** | Control channel (0x00) messages MUST complete delivery within 1ms of entering the send queue, regardless of video/tile/audio backlog.                                                                                                                                      | Control uses a separate QUIC stream (or TCP priority in tcp+udp mode). Send queue partitioned so control bypasses data channels.                                                                                                                   |
+| **R3: Input coalescing parameters**       | During backpressure, the server MAY coalesce input events according to the rules in §10.6. Mouse moves coalesce (latest wins); keyboard, button, and IME barrier events MUST NOT coalesce.                                                                                 | Server-side coalescing before compositor injection. See coalescing table in §10.6 for per-event-type rules.                                                                                                                                        |
+| **R4: Priority inversion prevention**     | A lower-priority channel (P5/P6) that has occupied the send path MUST yield within 1ms when a higher-priority channel (P0–P3) has data to send.                                                                                                                            | Pacing algorithm (§7d) preempts bulk data for input/audio/cursor on each 1ms tick.                                                                                                                                                                 |
+| **R5: IME transactional integrity**       | When an IME composition sequence is active (`CompositionUpdate` with `phase = "begin"` received), all events in the composition MUST be delivered atomically to the compositor. Partial delivery (begin without commit) leaves the compositor in an undefined input state. | Composition events are queued server-side until `phase = "commit"` or `phase = "cancel"` is received. The entire sequence is then injected as a batch. If the connection drops mid-composition, the pending composition is cancelled on reconnect. |
 
 ---
 
@@ -1313,7 +1325,7 @@ All channels in the LiquiDE protocol implement backpressure mechanisms to preven
 
 ### 11.1 Flow Control Model
 
-```
+```text
 Sender                                  Receiver
   │                                         │
   │  ──── Data Message ──────────────────►  │
@@ -1329,27 +1341,27 @@ Sender                                  Receiver
 
 ### 11.2 Per-Channel Flow Control
 
-| Channel | Mechanism | Window Size | Behavior When Full |
-|---------|-----------|-------------|-------------------|
-| **Control (0x00)** | No explicit flow control | N/A | Control messages are small and rate-limited by design. Sender-side rate limit: 100 messages/sec. |
-| **Emergency (0x01)** | No flow control | N/A | Emergency channel is best-effort, zero-copy. Messages are never dropped by sender. |
-| **Video (0x10)** | `FrameAck`-based | 3 frames in-flight | Server pauses encoding if 3 unacknowledged frames are in-flight. Drops to lower FPS or switches to tile mode. |
-| **Tile (0x12)** | `TileBatchAck`-based | 2 batches in-flight | Server waits for ack before sending 3rd batch. Client reports `decode_time_us` in ack for adaptive tuning. |
-| **Cursor (0x11)** | Rate-limited (no acks) | N/A | Server caps at 1 update per frame interval. During congestion, updates are coalesced (latest position wins). |
-| **Audio (0x20/0x21)** | Jitter buffer feedback | 200ms buffer | Client reports buffer level. Server adjusts bitrate. If buffer overflows, oldest packets are dropped (audio glitch preferred over latency). |
-| **Clipboard (0x30)** | `ClipboardProgress` + `ClipboardDataEnd` | 1 transfer at a time | Only one clipboard transfer per direction at a time. `ClipboardCancel` aborts. Max size enforced before transfer starts. |
-| **Input (0x50)** | No acks (fire-and-forget) | N/A | Reliable transport guarantees delivery. Server coalesces mouse movements during overload. Key events are never dropped. |
+| Channel               | Mechanism                                | Window Size          | Behavior When Full                                                                                                                          |
+| --------------------- | ---------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Control (0x00)**    | No explicit flow control                 | N/A                  | Control messages are small and rate-limited by design. Sender-side rate limit: 100 messages/sec.                                            |
+| **Emergency (0x01)**  | No flow control                          | N/A                  | Emergency channel is best-effort, zero-copy. Messages are never dropped by sender.                                                          |
+| **Video (0x10)**      | `FrameAck`-based                         | 3 frames in-flight   | Server pauses encoding if 3 unacknowledged frames are in-flight. Drops to lower FPS or switches to tile mode.                               |
+| **Tile (0x12)**       | `TileBatchAck`-based                     | 2 batches in-flight  | Server waits for ack before sending 3rd batch. Client reports `decode_time_us` in ack for adaptive tuning.                                  |
+| **Cursor (0x11)**     | Rate-limited (no acks)                   | N/A                  | Server caps at 1 update per frame interval. During congestion, updates are coalesced (latest position wins).                                |
+| **Audio (0x20/0x21)** | Jitter buffer feedback                   | 200ms buffer         | Client reports buffer level. Server adjusts bitrate. If buffer overflows, oldest packets are dropped (audio glitch preferred over latency). |
+| **Clipboard (0x30)**  | `ClipboardProgress` + `ClipboardDataEnd` | 1 transfer at a time | Only one clipboard transfer per direction at a time. `ClipboardCancel` aborts. Max size enforced before transfer starts.                    |
+| **Input (0x50)**      | No acks (fire-and-forget)                | N/A                  | Reliable transport guarantees delivery. Server coalesces mouse movements during overload. Key events are never dropped.                     |
 
 ### 11.3 Global Connection Backpressure
 
 When the total send queue across all channels exceeds a high-water mark, global backpressure activates:
 
-| Threshold | Action |
-|-----------|--------|
-| Send queue > 80% of `transport.send_buffer_size` | Video FPS reduced by 50%. Tile batch rate halved. |
+| Threshold                                        | Action                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Send queue > 80% of `transport.send_buffer_size` | Video FPS reduced by 50%. Tile batch rate halved.                                          |
 | Send queue > 90% of `transport.send_buffer_size` | Video encoding paused. Only tile key updates, cursor, audio, and control messages proceed. |
-| Send queue > 95% of `transport.send_buffer_size` | Audio bitrate reduced to minimum. Clipboard transfers paused. |
-| Send queue = 100% | Only control and emergency channel messages proceed. All data channels stalled. |
+| Send queue > 95% of `transport.send_buffer_size` | Audio bitrate reduced to minimum. Clipboard transfers paused.                              |
+| Send queue = 100%                                | Only control and emergency channel messages proceed. All data channels stalled.            |
 
 Recovery is hysteretic: backpressure relaxes when the queue drops below 70% of the triggering threshold.
 
@@ -1362,6 +1374,7 @@ The transport layer continuously estimates available bandwidth using:
 3. **Send buffer drain rate** — how fast the OS sends pending data.
 
 Bandwidth estimate feeds into:
+
 - Video encoder bitrate target.
 - Tile compression level selection.
 - Audio codec bitrate.
@@ -1369,16 +1382,16 @@ Bandwidth estimate feeds into:
 
 ### 11.5 Connection-Level Resource Limits
 
-| Resource | Default Limit | Configurable |
-|----------|---------------|-------------|
-| Max concurrent channels | 16 | `transport.max_channels` |
-| Max message size (pre-fragmentation) | 16 MB | `transport.max_message_size` |
-| Max frame rate (video) | 60 fps | `performance.max_fps` |
-| Max tile batch rate | 60 batches/sec | `performance.tile.max_batch_rate` |
-| Max clipboard transfer size | 50 MB | `clipboard.max_size` |
-| Max pending clipboard transfers | 1 per direction | Fixed |
-| Input event rate limit | 1000 events/sec | `input.max_rate` |
-| Control message rate limit | 100 messages/sec | Fixed |
+| Resource                             | Default Limit    | Configurable                      |
+| ------------------------------------ | ---------------- | --------------------------------- |
+| Max concurrent channels              | 16               | `transport.max_channels`          |
+| Max message size (pre-fragmentation) | 16 MB            | `transport.max_message_size`      |
+| Max frame rate (video)               | 60 fps           | `performance.max_fps`             |
+| Max tile batch rate                  | 60 batches/sec   | `performance.tile.max_batch_rate` |
+| Max clipboard transfer size          | 50 MB            | `clipboard.max_size`              |
+| Max pending clipboard transfers      | 1 per direction  | Fixed                             |
+| Input event rate limit               | 1000 events/sec  | `input.max_rate`                  |
+| Control message rate limit           | 100 messages/sec | Fixed                             |
 
 ### 11.6 Compression Strategy
 
@@ -1386,22 +1399,22 @@ The protocol uses a **tiered compression strategy** that selects the optimal alg
 
 #### Compression Tiers
 
-| Tier | Name | Algorithm | Applies To | Selection Rule |
-|------|------|-----------|-----------|---------------|
-| **Tier 1** | Command compression | Zstd (level 3) | Control channel messages, clipboard text, crash reports | Applied when payload > 128 bytes |
-| **Tier 2** | Lossless bitmap | Zstd (per-tile), XOR delta + Zstd, solid-fill, copy | Tile channel — UI elements, text, icons | Default for all tile data |
-| **Tier 3** | Optional lossy | JPEG-XL or WebP (quality 85) | Tile channel — photographic/video regions only | When tile entropy > threshold AND `transport.tile_lossy_enabled = true` |
+| Tier       | Name                | Algorithm                                           | Applies To                                              | Selection Rule                                                          |
+| ---------- | ------------------- | --------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Tier 1** | Command compression | Zstd (level 3)                                      | Control channel messages, clipboard text, crash reports | Applied when payload > 128 bytes                                        |
+| **Tier 2** | Lossless bitmap     | Zstd (per-tile), XOR delta + Zstd, solid-fill, copy | Tile channel — UI elements, text, icons                 | Default for all tile data                                               |
+| **Tier 3** | Optional lossy      | JPEG-XL or WebP (quality 85)                        | Tile channel — photographic/video regions only          | When tile entropy > threshold AND `transport.tile_lossy_enabled = true` |
 
 #### Selection Rules
 
-| Content Detected | Compression | Rationale |
-|-----------------|-------------|-----------|
-| Text / glyphs (damage class `TEXT_GLYPH`) | Tier 2 — Zstd lossless | Lossy compression destroys subpixel text. Always lossless. |
-| UI primitives (damage class `UI_PRIMITIVE`) | Tier 2 — Zstd lossless | Hard edges artifact with lossy. Lossless preserves crispness. |
+| Content Detected                                                             | Compression                        | Rationale                                                                                             |
+| ---------------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Text / glyphs (damage class `TEXT_GLYPH`)                                    | Tier 2 — Zstd lossless             | Lossy compression destroys subpixel text. Always lossless.                                            |
+| UI primitives (damage class `UI_PRIMITIVE`)                                  | Tier 2 — Zstd lossless             | Hard edges artifact with lossy. Lossless preserves crispness.                                         |
 | Photographic content (damage class `BITMAP_REGION`, entropy > 6.0 bits/byte) | Tier 3 — JPEG-XL/WebP (if enabled) | Photographic regions compress 5–10× better with lossy. Visual difference imperceptible at quality 85. |
-| Solid color tile | Tier 2 — solid-fill (3–4 bytes) | No compression needed — tile is represented as a single color value. |
-| Identical to another tile in batch | Tier 2 — copy reference (2 bytes) | Copy encoding: reference index only. |
-| XOR delta with < 10% changed pixels | Tier 2 — XOR delta + Zstd | Delta is mostly zeros → exceptional Zstd ratio (often 95%+ compression). |
+| Solid color tile                                                             | Tier 2 — solid-fill (3–4 bytes)    | No compression needed — tile is represented as a single color value.                                  |
+| Identical to another tile in batch                                           | Tier 2 — copy reference (2 bytes)  | Copy encoding: reference index only.                                                                  |
+| XOR delta with < 10% changed pixels                                          | Tier 2 — XOR delta + Zstd          | Delta is mostly zeros → exceptional Zstd ratio (often 95%+ compression).                              |
 
 #### Tier 3 Safeguards
 
@@ -1414,25 +1427,26 @@ The protocol uses a **tiered compression strategy** that selects the optimal alg
 
 For bandwidth-constrained scenarios (network degradation level ≥ N3 per spec.md §7c, or explicit `transport.tile_color_depth` override), tile data MAY be transmitted at reduced color depth as an additional compression stage applied before Zstd:
 
-| Depth | Palette Size | Palette Overhead | Use Case |
-|-------|-------------|-----------------|----------|
-| **8bpp (256-color)** | 256 entries × 3 bytes = 768 bytes | Sent once per `TileBatch` in batch header | UI-heavy content: toolbars, dialogs, menus. Buttons and icons retain acceptable quality. |
-| **4bpp (16-color)** | 16 entries × 3 bytes = 48 bytes | Sent once per `TileBatch` in batch header | Text-and-background content: terminals, editors, consoles. Typically only 2–4 distinct colors. |
+| Depth                | Palette Size                      | Palette Overhead                          | Use Case                                                                                       |
+| -------------------- | --------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **8bpp (256-color)** | 256 entries × 3 bytes = 768 bytes | Sent once per `TileBatch` in batch header | UI-heavy content: toolbars, dialogs, menus. Buttons and icons retain acceptable quality.       |
+| **4bpp (16-color)**  | 16 entries × 3 bytes = 48 bytes   | Sent once per `TileBatch` in batch header | Text-and-background content: terminals, editors, consoles. Typically only 2–4 distinct colors. |
 
 **Selection criteria** (based on compositor damage classification from spec-rendering-software.md §4.5):
 
-| Damage Class | Eligible Depths | Rationale |
-|-------------|----------------|-----------|
-| `TEXT_GLYPH` | 8bpp, 4bpp | Text is typically 2–4 colors (fg, bg, selection, cursor). 4bpp is visually lossless for text. |
-| `UI_PRIMITIVE` | 8bpp | Buttons, icons, and gradients need more colors. 4bpp produces visible banding on gradients. |
-| `BITMAP_REGION` | NOT eligible | Photographic/video content would show severe posterization. Always 32bpp (or Tier 3 lossy). |
-| `CURSOR_ONLY` | N/A | Cursor has its own channel. |
+| Damage Class    | Eligible Depths | Rationale                                                                                     |
+| --------------- | --------------- | --------------------------------------------------------------------------------------------- |
+| `TEXT_GLYPH`    | 8bpp, 4bpp      | Text is typically 2–4 colors (fg, bg, selection, cursor). 4bpp is visually lossless for text. |
+| `UI_PRIMITIVE`  | 8bpp            | Buttons, icons, and gradients need more colors. 4bpp produces visible banding on gradients.   |
+| `BITMAP_REGION` | NOT eligible    | Photographic/video content would show severe posterization. Always 32bpp (or Tier 3 lossy).   |
+| `CURSOR_ONLY`   | N/A             | Cursor has its own channel.                                                                   |
 
 The `CompressedTileHeader.flags` bit 0 signals reduced color depth to the decoder. The palette is included in the `TileBatch` message (not per-tile) and indexed by pixel values in the compressed tile data. The client inflates to 32bpp RGBA after decompression and palette lookup.
 
 **Compression efficiency:** 4bpp tiles compress approximately 6× smaller than 32bpp equivalents through Zstd. 8bpp tiles compress approximately 3× smaller. Combined with XOR delta encoding, effective compression ratios exceed 20:1 for mostly-static UI content — making this path highly effective on low-bandwidth connections.
 
 **Automatic depth selection** (when `color_depth = "auto"`):
+
 - Default: 32bpp (full color).
 - At network degradation N3: switch `TEXT_GLYPH` and `UI_PRIMITIVE` tiles to 8bpp.
 - At network degradation N4: switch `TEXT_GLYPH` tiles to 4bpp, keep `UI_PRIMITIVE` at 8bpp.
@@ -1480,7 +1494,7 @@ Capabilities = {
 
 #### Negotiation Flow
 
-```
+```text
 Client                                  Server
   │                                         │
   │  ──── Capabilities ─────────────────►  │
@@ -1506,49 +1520,50 @@ Client                                  Server
 
 #### Known Capability Keys
 
-| Capability Key | Value Type | Meaning |
-|---------------|-----------|---------|
-| `file_transfer` | bool | File transfer channel support |
-| `usb_redirect` | bool | USB/IP device redirection |
-| `webcam` | bool | Camera passthrough |
-| `seamless_windows` | bool | Seamless window mode |
-| `audio_capture` | bool | Microphone input |
-| `clipboard_files` | bool | File list clipboard support |
-| `clipboard_images` | bool | Image clipboard support |
-| `clipboard_richtext` | bool | Rich text clipboard support |
-| `tile_encoding` | bool | Tile/bitmap channel support |
-| `client_render_offload` | bool | Mode C client-side rendering |
-| `multi_monitor` | bool | Multi-monitor virtual screens |
-| `pen_input` | bool | Stylus/pen input events |
-| `gamepad_input` | bool | Gamepad input forwarding |
-| `plugin_ipc` | bool | Plugin-to-client communication |
+| Capability Key          | Value Type | Meaning                        |
+| ----------------------- | ---------- | ------------------------------ |
+| `file_transfer`         | bool       | File transfer channel support  |
+| `usb_redirect`          | bool       | USB/IP device redirection      |
+| `webcam`                | bool       | Camera passthrough             |
+| `seamless_windows`      | bool       | Seamless window mode           |
+| `audio_capture`         | bool       | Microphone input               |
+| `clipboard_files`       | bool       | File list clipboard support    |
+| `clipboard_images`      | bool       | Image clipboard support        |
+| `clipboard_richtext`    | bool       | Rich text clipboard support    |
+| `tile_encoding`         | bool       | Tile/bitmap channel support    |
+| `client_render_offload` | bool       | Mode C client-side rendering   |
+| `multi_monitor`         | bool       | Multi-monitor virtual screens  |
+| `pen_input`             | bool       | Stylus/pen input events        |
+| `gamepad_input`         | bool       | Gamepad input forwarding       |
+| `plugin_ipc`            | bool       | Plugin-to-client communication |
 
 New capability keys MAY be introduced in any MINOR version. Unknown capability keys MUST be ignored by the receiver (respond with `false` or omit from the confirm message).
 
 ### 12.2 Protocol Version Extensions
 
 Each protocol version MAY introduce:
+
 - **New message types**: assigned type codes from reserved ranges (see §12.3).
 - **New fields in existing CBOR schemas**: receivers MUST ignore unknown CBOR fields (forward compatibility).
 - **New channels**: channel IDs from the reserved range.
 
 ### 12.3 Reserved Ranges
 
-| Range | Allocation |
-|-------|-----------|
-| `0x0000–0x00FF` | Control channel messages |
-| `0x0100–0x01FF` | Emergency channel messages |
-| `0x1000–0x10FF` | Video channel messages |
-| `0x1100–0x11FF` | Cursor channel messages |
-| `0x1200–0x12FF` | Tile channel messages |
-| `0x2000–0x21FF` | Audio channel messages |
-| `0x3000–0x30FF` | Clipboard channel messages |
-| `0x4000–0x40FF` | File transfer channel messages (reserved) |
-| `0x5000–0x50FF` | Input channel messages |
-| `0x6000–0x60FF` | USB channel messages (reserved) |
-| `0x7000–0x70FF` | Webcam channel messages (reserved) |
-| `0x8000–0x80FF` | Plugin IPC channel messages (reserved) |
-| `0xE000–0xEFFF` | Vendor extensions (private use) |
+| Range           | Allocation                                              |
+| --------------- | ------------------------------------------------------- |
+| `0x0000–0x00FF` | Control channel messages                                |
+| `0x0100–0x01FF` | Emergency channel messages                              |
+| `0x1000–0x10FF` | Video channel messages                                  |
+| `0x1100–0x11FF` | Cursor channel messages                                 |
+| `0x1200–0x12FF` | Tile channel messages                                   |
+| `0x2000–0x21FF` | Audio channel messages                                  |
+| `0x3000–0x30FF` | Clipboard channel messages                              |
+| `0x4000–0x40FF` | File transfer channel messages (reserved)               |
+| `0x5000–0x50FF` | Input channel messages                                  |
+| `0x6000–0x60FF` | USB channel messages (reserved)                         |
+| `0x7000–0x70FF` | Webcam channel messages (reserved)                      |
+| `0x8000–0x80FF` | Plugin IPC channel messages (reserved)                  |
+| `0xE000–0xEFFF` | Vendor extensions (private use)                         |
 | `0xF000–0xFFFF` | Experimental / testing (MUST NOT be used in production) |
 
 ### 12.4 Unknown Message Handling
@@ -1582,29 +1597,29 @@ The LiquiDE protocol uses **CBOR (RFC 8949)** as its payload encoding format. Al
 
 The canonical schemas live in the repository at `crates/liquide-protocol/schema/`:
 
-| File | Contents |
-|------|----------|
-| `control.cddl` | Control channel messages (ClientHello, ServerHello, LoginPrompt, etc.) |
-| `video.cddl` | Video channel messages (FrameHeader, FrameData, FrameAck) |
-| `tile.cddl` | Tile channel messages (TileConfig, TileBatch, TileUpdate, etc.) |
-| `cursor.cddl` | Cursor channel messages (CursorShape, CursorPosition) |
-| `audio.cddl` | Audio channel messages (AudioConfig, AudioData) |
-| `clipboard.cddl` | Clipboard channel messages (ClipboardOffer, ClipboardData, etc.) |
-| `input.cddl` | Input channel messages (KeyEvent, MouseEvent, TouchEvent, etc.) |
-| `emergency.cddl` | Emergency channel messages (EmergencyHello, CrashInfo, CrashLog) |
-| `common.cddl` | Shared type definitions (session_id, error codes, enums) |
-| `color.cddl` | Color space types (ColorSpaceInfo, HDRMetadata, HDR10Static) |
+| File             | Contents                                                               |
+| ---------------- | ---------------------------------------------------------------------- |
+| `control.cddl`   | Control channel messages (ClientHello, ServerHello, LoginPrompt, etc.) |
+| `video.cddl`     | Video channel messages (FrameHeader, FrameData, FrameAck)              |
+| `tile.cddl`      | Tile channel messages (TileConfig, TileBatch, TileUpdate, etc.)        |
+| `cursor.cddl`    | Cursor channel messages (CursorShape, CursorPosition)                  |
+| `audio.cddl`     | Audio channel messages (AudioConfig, AudioData)                        |
+| `clipboard.cddl` | Clipboard channel messages (ClipboardOffer, ClipboardData, etc.)       |
+| `input.cddl`     | Input channel messages (KeyEvent, MouseEvent, TouchEvent, etc.)        |
+| `emergency.cddl` | Emergency channel messages (EmergencyHello, CrashInfo, CrashLog)       |
+| `common.cddl`    | Shared type definitions (session_id, error codes, enums)               |
+| `color.cddl`     | Color space types (ColorSpaceInfo, HDRMetadata, HDR10Static)           |
 
 ### 13.2 Schema Conventions
 
-| Convention | Rule |
-|-----------|------|
-| **Integer keys** | CBOR maps use integer keys (not string keys) on the wire for compactness. String key names in CDDL are documentation only — the encoded form uses the integer mappings defined in each schema. |
-| **Optional fields** | Optional fields (`? key`) MUST be omitted (not set to null) when absent. Receivers MUST accept both omission and explicit null for optional fields. |
-| **Unknown fields** | Receivers MUST ignore unknown integer keys in CBOR maps (forward compatibility). Senders MUST NOT send fields not defined in the current protocol version's schema. |
-| **Enums** | Enum values are encoded as unsigned integers, not strings. Mapping tables are defined per schema. |
-| **Byte strings** | Binary data (frame payloads, tile pixels, audio samples) uses CBOR byte strings (`bstr`), not base64-encoded text. |
-| **Timestamps** | All timestamps are `uint` microseconds since session start. Absolute timestamps (audit, logs) use ISO 8601 text strings. |
+| Convention          | Rule                                                                                                                                                                                           |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Integer keys**    | CBOR maps use integer keys (not string keys) on the wire for compactness. String key names in CDDL are documentation only — the encoded form uses the integer mappings defined in each schema. |
+| **Optional fields** | Optional fields (`? key`) MUST be omitted (not set to null) when absent. Receivers MUST accept both omission and explicit null for optional fields.                                            |
+| **Unknown fields**  | Receivers MUST ignore unknown integer keys in CBOR maps (forward compatibility). Senders MUST NOT send fields not defined in the current protocol version's schema.                            |
+| **Enums**           | Enum values are encoded as unsigned integers, not strings. Mapping tables are defined per schema.                                                                                              |
+| **Byte strings**    | Binary data (frame payloads, tile pixels, audio samples) uses CBOR byte strings (`bstr`), not base64-encoded text.                                                                             |
+| **Timestamps**      | All timestamps are `uint` microseconds since session start. Absolute timestamps (audit, logs) use ISO 8601 text strings.                                                                       |
 
 ### 13.3 Schema Excerpt: Control Channel
 
@@ -1673,17 +1688,17 @@ Disconnect = {
 
 Implementations MUST follow these decode rules:
 
-| Rule | Strict Mode (default) | Lax Mode (optional, config) |
-|------|----------------------|---------------------------|
-| Unknown CBOR map keys | Silently ignored | Silently ignored |
-| Missing required field | Reject message, emit error metric | Reject message |
-| Wrong field type | Reject message | Attempt coercion (uint↔int), reject if impossible |
-| Duplicate map keys | Reject message | Last value wins |
-| Trailing bytes after CBOR | Reject message | Ignore trailing bytes |
-| Indefinite-length CBOR | Reject (not supported) | Reject |
-| CBOR tags | Ignored (strip) | Ignored (strip) |
-| Nested depth > 8 | Reject message | Reject message |
-| Single value > 16 MB | Reject message | Reject message |
+| Rule                      | Strict Mode (default)             | Lax Mode (optional, config)                       |
+| ------------------------- | --------------------------------- | ------------------------------------------------- |
+| Unknown CBOR map keys     | Silently ignored                  | Silently ignored                                  |
+| Missing required field    | Reject message, emit error metric | Reject message                                    |
+| Wrong field type          | Reject message                    | Attempt coercion (uint↔int), reject if impossible |
+| Duplicate map keys        | Reject message                    | Last value wins                                   |
+| Trailing bytes after CBOR | Reject message                    | Ignore trailing bytes                             |
+| Indefinite-length CBOR    | Reject (not supported)            | Reject                                            |
+| CBOR tags                 | Ignored (strip)                   | Ignored (strip)                                   |
+| Nested depth > 8          | Reject message                    | Reject message                                    |
+| Single value > 16 MB      | Reject message                    | Reject message                                    |
 
 Strict mode is the default for all production deployments. Lax mode MAY be enabled for interoperability testing with third-party clients. Lax mode MUST NOT be used in production as it masks protocol violations.
 
@@ -1710,19 +1725,19 @@ Test vectors provide known-good protocol message sequences that implementations 
 
 Each message type has a canonical byte sequence stored in `crates/liquide-protocol/test-vectors/`:
 
-| File | Contents | Format |
-|------|----------|--------|
-| `clienthello_basic.bin` | Minimal ClientHello with proto/1, QUIC, H.264 | Raw frame (header + CBOR payload) |
-| `serverhello_basic.bin` | ServerHello response | Raw frame |
-| `login_password_flow.bin` | LoginPrompt → LoginResponse → LoginSuccess | Concatenated frames |
-| `login_failure.bin` | LoginPrompt → LoginResponse → LoginFailure | Concatenated frames |
-| `tile_batch_mixed.bin` | TileBatch with skip, full, delta, copy, solid tiles | Raw frame |
-| `tile_keyframe_1080p.bin` | TileKeyFrame for 1920×1080 at 64×64 tiles | Raw frame |
-| `clipboard_text_roundtrip.bin` | ClipboardOffer → Request → Data → DataEnd | Concatenated frames |
-| `disconnect_clean.bin` | Graceful Disconnect | Raw frame |
-| `capability_negotiation.bin` | Client advertise → Server confirm | Concatenated frames |
-| `emergency_crash.bin` | EmergencyHello → CrashInfo → CrashLogRequest → CrashLogChunk | Concatenated frames |
-| `reconnect_resume.bin` | ClientHello with resume token → ServerHello → SessionInfo | Concatenated frames |
+| File                           | Contents                                                     | Format                            |
+| ------------------------------ | ------------------------------------------------------------ | --------------------------------- |
+| `clienthello_basic.bin`        | Minimal ClientHello with proto/1, QUIC, H.264                | Raw frame (header + CBOR payload) |
+| `serverhello_basic.bin`        | ServerHello response                                         | Raw frame                         |
+| `login_password_flow.bin`      | LoginPrompt → LoginResponse → LoginSuccess                   | Concatenated frames               |
+| `login_failure.bin`            | LoginPrompt → LoginResponse → LoginFailure                   | Concatenated frames               |
+| `tile_batch_mixed.bin`         | TileBatch with skip, full, delta, copy, solid tiles          | Raw frame                         |
+| `tile_keyframe_1080p.bin`      | TileKeyFrame for 1920×1080 at 64×64 tiles                    | Raw frame                         |
+| `clipboard_text_roundtrip.bin` | ClipboardOffer → Request → Data → DataEnd                    | Concatenated frames               |
+| `disconnect_clean.bin`         | Graceful Disconnect                                          | Raw frame                         |
+| `capability_negotiation.bin`   | Client advertise → Server confirm                            | Concatenated frames               |
+| `emergency_crash.bin`          | EmergencyHello → CrashInfo → CrashLogRequest → CrashLogChunk | Concatenated frames               |
+| `reconnect_resume.bin`         | ClientHello with resume token → ServerHello → SessionInfo    | Concatenated frames               |
 
 ### 14.2 Golden Capture Format
 
@@ -1756,25 +1771,25 @@ Each `.bin` file is accompanied by a `.json` description file:
 
 ### 14.3 Test Vector Requirements
 
-| Requirement | Description |
-|-------------|-------------|
+| Requirement              | Description                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Platform-independent** | Test vectors use fixed byte order (network byte order), fixed timestamps (0), and deterministic CBOR encoding (canonical form per RFC 8949 §4.2). |
-| **Version-tagged** | Each vector specifies the minimum protocol version that supports it. |
-| **CI-gated** | `cargo test --package liquide-protocol -- test_vector` runs all test vectors. New vectors MUST be added when new message types are introduced. |
-| **Cross-platform** | Test vectors MUST produce identical parse results on all target platforms (x86_64, ARM64, WASM). |
-| **Fuzz corpus seed** | Golden captures are the planned seed source for frame parser and CBOR decoder corpora once corpus generation is wired. |
+| **Version-tagged**       | Each vector specifies the minimum protocol version that supports it.                                                                              |
+| **CI-gated**             | `cargo test --package liquide-protocol -- test_vector` runs all test vectors. New vectors MUST be added when new message types are introduced.    |
+| **Cross-platform**       | Test vectors MUST produce identical parse results on all target platforms (x86_64, ARM64, WASM).                                                  |
+| **Fuzz corpus seed**     | Golden captures are the planned seed source for frame parser and CBOR decoder corpora once corpus generation is wired.                            |
 
 ### 14.4 Compatibility Test Matrix
 
 Client-server combinations tested with test vectors:
 
-| Client Version | Server Version | Expected Behavior |
-|---------------|----------------|-------------------|
-| Current | Current | Full feature set, all vectors pass |
-| Current | Current - 1 minor | Full feature set, server ignores unknown client capabilities |
-| Current - 1 minor | Current | Full feature set, client ignores unknown server capabilities |
-| Current | Current + 1 minor (future) | Server ignores unknown fields/capabilities from client |
-| proto/1 client | proto/2 server (future) | Version negotiation falls back to proto/1 |
+| Client Version    | Server Version             | Expected Behavior                                            |
+| ----------------- | -------------------------- | ------------------------------------------------------------ |
+| Current           | Current                    | Full feature set, all vectors pass                           |
+| Current           | Current - 1 minor          | Full feature set, server ignores unknown client capabilities |
+| Current - 1 minor | Current                    | Full feature set, client ignores unknown server capabilities |
+| Current           | Current + 1 minor (future) | Server ignores unknown fields/capabilities from client       |
+| proto/1 client    | proto/2 server (future)    | Version negotiation falls back to proto/1                    |
 
 ---
 
@@ -1782,13 +1797,13 @@ Client-server combinations tested with test vectors:
 
 ### 15.1 Protocol Version Contract
 
-| Property | Rule |
-|----------|------|
-| **Frame header format** | Frozen. The 20/24-byte frame header (§4) MUST NOT change within a major protocol version. Adding fields requires a new major version. |
-| **Magic number** | `0x4C44` is permanent. A different magic indicates a non-LiquiDE protocol. |
-| **Channel IDs** | Channel ID assignments (§3.1) are frozen within a major protocol version. New channels use reserved IDs (§12.3). Existing channel IDs MUST NOT be reassigned. |
-| **Message type codes** | Existing type codes are frozen. New message types use unallocated codes from reserved ranges (§12.3). Existing codes MUST NOT be reassigned or change semantics. |
-| **CBOR field numbering** | Existing integer keys in CBOR maps are frozen. New optional fields use the next available integer key. Existing keys MUST NOT change meaning. |
+| Property                 | Rule                                                                                                                                                             |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Frame header format**  | Frozen. The 20/24-byte frame header (§4) MUST NOT change within a major protocol version. Adding fields requires a new major version.                            |
+| **Magic number**         | `0x4C44` is permanent. A different magic indicates a non-LiquiDE protocol.                                                                                       |
+| **Channel IDs**          | Channel ID assignments (§3.1) are frozen within a major protocol version. New channels use reserved IDs (§12.3). Existing channel IDs MUST NOT be reassigned.    |
+| **Message type codes**   | Existing type codes are frozen. New message types use unallocated codes from reserved ranges (§12.3). Existing codes MUST NOT be reassigned or change semantics. |
+| **CBOR field numbering** | Existing integer keys in CBOR maps are frozen. New optional fields use the next available integer key. Existing keys MUST NOT change meaning.                    |
 
 ### 15.2 Version Negotiation Rules
 
@@ -1800,13 +1815,13 @@ Client-server combinations tested with test vectors:
 
 ### 15.3 Forward Compatibility Rules
 
-| Sender Action | Receiver Behavior |
-|--------------|-------------------|
-| Sends unknown CBOR field | Receiver ignores it |
-| Sends unknown message type on known channel | Receiver silently discards message |
-| Sends unknown capability key | Receiver responds with `false` or omits from confirm |
-| Sends ChannelOpen for unknown channel | Receiver sends ChannelOpenReject |
-| Uses a new compression algorithm ID | Receiver falls back to uncompressed and logs warning |
+| Sender Action                               | Receiver Behavior                                    |
+| ------------------------------------------- | ---------------------------------------------------- |
+| Sends unknown CBOR field                    | Receiver ignores it                                  |
+| Sends unknown message type on known channel | Receiver silently discards message                   |
+| Sends unknown capability key                | Receiver responds with `false` or omits from confirm |
+| Sends ChannelOpen for unknown channel       | Receiver sends ChannelOpenReject                     |
+| Uses a new compression algorithm ID         | Receiver falls back to uncompressed and logs warning |
 
 ### 15.4 Breaking Change Policy
 
@@ -1840,78 +1855,79 @@ A protocol major version bump is **NOT** required for:
 
 ### 16.1 Latency Budgets
 
-| Metric | Target (1080p, same-datacenter) | Target (1080p, WAN 50ms RTT) | Target (4K, same-datacenter) |
-|--------|-------------------------------|------------------------------|------------------------------|
-| Input-to-display (total) | < 16ms | < 50ms + RTT | < 25ms |
-| Input processing | < 1ms | < 1ms | < 1ms |
-| Compositor render | < 5ms | < 5ms | < 10ms |
-| Encode (H.264) | < 5ms | < 5ms | < 10ms |
-| Encode (AV1) | < 8ms | < 8ms | < 15ms |
-| Tile batch encode (64×64) | < 3ms | < 3ms | < 5ms |
-| Tile XOR delta (64×64) | < 0.1ms | < 0.1ms | < 0.1ms |
-| Transport (packetize + send) | < 2ms | < 2ms | < 3ms |
-| Client decode | < 3ms | < 3ms | < 5ms |
-| Cursor update | < 5ms | < 5ms + RTT | < 5ms |
-| Audio end-to-end | < 30ms | < 30ms + RTT | < 30ms |
+| Metric                       | Target (1080p, same-datacenter) | Target (1080p, WAN 50ms RTT) | Target (4K, same-datacenter) |
+| ---------------------------- | ------------------------------- | ---------------------------- | ---------------------------- |
+| Input-to-display (total)     | < 16ms                          | < 50ms + RTT                 | < 25ms                       |
+| Input processing             | < 1ms                           | < 1ms                        | < 1ms                        |
+| Compositor render            | < 5ms                           | < 5ms                        | < 10ms                       |
+| Encode (H.264)               | < 5ms                           | < 5ms                        | < 10ms                       |
+| Encode (AV1)                 | < 8ms                           | < 8ms                        | < 15ms                       |
+| Tile batch encode (64×64)    | < 3ms                           | < 3ms                        | < 5ms                        |
+| Tile XOR delta (64×64)       | < 0.1ms                         | < 0.1ms                      | < 0.1ms                      |
+| Transport (packetize + send) | < 2ms                           | < 2ms                        | < 3ms                        |
+| Client decode                | < 3ms                           | < 3ms                        | < 5ms                        |
+| Cursor update                | < 5ms                           | < 5ms + RTT                  | < 5ms                        |
+| Audio end-to-end             | < 30ms                          | < 30ms + RTT                 | < 30ms                       |
 
 ### 16.2 Throughput Targets
 
-| Metric | Target  |
-|--------|---------|
-| Frame rate (1080p, balanced) | 60 FPS sustained |
-| Frame rate (4K, balanced) | 30 FPS sustained, 60 FPS achievable |
-| Frame rate (idle, no damage) | 0 FPS (no frames sent when nothing changes) |
-| Tile batch rate (1080p, active typing) | 30–60 batches/sec |
-| Tile skip ratio (static screen) | > 99% (only cursor blink tiles sent) |
-| Tile delta savings (vs. full tile, typical UI) | 60–90% bandwidth reduction |
-| Audio stream | 48kHz stereo, Opus, < 128kbps |
-| Clipboard (text, < 1MB) | < 100ms end-to-end |
-| File transfer | Limited by network bandwidth |
+| Metric                                         | Target                                      |
+| ---------------------------------------------- | ------------------------------------------- |
+| Frame rate (1080p, balanced)                   | 60 FPS sustained                            |
+| Frame rate (4K, balanced)                      | 30 FPS sustained, 60 FPS achievable         |
+| Frame rate (idle, no damage)                   | 0 FPS (no frames sent when nothing changes) |
+| Tile batch rate (1080p, active typing)         | 30–60 batches/sec                           |
+| Tile skip ratio (static screen)                | > 99% (only cursor blink tiles sent)        |
+| Tile delta savings (vs. full tile, typical UI) | 60–90% bandwidth reduction                  |
+| Audio stream                                   | 48kHz stereo, Opus, < 128kbps               |
+| Clipboard (text, < 1MB)                        | < 100ms end-to-end                          |
+| File transfer                                  | Limited by network bandwidth                |
 
 ### 16.3 Resource Budget (Server, per session)
 
-| Resource | Target | Maximum |
-|----------|--------|---------|
-| CPU (1080p, 60fps, balanced) | 1–2 cores | 4 cores |
-| CPU (4K, 30fps, balanced) | 2–3 cores | 6 cores |
-| CPU (idle, no damage) | < 1% of 1 core | — |
-| Memory (session process) | 100–200 MB | 512 MB (without apps) |
-| Memory (per WASM plugin) | 2–32 MB | 256 MB (configurable cap) |
-| Network (1080p, 60fps, quality) | 5–15 Mbps | 50 Mbps |
-| Network (1080p, 60fps, balanced) | 2–8 Mbps | 20 Mbps |
-| Network (4K, 30fps, balanced) | 8–20 Mbps | 50 Mbps |
-| Network (idle) | < 10 Kbps | — |
+| Resource                         | Target         | Maximum                   |
+| -------------------------------- | -------------- | ------------------------- |
+| CPU (1080p, 60fps, balanced)     | 1–2 cores      | 4 cores                   |
+| CPU (4K, 30fps, balanced)        | 2–3 cores      | 6 cores                   |
+| CPU (idle, no damage)            | < 1% of 1 core | —                         |
+| Memory (session process)         | 100–200 MB     | 512 MB (without apps)     |
+| Memory (per WASM plugin)         | 2–32 MB        | 256 MB (configurable cap) |
+| Network (1080p, 60fps, quality)  | 5–15 Mbps      | 50 Mbps                   |
+| Network (1080p, 60fps, balanced) | 2–8 Mbps       | 20 Mbps                   |
+| Network (4K, 30fps, balanced)    | 8–20 Mbps      | 50 Mbps                   |
+| Network (idle)                   | < 10 Kbps      | —                         |
 
 ### 16.4 CI Regression Thresholds
 
 Automated performance tests run in CI. A regression is flagged if:
 
-| Metric | Regression Threshold |
-|--------|---------------------|
-| Input-to-display latency (p50) | > 10% increase |
-| Input-to-display latency (p99) | > 20% increase |
-| Frame rate (sustained, same workload) | > 5% decrease |
-| Memory usage (idle session) | > 15% increase |
-| CPU usage (idle session) | > 20% increase |
-| Binary size | > 10% increase |
-| Startup time (session ready) | > 15% increase |
+| Metric                                | Regression Threshold |
+| ------------------------------------- | -------------------- |
+| Input-to-display latency (p50)        | > 10% increase       |
+| Input-to-display latency (p99)        | > 20% increase       |
+| Frame rate (sustained, same workload) | > 5% decrease        |
+| Memory usage (idle session)           | > 15% increase       |
+| CPU usage (idle session)              | > 20% increase       |
+| Binary size                           | > 10% increase       |
+| Startup time (session ready)          | > 15% increase       |
 
 ### 16.5 Network Emulation Scenarios
 
 Release gating includes tests under simulated network conditions:
 
-| Scenario | RTT | Bandwidth | Packet Loss | Jitter |
-|----------|-----|-----------|-------------|--------|
-| LAN | 1ms | 1 Gbps | 0% | 0ms |
-| Datacenter (same region) | 5ms | 1 Gbps | 0% | 1ms |
-| WAN (same continent) | 30ms | 100 Mbps | 0.1% | 5ms |
-| WAN (cross-continent) | 100ms | 50 Mbps | 0.5% | 10ms |
-| Cellular (4G) | 50ms | 20 Mbps | 1% | 20ms |
-| Cellular (3G) | 100ms | 2 Mbps | 2% | 50ms |
-| Degraded (hotel Wi-Fi) | 50ms | 5 Mbps | 3% | 30ms |
-| Satellite | 600ms | 10 Mbps | 1% | 10ms |
+| Scenario                 | RTT   | Bandwidth | Packet Loss | Jitter |
+| ------------------------ | ----- | --------- | ----------- | ------ |
+| LAN                      | 1ms   | 1 Gbps    | 0%          | 0ms    |
+| Datacenter (same region) | 5ms   | 1 Gbps    | 0%          | 1ms    |
+| WAN (same continent)     | 30ms  | 100 Mbps  | 0.1%        | 5ms    |
+| WAN (cross-continent)    | 100ms | 50 Mbps   | 0.5%        | 10ms   |
+| Cellular (4G)            | 50ms  | 20 Mbps   | 1%          | 20ms   |
+| Cellular (3G)            | 100ms | 2 Mbps    | 2%          | 50ms   |
+| Degraded (hotel Wi-Fi)   | 50ms  | 5 Mbps    | 3%          | 30ms   |
+| Satellite                | 600ms | 10 Mbps   | 1%          | 10ms   |
 
 For each scenario, verify:
+
 - Session is usable (subjective, by test operator).
 - No crashes or protocol errors.
 - Graceful degradation (quality reduction, not hangs).
@@ -1925,20 +1941,20 @@ The repository currently keeps focused `cargo-fuzz` harnesses under `tests/fuzz/
 
 Live targets:
 
-| Target | Fuzzer Input | Goal |
-|--------|-------------|------|
-| Frame parser | Random bytes as frame data | No crash, no undefined behavior |
-| CBOR decoder | Random bytes as CBOR payload | No crash, correct error returns |
-| Video decoder (in-tree null-codec decoder) | Malformed encoded bitstreams | No crash, graceful error |
+| Target                                     | Fuzzer Input                 | Goal                            |
+| ------------------------------------------ | ---------------------------- | ------------------------------- |
+| Frame parser                               | Random bytes as frame data   | No crash, no undefined behavior |
+| CBOR decoder                               | Random bytes as CBOR payload | No crash, correct error returns |
+| Video decoder (in-tree null-codec decoder) | Malformed encoded bitstreams | No crash, graceful error        |
 
 Roadmap targets, not yet release/CI fuzz gates:
 
-| Target | Fuzzer Input | Goal |
-|--------|-------------|------|
-| Clipboard parser | Arbitrary MIME data | No crash, correct MIME validation |
-| Protocol state machine | Random message sequences | No invalid state transitions |
-| TLS handshake | Malformed TLS records | No crash, correct TLS error |
-| Session resume token | Malformed tokens | No bypass, correct auth error |
+| Target                 | Fuzzer Input             | Goal                              |
+| ---------------------- | ------------------------ | --------------------------------- |
+| Clipboard parser       | Arbitrary MIME data      | No crash, correct MIME validation |
+| Protocol state machine | Random message sequences | No invalid state transitions      |
+| TLS handshake          | Malformed TLS records    | No crash, correct TLS error       |
+| Session resume token   | Malformed tokens         | No bypass, correct auth error     |
 
 ### 17.1 Fuzzing Infrastructure
 
@@ -1953,49 +1969,49 @@ Roadmap targets, not yet release/CI fuzz gates:
 
 ### 18.1 Test Categories
 
-| Category | Description | Pass Criteria |
-|----------|-------------|---------------|
-| Handshake | ClientHello/ServerHello exchange | Both sides reach Active state |
-| Channel lifecycle | Open/close/suspend/resume all channels | State machine transitions are correct |
-| Authentication | All PAM flows (password, MFA, failure) | Correct state after each flow |
-| Video streaming | Key frame + delta frames | Client can decode and display |
-| Input round-trip | Key/mouse/touch → server → response | Input is processed and frame reflects it |
-| Emergency channel | Simulate crash, verify CrashInfo delivery | Client receives crash data |
-| Reconnection | Drop TCP, verify reconnect + resume | Session resumes without data loss |
-| Codec switching | Mid-stream codec switch | Client switches decoder, no artifacts |
-| Compression | Verify all compression modes | Data integrity after decompress |
-| Fragmentation | Send messages > 65535 bytes | Reassembly produces correct data |
-| Ordering | Verify per-channel ordering | No out-of-order processing |
-| Rate limiting | Exceed notification/clipboard limits | Correct error codes returned |
-| Asset caching | AssetManifest/Request/Data round-trip | Client receives and caches assets correctly; cache hits skip transfer |
-| Tile key frame | TileConfig → TileKeyFrame, all tiles full | Client reconstructs full screen from tiles |
-| Tile delta | TileBatch with XOR deltas | Client applies XOR, result matches server bitmap |
-| Tile scroll | TileScroll + TileBatch for exposed strip | Client shifts buffer, exposed tiles are correct |
-| Tile copy/solid | TileBatch with copy and solid tiles | Client fills/copies correctly, pixel-perfect match |
-| Tile mode switch | TileModeSwitch video↔tile | Client transitions regions without artifacts |
-| Tile resize | Resize → TileConfig → TileKeyFrame | Client reconfigures grid, no desync |
-| Tile key frame request | Client sends TileKeyFrameRequest | Server responds with full TileKeyFrame |
-| Clipboard lifecycle | ClipboardOffer → Request → Data → DataEnd | Complete transfer, state returns to Idle |
-| Clipboard cancel | ClipboardCancel during transfer | Transfer aborted, state returns to Idle |
-| Clipboard timeout | No ClipboardRequest within 30s of offer | Offer expires, state returns to Idle |
-| Clipboard policy block | Transfer violating direction policy | Transfer rejected, audit event emitted |
-| Input sync | InputSyncRequest/Response on channel open | Client receives correct modifier state |
-| Input coalescing | Rapid mouse moves under backpressure | Server coalesces to latest position, no key drops |
-| Cursor shape cache | Repeated cursor shape changes | Client uses cached shapes, new shapes transferred |
-| Backpressure video | 3 unacked frames in-flight | Server pauses encoding, resumes on ack |
-| Backpressure tile | 2 unacked batches in-flight | Server waits for ack |
-| Backpressure global | Send queue exceeds 90% | Video paused, cursor/audio/control continue |
-| Capability negotiation | Client advertises, server confirms/rejects | Only confirmed capabilities activate channels |
-| Unknown message type | Send unrecognized message type on known channel | Message silently discarded, channel stays open |
-| Unknown CBOR field | Add extra field to known message | Receiver ignores field, processes message |
-| Unknown channel | ChannelOpen for unrecognized channel ID | ChannelOpenReject with unsupported_channel |
-| Vendor extension | Negotiate vendor cap, send vendor messages | Messages processed only after capability confirmed |
-| Color negotiation | ClientHello with color caps, ServerHello selects mode | Both sides agree on pipeline mode; fallback to SDR-sRGB if mismatch |
-| Color fallback | Client with SDR-only, server configured HDR | Server falls back to SDR-sRGB; no HDR metadata sent |
-| HDR metadata | FrameHeader includes HDR10 static/dynamic metadata | Client receives and validates `color_space` and `hdr_metadata` fields |
-| Deep color tile | TileConfig with `rgb101010` pixel format, 10-bit tile data | Client decodes 10-bit tiles correctly, pixel-perfect match |
-| Deep color round-trip | 10-bit encode → transport → 10-bit decode | No precision loss beyond codec quantization |
-| Wayland wire fuzz | Randomized Wayland protocol messages to compositor | Compositor does not crash, returns appropriate protocol errors |
+| Category               | Description                                                | Pass Criteria                                                         |
+| ---------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------- |
+| Handshake              | ClientHello/ServerHello exchange                           | Both sides reach Active state                                         |
+| Channel lifecycle      | Open/close/suspend/resume all channels                     | State machine transitions are correct                                 |
+| Authentication         | All PAM flows (password, MFA, failure)                     | Correct state after each flow                                         |
+| Video streaming        | Key frame + delta frames                                   | Client can decode and display                                         |
+| Input round-trip       | Key/mouse/touch → server → response                        | Input is processed and frame reflects it                              |
+| Emergency channel      | Simulate crash, verify CrashInfo delivery                  | Client receives crash data                                            |
+| Reconnection           | Drop TCP, verify reconnect + resume                        | Session resumes without data loss                                     |
+| Codec switching        | Mid-stream codec switch                                    | Client switches decoder, no artifacts                                 |
+| Compression            | Verify all compression modes                               | Data integrity after decompress                                       |
+| Fragmentation          | Send messages > 65535 bytes                                | Reassembly produces correct data                                      |
+| Ordering               | Verify per-channel ordering                                | No out-of-order processing                                            |
+| Rate limiting          | Exceed notification/clipboard limits                       | Correct error codes returned                                          |
+| Asset caching          | AssetManifest/Request/Data round-trip                      | Client receives and caches assets correctly; cache hits skip transfer |
+| Tile key frame         | TileConfig → TileKeyFrame, all tiles full                  | Client reconstructs full screen from tiles                            |
+| Tile delta             | TileBatch with XOR deltas                                  | Client applies XOR, result matches server bitmap                      |
+| Tile scroll            | TileScroll + TileBatch for exposed strip                   | Client shifts buffer, exposed tiles are correct                       |
+| Tile copy/solid        | TileBatch with copy and solid tiles                        | Client fills/copies correctly, pixel-perfect match                    |
+| Tile mode switch       | TileModeSwitch video↔tile                                  | Client transitions regions without artifacts                          |
+| Tile resize            | Resize → TileConfig → TileKeyFrame                         | Client reconfigures grid, no desync                                   |
+| Tile key frame request | Client sends TileKeyFrameRequest                           | Server responds with full TileKeyFrame                                |
+| Clipboard lifecycle    | ClipboardOffer → Request → Data → DataEnd                  | Complete transfer, state returns to Idle                              |
+| Clipboard cancel       | ClipboardCancel during transfer                            | Transfer aborted, state returns to Idle                               |
+| Clipboard timeout      | No ClipboardRequest within 30s of offer                    | Offer expires, state returns to Idle                                  |
+| Clipboard policy block | Transfer violating direction policy                        | Transfer rejected, audit event emitted                                |
+| Input sync             | InputSyncRequest/Response on channel open                  | Client receives correct modifier state                                |
+| Input coalescing       | Rapid mouse moves under backpressure                       | Server coalesces to latest position, no key drops                     |
+| Cursor shape cache     | Repeated cursor shape changes                              | Client uses cached shapes, new shapes transferred                     |
+| Backpressure video     | 3 unacked frames in-flight                                 | Server pauses encoding, resumes on ack                                |
+| Backpressure tile      | 2 unacked batches in-flight                                | Server waits for ack                                                  |
+| Backpressure global    | Send queue exceeds 90%                                     | Video paused, cursor/audio/control continue                           |
+| Capability negotiation | Client advertises, server confirms/rejects                 | Only confirmed capabilities activate channels                         |
+| Unknown message type   | Send unrecognized message type on known channel            | Message silently discarded, channel stays open                        |
+| Unknown CBOR field     | Add extra field to known message                           | Receiver ignores field, processes message                             |
+| Unknown channel        | ChannelOpen for unrecognized channel ID                    | ChannelOpenReject with unsupported_channel                            |
+| Vendor extension       | Negotiate vendor cap, send vendor messages                 | Messages processed only after capability confirmed                    |
+| Color negotiation      | ClientHello with color caps, ServerHello selects mode      | Both sides agree on pipeline mode; fallback to SDR-sRGB if mismatch   |
+| Color fallback         | Client with SDR-only, server configured HDR                | Server falls back to SDR-sRGB; no HDR metadata sent                   |
+| HDR metadata           | FrameHeader includes HDR10 static/dynamic metadata         | Client receives and validates `color_space` and `hdr_metadata` fields |
+| Deep color tile        | TileConfig with `rgb101010` pixel format, 10-bit tile data | Client decodes 10-bit tiles correctly, pixel-perfect match            |
+| Deep color round-trip  | 10-bit encode → transport → 10-bit decode                  | No precision loss beyond codec quantization                           |
+| Wayland wire fuzz      | Randomized Wayland protocol messages to compositor         | Compositor does not crash, returns appropriate protocol errors        |
 
 ### 18.2 Conformance Test Runner
 
@@ -2021,6 +2037,7 @@ Roadmap: the conformance runner should add a `--wayland-fuzz` mode that sends ra
 ## 19) Test Plan
 
 ### Protocol Correctness
+
 - Frame parsing: all field combinations, max sizes, truncated frames.
 - CBOR encoding/decoding: round-trip all message types.
 - State machine: all transition paths, including error paths.
@@ -2032,16 +2049,19 @@ Roadmap: the conformance runner should add a `--wayland-fuzz` mode that sends ra
 - Tile: TileKeyFrame fully resynchronizes client after induced desync.
 
 ### Security
+
 - TLS: verify only TLS 1.3 is accepted. Downgrade attack rejected.
 - Authentication: brute-force rate limiting. Invalid credentials rejected.
 - Channel injection: verify a client cannot send messages on server-only channels.
 - Emergency channel: verify it cannot be used to bypass authentication.
 
 ### Performance
+
 - All SLOs (§16) met under each network scenario (§16.5).
 - Regression thresholds (§16.4) enforced in CI.
 
 ### Interoperability
+
 - Conformance tests pass for: Linux client, Windows client, macOS client, browser client.
 - Version mismatch: older client with newer server and vice versa.
 - Backpressure: verify all channels respect flow control limits (§11).
@@ -2051,6 +2071,7 @@ Roadmap: the conformance runner should add a `--wayland-fuzz` mode that sends ra
 - Compatibility: verify version negotiation rules (§15) are enforced.
 
 ### New Feature Conformance
+
 - Verify `KEYFRAME` flag is set on all IDR video frames and `TileKeyFrame` messages.
 - Verify `CONGESTION_MARK` flag is set when send queue exceeds 80% capacity at frame enqueue time.
 - Verify tile delta-to-keyframe threshold: after 60 consecutive delta frames for the same tile position, server sends a full tile (configurable via `transport.tile_keyframe_threshold`).

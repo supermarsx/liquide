@@ -1,5 +1,5 @@
 use crate::config::{SmartCardConfig, UsbConfig};
-use crate::device::{DeviceClass, DeviceInfo, DeviceState, VidPid};
+use crate::device::{DeviceClass, DeviceInfo, VidPid};
 use crate::manager::UsbManager;
 
 fn enabled_config() -> UsbConfig {
@@ -36,9 +36,36 @@ fn test_manager_attach_detach() {
     assert!(id >= 1);
     assert_eq!(manager.list_devices().len(), 1);
 
+    // Detaching removes the device from the tracking set entirely, so the
+    // map reflects only currently-attached devices.
     manager.detach_device(id).unwrap();
-    let device = manager.list_devices().get(&id).unwrap();
-    assert_eq!(device.state(), DeviceState::Disconnected);
+    assert!(manager.list_devices().get(&id).is_none());
+    assert_eq!(manager.list_devices().len(), 0);
+}
+
+#[test]
+fn test_manager_detach_removes_from_tracking_set() {
+    // Regression for t49-e9-15: the manager must not retain detached devices,
+    // otherwise the tracking map grows unbounded across plug/unplug cycles.
+    let mut manager = UsbManager::new(enabled_config(), SmartCardConfig::default());
+
+    for cycle in 0..1000u16 {
+        let info = make_info(
+            0x046D,
+            0xC534,
+            DeviceClass::Filesystem,
+            &format!("Drive {cycle}"),
+        );
+        let id = manager.attach_device(info).unwrap();
+        // Exactly one device is tracked while attached.
+        assert_eq!(manager.list_devices().len(), 1);
+        manager.detach_device(id).unwrap();
+        // None remain tracked once detached, regardless of how many cycles run.
+        assert_eq!(manager.list_devices().len(), 0);
+    }
+
+    // After 1000 plug/unplug cycles the tracking set is still empty.
+    assert!(manager.list_devices().is_empty());
 }
 
 #[test]

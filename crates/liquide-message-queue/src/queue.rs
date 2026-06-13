@@ -9,6 +9,27 @@
 //! 3. **Synthetic messages** — generated on demand: `Paint` (from invalid
 //!    regions) and `Timer` (from expired timers).  These have the *lowest*
 //!    priority and are only returned when no other work is pending.
+//!
+//! ## Canonical input path & staging status
+//!
+//! `ThreadQueue` is the **canonical, runtime-wired** per-thread input queue
+//! (consumed by `liquide-session`). The priority-bucketed `MessageQueue` in
+//! `liquide-focus` is a divergent duplicate slated for retirement; the
+//! coalescing / key-repeat-thinning / scroll-coalesce logic that landed there
+//! in flight is reconciled here on `ThreadQueue` (see the t51 input redirect
+//! note, `.orchestration/notes/t51-input-redirect.md`).
+//!
+//! The following surfaces are present and tested but **not yet driven by the
+//! runtime pump** (staged per t49-e1-F21 / plan B5a) — they are explicit
+//! backpressure / wait-tuning tools, deliberately not invoked on the default
+//! retrieval path:
+//!   - [`ThreadQueue::thin_key_repeats`] (overload backpressure; key transitions
+//!     are stateful and must normally be preserved exactly),
+//!   - [`ThreadQueue::wake_bits_older_than`] / [`ThreadQueue::pending_since_us`]
+//!     and the underlying [`crate::wake_bits::WakeDeadlines`] (input-starvation /
+//!     timeout aging for a future `MsgWaitForMultipleObjects`-style waiter).
+//! Synthetic key-repeat *generation* (delay→rate) is intentionally NOT here; it
+//! lives in `liquide-keyboard` (see the redirect note §4).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -16,7 +37,7 @@ use crate::filter::MessageFilter;
 use crate::message::{MessageResult, MessageType, QueueMessage, WINDOW_BROADCAST, WindowId};
 use crate::sent::SentMessage;
 use crate::timer::TimerManager;
-use crate::wake_bits::WakeBits;
+use crate::wake_bits::{WakeBits, WakeDeadlines};
 
 /// Rectangular region (kept simple — no dependency on liquide-compositor).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,6 +102,8 @@ pub struct ThreadQueue {
     wake_bits: WakeBits,
     /// Which bits changed since the last `get_message` / `peek_message`.
     changed_bits: WakeBits,
+    /// First timestamp for each currently-pending wake bit.
+    wake_deadlines: WakeDeadlines,
 
     // ── Window state tracked per-queue (NT pattern) ─────────────────────
     /// The active window for this queue.
@@ -93,6 +116,8 @@ pub struct ThreadQueue {
     // ── Mouse-move coalescing ───────────────────────────────────────────
     /// Only the latest mouse-move is kept; new moves replace the old one.
     last_mouse_move: Option<QueueMessage>,
+    /// Same-direction wheel messages are accumulated into one scroll event.
+    last_scroll: Option<QueueMessage>,
 
     // ── Paint coalescing ────────────────────────────────────────────────
     /// Invalid (dirty) regions per window.  A `Paint` message is synthesized
@@ -115,6 +140,7 @@ impl std::fmt::Debug for ThreadQueue {
             .field("focus_window", &self.focus_window)
             .field("capture_window", &self.capture_window)
             .field("has_mouse_move", &self.last_mouse_move.is_some())
+            .field("has_scroll", &self.last_scroll.is_some())
             .field("invalid_windows", &self.invalid_regions.len())
             .field("timers", &self.timers.count())
             .finish()
@@ -132,10 +158,12 @@ impl ThreadQueue {
             sent_scratch: Vec::with_capacity(8),
             wake_bits: WakeBits::NONE,
             changed_bits: WakeBits::NONE,
+            wake_deadlines: WakeDeadlines::new(),
             active_window: None,
             focus_window: None,
             capture_window: None,
             last_mouse_move: None,
+            last_scroll: None,
             invalid_regions: HashMap::with_capacity(8),
             timers: TimerManager::new(),
         }
@@ -153,6 +181,19 @@ impl ThreadQueue {
     #[must_use]
     pub fn changed_bits(&self) -> WakeBits {
         self.changed_bits
+    }
+
+    /// Earliest timestamp for any currently pending bit in `bits`.
+    #[must_use]
+    pub fn pending_since_us(&self, bits: WakeBits) -> Option<u64> {
+        self.wake_deadlines.pending_since_us(bits)
+    }
+
+    /// Return pending wake bits older than `timeout_us` at `now_us`.
+    #[must_use]
+    pub fn wake_bits_older_than(&self, now_us: u64, timeout_us: u64) -> WakeBits {
+        self.wake_deadlines
+            .bits_older_than(self.wake_bits, now_us, timeout_us)
     }
 
     /// Active window.
@@ -200,9 +241,9 @@ impl ThreadQueue {
             MessageType::MouseMove => WakeBits::QS_MOUSEMOVE,
             MessageType::MouseDown
             | MessageType::MouseUp
-            | MessageType::MouseWheel
             | MessageType::MouseEnter
             | MessageType::MouseLeave => WakeBits::QS_MOUSE,
+            MessageType::MouseWheel => WakeBits::SCROLL,
             MessageType::KeyDown | MessageType::KeyUp | MessageType::KeyChar => WakeBits::QS_KEY,
             MessageType::HotKey(_) => WakeBits::QS_HOTKEY,
             _ => WakeBits::QS_POSTMESSAGE,
@@ -228,6 +269,11 @@ impl ThreadQueue {
             bits.insert(WakeBits::QS_MOUSEMOVE);
         }
 
+        // Scroll
+        if self.last_scroll.is_some() {
+            bits.insert(WakeBits::SCROLL);
+        }
+
         // Paint
         if !self.invalid_regions.is_empty() {
             bits.insert(WakeBits::QS_PAINT);
@@ -239,6 +285,19 @@ impl ThreadQueue {
         }
 
         self.wake_bits = bits;
+        self.wake_deadlines.retain(bits);
+        self.wake_deadlines.mark_pending(bits, now_us);
+    }
+
+    fn set_wake_bits(&mut self, bits: WakeBits, now_us: u64) {
+        self.wake_bits.insert(bits);
+        self.changed_bits.insert(bits);
+        self.wake_deadlines.mark_pending(bits, now_us);
+    }
+
+    fn clear_wake_bits(&mut self, bits: WakeBits) {
+        self.wake_bits.remove(bits);
+        self.wake_deadlines.clear(bits);
     }
 
     // ── Post ────────────────────────────────────────────────────────────
@@ -248,18 +307,54 @@ impl ThreadQueue {
     ///
     /// Mouse-move messages are *coalesced*: only the latest move is kept.
     pub fn post_message(&mut self, msg: QueueMessage) {
+        let now_us = if msg.time == 0 {
+            current_time_us()
+        } else {
+            msg.time
+        };
+
         if msg.msg == MessageType::MouseMove {
             // Coalesce: replace pending mouse move
             self.last_mouse_move = Some(msg);
-            self.wake_bits.insert(WakeBits::QS_MOUSEMOVE);
-            self.changed_bits.insert(WakeBits::QS_MOUSEMOVE);
+            self.set_wake_bits(WakeBits::QS_MOUSEMOVE, now_us);
+            return;
+        }
+
+        if msg.msg == MessageType::MouseWheel {
+            self.post_scroll_message(msg, now_us);
             return;
         }
 
         let bits = Self::wake_bits_for_msg(&msg.msg);
-        self.wake_bits.insert(bits);
-        self.changed_bits.insert(bits);
+        self.set_wake_bits(bits, now_us);
         self.messages.push_back(msg);
+    }
+
+    fn post_scroll_message(&mut self, msg: QueueMessage, now_us: u64) {
+        if let Some(existing) = &mut self.last_scroll {
+            // Only accumulate wheels that are genuinely the *same* gesture:
+            // same target, same modifier/axis flags (`wparam`), and same
+            // direction. Coalescing across differing flags would fuse distinct
+            // events' flag bits (t49-e1-F26); a direction/flag change instead
+            // flushes the held wheel so input order is preserved.
+            if existing.target == msg.target
+                && existing.wparam == msg.wparam
+                && same_scroll_direction(existing.lparam, msg.lparam)
+            {
+                existing.lparam = existing.lparam.saturating_add(msg.lparam);
+                existing.time = msg.time;
+                existing.pt = msg.pt;
+                existing.extra_info = msg.extra_info;
+                self.set_wake_bits(WakeBits::SCROLL, now_us);
+                return;
+            }
+        }
+
+        if let Some(previous) = self.last_scroll.take() {
+            self.messages.push_back(previous);
+        }
+        self.last_scroll = Some(msg);
+        self.set_wake_bits(WakeBits::SCROLL, now_us);
     }
 
     // ── Send (cross-thread) ─────────────────────────────────────────────
@@ -270,8 +365,7 @@ impl ThreadQueue {
     /// This is the *receiver side* of the SMS protocol.
     pub fn push_sent_message(&mut self, sent: SentMessage) {
         self.sent_messages.push(sent);
-        self.wake_bits.insert(WakeBits::QS_SENDMESSAGE);
-        self.changed_bits.insert(WakeBits::QS_SENDMESSAGE);
+        self.set_wake_bits(WakeBits::QS_SENDMESSAGE, current_time_us());
     }
 
     /// Process all pending inter-thread sent messages using `handler`.
@@ -283,7 +377,7 @@ impl ThreadQueue {
         handler: &mut dyn FnMut(&QueueMessage) -> MessageResult,
     ) {
         if self.sent_messages.is_empty() {
-            self.wake_bits.remove(WakeBits::QS_SENDMESSAGE);
+            self.clear_wake_bits(WakeBits::QS_SENDMESSAGE);
             return;
         }
 
@@ -292,7 +386,7 @@ impl ThreadQueue {
             let result = handler(&sm.msg);
             sm.reply(result);
         }
-        self.wake_bits.remove(WakeBits::QS_SENDMESSAGE);
+        self.clear_wake_bits(WakeBits::QS_SENDMESSAGE);
     }
 
     // ── Peek / Get ──────────────────────────────────────────────────────
@@ -303,8 +397,9 @@ impl ThreadQueue {
     /// 1. Sent messages (always processed first, not returned here)
     /// 2. Posted messages
     /// 3. Coalesced mouse-move
-    /// 4. Paint (synthetic)
-    /// 5. Timer (synthetic, lowest priority)
+    /// 4. Coalesced scroll / wheel input
+    /// 5. Paint (synthetic)
+    /// 6. Timer (synthetic, lowest priority)
     ///
     /// If `filter.remove` is true the message is removed from the queue;
     /// otherwise it is left in place.
@@ -330,7 +425,12 @@ impl ThreadQueue {
                     .iter()
                     .any(|m| Self::wake_bits_for_msg(&m.msg).intersects(bit))
                 {
-                    self.wake_bits.remove(bit);
+                    let has_coalesced_source = (bit == WakeBits::QS_MOUSEMOVE
+                        && self.last_mouse_move.is_some())
+                        || (bit == WakeBits::SCROLL && self.last_scroll.is_some());
+                    if !has_coalesced_source {
+                        self.clear_wake_bits(bit);
+                    }
                 }
                 return Some(msg);
             } else {
@@ -343,7 +443,7 @@ impl ThreadQueue {
             if filter.matches(mm) {
                 if do_remove {
                     let msg = self.last_mouse_move.take().unwrap();
-                    self.wake_bits.remove(WakeBits::QS_MOUSEMOVE);
+                    self.clear_wake_bits(WakeBits::QS_MOUSEMOVE);
                     return Some(msg);
                 } else {
                     return Some(mm.clone());
@@ -351,7 +451,26 @@ impl ThreadQueue {
             }
         }
 
-        // 3. Paint (synthetic from invalid regions)
+        // 3. Coalesced scroll / wheel input
+        if let Some(ref scroll) = self.last_scroll {
+            if filter.matches(scroll) {
+                if do_remove {
+                    let msg = self.last_scroll.take().unwrap();
+                    let has_posted_scroll = self
+                        .messages
+                        .iter()
+                        .any(|m| Self::wake_bits_for_msg(&m.msg).intersects(WakeBits::SCROLL));
+                    if !has_posted_scroll {
+                        self.clear_wake_bits(WakeBits::SCROLL);
+                    }
+                    return Some(msg);
+                } else {
+                    return Some(scroll.clone());
+                }
+            }
+        }
+
+        // 4. Paint (synthetic from invalid regions)
         if !self.invalid_regions.is_empty() {
             // Find the first window whose paint matches the filter.
             let paint_wid = {
@@ -370,7 +489,7 @@ impl ThreadQueue {
                 if do_remove {
                     self.invalid_regions.remove(&wid);
                     if self.invalid_regions.is_empty() {
-                        self.wake_bits.remove(WakeBits::QS_PAINT);
+                        self.clear_wake_bits(WakeBits::QS_PAINT);
                     }
                 }
                 let mut msg = QueueMessage::new(wid, MessageType::Paint);
@@ -384,11 +503,8 @@ impl ThreadQueue {
             }
         }
 
-        // 4. Timer (lowest priority synthetic)
-        let now_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
+        // 5. Timer (lowest priority synthetic)
+        let now_us = current_time_us();
         let timer_msgs = self.timers.check_timers(now_us);
         for tmsg in timer_msgs {
             if filter.matches(&tmsg) {
@@ -486,10 +602,7 @@ impl ThreadQueue {
 
     /// Register a repeating timer.
     pub fn set_timer(&mut self, window_id: WindowId, timer_id: u32, interval_ms: u32) {
-        let now_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
+        let now_us = current_time_us();
         self.timers
             .set_timer(window_id, timer_id, interval_ms, now_us);
     }
@@ -515,7 +628,7 @@ impl ThreadQueue {
     pub fn check_timers(&mut self, now_us: u64) -> Vec<QueueMessage> {
         let msgs = self.timers.check_timers(now_us);
         if !msgs.is_empty() {
-            self.wake_bits.insert(WakeBits::QS_TIMER);
+            self.set_wake_bits(WakeBits::QS_TIMER, now_us);
         }
         msgs
     }
@@ -546,8 +659,7 @@ impl ThreadQueue {
                 }
             }
         }
-        self.wake_bits.insert(WakeBits::QS_PAINT);
-        self.changed_bits.insert(WakeBits::QS_PAINT);
+        self.set_wake_bits(WakeBits::QS_PAINT, current_time_us());
     }
 
     /// Mark a region of a window as painted (no longer invalid).
@@ -558,7 +670,7 @@ impl ThreadQueue {
         // window.  A production implementation would subtract the region.
         self.invalid_regions.remove(&window_id);
         if self.invalid_regions.is_empty() {
-            self.wake_bits.remove(WakeBits::QS_PAINT);
+            self.clear_wake_bits(WakeBits::QS_PAINT);
         }
     }
 
@@ -582,9 +694,11 @@ impl ThreadQueue {
         self.sent_messages.clear();
         self.sent_scratch.clear();
         self.last_mouse_move = None;
+        self.last_scroll = None;
         self.invalid_regions.clear();
         self.wake_bits = WakeBits::NONE;
         self.changed_bits = WakeBits::NONE;
+        self.wake_deadlines = WakeDeadlines::new();
     }
 
     /// Post a `Quit` message.  The next `get_message` call will return `None`.
@@ -602,6 +716,13 @@ impl ThreadQueue {
         {
             self.last_mouse_move = None;
         }
+        if self
+            .last_scroll
+            .as_ref()
+            .is_some_and(|m| m.target == window_id)
+        {
+            self.last_scroll = None;
+        }
         self.invalid_regions.remove(&window_id);
         self.timers.kill_all_for_window(window_id);
         if self.capture_window == Some(window_id) {
@@ -614,10 +735,48 @@ impl ThreadQueue {
             self.active_window = None;
         }
         // Recompute wake bits
-        let now_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
-        self.recompute_wake_bits(now_us);
+        self.recompute_wake_bits(current_time_us());
     }
+
+    /// Thin repeated `KeyDown` messages while preserving all `KeyUp` events.
+    ///
+    /// This is an explicit overload/backpressure helper. It is not run by
+    /// default because ordinary key transitions are stateful and must be
+    /// preserved exactly.
+    pub fn thin_key_repeats(&mut self, max_repeats_per_key: usize) -> usize {
+        let max_repeats_per_key = max_repeats_per_key.max(1);
+        let before = self.messages.len();
+        let mut repeats: HashMap<(WindowId, u64), usize> = HashMap::new();
+
+        self.messages.retain(|msg| match msg.msg {
+            MessageType::KeyDown => {
+                let key = (msg.target, msg.wparam);
+                let count = repeats.entry(key).or_insert(0);
+                *count += 1;
+                *count <= max_repeats_per_key
+            }
+            MessageType::KeyUp => {
+                repeats.remove(&(msg.target, msg.wparam));
+                true
+            }
+            _ => true,
+        });
+
+        let removed = before - self.messages.len();
+        if removed > 0 {
+            self.recompute_wake_bits(current_time_us());
+        }
+        removed
+    }
+}
+
+fn same_scroll_direction(a: i64, b: i64) -> bool {
+    a == 0 || b == 0 || a.signum() == b.signum()
+}
+
+fn current_time_us() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
 }

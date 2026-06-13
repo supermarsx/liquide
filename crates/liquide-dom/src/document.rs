@@ -178,9 +178,29 @@ impl Document {
         // Set new parent
         if let Some(node) = self.nodes.get_mut(&child) {
             node.parent = Some(parent);
+            node.dirty.mark_style_dirty();
         }
         if let Some(node) = self.nodes.get_mut(&parent) {
             node.children.insert(0, child);
+            node.dirty.mark_layout_dirty();
+        }
+
+        // Update structural pseudo-states (marks affected siblings style-dirty).
+        self.update_child_pseudo_states(parent);
+
+        self.dirty.mark_layout(parent);
+
+        // Notify observers
+        for obs in &mut self.observers {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                obs.on_child_added(parent, child);
+            }));
+            if result.is_err() {
+                eprintln!(
+                    "mutation observer panicked during on_child_added on node {:?}",
+                    parent,
+                );
+            }
         }
     }
 
@@ -775,6 +795,14 @@ impl Document {
 
     /// Update `:first-child`, `:last-child`, `:only-child`, and `:empty`
     /// pseudo-states for a parent's children.
+    ///
+    /// Whenever a structural pseudo-state flag actually changes for a child,
+    /// that child is marked style-dirty in the document-level [`DirtySet`] so
+    /// the next restyle pass re-matches selectors like `:first-child`,
+    /// `:last-child`, `:only-child`, and `:empty`. Without this, a sibling
+    /// insert/remove silently rewrote selector inputs and the restyle walk
+    /// (which only visits `dirty.style`) kept stale matches. The parent is
+    /// also re-marked because its own `:empty` state depends on its child list.
     fn update_child_pseudo_states(&mut self, parent: NodeId) {
         let children = self
             .nodes
@@ -782,9 +810,15 @@ impl Document {
             .map(|n| n.children.clone())
             .unwrap_or_default();
 
+        // Collect children whose structural pseudo-state flags changed, then
+        // mark them style-dirty after the mutable borrow of `nodes` ends.
+        let mut restyle: Vec<NodeId> = Vec::new();
+
         let total = children.len();
         for (i, &child_id) in children.iter().enumerate() {
             if let Some(child) = self.nodes.get_mut(&child_id) {
+                let before = child.pseudo_states;
+
                 let is_first = i == 0;
                 let is_last = i == total - 1;
                 let is_only = total == 1;
@@ -815,8 +849,21 @@ impl Document {
                 } else {
                     child.pseudo_states &= !PseudoStateFlags::EMPTY;
                 }
+
+                if child.pseudo_states != before {
+                    child.dirty.mark_style_dirty();
+                    restyle.push(child_id);
+                }
             }
         }
+
+        for child_id in restyle {
+            self.dirty.mark_style(child_id);
+        }
+
+        // The parent's own `:empty` state depends on whether it has children,
+        // so a structural change must re-style it as well.
+        self.dirty.mark_style(parent);
     }
 }
 
@@ -1066,5 +1113,130 @@ mod tests {
 
         doc.remove_attribute(el, "src");
         assert_eq!(doc.get_attribute(el, "src"), None);
+    }
+
+    // -------------------------------------------------------------------
+    // Regression: structural pseudo-state mutations mark style dirty (F2)
+    // and prepend_child marks dirty + notifies observers like append (F8).
+    // -------------------------------------------------------------------
+
+    /// An observer that records every `on_child_added` call it receives.
+    struct RecordingObserver {
+        added: std::sync::Arc<std::sync::Mutex<Vec<(NodeId, NodeId)>>>,
+    }
+
+    impl MutationObserver for RecordingObserver {
+        fn on_child_added(&mut self, parent: NodeId, child: NodeId) {
+            self.added.lock().unwrap().push((parent, child));
+        }
+        fn on_child_removed(&mut self, _parent: NodeId, _child: NodeId) {}
+        fn on_attribute_changed(&mut self, _: NodeId, _: &str, _: Option<&str>, _: Option<&str>) {}
+        fn on_class_changed(&mut self, _: NodeId, _: &crate::class_list::ClassList) {}
+        fn on_text_changed(&mut self, _: NodeId, _: &str) {}
+        fn on_pseudo_state_changed(&mut self, _: NodeId, _: PseudoStateFlags, _: PseudoStateFlags) {
+        }
+        fn on_id_changed(&mut self, _: NodeId, _: Option<&str>, _: Option<&str>) {}
+    }
+
+    #[test]
+    fn remove_child_marks_structural_siblings_style_dirty() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let a = doc.create_element("a");
+        let b = doc.create_element("b");
+        let c = doc.create_element("c");
+        doc.append_child(root, a);
+        doc.append_child(root, b);
+        doc.append_child(root, c);
+
+        // `b` is currently neither first nor last; after removing `c`, `b`
+        // becomes the last child, so its `:last-child` match changes and it
+        // must be re-styled.
+        doc.dirty.clear_all();
+        doc.remove_child(root, c);
+
+        assert!(
+            doc.get(b)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::LAST_CHILD),
+            "b should now match :last-child"
+        );
+        assert!(
+            doc.dirty.style.contains(&b),
+            "the new :last-child must be marked style-dirty so restyle re-matches it"
+        );
+        // The parent's own `:empty` depends on its child list, so it is dirtied too.
+        assert!(doc.dirty.style.contains(&root));
+    }
+
+    #[test]
+    fn insert_child_marks_structural_siblings_style_dirty() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let a = doc.create_element("a");
+        doc.append_child(root, a);
+
+        // `a` is currently first/last/only. Appending `b` flips `a`'s
+        // :last-child and :only-child off, so `a` must be re-styled.
+        doc.dirty.clear_all();
+        let b = doc.create_element("b");
+        // create_element marks `b` style-dirty; clear again so we only observe
+        // the structural marking caused by the insertion of `b`.
+        doc.dirty.clear_all();
+        doc.append_child(root, b);
+
+        assert!(
+            doc.dirty.style.contains(&a),
+            "the former :last-child/:only-child sibling must be marked style-dirty"
+        );
+    }
+
+    #[test]
+    fn prepend_child_marks_dirty_and_notifies_observers() {
+        let added = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut doc = Document::new();
+        doc.add_observer(Box::new(RecordingObserver {
+            added: added.clone(),
+        }));
+
+        let root = doc.root();
+        let existing = doc.create_element("existing");
+        doc.append_child(root, existing);
+
+        doc.dirty.clear_all();
+        added.lock().unwrap().clear();
+
+        let first = doc.create_element("first");
+        // Clear the style mark from create_element so we only observe the
+        // marking performed by prepend_child itself.
+        doc.dirty.clear_all();
+        doc.prepend_child(root, first);
+
+        // Order: prepended node is the new first child.
+        assert_eq!(doc.children(root), &[first, existing]);
+
+        // Per-node dirty flags: child style-dirty, parent layout-dirty
+        // (matching append_child / insert_before).
+        assert!(doc.get(first).unwrap().dirty.needs_style());
+        assert!(doc.get(root).unwrap().dirty.needs_layout());
+
+        // Structural pseudo-states recomputed: `first` is :first-child,
+        // `existing` (now displaced) is :last-child and is re-styled.
+        assert!(
+            doc.get(first)
+                .unwrap()
+                .has_pseudo_state(PseudoStateFlags::FIRST_CHILD)
+        );
+        assert!(
+            doc.dirty.style.contains(&existing),
+            "the displaced former first-child must be marked style-dirty"
+        );
+
+        // Observer was notified, just like append_child.
+        let recorded = added.lock().unwrap().clone();
+        assert!(
+            recorded.contains(&(root, first)),
+            "prepend_child must notify observers via on_child_added"
+        );
     }
 }

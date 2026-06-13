@@ -785,3 +785,398 @@ fn hit_test_zero_size_element_is_not_hit() {
         "zero-size element should not be hit"
     );
 }
+
+// ── Regression: subtree culling by parent box (t49-e4-02) ─────────────────
+
+/// A child painted OUTSIDE a non-clipping parent (overflow: visible) must
+/// still be hittable at its real location. The parent's border box must not
+/// gate descendant hit-testing unless the parent actually clips.
+#[test]
+fn hit_test_child_outside_nonclipping_parent_is_hittable() {
+    let root_node = NodeId::from(1u64);
+    let parent_node = NodeId::from(2u64);
+    let child_node = NodeId::from(3u64);
+
+    let mut tree = LayoutTree::new();
+    let root_id = tree.alloc(root_node, BoxType::Block);
+    {
+        let r = tree.get_mut(root_id).unwrap();
+        r.content_rect = Rect::new(0.0, 0.0, 800.0, 600.0);
+        r.padding_rect = r.content_rect;
+        r.border_rect = r.content_rect;
+        r.margin_rect = r.content_rect;
+    }
+    let parent_id = tree.alloc(parent_node, BoxType::Block);
+    {
+        let p = tree.get_mut(parent_id).unwrap();
+        // Parent is small: 50×50 at (50, 50).
+        p.content_rect = Rect::new(50.0, 50.0, 50.0, 50.0);
+        p.padding_rect = p.content_rect;
+        p.border_rect = p.content_rect;
+        p.margin_rect = p.content_rect;
+    }
+    let child_id = tree.alloc(child_node, BoxType::Block);
+    {
+        let c = tree.get_mut(child_id).unwrap();
+        // Child painted well beyond parent's bounds: at (300, 300) relative to
+        // the parent's content origin (50, 50) → absolute (350, 350, 100, 100).
+        c.content_rect = Rect::new(300.0, 300.0, 100.0, 100.0);
+        c.padding_rect = c.content_rect;
+        c.border_rect = c.content_rect;
+        c.margin_rect = c.content_rect;
+    }
+    tree.add_child(root_id, parent_id);
+    tree.add_child(parent_id, child_id);
+    tree.root = root_id;
+
+    let mut styles = StyleMap::new();
+    styles.insert(root_node, ComputedStyle::default());
+
+    // Parent does NOT clip (overflow: visible, the default).
+    let mut parent_style = ComputedStyle::default();
+    parent_style.overflow_x = Overflow::Visible;
+    parent_style.overflow_y = Overflow::Visible;
+    styles.insert(parent_node, parent_style);
+
+    styles.insert(child_node, ComputedStyle::default());
+
+    let engine = HitTestEngine::from_owned(tree, styles);
+
+    // Point is inside the child's painted area but far outside the parent's
+    // border box. Before the fix the parent's border-box early-return culled
+    // the whole subtree and this fell through to root.
+    let result = engine.hit_test(Point::new(380.0, 380.0));
+    assert!(result.is_some(), "should hit the overflowing child");
+    assert_eq!(
+        result.unwrap().node,
+        child_node,
+        "child painted outside a non-clipping parent must be hittable"
+    );
+
+    // The parent itself is still only hittable within its own bounds.
+    let result = engine.hit_test(Point::new(75.0, 75.0));
+    assert_eq!(
+        result.unwrap().node,
+        parent_node,
+        "point inside the parent box hits the parent"
+    );
+}
+
+/// An absolutely-positioned child beyond the parent's bounds is hittable when
+/// the parent does not clip, but is correctly NOT hit when the parent clips
+/// (overflow: hidden).
+#[test]
+fn hit_test_clipping_parent_culls_out_of_bounds_child() {
+    fn build(parent_clips: bool) -> (LayoutTree, NodeId, NodeId, NodeId) {
+        let root_node = NodeId::from(1u64);
+        let parent_node = NodeId::from(2u64);
+        let child_node = NodeId::from(3u64);
+
+        let mut tree = LayoutTree::new();
+        let root_id = tree.alloc(root_node, BoxType::Block);
+        {
+            let r = tree.get_mut(root_id).unwrap();
+            r.content_rect = Rect::new(0.0, 0.0, 800.0, 600.0);
+            r.padding_rect = r.content_rect;
+            r.border_rect = r.content_rect;
+            r.margin_rect = r.content_rect;
+        }
+        let parent_id = tree.alloc(parent_node, BoxType::Block);
+        {
+            let p = tree.get_mut(parent_id).unwrap();
+            p.content_rect = Rect::new(50.0, 50.0, 50.0, 50.0);
+            p.padding_rect = p.content_rect;
+            p.border_rect = p.content_rect;
+            p.margin_rect = p.content_rect;
+        }
+        let child_id = tree.alloc(child_node, BoxType::Absolute);
+        {
+            let c = tree.get_mut(child_id).unwrap();
+            // Absolute child far outside the parent: absolute (350, 350, 100, 100).
+            c.content_rect = Rect::new(300.0, 300.0, 100.0, 100.0);
+            c.padding_rect = c.content_rect;
+            c.border_rect = c.content_rect;
+            c.margin_rect = c.content_rect;
+        }
+        tree.add_child(root_id, parent_id);
+        tree.add_child(parent_id, child_id);
+        tree.root = root_id;
+        let _ = parent_clips;
+        (tree, root_node, parent_node, child_node)
+    }
+
+    // Non-clipping parent → child IS hittable beyond bounds.
+    {
+        let (tree, root_node, parent_node, child_node) = build(false);
+        let mut styles = StyleMap::new();
+        styles.insert(root_node, ComputedStyle::default());
+        styles.insert(parent_node, ComputedStyle::default()); // overflow: visible
+        let mut cs = ComputedStyle::default();
+        cs.position = Position::Absolute;
+        styles.insert(child_node, cs);
+        let engine = HitTestEngine::from_owned(tree, styles);
+
+        let result = engine.hit_test(Point::new(380.0, 380.0));
+        assert_eq!(
+            result.unwrap().node,
+            child_node,
+            "abs child beyond a non-clipping parent is hittable"
+        );
+    }
+
+    // Clipping parent (overflow: hidden) → child is NOT hit; falls through to root.
+    {
+        let (tree, root_node, parent_node, child_node) = build(true);
+        let mut styles = StyleMap::new();
+        styles.insert(root_node, ComputedStyle::default());
+        let mut ps = ComputedStyle::default();
+        ps.overflow_x = Overflow::Hidden;
+        ps.overflow_y = Overflow::Hidden;
+        styles.insert(parent_node, ps);
+        let mut cs = ComputedStyle::default();
+        cs.position = Position::Absolute;
+        styles.insert(child_node, cs);
+        let engine = HitTestEngine::from_owned(tree, styles);
+
+        let result = engine.hit_test(Point::new(380.0, 380.0));
+        let hit = result.map(|r| r.node);
+        assert_ne!(
+            hit,
+            Some(child_node),
+            "abs child clipped by overflow:hidden parent must not be hit"
+        );
+        assert_eq!(
+            hit,
+            Some(root_node),
+            "clipped-away point falls through to root"
+        );
+    }
+}
+
+// ── Regression: overflow-clip coordinate space across transforms (t49-e4-03)
+
+/// A clipping ancestor establishes its clip in its own (root) coordinate
+/// space. A transformed descendant inverse-transforms the pointer into local
+/// space; the inherited clip must still be evaluated in the space it was built
+/// (against the un-inverse-transformed point), not against the local point.
+///
+/// Layout:
+///   root (no transform)
+///     clipper: overflow:hidden, clip = padding box (150,100,200,300)
+///       middle: transform translate(100,0), border (150,100,300,300) local
+///         child: fills middle
+///
+/// A screen point inside the transformed clip hits the child; a point that is
+/// inside the transformed child but outside the clip (and which the old
+/// space-mixing code wrongly accepted) is correctly rejected.
+#[test]
+fn hit_test_overflow_clip_respects_transform_space() {
+    fn build() -> (LayoutTree, NodeId, NodeId, NodeId, NodeId) {
+        let root_node = NodeId::from(1u64);
+        let clipper_node = NodeId::from(2u64);
+        let middle_node = NodeId::from(3u64);
+        let child_node = NodeId::from(4u64);
+
+        let mut tree = LayoutTree::new();
+        let root_id = tree.alloc(root_node, BoxType::Block);
+        {
+            let r = tree.get_mut(root_id).unwrap();
+            r.content_rect = Rect::new(0.0, 0.0, 800.0, 600.0);
+            r.padding_rect = r.content_rect;
+            r.border_rect = r.content_rect;
+            r.margin_rect = r.content_rect;
+        }
+        let clipper_id = tree.alloc(clipper_node, BoxType::Block);
+        {
+            let c = tree.get_mut(clipper_id).unwrap();
+            // Border box wider than the clip so a point can be inside the
+            // border (passing the cull) yet outside the child clip.
+            c.border_rect = Rect::new(100.0, 100.0, 300.0, 300.0);
+            c.margin_rect = c.border_rect;
+            // Clip/content = padding box, narrower in x: (150,100,200,300).
+            c.padding_rect = Rect::new(150.0, 100.0, 200.0, 300.0);
+            c.content_rect = c.padding_rect;
+        }
+        let middle_id = tree.alloc(middle_node, BoxType::Block);
+        {
+            let m = tree.get_mut(middle_id).unwrap();
+            // Relative to clipper content origin (150,100).
+            m.content_rect = Rect::new(0.0, 0.0, 300.0, 300.0);
+            m.padding_rect = m.content_rect;
+            m.border_rect = m.content_rect;
+            m.margin_rect = m.content_rect;
+        }
+        let child_id = tree.alloc(child_node, BoxType::Block);
+        {
+            let c = tree.get_mut(child_id).unwrap();
+            c.content_rect = Rect::new(0.0, 0.0, 300.0, 300.0);
+            c.padding_rect = c.content_rect;
+            c.border_rect = c.content_rect;
+            c.margin_rect = c.content_rect;
+        }
+        tree.add_child(root_id, clipper_id);
+        tree.add_child(clipper_id, middle_id);
+        tree.add_child(middle_id, child_id);
+        tree.root = root_id;
+        (tree, root_node, clipper_node, middle_node, child_node)
+    }
+
+    let make_styles =
+        |root_node: NodeId, clipper_node: NodeId, middle_node: NodeId, child_node: NodeId| {
+            let mut styles = StyleMap::new();
+            styles.insert(root_node, ComputedStyle::default());
+            let mut cs = ComputedStyle::default();
+            cs.overflow_x = Overflow::Hidden;
+            cs.overflow_y = Overflow::Hidden;
+            styles.insert(clipper_node, cs);
+            let mut ms = ComputedStyle::default();
+            ms.transform = vec![Transform::Translate(100.0, 0.0)];
+            styles.insert(middle_node, ms);
+            styles.insert(child_node, ComputedStyle::default());
+            styles
+        };
+
+    // Inside the transformed clip → hits child.
+    {
+        let (tree, root_node, clipper_node, middle_node, child_node) = build();
+        let styles = make_styles(root_node, clipper_node, middle_node, child_node);
+        let engine = HitTestEngine::from_owned(tree, styles);
+        let result = engine.hit_test(Point::new(300.0, 200.0));
+        assert_eq!(
+            result.unwrap().node,
+            child_node,
+            "point inside the transformed clip should hit the child"
+        );
+    }
+
+    // Inside the transformed child but OUTSIDE the clip → must not hit child.
+    // (The old code compared the root-space clip against the local point and
+    // wrongly accepted this.)
+    {
+        let (tree, root_node, clipper_node, middle_node, child_node) = build();
+        let styles = make_styles(root_node, clipper_node, middle_node, child_node);
+        let engine = HitTestEngine::from_owned(tree, styles);
+        let result = engine.hit_test(Point::new(360.0, 200.0));
+        let hit = result.map(|r| r.node);
+        assert_ne!(
+            hit,
+            Some(child_node),
+            "point outside the transformed clip must not hit the clipped child"
+        );
+    }
+}
+
+/// B7 regression: nested (stacked) overflow clips, no transform.
+///
+/// Two clipping ancestors in the same coordinate space must intersect their
+/// clip rects (the `clip.intersect_rect(abs_padding)` branch of the t50-e17
+/// remap). A point inside the inner box but outside the *intersection* of the
+/// two clips must be rejected; a point inside both clips hits the child.
+///
+///   root (800x600)
+///     outer: overflow:hidden, padding/clip = (100,100,300,200)
+///       inner: overflow:hidden, padding/clip = (0,0,200,200) rel. to outer
+///         child: fills inner
+///
+/// The effective clip is (100,100,200,200) — the intersection. A point at
+/// x=350 is inside inner (which spans to x=300 abs ... wait) — concretely:
+/// outer clip abs = x∈[100,400), inner clip abs = x∈[100,300). The
+/// intersection ends at x=300, so x=350 (inside inner's own 200-wide span only
+/// if not clipped) is outside the combined clip.
+#[test]
+fn hit_test_nested_clips_intersect() {
+    fn build() -> (LayoutTree, NodeId, NodeId, NodeId, NodeId) {
+        let root_node = NodeId::from(1u64);
+        let outer_node = NodeId::from(2u64);
+        let inner_node = NodeId::from(3u64);
+        let child_node = NodeId::from(4u64);
+
+        let mut tree = LayoutTree::new();
+        let root_id = tree.alloc(root_node, BoxType::Block);
+        {
+            let r = tree.get_mut(root_id).unwrap();
+            r.content_rect = Rect::new(0.0, 0.0, 800.0, 600.0);
+            r.padding_rect = r.content_rect;
+            r.border_rect = r.content_rect;
+            r.margin_rect = r.content_rect;
+        }
+        let outer_id = tree.alloc(outer_node, BoxType::Block);
+        {
+            let o = tree.get_mut(outer_id).unwrap();
+            // Border box wide; clip (padding) abs = (100,100,300,200) → x∈[100,400).
+            o.border_rect = Rect::new(100.0, 100.0, 400.0, 200.0);
+            o.margin_rect = o.border_rect;
+            o.padding_rect = Rect::new(100.0, 100.0, 300.0, 200.0);
+            o.content_rect = o.padding_rect;
+        }
+        let inner_id = tree.alloc(inner_node, BoxType::Block);
+        {
+            // Relative to outer content origin (100,100). Inner clip
+            // (padding) abs = (100,100,200,200) → x∈[100,300).
+            let i = tree.get_mut(inner_id).unwrap();
+            i.border_rect = Rect::new(0.0, 0.0, 250.0, 200.0);
+            i.margin_rect = i.border_rect;
+            i.padding_rect = Rect::new(0.0, 0.0, 200.0, 200.0);
+            i.content_rect = i.padding_rect;
+        }
+        let child_id = tree.alloc(child_node, BoxType::Block);
+        {
+            let c = tree.get_mut(child_id).unwrap();
+            c.content_rect = Rect::new(0.0, 0.0, 250.0, 200.0);
+            c.padding_rect = c.content_rect;
+            c.border_rect = c.content_rect;
+            c.margin_rect = c.content_rect;
+        }
+        tree.add_child(root_id, outer_id);
+        tree.add_child(outer_id, inner_id);
+        tree.add_child(inner_id, child_id);
+        tree.root = root_id;
+        (tree, root_node, outer_node, inner_node, child_node)
+    }
+
+    let make_styles =
+        |root_node: NodeId, outer_node: NodeId, inner_node: NodeId, child_node: NodeId| {
+            let mut styles = StyleMap::new();
+            styles.insert(root_node, ComputedStyle::default());
+            let mut clip = ComputedStyle::default();
+            clip.overflow_x = Overflow::Hidden;
+            clip.overflow_y = Overflow::Hidden;
+            styles.insert(outer_node, clip.clone());
+            styles.insert(inner_node, clip);
+            styles.insert(child_node, ComputedStyle::default());
+            styles
+        };
+
+    // Inside BOTH clips (intersection x∈[100,300)) → hits child.
+    {
+        let (tree, root_node, outer_node, inner_node, child_node) = build();
+        let styles = make_styles(root_node, outer_node, inner_node, child_node);
+        let engine = HitTestEngine::from_owned(tree, styles);
+        let result = engine.hit_test(Point::new(200.0, 150.0));
+        assert_eq!(
+            result.unwrap().node,
+            child_node,
+            "point inside the intersection of nested clips should hit the child"
+        );
+    }
+
+    // Inside inner's border (x=350 < 350 border edge) but OUTSIDE the combined
+    // clip (intersection ends at x=300) → must not hit child.
+    {
+        let (tree, root_node, outer_node, inner_node, child_node) = build();
+        let styles = make_styles(root_node, outer_node, inner_node, child_node);
+        let engine = HitTestEngine::from_owned(tree, styles);
+        let result = engine.hit_test(Point::new(350.0, 150.0));
+        let hit = result.map(|r| r.node);
+        assert_ne!(
+            hit,
+            Some(child_node),
+            "point outside the nested-clip intersection must not hit the child"
+        );
+        assert_ne!(
+            hit,
+            Some(inner_node),
+            "the inner clipper itself is also clipped out at this point"
+        );
+    }
+}

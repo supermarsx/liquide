@@ -15,6 +15,22 @@
 //! The implementation is platform-agnostic; platform bridges translate
 //! between native DnD protocols (X11 XDND, Wayland, Win32 OLE, etc.)
 //! and this unified API.
+//!
+//! # Wiring status
+//!
+//! **This crate is NOT currently driven by the runtime.** It is an
+//! *above-queue processor*: the drag/drop lifecycle here is designed to sit on
+//! top of `liquide-message-queue` — the canonical input path that is actually
+//! wired into the session runtime — interpreting pointer messages drained from
+//! that queue to start, track, and complete drags. No production code
+//! constructs or feeds a [`DragManager`] today (confirmed: zero external
+//! `Cargo.toml` dependents).
+//!
+//! The DnD session/auto-scroll/spring-loading logic is real and intentionally
+//! retained, not dead code: it is staged pending a decision on whether the
+//! shell drives it. See `.orchestration/plans/t51.md` (Mandate 3) and
+//! `.orchestration/notes/t51-input-redirect.md` for the canonical-input-path
+//! plan and the rationale for keeping this crate staged rather than retired.
 
 pub mod auto_scroll;
 pub mod cursor_link;

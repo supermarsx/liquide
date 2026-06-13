@@ -6,6 +6,21 @@ use serde::{Deserialize, Serialize};
 use crate::tiling::SnapZone;
 
 /// Unique window identifier.
+///
+/// SINGLE-SOURCE DECISION (t52-e7): this shell `WindowId` is THE single
+/// definition of a window's identity. `liquide_window_tree::WindowId` is a
+/// structurally identical `struct WindowId(pub u64)`, but it is **not** the
+/// same id and **not** re-exported here — it is an *internal mapping detail* of
+/// the topology/hit-test tree (the shell↔tree id mapping is stored runtime-only
+/// in `Window.tree_id`, see t51-e11). Option (a) (`pub use
+/// liquide_window_tree::WindowId`) was rejected because the tree's id derives
+/// **no serde**, whereas this id derives `Serialize`/`Deserialize` and is
+/// **persisted** as part of `Window` (`id`, `parent`); aliasing onto the
+/// non-serde tree type would break the `Window` derive at compile time, and
+/// adding serde to the tree id would push persistence concerns into a pure
+/// hit-test/topology crate (wrong layering, out of lock). Keeping the shell id
+/// as the single truth IS the single-source outcome — see
+/// `.orchestration/logs/t52-e7.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WindowId(pub u64);
 
@@ -19,6 +34,17 @@ pub enum WindowState {
 }
 
 /// Window capability flags.
+///
+/// NOT single-sourceable with `liquide_window_tree::WindowFlags` (t52-e7
+/// assessment): they are **different flag sets**. This shell type is a `(u8)`
+/// of app-window *capability* semantics (DECORATED/RESIZABLE/FOCUSABLE/
+/// ALWAYS_ON_TOP/SKIP_TASKBAR) and derives serde for persistence; the tree's
+/// `WindowFlags` is a `bitflags! u32` of *runtime topology/render* state
+/// (VISIBLE/ENABLED/MINIMIZED/MAXIMIZED/UPDATE_DIRTY/… plus separate
+/// WindowStyle/WindowExStyle sets) with no serde. There is no shared vocabulary
+/// to merge — a forced union would mix persisted capability bits with transient
+/// hit-test state. They stay distinct by design — see
+/// `.orchestration/logs/t52-e7.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WindowFlags(u8);
 
@@ -86,9 +112,22 @@ pub struct Window {
     /// Whether this window is currently tiled.
     pub tiled: bool,
     /// The snap zone this window occupies, if tiled.
+    ///
+    /// `SnapZone` is the single-sourced shell snap type (t52-e3/e4): it bridges
+    /// to the canonical `liquide_tiling::SnapTarget` via `From`/`from_target`.
+    /// It is retained as a distinct serde-derived type (the canonical
+    /// `SnapTarget` is not `Serialize`-derived and carries an extra inactive
+    /// variant, so a direct alias would break window persistence) — see
+    /// `.orchestration/logs/t52-e3.md`. Wave W starts from this unified type.
     pub tile_zone: Option<SnapZone>,
     /// Minimum size constraint.
     pub min_size: Option<(f32, f32)>,
+    /// Identifier of this window's node in the canonical
+    /// `liquide_window_tree::WindowTree` (the hierarchy + hit-test model that
+    /// the flat shell window list is mirrored into). `None` until the window is
+    /// registered with the tree. Not persisted — the tree is rebuilt at runtime.
+    #[serde(default, skip_serializing)]
+    pub tree_id: Option<u64>,
 }
 
 impl Window {
@@ -110,6 +149,7 @@ impl Window {
             tiled: false,
             tile_zone: None,
             min_size: None,
+            tree_id: None,
         }
     }
 

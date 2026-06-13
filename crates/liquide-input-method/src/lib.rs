@@ -12,6 +12,22 @@
 //! This crate implements the *logic* of input method processing. It does not
 //! interact with platform IME APIs (that is `liquide-ime`'s role). Instead, it
 //! can be used as a built-in fallback or embedded IM for the desktop shell.
+//!
+//! # Wiring status
+//!
+//! **This crate is NOT currently driven by the runtime.** It is an
+//! *above-queue processor*: the IME engine here is designed to sit on top of
+//! `liquide-message-queue` — the canonical input path that is actually wired
+//! into the session runtime — consuming key messages drained from that queue
+//! and producing preedit/commit text. No production code constructs or feeds an
+//! [`InputMethodEngine`] today (confirmed: zero external `Cargo.toml`
+//! dependents).
+//!
+//! The compose/dead-key/CJK/candidate logic is real and intentionally retained,
+//! not dead code: it is staged pending a decision on whether the shell drives
+//! it. See `.orchestration/plans/t51.md` (Mandate 3) and
+//! `.orchestration/notes/t51-input-redirect.md` for the canonical-input-path
+//! plan and the rationale for keeping this crate staged rather than retired.
 
 // Keysym constant tables and navigation key constants are kept as a reference
 // even when not all are used in the default compose/engine configurations.

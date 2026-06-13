@@ -8,6 +8,26 @@ use crate::password::{PasswordPolicy, PasswordStrength};
 use crate::platform::PlatformBackend;
 use crate::types::{AccountType, UserAccount};
 
+use liquide_authz_runtime::{AuthorizationRuntime, Resource, Subject};
+
+/// Optional authorization enforcement for privileged account mutations.
+///
+/// When a `UserManager` carries one of these (via
+/// [`UserManager::with_enforcement`]), destructive / system-state account
+/// operations (`create_user`, `delete_user`, `change_password`) are gated
+/// through the canonical [`AuthorizationRuntime`] facade and fail closed: any
+/// outcome other than `Granted` returns [`AccountError::PermissionDenied`]
+/// and the underlying mutation is NOT performed.
+///
+/// When no enforcement is configured (the default), behaviour is unchanged —
+/// existing callers that have not yet been wired to a runtime keep working.
+struct Enforcement {
+    /// The canonical authorization facade (agent + audit + event sink).
+    runtime: AuthorizationRuntime,
+    /// The subject (who is requesting) attributed to every gated mutation.
+    subject: Subject,
+}
+
 /// High-level account manager.
 ///
 /// Wraps a [`PlatformBackend`] and adds password-policy enforcement,
@@ -16,6 +36,11 @@ pub struct UserManager {
     backend: Box<dyn PlatformBackend>,
     password_policy: PasswordPolicy,
     login_history: LoginHistory,
+    /// Optional authorization enforcement for privileged mutations.
+    ///
+    /// `None` → no gating (legacy behaviour). `Some` → destructive account
+    /// ops are gated fail-closed through the [`AuthorizationRuntime`] facade.
+    enforcement: Option<Enforcement>,
 }
 
 impl UserManager {
@@ -25,12 +50,47 @@ impl UserManager {
             backend,
             password_policy: PasswordPolicy::default(),
             login_history: LoginHistory::new(),
+            enforcement: None,
         }
     }
 
     /// Create a `UserManager` using the platform's default backend.
     pub fn with_default_backend() -> Self {
         Self::new(Box::new(crate::platform::DefaultBackend::default()))
+    }
+
+    /// Attach authorization enforcement to this manager.
+    ///
+    /// Once attached, the destructive account mutations (`create_user`,
+    /// `delete_user`, `change_password`) are gated through the canonical
+    /// [`AuthorizationRuntime`] facade and fail closed: if authorization is not
+    /// `Granted`, the method returns [`AccountError::PermissionDenied`] and the
+    /// mutation is not performed. `subject` identifies the principal (who is
+    /// requesting); it is recorded in the audit trail for every gated op.
+    #[must_use]
+    pub fn with_enforcement(mut self, runtime: AuthorizationRuntime, subject: Subject) -> Self {
+        self.enforcement = Some(Enforcement { runtime, subject });
+        self
+    }
+
+    /// Gate a privileged mutation through the authorization facade.
+    ///
+    /// Fail-closed: returns `Err(AccountError::PermissionDenied)` if a runtime
+    /// is configured and the decision is anything other than `Granted`. Returns
+    /// `Ok(())` (allowing the mutation) when no enforcement is configured, or
+    /// when the runtime grants the request. `resource` scopes the audit entry
+    /// to the target user.
+    fn enforce(&mut self, action_id: &str, resource: Option<Resource>) -> Result<(), AccountError> {
+        if let Some(enforcement) = self.enforcement.as_mut() {
+            let result =
+                enforcement
+                    .runtime
+                    .authorize(action_id, &enforcement.subject, resource.as_ref());
+            if !result.is_granted() {
+                return Err(AccountError::PermissionDenied);
+            }
+        }
+        Ok(())
     }
 
     /// Get a reference to the current password policy.
@@ -108,6 +168,13 @@ impl UserManager {
         account_type: AccountType,
         password: &str,
     ) -> Result<UserAccount, AccountError> {
+        // Authorization gate (fail-closed): a non-Granted decision blocks the
+        // mutation entirely.
+        self.enforce(
+            "accounts.create_user",
+            Some(Resource::new(0, format!("user:{username}"))),
+        )?;
+
         // Validate username.
         Self::validate_username(username)?;
 
@@ -122,6 +189,13 @@ impl UserManager {
 
     /// Delete a user account.
     pub fn delete_user(&mut self, uid: u32, delete_home: bool) -> Result<(), AccountError> {
+        // Authorization gate (fail-closed): a non-Granted decision blocks the
+        // deletion.
+        self.enforce(
+            "accounts.delete_user",
+            Some(Resource::new(uid, format!("user:{uid}"))),
+        )?;
+
         self.backend.delete_user(uid, delete_home)
     }
 
@@ -142,6 +216,13 @@ impl UserManager {
         old_password: &str,
         new_password: &str,
     ) -> Result<(), AccountError> {
+        // Authorization gate (fail-closed): a non-Granted decision blocks the
+        // password change.
+        self.enforce(
+            "accounts.change_password",
+            Some(Resource::new(uid, format!("user:{uid}"))),
+        )?;
+
         if old_password.is_empty() {
             return Err(AccountError::PlatformError(
                 "old password must not be empty".into(),

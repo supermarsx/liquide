@@ -237,6 +237,101 @@ fn mouse_move_does_not_block_other_messages() {
     assert_eq!(msg.msg, MessageType::MouseMove);
 }
 
+#[test]
+fn scroll_coalescing_accumulates_same_direction_delta() {
+    let mut q = ThreadQueue::new(1);
+    q.post_message(QueueMessage::new(1, MessageType::MouseWheel).with_lparam(120));
+    q.post_message(QueueMessage::new(1, MessageType::MouseWheel).with_lparam(80));
+
+    assert_eq!(q.posted_count(), 0);
+    assert!(q.wake_bits().contains(WakeBits::SCROLL));
+
+    let msg = q.peek_message(None, true).unwrap();
+    assert_eq!(msg.msg, MessageType::MouseWheel);
+    assert_eq!(msg.lparam, 200);
+    assert!(!q.wake_bits().contains(WakeBits::SCROLL));
+}
+
+#[test]
+fn wheel_wakes_input_masks() {
+    // Regression (t49-e1-F16): wheel input was rerouted from QS_MOUSE to SCROLL.
+    // The legacy QS_INPUT / QS_ALLINPUT aliases — and the higher-level
+    // WakeMask waiters — must still wake on a posted wheel, or held scroll is
+    // silently starved.
+    let mut q = ThreadQueue::new(1);
+    q.post_message(QueueMessage::new(1, MessageType::MouseWheel).with_lparam(120));
+
+    let pending = q.wake_bits();
+    assert!(pending.contains(WakeBits::SCROLL));
+    // Legacy aliases must cover the wheel wake bit.
+    assert!(pending.intersects(WakeBits::QS_INPUT));
+    assert!(pending.intersects(WakeBits::QS_ALLINPUT));
+    // The modern masks already did; assert the aliases are now true aliases.
+    assert!(WakeBits::QS_INPUT.contains(WakeBits::SCROLL));
+    assert!(WakeBits::QS_ALLINPUT.contains(WakeBits::SCROLL));
+
+    // Realistic consumers (render-thread / input-only waiters) wake on it.
+    use crate::wake_bits::WakeMask;
+    assert!(WakeMask::render_thread().should_wake(pending));
+    assert!(WakeMask::input_only().should_wake(pending));
+}
+
+#[test]
+fn scroll_coalesce_keeps_opposite_directions_distinct_and_ordered() {
+    // Regression (t49-e1-F26): a direction change must NOT silently merge flag
+    // bits, and a held wheel must not be reordered behind input posted after it.
+    let mut q = ThreadQueue::new(1);
+    // Up-then-down: opposite directions, must stay two distinct wheel events.
+    q.post_message(QueueMessage::new(1, MessageType::MouseWheel).with_lparam(120));
+    q.post_message(QueueMessage::new(1, MessageType::MouseWheel).with_lparam(-120));
+
+    // The first (now flushed to FIFO) wheel comes out before the held one.
+    let first = q.peek_message(None, true).unwrap();
+    assert_eq!(first.msg, MessageType::MouseWheel);
+    assert_eq!(first.lparam, 120);
+    let second = q.peek_message(None, true).unwrap();
+    assert_eq!(second.msg, MessageType::MouseWheel);
+    assert_eq!(second.lparam, -120);
+}
+
+#[test]
+fn key_repeat_thinning_preserves_key_up_barrier() {
+    let mut q = ThreadQueue::new(1);
+    q.post_message(QueueMessage::new(1, MessageType::KeyDown).with_wparam(65));
+    q.post_message(QueueMessage::new(1, MessageType::KeyDown).with_wparam(65));
+    q.post_message(QueueMessage::new(1, MessageType::KeyDown).with_wparam(65));
+    q.post_message(QueueMessage::new(1, MessageType::KeyUp).with_wparam(65));
+    q.post_message(QueueMessage::new(1, MessageType::KeyDown).with_wparam(65));
+
+    let removed = q.thin_key_repeats(1);
+
+    assert_eq!(removed, 2);
+    assert_eq!(q.posted_count(), 3);
+    assert_eq!(
+        q.peek_message(None, true).unwrap().msg,
+        MessageType::KeyDown
+    );
+    assert_eq!(q.peek_message(None, true).unwrap().msg, MessageType::KeyUp);
+    assert_eq!(
+        q.peek_message(None, true).unwrap().msg,
+        MessageType::KeyDown
+    );
+}
+
+#[test]
+fn wake_bits_older_than_reports_aged_categories() {
+    let mut q = ThreadQueue::new(1);
+    q.post_message(QueueMessage::new(1, MessageType::KeyDown).with_time(1_000));
+
+    assert!(
+        q.wake_bits_older_than(1_040, 50)
+            .intersection(WakeBits::QS_KEY)
+            .is_empty()
+    );
+    assert!(q.wake_bits_older_than(1_060, 50).contains(WakeBits::QS_KEY));
+    assert_eq!(q.pending_since_us(WakeBits::QS_KEY), Some(1_000));
+}
+
 // ── Paint coalescing ────────────────────────────────────────────────────
 
 #[test]

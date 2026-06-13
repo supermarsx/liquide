@@ -744,6 +744,15 @@ unsafe extern "system" {
 
     pub fn GetSystemMetrics(nIndex: i32) -> i32;
 
+    /// Expand a client-area rectangle to the full window rectangle required to
+    /// produce that client area for the given window style/extended style.
+    pub fn AdjustWindowRectEx(
+        lpRect: *mut RECT,
+        dwStyle: DWORD,
+        bMenu: BOOL,
+        dwExStyle: DWORD,
+    ) -> BOOL;
+
     pub fn EnumDisplayMonitors(
         hdc: HDC,
         lprcClip: *const RECT,

@@ -47,6 +47,9 @@ anyhow.workspace = true
 [dev-dependencies]
 liquide-compositor = { path = "../liquide-compositor" }
 liquide-shell = { path = "../liquide-shell" }
+# t52-e4: the e2e tiling test exercises the canonical layout/snap engine
+# directly (window-geometry computation is single-sourced onto liquide-tiling).
+liquide-tiling = { path = "../liquide-tiling" }
 liquide-devtools = { path = "../liquide-devtools" }
 liquide-input = { path = "../liquide-input" }
 liquide-platform = { path = "../liquide-platform" }

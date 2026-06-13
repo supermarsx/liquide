@@ -1,0 +1,549 @@
+//! Structured event records and sinks for cross-subsystem diagnostics.
+
+use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
+
+use crate::Result;
+
+/// Structured key-value context attached to an event.
+pub type EventContext = BTreeMap<String, String>;
+
+/// Severity of a structured event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum EventLevel {
+    /// High-volume diagnostic detail.
+    Trace,
+    /// Debug-level diagnostic detail.
+    Debug,
+    /// Informational state change.
+    Info,
+    /// Warning that does not immediately break the session.
+    Warn,
+    /// Error that affected an operation.
+    Error,
+    /// Critical error that may require operator action.
+    Critical,
+}
+
+impl EventLevel {
+    /// Stable lowercase label used in append-only event files.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Debug => "debug",
+            Self::Info => "info",
+            Self::Warn => "warn",
+            Self::Error => "error",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+/// Top-level event stream category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum EventCategory {
+    /// General system/runtime event.
+    System,
+    /// Security-sensitive event.
+    Security,
+    /// Session lifecycle event.
+    Session,
+    /// Authorization/policy decision.
+    Authorization,
+    /// Input queue or device event.
+    Input,
+    /// Rendering/compositor event.
+    Rendering,
+    /// Transport/protocol event.
+    Transport,
+    /// Storage or persistence event.
+    Storage,
+    /// Configuration/policy reload event.
+    Configuration,
+    /// Accessibility event.
+    Accessibility,
+    /// Component-specific category not covered above.
+    Custom,
+}
+
+impl EventCategory {
+    /// Stable lowercase label used in append-only event files.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Security => "security",
+            Self::Session => "session",
+            Self::Authorization => "authorization",
+            Self::Input => "input",
+            Self::Rendering => "rendering",
+            Self::Transport => "transport",
+            Self::Storage => "storage",
+            Self::Configuration => "configuration",
+            Self::Accessibility => "accessibility",
+            Self::Custom => "custom",
+        }
+    }
+}
+
+/// A single structured diagnostic or audit event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventRecord {
+    /// Event timestamp in microseconds since UNIX epoch.
+    pub timestamp_us: u64,
+    /// Severity level.
+    pub level: EventLevel,
+    /// Top-level category.
+    pub category: EventCategory,
+    /// Component or crate that emitted the event.
+    pub component: String,
+    /// Stable event identifier within the component.
+    pub event_id: String,
+    /// Human-readable message.
+    pub message: String,
+    /// Optional session identifier for correlation.
+    pub session_id: Option<String>,
+    /// Optional resource identifier for object-scoped auditing.
+    pub resource_id: Option<String>,
+    /// Optional operation correlation identifier.
+    pub correlation_id: Option<String>,
+    /// Additional structured context.
+    pub context: EventContext,
+}
+
+impl EventRecord {
+    /// Create a new event with the current timestamp.
+    #[must_use]
+    pub fn new(
+        level: EventLevel,
+        category: EventCategory,
+        component: impl Into<String>,
+        event_id: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            timestamp_us: now_micros(),
+            level,
+            category,
+            component: component.into(),
+            event_id: event_id.into(),
+            message: message.into(),
+            session_id: None,
+            resource_id: None,
+            correlation_id: None,
+            context: EventContext::new(),
+        }
+    }
+
+    /// Create an event with an explicit timestamp.
+    #[must_use]
+    pub fn with_timestamp_us(mut self, timestamp_us: u64) -> Self {
+        self.timestamp_us = timestamp_us;
+        self
+    }
+
+    /// Attach a session identifier.
+    #[must_use]
+    pub fn with_session(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Attach a resource identifier.
+    #[must_use]
+    pub fn with_resource(mut self, resource_id: impl Into<String>) -> Self {
+        self.resource_id = Some(resource_id.into());
+        self
+    }
+
+    /// Attach a correlation identifier.
+    #[must_use]
+    pub fn with_correlation(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    /// Attach one key-value context pair.
+    #[must_use]
+    pub fn with_context(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.context.insert(key.into(), value.into());
+        self
+    }
+
+    /// Convert the event to a stable tab-separated append-only log line.
+    #[must_use]
+    pub fn to_log_line(&self) -> String {
+        let context = self
+            .context
+            .iter()
+            .map(|(key, value)| format!("{}={}", escape_field(key), escape_field(value)))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        [
+            self.timestamp_us.to_string(),
+            self.level.as_str().to_string(),
+            self.category.as_str().to_string(),
+            escape_field(&self.component),
+            escape_field(&self.event_id),
+            escape_field(&self.message),
+            escape_field(self.session_id.as_deref().unwrap_or("")),
+            escape_field(self.resource_id.as_deref().unwrap_or("")),
+            escape_field(self.correlation_id.as_deref().unwrap_or("")),
+            context,
+        ]
+        .join("\t")
+    }
+}
+
+/// Query filter for in-memory event logs.
+#[derive(Debug, Clone, Default)]
+pub struct EventFilter {
+    /// Inclusive lower timestamp bound.
+    pub from_us: Option<u64>,
+    /// Inclusive upper timestamp bound.
+    pub to_us: Option<u64>,
+    /// Minimum severity.
+    pub min_level: Option<EventLevel>,
+    /// Category filter.
+    pub category: Option<EventCategory>,
+    /// Component filter.
+    pub component: Option<String>,
+    /// Session filter.
+    pub session_id: Option<String>,
+    /// Resource filter.
+    pub resource_id: Option<String>,
+    /// Correlation filter.
+    pub correlation_id: Option<String>,
+}
+
+impl EventFilter {
+    /// Return true when `record` satisfies this filter.
+    #[must_use]
+    pub fn matches(&self, record: &EventRecord) -> bool {
+        if let Some(from_us) = self.from_us {
+            if record.timestamp_us < from_us {
+                return false;
+            }
+        }
+        if let Some(to_us) = self.to_us {
+            if record.timestamp_us > to_us {
+                return false;
+            }
+        }
+        if let Some(min_level) = self.min_level {
+            if record.level < min_level {
+                return false;
+            }
+        }
+        if let Some(category) = self.category {
+            if record.category != category {
+                return false;
+            }
+        }
+        if let Some(component) = self.component.as_deref() {
+            if record.component != component {
+                return false;
+            }
+        }
+        if let Some(session_id) = self.session_id.as_deref() {
+            if record.session_id.as_deref() != Some(session_id) {
+                return false;
+            }
+        }
+        if let Some(resource_id) = self.resource_id.as_deref() {
+            if record.resource_id.as_deref() != Some(resource_id) {
+                return false;
+            }
+        }
+        if let Some(correlation_id) = self.correlation_id.as_deref() {
+            if record.correlation_id.as_deref() != Some(correlation_id) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// Minimal sink trait for structured event logging.
+///
+/// Implementors include [`InMemoryEventLog`] (retains records for querying) and
+/// [`AppendOnlyEventLog`] (writes a stable TSV line per event). The trait is the
+/// single seam that subsystem audit planes drive: the authorization agent
+/// forwards every audited decision here, and the session runtime drains its
+/// lifecycle audit buffer here, so the sink is an actively driven consumer (not
+/// a staged surface with zero consumers).
+pub trait EventLogService {
+    /// Record one structured event.
+    fn record_event(&mut self, record: EventRecord) -> Result<()>;
+
+    /// Record a batch of structured events in order.
+    ///
+    /// Fail-fast: stops at the first error and returns it (the events recorded
+    /// before the failure are retained by the sink). Returns the number of
+    /// events successfully recorded. The default implementation simply calls
+    /// [`EventLogService::record_event`] for each record; sinks with cheaper
+    /// bulk paths may override it.
+    fn record_events(&mut self, records: impl IntoIterator<Item = EventRecord>) -> Result<usize>
+    where
+        Self: Sized,
+    {
+        let mut recorded = 0;
+        for record in records {
+            self.record_event(record)?;
+            recorded += 1;
+        }
+        Ok(recorded)
+    }
+}
+
+/// Query support for event logs that retain events locally.
+pub trait QueryableEventLog: EventLogService {
+    /// Query retained events.
+    fn query_events(&self, filter: &EventFilter) -> Vec<EventRecord>;
+}
+
+/// In-memory event sink with optional retention bound.
+#[derive(Debug, Clone, Default)]
+pub struct InMemoryEventLog {
+    records: Vec<EventRecord>,
+    max_records: Option<usize>,
+}
+
+impl InMemoryEventLog {
+    /// Create an unbounded in-memory event log.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            records: Vec::new(),
+            max_records: None,
+        }
+    }
+
+    /// Create a bounded in-memory event log that retains newest records.
+    #[must_use]
+    pub fn bounded(max_records: usize) -> Self {
+        Self {
+            records: Vec::new(),
+            max_records: Some(max_records),
+        }
+    }
+
+    /// Return retained events.
+    #[must_use]
+    pub fn records(&self) -> &[EventRecord] {
+        &self.records
+    }
+
+    /// Return the retained record count.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// Return true when no events are retained.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.records.is_empty()
+    }
+}
+
+impl EventLogService for InMemoryEventLog {
+    fn record_event(&mut self, record: EventRecord) -> Result<()> {
+        if self.max_records == Some(0) {
+            return Ok(());
+        }
+        self.records.push(record);
+        if let Some(max_records) = self.max_records {
+            let overflow = self.records.len().saturating_sub(max_records);
+            if overflow > 0 {
+                self.records.drain(0..overflow);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl QueryableEventLog for InMemoryEventLog {
+    fn query_events(&self, filter: &EventFilter) -> Vec<EventRecord> {
+        self.records
+            .iter()
+            .filter(|record| filter.matches(record))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Append-only file sink using [`EventRecord::to_log_line`].
+#[derive(Debug, Clone)]
+pub struct AppendOnlyEventLog {
+    path: PathBuf,
+}
+
+impl AppendOnlyEventLog {
+    /// Create a sink that appends events to `path`.
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    /// Path written by this sink.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl EventLogService for AppendOnlyEventLog {
+    fn record_event(&mut self, record: EventRecord) -> Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        writeln!(file, "{}", record.to_log_line())?;
+        Ok(())
+    }
+}
+
+fn now_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
+fn escape_field(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_record(id: &str, level: EventLevel) -> EventRecord {
+        EventRecord::new(
+            level,
+            EventCategory::Session,
+            "liquide-session",
+            id,
+            "test event",
+        )
+        .with_timestamp_us(100)
+        .with_session("session-1")
+    }
+
+    #[test]
+    fn event_log_record_builder_sets_context() {
+        let record = test_record("session_created", EventLevel::Info)
+            .with_resource("window:42")
+            .with_correlation("corr-1")
+            .with_context("owner", "1000");
+
+        assert_eq!(record.session_id.as_deref(), Some("session-1"));
+        assert_eq!(record.resource_id.as_deref(), Some("window:42"));
+        assert_eq!(record.correlation_id.as_deref(), Some("corr-1"));
+        assert_eq!(
+            record.context.get("owner").map(String::as_str),
+            Some("1000")
+        );
+    }
+
+    #[test]
+    fn event_log_filter_matches_category_level_and_session() {
+        let record = test_record("worker_failed", EventLevel::Error);
+        let filter = EventFilter {
+            min_level: Some(EventLevel::Warn),
+            category: Some(EventCategory::Session),
+            session_id: Some("session-1".to_string()),
+            ..EventFilter::default()
+        };
+
+        assert!(filter.matches(&record));
+
+        let wrong_session = EventFilter {
+            session_id: Some("session-2".to_string()),
+            ..filter
+        };
+        assert!(!wrong_session.matches(&record));
+    }
+
+    #[test]
+    fn event_log_in_memory_retains_newest_records() {
+        let mut log = InMemoryEventLog::bounded(2);
+        log.record_event(test_record("a", EventLevel::Info))
+            .unwrap();
+        log.record_event(test_record("b", EventLevel::Warn))
+            .unwrap();
+        log.record_event(test_record("c", EventLevel::Error))
+            .unwrap();
+
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.records()[0].event_id, "b");
+        assert_eq!(log.records()[1].event_id, "c");
+    }
+
+    #[test]
+    fn event_log_query_returns_matching_records() {
+        let mut log = InMemoryEventLog::new();
+        log.record_event(test_record("a", EventLevel::Info))
+            .unwrap();
+        log.record_event(test_record("b", EventLevel::Error).with_resource("display:1"))
+            .unwrap();
+
+        let matches = log.query_events(&EventFilter {
+            min_level: Some(EventLevel::Error),
+            resource_id: Some("display:1".to_string()),
+            ..EventFilter::default()
+        });
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].event_id, "b");
+    }
+
+    #[test]
+    fn event_log_record_events_batch_records_in_order() {
+        let mut log = InMemoryEventLog::new();
+        let recorded = log
+            .record_events([
+                test_record("a", EventLevel::Info),
+                test_record("b", EventLevel::Warn),
+                test_record("c", EventLevel::Error),
+            ])
+            .unwrap();
+
+        assert_eq!(recorded, 3);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.records()[0].event_id, "a");
+        assert_eq!(log.records()[2].event_id, "c");
+    }
+
+    #[test]
+    fn event_log_object_safe_via_dyn_sink() {
+        // The facade and the authorization agent hold the sink as
+        // `Box<dyn EventLogService>`; the batch helper's `Self: Sized` bound
+        // keeps the trait object-safe. This guards that invariant.
+        let mut sink: Box<dyn EventLogService> = Box::new(InMemoryEventLog::new());
+        sink.record_event(test_record("dyn", EventLevel::Info))
+            .unwrap();
+    }
+
+    #[test]
+    fn event_log_line_escapes_control_characters() {
+        let line = test_record("session\tcreated", EventLevel::Info)
+            .with_context("note", "line\nbreak")
+            .to_log_line();
+
+        assert!(line.contains("session\\tcreated"));
+        assert!(line.contains("line\\nbreak"));
+    }
+}

@@ -468,8 +468,16 @@ impl Shell {
                         if window.state == WindowState::Maximized {
                             window.state = WindowState::Normal;
                         }
+                        // A free move un-tiles the window; re-snap is decided
+                        // below from the live cursor position.
+                        window.tiled = false;
+                        window.tile_zone = None;
                         window_scene_changed = true;
                     }
+                    // Consult the canonical tiling snap zones for the live cursor
+                    // position so the active snap target is previewed during the
+                    // drag (applied on release by `apply_snap_on_release`).
+                    self.update_snap_preview_for_drag(x, y);
                     if window_scene_changed {
                         self.mark_window_scene_dirty();
                     }
@@ -614,13 +622,12 @@ impl Shell {
                         .max(4.0)
                         .min(self.screen_rect.width - tip_w - 4.0);
                     let tip_y = (item_rect.y - 32.0).max(4.0); // above the dock item
-                    // Only update timer when tooltip text changes.
-                    if self.tooltip_text.as_deref() != Some(label.as_str()) {
-                        self.tooltip_timer_us = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_micros() as u64;
-                    }
+                    // The show-delay dwell is owned by the canonical
+                    // TooltipManager (t51-e9/e15), driven from this hover state
+                    // each frame; the retired `tooltip_timer_us` timer reset is
+                    // no longer needed here. (The manager keys hover on a single
+                    // shell slot, so moving between dock items keeps the tooltip
+                    // up while only the rendered `tooltip_text` changes.)
                     self.tooltip_text = Some(label);
                     self.tooltip_pos = Point::new(tip_x, tip_y);
                 }
@@ -780,7 +787,16 @@ impl Shell {
         y: f32,
     ) -> Option<ShellAction> {
         if state == ButtonState::Released {
-            if self.drag_state.is_some() {
+            if let Some(drag) = self.drag_state {
+                // If a move drag ended over an active snap zone, tile the window
+                // into that zone (drives `liquide_tiling` snap geometry).
+                if let DragState::Moving { window_id, .. } = drag {
+                    if !self.apply_snap_on_release(window_id) {
+                        self.clear_snap_preview();
+                    }
+                } else {
+                    self.clear_snap_preview();
+                }
                 self.drag_state = None;
                 self.cursor_shape = CursorShape::Arrow;
                 return Some(ShellAction::Redraw);
@@ -995,14 +1011,18 @@ impl Shell {
                     )
             });
             if has_notification_indicator && (36.0..=80.0).contains(&from_right) {
-                self.notification_panel_visible = !self.notification_panel_visible;
+                // Route through the canonical notification center (t51-e14):
+                // the panel that dom_sync now renders reads the live
+                // (daemon-mirrored) notification set rather than a dead flag, so
+                // this toggle opens a real center (fixes t49-e5-F03).
+                self.toggle_notification_center();
                 return Some(ShellAction::OpenNotificationCenter);
             }
             if self
                 .status_bar_item_bounds("notifications")
                 .map_or(false, |bounds| bounds.contains(pt))
             {
-                self.notification_panel_visible = !self.notification_panel_visible;
+                self.toggle_notification_center();
                 return Some(ShellAction::OpenNotificationCenter);
             }
             return None;

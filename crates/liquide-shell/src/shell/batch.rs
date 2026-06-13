@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 use liquide_compositor::geometry::Rect;
 
-use crate::window::{WindowId, WindowState};
+use crate::window::WindowId;
 
 use super::Shell;
 
@@ -847,34 +847,106 @@ impl Shell {
         self.dom_dirty = true;
     }
 
-    /// Tile all visible windows on the current workspace using the active
-    /// tiling layout, applied as a single atomic batch.
+    /// Tile all visible windows on the current workspace, applied as a single
+    /// atomic batch.
+    ///
+    /// Single-sourced (t52-e3/e4): this now delegates to the canonical
+    /// `tile_visible_windows_canonical`, which drives layout through the
+    /// canonical `liquide_tiling::TilingEngine` (held in `chrome_tiling`) and
+    /// applies the arrangement via the canonical batch path. The shell-side
+    /// `TilingEngine::arrange*` compute methods are no longer a production code
+    /// path. Visible-window collection, deterministic ordering, the empty-set
+    /// early-out, and batched application all live in the canonical driver.
     pub fn tile_visible_windows(&mut self) {
-        let ws_id = self.workspaces.active().id;
-        let layout_kind = self.tiling.workspace_layout(ws_id);
-        let work = self.work_area();
+        let _ = self.tile_visible_windows_canonical();
+    }
 
-        // Collect visible window IDs in deterministic order.
-        let mut visible_ids: Vec<WindowId> = self
-            .windows
-            .values()
-            .filter(|w| w.visible && w.state != WindowState::Minimized)
-            .map(|w| w.id)
-            .collect();
-        visible_ids.sort_by_key(|id| id.0);
+    // -- Workspace switching (single-sourced onto liquide-workspaces) --------
+    //
+    // These methods make workspace switching REAL (fixes t49-e5-F01). Since
+    // t52-e5 the switching policy (next/prev wrap, index navigation) is owned by
+    // the canonical `liquide-workspaces::WorkspaceManager` *embedded inside*
+    // `self.workspaces` (the shell `WorkspaceManager` adapter) — there is no
+    // longer a separate `chrome_workspaces` manager to keep in lockstep, so the
+    // old index-mirroring `sync_canonical_workspaces` step is gone. Visibility is
+    // driven via the `WindowBatch::workspace_switch` builder (hide old members,
+    // show new members) for flicker-free, batched switches. `self.workspaces`
+    // ids are the shell's 0-based facade ids; the 1-based canonical mapping is
+    // resolved inside the adapter.
 
-        if visible_ids.is_empty() {
-            return;
-        }
-
-        let rects = self.tiling.arrange(layout_kind, visible_ids.len(), work);
-
-        let mut batch = WindowBatch::with_capacity(visible_ids.len());
-        for (id, rect) in visible_ids.iter().zip(rects.iter()) {
-            batch.move_resize(*id, rect.x, rect.y, rect.width, rect.height);
-        }
-
+    /// Drive the visibility transition after the active workspace has already
+    /// changed in `self.workspaces`: hide the windows of `prev_members` (the
+    /// previously-active workspace) and show the windows of the newly-active
+    /// one, via a single batched `workspace_switch`.
+    fn commit_workspace_switch(&mut self, prev_members: Vec<WindowId>) {
+        let show: Vec<WindowId> = self.workspaces.active().windows.clone();
+        let mut batch = WindowBatch::with_capacity(prev_members.len() + show.len());
+        batch.workspace_switch(&prev_members, &show);
         self.apply_batch(batch);
+    }
+
+    /// Switch to the next workspace. Real switch: the new workspace's windows
+    /// become visible/interactive, the old ones hidden. Returns true if the
+    /// active workspace changed.
+    pub fn switch_workspace_next(&mut self) -> bool {
+        let hide: Vec<WindowId> = self.workspaces.active().windows.clone();
+        if !self.workspaces.switch_next() {
+            return false;
+        }
+        self.commit_workspace_switch(hide);
+        true
+    }
+
+    /// Switch to the previous workspace.
+    pub fn switch_workspace_prev(&mut self) -> bool {
+        let hide: Vec<WindowId> = self.workspaces.active().windows.clone();
+        if !self.workspaces.switch_prev() {
+            return false;
+        }
+        self.commit_workspace_switch(hide);
+        true
+    }
+
+    /// Switch to a workspace by 0-based index. Returns true if the active
+    /// workspace changed.
+    pub fn switch_workspace_to_index(&mut self, index: usize) -> bool {
+        let hide: Vec<WindowId> = self.workspaces.active().windows.clone();
+        if !self.workspaces.switch_to_index(index) {
+            return false;
+        }
+        self.commit_workspace_switch(hide);
+        true
+    }
+
+    /// Move a window to the workspace at `target_idx` (0-based), then repatriate
+    /// visibility: the window disappears from the current (active) workspace's
+    /// rendered set unless the target is the active workspace. Returns true if
+    /// the move succeeded.
+    pub fn move_window_to_workspace_index(&mut self, id: WindowId, target_idx: usize) -> bool {
+        if !self.windows.contains_key(&id) {
+            return false;
+        }
+        let target_id = crate::workspace::WorkspaceId(target_idx as u32);
+        let from_id = match self.workspaces.find_window(id) {
+            Some(w) => w,
+            None => return false,
+        };
+        if from_id == target_id {
+            return true;
+        }
+        if self.workspaces.move_window(id, from_id, target_id).is_err() {
+            return false;
+        }
+
+        // A window moved off the active workspace must stop rendering; one moved
+        // onto it must start. Drive the visibility flag to match membership.
+        let active = self.workspaces.active().id;
+        let now_member = target_id == active;
+        if let Some(win) = self.windows.get_mut(&id) {
+            win.visible = now_member;
+        }
+        self.mark_window_scene_dirty();
+        true
     }
 }
 

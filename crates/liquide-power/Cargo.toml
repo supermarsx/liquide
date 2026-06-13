@@ -7,6 +7,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# Pre-added by t51-e1 for the Wave A3 authorization seam (t51-e6 adds the calls).
+liquide-authz-runtime.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

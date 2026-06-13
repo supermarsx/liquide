@@ -18,19 +18,18 @@ use crate::dimension::Sides;
 use crate::value_resolve::{parse_inline_value, *};
 
 fn css_wide_keyword(val: &liquide_theme_css::value::PropertyValue) -> Option<&'static str> {
+    // CSS-wide keywords are only valid as the ENTIRE value (CSS Values 4 §3.1.1),
+    // so match the whole trimmed token case-insensitively — never a substring.
+    // (e.g. `animation-name: fade-initial` / `font-family: "Inherit Sans"` are not
+    // CSS-wide keywords and must fall through to normal property handling.)
     let text = val.as_string()?.trim().to_ascii_lowercase();
-    if text.contains("revert-layer") {
-        Some("revert-layer")
-    } else if text.contains("revert") {
-        Some("revert")
-    } else if text.contains("unset") {
-        Some("unset")
-    } else if text.contains("inherit") {
-        Some("inherit")
-    } else if text.contains("initial") {
-        Some("initial")
-    } else {
-        None
+    match text.as_str() {
+        "revert-layer" => Some("revert-layer"),
+        "revert" => Some("revert"),
+        "unset" => Some("unset"),
+        "inherit" => Some("inherit"),
+        "initial" => Some("initial"),
+        _ => None,
     }
 }
 
@@ -47,9 +46,15 @@ fn background_spec_for_gradient(gradient: &CssGradient, color: Option<Color>) ->
 fn gradient_to_spec(gradient: &CssGradient) -> GradientSpec {
     match gradient {
         CssGradient::Linear { angle, stops } | CssGradient::RepeatingLinear { angle, stops } => {
+            // CSS gradient angles are measured clockwise from "to top" (0deg = up,
+            // 90deg = right, 180deg = bottom/default). The renderer consumes
+            // start/end as fractional coords in y-down screen space, so map the CSS
+            // angle's end-direction to (sin θ, -cos θ): 0deg→(0,-1)=up, 90deg→(1,0)=
+            // right, 180deg→(0,1)=down. (Previously cos/sin gave a 90deg rotation,
+            // so the default `to bottom` painted right-to-left.)
             let radians = angle.to_radians();
-            let dx = radians.cos() * 0.5;
-            let dy = radians.sin() * 0.5;
+            let dx = radians.sin() * 0.5;
+            let dy = -radians.cos() * 0.5;
             GradientSpec::Linear {
                 start_x: 0.5 - dx,
                 start_y: 0.5 - dy,

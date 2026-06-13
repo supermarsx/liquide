@@ -20,6 +20,83 @@ mod tests {
         assert_eq!(proc.display_env(), ":1");
     }
 
+    // Regression (t49-e6-03): `start()` must not lie about a running X11
+    // server. The real fork/exec path is unimplemented, so a successful start
+    // must leave the process in an explicit `Staged` state (never `Running`),
+    // and a process that was never spawned must NOT report alive.
+    #[test]
+    fn test_start_does_not_claim_running_without_a_process() {
+        let mut proc = XWaylandProcess::new(XWaylandConfig {
+            // Pin a binary path so `find_binary` succeeds on Linux without
+            // depending on the host having Xwayland installed.
+            binary_path: Some("/usr/bin/Xwayland".to_string()),
+            ..XWaylandConfig::default()
+        });
+
+        let result = proc.start();
+
+        #[cfg(target_os = "linux")]
+        {
+            // On Linux, staging succeeds but must be honest about it.
+            assert!(result.is_ok(), "start should stage successfully");
+            assert_eq!(
+                proc.state(),
+                XWaylandState::Staged,
+                "start must NOT claim Running before a real process exists"
+            );
+            assert_ne!(
+                proc.state(),
+                XWaylandState::Running,
+                "no process was spawned, so Running is a lie"
+            );
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            // Off Linux there is no spawn path at all: fail closed.
+            assert!(result.is_err(), "start must fail closed off Linux");
+            assert_ne!(proc.state(), XWaylandState::Running);
+        }
+    }
+
+    #[test]
+    fn test_check_alive_is_false_when_no_process_spawned() {
+        let mut proc = XWaylandProcess::new(XWaylandConfig {
+            binary_path: Some("/usr/bin/Xwayland".to_string()),
+            ..XWaylandConfig::default()
+        });
+
+        // Never started: clearly not alive.
+        assert!(!proc.check_alive(), "an unstarted process is not alive");
+
+        // After start(), the process was still never really spawned (no pid),
+        // so liveness must remain false — fail closed, do not report healthy.
+        let _ = proc.start();
+        assert!(
+            !proc.check_alive(),
+            "a process that was never forked/exec'd must not report alive"
+        );
+    }
+
+    #[test]
+    fn test_stop_from_staged_transitions_to_exited() {
+        let mut proc = XWaylandProcess::new(XWaylandConfig {
+            binary_path: Some("/usr/bin/Xwayland".to_string()),
+            ..XWaylandConfig::default()
+        });
+        let _ = proc.start();
+
+        assert!(proc.stop().is_ok());
+
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            proc.state(),
+            XWaylandState::Exited,
+            "stopping a staged process must reflect reality, not stay Staged"
+        );
+        assert!(!proc.check_alive());
+    }
+
     #[test]
     fn test_x11_window() {
         let mut win = X11Window::new(X11WindowId(1), 100, 200, 800, 600);

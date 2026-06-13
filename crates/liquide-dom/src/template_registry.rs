@@ -19,14 +19,65 @@ use crate::document::Document;
 use crate::node::NodeId;
 
 // ---------------------------------------------------------------------------
+// HTML escaping
+// ---------------------------------------------------------------------------
+
+/// HTML-escape a dynamic, untrusted string for safe embedding in element text
+/// or double/single-quoted attribute values.
+///
+/// Escapes the five characters that are significant in HTML markup:
+/// `&`, `<`, `>`, `"`, and `'`. `&` is replaced first (it is implicit in the
+/// per-character match, since each source character maps to a single output
+/// entity and entities are never re-scanned), preventing double-escaping of an
+/// already-escaped entity such as `&amp;` into `&amp;amp;`.
+///
+/// This is the single shared escaping helper for the shell DOM pipeline: the
+/// template registry uses it for every variable interpolation, and callers that
+/// build raw attribute HTML by hand (e.g. `liquide-shell`'s `dom_sync`) must
+/// route every untrusted substring through it. Only the *dynamic* substituted
+/// values are escaped — structural template markup (tag names, attribute names,
+/// quotes, `{{#if}}`/`{{#each}}` control tags) is emitted verbatim and never
+/// passed here.
+pub fn escape_html(s: &str) -> String {
+    // Fast path: nothing to escape.
+    if !s
+        .bytes()
+        .any(|b| matches!(b, b'&' | b'<' | b'>' | b'"' | b'\''))
+    {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + 16);
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // TemplateContext — the data passed into template rendering
 // ---------------------------------------------------------------------------
 
 /// A value that can be substituted into a template.
 #[derive(Debug, Clone)]
 pub enum TemplateValue {
-    /// A simple string value.
+    /// A simple string value. Interpolated values of this kind are
+    /// **HTML-escaped** on output (see [`escape_html`]) — this is the default
+    /// and correct choice for any untrusted/dynamic text.
     String(String),
+    /// Pre-built, trusted HTML that must be substituted **verbatim** (not
+    /// escaped). Used only for HTML fragments the caller has already assembled
+    /// and escaped itself — e.g. the shell's per-slot status-bar markup, which
+    /// the flat template engine cannot express with `{{#each}}`. The producer
+    /// is responsible for escaping every dynamic value embedded inside this
+    /// fragment; never store untrusted text here unescaped.
+    RawHtml(String),
     /// A boolean flag (for `{{#if}}`).
     Bool(bool),
     /// A list of sub-contexts (for `{{#each}}`).
@@ -82,6 +133,29 @@ impl TemplateContext {
         self.vars.insert(key.to_string(), value.into());
     }
 
+    /// Set a variable holding **pre-built, trusted HTML** that must be
+    /// interpolated verbatim (not HTML-escaped).
+    ///
+    /// Use this only for HTML fragments the caller has already assembled and
+    /// escaped itself (e.g. a slot of status-bar items built in Rust). For any
+    /// untrusted/dynamic text use [`set`](Self::set) instead, which escapes the
+    /// value on output.
+    pub fn set_raw_html(&mut self, key: &str, html: impl Into<String>) {
+        self.vars
+            .insert(key.to_string(), TemplateValue::RawHtml(html.into()));
+    }
+
+    /// Render a single `{{tag}}` interpolation: `RawHtml` is emitted verbatim,
+    /// every other string value is HTML-escaped. Missing/non-string values
+    /// produce the empty string.
+    fn render_interpolation(&self, key: &str, out: &mut String) {
+        match self.vars.get(key) {
+            Some(TemplateValue::RawHtml(s)) => out.push_str(s),
+            Some(TemplateValue::String(s)) => out.push_str(&escape_html(s)),
+            _ => {}
+        }
+    }
+
     /// Get a variable value.
     pub fn get(&self, key: &str) -> Option<&TemplateValue> {
         self.vars.get(key)
@@ -90,7 +164,7 @@ impl TemplateContext {
     /// Get a string variable, returning empty string if missing or non-string.
     pub fn get_str(&self, key: &str) -> &str {
         match self.vars.get(key) {
-            Some(TemplateValue::String(s)) => s.as_str(),
+            Some(TemplateValue::String(s)) | Some(TemplateValue::RawHtml(s)) => s.as_str(),
             _ => "",
         }
     }
@@ -99,7 +173,7 @@ impl TemplateContext {
     pub fn is_truthy(&self, key: &str) -> bool {
         match self.vars.get(key) {
             None => false,
-            Some(TemplateValue::String(s)) => !s.is_empty(),
+            Some(TemplateValue::String(s)) | Some(TemplateValue::RawHtml(s)) => !s.is_empty(),
             Some(TemplateValue::Bool(b)) => *b,
             Some(TemplateValue::List(v)) => !v.is_empty(),
         }
@@ -494,7 +568,12 @@ impl TemplateRegistry {
                 // Already consumed by the block opener — ignore.
             } else {
                 // ---------- variable interpolation ----------
-                out.push_str(ctx.get_str(tag));
+                // `String` values are HTML-escaped so that untrusted content
+                // (notification bodies, window titles, tray tooltips, …) cannot
+                // break out of an attribute or inject elements into the shell
+                // chrome DOM. `RawHtml` values — pre-built, already-escaped
+                // markup the caller assembled itself — are emitted verbatim.
+                ctx.render_interpolation(tag, &mut out);
             }
         }
 
@@ -795,6 +874,61 @@ mod tests {
 
         let result = reg.render("test", &ctx).unwrap();
         assert_eq!(result, "<div id=\"my-div\">Hello World</div>");
+    }
+
+    #[test]
+    fn interpolated_values_are_html_escaped() {
+        // Regression: T49-e5-F06 — the template engine performed NO HTML
+        // escaping, so untrusted notification/title/tooltip content could break
+        // out of attributes and inject elements into the shell chrome DOM.
+        let mut reg = TemplateRegistry::new();
+        reg.register("test", "<box title=\"{{title}}\">{{body}}</box>");
+
+        let mut ctx = TemplateContext::new();
+        ctx.set("title", "a\"b>c&d'e");
+        ctx.set("body", "<script>alert(1)</script> & \"quote\" > 'apos'");
+
+        let result = reg.render("test", &ctx).unwrap();
+        // Attribute value: the closing `"` is neutralised, as is `>`.
+        assert_eq!(
+            result,
+            "<box title=\"a&quot;b&gt;c&amp;d&#39;e\">\
+             &lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quote&quot; &gt; &#39;apos&#39;\
+             </box>"
+        );
+        // No raw injection survives.
+        assert!(!result.contains("<script>"));
+        assert!(!result.contains("title=\"a\"b"));
+    }
+
+    #[test]
+    fn plain_interpolated_value_passes_through_unchanged() {
+        // No double-escaping / mangling of ordinary text.
+        let mut reg = TemplateRegistry::new();
+        reg.register("test", "<div id=\"{{id}}\">{{text}}</div>");
+
+        let mut ctx = TemplateContext::new();
+        ctx.set("id", "my-div");
+        ctx.set("text", "Hello World 123");
+
+        let result = reg.render("test", &ctx).unwrap();
+        assert_eq!(result, "<div id=\"my-div\">Hello World 123</div>");
+    }
+
+    #[test]
+    fn escape_html_does_not_double_escape() {
+        // An already-escaped entity must not be re-escaped (the `&` of `&amp;`
+        // becomes `&amp;` once, not `&amp;amp;` — we escape source chars, never
+        // re-scan emitted entities).
+        assert_eq!(escape_html("&amp;"), "&amp;amp;");
+        // (The above documents that a literal `&amp;` in *source* text is treated
+        // as the literal characters `& a m p ;` — correct, because the helper's
+        // contract is "input is raw untrusted text, not pre-escaped HTML".)
+        assert_eq!(escape_html("plain text"), "plain text");
+        assert_eq!(
+            escape_html("<a href=\"x\">"),
+            "&lt;a href=&quot;x&quot;&gt;"
+        );
     }
 
     #[test]

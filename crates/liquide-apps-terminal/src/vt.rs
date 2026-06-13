@@ -122,6 +122,24 @@ pub enum OscAction {
     Unknown(String),
 }
 
+/// Maximum number of bytes retained in a CSI parameter/intermediate buffer.
+///
+/// A legitimate CSI sequence (even a long truecolor SGR run such as
+/// `38;2;R;G;B;48;2;R;G;B;...`) is well under this. A stream that exceeds it is
+/// treated as malformed: the sequence is aborted and the parser returns to the
+/// ground state rather than growing the buffer without bound. xterm itself caps
+/// CSI parameters far more tightly (16-32 numeric params); this generous cap
+/// avoids breaking any plausible real sequence while still bounding memory.
+const MAX_CSI_PARAM_BYTES: usize = 256;
+
+/// Maximum number of bytes retained in an OSC string buffer.
+///
+/// OSC payloads carry titles, working directories, and OSC 8 hyperlink URLs.
+/// 8 KiB comfortably covers a long URL while bounding the memory an unterminated
+/// or garbage OSC stream can consume. On overflow the OSC sequence is aborted
+/// and the parser returns to ground.
+const MAX_OSC_BYTES: usize = 8 * 1024;
+
 /// VT sequence parser state machine.
 pub struct Parser {
     state: ParserState,
@@ -204,10 +222,20 @@ impl Parser {
     fn csi(&mut self, byte: u8, actions: &mut Vec<Action>) {
         match byte {
             b'0'..=b'9' | b';' => {
+                if self.params.len() >= MAX_CSI_PARAM_BYTES {
+                    // Overlong parameter run: abort this CSI sequence and
+                    // return to ground rather than growing unbounded.
+                    self.abort_sequence();
+                    return;
+                }
                 self.params.push(byte);
                 self.state = ParserState::CsiParam;
             }
             b' '..=b'/' => {
+                if self.intermediate.len() >= MAX_CSI_PARAM_BYTES {
+                    self.abort_sequence();
+                    return;
+                }
                 self.intermediate.push(byte);
             }
             0x40..=0x7e => {
@@ -235,10 +263,25 @@ impl Parser {
             }
             _ => {
                 if byte.is_ascii() {
+                    if self.osc_buf.len() >= MAX_OSC_BYTES {
+                        // Overlong / unterminated OSC string: discard it and
+                        // return to ground rather than growing unbounded.
+                        self.abort_sequence();
+                        return;
+                    }
                     self.osc_buf.push(byte as char);
                 }
             }
         }
+    }
+
+    /// Abort the in-progress escape sequence: clear accumulated buffers and
+    /// return to the ground state. Used when a CSI/OSC buffer exceeds its cap.
+    fn abort_sequence(&mut self) {
+        self.params.clear();
+        self.intermediate.clear();
+        self.osc_buf.clear();
+        self.state = ParserState::Ground;
     }
 
     fn parse_params(&self) -> Vec<u32> {

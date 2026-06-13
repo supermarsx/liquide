@@ -13,10 +13,15 @@ use std::collections::HashMap;
 
 use liquide_compositor::damage::{DamageClass, DamageSet, DamageTile};
 use liquide_compositor::effects::EffectParams;
-use liquide_compositor::framebuffer::FrameBuffer;
+use liquide_compositor::framebuffer::{FrameBuffer, FrameMemory};
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::pixel::{BlendMode, Color};
+use liquide_compositor::pixel::{BlendMode, Color, PixelFormat};
 use liquide_compositor::scene::{FlatNode, NodeId, SceneNodeKind};
+use liquide_compositor::{
+    FrameMemoryKind, RendererBackendInfo, RendererBackendKind, RendererCapabilities,
+    RendererNegotiation, RendererRejectReason,
+};
+use liquide_font_rasterizer::database::{FontDatabase, FontFaceId};
 
 use crate::blur_worker::BlurWorker;
 use crate::color::SrgbLut;
@@ -50,6 +55,31 @@ const MAX_SHADOW_CACHE: usize = 256;
 // can import it from either location.
 pub use liquide_compositor::Renderer;
 
+/// Controls whether the CPU renderer proactively queues common glyphs for a font.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlyphPrewarmMode {
+    /// Do not enqueue common glyphs ahead of visible text.
+    Disabled,
+    /// Queue common Latin glyphs when a font family/size is first encountered.
+    #[default]
+    CommonGlyphs,
+}
+
+/// Configuration knobs for [`SoftwareRenderer`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SoftwareRendererOptions {
+    /// Glyph prewarming behavior for newly seen font family/size combinations.
+    pub glyph_prewarm: GlyphPrewarmMode,
+}
+
+impl Default for SoftwareRendererOptions {
+    fn default() -> Self {
+        Self {
+            glyph_prewarm: GlyphPrewarmMode::CommonGlyphs,
+        }
+    }
+}
+
 /// The software (CPU) renderer.
 pub struct SoftwareRenderer {
     srgb_lut: SrgbLut,
@@ -71,6 +101,8 @@ pub struct SoftwareRenderer {
     shadow_cache: HashMap<NodeId, CachedShadow>,
     /// Background thread for async glyph rasterization.
     font_worker: FontWorker,
+    /// Renderer behavior options.
+    options: SoftwareRendererOptions,
     /// Layout cache manager for computed element layouts.
     layout_cache: LayoutCacheManager,
     /// Texture cache for decoded images and rendered assets.
@@ -100,9 +132,38 @@ impl SoftwareRenderer {
     /// Create a new software renderer with default settings.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_options(SoftwareRendererOptions::default())
+    }
+
+    /// Create a new software renderer with explicit options.
+    #[must_use]
+    pub fn with_options(options: SoftwareRendererOptions) -> Self {
+        Self::from_font_worker(FontWorker::new(), 1024, options)
+    }
+
+    /// Create a renderer with a pre-loaded font database for real TrueType rendering.
+    #[must_use]
+    pub fn with_font_db(font_db: FontDatabase) -> Self {
+        Self::with_font_db_and_options(font_db, SoftwareRendererOptions::default())
+    }
+
+    /// Create a renderer with a pre-loaded font database and explicit options.
+    #[must_use]
+    pub fn with_font_db_and_options(
+        font_db: FontDatabase,
+        options: SoftwareRendererOptions,
+    ) -> Self {
+        Self::from_font_worker(FontWorker::with_font_db(font_db), 2048, options)
+    }
+
+    fn from_font_worker(
+        font_worker: FontWorker,
+        glyph_atlas_size: u32,
+        options: SoftwareRendererOptions,
+    ) -> Self {
         Self {
             srgb_lut: SrgbLut::new(),
-            glyph_atlas: GlyphAtlas::new(1024, 1024),
+            glyph_atlas: GlyphAtlas::new(glyph_atlas_size, glyph_atlas_size),
             effect_params: EffectParams::for_profile(
                 liquide_compositor::effects::QualityProfile::Balanced,
             ),
@@ -111,7 +172,8 @@ impl SoftwareRenderer {
             blur_budget_ms: 16.0, // Target ~60fps render budget
             blur_worker: BlurWorker::new(),
             shadow_cache: HashMap::new(),
-            font_worker: FontWorker::new(),
+            font_worker,
+            options,
             layout_cache: LayoutCacheManager::new(),
             texture_cache: TextureCache::new(),
             dirty_rects: DirtyRectManager::new(1920, 1080),
@@ -124,31 +186,66 @@ impl SoftwareRenderer {
         }
     }
 
-    /// Create a renderer with a pre-loaded font database for real TrueType rendering.
+    /// Return the active renderer options.
     #[must_use]
-    pub fn with_font_db(font_db: liquide_font_rasterizer::database::FontDatabase) -> Self {
-        Self {
-            srgb_lut: SrgbLut::new(),
-            glyph_atlas: GlyphAtlas::new(2048, 2048),
-            effect_params: EffectParams::for_profile(
-                liquide_compositor::effects::QualityProfile::Balanced,
-            ),
-            blur_enabled: true,
-            avg_render_ms: 0.0,
-            blur_budget_ms: 16.0,
-            blur_worker: BlurWorker::new(),
-            shadow_cache: HashMap::new(),
-            font_worker: FontWorker::with_font_db(font_db),
-            layout_cache: LayoutCacheManager::new(),
-            texture_cache: TextureCache::new(),
-            dirty_rects: DirtyRectManager::new(1920, 1080),
-            lod_manager: LodManager::new(1920.0, 1080.0),
-            buffer_pool: ObjectPool::new(64),
-            skeleton_window: None,
-            has_pending_glyphs: false,
-            prewarmed_fonts: std::collections::HashSet::new(),
-            active_blend_mode: BlendMode::SrcOver,
+    pub fn options(&self) -> SoftwareRendererOptions {
+        self.options
+    }
+
+    fn common_glyph_prewarm_enabled(&self) -> bool {
+        matches!(self.options.glyph_prewarm, GlyphPrewarmMode::CommonGlyphs)
+    }
+
+    /// CPU renderer capabilities exposed through the compositor renderer contract.
+    #[must_use]
+    pub fn cpu_capabilities() -> RendererCapabilities {
+        RendererCapabilities {
+            frame_memory_kinds: vec![FrameMemoryKind::Cpu],
+            pixel_formats: vec![PixelFormat::Bgra8, PixelFormat::Rgba8, PixelFormat::Rgb8],
+            supports_partial_damage: true,
+            supports_blur: true,
+            supports_skeleton_window: true,
+            supports_async_glyphs: true,
+            max_framebuffer_width: None,
+            max_framebuffer_height: None,
         }
+    }
+
+    /// Check file-backed font faces for staleness, **reload** changed faces
+    /// from disk, and invalidate CPU-side glyph state.
+    ///
+    /// Stale detection and the actual byte reload happen inside the font worker
+    /// (which shares the [`FontDatabase`]): a changed face is re-read and
+    /// re-parsed so subsequent rasterization uses the fresh outlines (closes
+    /// t49-e3-F15 — the prior code re-rasterized the same stale bytes forever).
+    ///
+    /// The CPU glyph atlas is keyed by renderer-local font IDs rather than
+    /// rasterizer face IDs, so once any face reloads this conservatively clears
+    /// the whole atlas and prewarm state, returning the exact stale face IDs to
+    /// the caller.
+    pub fn invalidate_stale_fonts(&mut self) -> Vec<FontFaceId> {
+        let stale_faces = self.font_worker.invalidate_stale_faces();
+        if !stale_faces.is_empty() {
+            self.glyph_atlas.clear();
+            self.prewarmed_fonts.clear();
+            self.has_pending_glyphs = false;
+        }
+        stale_faces
+    }
+
+    /// Alias for callers that prefer a poll-style stale font hook name.
+    pub fn check_stale_fonts_and_invalidate(&mut self) -> Vec<FontFaceId> {
+        self.invalidate_stale_fonts()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_glyph_request_count(&self) -> usize {
+        self.font_worker.pending_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn prewarmed_font_count(&self) -> usize {
+        self.prewarmed_fonts.len()
     }
 
     /// Returns `true` if the last `render()` call encountered text nodes
@@ -534,6 +631,72 @@ impl Default for SoftwareRenderer {
 }
 
 impl Renderer for SoftwareRenderer {
+    fn backend_info(&self) -> RendererBackendInfo {
+        let mut info =
+            RendererBackendInfo::new(RendererBackendKind::Software, "liquide-renderer-cpu");
+        info.version = Some(env!("CARGO_PKG_VERSION").to_string());
+        info.adapter = Some("host CPU".to_string());
+        info
+    }
+
+    fn capabilities(&self) -> RendererCapabilities {
+        Self::cpu_capabilities()
+    }
+
+    fn negotiate_render(
+        &self,
+        _nodes: &[FlatNode],
+        fb: &FrameBuffer,
+        damage: &DamageSet,
+    ) -> RendererNegotiation {
+        let negotiation = Self::cpu_capabilities().negotiate(fb, damage);
+        if !negotiation.is_accepted() {
+            return negotiation;
+        }
+
+        if fb.width == 0 || fb.height == 0 {
+            return RendererNegotiation::rejected(RendererRejectReason::Other(format!(
+                "CPU renderer requires non-zero framebuffer dimensions, got {}x{}",
+                fb.width, fb.height
+            )));
+        }
+
+        let bytes_per_pixel = fb.format.bytes_per_pixel();
+        let Some(minimum_stride) = fb.width.checked_mul(bytes_per_pixel) else {
+            return RendererNegotiation::rejected(RendererRejectReason::FramebufferTooLarge {
+                width: fb.width,
+                height: fb.height,
+                max_width: None,
+                max_height: None,
+            });
+        };
+        if fb.stride < minimum_stride {
+            return RendererNegotiation::rejected(RendererRejectReason::Other(format!(
+                "CPU framebuffer stride {} is smaller than width {} * {} bytes per pixel",
+                fb.stride, fb.width, bytes_per_pixel
+            )));
+        }
+
+        let Some(required_len) = (fb.stride as usize).checked_mul(fb.height as usize) else {
+            return RendererNegotiation::rejected(RendererRejectReason::FramebufferTooLarge {
+                width: fb.width,
+                height: fb.height,
+                max_width: None,
+                max_height: None,
+            });
+        };
+        match &fb.memory {
+            FrameMemory::Cpu(pixels) if pixels.len() < required_len => {
+                RendererNegotiation::rejected(RendererRejectReason::Other(format!(
+                    "CPU framebuffer has {} bytes but rendering requires at least {} bytes",
+                    pixels.len(),
+                    required_len
+                )))
+            }
+            _ => RendererNegotiation::accepted(),
+        }
+    }
+
     #[allow(unused_assignments)]
     fn render(
         &mut self,

@@ -9,7 +9,14 @@ description = "Transport layer abstractions: QUIC, TCP, UDP, and WebSocket backe
 default = ["tls", "quic", "websocket"]
 tls = ["dep:tokio-rustls", "dep:rustls-pemfile"]
 quic = ["dep:quinn"]
-websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
+# `websocket` enables the WebSocket backend. It pulls in tokio-tungstenite's
+# rustls TLS support so the transport can dial/accept `wss://` (encrypted) by
+# default; plaintext `ws://` remains an explicit opt-in in code.
+websocket = [
+    "dep:tokio-tungstenite",
+    "dep:futures-util",
+    "tokio-tungstenite/rustls-tls-webpki-roots",
+]
 full = ["tls", "quic", "websocket"]
 # DANGEROUS: Enables insecure QUIC certificate verification for testing only
 dangerous_insecure_quic = []

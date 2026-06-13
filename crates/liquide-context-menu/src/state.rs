@@ -240,8 +240,19 @@ impl MenuState {
                 MenuResponse::Activate(item.id)
             }
             _ => {
-                // Click outside the menu — close.
-                MenuResponse::Close
+                // `hit_test` returned `None`. This covers two cases: the click
+                // landed on a non-interactive row (separator, or a row clipped
+                // out by the height cap) that is still *inside* the panel, or it
+                // landed entirely outside the panel. Only a genuinely-outside
+                // click should dismiss the menu — clicking dead space inside the
+                // panel must be a no-op.
+                let inside_panel =
+                    x >= geo.x && x < geo.x + geo.width && y >= geo.y && y < geo.y + geo.height;
+                if inside_panel {
+                    MenuResponse::None
+                } else {
+                    MenuResponse::Close
+                }
             }
         }
     }
@@ -684,6 +695,28 @@ mod tests {
             &geo,
         );
         assert_eq!(resp, MenuResponse::None);
+    }
+
+    #[test]
+    fn mouse_move_over_separator_does_not_hover() {
+        // F20: hovering the separator row must not emit Hover(separator_id) or
+        // record the separator as the hovered item.
+        let items = basic_items();
+        let geo = basic_geo(&items);
+        let mut state = MenuState::new();
+        // Index 2 is the separator (see basic_items).
+        let sep = &geo.items[2];
+        assert!(sep.is_separator, "fixture item 2 should be a separator");
+        let resp = state.on_mouse_move(
+            geo.x + sep.rect.x + sep.rect.width / 2.0,
+            geo.y + sep.rect.y + sep.rect.height / 2.0,
+            &items,
+            &geo,
+            0,
+        );
+        assert_eq!(resp, MenuResponse::None, "separator hover must be a no-op");
+        assert_eq!(state.hovered_index(), None);
+        assert_eq!(state.hovered_id(), None);
     }
 
     #[test]

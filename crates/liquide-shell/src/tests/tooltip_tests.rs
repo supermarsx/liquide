@@ -22,6 +22,31 @@ fn make_mouse_move(x: f32, y: f32) -> PlatformEvent {
     }
 }
 
+/// Drive the canonical tooltip manager from a fresh hover up to the fully
+/// `Visible` state, so the next `sync_dom()` renders the tooltip overlay.
+///
+/// t51-e15 retired the hand-rolled `tooltip_timer_us` 400 ms dwell; the
+/// canonical `liquide-tooltip` `TooltipManager` (driven from the hover state)
+/// now owns the show-delay and fade lifecycle. The state machine advances at
+/// most one phase per `update`, so we step it deterministically:
+/// Pending → FadingIn (past `show_delay_ms` 500) → Visible (past `fade_in_ms`
+/// 150), then a tiny tick to confirm it stays visible — without crossing the
+/// 5 s `display_duration_ms` that would auto-hide it. Must be called while the
+/// hover label is set (after a hover `make_mouse_move`).
+fn dwell_past_show_delay(shell: &mut Shell) {
+    shell.sync_tooltip_manager(600.0); // Pending → FadingIn
+    shell.sync_tooltip_manager(200.0); // FadingIn → Visible
+    shell.sync_tooltip_manager(1.0); // stays Visible
+}
+
+/// Drive the manager through fade-out to fully `Hidden` after the hover label
+/// has been cleared, so the next `sync_dom()` removes the overlay
+/// deterministically (the manager fades out over `fade_out_ms` = 100 ms rather
+/// than vanishing instantly like the retired hand-rolled path).
+fn settle_tooltip_hidden(shell: &mut Shell) {
+    shell.sync_tooltip_manager(200.0); // FadingOut → Hidden
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -34,9 +59,11 @@ fn tooltip_initially_none() {
 }
 
 #[test]
-fn tooltip_timer_initially_zero() {
+fn tooltip_manager_initially_absent() {
+    // t51-e15: the hand-rolled `tooltip_timer_us` was retired; the canonical
+    // tooltip manager is dormant (`None`) until a tooltip is first driven.
     let shell = Shell::new(1920.0, 1080.0);
-    assert_eq!(shell.tooltip_timer_us, 0);
+    assert!(!shell.tooltip_manager_visible());
 }
 
 #[test]
@@ -165,10 +192,16 @@ fn tooltip_not_shown_outside_dock() {
     assert!(shell.tooltip_text.is_none());
 }
 
+// ---------------------------------------------------------------------------
+// Show-delay tests (t51-e15: dwell owned by the canonical TooltipManager,
+// replacing the retired hand-rolled `tooltip_timer_us`).
+// ---------------------------------------------------------------------------
+
 #[test]
-fn tooltip_timer_set_on_first_hover() {
+fn tooltip_not_visible_immediately_on_first_hover() {
     let mut shell = Shell::new(1920.0, 1080.0);
-    assert_eq!(shell.tooltip_timer_us, 0);
+    // Dormant before any hover is driven.
+    assert!(!shell.tooltip_manager_visible());
 
     let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
     let (_, r0) = &item_rects[0];
@@ -176,39 +209,45 @@ fn tooltip_timer_set_on_first_hover() {
         r0.x + r0.width / 2.0,
         r0.y + r0.height / 2.0,
     ));
+    assert!(shell.tooltip_text.is_some(), "hover sets the tooltip label");
+
+    // One render-sized frame is well short of the 500 ms show-delay: the
+    // manager must NOT report visible yet (the dwell has not elapsed).
+    shell.sync_tooltip_manager(8.0);
     assert!(
-        shell.tooltip_timer_us > 0,
-        "timer should be set on first hover"
+        !shell.tooltip_manager_visible(),
+        "tooltip must not appear before the show-delay elapses"
     );
 }
 
 #[test]
-fn tooltip_timer_unchanged_on_same_item() {
+fn tooltip_dwell_does_not_reset_while_hovering_same_item() {
     let mut shell = Shell::new(1920.0, 1080.0);
     let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
     let (_, r0) = &item_rects[0];
 
-    // First hover sets the timer.
+    // First hover starts the dwell.
     shell.handle_platform_event(&make_mouse_move(
         r0.x + r0.width / 2.0,
         r0.y + r0.height / 2.0,
     ));
-    let timer1 = shell.tooltip_timer_us;
-    assert!(timer1 > 0, "timer should be set on first hover");
-
-    // Hovering the same item again should NOT reset the timer.
+    // Accumulate dwell across two sub-delay frames, with a tiny re-hover of the
+    // SAME item in between — the manager must treat it as the same widget and
+    // keep accumulating rather than restarting.
+    shell.sync_tooltip_manager(300.0);
     shell.handle_platform_event(&make_mouse_move(
         r0.x + r0.width / 2.0 + 1.0,
         r0.y + r0.height / 2.0,
     ));
-    assert_eq!(
-        shell.tooltip_timer_us, timer1,
-        "timer should not change for same item"
+    shell.sync_tooltip_manager(300.0);
+    assert!(
+        shell.tooltip_manager_visible(),
+        "dwell on the same item must not reset across a same-item re-hover"
     );
 }
 
 #[test]
-fn tooltip_timer_changes_on_different_item() {
+fn tooltip_text_changes_on_different_item() {
     let mut shell = Shell::new(1920.0, 1080.0);
     let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
     assert!(item_rects.len() >= 2);
@@ -218,26 +257,18 @@ fn tooltip_timer_changes_on_different_item() {
         r0.x + r0.width / 2.0,
         r0.y + r0.height / 2.0,
     ));
-    let timer1 = shell.tooltip_timer_us;
+    assert_eq!(shell.tooltip_text.as_deref(), Some("Files"));
 
-    // Moving to a different dock item should update the timer.
+    // Moving to a different dock item updates the rendered label.
     let (_, r1) = &item_rects[1];
     shell.handle_platform_event(&make_mouse_move(
         r1.x + r1.width / 2.0,
         r1.y + r1.height / 2.0,
     ));
-    // The timer is based on SystemTime::now(), which will differ between calls.
-    // It may or may not change depending on timing, but at least the tooltip_text
-    // should have changed.
     assert_ne!(
         shell.tooltip_text.as_deref(),
         Some("Files"),
         "text should change when hovering a different item"
-    );
-    // Timer should have been re-set (it should be >= timer1 since time moves forward).
-    assert!(
-        shell.tooltip_timer_us >= timer1,
-        "timer should be updated on new item"
     );
 }
 
@@ -252,8 +283,9 @@ fn tooltip_overlay_rendered_in_dom() {
         first_rect.y + first_rect.height / 2.0,
     ));
 
-    // Bypass the 400ms tooltip delay by backdating the timer.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    // Dwell past the canonical manager's show-delay (replaces the retired
+    // `tooltip_timer_us` backdating).
+    dwell_past_show_delay(&mut shell);
 
     // Force DOM sync — this pushes tooltip state into the DOM.
     shell.sync_dom();
@@ -278,7 +310,7 @@ fn tooltip_overlay_removed_from_dom_on_leave() {
         first_rect.y + first_rect.height / 2.0,
     ));
     // Bypass the 400ms tooltip delay by backdating the timer.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
     shell.sync_dom();
     assert!(
         shell
@@ -288,8 +320,10 @@ fn tooltip_overlay_removed_from_dom_on_leave() {
             .is_some()
     );
 
-    // Leave dock
+    // Leave dock — the manager fades out over `fade_out_ms`; settle it to
+    // Hidden so the overlay is deterministically removed this sync.
     shell.handle_platform_event(&make_mouse_move(500.0, 500.0));
+    settle_tooltip_hidden(&mut shell);
     shell.sync_dom();
     assert!(
         shell
@@ -312,7 +346,7 @@ fn tooltip_overlay_reappears_after_leave_and_rehover() {
     // Show tooltip
     shell.handle_platform_event(&make_mouse_move(cx, cy));
     // Bypass the 400ms tooltip delay by backdating the timer.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
     shell.sync_dom();
     assert!(
         shell
@@ -322,8 +356,9 @@ fn tooltip_overlay_reappears_after_leave_and_rehover() {
             .is_some()
     );
 
-    // Leave dock
+    // Leave dock — settle the fade-out to Hidden before asserting removal.
     shell.handle_platform_event(&make_mouse_move(500.0, 500.0));
+    settle_tooltip_hidden(&mut shell);
     shell.sync_dom();
     assert!(
         shell
@@ -336,7 +371,7 @@ fn tooltip_overlay_reappears_after_leave_and_rehover() {
     // Re-hover the same item
     shell.handle_platform_event(&make_mouse_move(cx, cy));
     // Bypass the 400ms tooltip delay again for re-hover.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
     shell.sync_dom();
     assert!(
         shell
@@ -413,7 +448,7 @@ fn tooltip_template_cache_populated_after_sync() {
         first_rect.y + first_rect.height / 2.0,
     ));
     // Bypass the 400ms tooltip delay by backdating the timer.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
     shell.sync_dom();
 
     assert!(
@@ -434,12 +469,14 @@ fn tooltip_template_cache_cleared_on_leave() {
         first_rect.y + first_rect.height / 2.0,
     ));
     // Bypass the 400ms tooltip delay by backdating the timer.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
     shell.sync_dom();
     assert!(shell.template_cache.contains_key("tooltip"));
 
-    // Leave dock and sync.
+    // Leave dock and sync — settle the fade-out to Hidden so the overlay (and
+    // its cache entry) is removed this sync.
     shell.handle_platform_event(&make_mouse_move(500.0, 500.0));
+    settle_tooltip_hidden(&mut shell);
     shell.sync_dom();
     assert!(
         !shell.template_cache.contains_key("tooltip"),
@@ -458,7 +495,7 @@ fn tooltip_dom_contains_text() {
         first_rect.y + first_rect.height / 2.0,
     ));
     // Bypass the 400ms tooltip delay by backdating the timer.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
     shell.sync_dom();
 
     // The rendered HTML in the cache should contain the item label.
@@ -480,7 +517,7 @@ fn tooltip_dom_contains_position_style() {
         first_rect.y + first_rect.height / 2.0,
     ));
     // Bypass the 400ms tooltip delay by backdating the timer.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
     shell.sync_dom();
 
     let cached = shell.template_cache.get("tooltip").expect("cache entry");
@@ -527,15 +564,15 @@ fn tooltip_not_shown_immediately_after_hover() {
     let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
     let (_, first_rect) = &item_rects[0];
 
-    // Hover a dock item — tooltip_text is set, timer is set to "now".
+    // Hover a dock item — tooltip_text is set; the manager's show-delay starts.
     shell.handle_platform_event(&make_mouse_move(
         first_rect.x + first_rect.width / 2.0,
         first_rect.y + first_rect.height / 2.0,
     ));
     assert!(shell.tooltip_text.is_some(), "tooltip text should be set");
-    assert!(shell.tooltip_timer_us > 0, "timer should be set");
 
-    // Do NOT backdate the timer — the 400ms delay has not elapsed.
+    // Do NOT dwell — `sync_dom` advances the manager by a single render-sized
+    // frame, far short of the 500 ms show-delay, so the tooltip stays pending.
     shell.sync_dom();
 
     // The tooltip overlay should NOT be in the DOM yet.
@@ -545,7 +582,7 @@ fn tooltip_not_shown_immediately_after_hover() {
             .doc
             .get_element_by_id("shell-tooltip")
             .is_none(),
-        "tooltip should NOT appear in DOM before 400ms delay"
+        "tooltip should NOT appear in DOM before the show-delay elapses"
     );
     // Template cache should also not be populated.
     assert!(
@@ -568,7 +605,7 @@ fn tooltip_shown_after_delay_elapsed() {
     assert!(shell.tooltip_text.is_some());
 
     // Simulate that enough time has passed by backdating the timer by 500ms.
-    shell.tooltip_timer_us = shell.tooltip_timer_us.saturating_sub(500_000);
+    dwell_past_show_delay(&mut shell);
 
     shell.sync_dom();
 

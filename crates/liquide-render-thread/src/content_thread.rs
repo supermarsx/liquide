@@ -208,6 +208,21 @@ pub fn content_worker(
 
                 if let Err(e) = renderer.render(&nodes, framebuf, &damage) {
                     tracing::error!(error = %e, "content render failed, frame dropped");
+                    // Still notify completion so the handle leaves `Rendering`
+                    // and the pipeline can recover; otherwise a single transient
+                    // render error wedges this window's content forever.
+                    let dropped = FrameComplete {
+                        frame_id,
+                        render_time_us: start.elapsed().as_micros() as u64,
+                        dropped: true,
+                        pixels: None,
+                        width: framebuf.width,
+                        height: framebuf.height,
+                        stride: framebuf.stride,
+                    };
+                    if completion_tx.send(dropped).is_err() {
+                        break;
+                    }
                     continue;
                 }
 
@@ -244,6 +259,88 @@ pub fn content_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::time::Duration;
+
+    use liquide_compositor::damage::DamageTile;
+    use liquide_compositor::renderer::RenderResult;
+
+    /// A renderer whose `render` always fails, to exercise the worker error path.
+    struct FailingRenderer;
+
+    impl Renderer for FailingRenderer {
+        fn render(
+            &mut self,
+            _nodes: &[FlatNode],
+            _fb: &mut FrameBuffer,
+            _damage: &DamageSet,
+        ) -> RenderResult<Vec<DamageTile>> {
+            Err("simulated content render failure".into())
+        }
+    }
+
+    /// Regression for t49-e1-F1: a render error must still emit a completion
+    /// (so the handle leaves `Rendering`) rather than wedging the pipeline.
+    #[test]
+    fn test_content_render_error_still_completes() {
+        let (msg_tx, msg_rx) = mpsc::channel();
+        let (comp_tx, comp_rx) = mpsc::channel();
+
+        let worker = std::thread::spawn(move || {
+            content_worker(msg_rx, comp_tx, Box::new(FailingRenderer));
+        });
+
+        msg_tx
+            .send(ContentMessage::RenderFrame {
+                frame_id: FrameId(1),
+                viewport_width: 64,
+                viewport_height: 64,
+                damage: vec![],
+                nodes: vec![],
+            })
+            .unwrap();
+
+        let completion = comp_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker must emit a completion on render error");
+        assert_eq!(completion.frame_id, FrameId(1));
+        assert!(
+            completion.dropped,
+            "error-path completion must be marked dropped"
+        );
+        assert!(completion.pixels.is_none());
+
+        msg_tx.send(ContentMessage::Shutdown).unwrap();
+        worker.join().unwrap();
+    }
+
+    /// A dropped completion resets the handle out of `Rendering`, so the next
+    /// frame can proceed after a render error.
+    #[test]
+    fn test_content_dropped_completion_resets_state() {
+        let (mut handle, _rx, comp_tx) = ContentThread::new(64, 64);
+        handle.request_frame(vec![], vec![]).unwrap();
+        assert_eq!(handle.state(), ContentThreadState::Rendering);
+
+        comp_tx
+            .send(FrameComplete {
+                frame_id: FrameId(1),
+                render_time_us: 0,
+                dropped: true,
+                pixels: None,
+                width: 64,
+                height: 64,
+                stride: 64 * 4,
+            })
+            .unwrap();
+
+        let c = handle.try_recv_completion().unwrap();
+        assert!(c.dropped);
+        assert_eq!(handle.state(), ContentThreadState::Idle);
+
+        let next = handle.request_frame(vec![], vec![]).unwrap();
+        assert_eq!(next, FrameId(2));
+    }
 
     #[test]
     fn test_content_thread_messaging() {

@@ -363,11 +363,13 @@ mod tests {
 
     #[test]
     fn verify_result_to_result_success() {
-        assert!(verify_result_to_result(VerifyResult::Success {
-            username: "test_user".to_string(),
-            level: AuthLevel::NoAuth,
-        })
-        .is_ok());
+        assert!(
+            verify_result_to_result(VerifyResult::Success {
+                username: "test_user".to_string(),
+                level: AuthLevel::NoAuth,
+            })
+            .is_ok()
+        );
     }
 
     #[test]

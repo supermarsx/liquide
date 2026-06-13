@@ -1,10 +1,20 @@
 use crate::tiling::*;
 use crate::workspace::WorkspaceId;
 use liquide_compositor::geometry::Rect;
+use liquide_tiling::{
+    SnapTarget, SnapZones, TilingEngine as CanonicalEngine, TilingGaps, TilingLayout,
+};
 
 // ---------------------------------------------------------------------------
-// Helper
+// Helpers
 // ---------------------------------------------------------------------------
+//
+// Single-sourcing (t52-e3/e4): window-layout *computation* and snap geometry
+// are owned by the canonical `liquide_tiling` engine. These tests exercise that
+// canonical surface directly. The shell-side `TilingEngine` (below) is retained
+// only for the config / preset / window-rule / snap-preview / per-workspace
+// render-state that has no canonical equivalent (see `.orchestration/logs/`
+// `t52-e3.md`), and its own tests follow further down.
 
 fn default_engine() -> TilingEngine {
     TilingEngine::new(TilingConfig::default())
@@ -16,6 +26,21 @@ fn screen() -> Rect {
 
 fn approx_eq(a: f32, b: f32) -> bool {
     (a - b).abs() < 0.1
+}
+
+/// Build a canonical engine for `layout` with `n` windows added (default gaps
+/// and master ratio), then compute its layout over the 1920x1080 screen and
+/// return the rects in window order.
+fn canonical_rects(layout: TilingLayout, n: usize) -> Vec<Rect> {
+    let mut engine = CanonicalEngine::with_config(layout, TilingGaps::default(), 0.55);
+    for i in 0..n {
+        engine.add_window(i as u64);
+    }
+    engine
+        .compute_layout(screen())
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect()
 }
 
 // ========== TilingConfig defaults ==========
@@ -45,179 +70,213 @@ fn custom_grid_config_default_values() {
     assert_eq!(g.row_ratios, vec![0.5, 0.5]);
 }
 
-// ========== arrange — zero windows ==========
+// ===========================================================================
+// CANONICAL layout computation (single-sourced onto `liquide_tiling`)
+// ===========================================================================
+//
+// These tests exercise `liquide_tiling::{TilingEngine, algorithms}` — the
+// single source of truth for tiled-window geometry. The canonical engine uses a
+// `TilingGaps { inner: 8, outer: 8, smart_gaps: true }` model: a single tiled
+// window fills the full work area (smart-gaps collapses gaps for one window),
+// and multi-window layouts inset by the 8px outer gap (usable = 8,8,1904,1064).
+
+// ---- zero windows -------------------------------------------------------
 
 #[test]
-fn arrange_zero_windows_returns_empty() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::SplitHorizontal, 0, screen());
+fn canonical_zero_windows_returns_empty() {
+    let rects = canonical_rects(TilingLayout::Columns, 0);
     assert!(rects.is_empty());
 }
 
-// ========== SplitHorizontal ==========
+// ---- Columns (master left / stack right; ≈ shell SplitHorizontal) -------
 
 #[test]
-fn split_h_single_window_fills_usable() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::SplitHorizontal, 1, screen());
+fn columns_single_window_fills_work_area() {
+    // smart_gaps collapses all gaps for a single window → full screen.
+    let rects = canonical_rects(TilingLayout::Columns, 1);
     assert_eq!(rects.len(), 1);
-    // usable = (8, 8, 1904, 1064)
-    assert!(approx_eq(rects[0].x, 8.0));
-    assert!(approx_eq(rects[0].y, 8.0));
-    assert!(approx_eq(rects[0].width, 1904.0));
-    assert!(approx_eq(rects[0].height, 1064.0));
+    assert!(approx_eq(rects[0].x, 0.0));
+    assert!(approx_eq(rects[0].y, 0.0));
+    assert!(approx_eq(rects[0].width, 1920.0));
+    assert!(approx_eq(rects[0].height, 1080.0));
 }
 
 #[test]
-fn split_h_two_windows_master_and_stack() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::SplitHorizontal, 2, screen());
+fn columns_two_windows_master_and_stack() {
+    let rects = canonical_rects(TilingLayout::Columns, 2);
     assert_eq!(rects.len(), 2);
-    // Master width = usable_w * 0.55 - gap/2 = 1904 * 0.55 - 4 = 1043.2
+    // usable = (8,8,1904,1064); master_w = 1904*0.55 - 4 = 1043.2.
+    assert!(approx_eq(rects[0].x, 8.0));
     assert!(approx_eq(rects[0].width, 1043.2));
-    // Stack = usable_w - master_w - gap
+    assert!(approx_eq(rects[0].height, 1064.0));
+    // stack = usable_w - master_w - gap.
     let expected_stack_w = 1904.0 - 1043.2 - 8.0;
     assert!(approx_eq(rects[1].width, expected_stack_w));
     assert!(approx_eq(rects[1].height, 1064.0));
+    // No horizontal overlap between master and stack.
+    assert!(rects[0].x + rects[0].width <= rects[1].x + 0.1);
 }
 
 #[test]
-fn split_h_three_windows_stack_divides_height() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::SplitHorizontal, 3, screen());
+fn columns_three_windows_stack_divides_height() {
+    let rects = canonical_rects(TilingLayout::Columns, 3);
     assert_eq!(rects.len(), 3);
-    // Two stack windows share the height with a gap between them
+    // master (idx 0) spans full usable height; the two stack windows split it.
     let stack_h = (1064.0 - 8.0) / 2.0;
     assert!(approx_eq(rects[1].height, stack_h));
     assert!(approx_eq(rects[2].height, stack_h));
-    // Second stack window starts after first + gap
+    // Second stack window starts after the first + gap.
     assert!(approx_eq(rects[2].y, rects[1].y + stack_h + 8.0));
 }
 
-// ========== SplitVertical ==========
+// ---- Rows (master top / stack bottom; ≈ shell SplitVertical) ------------
 
 #[test]
-fn split_v_single_window_fills_usable() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::SplitVertical, 1, screen());
+fn rows_single_window_fills_work_area() {
+    let rects = canonical_rects(TilingLayout::Rows, 1);
     assert_eq!(rects.len(), 1);
-    assert!(approx_eq(rects[0].width, 1904.0));
-    assert!(approx_eq(rects[0].height, 1064.0));
+    assert!(approx_eq(rects[0].width, 1920.0));
+    assert!(approx_eq(rects[0].height, 1080.0));
 }
 
 #[test]
-fn split_v_two_windows_master_top_stack_bottom() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::SplitVertical, 2, screen());
+fn rows_two_windows_master_top_stack_bottom() {
+    let rects = canonical_rects(TilingLayout::Rows, 2);
     assert_eq!(rects.len(), 2);
-    // Master height = usable_h * 0.55 - gap/2 = 1064 * 0.55 - 4 = 581.2
+    // master_h = usable_h * 0.55 - gap/2 = 1064 * 0.55 - 4 = 581.2.
     assert!(approx_eq(rects[0].height, 581.2));
     assert!(approx_eq(rects[0].width, 1904.0));
-    // Stack starts below master + gap
+    // Stack starts below master + gap (usable.y=8).
     assert!(approx_eq(rects[1].y, 8.0 + 581.2 + 8.0));
 }
 
-// ========== Quadrant ==========
+// ---- Grid (equal cells; covers the shell Quadrant / CustomGrid cases) ---
 
 #[test]
-fn quadrant_four_windows_fills_quadrants() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::Quadrant, 4, screen());
+fn grid_four_windows_fills_2x2() {
+    // n=4 → cols = ceil(sqrt(4)) = 2, rows = 2.
+    let rects = canonical_rects(TilingLayout::Grid, 4);
     assert_eq!(rects.len(), 4);
-    let half_w = (1904.0 - 8.0) / 2.0;
-    let half_h = (1064.0 - 8.0) / 2.0;
-    // Top-left
+    let cell_w = (1904.0 - 8.0) / 2.0; // minus one inter-column gap
+    let cell_h = (1064.0 - 8.0) / 2.0; // minus one inter-row gap
+    // Top-left cell.
     assert!(approx_eq(rects[0].x, 8.0));
     assert!(approx_eq(rects[0].y, 8.0));
-    assert!(approx_eq(rects[0].width, half_w));
-    assert!(approx_eq(rects[0].height, half_h));
-    // Top-right
-    assert!(approx_eq(rects[1].x, 8.0 + half_w + 8.0));
+    assert!(approx_eq(rects[0].width, cell_w));
+    assert!(approx_eq(rects[0].height, cell_h));
+    // Top-right cell.
+    assert!(approx_eq(rects[1].x, 8.0 + cell_w + 8.0));
     assert!(approx_eq(rects[1].y, 8.0));
 }
 
 #[test]
-fn quadrant_two_windows_only_fills_two() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::Quadrant, 2, screen());
+fn grid_two_windows_produces_two_rects() {
+    let rects = canonical_rects(TilingLayout::Grid, 2);
     assert_eq!(rects.len(), 2);
+    // No overlap.
+    assert!(
+        rects[0].x + rects[0].width <= rects[1].x + 0.1
+            || rects[0].y + rects[0].height <= rects[1].y + 0.1
+    );
 }
 
 #[test]
-fn quadrant_caps_at_four() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::Quadrant, 6, screen());
-    assert_eq!(rects.len(), 4);
+fn grid_produces_one_rect_per_window() {
+    // Grid never caps: every window gets a cell (no fixed-slot ceiling).
+    let rects = canonical_rects(TilingLayout::Grid, 6);
+    assert_eq!(rects.len(), 6);
+    for r in &rects {
+        assert!(r.width > 0.0 && r.height > 0.0);
+    }
 }
 
-// ========== ThreeColumn ==========
+#[test]
+fn grid_nine_windows_fills_3x3() {
+    // n=9 → cols = ceil(sqrt(9)) = 3, rows = 3. Equal-sized cells.
+    let rects = canonical_rects(TilingLayout::Grid, 9);
+    assert_eq!(rects.len(), 9);
+    let cell_w = (1904.0 - 2.0 * 8.0) / 3.0; // 2 inter-column gaps
+    let cell_h = (1064.0 - 2.0 * 8.0) / 3.0; // 2 inter-row gaps
+    assert!(approx_eq(rects[0].x, 8.0));
+    assert!(approx_eq(rects[0].y, 8.0));
+    assert!(approx_eq(rects[0].width, cell_w));
+    assert!(approx_eq(rects[0].height, cell_h));
+}
 
 #[test]
-fn three_column_single_window_fills_usable() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::ThreeColumn, 1, screen());
+fn grid_cells_do_not_overlap() {
+    let rects = canonical_rects(TilingLayout::Grid, 4);
+    for i in 0..rects.len() {
+        for j in (i + 1)..rects.len() {
+            let (a, b) = (&rects[i], &rects[j]);
+            let overlap_x = a.x < b.x + b.width && a.x + a.width > b.x;
+            let overlap_y = a.y < b.y + b.height && a.y + a.height > b.y;
+            assert!(!(overlap_x && overlap_y), "grid cells {i}/{j} overlap");
+        }
+    }
+}
+
+// ---- ThreeColumn (left stack | center master | right stack) -------------
+
+#[test]
+fn three_column_single_window_fills_work_area() {
+    let rects = canonical_rects(TilingLayout::ThreeColumn, 1);
     assert_eq!(rects.len(), 1);
-    assert!(approx_eq(rects[0].width, 1904.0));
+    assert!(approx_eq(rects[0].width, 1920.0));
 }
 
 #[test]
 fn three_column_three_windows_center_left_right() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::ThreeColumn, 3, screen());
+    let rects = canonical_rects(TilingLayout::ThreeColumn, 3);
     assert_eq!(rects.len(), 3);
-    // Center column takes 60% of usable width (1 - 2*0.2)
-    let side_w = 1904.0 * 0.2;
-    let center_w = 1904.0 - 2.0 * side_w - 2.0 * 8.0;
+    // Center column (idx 0) = master_ratio of usable width.
+    let center_w = 1904.0 * 0.55;
+    let side_w = (1904.0 - center_w - 2.0 * 8.0) / 2.0;
     assert!(approx_eq(rects[0].width, center_w));
-    // Second window goes to left column
+    // Index 1 → left stack, index 2 → right stack.
     assert!(approx_eq(rects[1].x, 8.0));
     assert!(approx_eq(rects[1].width, side_w));
-    // Third window goes to right column
-    assert!(approx_eq(rects[2].x, 8.0 + side_w + 8.0 + center_w + 8.0));
+    // Right column sits to the right of center.
+    assert!(rects[2].x > rects[0].x);
 }
 
-// ========== Spiral ==========
+// ---- Spiral (fibonacci; alternating split direction) --------------------
 
 #[test]
-fn spiral_single_window_fills_usable() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::Spiral, 1, screen());
+fn spiral_single_window_fills_work_area() {
+    let rects = canonical_rects(TilingLayout::Spiral, 1);
     assert_eq!(rects.len(), 1);
-    assert!(approx_eq(rects[0].width, 1904.0));
-    assert!(approx_eq(rects[0].height, 1064.0));
+    assert!(approx_eq(rects[0].width, 1920.0));
+    assert!(approx_eq(rects[0].height, 1080.0));
 }
 
 #[test]
 fn spiral_two_windows_alternating_split() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::Spiral, 2, screen());
+    let rects = canonical_rects(TilingLayout::Spiral, 2);
     assert_eq!(rects.len(), 2);
-    // First split is horizontal: left = master_ratio * usable_w - gap/2
+    // First split is horizontal: left = master_ratio * usable_w - gap/2.
     let master_w = 1904.0 * 0.55 - 4.0;
     assert!(approx_eq(rects[0].width, master_w));
     assert!(approx_eq(rects[0].height, 1064.0));
-    // Second window takes the rest
     let rest_w = 1904.0 - master_w - 8.0;
     assert!(approx_eq(rects[1].width, rest_w));
 }
 
 #[test]
 fn spiral_three_windows_fibonacci() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::Spiral, 3, screen());
+    let rects = canonical_rects(TilingLayout::Spiral, 3);
     assert_eq!(rects.len(), 3);
-    // Third window is the last, so it occupies the remaining area
-    // Second split is vertical (i=1 is odd): top portion
+    // Second split is vertical (i=1 is odd): rect 1 is shorter than full.
     assert!(rects[1].height < 1064.0);
 }
 
-// ========== Stacking ==========
+// ---- Monocle (all windows full area; ≈ shell Stacking) ------------------
 
 #[test]
-fn stacking_all_windows_same_rect() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::Stacking, 5, screen());
+fn monocle_all_windows_same_full_rect() {
+    let rects = canonical_rects(TilingLayout::Monocle, 5);
     assert_eq!(rects.len(), 5);
+    // n>1 → smart_gaps inactive → usable inset by the 8px outer gap.
     for r in &rects {
         assert!(approx_eq(r.x, 8.0));
         assert!(approx_eq(r.y, 8.0));
@@ -226,143 +285,115 @@ fn stacking_all_windows_same_rect() {
     }
 }
 
-// ========== CustomGrid ==========
+// ===========================================================================
+// CANONICAL snap detection + preview geometry (single-sourced)
+// ===========================================================================
+//
+// `liquide_tiling::SnapZones::detect_zone` / `zone_preview` are the single
+// source for snap. Preview geometry differs from the retired shell helper: no
+// outer-gap inset, and `Top`/`Center` map to the full screen (maximize).
 
-#[test]
-fn custom_grid_default_2x2_four_windows() {
-    let engine = default_engine();
-    let rects = engine.arrange(TilingLayoutKind::CustomGrid, 4, screen());
-    assert_eq!(rects.len(), 4);
-    // All cells should have equal size
-    let avail_w = 1904.0 - 8.0; // minus one gap between 2 cols
-    let avail_h = 1064.0 - 8.0; // minus one gap between 2 rows
-    let cell_w = avail_w * 0.5;
-    let cell_h = avail_h * 0.5;
-    assert!(approx_eq(rects[0].width, cell_w));
-    assert!(approx_eq(rects[0].height, cell_h));
+fn detect(x: f32, y: f32) -> SnapTarget {
+    // 32px default snap threshold (matches TilingConfig::default).
+    SnapZones::detect_zone((x, y), screen(), 32.0)
 }
-
-#[test]
-fn custom_grid_caps_at_total_slots() {
-    let engine = default_engine();
-    // Default 2x2 grid = 4 slots, requesting 10 windows
-    let rects = engine.arrange(TilingLayoutKind::CustomGrid, 10, screen());
-    assert_eq!(rects.len(), 4);
-}
-
-#[test]
-fn custom_grid_3x3_config() {
-    let mut engine = default_engine();
-    engine.set_custom_grid(CustomGridConfig {
-        rows: 3,
-        columns: 3,
-        col_ratios: vec![0.25, 0.5, 0.25],
-        row_ratios: vec![0.33, 0.34, 0.33],
-    });
-    let rects = engine.arrange(TilingLayoutKind::CustomGrid, 9, screen());
-    assert_eq!(rects.len(), 9);
-    // First cell is top-left with 25% width, 33% height
-    let avail_w = 1904.0 - 2.0 * 8.0; // 2 gaps for 3 cols
-    let avail_h = 1064.0 - 2.0 * 8.0; // 2 gaps for 3 rows
-    assert!(approx_eq(rects[0].width, avail_w * 0.25));
-    assert!(approx_eq(rects[0].height, avail_h * 0.33));
-}
-
-// ========== Snap zone detection ==========
 
 #[test]
 fn detect_snap_zone_top_left_corner() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(5.0, 5.0, screen());
-    assert_eq!(zone, Some(SnapZone::TopLeft));
+    assert_eq!(detect(5.0, 5.0), SnapTarget::TopLeft);
 }
 
 #[test]
 fn detect_snap_zone_top_right_corner() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(1915.0, 5.0, screen());
-    assert_eq!(zone, Some(SnapZone::TopRight));
+    assert_eq!(detect(1915.0, 5.0), SnapTarget::TopRight);
 }
 
 #[test]
 fn detect_snap_zone_bottom_left() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(5.0, 1075.0, screen());
-    assert_eq!(zone, Some(SnapZone::BottomLeft));
+    assert_eq!(detect(5.0, 1075.0), SnapTarget::BottomLeft);
 }
 
 #[test]
 fn detect_snap_zone_bottom_right() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(1915.0, 1075.0, screen());
-    assert_eq!(zone, Some(SnapZone::BottomRight));
+    assert_eq!(detect(1915.0, 1075.0), SnapTarget::BottomRight);
 }
 
 #[test]
 fn detect_snap_zone_left_edge() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(10.0, 540.0, screen());
-    assert_eq!(zone, Some(SnapZone::Left));
+    assert_eq!(detect(10.0, 540.0), SnapTarget::Left);
 }
 
 #[test]
 fn detect_snap_zone_right_edge() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(1910.0, 540.0, screen());
-    assert_eq!(zone, Some(SnapZone::Right));
+    assert_eq!(detect(1910.0, 540.0), SnapTarget::Right);
 }
 
 #[test]
 fn detect_snap_zone_top_edge() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(960.0, 10.0, screen());
-    assert_eq!(zone, Some(SnapZone::Top));
+    assert_eq!(detect(960.0, 10.0), SnapTarget::Top);
 }
 
 #[test]
 fn detect_snap_zone_bottom_edge() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(960.0, 1070.0, screen());
-    assert_eq!(zone, Some(SnapZone::Bottom));
+    assert_eq!(detect(960.0, 1070.0), SnapTarget::Bottom);
 }
 
 #[test]
 fn detect_snap_zone_center_is_none() {
-    let engine = default_engine();
-    let zone = engine.detect_snap_zone(960.0, 540.0, screen());
-    assert_eq!(zone, None);
+    assert_eq!(detect(960.0, 540.0), SnapTarget::None);
 }
 
-// ========== Snap zone rectangles ==========
+// ---- preview rectangles -------------------------------------------------
 
 #[test]
-fn snap_zone_rect_left_half() {
-    let engine = default_engine();
-    let r = engine.snap_zone_rect(SnapZone::Left, screen());
-    assert!(approx_eq(r.x, 8.0));
-    assert!(approx_eq(r.y, 8.0));
-    assert!(approx_eq(r.width, 952.0));
-    assert!(approx_eq(r.height, 1064.0));
+fn snap_preview_left_half() {
+    let r = SnapZones::zone_preview(SnapTarget::Left, screen());
+    assert!(approx_eq(r.x, 0.0));
+    assert!(approx_eq(r.y, 0.0));
+    assert!(approx_eq(r.width, 960.0));
+    assert!(approx_eq(r.height, 1080.0));
 }
 
 #[test]
-fn snap_zone_rect_center_is_full_usable() {
-    let engine = default_engine();
-    let r = engine.snap_zone_rect(SnapZone::Center, screen());
-    assert!(approx_eq(r.x, 8.0));
-    assert!(approx_eq(r.y, 8.0));
-    assert!(approx_eq(r.width, 1904.0));
-    assert!(approx_eq(r.height, 1064.0));
+fn snap_preview_center_is_maximize() {
+    // Canonical Center/Top = full-screen maximize (no outer-gap inset).
+    let r = SnapZones::zone_preview(SnapTarget::Center, screen());
+    assert!(approx_eq(r.x, 0.0));
+    assert!(approx_eq(r.y, 0.0));
+    assert!(approx_eq(r.width, 1920.0));
+    assert!(approx_eq(r.height, 1080.0));
 }
 
 #[test]
-fn snap_zone_rect_top_right_quarter() {
-    let engine = default_engine();
-    let r = engine.snap_zone_rect(SnapZone::TopRight, screen());
-    assert!(approx_eq(r.x, 8.0 + 952.0));
-    assert!(approx_eq(r.y, 8.0));
-    assert!(approx_eq(r.width, 952.0));
-    assert!(approx_eq(r.height, 532.0));
+fn snap_preview_top_right_quarter() {
+    let r = SnapZones::zone_preview(SnapTarget::TopRight, screen());
+    assert!(approx_eq(r.x, 960.0));
+    assert!(approx_eq(r.y, 0.0));
+    assert!(approx_eq(r.width, 960.0));
+    assert!(approx_eq(r.height, 540.0));
+}
+
+#[test]
+fn snap_bridge_zone_to_target_round_trip() {
+    // The shell `SnapZone` ↔ canonical `SnapTarget` bridge (t52-e3) is the
+    // single conversion surface: every active zone maps to its target and back.
+    for zone in [
+        SnapZone::Left,
+        SnapZone::Right,
+        SnapZone::Top,
+        SnapZone::Bottom,
+        SnapZone::TopLeft,
+        SnapZone::TopRight,
+        SnapZone::BottomLeft,
+        SnapZone::BottomRight,
+        SnapZone::Center,
+    ] {
+        let target: SnapTarget = zone.into();
+        assert!(target.is_active());
+        assert_eq!(SnapZone::from_target(target), Some(zone));
+    }
+    // The inactive canonical target maps back to "no zone".
+    assert_eq!(SnapZone::from_target(SnapTarget::None), None);
 }
 
 // ========== Per-workspace config ==========

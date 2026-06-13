@@ -17,6 +17,13 @@ pub struct StandaloneConfig {
     pub enable_xwayland: bool,
     /// Enable Wayland server.
     pub enable_wayland: bool,
+    /// Initial surface width override in pixels (None = derive from output /
+    /// fallback). Primarily sets the windowed/dev-mode host window size, but
+    /// also overrides the fullscreen surface size when set.
+    pub width: Option<u32>,
+    /// Initial surface height override in pixels (None = derive from output /
+    /// fallback). See [`StandaloneConfig::width`].
+    pub height: Option<u32>,
 }
 
 impl Default for StandaloneConfig {
@@ -29,6 +36,8 @@ impl Default for StandaloneConfig {
             wayland_socket: "wayland-0".to_string(),
             enable_xwayland: true,
             enable_wayland: true,
+            width: None,
+            height: None,
         }
     }
 }

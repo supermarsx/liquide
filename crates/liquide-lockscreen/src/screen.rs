@@ -182,11 +182,10 @@ impl LockScreenState {
                     return self.pending_events.clone();
                 }
 
-                // Check grace period
-                if self.locked_at.elapsed() < Duration::from_secs(self.config.grace_period_secs) {
-                    self.pending_events.push(LockScreenEvent::Unlock);
-                    return self.pending_events.clone();
-                }
+                // SECURITY: a key press must NEVER unlock the screen without a
+                // successful authentication. The grace period only controls how
+                // quickly the password prompt is revealed (handled by the
+                // renderer); it must not bypass auth. See t49-e8-F5.
 
                 match self.phase {
                     ScreenPhase::Clock => {
@@ -241,10 +240,11 @@ impl LockScreenState {
                     }
                     (ScreenPhase::PasswordEntry, LockNavKey::Tab)
                     | (ScreenPhase::PasswordEntry, LockNavKey::BackTab) => {
-                        // Cycle focus to user-switch affordance.
-                        if self.config.allow_user_switch {
-                            self.pending_events.push(LockScreenEvent::SwitchUser);
-                        }
+                        // Tab cycles focus only; it must NOT trigger a user
+                        // switch. Switching users requires the explicit
+                        // `LockScreenAction::SwitchUser` control. The renderer is
+                        // responsible for visible focus traversal. See
+                        // t49-e5-F41.
                     }
                     _ => {}
                 }
@@ -292,9 +292,17 @@ impl LockScreenState {
                                 ));
                             }
                         }
-                        AuthResult::Locked(_ms) => {
-                            self.phase = ScreenPhase::AuthFailed;
-                            self.error_message = Some("Account is locked.".into());
+                        AuthResult::Locked(ms) => {
+                            // Honor the backend-reported lockout duration so the
+                            // user cannot keep hammering a locked account (each
+                            // attempt re-invokes the backend). See t49-e5-F21.
+                            self.phase = ScreenPhase::LockedOut;
+                            self.lockout_until = Some(Instant::now() + Duration::from_millis(ms));
+                            let remaining_secs = ms.div_ceil(1000);
+                            self.error_message = Some(format!(
+                                "Account is locked. Try again in {} seconds.",
+                                remaining_secs
+                            ));
                         }
                         AuthResult::RequiresMfa => {
                             self.phase = ScreenPhase::AuthFailed;
@@ -726,6 +734,105 @@ mod tests {
         assert_eq!(layout.phase, ScreenPhase::Clock);
         assert_eq!(layout.display_name, "Test User");
         assert!(layout.show_clock);
+    }
+
+    // -- Regression tests for t50-e23 security/correctness fixes --
+
+    /// t49-e8-F5: a key press during the grace window must NOT unlock the
+    /// screen without authentication. With the secure default (grace = 0) and
+    /// even with a long grace window, a keypress only moves to password entry.
+    #[test]
+    fn grace_period_does_not_unlock_without_auth() {
+        // Default config now has grace_period_secs == 0 (secure default).
+        let cfg = LockScreenConfig::default();
+        assert_eq!(cfg.grace_period_secs, 0, "secure default must be 0");
+        let mut state = LockScreenState::new(cfg, "testuser".into(), "Test User".into(), None);
+        let auth = NullAuth::new();
+
+        let events = state.handle_action(LockScreenAction::KeyPress('a'), &auth);
+        assert!(
+            !events.iter().any(|e| matches!(e, LockScreenEvent::Unlock)),
+            "keypress must never emit Unlock without auth"
+        );
+        assert_ne!(state.phase, ScreenPhase::Unlocking);
+        assert_eq!(state.phase, ScreenPhase::PasswordEntry);
+    }
+
+    /// t49-e8-F5: even an explicitly configured non-zero grace window must not
+    /// bypass auth — a keypress immediately after locking still requires the
+    /// password and never emits Unlock.
+    #[test]
+    fn nonzero_grace_period_still_requires_auth() {
+        let mut cfg = LockScreenConfig::default();
+        cfg.grace_period_secs = 3600; // long grace window
+        let mut state = LockScreenState::new(cfg, "testuser".into(), "Test User".into(), None);
+        let auth = NullAuth::new();
+
+        // Freshly locked, then press a key within the grace window.
+        state.handle_action(LockScreenAction::Lock, &auth);
+        let events = state.handle_action(LockScreenAction::KeyPress('a'), &auth);
+        assert!(
+            !events.iter().any(|e| matches!(e, LockScreenEvent::Unlock)),
+            "grace window must never auto-unlock"
+        );
+        assert_eq!(state.phase, ScreenPhase::PasswordEntry);
+    }
+
+    /// t49-e5-F21: a backend `Locked(ms)` result must engage a UI lockout for
+    /// the reported duration, not be silently discarded.
+    #[test]
+    fn backend_locked_result_engages_lockout() {
+        struct LockedAuth;
+        impl AuthBackend for LockedAuth {
+            fn authenticate(&self, _u: &str, _c: &str) -> AuthResult {
+                AuthResult::Locked(30_000)
+            }
+        }
+        let mut state = make_state();
+        let auth = LockedAuth;
+        state.handle_action(LockScreenAction::KeyPress('x'), &auth);
+        state.handle_action(LockScreenAction::Submit, &auth);
+
+        assert_eq!(state.phase, ScreenPhase::LockedOut);
+        assert!(state.lockout_until.is_some());
+        assert!(
+            state.is_locked_out(),
+            "lockout must be active after Locked(ms)"
+        );
+
+        // A further keypress while locked out must be ignored.
+        state.handle_action(LockScreenAction::KeyPress('y'), &auth);
+        assert_eq!(state.phase, ScreenPhase::LockedOut);
+    }
+
+    /// t49-e5-F41: pressing Tab during password entry must not emit SwitchUser,
+    /// even when user switching is allowed.
+    #[test]
+    fn tab_does_not_switch_user() {
+        let mut state = make_state();
+        state.config.allow_user_switch = true;
+        let auth = NullAuth::new();
+
+        // Move to password entry.
+        state.handle_action(LockScreenAction::KeyPress('a'), &auth);
+        assert_eq!(state.phase, ScreenPhase::PasswordEntry);
+
+        let tab_events = state.handle_action(LockScreenAction::NavKey(LockNavKey::Tab), &auth);
+        assert!(
+            !tab_events
+                .iter()
+                .any(|e| matches!(e, LockScreenEvent::SwitchUser)),
+            "Tab must not emit SwitchUser"
+        );
+
+        let backtab_events =
+            state.handle_action(LockScreenAction::NavKey(LockNavKey::BackTab), &auth);
+        assert!(
+            !backtab_events
+                .iter()
+                .any(|e| matches!(e, LockScreenEvent::SwitchUser)),
+            "Shift+Tab must not emit SwitchUser"
+        );
     }
 
     #[test]

@@ -596,6 +596,40 @@ impl Win32PresentFeedbackState {
 // Win32 window host
 // ---------------------------------------------------------------------------
 
+/// Convert a desired CLIENT-area size into the OUTER window size that
+/// `CreateWindowExW` needs so that the resulting client area matches the
+/// request, accounting for the window's title bar / borders.
+///
+/// Uses `AdjustWindowRectEx`; on failure (it should not fail for valid styles)
+/// it falls back to the requested size unchanged. Inputs are clamped to be at
+/// least 1×1. Returns `(window_width, window_height)`.
+fn client_size_to_window_size(
+    client_width: i32,
+    client_height: i32,
+    style: ffi::DWORD,
+    ex_style: ffi::DWORD,
+) -> (i32, i32) {
+    let cw = client_width.max(1);
+    let ch = client_height.max(1);
+    let mut rect = ffi::RECT {
+        left: 0,
+        top: 0,
+        right: cw,
+        bottom: ch,
+    };
+    // SAFETY: AdjustWindowRectEx only reads/writes the provided RECT and takes
+    // the style flags by value. `rect` is a valid stack-allocated RECT.
+    let ok = unsafe { ffi::AdjustWindowRectEx(&mut rect, style, ffi::FALSE, ex_style) };
+    if ok == 0 {
+        // Should not happen for valid styles; keep the requested size so the
+        // window is at least created.
+        return (cw, ch);
+    }
+    let w = (rect.right - rect.left).max(1);
+    let h = (rect.bottom - rect.top).max(1);
+    (w, h)
+}
+
 /// Window host implementation backed by `CreateWindowExW`.
 struct Win32WindowHost {
     /// Map from our `NativeWindowHandle` to the Win32 HWND and metadata.
@@ -651,15 +685,24 @@ impl NativeWindowHost for Win32WindowHost {
             } else {
                 params.geometry.y as i32
             };
-            let w = if params.geometry.width > 0.0 {
-                params.geometry.width as i32
+            // The geometry width/height the caller requests is the desired
+            // CLIENT area (the surface the compositor renders into). Win32's
+            // CreateWindowExW takes the OUTER window size, so for a normal
+            // overlapped window the title bar + borders would eat into the
+            // client area, leaving it smaller than requested. DXGI would then
+            // stretch the rendered frame into the smaller client rect, which
+            // shimmers on every present (t55 flicker fix, H2). Expand the
+            // requested client size to the matching outer window size via
+            // AdjustWindowRectEx so the client area == the requested size.
+            let (w, h) = if params.geometry.width > 0.0 && params.geometry.height > 0.0 {
+                client_size_to_window_size(
+                    params.geometry.width as i32,
+                    params.geometry.height as i32,
+                    style,
+                    ex_style,
+                )
             } else {
-                ffi::CW_USEDEFAULT
-            };
-            let h = if params.geometry.height > 0.0 {
-                params.geometry.height as i32
-            } else {
-                ffi::CW_USEDEFAULT
+                (ffi::CW_USEDEFAULT, ffi::CW_USEDEFAULT)
             };
             (x, y, w, h)
         };
@@ -1135,10 +1178,18 @@ impl Win32Platform {
         // fully initialised above.
         let class_atom = unsafe { ffi::RegisterClassExW(&wc) };
         if class_atom == 0 {
-            return Err(PlatformError::Other(format!(
-                "RegisterClassExW failed (error {})",
-                unsafe { ffi::GetLastError() }
-            )));
+            // ERROR_CLASS_ALREADY_EXISTS (1410) means a previous Win32Platform
+            // in this process already registered the (process-global) class.
+            // That registration is still valid for CreateWindowExW, so tolerate
+            // it rather than failing — this lets a second backend (and the unit
+            // tests) construct without error.
+            const ERROR_CLASS_ALREADY_EXISTS: ffi::DWORD = 1410;
+            let err = unsafe { ffi::GetLastError() };
+            if err != ERROR_CLASS_ALREADY_EXISTS {
+                return Err(PlatformError::Other(format!(
+                    "RegisterClassExW failed (error {err})"
+                )));
+            }
         }
 
         // Create a hidden message-only window for tray icon callbacks.
@@ -1220,7 +1271,15 @@ impl Win32Platform {
             hinstance,
             class_name_wide,
             msg_hwnd,
-            present_mode: dxgi::DxgiPresentMode::Immediate,
+            // Default to vsync (RefreshSync) for the windowed/dev CPU present
+            // path. The CPU renderer uploads a full BGRA frame each present via
+            // UpdateSubresource; presenting that with no vsync + ALLOW_TEARING
+            // races DWM composition and reads as flicker (t55 flicker fix, H1).
+            // RefreshSync presents with sync_interval = 1 and never combines
+            // with ALLOW_TEARING, so DWM composites whole frames. Callers that
+            // genuinely need no-vsync immediate presentation (e.g. specialized
+            // non-windowed paths) can opt in via `new_with_present_mode`.
+            present_mode: dxgi::DxgiPresentMode::RefreshSync,
             present_feedback: Win32PresentFeedbackState::default(),
         })
     }
@@ -1451,6 +1510,31 @@ impl PlatformBackend for Win32Platform {
         }
 
         // GDI fallback: SetDIBitsToDevice.
+        //
+        // SetDIBitsToDevice expects the source DIB rows to be packed at the
+        // bitmap's natural stride (width * 4 for 32bpp, which is already
+        // DWORD-aligned). It has no way to express a custom source stride, so a
+        // padded framebuffer (stride > width * 4) would be read incorrectly and
+        // produce a sheared/garbage image. Guard that here rather than present
+        // corruption (t55 flicker fix, H3 hardening).
+        let packed_stride = width.saturating_mul(4);
+        if stride != packed_stride {
+            return Err(PlatformError::Presentation(format!(
+                "GDI fallback requires packed BGRA rows (stride {stride} != {packed_stride} for width {width})"
+            )));
+        }
+        // Validate the buffer is large enough for the full frame before handing
+        // a raw pointer to GDI.
+        let required = (packed_stride as usize).saturating_mul(height as usize);
+        if pixels.len() < required {
+            return Err(PlatformError::Presentation(format!(
+                "GDI fallback pixel buffer too small: {} < {} for {}x{}",
+                pixels.len(),
+                required,
+                width,
+                height
+            )));
+        }
         let mut bmi = ffi::BITMAPINFO {
             bmiHeader: ffi::BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<ffi::BITMAPINFOHEADER>() as ffi::DWORD,
@@ -1478,7 +1562,7 @@ impl PlatformBackend for Win32Platform {
                 return Err(PlatformError::Presentation("GetDC returned null".into()));
             }
 
-            ffi::SetDIBitsToDevice(
+            let scan_lines = ffi::SetDIBitsToDevice(
                 hdc,
                 0,      // xDest
                 0,      // yDest
@@ -1494,6 +1578,12 @@ impl PlatformBackend for Win32Platform {
             );
 
             ffi::ReleaseDC(hwnd, hdc);
+
+            if scan_lines == 0 {
+                return Err(PlatformError::Presentation(
+                    "SetDIBitsToDevice set 0 scan lines (GDI present failed)".into(),
+                ));
+            }
         }
 
         self.present_feedback
@@ -1639,6 +1729,57 @@ mod tests {
         assert_eq!(refresh_rate_hz_from_devmode_frequency(1), None);
         assert_eq!(refresh_rate_hz_from_devmode_frequency(60), Some(60));
         assert_eq!(refresh_rate_hz_from_devmode_frequency(144), Some(144));
+    }
+
+    /// The default Win32 present mode must be vsync (RefreshSync), so the
+    /// windowed/dev CPU present path does not tear/flicker (t55 flicker fix,
+    /// H1). This guards the wiring decision point without rendering.
+    #[test]
+    fn default_present_mode_is_refresh_sync() {
+        let platform = Win32Platform::new().expect("create Win32 platform");
+        assert_eq!(platform.present_mode(), dxgi::DxgiPresentMode::RefreshSync);
+    }
+
+    /// An explicit present mode is still honored (e.g. Immediate for
+    /// non-windowed paths), so the default change does not lock out callers.
+    #[test]
+    fn explicit_present_mode_overrides_default() {
+        let platform = Win32Platform::new_with_present_mode(dxgi::DxgiPresentMode::Immediate)
+            .expect("create Win32 platform");
+        assert_eq!(platform.present_mode(), dxgi::DxgiPresentMode::Immediate);
+    }
+
+    /// For a normal overlapped window, AdjustWindowRectEx must grow the
+    /// requested client size to a strictly larger outer window size (title bar
+    /// + borders), so the client area ends up == the requested size and DXGI
+    /// does not stretch the frame (t55 flicker fix, H2).
+    #[test]
+    fn client_sizing_grows_overlapped_window() {
+        let (w, h) =
+            client_size_to_window_size(1270, 768, ffi::WS_OVERLAPPEDWINDOW, ffi::WS_EX_APPWINDOW);
+        assert!(
+            w >= 1270 && h >= 768,
+            "outer window must be at least the requested client size, got {w}x{h}"
+        );
+        assert!(
+            w > 1270 || h > 768,
+            "overlapped window has borders/title bar, so outer must exceed client; got {w}x{h}"
+        );
+    }
+
+    /// A borderless popup ("desktop") has no non-client area, so the outer
+    /// window size equals the requested client size.
+    #[test]
+    fn client_sizing_borderless_popup_is_identity() {
+        let (w, h) = client_size_to_window_size(800, 600, ffi::WS_POPUP, ffi::WS_EX_APPWINDOW);
+        assert_eq!((w, h), (800, 600));
+    }
+
+    /// Degenerate (zero/negative) client sizes are clamped to at least 1×1.
+    #[test]
+    fn client_sizing_clamps_degenerate_sizes() {
+        let (w, h) = client_size_to_window_size(0, -5, ffi::WS_POPUP, ffi::WS_EX_APPWINDOW);
+        assert!(w >= 1 && h >= 1, "must clamp to >= 1x1, got {w}x{h}");
     }
 
     #[test]

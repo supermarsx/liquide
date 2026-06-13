@@ -1,11 +1,10 @@
-#![allow(dead_code)]
-
 //! Shared CSS conformance fixture catalog.
 //!
 //! This module keeps the post-t13 CSS regression surface in one place so
 //! crate-local tests can import the same fixture list without duplicating the
 //! coverage matrix in ad hoc assertions.
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CssCoverageArea {
     ParserValues,
@@ -34,6 +33,7 @@ pub struct CssCaseMeta {
     pub kind: CssCaseKind,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeCssParserScenario {
     CustomPropertyRoundTrip,
@@ -42,6 +42,7 @@ pub enum ThemeCssParserScenario {
     ShorthandTokensPreserved,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeCssParserFixture {
     pub meta: CssCaseMeta,
@@ -49,6 +50,7 @@ pub struct ThemeCssParserFixture {
     pub scenario: ThemeCssParserScenario,
 }
 
+#[allow(dead_code)]
 pub const THEME_CSS_PARSER_FIXTURES: &[ThemeCssParserFixture] = &[
     ThemeCssParserFixture {
         meta: CssCaseMeta {
@@ -102,12 +104,14 @@ pub const THEME_CSS_PARSER_FIXTURES: &[ThemeCssParserFixture] = &[
     },
 ];
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeCssStylesheetScenario {
     InvalidSupportsAndMediaFailClosed,
     ImportQualifiersRespected,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThemeCssStylesheetFixture {
     pub meta: CssCaseMeta,
@@ -115,6 +119,7 @@ pub struct ThemeCssStylesheetFixture {
     pub scenario: ThemeCssStylesheetScenario,
 }
 
+#[allow(dead_code)]
 pub const THEME_CSS_STYLESHEET_FIXTURES: &[ThemeCssStylesheetFixture] = &[
     ThemeCssStylesheetFixture {
         meta: CssCaseMeta {
@@ -148,6 +153,7 @@ pub const THEME_CSS_STYLESHEET_FIXTURES: &[ThemeCssStylesheetFixture] = &[
     },
 ];
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StyleEngineScenario {
     RelativeHasChildSelector,
@@ -160,6 +166,7 @@ pub enum StyleEngineScenario {
     ShadowBoundaryIsolation,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StyleEngineFixture {
     pub meta: CssCaseMeta,
@@ -167,6 +174,7 @@ pub struct StyleEngineFixture {
     pub scenario: StyleEngineScenario,
 }
 
+#[allow(dead_code)]
 pub const STYLE_ENGINE_FIXTURES: &[StyleEngineFixture] = &[
     StyleEngineFixture {
         meta: CssCaseMeta {
@@ -283,6 +291,7 @@ pub const STYLE_ENGINE_FIXTURES: &[StyleEngineFixture] = &[
     },
 ];
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExternalCssCoverage {
     pub meta: CssCaseMeta,
@@ -290,6 +299,7 @@ pub struct ExternalCssCoverage {
     pub note: &'static str,
 }
 
+#[allow(dead_code)]
 pub const EXTERNAL_CSS_COVERAGE: &[ExternalCssCoverage] = &[ExternalCssCoverage {
     meta: CssCaseMeta {
         id: "CSS-THEME-001",
@@ -302,6 +312,7 @@ pub const EXTERNAL_CSS_COVERAGE: &[ExternalCssCoverage] = &[ExternalCssCoverage 
     note: "Theme activation, inheritance resolution, and emitted-token coverage live in the theme-engine crate surface, which is outside this executor's writable test scope.",
 }];
 
+#[allow(dead_code)]
 pub const REQUIRED_RUNNABLE_AREAS: &[CssCoverageArea] = &[
     CssCoverageArea::ParserValues,
     CssCoverageArea::Selectors,
@@ -312,6 +323,7 @@ pub const REQUIRED_RUNNABLE_AREAS: &[CssCoverageArea] = &[
     CssCoverageArea::CustomProperties,
 ];
 
+#[allow(dead_code)]
 pub fn runnable_case_metas() -> Vec<CssCaseMeta> {
     let mut metas = Vec::new();
     metas.extend(THEME_CSS_PARSER_FIXTURES.iter().map(|fixture| fixture.meta));
@@ -324,6 +336,7 @@ pub fn runnable_case_metas() -> Vec<CssCaseMeta> {
     metas
 }
 
+#[allow(dead_code)]
 pub fn all_case_metas() -> Vec<CssCaseMeta> {
     let mut metas = runnable_case_metas();
     metas.extend(EXTERNAL_CSS_COVERAGE.iter().map(|fixture| fixture.meta));

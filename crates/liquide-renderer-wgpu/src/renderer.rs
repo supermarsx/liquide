@@ -8,7 +8,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use liquide_compositor::damage::{DamageClass, DamageSet, DamageTile};
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
-use liquide_compositor::{RenderResult, Renderer};
+use liquide_compositor::{
+    Color, FrameMemoryKind, PixelFormat, RenderResult, Renderer, RendererBackendInfo,
+    RendererBackendKind, RendererCapabilities, RendererNegotiation, RendererNegotiationError,
+    RendererRejectReason,
+};
 
 use crate::device::{GpuBackend, WgpuDevice};
 use crate::pipeline::PipelineCache;
@@ -16,7 +20,6 @@ use crate::texture::GpuTexture;
 use crate::{Result, WgpuError};
 
 use bytemuck::{Pod, Zeroable};
-use liquide_compositor::Color;
 use liquide_compositor::scene::{
     BackgroundImage, BackgroundSpec, BorderSides, FlatNode, GradientSpec, ImageFit, OutlineSpec,
     SceneNodeKind,
@@ -906,6 +909,86 @@ fn rounded_clip_radius_is_active(radius: (f32, f32, f32, f32)) -> bool {
     radius.0 > 0.0 || radius.1 > 0.0 || radius.2 > 0.0 || radius.3 > 0.0
 }
 
+fn wgpu_backend_info(backend: GpuBackend, adapter: &str) -> RendererBackendInfo {
+    let mut info = RendererBackendInfo::new(RendererBackendKind::Wgpu, format!("wgpu {backend}"));
+    info.version = Some(env!("CARGO_PKG_VERSION").to_string());
+    if !adapter.is_empty() {
+        info.adapter = Some(adapter.to_string());
+    }
+    info
+}
+
+fn wgpu_renderer_capabilities(max_texture_dimension_2d: Option<u32>) -> RendererCapabilities {
+    RendererCapabilities {
+        frame_memory_kinds: vec![FrameMemoryKind::Cpu],
+        pixel_formats: vec![PixelFormat::Bgra8],
+        supports_partial_damage: false,
+        supports_blur: false,
+        supports_skeleton_window: false,
+        supports_async_glyphs: false,
+        max_framebuffer_width: max_texture_dimension_2d,
+        max_framebuffer_height: max_texture_dimension_2d,
+    }
+}
+
+fn negotiate_wgpu_framebuffer_target(
+    fb: &FrameBuffer,
+    capabilities: &RendererCapabilities,
+) -> RendererNegotiation {
+    let memory = FrameMemoryKind::of_framebuffer(fb);
+    if !capabilities.supports_frame_memory(memory) {
+        return RendererNegotiation::rejected(RendererRejectReason::UnsupportedFrameMemory {
+            memory,
+        });
+    }
+
+    if !capabilities.supports_pixel_format(fb.format) {
+        return RendererNegotiation::rejected(RendererRejectReason::UnsupportedPixelFormat {
+            format: fb.format,
+        });
+    }
+
+    let width_too_large = capabilities
+        .max_framebuffer_width
+        .is_some_and(|max_width| fb.width > max_width);
+    let height_too_large = capabilities
+        .max_framebuffer_height
+        .is_some_and(|max_height| fb.height > max_height);
+    if width_too_large || height_too_large {
+        return RendererNegotiation::rejected(RendererRejectReason::FramebufferTooLarge {
+            width: fb.width,
+            height: fb.height,
+            max_width: capabilities.max_framebuffer_width,
+            max_height: capabilities.max_framebuffer_height,
+        });
+    }
+
+    RendererNegotiation::accepted()
+}
+
+fn negotiate_wgpu_render_request(
+    nodes: &[FlatNode],
+    fb: &FrameBuffer,
+    _damage: &DamageSet,
+    unavailable_reason: Option<String>,
+    max_texture_dimension_2d: Option<u32>,
+) -> RendererNegotiation {
+    if let Some(reason) = unavailable_reason {
+        return RendererNegotiation::rejected(RendererRejectReason::BackendUnavailable(reason));
+    }
+
+    let capabilities = wgpu_renderer_capabilities(max_texture_dimension_2d);
+    let framebuffer = negotiate_wgpu_framebuffer_target(fb, &capabilities);
+    if !framebuffer.is_accepted() {
+        return framebuffer;
+    }
+
+    match validate_wgpu_scene_kind_coverage(nodes.iter()) {
+        Ok(()) => RendererNegotiation::accepted(),
+        Err(reason) => RendererNegotiation::rejected(RendererRejectReason::Other(reason)),
+    }
+}
+
 // ── Main renderer ───────────────────────────────────────────────────────
 
 /// The main GPU renderer.
@@ -1054,6 +1137,16 @@ impl WgpuRenderer {
     pub fn mark_device_lost(&self) {
         self.device_lost.store(true, Ordering::Release);
         log::error!("wgpu device marked as lost — GPU rendering disabled");
+    }
+
+    fn device_unavailable_reason(&self) -> Option<String> {
+        self.is_device_lost().then(|| {
+            "wgpu device is lost; fall back to another renderer or recreate the device".to_string()
+        })
+    }
+
+    fn max_texture_dimension_2d(&self) -> Option<u32> {
+        Some(self.gpu.device.limits().max_texture_dimension_2d)
     }
 
     /// Render a frame from the flattened scene graph.
@@ -2710,6 +2803,17 @@ impl WgpuRenderer {
         fb: &mut FrameBuffer,
         damage: &DamageSet,
     ) -> std::result::Result<Vec<DamageTile>, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(reason) = self
+            .negotiate_render(nodes, fb, damage)
+            .reject_reason()
+            .cloned()
+        {
+            return Err(Box::new(RendererNegotiationError {
+                backend: self.backend_info(),
+                reason,
+            }));
+        }
+
         if fb.width != self.width || fb.height != self.height {
             self.resize(fb.width, fb.height)?;
         }
@@ -2859,9 +2963,31 @@ impl Renderer for WgpuRenderer {
         self.render_to_framebuffer(nodes, fb, damage)
     }
 
+    fn backend_info(&self) -> RendererBackendInfo {
+        wgpu_backend_info(self.gpu.backend, &self.gpu.device_name)
+    }
+
+    fn capabilities(&self) -> RendererCapabilities {
+        wgpu_renderer_capabilities(self.max_texture_dimension_2d())
+    }
+
+    fn negotiate_render(
+        &self,
+        nodes: &[FlatNode],
+        fb: &FrameBuffer,
+        damage: &DamageSet,
+    ) -> RendererNegotiation {
+        negotiate_wgpu_render_request(
+            nodes,
+            fb,
+            damage,
+            self.device_unavailable_reason(),
+            self.max_texture_dimension_2d(),
+        )
+    }
+
     fn blur_enabled(&self) -> bool {
-        // GPU blur is always available when the device is alive.
-        !self.is_device_lost()
+        false
     }
 
     fn has_pending_glyphs(&self) -> bool {
@@ -2888,7 +3014,7 @@ mod tests {
         BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec, ClipPathKind,
         CursorShape, GlassParams, GradientSpec, MaskMode, MaskSpec, SceneNodeKind,
     };
-    use liquide_compositor::{BackdropFilterSpec, BoxShadowSpec, FilterSpec};
+    use liquide_compositor::{BackdropFilterSpec, BoxShadowSpec, FilterSpec, FrameMemory};
 
     fn test_gradient() -> GradientSpec {
         GradientSpec::Linear {
@@ -2924,7 +3050,132 @@ mod tests {
         }
     }
 
+    fn test_damage() -> DamageSet {
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
+        damage
+    }
+
     // ── Uniform struct layout tests ─────────────────────────────────────
+
+    #[test]
+    fn wgpu_backend_info_reports_backend_kind_version_and_adapter() {
+        let info = wgpu_backend_info(GpuBackend::Vulkan, "Synthetic Adapter");
+
+        assert_eq!(info.kind, RendererBackendKind::Wgpu);
+        assert_eq!(info.name, "wgpu Vulkan");
+        assert_eq!(info.version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(info.adapter.as_deref(), Some("Synthetic Adapter"));
+    }
+
+    #[test]
+    fn wgpu_capabilities_report_current_cpu_readback_contract() {
+        let capabilities = wgpu_renderer_capabilities(Some(4096));
+
+        assert_eq!(capabilities.frame_memory_kinds, vec![FrameMemoryKind::Cpu]);
+        assert_eq!(capabilities.pixel_formats, vec![PixelFormat::Bgra8]);
+        assert!(!capabilities.supports_frame_memory(FrameMemoryKind::Gpu));
+        assert!(!capabilities.supports_frame_memory(FrameMemoryKind::DmaBuf));
+        assert!(!capabilities.supports_pixel_format(PixelFormat::Rgba8));
+        assert!(!capabilities.supports_partial_damage);
+        assert!(!capabilities.supports_blur);
+        assert_eq!(capabilities.max_framebuffer_width, Some(4096));
+        assert_eq!(capabilities.max_framebuffer_height, Some(4096));
+    }
+
+    #[test]
+    fn negotiate_wgpu_render_request_accepts_supported_cpu_bgra_scene() {
+        let nodes = vec![flat_node(SceneNodeKind::Background {
+            color: Color::BLACK,
+        })];
+        let fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
+
+        let negotiation = negotiate_wgpu_render_request(&nodes, &fb, &test_damage(), None, None);
+
+        assert!(negotiation.is_accepted());
+    }
+
+    #[test]
+    fn negotiate_wgpu_render_request_rejects_unsupported_filters() {
+        let nodes = vec![flat_node(SceneNodeKind::Filter {
+            filters: vec![FilterSpec::Brightness(1.2)],
+        })];
+        let fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
+
+        let negotiation = negotiate_wgpu_render_request(&nodes, &fb, &test_damage(), None, None);
+
+        let Some(RendererRejectReason::Other(reason)) = negotiation.reject_reason() else {
+            panic!("expected unsupported scene coverage rejection, got {negotiation:?}");
+        };
+        assert!(reason.contains("Filter"));
+        assert!(reason.contains("filter chains need offscreen subtree rendering"));
+    }
+
+    #[test]
+    fn negotiate_wgpu_render_request_rejects_gpu_framebuffer_targets() {
+        let nodes = vec![flat_node(SceneNodeKind::Background {
+            color: Color::BLACK,
+        })];
+        let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
+        fb.memory = FrameMemory::Gpu {
+            handle: 7,
+            dmabuf_fd: -1,
+            width: 32,
+            height: 32,
+        };
+
+        let negotiation = negotiate_wgpu_render_request(&nodes, &fb, &test_damage(), None, None);
+
+        assert_eq!(
+            negotiation.reject_reason(),
+            Some(&RendererRejectReason::UnsupportedFrameMemory {
+                memory: FrameMemoryKind::Gpu,
+            })
+        );
+    }
+
+    #[test]
+    fn negotiate_wgpu_render_request_rejects_non_bgra_framebuffers() {
+        let nodes = vec![flat_node(SceneNodeKind::Background {
+            color: Color::BLACK,
+        })];
+        let fb = FrameBuffer::new(32, 32, PixelFormat::Rgba8);
+
+        let negotiation = negotiate_wgpu_render_request(&nodes, &fb, &test_damage(), None, None);
+
+        assert_eq!(
+            negotiation.reject_reason(),
+            Some(&RendererRejectReason::UnsupportedPixelFormat {
+                format: PixelFormat::Rgba8,
+            })
+        );
+    }
+
+    #[test]
+    fn negotiate_wgpu_render_request_rejects_unavailable_device_with_fallback_hint() {
+        let nodes = vec![flat_node(SceneNodeKind::Background {
+            color: Color::BLACK,
+        })];
+        let fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
+
+        let negotiation = negotiate_wgpu_render_request(
+            &nodes,
+            &fb,
+            &test_damage(),
+            Some("wgpu device is lost; fall back to another renderer".to_string()),
+            None,
+        );
+
+        let Some(RendererRejectReason::BackendUnavailable(reason)) = negotiation.reject_reason()
+        else {
+            panic!("expected unavailable-device rejection, got {negotiation:?}");
+        };
+        assert!(reason.contains("fall back"));
+    }
 
     #[test]
     fn scene_kind_coverage_allows_safe_wgpu_subsets() {

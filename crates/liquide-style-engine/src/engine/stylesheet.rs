@@ -162,12 +162,18 @@ impl StyleEngine {
         let selector_str = Self::prefix_scope(scope_prefix, &rule.selector.raw);
         if let Some(complex) = ComplexSelector::parse(&selector_str) {
             let specificity = complex.specificity();
+            // Per CSS Cascade 5 §6.4.2, unlayered author styles act as the LAST
+            // (highest-priority for normal) implicit layer: normal unlayered rules
+            // beat every `@layer` rule, and the CascadePriority `Ord` reverses this
+            // for `!important`. Declared layers are 1..=N; encode "no layer" as the
+            // maximum so it sorts after all declared layers. (Previously this was 0,
+            // which made unlayered rules LOSE to every layered rule.)
             let layer_ord = rule
                 .layer
                 .as_ref()
                 .and_then(|name| self.layer_order.get(name))
                 .copied()
-                .unwrap_or(0);
+                .unwrap_or(u32::MAX);
             prepared_rules.push(PreparedRule {
                 selector: complex,
                 specificity,

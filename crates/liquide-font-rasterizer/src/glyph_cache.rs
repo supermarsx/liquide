@@ -3,7 +3,7 @@
 //! Avoids re-rasterizing the same glyph at the same size/subpixel offset.
 //! The cache is keyed by `(FontFaceId, glyph_id, size_key, subpixel_key)`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use crate::database::FontFaceId;
@@ -136,6 +136,28 @@ impl GlyphCache {
             .entries
             .keys()
             .filter(|k| k.face_id == face_id)
+            .copied()
+            .collect();
+        for key in keys_to_remove {
+            let _ = inner.remove(&key);
+        }
+    }
+
+    /// Invalidate cached glyphs for a batch of font faces.
+    pub fn invalidate_faces<I>(&self, face_ids: I)
+    where
+        I: IntoIterator<Item = FontFaceId>,
+    {
+        let face_ids: HashSet<FontFaceId> = face_ids.into_iter().collect();
+        if face_ids.is_empty() {
+            return;
+        }
+
+        let mut inner = liquide_common::sync::lock_or_recover(&self.inner);
+        let keys_to_remove: Vec<GlyphCacheKey> = inner
+            .entries
+            .keys()
+            .filter(|key| face_ids.contains(&key.face_id))
             .copied()
             .collect();
         for key in keys_to_remove {
@@ -304,6 +326,24 @@ mod tests {
         cache.invalidate_face(FontFaceId(1));
         assert!(cache.get(&k1).is_none());
         assert!(cache.get(&k2).is_some());
+    }
+
+    #[test]
+    fn test_cache_invalidate_faces_evicts_only_selected_faces() {
+        let cache = GlyphCache::with_defaults();
+        let k1 = GlyphCacheKey::new(FontFaceId(1), 65, 16.0, 0.0, 0.0);
+        let k2 = GlyphCacheKey::new(FontFaceId(2), 65, 16.0, 0.0, 0.0);
+        let k3 = GlyphCacheKey::new(FontFaceId(3), 65, 16.0, 0.0, 0.0);
+        cache.insert(k1, dummy_bitmap(65));
+        cache.insert(k2, dummy_bitmap(65));
+        cache.insert(k3, dummy_bitmap(65));
+
+        cache.invalidate_faces([FontFaceId(1), FontFaceId(3)]);
+
+        assert!(cache.get(&k1).is_none());
+        assert!(cache.get(&k2).is_some());
+        assert!(cache.get(&k3).is_none());
+        assert_eq!(cache.stats().entries, 1);
     }
 
     #[test]

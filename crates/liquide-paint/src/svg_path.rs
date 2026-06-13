@@ -11,16 +11,24 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::mem;
 
 use liquide_compositor::pixel::Color;
 use liquide_layout::Rect;
 
 use crate::display_list::{DisplayItem, DisplayList};
 
-// Thread-local cache for flattened SVG paths, keyed by hash of the `d` attribute string.
-// Stores (original_string, segments) to detect hash collisions (CR-11).
+/// Default maximum number of parsed and flattened SVG path entries retained by
+/// [`flatten_path_cached`]'s thread-local cache.
+pub const DEFAULT_SVG_PATH_CACHE_ENTRIES: usize = 1024;
+
+/// Current flattening tolerance used by the SVG path flattener.
+pub const DEFAULT_SVG_PATH_FLATTENING_TOLERANCE: f32 = 0.25;
+
+// Thread-local cache used by the legacy `flatten_path_cached` entry point.
+// Explicit cache types below are public so future callers can own scoped caches.
 thread_local! {
-    static PATH_CACHE: RefCell<HashMap<u64, (String, Vec<PathSegment>)>> = RefCell::new(HashMap::new());
+    static PATH_CACHE: RefCell<SvgPathResourceCache> = RefCell::new(SvgPathResourceCache::default());
 }
 
 fn hash_path_string(d: &str) -> u64 {
@@ -29,8 +37,671 @@ fn hash_path_string(d: &str) -> u64 {
     hasher.finish()
 }
 
+fn cache_float_bits(value: f32) -> Option<u32> {
+    if !value.is_finite() {
+        None
+    } else if value == 0.0 {
+        Some(0.0f32.to_bits())
+    } else {
+        Some(value.to_bits())
+    }
+}
+
+fn cache_positive_float_bits(value: f32) -> Option<u32> {
+    if value > 0.0 {
+        cache_float_bits(value)
+    } else {
+        None
+    }
+}
+
+fn cache_non_negative_float_bits(value: Option<f32>) -> Option<Option<u32>> {
+    match value {
+        Some(value) if value >= 0.0 => cache_float_bits(value).map(Some),
+        Some(_) => None,
+        None => Some(None),
+    }
+}
+
+/// Stable identity for parsed SVG path data.
+///
+/// The key includes both a caller-visible source identity and a content hash.
+/// Cache entries still keep the original path data and verify it on hits so a
+/// hash collision cannot return geometry for the wrong `d` attribute.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SvgPathResourceKey {
+    source_id: String,
+    content_hash: u64,
+    revision: Option<u64>,
+}
+
+impl SvgPathResourceKey {
+    /// Create a key from explicit identity fields.
+    ///
+    /// Empty source IDs are rejected so callers with unknown identity can fail
+    /// closed by bypassing cache insertion and reuse.
+    #[must_use]
+    pub fn new(
+        source_id: impl Into<String>,
+        content_hash: u64,
+        revision: Option<u64>,
+    ) -> Option<Self> {
+        let source_id = source_id.into();
+        if source_id.trim().is_empty() {
+            return None;
+        }
+        Some(Self {
+            source_id,
+            content_hash,
+            revision,
+        })
+    }
+
+    /// Create a key for a known source and SVG `d` attribute content.
+    #[must_use]
+    pub fn from_path_data(
+        source_id: impl Into<String>,
+        path_data: &str,
+        revision: Option<u64>,
+    ) -> Option<Self> {
+        Self::new(source_id, hash_path_string(path_data), revision)
+    }
+
+    /// Create a content-addressed key for inline SVG path data.
+    #[must_use]
+    pub fn inline(path_data: &str) -> Self {
+        Self {
+            source_id: "inline:svg-path".to_string(),
+            content_hash: hash_path_string(path_data),
+            revision: None,
+        }
+    }
+
+    /// Stable source identity supplied by the caller.
+    #[must_use]
+    pub fn source_id(&self) -> &str {
+        &self.source_id
+    }
+
+    /// Content hash used by this key.
+    #[must_use]
+    pub fn content_hash(&self) -> u64 {
+        self.content_hash
+    }
+
+    /// Optional caller-supplied revision.
+    #[must_use]
+    pub fn revision(&self) -> Option<u64> {
+        self.revision
+    }
+
+    fn matches_path_data(&self, path_data: &str) -> bool {
+        self.content_hash == hash_path_string(path_data)
+    }
+}
+
+/// Parameters that can affect flattened SVG path geometry.
+///
+/// Only the parameters that the flattener actually consumes participate in the
+/// flattened-cache key (see [`SvgFlattenedPathKey`]). `scale_x`/`scale_y` and
+/// `tolerance` feed [`flatness_factor`] and therefore change tessellation
+/// output. The `viewport_*` fields are **reserved**: the current flattener
+/// operates in raw path-coordinate space and performs no viewport-relative
+/// transform, so a viewport dimension cannot change the emitted geometry.
+///
+/// Because of that, viewport dimensions are intentionally NOT part of the
+/// flattened-cache key. Keying on an input that has zero effect on output would
+/// fragment the cache into byte-identical entries (false misses + wasted
+/// memory) — the "cache-key-only theater" hazard (t49-e4-05). They remain on the
+/// struct so the public API is stable for a future viewport-aware flattener;
+/// when one lands, thread them through [`flatness_factor`]/the flattener AND add
+/// them back to [`SvgFlattenedPathKey::new`] in the same change.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SvgPathFlatteningParams {
+    /// X scale used by the caller for output-aware flattening.
+    pub scale_x: f32,
+    /// Y scale used by the caller for output-aware flattening.
+    pub scale_y: f32,
+    /// Curve tolerance used by flattening.
+    pub tolerance: f32,
+    /// Reserved viewport width. Not yet consumed by flattening and not part of
+    /// the flattened-cache key. See the type-level note above.
+    pub viewport_width: Option<f32>,
+    /// Reserved viewport height. Not yet consumed by flattening and not part of
+    /// the flattened-cache key. See the type-level note above.
+    pub viewport_height: Option<f32>,
+}
+
+impl SvgPathFlatteningParams {
+    /// Create output-aware flattening parameters.
+    #[must_use]
+    pub const fn new(
+        scale_x: f32,
+        scale_y: f32,
+        tolerance: f32,
+        viewport_width: Option<f32>,
+        viewport_height: Option<f32>,
+    ) -> Self {
+        Self {
+            scale_x,
+            scale_y,
+            tolerance,
+            viewport_width,
+            viewport_height,
+        }
+    }
+}
+
+impl Default for SvgPathFlatteningParams {
+    fn default() -> Self {
+        Self {
+            scale_x: 1.0,
+            scale_y: 1.0,
+            tolerance: DEFAULT_SVG_PATH_FLATTENING_TOLERANCE,
+            viewport_width: None,
+            viewport_height: None,
+        }
+    }
+}
+
+/// Stable key for flattened SVG geometry.
+///
+/// The key includes only the parameters the flattener actually consumes
+/// (output scale and curve tolerance). Reserved-but-inert viewport dimensions
+/// are deliberately excluded — keying on them would split the cache into
+/// byte-identical entries with no behavioral difference. See
+/// [`SvgPathFlatteningParams`] for the staging note.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SvgFlattenedPathKey {
+    resource: SvgPathResourceKey,
+    scale_x_bits: u32,
+    scale_y_bits: u32,
+    tolerance_bits: u32,
+}
+
+impl SvgFlattenedPathKey {
+    /// Build a flattened-geometry key. Non-finite, zero, or negative scale and
+    /// tolerance values return `None` so callers avoid unsafe reuse.
+    ///
+    /// Viewport dimensions are not keyed (they do not affect output), but a
+    /// supplied viewport value that is non-finite or negative still fails the
+    /// key closed: it signals a degenerate caller, and a degenerate caller must
+    /// bypass cache reuse rather than share a slot under nonsense parameters.
+    #[must_use]
+    pub fn new(resource: SvgPathResourceKey, params: SvgPathFlatteningParams) -> Option<Self> {
+        // Validate (but do not key on) the reserved viewport dimensions so a
+        // garbage viewport fails closed instead of silently caching.
+        cache_non_negative_float_bits(params.viewport_width)?;
+        cache_non_negative_float_bits(params.viewport_height)?;
+        Some(Self {
+            resource,
+            scale_x_bits: cache_positive_float_bits(params.scale_x)?,
+            scale_y_bits: cache_positive_float_bits(params.scale_y)?,
+            tolerance_bits: cache_positive_float_bits(params.tolerance)?,
+        })
+    }
+
+    /// Parsed path resource identity used by this flattened entry.
+    #[must_use]
+    pub fn resource(&self) -> &SvgPathResourceKey {
+        &self.resource
+    }
+}
+
+/// Entry-count limits for parsed and flattened SVG path resources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SvgPathCacheLimits {
+    /// Maximum parsed path entries to retain.
+    pub max_parsed_entries: usize,
+    /// Maximum flattened path entries to retain.
+    pub max_flattened_entries: usize,
+}
+
+impl SvgPathCacheLimits {
+    /// Create cache limits with the same bound for parsed and flattened data.
+    #[must_use]
+    pub const fn new(max_entries: usize) -> Self {
+        Self {
+            max_parsed_entries: max_entries,
+            max_flattened_entries: max_entries,
+        }
+    }
+}
+
+impl Default for SvgPathCacheLimits {
+    fn default() -> Self {
+        Self::new(DEFAULT_SVG_PATH_CACHE_ENTRIES)
+    }
+}
+
+/// Observable counters for SVG path resource caching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SvgPathCacheStats {
+    /// Parsed path cache hits.
+    pub parsed_hits: u64,
+    /// Parsed path cache misses.
+    pub parsed_misses: u64,
+    /// Flattened path cache hits.
+    pub flattened_hits: u64,
+    /// Flattened path cache misses.
+    pub flattened_misses: u64,
+    /// Entries evicted because a limit was exceeded.
+    pub evictions: u64,
+    /// Number of clear operations.
+    pub clears: u64,
+    /// Number of explicit invalidation calls that removed at least one entry.
+    pub invalidations: u64,
+    /// Parsed entries currently retained.
+    pub parsed_entries: usize,
+    /// Flattened entries currently retained.
+    pub flattened_entries: usize,
+    /// Approximate memory retained by path strings and geometry vectors.
+    pub approx_geometry_bytes: usize,
+    /// Pixel bytes retained by this cache. This is always zero by design.
+    pub stored_pixel_bytes: usize,
+}
+
+impl SvgPathCacheStats {
+    /// Cache hit rate for parsed path commands.
+    #[must_use]
+    pub fn parsed_hit_rate(&self) -> f32 {
+        hit_rate(self.parsed_hits, self.parsed_misses)
+    }
+
+    /// Cache hit rate for flattened path segments.
+    #[must_use]
+    pub fn flattened_hit_rate(&self) -> f32 {
+        hit_rate(self.flattened_hits, self.flattened_misses)
+    }
+
+    /// Combined hit rate across parsed and flattened tiers.
+    #[must_use]
+    pub fn total_hit_rate(&self) -> f32 {
+        hit_rate(
+            self.parsed_hits + self.flattened_hits,
+            self.parsed_misses + self.flattened_misses,
+        )
+    }
+
+    /// Current retained geometry entries across parsed and flattened tiers.
+    #[must_use]
+    pub fn retained_geometry_entries(&self) -> usize {
+        self.parsed_entries + self.flattened_entries
+    }
+
+    /// Whether this geometry cache retained any rendered pixels.
+    #[must_use]
+    pub fn retains_pixels(&self) -> bool {
+        self.stored_pixel_bytes != 0
+    }
+
+    /// Evictions per retained entry, useful as a coarse pressure signal.
+    #[must_use]
+    pub fn eviction_pressure(&self) -> f32 {
+        let retained = self.retained_geometry_entries();
+        if retained == 0 {
+            0.0
+        } else {
+            self.evictions as f32 / retained as f32
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ParsedPathCacheEntry {
+    path_data: String,
+    commands: Vec<PathCommand>,
+}
+
+#[derive(Debug, Clone)]
+struct FlattenedPathCacheEntry {
+    path_data: String,
+    segments: Vec<PathSegment>,
+}
+
+/// Behavior-neutral cache for parsed and flattened SVG path geometry.
+///
+/// This cache stores only path source strings, parsed commands, and flattened
+/// line segments. Rendered pixels, clip masks, and paint output intentionally
+/// remain separate future caches.
+#[derive(Debug, Clone)]
+pub struct SvgPathResourceCache {
+    parsed_entries: HashMap<SvgPathResourceKey, ParsedPathCacheEntry>,
+    parsed_access_order: Vec<SvgPathResourceKey>,
+    flattened_entries: HashMap<SvgFlattenedPathKey, FlattenedPathCacheEntry>,
+    flattened_access_order: Vec<SvgFlattenedPathKey>,
+    limits: SvgPathCacheLimits,
+    stats: SvgPathCacheStats,
+}
+
+impl SvgPathResourceCache {
+    /// Create a cache with default limits.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_limits(SvgPathCacheLimits::default())
+    }
+
+    /// Create a cache with explicit parsed and flattened limits.
+    #[must_use]
+    pub fn with_limits(limits: SvgPathCacheLimits) -> Self {
+        Self {
+            parsed_entries: HashMap::new(),
+            parsed_access_order: Vec::new(),
+            flattened_entries: HashMap::new(),
+            flattened_access_order: Vec::new(),
+            limits,
+            stats: SvgPathCacheStats::default(),
+        }
+    }
+
+    /// Current cache limits.
+    #[must_use]
+    pub fn limits(&self) -> SvgPathCacheLimits {
+        self.limits
+    }
+
+    /// Parse a path, using only the parsed-geometry cache.
+    pub fn parse_path(&mut self, key: SvgPathResourceKey, path_data: &str) -> Vec<PathCommand> {
+        if !key.matches_path_data(path_data) {
+            self.stats.parsed_misses += 1;
+            return parse_svg_path(path_data);
+        }
+
+        let cached = self
+            .parsed_entries
+            .get(&key)
+            .and_then(|entry| (entry.path_data == path_data).then(|| entry.commands.clone()));
+        if let Some(commands) = cached {
+            self.stats.parsed_hits += 1;
+            self.touch_parsed(&key);
+            return commands;
+        }
+
+        self.stats.parsed_misses += 1;
+        let commands = parse_svg_path(path_data);
+        self.insert_parsed(key, path_data, commands.clone());
+        commands
+    }
+
+    /// Flatten a path, using separate parsed and flattened geometry caches.
+    pub fn flatten_path(
+        &mut self,
+        key: SvgPathResourceKey,
+        path_data: &str,
+        params: SvgPathFlatteningParams,
+    ) -> Vec<PathSegment> {
+        if !key.matches_path_data(path_data) {
+            self.stats.flattened_misses += 1;
+            self.stats.parsed_misses += 1;
+            return flatten_path_with_params(&parse_svg_path(path_data), params);
+        }
+
+        let Some(flattened_key) = SvgFlattenedPathKey::new(key.clone(), params) else {
+            self.stats.flattened_misses += 1;
+            let commands = self.parse_path(key, path_data);
+            return flatten_path_with_params(&commands, params);
+        };
+
+        let cached = self
+            .flattened_entries
+            .get(&flattened_key)
+            .and_then(|entry| (entry.path_data == path_data).then(|| entry.segments.clone()));
+        if let Some(segments) = cached {
+            self.stats.flattened_hits += 1;
+            self.touch_flattened(&flattened_key);
+            return segments;
+        }
+
+        self.stats.flattened_misses += 1;
+        let commands = self.parse_path(key, path_data);
+        let segments = flatten_path_with_params(&commands, params);
+        self.insert_flattened(flattened_key, path_data, segments.clone());
+        segments
+    }
+
+    /// Remove all entries while keeping cumulative counters.
+    pub fn clear(&mut self) {
+        self.parsed_entries.clear();
+        self.parsed_access_order.clear();
+        self.flattened_entries.clear();
+        self.flattened_access_order.clear();
+        self.stats.clears += 1;
+    }
+
+    /// Reset cumulative counters without removing retained entries.
+    pub fn reset_stats(&mut self) {
+        self.stats = SvgPathCacheStats::default();
+    }
+
+    /// Invalidate one parsed resource and any flattened geometry derived from it.
+    pub fn invalidate_resource(&mut self, key: &SvgPathResourceKey) -> usize {
+        let mut removed = 0usize;
+        if self.parsed_entries.remove(key).is_some() {
+            removed += 1;
+        }
+        self.parsed_access_order
+            .retain(|entry_key| entry_key != key);
+
+        let flattened_keys: Vec<SvgFlattenedPathKey> = self
+            .flattened_entries
+            .keys()
+            .filter(|flattened_key| flattened_key.resource() == key)
+            .cloned()
+            .collect();
+        for flattened_key in flattened_keys {
+            if self.flattened_entries.remove(&flattened_key).is_some() {
+                removed += 1;
+            }
+        }
+        self.flattened_access_order
+            .retain(|flattened_key| flattened_key.resource() != key);
+
+        if removed > 0 {
+            self.stats.invalidations += 1;
+        }
+        removed
+    }
+
+    /// Invalidate all resources with the supplied source identity.
+    pub fn invalidate_source(&mut self, source_id: &str) -> usize {
+        // Collect matching resource identities from BOTH tiers. The parsed and
+        // flattened tiers evict independently, so a path's parsed entry can be
+        // LRU-evicted while its flattened entries (one parsed entry fans out to
+        // many under different `SvgPathFlatteningParams`) survive. Scanning only
+        // the parsed tier would then miss those orphaned flattened entries and
+        // leave stale geometry servable. Dedupe by collecting unique resource
+        // keys across both tiers before invalidating.
+        let mut keys: Vec<SvgPathResourceKey> = self
+            .parsed_entries
+            .keys()
+            .filter(|key| key.source_id() == source_id)
+            .cloned()
+            .collect();
+        for flattened_key in self.flattened_entries.keys() {
+            let resource = flattened_key.resource();
+            if resource.source_id() == source_id && !keys.contains(resource) {
+                keys.push(resource.clone());
+            }
+        }
+
+        let mut removed = 0usize;
+        for key in keys {
+            removed += self.invalidate_resource(&key);
+        }
+        removed
+    }
+
+    /// Drop every cached entry for `source_id` whose revision differs from
+    /// `live_revision`, keeping the live revision warm.
+    ///
+    /// This completes resource-cache coherence on revision bumps. When a source
+    /// resource changes, callers mint a new [`SvgPathResourceKey`] revision; the
+    /// old revision's parsed and flattened entries are distinct keys and would
+    /// otherwise linger until LRU-evicted (servable stale geometry, wasted
+    /// capacity). Blanket [`invalidate_source`] cannot be used after inserting
+    /// the new revision because it would also drop the fresh entry. This call
+    /// supersedes only the stale revisions.
+    ///
+    /// A `live_revision` of `None` matches entries minted without a revision; it
+    /// purges every revisioned entry for the source while keeping unrevisioned
+    /// ones. Returns the number of entries removed across both tiers.
+    pub fn invalidate_source_stale_revisions(
+        &mut self,
+        source_id: &str,
+        live_revision: Option<u64>,
+    ) -> usize {
+        // Collect stale resource identities from BOTH tiers (a flattened entry
+        // can outlive its parsed entry — see `invalidate_source`). Dedupe so a
+        // resource present in both tiers is invalidated once.
+        let mut keys: Vec<SvgPathResourceKey> = self
+            .parsed_entries
+            .keys()
+            .filter(|key| key.source_id() == source_id && key.revision() != live_revision)
+            .cloned()
+            .collect();
+        for flattened_key in self.flattened_entries.keys() {
+            let resource = flattened_key.resource();
+            if resource.source_id() == source_id
+                && resource.revision() != live_revision
+                && !keys.contains(resource)
+            {
+                keys.push(resource.clone());
+            }
+        }
+
+        let mut removed = 0usize;
+        for key in keys {
+            removed += self.invalidate_resource(&key);
+        }
+        removed
+    }
+
+    /// Return current cache counters and entry counts.
+    #[must_use]
+    pub fn stats(&self) -> SvgPathCacheStats {
+        let mut stats = self.stats;
+        stats.parsed_entries = self.parsed_entries.len();
+        stats.flattened_entries = self.flattened_entries.len();
+        stats.approx_geometry_bytes = self.approx_geometry_bytes();
+        stats.stored_pixel_bytes = 0;
+        stats
+    }
+
+    fn insert_parsed(
+        &mut self,
+        key: SvgPathResourceKey,
+        path_data: &str,
+        commands: Vec<PathCommand>,
+    ) {
+        if self.limits.max_parsed_entries == 0 {
+            return;
+        }
+        self.parsed_entries.insert(
+            key.clone(),
+            ParsedPathCacheEntry {
+                path_data: path_data.to_string(),
+                commands,
+            },
+        );
+        self.touch_parsed(&key);
+        self.evict_parsed_if_needed();
+    }
+
+    fn insert_flattened(
+        &mut self,
+        key: SvgFlattenedPathKey,
+        path_data: &str,
+        segments: Vec<PathSegment>,
+    ) {
+        if self.limits.max_flattened_entries == 0 {
+            return;
+        }
+        self.flattened_entries.insert(
+            key.clone(),
+            FlattenedPathCacheEntry {
+                path_data: path_data.to_string(),
+                segments,
+            },
+        );
+        self.touch_flattened(&key);
+        self.evict_flattened_if_needed();
+    }
+
+    fn touch_parsed(&mut self, key: &SvgPathResourceKey) {
+        if let Some(position) = self
+            .parsed_access_order
+            .iter()
+            .position(|entry_key| entry_key == key)
+        {
+            self.parsed_access_order.remove(position);
+        }
+        self.parsed_access_order.push(key.clone());
+    }
+
+    fn touch_flattened(&mut self, key: &SvgFlattenedPathKey) {
+        if let Some(position) = self
+            .flattened_access_order
+            .iter()
+            .position(|entry_key| entry_key == key)
+        {
+            self.flattened_access_order.remove(position);
+        }
+        self.flattened_access_order.push(key.clone());
+    }
+
+    fn evict_parsed_if_needed(&mut self) {
+        while self.parsed_entries.len() > self.limits.max_parsed_entries {
+            let Some(key) = self.parsed_access_order.first().cloned() else {
+                break;
+            };
+            self.parsed_access_order.remove(0);
+            if self.parsed_entries.remove(&key).is_some() {
+                self.stats.evictions += 1;
+            }
+        }
+    }
+
+    fn evict_flattened_if_needed(&mut self) {
+        while self.flattened_entries.len() > self.limits.max_flattened_entries {
+            let Some(key) = self.flattened_access_order.first().cloned() else {
+                break;
+            };
+            self.flattened_access_order.remove(0);
+            if self.flattened_entries.remove(&key).is_some() {
+                self.stats.evictions += 1;
+            }
+        }
+    }
+
+    fn approx_geometry_bytes(&self) -> usize {
+        let parsed_bytes = self.parsed_entries.values().map(|entry| {
+            entry.path_data.len() + entry.commands.len() * mem::size_of::<PathCommand>()
+        });
+        let flattened_bytes = self.flattened_entries.values().map(|entry| {
+            entry.path_data.len() + entry.segments.len() * mem::size_of::<PathSegment>()
+        });
+
+        parsed_bytes.chain(flattened_bytes).sum()
+    }
+}
+
+impl Default for SvgPathResourceCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn hit_rate(hits: u64, misses: u64) -> f32 {
+    let total = hits + misses;
+    if total == 0 {
+        0.0
+    } else {
+        hits as f32 / total as f32
+    }
+}
+
 /// A parsed SVG path command.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PathCommand {
     MoveTo {
         x: f32,
@@ -83,7 +754,7 @@ pub enum PathCommand {
 }
 
 /// A flattened path segment (line).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PathSegment {
     pub x1: f32,
     pub y1: f32,
@@ -153,6 +824,16 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
         if s.is_empty() { None } else { s.parse().ok() }
     }
 
+    /// Guarantee forward progress when a command's operands cannot be parsed.
+    ///
+    /// Consumes exactly one offending character and returns `true`, or returns
+    /// `false` when the input is exhausted so the caller can stop. Without this
+    /// guard a malformed `d` string (e.g. a lone command letter followed by a
+    /// non-numeric token) would spin the parse loop forever.
+    fn consume_one_or_stop(chars: &mut std::iter::Peekable<std::str::Chars>) -> bool {
+        chars.next().is_some()
+    }
+
     fn parse_flag(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<bool> {
         skip_ws_comma(chars);
         match chars.peek() {
@@ -196,6 +877,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     commands.push(PathCommand::MoveTo { x, y });
                     // Subsequent coords are implicit LineTo
                     current_cmd = if relative { 'l' } else { 'L' };
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'L' => {
@@ -209,6 +892,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     cx = x;
                     cy = y;
                     commands.push(PathCommand::LineTo { x, y });
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'H' => {
@@ -218,6 +903,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     }
                     cx = x;
                     commands.push(PathCommand::HLineTo { x });
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'V' => {
@@ -227,6 +914,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     }
                     cy = y;
                     commands.push(PathCommand::VLineTo { y });
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'C' => {
@@ -263,6 +952,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                         x,
                         y,
                     });
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'S' => {
@@ -281,6 +972,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     cx = x;
                     cy = y;
                     commands.push(PathCommand::SmoothCubicTo { x2, y2, x, y });
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'Q' => {
@@ -299,6 +992,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     cx = x;
                     cy = y;
                     commands.push(PathCommand::QuadTo { x1, y1, x, y });
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'T' => {
@@ -312,6 +1007,8 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                     cx = x;
                     cy = y;
                     commands.push(PathCommand::SmoothQuadTo { x, y });
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'A' => {
@@ -339,14 +1036,25 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
                                 x,
                                 y,
                             });
+                        } else if !consume_one_or_stop(&mut chars) {
+                            break;
                         }
+                    } else if !consume_one_or_stop(&mut chars) {
+                        break;
                     }
+                } else if !consume_one_or_stop(&mut chars) {
+                    break;
                 }
             }
             'Z' => {
                 cx = sx;
                 cy = sy;
                 commands.push(PathCommand::Close);
+                // A close command carries no coordinates and does not repeat
+                // implicitly. Reset to a non-command sentinel so a following
+                // non-letter token cannot re-enter this arm and push `Close`
+                // forever (unbounded growth / OOM).
+                current_cmd = ' ';
             }
             _ => {
                 chars.next(); // Skip unknown
@@ -357,10 +1065,49 @@ pub fn parse_svg_path(d: &str) -> Vec<PathCommand> {
     commands
 }
 
-/// Flatten SVG path commands into line segments.
+/// Compute the squared flatness factor used by curve subdivision from caller
+/// flattening parameters.
+///
+/// The flatness test in [`flatten_cubic`] accepts a curve when
+/// `d2 * d2 <= factor * chord_sq`; a smaller `factor` forces more subdivision
+/// (finer geometry) and a larger `factor` produces coarser geometry. The factor
+/// is the caller's `tolerance` made finer as output scale increases — content
+/// rendered at 2x device scale needs roughly half the on-screen deviation, so
+/// the tolerance is divided by the dominant axis scale. This is what makes the
+/// cache-keyed [`SvgPathFlatteningParams`] actually influence tessellation
+/// output rather than only the cache key.
+fn flatness_factor(params: SvgPathFlatteningParams) -> f32 {
+    // Fall back to the default tolerance for non-finite/non-positive inputs so
+    // a degenerate caller can never produce NaN/inf thresholds (which would
+    // make the flatness test never pass and recurse to the depth cap).
+    let tolerance = if params.tolerance.is_finite() && params.tolerance > 0.0 {
+        params.tolerance
+    } else {
+        DEFAULT_SVG_PATH_FLATTENING_TOLERANCE
+    };
+    let mut scale = params.scale_x.max(params.scale_y);
+    if !scale.is_finite() || scale <= 0.0 {
+        scale = 1.0;
+    }
+    (tolerance / scale).max(f32::MIN_POSITIVE)
+}
+
+/// Flatten SVG path commands into line segments using default flattening
+/// parameters.
 ///
 /// Curves are approximated by subdivision into short line segments.
 pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
+    flatten_path_with_params(commands, SvgPathFlatteningParams::default())
+}
+
+/// Flatten SVG path commands into line segments, honoring the supplied
+/// flattening parameters (output scale and curve tolerance) so the emitted
+/// geometry density tracks the requested output resolution.
+pub fn flatten_path_with_params(
+    commands: &[PathCommand],
+    params: SvgPathFlatteningParams,
+) -> Vec<PathSegment> {
+    let factor = flatness_factor(params);
     let mut segments = Vec::new();
     let mut cx = 0.0f32;
     let mut cy = 0.0f32;
@@ -421,7 +1168,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
                 x,
                 y,
             } => {
-                flatten_cubic(&mut segments, cx, cy, x1, y1, x2, y2, x, y, 0);
+                flatten_cubic(&mut segments, cx, cy, x1, y1, x2, y2, x, y, factor, 0);
                 last_cp_x = x2;
                 last_cp_y = y2;
                 cx = x;
@@ -431,14 +1178,14 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
                 // Reflect previous control point
                 let rx1 = 2.0 * cx - last_cp_x;
                 let ry1 = 2.0 * cy - last_cp_y;
-                flatten_cubic(&mut segments, cx, cy, rx1, ry1, x2, y2, x, y, 0);
+                flatten_cubic(&mut segments, cx, cy, rx1, ry1, x2, y2, x, y, factor, 0);
                 last_cp_x = x2;
                 last_cp_y = y2;
                 cx = x;
                 cy = y;
             }
             PathCommand::QuadTo { x1, y1, x, y } => {
-                flatten_quadratic(&mut segments, cx, cy, x1, y1, x, y);
+                flatten_quadratic(&mut segments, cx, cy, x1, y1, x, y, factor);
                 last_cp_x = x1;
                 last_cp_y = y1;
                 cx = x;
@@ -447,7 +1194,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
             PathCommand::SmoothQuadTo { x, y } => {
                 let rx1 = 2.0 * cx - last_cp_x;
                 let ry1 = 2.0 * cy - last_cp_y;
-                flatten_quadratic(&mut segments, cx, cy, rx1, ry1, x, y);
+                flatten_quadratic(&mut segments, cx, cy, rx1, ry1, x, y, factor);
                 last_cp_x = rx1;
                 last_cp_y = ry1;
                 cx = x;
@@ -484,6 +1231,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
                         sweep,
                         x,
                         y,
+                        factor,
                     );
                 }
                 cx = x;
@@ -511,45 +1259,65 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<PathSegment> {
     segments
 }
 
-/// Flatten SVG path commands with caching.
+/// Flatten SVG path commands with thread-local caching.
 ///
-/// Looks up the path string in a thread-local cache to avoid re-parsing
-/// and re-flattening identical paths every frame. The cache is bounded
-/// at 1024 entries and cleared when full.
+/// This preserves the existing content-addressed behavior while using the
+/// explicit parsed/flattened resource cache foundation underneath.
 pub fn flatten_path_cached(d: &str) -> Vec<PathSegment> {
-    let key = hash_path_string(d);
-
-    // Check cache first, verifying the original string matches to detect hash collisions.
-    let cached = PATH_CACHE.with(|cache| {
-        cache.borrow().get(&key).and_then(|(original, segments)| {
-            if original == d {
-                Some(segments.clone())
-            } else {
-                None
-            }
-        })
-    });
-
-    if let Some(segments) = cached {
-        return segments;
-    }
-
-    // Cache miss — parse and flatten.
-    let commands = parse_svg_path(d);
-    let segments = flatten_path(&commands);
-
     PATH_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if cache.len() > 2048 {
-            cache.clear();
-        }
-        cache.insert(key, (d.to_string(), segments.clone()));
-    });
+        cache.borrow_mut().flatten_path(
+            SvgPathResourceKey::inline(d),
+            d,
+            SvgPathFlatteningParams::default(),
+        )
+    })
+}
 
-    segments
+/// Flatten SVG path commands through the thread-local cache with explicit
+/// output-aware key parameters.
+pub fn flatten_path_cached_with_params(
+    d: &str,
+    params: SvgPathFlatteningParams,
+) -> Vec<PathSegment> {
+    PATH_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .flatten_path(SvgPathResourceKey::inline(d), d, params)
+    })
+}
+
+/// Return stats for the thread-local SVG path cache.
+#[must_use]
+pub fn svg_path_thread_cache_stats() -> SvgPathCacheStats {
+    PATH_CACHE.with(|cache| cache.borrow().stats())
+}
+
+/// Clear the thread-local SVG path cache.
+pub fn clear_svg_path_thread_cache() {
+    PATH_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+/// Invalidate a resource from the thread-local SVG path cache.
+pub fn invalidate_svg_path_thread_cache_resource(key: &SvgPathResourceKey) -> usize {
+    PATH_CACHE.with(|cache| cache.borrow_mut().invalidate_resource(key))
+}
+
+/// Drop stale-revision entries for a source from the thread-local SVG path
+/// cache, keeping `live_revision` warm. See
+/// [`SvgPathResourceCache::invalidate_source_stale_revisions`].
+pub fn invalidate_svg_path_thread_cache_stale_revisions(
+    source_id: &str,
+    live_revision: Option<u64>,
+) -> usize {
+    PATH_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .invalidate_source_stale_revisions(source_id, live_revision)
+    })
 }
 
 /// Flatten a cubic bezier into line segments by recursive subdivision.
+#[allow(clippy::too_many_arguments)]
 fn flatten_cubic(
     out: &mut Vec<PathSegment>,
     x0: f32,
@@ -560,6 +1328,7 @@ fn flatten_cubic(
     y2: f32,
     x3: f32,
     y3: f32,
+    factor: f32,
     depth: u32,
 ) {
     // Guard against infinite recursion and NaN propagation. We must check
@@ -591,7 +1360,7 @@ fn flatten_cubic(
     let d2 = ((x1 - x3) * dy - (y1 - y3) * dx).abs() + ((x2 - x3) * dy - (y2 - y3) * dx).abs();
     let chord_sq = dx * dx + dy * dy;
 
-    if d2 * d2 <= 0.25 * chord_sq {
+    if d2 * d2 <= factor * chord_sq {
         out.push(PathSegment {
             x1: x0,
             y1: y0,
@@ -615,14 +1384,39 @@ fn flatten_cubic(
     let mx = (m012x + m123x) * 0.5;
     let my = (m012y + m123y) * 0.5;
 
-    flatten_cubic(out, x0, y0, m01x, m01y, m012x, m012y, mx, my, depth + 1);
-    flatten_cubic(out, mx, my, m123x, m123y, m23x, m23y, x3, y3, depth + 1);
+    flatten_cubic(
+        out,
+        x0,
+        y0,
+        m01x,
+        m01y,
+        m012x,
+        m012y,
+        mx,
+        my,
+        factor,
+        depth + 1,
+    );
+    flatten_cubic(
+        out,
+        mx,
+        my,
+        m123x,
+        m123y,
+        m23x,
+        m23y,
+        x3,
+        y3,
+        factor,
+        depth + 1,
+    );
 }
 
 /// Convert an SVG arc (endpoint parameterization) to cubic Bézier curves.
 ///
 /// Implements the SVG spec endpoint-to-center parameterization and then
 /// approximates each arc segment (≤ π/2) with a cubic Bézier.
+#[allow(clippy::too_many_arguments)]
 fn arc_to_cubic_beziers(
     out: &mut Vec<PathSegment>,
     x1: f32,
@@ -634,6 +1428,7 @@ fn arc_to_cubic_beziers(
     sweep: bool,
     x2: f32,
     y2: f32,
+    factor: f32,
 ) {
     use std::f32::consts::PI;
 
@@ -747,13 +1542,16 @@ fn arc_to_cubic_beziers(
         let end_x = cos_phi * ep2x - sin_phi * ep2y + cx;
         let end_y = sin_phi * ep2x + cos_phi * ep2y + cy;
 
-        flatten_cubic(out, prev_x, prev_y, q1x, q1y, q2x, q2y, end_x, end_y, 0);
+        flatten_cubic(
+            out, prev_x, prev_y, q1x, q1y, q2x, q2y, end_x, end_y, factor, 0,
+        );
         prev_x = end_x;
         prev_y = end_y;
     }
 }
 
 /// Flatten a quadratic bezier into line segments.
+#[allow(clippy::too_many_arguments)]
 fn flatten_quadratic(
     out: &mut Vec<PathSegment>,
     x0: f32,
@@ -762,13 +1560,14 @@ fn flatten_quadratic(
     y1: f32,
     x2: f32,
     y2: f32,
+    factor: f32,
 ) {
     // Convert quadratic to cubic and flatten.
     let cx1 = x0 + (x1 - x0) * 2.0 / 3.0;
     let cy1 = y0 + (y1 - y0) * 2.0 / 3.0;
     let cx2 = x2 + (x1 - x2) * 2.0 / 3.0;
     let cy2 = y2 + (y1 - y2) * 2.0 / 3.0;
-    flatten_cubic(out, x0, y0, cx1, cy1, cx2, cy2, x2, y2, 0);
+    flatten_cubic(out, x0, y0, cx1, cy1, cx2, cy2, x2, y2, factor, 0);
 }
 
 /// Paint an SVG path into a display list as a series of line segments.
@@ -903,6 +1702,105 @@ mod tests {
     }
 
     #[test]
+    fn svg_path_resource_cache_records_flattened_hit_and_miss() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(8));
+        let path = "M 0 0 L 10 0 L 10 10 Z";
+        let key = SvgPathResourceKey::from_path_data("icon:triangle", path, Some(1)).unwrap();
+
+        let first = cache.flatten_path(key.clone(), path, SvgPathFlatteningParams::default());
+        let after_first = cache.stats();
+        let second = cache.flatten_path(key, path, SvgPathFlatteningParams::default());
+        let after_second = cache.stats();
+
+        assert_eq!(first, second);
+        assert_eq!(after_first.flattened_misses, 1);
+        assert_eq!(after_first.parsed_misses, 1);
+        assert_eq!(after_second.flattened_hits, 1);
+        assert_eq!(after_second.flattened_entries, 1);
+        assert_eq!(after_second.parsed_entries, 1);
+        assert_eq!(after_second.parsed_hit_rate(), 0.0);
+        assert!((after_second.flattened_hit_rate() - 0.5).abs() < 0.001);
+        assert!((after_second.total_hit_rate() - (1.0 / 3.0)).abs() < 0.001);
+        assert_eq!(after_second.retained_geometry_entries(), 2);
+        assert!(!after_second.retains_pixels());
+    }
+
+    #[test]
+    fn svg_path_resource_cache_distinguishes_revision_and_source_key() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(8));
+        let path = "M 0 0 L 10 0";
+        let rev1 = SvgPathResourceKey::from_path_data("icon:line", path, Some(1)).unwrap();
+        let rev2 = SvgPathResourceKey::from_path_data("icon:line", path, Some(2)).unwrap();
+        let other_source =
+            SvgPathResourceKey::from_path_data("icon:line-copy", path, Some(1)).unwrap();
+
+        cache.flatten_path(rev1, path, SvgPathFlatteningParams::default());
+        cache.flatten_path(rev2, path, SvgPathFlatteningParams::default());
+        cache.flatten_path(other_source, path, SvgPathFlatteningParams::default());
+
+        let stats = cache.stats();
+        assert_eq!(stats.flattened_misses, 3);
+        assert_eq!(stats.flattened_hits, 0);
+        assert_eq!(stats.flattened_entries, 3);
+        assert_eq!(stats.parsed_entries, 3);
+    }
+
+    #[test]
+    fn svg_path_resource_cache_eviction_and_clear_are_bounded() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(1));
+        let path1 = "M 0 0 L 1 0";
+        let path2 = "M 0 0 L 2 0";
+        let key1 = SvgPathResourceKey::from_path_data("icon:first", path1, None).unwrap();
+        let key2 = SvgPathResourceKey::from_path_data("icon:second", path2, None).unwrap();
+
+        cache.flatten_path(key1, path1, SvgPathFlatteningParams::default());
+        cache.flatten_path(key2, path2, SvgPathFlatteningParams::default());
+
+        let bounded = cache.stats();
+        assert_eq!(bounded.parsed_entries, 1);
+        assert_eq!(bounded.flattened_entries, 1);
+        assert!(bounded.evictions >= 2);
+        assert!(bounded.eviction_pressure() >= 1.0);
+
+        cache.clear();
+        let cleared = cache.stats();
+        assert_eq!(cleared.parsed_entries, 0);
+        assert_eq!(cleared.flattened_entries, 0);
+        assert_eq!(cleared.clears, 1);
+    }
+
+    #[test]
+    fn svg_path_resource_cache_invalid_flattening_params_fail_closed() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(8));
+        let path = "M 0 0 L 10 0";
+        let key = SvgPathResourceKey::from_path_data("icon:bad-scale", path, None).unwrap();
+        let params = SvgPathFlatteningParams::new(f32::NAN, 1.0, 0.25, None, None);
+
+        cache.flatten_path(key.clone(), path, params);
+        cache.flatten_path(key, path, params);
+
+        let stats = cache.stats();
+        assert_eq!(stats.flattened_misses, 2);
+        assert_eq!(stats.flattened_hits, 0);
+        assert_eq!(stats.flattened_entries, 0);
+        assert_eq!(stats.parsed_entries, 1);
+    }
+
+    #[test]
+    fn svg_path_resource_cache_stores_geometry_not_pixels() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(8));
+        let path = "M 0 0 C 0 10 10 10 10 0";
+        let key = SvgPathResourceKey::from_path_data("icon:curve", path, Some(7)).unwrap();
+
+        cache.flatten_path(key, path, SvgPathFlatteningParams::default());
+
+        let stats = cache.stats();
+        assert!(stats.approx_geometry_bytes > 0);
+        assert_eq!(stats.stored_pixel_bytes, 0);
+        assert_eq!(stats.flattened_entries, 1);
+    }
+
+    #[test]
     fn flatten_cubic_depth_limit_prevents_stack_overflow() {
         // Craft a curve with NaN that would recurse infinitely without the depth guard.
         let mut out = Vec::new();
@@ -916,6 +1814,7 @@ mod tests {
             100.0,
             200.0,
             200.0,
+            DEFAULT_SVG_PATH_FLATTENING_TOLERANCE,
             0,
         );
         // Should produce a single line segment (bailout at depth 0 due to NaN).
@@ -926,7 +1825,19 @@ mod tests {
     fn flatten_cubic_deep_subdivision_terminates() {
         // A pathological curve that causes many subdivisions.
         let mut out = Vec::new();
-        flatten_cubic(&mut out, 0.0, 0.0, 1e6, -1e6, -1e6, 1e6, 1.0, 1.0, 0);
+        flatten_cubic(
+            &mut out,
+            0.0,
+            0.0,
+            1e6,
+            -1e6,
+            -1e6,
+            1e6,
+            1.0,
+            1.0,
+            DEFAULT_SVG_PATH_FLATTENING_TOLERANCE,
+            0,
+        );
         // Must terminate with at most 2^16 segments.
         assert!(out.len() <= 65536);
     }
@@ -1279,5 +2190,276 @@ mod tests {
             }
             _ => panic!("expected MoveTo"),
         }
+    }
+
+    // ── t50-e8 regression tests ──
+
+    // T49-e4-01: malformed `d` data must not hang or grow memory unboundedly.
+    // Each of these inputs previously spun the parse loop forever (the test
+    // would never return); a wrong fix would hang here, which is itself the
+    // signal. We additionally bound the output so a regression toward the
+    // unbounded-`Close` OOM path fails loudly instead of timing out.
+
+    #[test]
+    fn malformed_unparseable_operand_does_not_hang() {
+        // `parse_number` cannot consume '(' after the `L` command. Before the
+        // fix the loop never advanced past it.
+        let cmds = parse_svg_path("M 0 0 L 10 10 (");
+        assert!(cmds.len() <= 8, "unexpected command growth: {}", cmds.len());
+        assert!(matches!(cmds[0], PathCommand::MoveTo { .. }));
+    }
+
+    #[test]
+    fn malformed_close_followed_by_garbage_does_not_oom() {
+        // `Z5` previously re-entered the `Z` arm every iteration, pushing a
+        // `Close` each time (infinite loop + unbounded Vec growth).
+        let cmds = parse_svg_path("M 0 0 Z5");
+        assert!(cmds.len() <= 8, "unbounded Close growth: {}", cmds.len());
+        assert_eq!(
+            cmds.iter()
+                .filter(|c| matches!(c, PathCommand::Close))
+                .count(),
+            1,
+            "Close must be emitted exactly once"
+        );
+    }
+
+    #[test]
+    fn malformed_lone_command_letters_terminate() {
+        for d in ["L", "M", "C", "A", "Q", "S", "T", "H", "V", "Z", "@#$%"] {
+            // Must return; if forward progress regressed this would hang.
+            let _ = parse_svg_path(d);
+        }
+        // Garbage interleaved with a valid arc-flag region.
+        let cmds = parse_svg_path("M 0 0 A 5 5 0 x 1 10 10");
+        assert!(cmds.len() <= 16);
+    }
+
+    #[test]
+    fn malformed_nan_coords_do_not_hang() {
+        // "NaN" is not a valid number token; the parser must skip it and stop.
+        let cmds = parse_svg_path("M NaN NaN L 1 1");
+        assert!(cmds.len() <= 8);
+    }
+
+    // T49-e4-04: invalidate_source must clear flattened entries even after the
+    // parsed entry has been evicted.
+    #[test]
+    fn invalidate_source_clears_orphaned_flattened_entries() {
+        // One parsed slot, many flattened slots: the parsed entry will be
+        // evicted while flattened entries survive.
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits {
+            max_parsed_entries: 1,
+            max_flattened_entries: 8,
+        });
+        let d = "M 0 0 L 10 10";
+        let key = SvgPathResourceKey::from_path_data("logo", d, None).unwrap();
+
+        // Insert several flattened entries under distinct params for the same
+        // source. Each flatten reinserts the (single) parsed slot.
+        for scale in [1.0_f32, 2.0, 3.0] {
+            let params = SvgPathFlatteningParams::new(
+                scale,
+                scale,
+                DEFAULT_SVG_PATH_FLATTENING_TOLERANCE,
+                None,
+                None,
+            );
+            let _ = cache.flatten_path(key.clone(), d, params);
+        }
+        // Evict the parsed entry by parsing a different source path.
+        let other = SvgPathResourceKey::from_path_data("other", "M 1 1 L 2 2", None).unwrap();
+        let _ = cache.parse_path(other, "M 1 1 L 2 2");
+
+        let stats = cache.stats();
+        assert!(
+            stats.flattened_entries >= 3,
+            "expected surviving flattened entries"
+        );
+        // Parsed slot for "logo" should be gone (capacity 1, evicted by "other").
+        let removed = cache.invalidate_source("logo");
+        assert!(
+            removed >= 3,
+            "invalidate_source must remove orphaned flattened entries, removed={removed}"
+        );
+        assert_eq!(cache.stats().flattened_entries, 0);
+    }
+
+    // T49-e4-05: flattening params must actually change tessellation output.
+    #[test]
+    fn flattening_params_change_output() {
+        let cmds = parse_svg_path("M 0 0 C 0 100 100 100 100 0");
+
+        let coarse = flatten_path_with_params(
+            &cmds,
+            SvgPathFlatteningParams::new(1.0, 1.0, 4.0, None, None),
+        );
+        let fine = flatten_path_with_params(
+            &cmds,
+            SvgPathFlatteningParams::new(1.0, 1.0, 0.05, None, None),
+        );
+        assert!(
+            fine.len() > coarse.len(),
+            "finer tolerance must yield more segments: fine={}, coarse={}",
+            fine.len(),
+            coarse.len()
+        );
+
+        // Output scale also feeds the flatness threshold (tolerance / scale):
+        // a small scale coarsens geometry, a large scale refines it. Use a
+        // coarse tolerance so the result is below the subdivision depth cap and
+        // the scale effect is observable in segment counts.
+        let coarse_tolerance = 4.0;
+        let small_scale = flatten_path_with_params(
+            &cmds,
+            SvgPathFlatteningParams::new(0.25, 0.25, coarse_tolerance, None, None),
+        );
+        let large_scale = flatten_path_with_params(
+            &cmds,
+            SvgPathFlatteningParams::new(8.0, 8.0, coarse_tolerance, None, None),
+        );
+        assert!(
+            large_scale.len() > small_scale.len(),
+            "higher output scale must yield more segments: 8x={}, 0.25x={}",
+            large_scale.len(),
+            small_scale.len()
+        );
+    }
+
+    #[test]
+    fn default_params_match_legacy_flatten_path() {
+        // The additive params plumbing must not change default-path output.
+        let cmds = parse_svg_path("M 0 0 C 0 100 100 100 100 0 Q 50 50 0 0 Z");
+        let legacy = flatten_path(&cmds);
+        let defaulted = flatten_path_with_params(&cmds, SvgPathFlatteningParams::default());
+        assert_eq!(legacy.len(), defaulted.len());
+    }
+
+    // ── t55-E1 follow-on: viewport de-keying + revision coherence ──
+
+    // T49-e4-05 (viewport leg): viewport dimensions are reserved/inert — they do
+    // not affect flattened output, so they must NOT fragment the flattened
+    // cache. Two flattens of the same resource at the same scale/tolerance but
+    // different viewports must share ONE flattened slot (a hit on the second).
+    #[test]
+    fn viewport_dimensions_do_not_fragment_flattened_cache() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(8));
+        let d = "M 0 0 C 0 100 100 100 100 0";
+        let key = SvgPathResourceKey::from_path_data("icon:curve", d, Some(1)).unwrap();
+
+        let a = cache.flatten_path(
+            key.clone(),
+            d,
+            SvgPathFlatteningParams::new(1.0, 1.0, 0.25, Some(640.0), Some(480.0)),
+        );
+        let b = cache.flatten_path(
+            key,
+            d,
+            // Same scale/tolerance, DIFFERENT viewport.
+            SvgPathFlatteningParams::new(1.0, 1.0, 0.25, Some(1920.0), Some(1080.0)),
+        );
+
+        // Identical geometry (viewport is inert) and a single cache slot.
+        assert_eq!(a, b);
+        let stats = cache.stats();
+        assert_eq!(
+            stats.flattened_entries, 1,
+            "viewport must not fragment cache"
+        );
+        assert_eq!(stats.flattened_hits, 1);
+        assert_eq!(stats.flattened_misses, 1);
+    }
+
+    // A non-finite/negative reserved viewport must still fail the key closed so a
+    // degenerate caller bypasses reuse rather than sharing a slot.
+    #[test]
+    fn degenerate_viewport_fails_key_closed() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(8));
+        let d = "M 0 0 L 10 0";
+        let key = SvgPathResourceKey::from_path_data("icon:bad-vp", d, None).unwrap();
+        let params = SvgPathFlatteningParams::new(1.0, 1.0, 0.25, Some(f32::NAN), None);
+
+        cache.flatten_path(key.clone(), d, params);
+        cache.flatten_path(key, d, params);
+
+        let stats = cache.stats();
+        assert_eq!(
+            stats.flattened_entries, 0,
+            "degenerate viewport must not cache"
+        );
+        assert_eq!(stats.flattened_misses, 2);
+        assert_eq!(stats.flattened_hits, 0);
+    }
+
+    // B4d / resource-cache coherence: bumping a source to a new revision must be
+    // able to purge the stale older revision while keeping the live one warm.
+    #[test]
+    fn invalidate_stale_revisions_purges_old_keeps_live() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits::new(32));
+        let old_d = "M 0 0 L 10 0";
+        let new_d = "M 0 0 L 20 0";
+        let rev1 = SvgPathResourceKey::from_path_data("logo", old_d, Some(1)).unwrap();
+        let rev2 = SvgPathResourceKey::from_path_data("logo", new_d, Some(2)).unwrap();
+        // An unrelated source must be untouched.
+        let other = SvgPathResourceKey::from_path_data("badge", old_d, Some(1)).unwrap();
+
+        cache.flatten_path(rev1, old_d, SvgPathFlatteningParams::default());
+        cache.flatten_path(rev2, new_d, SvgPathFlatteningParams::default());
+        cache.flatten_path(other, old_d, SvgPathFlatteningParams::default());
+
+        // Bump "logo" live revision to 2 → revision-1 entries must be dropped.
+        let removed = cache.invalidate_source_stale_revisions("logo", Some(2));
+        assert!(
+            removed >= 2,
+            "stale parsed+flattened rev1 must be removed, removed={removed}"
+        );
+
+        let stats = cache.stats();
+        // Live "logo" rev2 (parsed+flattened) and "badge" rev1 (parsed+flattened) survive.
+        assert_eq!(stats.parsed_entries, 2);
+        assert_eq!(stats.flattened_entries, 2);
+        assert_eq!(stats.invalidations, 1);
+
+        // Re-flattening the live revision is a hit (it was kept warm).
+        let before = cache.stats().flattened_hits;
+        let live = SvgPathResourceKey::from_path_data("logo", new_d, Some(2)).unwrap();
+        cache.flatten_path(live, new_d, SvgPathFlatteningParams::default());
+        assert_eq!(cache.stats().flattened_hits, before + 1);
+    }
+
+    // The stale-revision purge also reaches flattened entries orphaned by parsed
+    // eviction (coherence parity with `invalidate_source`).
+    #[test]
+    fn invalidate_stale_revisions_reaches_orphaned_flattened() {
+        let mut cache = SvgPathResourceCache::with_limits(SvgPathCacheLimits {
+            max_parsed_entries: 1,
+            max_flattened_entries: 8,
+        });
+        let d = "M 0 0 L 10 10";
+        let stale = SvgPathResourceKey::from_path_data("logo", d, Some(1)).unwrap();
+
+        // Several flattened entries for the stale revision under distinct scales.
+        for scale in [1.0_f32, 2.0, 3.0] {
+            let params = SvgPathFlatteningParams::new(
+                scale,
+                scale,
+                DEFAULT_SVG_PATH_FLATTENING_TOLERANCE,
+                None,
+                None,
+            );
+            let _ = cache.flatten_path(stale.clone(), d, params);
+        }
+        // Evict the parsed entry by parsing a different source.
+        let other = SvgPathResourceKey::from_path_data("other", "M 1 1 L 2 2", Some(1)).unwrap();
+        let _ = cache.parse_path(other, "M 1 1 L 2 2");
+        assert!(cache.stats().flattened_entries >= 3);
+
+        // No live revision for "logo" → purge all of its revisions.
+        let removed = cache.invalidate_source_stale_revisions("logo", Some(99));
+        assert!(
+            removed >= 3,
+            "orphaned flattened entries must be purged, removed={removed}"
+        );
+        assert_eq!(cache.stats().flattened_entries, 0);
     }
 }

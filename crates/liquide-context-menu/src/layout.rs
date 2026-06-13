@@ -31,6 +31,9 @@ pub struct MenuItemRect {
     pub submenu_arrow_rect: Option<Rect>,
     /// Bounding box of the check/radio indicator.
     pub check_rect: Option<Rect>,
+    /// Whether this row is a separator (non-interactive: not hoverable or
+    /// activatable). Separators must never be returned from hit-testing.
+    pub is_separator: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -60,14 +63,31 @@ impl MenuGeometry {
     }
 
     /// Hit-test: find which item index a point (in screen coords) falls on.
-    /// Returns `None` if outside the menu or on a separator.
+    ///
+    /// Returns `None` if the point is outside the menu, on a separator row, or
+    /// on a row that is clipped out by the height cap (the panel `height` is
+    /// clamped to a fraction of the screen, so trailing rows whose geometry
+    /// extends past `height` are not actually visible and must not be hit).
     #[must_use]
     pub fn hit_test(&self, sx: f32, sy: f32) -> Option<usize> {
         let lx = sx - self.x;
         let ly = sy - self.y;
+        // Reject points outside the visible (clamped) panel bounds. Rows laid
+        // out below `self.height` are clipped away, so a click there activates
+        // nothing.
+        if lx < 0.0 || lx >= self.width || ly < 0.0 || ly >= self.height {
+            return None;
+        }
         for item_rect in &self.items {
+            // Separators are decorative: never hoverable or activatable.
+            if item_rect.is_separator {
+                continue;
+            }
             let r = &item_rect.rect;
-            if lx >= r.x && lx < r.x + r.width && ly >= r.y && ly < r.y + r.height {
+            // Only hit the portion of the row that is actually visible within
+            // the clamped panel height.
+            let visible_bottom = (r.y + r.height).min(self.height);
+            if lx >= r.x && lx < r.x + r.width && ly >= r.y && ly < visible_bottom {
                 return Some(item_rect.index);
             }
         }
@@ -290,6 +310,7 @@ impl MenuLayout {
                     shortcut_rect: None,
                     submenu_arrow_rect: None,
                     check_rect: None,
+                    is_separator: true,
                 });
                 cy += item_h;
                 continue;
@@ -382,6 +403,7 @@ impl MenuLayout {
                 shortcut_rect,
                 submenu_arrow_rect,
                 check_rect,
+                is_separator: false,
             });
 
             cy += item_h;
@@ -610,6 +632,58 @@ mod tests {
         let geo = MenuLayout::compute(&items, (100.0, 200.0), screen(), &theme(), 1.0);
         let hit = geo.hit_test(0.0, 0.0);
         assert_eq!(hit, None);
+    }
+
+    #[test]
+    fn layout_hit_test_separator_returns_none() {
+        // F20: a point landing on a separator row must not be hit-tested as a
+        // selectable/activatable item.
+        let items = sample_items();
+        let geo = MenuLayout::compute(&items, (100.0, 200.0), screen(), &theme(), 1.0);
+        // Index 2 is the separator (see sample_items).
+        let sep = &geo.items[2];
+        assert!(sep.is_separator, "fixture item 2 should be a separator");
+        // Aim at the vertical center of the separator row.
+        let hit = geo.hit_test(
+            geo.x + sep.rect.x + sep.rect.width / 2.0,
+            geo.y + sep.rect.y + sep.rect.height / 2.0,
+        );
+        assert_eq!(hit, None, "separator row must not be hit");
+    }
+
+    #[test]
+    fn layout_hit_test_ignores_height_capped_items() {
+        // F20: with many items on a small screen the panel height is capped to
+        // 80% of the screen, clipping the trailing rows. A point in the region
+        // below the clamped panel height (where overflow rows are laid out but
+        // not rendered) must not activate those invisible items.
+        let many: Vec<_> = (0..40)
+            .map(|i| MenuItem::action(format!("Item {i}"), MenuAction(i)))
+            .collect();
+        let geo = MenuLayout::compute(&many, (10.0, 10.0), small_screen(), &theme(), 1.0);
+
+        // The full laid-out content is taller than the clamped panel height,
+        // so at least one trailing row extends past `geo.height`.
+        let last = geo.items.last().unwrap();
+        assert!(
+            last.rect.y + last.rect.height > geo.height,
+            "fixture should overflow the height cap (last row bottom {} vs height {})",
+            last.rect.y + last.rect.height,
+            geo.height
+        );
+
+        // A point just inside the row geometry of the last item but below the
+        // clamped panel height must NOT hit it.
+        let hit = geo.hit_test(
+            geo.x + last.rect.x + 5.0,
+            geo.y + last.rect.y + last.rect.height / 2.0,
+        );
+        assert_eq!(hit, None, "clipped-out overflow row must not be hit");
+
+        // A point just below the clamped panel bottom (empty region) is also
+        // not a hit.
+        let below = geo.hit_test(geo.x + 5.0, geo.y + geo.height + 5.0);
+        assert_eq!(below, None, "region below clamped panel must not be hit");
     }
 
     #[test]

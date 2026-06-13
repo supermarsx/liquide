@@ -30,6 +30,68 @@ use liquide_protocol::messages::control::{
 };
 use liquide_protocol::version;
 
+/// Number of CSPRNG bytes in a freshly issued session token.
+///
+/// 32 bytes (256 bits) of entropy is well beyond brute-force reach and matches
+/// the security level of the SHA-256 hash we store server-side.
+const SESSION_TOKEN_LEN: usize = 32;
+
+/// A server-side, opaque hash of an issued session token.
+///
+/// Only the hash is retained by the gateway — never the raw token. On a resume
+/// or relay-reauth path the candidate token is hashed and compared against this
+/// value in constant time, so a database/log leak of stored hashes does not
+/// disclose usable tokens.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SessionTokenHash([u8; 32]);
+
+impl SessionTokenHash {
+    /// Compute the storage hash of a raw token's bytes (SHA-256).
+    #[must_use]
+    fn of_token(raw_token: &[u8]) -> Self {
+        let digest = ring::digest::digest(&ring::digest::SHA256, raw_token);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(digest.as_ref());
+        Self(out)
+    }
+
+    /// Constant-time check that `raw_token` hashes to this stored value.
+    ///
+    /// Uses `subtle::ConstantTimeEq` so the comparison does not leak how many
+    /// leading bytes matched via timing. Hashing first means even the input
+    /// length is fixed (32 bytes), independent of the candidate token length.
+    #[must_use]
+    fn verify(&self, raw_token: &[u8]) -> bool {
+        use subtle::ConstantTimeEq;
+        let candidate = Self::of_token(raw_token);
+        self.0.ct_eq(&candidate.0).into()
+    }
+}
+
+impl std::fmt::Debug for SessionTokenHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never print the raw hash bytes in logs.
+        f.write_str("SessionTokenHash(..)")
+    }
+}
+
+/// Generate a fresh CSPRNG session token and its server-side storage hash.
+///
+/// The raw token is sent to the client exactly once (in `LoginSuccess`); the
+/// returned hash is what the gateway retains. The raw token carries
+/// `SESSION_TOKEN_LEN` bytes of OS-CSPRNG entropy and is unrelated to the
+/// public, predictable `session_id`, closing the forgeable-token gap.
+fn issue_session_token() -> Result<(Vec<u8>, SessionTokenHash)> {
+    use ring::rand::SecureRandom;
+
+    let mut raw = vec![0u8; SESSION_TOKEN_LEN];
+    let rng = ring::rand::SystemRandom::new();
+    rng.fill(&mut raw)
+        .map_err(|_| GatewayError::Internal("CSPRNG token generation failed".to_string()))?;
+    let hash = SessionTokenHash::of_token(&raw);
+    Ok((raw, hash))
+}
+
 /// Snapshot summary of the gateway's current state.
 #[derive(Debug)]
 pub struct GatewayStatus {
@@ -68,6 +130,12 @@ pub struct GatewayRuntime {
     audit_events: Vec<GatewayAuditEvent>,
     /// TLS acceptor for incoming connections. `None` if TLS is not configured.
     tls_acceptor: Option<TlsAcceptor>,
+    /// Server-side hashes of issued session tokens, keyed by `session_id`.
+    ///
+    /// Only the SHA-256 hash of each CSPRNG token is retained; resume/relay
+    /// paths verify a candidate token against this in constant time. Never
+    /// holds a raw token.
+    session_tokens: BTreeMap<String, SessionTokenHash>,
 }
 
 impl GatewayRuntime {
@@ -111,6 +179,7 @@ impl GatewayRuntime {
             management_api,
             audit_events: Vec::new(),
             tls_acceptor: None,
+            session_tokens: BTreeMap::new(),
         }
     }
 
@@ -315,6 +384,21 @@ impl GatewayRuntime {
     /// Drain all accumulated audit events.
     pub fn drain_audit_events(&mut self) -> Vec<GatewayAuditEvent> {
         std::mem::take(&mut self.audit_events)
+    }
+
+    /// Verify a candidate session token for a given session id, in constant time.
+    ///
+    /// This is the canonical check any resume/relay-reauth path must use:
+    /// it hashes the candidate and compares against the stored hash with a
+    /// constant-time comparison. Returns `false` for an unknown session id or
+    /// any token mismatch. The gateway never compares raw tokens directly, so a
+    /// predictable `session_id` cannot be turned into a valid token.
+    #[must_use]
+    pub fn verify_session_token(&self, session_id: &str, candidate_token: &[u8]) -> bool {
+        match self.session_tokens.get(session_id) {
+            Some(hash) => hash.verify(candidate_token),
+            None => false,
+        }
     }
 
     /// Get a snapshot of the gateway's current status.
@@ -592,9 +676,23 @@ impl GatewayRuntime {
                 return;
             }
             AuthResult::Authenticated { user_id, .. } => {
+                // Issue a CSPRNG session token (unrelated to the predictable
+                // `session_id`); retain only its hash server-side.
+                let (session_token, token_hash) = match issue_session_token() {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        tracing::error!(peer = %peer_addr, err = %e, "failed to mint session token");
+                        if let Some(conn) = self.connection_tracker.get_mut(&conn_id) {
+                            conn.transition_to(ConnectionState::Terminated, None, None);
+                        }
+                        return;
+                    }
+                };
+                self.session_tokens.insert(session_id.clone(), token_hash);
+
                 let success = LoginSuccess {
                     session_id: session_id.clone(),
-                    session_token: session_id.as_bytes().to_vec(),
+                    session_token,
                     session_features: BTreeMap::new(),
                     token_lifetime_sec: Some(3600),
                 };
@@ -1022,5 +1120,88 @@ mod tests {
         let encoded = cbor_encode(&msg).unwrap();
         let decoded: LoginPrompt = cbor_decode(&encoded).unwrap();
         assert_eq!(msg, decoded);
+    }
+
+    // ------------------------------------------------------------------
+    // Regression: t49-e7-F3 — predictable/forgeable session token.
+    // ------------------------------------------------------------------
+
+    /// Two tokens minted for the same logical (`conn_id`, `unix_seconds`) — i.e.
+    /// the exact inputs that the old `gw-{conn_id}-{unix_seconds}` scheme made
+    /// fully predictable — must be distinct and carry real entropy. The stored
+    /// value must be a hash, not the raw token, and verification must be
+    /// constant-time correct/reject.
+    #[test]
+    fn session_token_is_csprng_hashed_and_constant_time_verified() {
+        // 1. Entropy: same logical time/conn yields distinct, full-length tokens.
+        let (raw_a, hash_a) = issue_session_token().unwrap();
+        let (raw_b, hash_b) = issue_session_token().unwrap();
+        assert_eq!(raw_a.len(), SESSION_TOKEN_LEN);
+        assert_eq!(raw_b.len(), SESSION_TOKEN_LEN);
+        assert_ne!(
+            raw_a, raw_b,
+            "two issued tokens must differ (CSPRNG entropy)"
+        );
+        // Not all-zero / not a constant.
+        assert!(raw_a.iter().any(|&b| b != 0));
+
+        // 2. Token is NOT derived from the predictable session id.
+        let session_id = "gw-7-1700000000";
+        assert_ne!(
+            raw_a,
+            session_id.as_bytes().to_vec(),
+            "token must not be the bytes of the predictable session id"
+        );
+
+        // 3. Stored value is a hash, not the raw token.
+        let direct_hash = SessionTokenHash::of_token(&raw_a);
+        assert_eq!(
+            direct_hash, hash_a,
+            "stored hash must be SHA-256 of the token"
+        );
+        assert_ne!(
+            hash_a, hash_b,
+            "distinct tokens must produce distinct stored hashes"
+        );
+
+        // 4. Constant-time verification: correct token verifies, wrong rejects.
+        assert!(hash_a.verify(&raw_a), "correct token must verify");
+        assert!(
+            !hash_a.verify(&raw_b),
+            "a different valid token must be rejected"
+        );
+        assert!(
+            !hash_a.verify(session_id.as_bytes()),
+            "forging the token from the public session id must be rejected"
+        );
+        // Truncated / wrong-length candidate is rejected, not a panic.
+        assert!(!hash_a.verify(&raw_a[..raw_a.len() - 1]));
+    }
+
+    /// End-to-end through the runtime's public API: a session token recorded at
+    /// issuance verifies for the right id and is rejected for a forged or
+    /// unknown id.
+    #[test]
+    fn runtime_verify_session_token_rejects_forgery() {
+        let mut rt = GatewayRuntime::new(
+            GatewayConfig::default(),
+            RoutingConfig::default(),
+            RelayConfig::default(),
+            LimitsConfig::default(),
+            HealthCheckConfig::default(),
+            ManagementApiConfig::default(),
+            ClusterConfig::default(),
+        );
+
+        let (raw_token, hash) = issue_session_token().unwrap();
+        let session_id = "gw-1-1700000000".to_string();
+        rt.session_tokens.insert(session_id.clone(), hash);
+
+        // Correct token + id verifies in constant time.
+        assert!(rt.verify_session_token(&session_id, &raw_token));
+        // Forged token (bytes of the predictable session id) is rejected.
+        assert!(!rt.verify_session_token(&session_id, session_id.as_bytes()));
+        // Unknown session id is rejected even with a real token.
+        assert!(!rt.verify_session_token("gw-2-1700000000", &raw_token));
     }
 }

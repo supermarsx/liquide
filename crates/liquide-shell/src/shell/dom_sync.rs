@@ -14,6 +14,7 @@ use std::hash::{Hash, Hasher};
 use crate::desktop_dom::DockItemInfo;
 use crate::launcher::SearchResultKind;
 use liquide_dom::NodeId;
+use liquide_dom::escape_html;
 use liquide_dom::html_parser::parse_html_into;
 use liquide_dom::template_registry::TemplateContext;
 use liquide_interop::notification::Urgency;
@@ -27,6 +28,50 @@ fn template_state_hash<T: Hash>(state: &T) -> String {
     let mut hasher = DefaultHasher::new();
     state.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// Render a single `<status-tray-item>` element from a tray context into `out`.
+///
+/// The status-bar tray HTML is assembled by hand in Rust (the flat template
+/// engine cannot express the nested per-item structure), so this function is
+/// the manual attribute-building site that bypasses the template registry's
+/// escaping. Every value here originates from untrusted notification/seamless
+/// sources (app titles, tooltips, ids), so each is routed through
+/// [`escape_html`] before being embedded into a raw attribute value — otherwise
+/// an embedded `"` or `<` could break out of an attribute and inject elements
+/// into the shell chrome DOM (T49-e5-F06).
+fn render_tray_item(tray: &TemplateContext, out: &mut String) {
+    let source = escape_html(tray.get_str("source"));
+    let label = escape_html(tray.get_str("label"));
+    let tooltip = escape_html(tray.get_str("tooltip"));
+    let icon = escape_html(tray.get_str("icon"));
+    let badge = escape_html(tray.get_str("badge"));
+    let classes = escape_html(tray.get_str("classes"));
+    let has_icon = tray.is_truthy("has_icon");
+    let has_badge = tray.is_truthy("has_badge");
+    let has_menu = tray.is_truthy("has_menu");
+    let has_icon_data = tray.is_truthy("has_icon_data");
+    let inner_id = escape_html(tray.get_str("id"));
+    let mut attrs = format!(
+        " id=\"{inner_id}\" data-source=\"{source}\" data-label=\"{label}\" data-tooltip=\"{tooltip}\""
+    );
+    if has_icon {
+        attrs.push_str(&format!(" data-icon=\"{icon}\""));
+    }
+    if has_menu {
+        attrs.push_str(" data-has-menu=\"true\"");
+    }
+    if has_icon_data {
+        attrs.push_str(" data-has-icon-data=\"true\"");
+    }
+    if !classes.is_empty() {
+        attrs.push_str(&format!(" class=\"{classes}\""));
+    }
+    out.push_str(&format!("<status-tray-item{attrs}>"));
+    if has_badge {
+        out.push_str(&format!("<status-tray-badge>{badge}</status-tray-badge>"));
+    }
+    out.push_str("</status-tray-item>");
 }
 
 fn element_inner_html<'a>(html: &'a str, tag: &str) -> Option<&'a str> {
@@ -46,6 +91,7 @@ impl Shell {
         self.sync_statusbar_template();
         self.sync_dock_template();
         self.sync_notifications_template();
+        self.sync_notification_center_template();
         self.sync_launcher_template();
         self.sync_session_menu_template();
         self.sync_context_menu_template();
@@ -201,8 +247,8 @@ impl Shell {
             let text = self.status_bar_item_text(item);
             left_html.push_str(&format!(
                 "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
-                id = item.id,
-                text = text,
+                id = escape_html(&item.id),
+                text = escape_html(&text),
             ));
         }
 
@@ -220,8 +266,8 @@ impl Shell {
             let text = self.status_bar_item_text(item);
             center_html.push_str(&format!(
                 "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
-                id = item.id,
-                text = text,
+                id = escape_html(&item.id),
+                text = escape_html(&text),
             ));
         }
 
@@ -245,7 +291,7 @@ impl Shell {
                     };
                     right_html.push_str(&format!(
                         "<notification-indicator id=\"{id}\" class=\"{cls}\">{count}</notification-indicator>",
-                        id = item.id,
+                        id = escape_html(&item.id),
                         cls = cls,
                         count = unread_count,
                     ));
@@ -262,65 +308,33 @@ impl Shell {
                     };
                     right_html.push_str(&format!(
                         "<status-indicator id=\"{id}\" class=\"{cls}\"></status-indicator>",
-                        id = item.id,
+                        id = escape_html(&item.id),
                         cls = cls,
                     ));
                 }
                 StatusBarItemKind::TrayArea => {
                     right_html.push_str(&format!(
                         "<status-tray id=\"{id}\" data-count=\"{count}\">",
-                        id = item.id,
+                        id = escape_html(&item.id),
                         count = live_tray.len(),
                     ));
                     for tray in &live_tray {
-                        let source = tray.get_str("source");
-                        let label = tray.get_str("label");
-                        let tooltip = tray.get_str("tooltip");
-                        let icon = tray.get_str("icon");
-                        let badge = tray.get_str("badge");
-                        let classes = tray.get_str("classes");
-                        let has_icon = tray.is_truthy("has_icon");
-                        let has_badge = tray.is_truthy("has_badge");
-                        let has_menu = tray.is_truthy("has_menu");
-                        let has_icon_data = tray.is_truthy("has_icon_data");
-                        let inner_id = tray.get_str("id");
-                        let mut attrs = format!(
-                            " id=\"{inner_id}\" data-source=\"{source}\" data-label=\"{label}\" data-tooltip=\"{tooltip}\""
-                        );
-                        if has_icon {
-                            attrs.push_str(&format!(" data-icon=\"{icon}\""));
-                        }
-                        if has_menu {
-                            attrs.push_str(" data-has-menu=\"true\"");
-                        }
-                        if has_icon_data {
-                            attrs.push_str(" data-has-icon-data=\"true\"");
-                        }
-                        if !classes.is_empty() {
-                            attrs.push_str(&format!(" class=\"{classes}\""));
-                        }
-                        right_html.push_str(&format!("<status-tray-item{attrs}>"));
-                        if has_badge {
-                            right_html.push_str(&format!(
-                                "<status-tray-badge>{badge}</status-tray-badge>"
-                            ));
-                        }
-                        right_html.push_str("</status-tray-item>");
+                        render_tray_item(tray, &mut right_html);
                     }
                     right_html.push_str("</status-tray>");
                 }
                 StatusBarItemKind::SessionButton => {
                     right_html.push_str(&format!(
                         "<session-button id=\"{id}\">{text}</session-button>",
-                        id = item.id,
-                        text = self.status_bar_item_text(item),
+                        id = escape_html(&item.id),
+                        text = escape_html(&self.status_bar_item_text(item)),
                     ));
                 }
                 StatusBarItemKind::Custom { .. } => {
                     right_html.push_str(&format!(
                         "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
-                        id = item.id,
-                        text = self.status_bar_item_text(item),
+                        id = escape_html(&item.id),
+                        text = escape_html(&self.status_bar_item_text(item)),
                     ));
                 }
                 StatusBarItemKind::Clock { .. } => {}
@@ -330,9 +344,16 @@ impl Shell {
         let mut ctx = TemplateContext::new();
         ctx.set("show_branding", cfg.show_app_menu);
         ctx.set("branding_text", "LiquiDE");
-        ctx.set("left_items_html", left_html);
-        ctx.set("center_items_html", center_html);
-        ctx.set("right_items_html", right_html);
+        // These are pre-built HTML fragments (each per-item value already
+        // escaped via `escape_html` at the attribute/text build sites above),
+        // so they must be substituted VERBATIM — `set_raw_html`, not `set`,
+        // otherwise the flat template engine would HTML-escape the structural
+        // `<statusbar-item>` markup and the whole status bar would render as
+        // visible escaped text (T49-e5-F06: escape dynamic values, never the
+        // structural markup).
+        ctx.set_raw_html("left_items_html", left_html);
+        ctx.set_raw_html("center_items_html", center_html);
+        ctx.set_raw_html("right_items_html", right_html);
 
         self.apply_template("statusbar", "shell-statusbar", &ctx);
     }
@@ -524,6 +545,106 @@ impl Shell {
             !key.starts_with(NOTIFICATION_ITEM_CACHE_PREFIX) || live_cache_keys.contains(key)
         });
         self.template_cache.insert("notifications".into(), html);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // Notification center (live panel — t51-e14, fixes t49-e5-F03)
+    // ══════════════════════════════════════════════════════════
+
+    /// Render the notification center panel that the `OpenNotificationCenter`
+    /// action / status-bar indicator toggles.
+    ///
+    /// Before t51-e14 the toggle flipped `notification_panel_visible` but
+    /// nothing rendered it and the panel read no data — a dead end (F03). This
+    /// builds a real `<notification-center>` overlay from the live notification
+    /// set (active + history, kept canonical via the daemon-backed
+    /// `post_notification` path) when the panel is open, and removes it when
+    /// closed. The HTML is assembled by hand (the flat template registry has no
+    /// nested-list template for this surface), so every dynamic value is routed
+    /// through [`escape_html`] before embedding, matching the t50-e5 escaping
+    /// discipline used by the status-bar tray builder above (T49-e5-F06).
+    fn sync_notification_center_template(&mut self) {
+        const CENTER_ID: &str = "notification-center";
+
+        if !self.notification_center_open() {
+            if let Some(existing) = self.desktop_dom.doc.get_element_by_id(CENTER_ID) {
+                if let Some(parent) = self.desktop_dom.doc.parent(existing) {
+                    self.desktop_dom.doc.remove_child(parent, existing);
+                }
+                self.desktop_dom.doc.destroy_node(existing);
+            }
+            self.template_cache.remove("notification-center");
+            return;
+        }
+
+        let items = self.notification_center_items();
+
+        let mut html = String::from("<notification-center id=\"notification-center\">");
+        html.push_str(&format!(
+            "<notification-center-header data-count=\"{count}\">Notifications</notification-center-header>",
+            count = items.len()
+        ));
+        if items.is_empty() {
+            html.push_str(
+                "<notification-center-empty>No notifications</notification-center-empty>",
+            );
+        } else {
+            html.push_str("<notification-center-list>");
+            for sn in &items {
+                let urgency_class = match sn.notification.urgency {
+                    Urgency::Low => "urgency-low",
+                    Urgency::Normal => "urgency-normal",
+                    Urgency::Critical => "urgency-critical",
+                };
+                let title = escape_html(&sn.notification.summary);
+                let body = escape_html(&sn.notification.body);
+                let app = escape_html(&sn.notification.app_name);
+                html.push_str(&format!(
+                    "<notification-center-item id=\"notif-center-{id}\" \
+                     class=\"{urgency_class}\" data-notif-id=\"{id}\" data-app=\"{app}\" \
+                     data-read=\"{read}\">",
+                    id = sn.id,
+                    read = sn.read,
+                ));
+                html.push_str(&format!(
+                    "<notification-center-title>{title}</notification-center-title>"
+                ));
+                if !sn.notification.body.is_empty() {
+                    html.push_str(&format!(
+                        "<notification-center-body>{body}</notification-center-body>"
+                    ));
+                }
+                for action in &sn.notification.actions {
+                    let action_id = escape_html(&action.key);
+                    let label = escape_html(&action.label);
+                    html.push_str(&format!(
+                        "<notification-action data-notif-id=\"{id}\" \
+                         data-action-id=\"{action_id}\">{label}</notification-action>",
+                        id = sn.id,
+                    ));
+                }
+                html.push_str("</notification-center-item>");
+            }
+            html.push_str("</notification-center-list>");
+        }
+        html.push_str("</notification-center>");
+
+        if let Some(cached) = self.template_cache.get("notification-center") {
+            if *cached == html {
+                return;
+            }
+        }
+
+        let root = self.desktop_dom.doc.root();
+        if let Some(existing) = self.desktop_dom.doc.get_element_by_id(CENTER_ID) {
+            if let Some(parent) = self.desktop_dom.doc.parent(existing) {
+                self.desktop_dom.doc.remove_child(parent, existing);
+            }
+            self.desktop_dom.doc.destroy_node(existing);
+        }
+        parse_html_into(&mut self.desktop_dom.doc, root, &html);
+        self.template_cache
+            .insert("notification-center".into(), html);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -778,18 +899,26 @@ impl Shell {
     // ══════════════════════════════════════════════════════════
 
     fn sync_tooltip_template(&mut self) {
-        if let Some(ref text) = self.tooltip_text {
-            // Enforce 400ms hover delay before showing tooltip
-            let now_us = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros() as u64;
-            if now_us.saturating_sub(self.tooltip_timer_us) < 400_000 {
-                // Not enough time elapsed — don't show yet, but remove stale overlay
+        // The show-delay / fade lifecycle is owned by the canonical
+        // `liquide-tooltip` TooltipManager (t51-e9). t51-e15 retired the former
+        // hand-rolled 400 ms `tooltip_timer_us` dwell: the render path is now
+        // the authoritative per-frame driver of the manager (so the tooltip
+        // resolves correctly regardless of tick↔render ordering across the
+        // render-thread boundary), and the render gate is the manager's
+        // visibility. `tooltip_text` remains the rendered content and
+        // `tooltip_pos` the anchor; only the *when-to-show* decision moved to
+        // the manager. `sync_tooltip_manager` applies the hover transition
+        // before advancing the timers — the F07-safe order (see
+        // `tooltip_adapter`).
+        self.sync_tooltip_manager(self.frame_delta_ms);
+        if self.tooltip_manager_visible() {
+            // Cannot fail while visible: the manager only reports visible while
+            // a hover label is present, but guard defensively rather than panic.
+            let Some(text) = self.tooltip_text.clone() else {
                 self.remove_overlay("shell-tooltip");
                 self.template_cache.remove("tooltip");
                 return;
-            }
+            };
 
             let mut ctx = TemplateContext::new();
             ctx.set("id", "shell-tooltip");
@@ -1014,5 +1143,67 @@ impl Shell {
             })
             .collect();
         coordinator.update_notifications(notifications);
+    }
+}
+
+#[cfg(test)]
+mod dom_sync_escape_tests {
+    use super::{TemplateContext, render_tray_item};
+
+    /// Regression: T49-e5-F06 — the hand-built tray-item attribute HTML must
+    /// HTML-escape every untrusted value so a malicious app title / tooltip / id
+    /// cannot break out of an attribute and inject elements into the shell DOM.
+    #[test]
+    fn tray_item_attributes_are_html_escaped() {
+        let mut tray = TemplateContext::new();
+        // An app title that tries to close the attribute and inject an element.
+        tray.set("id", "evil\"><script>alert(1)</script>");
+        tray.set("source", "seamless");
+        tray.set("label", "Title & \"co\" <b>");
+        tray.set("tooltip", "tip > here & \"there\"");
+        tray.set("classes", "evil\" onclick=\"x");
+        tray.set("badge", "<img src=x>");
+        tray.set("has_badge", true);
+
+        let mut out = String::new();
+        render_tray_item(&tray, &mut out);
+
+        // No raw injection survives anywhere in the built markup.
+        assert!(
+            !out.contains("<script>"),
+            "raw <script> leaked into tray HTML: {out}"
+        );
+        assert!(
+            !out.contains("<img src=x>"),
+            "raw <img> leaked into tray badge: {out}"
+        );
+        // The malicious id no longer closes the attribute.
+        assert!(!out.contains("id=\"evil\">"), "attribute break-out: {out}");
+        // The dangerous characters are entity-encoded.
+        assert!(out.contains("&lt;script&gt;"));
+        assert!(out.contains("Title &amp; &quot;co&quot; &lt;b&gt;"));
+        assert!(out.contains("onclick=&quot;x"));
+        assert!(out.contains("&lt;img src=x&gt;"));
+    }
+
+    /// A plain tray item passes through unchanged (no double-escaping/mangling).
+    #[test]
+    fn plain_tray_item_passes_through_unchanged() {
+        let mut tray = TemplateContext::new();
+        tray.set("id", "tray-item-clock");
+        tray.set("source", "seamless");
+        tray.set("label", "Clock");
+        tray.set("tooltip", "12:00 PM");
+        tray.set("classes", "seamless");
+
+        let mut out = String::new();
+        render_tray_item(&tray, &mut out);
+
+        assert_eq!(
+            out,
+            "<status-tray-item id=\"tray-item-clock\" data-source=\"seamless\" \
+             data-label=\"Clock\" data-tooltip=\"12:00 PM\" class=\"seamless\">\
+             </status-tray-item>"
+        );
     }
 }

@@ -49,7 +49,11 @@ pub trait SharedMemoryOps {
 
     /// Read bytes from the shared memory
     fn read(&self, offset: usize, buf: &mut [u8]) -> Result<(), SharedMemoryError> {
-        if offset + buf.len() > self.size() {
+        // Use checked arithmetic: an `offset + len` near `usize::MAX` would wrap in
+        // release builds, slip past this guard, and reach the `unsafe` copy below with
+        // a wildly out-of-bounds pointer. Treat any overflow as out of bounds.
+        let end = offset.checked_add(buf.len());
+        if end.is_none_or(|end| end > self.size()) {
             return Err(SharedMemoryError::OutOfBounds {
                 offset,
                 len: buf.len(),
@@ -67,7 +71,10 @@ pub trait SharedMemoryOps {
         if self.access() == ShmAccess::ReadOnly {
             return Err(SharedMemoryError::PermissionDenied);
         }
-        if offset + data.len() > self.size() {
+        // Checked arithmetic: see `read` -- a wrapping `offset + len` must not slip
+        // past this guard into the `unsafe` copy below.
+        let end = offset.checked_add(data.len());
+        if end.is_none_or(|end| end > self.size()) {
             return Err(SharedMemoryError::OutOfBounds {
                 offset,
                 len: data.len(),
@@ -142,7 +149,18 @@ pub fn create_framebuffer_shm(
     height: u32,
     bpp: u32,
 ) -> Result<SharedMemory, SharedMemoryError> {
-    let size = (width * height * bpp) as usize;
+    // Widen each dimension to `usize` first, then multiply with checked arithmetic.
+    // Computing `width * height * bpp` in `u32` (as the original code did) overflows
+    // for large dimensions (e.g. 0x10000 x 0x10000 x 4), wrapping to a tiny size that
+    // under-allocates the region; later `write`s would then overrun the mapping.
+    let size = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|wh| wh.checked_mul(bpp as usize))
+        .ok_or(SharedMemoryError::OutOfBounds {
+            offset: 0,
+            len: 0,
+            size: 0,
+        })?;
     SharedMemory::create(name, size)
 }
 

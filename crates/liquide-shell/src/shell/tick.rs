@@ -34,6 +34,14 @@ impl Shell {
         self.status_bar.update_clock(now_us);
         self.status_bar
             .update_notification_count(self.notifications.unread_count() as u32);
+        // t52-e1 single-sourcing: advance the canonical notification daemon (the
+        // single source of the active/history data the center renders) so its
+        // expiry/dispatch progresses each frame (t49-e5-F03 — events are no
+        // longer silently dropped on tick). The daemon is ticked once here; the
+        // renderable mirror is ticked once below, so neither is double-advanced.
+        if let Some(server) = self.chrome_notification_server.as_mut() {
+            server.tick(now_us / 1000);
+        }
         let expired = self.notifications.tick(now_us);
         let bar_dirty = self.status_bar.is_dirty();
         if bar_dirty {
@@ -52,8 +60,23 @@ impl Shell {
         // Status bar auto-hide based on cursor position and maximized windows
         let auto_hide_dirty = self.update_status_bar_visibility();
 
+        // Tooltip: the canonical `liquide-tooltip` TooltipManager (t51-e9) is
+        // driven from the shell's hover state. t51-e15 moved the single
+        // per-frame *drive* into the render path (`sync_tooltip_template`,
+        // dom_sync.rs), which advances the show-delay / fade lifecycle in the
+        // F07-safe order regardless of tick↔render ordering across the
+        // render-thread boundary. Tick only *reads* the manager's current
+        // visibility for its redraw hint (driving here too would double-advance
+        // the dwell). The render path is the retirement replacement for the old
+        // hand-rolled `tooltip_timer_us` 400 ms dwell.
+        let tooltip_visible = self.tooltip_manager_visible();
+
         ShellTickResult {
-            dirty: bar_dirty || !expired.is_empty() || repatriation_dirty || auto_hide_dirty,
+            dirty: bar_dirty
+                || !expired.is_empty()
+                || repatriation_dirty
+                || auto_hide_dirty
+                || tooltip_visible,
             status_bar_dirty: bar_dirty,
             notifications_dirty: !expired.is_empty(),
             windows_dirty: repatriation_dirty,
@@ -272,29 +295,65 @@ impl Shell {
                 true
             }
             ShellAction::WorkspaceNext => {
-                let active = self.workspaces.active().id;
-                let count = self.workspaces.workspace_count();
-                if (active.0 as usize) < count - 1 {
-                    let from = active.0;
-                    let next = crate::workspace::WorkspaceId(active.0 + 1);
-                    if self.workspaces.switch_to(next).is_ok() {
-                        self.mark_window_scene_dirty();
-                    }
+                // Drive through the canonical `liquide-workspaces` manager
+                // (t51-e12). This is a REAL switch (fixes t49-e5-F01): the new
+                // workspace's windows become visible/interactive and the old
+                // ones are hidden via a batched `workspace_switch`.
+                let from = self.workspaces.active().id.0;
+                if self.switch_workspace_next() {
+                    let to = self.workspaces.active().id.0;
+                    self.mark_window_scene_dirty();
                     self.hook_manager
-                        .dispatch(&ShellHookEvent::WorkspaceChanged { from, to: next.0 });
+                        .dispatch(&ShellHookEvent::WorkspaceChanged { from, to });
                 }
                 true
             }
             ShellAction::WorkspacePrev => {
-                let active = self.workspaces.active().id;
-                if active.0 > 0 {
-                    let from = active.0;
-                    let prev = crate::workspace::WorkspaceId(active.0 - 1);
-                    if self.workspaces.switch_to(prev).is_ok() {
-                        self.mark_window_scene_dirty();
-                    }
+                let from = self.workspaces.active().id.0;
+                if self.switch_workspace_prev() {
+                    let to = self.workspaces.active().id.0;
+                    self.mark_window_scene_dirty();
                     self.hook_manager
-                        .dispatch(&ShellHookEvent::WorkspaceChanged { from, to: prev.0 });
+                        .dispatch(&ShellHookEvent::WorkspaceChanged { from, to });
+                }
+                true
+            }
+            ShellAction::SwitchToWorkspace(n) => {
+                let from = self.workspaces.active().id.0;
+                if self.switch_workspace_to_index(*n as usize) {
+                    let to = self.workspaces.active().id.0;
+                    self.mark_window_scene_dirty();
+                    self.hook_manager
+                        .dispatch(&ShellHookEvent::WorkspaceChanged { from, to });
+                }
+                true
+            }
+            ShellAction::MoveWindowToWorkspace(n) => {
+                // Repatriate the focused window to another workspace (fixes the
+                // F04 gap where this action had no arm). Routed through the
+                // canonical manager; the window stops rendering on the active
+                // workspace once moved away.
+                if let Some(wid) = self.focus.focused() {
+                    self.move_window_to_workspace_index(wid, *n as usize);
+                }
+                true
+            }
+            ShellAction::MoveWindowToNextWorkspace => {
+                if let Some(wid) = self.focus.focused() {
+                    let count = self.workspaces.workspace_count();
+                    let active = self.workspaces.active().id.0 as usize;
+                    if active + 1 < count {
+                        self.move_window_to_workspace_index(wid, active + 1);
+                    }
+                }
+                true
+            }
+            ShellAction::MoveWindowToPrevWorkspace => {
+                if let Some(wid) = self.focus.focused() {
+                    let active = self.workspaces.active().id.0 as usize;
+                    if active > 0 {
+                        self.move_window_to_workspace_index(wid, active - 1);
+                    }
                 }
                 true
             }
@@ -334,7 +393,15 @@ impl Shell {
                 true
             }
             ShellAction::LockSession => {
-                // Visual feedback only — no real lock in a simulated shell.
+                // Drive the canonical lockscreen (t51-e12 folding in t51-e10's
+                // `Shell::lock_session()`): the session-menu Lock action now
+                // transitions the canonical `liquide-lockscreen` state to locked
+                // through the real `AuthBackend`, instead of the prior no-op
+                // (fixes t49-e5-F02). The emitted lockscreen events
+                // (RequestBackgroundCapture / ClearOverview) are produced by the
+                // canonical state machine; we ignore them here (no compositor
+                // sink in the simulated shell) but the lock state is now real.
+                let _events = self.lock_session();
                 true
             }
             ShellAction::Redraw => {

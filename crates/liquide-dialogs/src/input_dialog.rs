@@ -97,7 +97,12 @@ impl InputDialog {
     pub fn set_value(&mut self, value: impl Into<String>) {
         let mut value = value.into();
         if let Some(max) = self.max_length {
-            value.truncate(max);
+            // `max_length` counts characters, not bytes. Truncate at a char
+            // boundary so multi-byte input never triggers `String::truncate`'s
+            // mid-codepoint panic.
+            if let Some((byte_idx, _)) = value.char_indices().nth(max) {
+                value.truncate(byte_idx);
+            }
         }
         self.value = value;
         // Clear previous validation error on input change
@@ -209,6 +214,32 @@ mod tests {
         let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_max_length(5);
         dlg.set_value("hello world");
         assert_eq!(dlg.value, "hello");
+    }
+
+    #[test]
+    fn test_max_length_multibyte_no_panic() {
+        // Regression for t49-e5-F24: byte-index truncation could land mid
+        // multi-byte char and panic. Cap of 5 chars over a value whose 5th and
+        // 6th chars are multi-byte must truncate on a char boundary.
+        let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_max_length(5);
+        // "héllo!" = 6 chars; 'é' is 2 bytes, so byte index 5 is mid-codepoint
+        // under the old `truncate(5)` and would panic.
+        dlg.set_value("héllo!");
+        assert_eq!(dlg.value, "héllo");
+        assert_eq!(dlg.value.chars().count(), 5);
+    }
+
+    #[test]
+    fn test_max_length_all_multibyte_at_cap() {
+        // Every char multi-byte, value length exactly at the cap: no truncation,
+        // no panic.
+        let mut dlg = InputDialog::new(DialogId(1), "T", "L").with_max_length(3);
+        dlg.set_value("日本語");
+        assert_eq!(dlg.value, "日本語");
+        // Over the cap truncates on a boundary.
+        dlg.set_value("日本語テスト");
+        assert_eq!(dlg.value, "日本語");
+        assert_eq!(dlg.value.chars().count(), 3);
     }
 
     #[test]

@@ -719,10 +719,15 @@ impl SceneNode {
 
         // Accumulate clip: intersect the parent's absolute clip with this
         // node's own clip (transformed to absolute coordinates).
+        //
+        // `clip` is documented as being in PARENT coordinates, so it must be
+        // mapped to absolute space by the PARENT transform only. Using
+        // `abs_transform` here would double-apply this node's own bounds
+        // translation + local transform, shifting every non-origin clip.
         let node_abs_clip = self
             .properties
             .clip
-            .map(|c| abs_transform.transform_rect(c));
+            .map(|c| parent_transform.transform_rect(c));
         let effective_clip = match (parent_clip, node_abs_clip) {
             (Some(pc), Some(nc)) => Some(
                 pc.intersection(&nc)
@@ -867,5 +872,61 @@ impl FlatNode {
     #[must_use]
     pub fn kind_ref(&self) -> &SceneNodeKind {
         self.kind.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod flatten_clip_tests {
+    use super::*;
+    use crate::pixel::Color;
+
+    // Regression for t49-e1-F3: a node's `clip` is in PARENT coordinates, so
+    // flattening must map it to absolute space by the PARENT transform only.
+    // The previous code used `abs_transform`, which already folds in the
+    // node's OWN bounds translation + local transform, shifting every
+    // non-origin clip by the node's bounds origin.
+    #[test]
+    fn non_origin_clip_under_translated_node_stays_put() {
+        // Root (identity) -> child positioned at bounds origin (50, 60).
+        let mut root = SceneNode::new(
+            0,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)),
+        );
+
+        // The child carries a clip expressed in its PARENT (= root) coords.
+        let clip = Rect::new(10.0, 20.0, 30.0, 40.0);
+        let child = SceneNode::new(
+            1,
+            SceneNodeKind::Background {
+                color: Color::BLACK,
+            },
+            NodeProperties::new(Rect::new(50.0, 60.0, 100.0, 100.0)).with_clip(clip),
+        );
+        root.add_child(child);
+
+        let flat = root.flatten();
+        let child_flat = flat
+            .iter()
+            .find(|n| n.id == 1)
+            .expect("child should be flattened");
+
+        // Parent transform is identity, so the absolute clip must equal the
+        // parent-space clip exactly — NOT shifted by the child's (50, 60)
+        // bounds origin.
+        let c = child_flat.clip.expect("clip should be present");
+        assert!(
+            (c.x - 10.0).abs() < 1e-4
+                && (c.y - 20.0).abs() < 1e-4
+                && (c.width - 30.0).abs() < 1e-4
+                && (c.height - 40.0).abs() < 1e-4,
+            "clip mapped to ({}, {}, {}, {}), expected (10, 20, 30, 40) — \
+             node's own bounds translation must NOT be applied to a \
+             parent-space clip",
+            c.x,
+            c.y,
+            c.width,
+            c.height
+        );
     }
 }

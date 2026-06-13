@@ -387,6 +387,172 @@ fn all_revert_restores_parent_inherited_values() {
     );
 }
 
+// ── t50-e13 regressions (t49-e2-F1 / F3 / F4) ───────────────────────────────
+
+/// t49-e2-F1: a normal unlayered rule must beat a normal layered rule even when
+/// the layered rule has higher specificity — unlayered author styles act as the
+/// last implicit layer for normal declarations (CSS Cascade 5 §6.4.2).
+#[test]
+fn unlayered_normal_rule_beats_layered_rule() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            @layer base {
+                div#main { color: #ff0000; }
+            }
+            div { color: #00ff00; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let div = doc.create_element("div");
+    doc.set_id(div, "main");
+    doc.append_child(root, div);
+
+    let style = engine.compute_style(&doc, div);
+    // Unlayered green wins over the higher-specificity layered red.
+    assert_eq!((style.color.r, style.color.g, style.color.b), (0, 255, 0));
+}
+
+/// t49-e2-F1: among declared layers, the later-declared layer wins for normal
+/// declarations.
+#[test]
+fn later_declared_layer_wins_for_normal_declarations() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            @layer first, second;
+            @layer first  { div { color: #ff0000; } }
+            @layer second { div { color: #00ff00; } }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let div = doc.create_element("div");
+    doc.append_child(root, div);
+
+    let style = engine.compute_style(&doc, div);
+    // `second` is declared after `first`, so it wins.
+    assert_eq!((style.color.r, style.color.g, style.color.b), (0, 255, 0));
+}
+
+/// t49-e2-F1: `!important` reverses layer ordering — a layered `!important` rule
+/// beats an unlayered `!important` rule (unlayered loses for important).
+#[test]
+fn important_reverses_layer_ordering_unlayered_loses() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            @layer base {
+                div { color: #ff0000 !important; }
+            }
+            div { color: #00ff00 !important; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let div = doc.create_element("div");
+    doc.append_child(root, div);
+
+    let style = engine.compute_style(&doc, div);
+    // For !important, layer order reverses: the layered red beats unlayered green.
+    assert_eq!((style.color.r, style.color.g, style.color.b), (255, 0, 0));
+}
+
+/// t49-e2-F3: a value that merely *contains* a CSS-wide keyword as a substring
+/// (e.g. `fade-initial`, `"Inherit Sans"`) must NOT be treated as the keyword and
+/// dropped/inherited, while a bare CSS-wide keyword still is honored.
+#[test]
+fn css_wide_keyword_requires_whole_value_match() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            #anim   { animation-name: fade-initial; }
+            #fonted { font-family: "Inherit Sans"; }
+            #bare   { animation-name: inherit; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    // `fade-initial` contains "initial" but is NOT the keyword — must be kept.
+    let anim = doc.create_element("div");
+    doc.set_id(anim, "anim");
+    doc.append_child(root, anim);
+    let anim_style = engine.compute_style(&doc, anim);
+    assert_eq!(anim_style.animation_name.as_deref(), Some("fade-initial"));
+
+    // `"Inherit Sans"` contains "inherit" but is NOT the keyword — must be set.
+    let fonted = doc.create_element("div");
+    doc.set_id(fonted, "fonted");
+    doc.append_child(root, fonted);
+    let fonted_style = engine.compute_style(&doc, fonted);
+    assert!(
+        fonted_style.font_family.iter().any(|f| f == "Inherit Sans"),
+        "font_family was {:?}",
+        fonted_style.font_family
+    );
+
+    // A bare `inherit` is still a CSS-wide keyword: animation-name inherits the
+    // root default (None) rather than becoming Some("inherit").
+    let bare = doc.create_element("div");
+    doc.set_id(bare, "bare");
+    doc.append_child(root, bare);
+    let bare_style = engine.compute_style(&doc, bare);
+    assert_ne!(bare_style.animation_name.as_deref(), Some("inherit"));
+}
+
+/// t49-e2-F4: default `to bottom` (180deg) gradient must run top→bottom in the
+/// renderer's y-down space, and explicit angles must map to the right direction.
+#[test]
+fn linear_gradient_angle_maps_to_ydown_space() {
+    use liquide_compositor::scene::{BackgroundImage, GradientSpec};
+
+    fn endpoints(css: &str) -> (f32, f32, f32, f32) {
+        let mut engine = StyleEngine::default();
+        engine.add_stylesheet(&format!("div {{ background: {css}; }}"));
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+        let styles = engine.restyle_all(&doc);
+        let style = styles.get(div).unwrap();
+        match style.background[0].image.as_ref().unwrap() {
+            BackgroundImage::Gradient(GradientSpec::Linear {
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                ..
+            }) => (*start_x, *start_y, *end_x, *end_y),
+            other => panic!("expected linear gradient, got {other:?}"),
+        }
+    }
+
+    fn approx(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    // Default `to bottom` (180deg): start at top (y=0), end at bottom (y=1).
+    let (sx, sy, ex, ey) = endpoints("linear-gradient(red, blue)");
+    assert!(approx(sx, 0.5) && approx(sy, 0.0), "start {sx},{sy}");
+    assert!(approx(ex, 0.5) && approx(ey, 1.0), "end {ex},{ey}");
+
+    // `to right` (90deg): start at left (x=0), end at right (x=1).
+    let (sx, sy, ex, ey) = endpoints("linear-gradient(90deg, red, blue)");
+    assert!(approx(sx, 0.0) && approx(sy, 0.5), "start {sx},{sy}");
+    assert!(approx(ex, 1.0) && approx(ey, 0.5), "end {ex},{ey}");
+
+    // `to top` (0deg): start at bottom (y=1), end at top (y=0).
+    let (sx, sy, ex, ey) = endpoints("linear-gradient(0deg, red, blue)");
+    assert!(approx(sx, 0.5) && approx(sy, 1.0), "start {sx},{sy}");
+    assert!(approx(ex, 0.5) && approx(ey, 0.0), "end {ex},{ey}");
+}
+
 #[test]
 fn transition_duration_defaults_transition_definitions_to_all() {
     let mut engine = StyleEngine::default();

@@ -10,5 +10,7 @@ description = "User account management, group management, password policy, and l
 [dependencies]
 thiserror.workspace = true
 tracing.workspace = true
+# Pre-added by t51-e1 for the Wave A3 authorization seam (t51-e3 adds the calls).
+liquide-authz-runtime.workspace = true
 
 [dev-dependencies]

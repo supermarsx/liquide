@@ -15,6 +15,7 @@ pub mod platform;
 pub mod policy;
 pub mod policy_db;
 pub mod rules;
+pub mod security_descriptor;
 pub mod store;
 pub mod subject;
 
@@ -27,6 +28,9 @@ pub use level::AuthLevel;
 pub use policy::{AuthorizationPolicy, PolicyRule};
 pub use policy_db::{ActionId, AuthDecision, AuthType, ImpliedAuth, PolicyDatabase, PolicyEntry};
 pub use rules::{Rule, RuleSet, SubjectMatch};
+pub use security_descriptor::{
+    AccessCheckResult, AccessControlEntry, AceEffect, CapabilitySet, Principal, SecurityDescriptor,
+};
 pub use store::AuthorizationStore;
 pub use subject::{Resource, Subject, SubjectKind};
 

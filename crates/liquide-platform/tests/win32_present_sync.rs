@@ -1,7 +1,7 @@
 #![cfg(target_os = "windows")]
 
 use liquide_platform::win32::{
-    refresh_rate_hz_from_devmode_frequency, DxgiPresentCapabilities, DxgiPresentMode,
+    DxgiPresentCapabilities, DxgiPresentMode, refresh_rate_hz_from_devmode_frequency,
 };
 
 #[test]

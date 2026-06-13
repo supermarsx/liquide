@@ -138,7 +138,9 @@ pub struct PositionedGlyph {
     pub x: f32,
     /// Y position (baseline) relative to the paragraph origin.
     pub y: f32,
-    /// Character cluster index in the source text.
+    /// Byte offset of this glyph's cluster, **relative to the start of its
+    /// line** (i.e. `global_byte_offset - line.start`). Add `line.start` to
+    /// recover the global offset into the source text.
     pub cluster: u32,
 }
 
@@ -255,7 +257,7 @@ impl ParagraphLayouter {
         };
 
         // Apply alignment and produce final layout.
-        self.position_lines(raw_lines, max_width)
+        self.position_lines(text, raw_lines, max_width)
     }
 
     /// Greedy line breaking.
@@ -570,7 +572,12 @@ impl ParagraphLayouter {
     }
 
     /// Position lines according to alignment and produce the final layout.
-    fn position_lines(&self, raw_lines: Vec<RawLine>, max_width: f32) -> ParagraphLayout {
+    fn position_lines(
+        &self,
+        text: &str,
+        raw_lines: Vec<RawLine>,
+        max_width: f32,
+    ) -> ParagraphLayout {
         let mut lines: Vec<LayoutLine> = Vec::with_capacity(raw_lines.len());
         let mut y: f32 = 0.0;
         let mut total_width: f32 = 0.0;
@@ -629,6 +636,26 @@ impl ParagraphLayouter {
                 }
             };
 
+            // Byte range of this line in the source text. `byte_offset` is the
+            // *global* offset of each item's cluster; the line starts at the
+            // first item's offset.
+            let line_start = raw.items.first().map(|it| it.byte_offset).unwrap_or(0);
+            // The line ends just past the last cluster's text. The last item's
+            // `byte_offset` is the start of that cluster, so the end is the byte
+            // offset of the following character (next char boundary in `text`).
+            // (F10: previously this added the run-local cluster index to an
+            // already-global `byte_offset`, double-counting and corrupting the
+            // range for everything but a single ASCII run starting at byte 0.)
+            let line_end = raw
+                .items
+                .last()
+                .map(|it| {
+                    let start = it.byte_offset.min(text.len());
+                    let len = text[start..].chars().next().map_or(0, |c| c.len_utf8());
+                    start + len
+                })
+                .unwrap_or(line_start);
+
             // Position glyphs.
             let mut positioned = Vec::with_capacity(raw.items.len());
             let mut x = x_offset;
@@ -647,13 +674,20 @@ impl ParagraphLayouter {
             };
 
             for item in &raw.items {
+                // `cluster` is stored as a *line-local* byte offset (the item's
+                // global `byte_offset` minus the line start). This is the
+                // convention the caret/hit-test consumers expect; the previous
+                // code copied the *run-local* shaper cluster verbatim, which only
+                // coincided with a usable offset for a single run starting at
+                // byte 0 (F11).
+                let line_local = item.byte_offset.saturating_sub(line_start);
                 positioned.push(PositionedGlyph {
                     glyph_id: item.glyph.glyph_id,
                     font_id: item.font_id,
                     size: item.size,
                     x: x + item.glyph.x_offset,
                     y: baseline + item.glyph.y_offset,
-                    cluster: item.glyph.cluster,
+                    cluster: line_local as u32,
                 });
                 x += item.glyph.x_advance + justify_extra;
             }
@@ -665,13 +699,6 @@ impl ParagraphLayouter {
             };
 
             total_width = total_width.max(line_width);
-
-            let line_start = raw.items.first().map(|it| it.byte_offset).unwrap_or(0);
-            let line_end = raw
-                .items
-                .last()
-                .map(|it| it.byte_offset + it.glyph.cluster as usize)
-                .unwrap_or(0);
 
             lines.push(LayoutLine {
                 glyphs: positioned,
@@ -829,6 +856,78 @@ mod tests {
         let run = make_run("Hello World", 10.0);
         let layout = layouter.layout("Hello World", &[run]);
         assert_eq!(layout.lines.len(), 1); // single line even though it overflows
+    }
+
+    /// Build a run whose glyphs carry run-local *byte* cluster offsets, spanning
+    /// the global byte range `[start, start + text.len())`. Mirrors how the real
+    /// shaper emits per-run clusters, so multi-run layouts can be exercised.
+    fn make_run_at(text: &str, start: usize, advance: f32) -> GlyphRun {
+        let glyphs: Vec<ShapedGlyph> = text
+            .char_indices()
+            .map(|(byte_off, _)| ShapedGlyph {
+                glyph_id: byte_off as u32,
+                cluster: byte_off as u32,
+                x_advance: advance,
+                y_advance: 0.0,
+                x_offset: 0.0,
+                y_offset: 0.0,
+            })
+            .collect();
+        GlyphRun {
+            glyphs,
+            font_id: FontId(1),
+            size: 16.0,
+            direction: Direction::Ltr,
+            metrics: FontMetrics::default_for_size(16.0),
+            start,
+            end: start + text.len(),
+        }
+    }
+
+    /// Regression (t49-e3-F10): a line's `end` must be the byte offset just past
+    /// the last cluster's text — not `byte_offset + cluster`, which double-counts
+    /// and roughly doubles the end index for a single ASCII run.
+    #[test]
+    fn test_line_end_no_duplicate_last_cluster() {
+        let style = ParagraphStyle {
+            max_width: Some(500.0),
+            ..Default::default()
+        };
+        let layouter = ParagraphLayouter::new(style);
+        let text = "Hello";
+        let run = make_run_at(text, 0, 10.0);
+        let layout = layouter.layout(text, &[run]);
+        assert_eq!(layout.lines.len(), 1);
+        // Correct end is the text length (past the final 'o'). The old bug
+        // produced ~= 2 * last_cluster (e.g. 8) here.
+        assert_eq!(layout.lines[0].start, 0);
+        assert_eq!(layout.lines[0].end, text.len());
+    }
+
+    /// Regression (t49-e3-F11): with multiple shaping runs, a glyph's stored
+    /// `cluster` is line-local, so global offsets recover correctly even for the
+    /// second run (which starts at a non-zero byte offset).
+    #[test]
+    fn test_multi_run_global_offsets() {
+        let style = ParagraphStyle {
+            max_width: Some(500.0),
+            ..Default::default()
+        };
+        let layouter = ParagraphLayouter::new(style);
+        // Two runs: "AB" (bytes 0..2) then "CD" (bytes 2..4) of "ABCD".
+        let text = "ABCD";
+        let run1 = make_run_at("AB", 0, 10.0);
+        let run2 = make_run_at("CD", 2, 10.0);
+        let layout = layouter.layout(text, &[run1, run2]);
+        assert_eq!(layout.lines.len(), 1);
+        let line = &layout.lines[0];
+        assert_eq!(line.glyphs.len(), 4);
+        assert_eq!(line.start, 0);
+        assert_eq!(line.end, 4);
+        // Hit-testing a point inside the *second* run's first glyph (C, x≈20)
+        // must map to global byte offset 2, not a run-local 0.
+        let result = crate::hit_test::HitTester::hit_test_line(line, 0, 21.0);
+        assert_eq!(result.offset.0, 2, "second-run hit must be global offset 2");
     }
 
     #[test]

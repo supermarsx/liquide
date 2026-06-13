@@ -112,8 +112,13 @@ impl UsbManager {
     }
 
     /// Detach a USB device from the session.
+    ///
+    /// Removes the device from the tracking set after emitting the audit
+    /// event, so the map reflects only currently-attached devices. Leaving
+    /// detached entries in place would let the table grow unbounded across
+    /// repeated plug/unplug cycles (resource leak).
     pub fn detach_device(&mut self, instance_id: u32) -> Result<()> {
-        let device = self.devices.get_mut(&instance_id).ok_or_else(|| {
+        let mut device = self.devices.remove(&instance_id).ok_or_else(|| {
             UsbError::InvalidDevice(format!("no device with instance ID {}", instance_id))
         })?;
 
@@ -124,6 +129,8 @@ impl UsbManager {
             reason: "detached".to_string(),
         });
 
+        // Mark state transition for any observer holding a moved-out copy;
+        // the entry itself is dropped here so it no longer occupies the map.
         device.detach();
         Ok(())
     }

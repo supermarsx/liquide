@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use criterion::{
-    BatchSize, BenchmarkId, Criterion, black_box, criterion_group, criterion_main,
-};
+use criterion::{BatchSize, BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 
 use liquide_font_rasterizer::{FontFaceId, GlyphBitmap, GlyphCache, GlyphCacheKey};
 
@@ -49,14 +47,18 @@ fn bench_glyph_cache_hot_hits(c: &mut Criterion) {
         let keys = build_keys(0, glyph_count);
         populate_cache(&cache, &keys);
 
-        group.bench_with_input(BenchmarkId::new("shared_bitmap_hits", glyph_count), &glyph_count, |b, _| {
-            b.iter(|| {
-                for key in &keys {
-                    let bitmap = cache.get(black_box(key)).expect("glyph should be cached");
-                    black_box(Arc::as_ptr(&bitmap.pixels));
-                }
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("shared_bitmap_hits", glyph_count),
+            &glyph_count,
+            |b, _| {
+                b.iter(|| {
+                    for key in &keys {
+                        let bitmap = cache.get(black_box(key)).expect("glyph should be cached");
+                        black_box(Arc::as_ptr(&bitmap.pixels));
+                    }
+                });
+            },
+        );
     }
     group.finish();
 }

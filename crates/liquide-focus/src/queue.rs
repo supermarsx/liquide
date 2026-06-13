@@ -1,12 +1,34 @@
 //! Per-window message queue with priority-based ordering.
 //!
+//! # RETIRED DUPLICATE — do not extend
+//!
+//! This [`MessageQueue`] is a **divergent duplicate** of the canonical,
+//! runtime-wired input queue `liquide_message_queue::ThreadQueue` (consumed by
+//! `liquide-session`). Per the user-approved decision recorded in the t51 input
+//! redirect note (`.orchestration/notes/t51-input-redirect.md`), `ThreadQueue`
+//! is THE canonical input path and this queue is slated for **retirement**.
+//!
+//! The genuinely-useful coalescing / key-repeat-thinning / scroll-coalesce
+//! logic that landed here in flight has been **reconciled onto `ThreadQueue`**
+//! (wheel-wake regression and scroll-coalesce reorder/flag-OR fixed there).
+//! The methods below (`coalesce_mouse_wheel`, `coalesce_mouse_move`,
+//! `thin_key_repeats`, `drain_paint`) now have a canonical home in
+//! `liquide-message-queue`; do NOT add new coalescing behaviour here.
+//!
+//! This file is **not deleted** because it still has callers within this crate
+//! (the `Dispatcher` in `dispatch.rs`) plus its own test module (`tests.rs`).
+//! Full deletion requires migrating `Dispatcher`/`liquide-focus` off the
+//! priority-bucketed queue (or retiring the whole crate, which has zero
+//! production consumers — see `lib.rs` wiring status) and is **escalated** as a
+//! follow-up beyond this pass's file lock.
+//!
 //! Each window owns a [`MessageQueue`] that stores pending messages in
 //! priority order: `High` before `Normal` before `Low`.  Within a priority
 //! band, messages are strictly FIFO.
 
 use std::collections::VecDeque;
 
-use crate::message::{MessagePriority, WindowMessage};
+use crate::message::{MessagePriority, Modifiers, WindowMessage};
 
 /// A priority-bucketed FIFO message queue.
 ///
@@ -134,6 +156,53 @@ impl MessageQueue {
         }
     }
 
+    /// Coalesce `MouseWheel` messages by accumulating their deltas.
+    ///
+    /// Scroll is stateless at this queue layer: combining same-frame deltas
+    /// preserves total movement while reducing dispatch pressure.
+    pub fn coalesce_mouse_wheel(&mut self) -> usize {
+        let mut total_delta = 0.0;
+        let mut found_priority = None;
+        let mut count = 0usize;
+
+        for (prio, deque) in [
+            (MessagePriority::Low, &self.low),
+            (MessagePriority::Normal, &self.normal),
+            (MessagePriority::High, &self.high),
+        ] {
+            for msg in deque {
+                if let WindowMessage::MouseWheel { delta } = msg {
+                    total_delta += *delta;
+                    count += 1;
+                    found_priority = Some(prio);
+                }
+            }
+        }
+
+        remove_all_mouse_wheel(&mut self.high);
+        remove_all_mouse_wheel(&mut self.normal);
+        remove_all_mouse_wheel(&mut self.low);
+
+        if let Some(prio) = found_priority {
+            let msg = WindowMessage::MouseWheel { delta: total_delta };
+            match prio {
+                MessagePriority::High => self.high.push_back(msg),
+                MessagePriority::Normal => self.normal.push_back(msg),
+                MessagePriority::Low => self.low.push_back(msg),
+            }
+        }
+
+        count.saturating_sub(1)
+    }
+
+    /// Thin duplicate key-down repeats while preserving key-up events.
+    pub fn thin_key_repeats(&mut self, max_repeats_per_key: usize) -> usize {
+        let max_repeats_per_key = max_repeats_per_key.max(1);
+        thin_key_repeats_in(&mut self.high, max_repeats_per_key)
+            + thin_key_repeats_in(&mut self.normal, max_repeats_per_key)
+            + thin_key_repeats_in(&mut self.low, max_repeats_per_key)
+    }
+
     /// Remove all messages from the queue.
     pub fn clear(&mut self) {
         self.high.clear();
@@ -197,4 +266,28 @@ fn remove_all_paint(deque: &mut VecDeque<WindowMessage>) -> usize {
 /// Remove all `MouseMove` messages from `deque`.
 fn remove_all_mouse_move(deque: &mut VecDeque<WindowMessage>) {
     deque.retain(|m| !matches!(m, WindowMessage::MouseMove { .. }));
+}
+
+fn remove_all_mouse_wheel(deque: &mut VecDeque<WindowMessage>) {
+    deque.retain(|m| !matches!(m, WindowMessage::MouseWheel { .. }));
+}
+
+fn thin_key_repeats_in(deque: &mut VecDeque<WindowMessage>, max_repeats_per_key: usize) -> usize {
+    let before = deque.len();
+    let mut repeats = std::collections::HashMap::<(u32, Modifiers), usize>::new();
+
+    deque.retain(|message| match message {
+        WindowMessage::KeyDown { keycode, modifiers } => {
+            let count = repeats.entry((*keycode, *modifiers)).or_insert(0);
+            *count += 1;
+            *count <= max_repeats_per_key
+        }
+        WindowMessage::KeyUp { keycode, modifiers } => {
+            repeats.remove(&(*keycode, *modifiers));
+            true
+        }
+        _ => true,
+    });
+
+    before - deque.len()
 }

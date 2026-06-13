@@ -1,8 +1,10 @@
 //! `AppBootstrap` — the builder and driver of an app's event loop.
 
 use anyhow::Result;
-use liquide_platform::{NullPlatform, PlatformBackend};
-use liquide_ui_core::{Event, UiTheme, widget::Widget};
+#[cfg(test)]
+use liquide_platform::NullPlatform;
+use liquide_platform::PlatformBackend;
+use liquide_ui_core::{widget::Widget, Event, UiTheme};
 
 use crate::event_loop::{AppRunReport, EventLoop, FrameStats};
 
@@ -19,13 +21,11 @@ impl Size {
         Self { width, height }
     }
 }
-
 impl Default for Size {
     fn default() -> Self {
         Self::new(1024, 768)
     }
 }
-
 /// Context passed to the root-widget builder.
 ///
 /// Intentionally narrow: exposes only the information the root builder
@@ -225,11 +225,4 @@ impl AppBootstrap {
 
         Ok((cx, ev_loop, root))
     }
-}
-
-// Keep `NullPlatform` in the use-graph even when the `cfg(test)` arm in
-// `prepare` is not compiled (e.g. with `--release`).
-#[allow(dead_code)]
-fn _ensure_null_platform_linked() -> Box<dyn PlatformBackend> {
-    Box::new(NullPlatform::new())
 }

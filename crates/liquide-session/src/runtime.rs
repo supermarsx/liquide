@@ -1,5 +1,7 @@
 //! Session runtime coordinator — the central manager.
 
+use std::collections::HashSet;
+
 use crate::audit::SessionAuditEvent;
 use crate::config::{JailConfig, ResourceLimits, ResumeConfig, SessionConfig, SupervisorConfig};
 use crate::crash::{RestartAction, RestartTracker, SafeMode};
@@ -24,6 +26,7 @@ pub struct SessionRuntime {
     sandbox: SandboxEnforcer,
     safe_mode: SafeMode,
     audit_events: Vec<SessionAuditEvent>,
+    owners: HashSet<String>,
 }
 
 impl SessionRuntime {
@@ -68,6 +71,7 @@ impl SessionRuntime {
             sandbox: SandboxEnforcer::new(jail_config),
             safe_mode: SafeMode::new(safe_mode_enabled),
             audit_events,
+            owners: HashSet::new(),
         }
     }
 
@@ -248,7 +252,17 @@ impl SessionRuntime {
     /// Handle a crash: decide restart strategy and update state.
     pub fn handle_crash(&mut self) -> RestartAction {
         let from = self.state_machine.state();
-        let _ = self.state_machine.transition_to(SessionState::Crashed);
+        // Only audit/restart if the state machine actually accepted the
+        // transition into Crashed. Crash handling invoked from a state that
+        // refuses the transition (e.g. Terminated/Failed) must not record a
+        // transition that never happened nor restart workers (t49-e6-08).
+        if self
+            .state_machine
+            .transition_to(SessionState::Crashed)
+            .is_err()
+        {
+            return RestartAction::EnterFailed;
+        }
         self.audit_events.push(SessionAuditEvent::StateTransition {
             from: from.to_string(),
             to: SessionState::Crashed.to_string(),
@@ -267,8 +281,16 @@ impl SessionRuntime {
                 self.safe_mode.set_active(true);
                 self.state_machine.set_safe_mode(true);
                 self.audit_events.push(SessionAuditEvent::SafeModeEntered);
-                let _ = self.state_machine.transition_to(SessionState::Running);
-                self.start_essential_workers();
+                // Only restart workers if the session actually returned to
+                // Running; a refused transition must not "restart" workers
+                // while the state disagrees (t49-e6-08).
+                if self
+                    .state_machine
+                    .transition_to(SessionState::Running)
+                    .is_ok()
+                {
+                    self.start_essential_workers();
+                }
             }
             RestartAction::RestartSafePlugins => {
                 // Quarantine plugins but keep the session running normally otherwise.
@@ -278,19 +300,36 @@ impl SessionRuntime {
                             plugin_id: "all".to_string(),
                         });
                 }
-                let _ = self.state_machine.transition_to(SessionState::Running);
-                self.start_essential_workers();
+                if self
+                    .state_machine
+                    .transition_to(SessionState::Running)
+                    .is_ok()
+                {
+                    self.start_essential_workers();
+                }
             }
             RestartAction::RestartNormal => {
-                let _ = self.state_machine.transition_to(SessionState::Running);
-                self.start_essential_workers();
+                if self
+                    .state_machine
+                    .transition_to(SessionState::Running)
+                    .is_ok()
+                {
+                    self.start_essential_workers();
+                }
             }
             RestartAction::EnterFailed => {
-                let _ = self.state_machine.transition_to(SessionState::Failed);
-                self.audit_events.push(SessionAuditEvent::StateTransition {
-                    from: SessionState::Crashed.to_string(),
-                    to: SessionState::Failed.to_string(),
-                });
+                // Only record the Crashed -> Failed transition if it was
+                // actually accepted by the state machine (t49-e6-08).
+                if self
+                    .state_machine
+                    .transition_to(SessionState::Failed)
+                    .is_ok()
+                {
+                    self.audit_events.push(SessionAuditEvent::StateTransition {
+                        from: SessionState::Crashed.to_string(),
+                        to: SessionState::Failed.to_string(),
+                    });
+                }
             }
         }
 
@@ -324,6 +363,98 @@ impl SessionRuntime {
     /// Drain all accumulated audit events.
     pub fn drain_audit_events(&mut self) -> Vec<SessionAuditEvent> {
         std::mem::take(&mut self.audit_events)
+    }
+
+    /// Drain accumulated audit events into a structured [`EventLogService`] sink.
+    ///
+    /// Each [`SessionAuditEvent`] is converted to its
+    /// [`liquide_common::event_log::EventRecord`] form and recorded. This is the
+    /// structured-sink consumer for the session audit plane (closes the
+    /// "EventLogService sink with zero consumers" gap, B6b, from the session
+    /// side): callers that hold a real append-only or in-memory sink drive it
+    /// here instead of only formatting events to a tracing log.
+    ///
+    /// On the first sink error the remaining (already-drained) events are
+    /// preserved by being pushed back into the buffer so no audit event is
+    /// silently lost, and the error is returned. Returns the number of events
+    /// successfully recorded on success.
+    pub fn drain_audit_events_to(
+        &mut self,
+        sink: &mut dyn liquide_common::event_log::EventLogService,
+    ) -> liquide_common::Result<usize> {
+        let events = std::mem::take(&mut self.audit_events);
+        let mut recorded = 0;
+        for (index, event) in events.iter().enumerate() {
+            if let Err(err) = sink.record_event(event.to_event_record()) {
+                // Preserve the unrecorded tail (including the failing event) so
+                // a transient sink failure does not drop audit history.
+                self.audit_events.extend(events[index..].iter().cloned());
+                return Err(err);
+            }
+            recorded += 1;
+        }
+        Ok(recorded)
+    }
+
+    /// Attach a runtime owner/reference to the session.
+    ///
+    /// Owners represent external holders such as connected clients,
+    /// supervisor handles, or manager-owned lifecycle references. They make
+    /// last-owner cleanup observable without forcing an immediate teardown.
+    pub fn attach_owner(&mut self, owner_id: impl Into<String>) -> usize {
+        let owner_id = owner_id.into();
+        let inserted = self.owners.insert(owner_id.clone());
+        let owner_count = self.owners.len();
+        if inserted {
+            self.audit_events.push(SessionAuditEvent::OwnerAttached {
+                session_id: self.session_id().to_string(),
+                owner_id,
+                owner_count,
+            });
+        }
+        owner_count
+    }
+
+    /// Detach a runtime owner/reference from the session.
+    ///
+    /// When the final owner detaches, the runtime records both
+    /// `LastOwnerDetached` and `CleanupStarted` so the supervisor or manager can
+    /// correlate the cleanup path.
+    pub fn detach_owner(&mut self, owner_id: &str) -> usize {
+        let removed = self.owners.remove(owner_id);
+        let owner_count = self.owners.len();
+        if removed {
+            self.audit_events.push(SessionAuditEvent::OwnerDetached {
+                session_id: self.session_id().to_string(),
+                owner_id: owner_id.to_string(),
+                owner_count,
+            });
+            if owner_count == 0 {
+                let session_id = self.session_id().to_string();
+                self.audit_events
+                    .push(SessionAuditEvent::LastOwnerDetached {
+                        session_id: session_id.clone(),
+                    });
+                self.audit_events.push(SessionAuditEvent::CleanupStarted {
+                    session_id,
+                    reason: "last_owner_detached".to_string(),
+                });
+            }
+        }
+        owner_count
+    }
+
+    /// Mark session cleanup as completed.
+    pub fn complete_cleanup(&mut self) {
+        self.audit_events.push(SessionAuditEvent::CleanupCompleted {
+            session_id: self.session_id().to_string(),
+        });
+    }
+
+    /// Current number of attached runtime owners.
+    #[must_use]
+    pub fn owner_count(&self) -> usize {
+        self.owners.len()
     }
 
     /// The current session state.

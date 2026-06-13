@@ -9,6 +9,7 @@ description = "Privilege escalation and authorization framework for the Liquide 
 thiserror.workspace = true
 tracing.workspace = true
 serde.workspace = true
+liquide-common.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

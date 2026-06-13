@@ -169,6 +169,56 @@ impl fmt::Display for SnapZone {
     }
 }
 
+// `SnapZone` is the single shell-side snap type. It is the serializable,
+// always-active counterpart of the canonical `liquide_tiling::SnapTarget`
+// (which carries an extra inactive `None` variant and is NOT `serde`-derived —
+// `Window::tile_zone: Option<SnapZone>` and `WindowRule`/`SnapPreview` are
+// persisted, so the shell type must stay `Serialize`/`Deserialize`). Rather
+// than a lossy type-alias (t52-e3 verified the serde + `None`-variant gap), the
+// two are unified at the conversion edge via these `From` impls — the canonical
+// snap geometry/detection (`SnapZones`) is consumed through this single bridge.
+
+impl From<SnapZone> for liquide_tiling::SnapTarget {
+    fn from(zone: SnapZone) -> Self {
+        match zone {
+            SnapZone::Left => Self::Left,
+            SnapZone::Right => Self::Right,
+            SnapZone::Top => Self::Top,
+            SnapZone::Bottom => Self::Bottom,
+            SnapZone::TopLeft => Self::TopLeft,
+            SnapZone::TopRight => Self::TopRight,
+            SnapZone::BottomLeft => Self::BottomLeft,
+            SnapZone::BottomRight => Self::BottomRight,
+            SnapZone::Center => Self::Center,
+        }
+    }
+}
+
+impl SnapZone {
+    /// Map a canonical [`liquide_tiling::SnapTarget`] to a shell [`SnapZone`].
+    ///
+    /// The inactive `SnapTarget::None` maps to `None`; every active target maps
+    /// to its shell zone. (An `impl From<SnapTarget> for Option<SnapZone>` would
+    /// violate the orphan rule — both types are foreign — so this reverse
+    /// direction is an inherent associated fn.)
+    #[must_use]
+    pub fn from_target(target: liquide_tiling::SnapTarget) -> Option<Self> {
+        use liquide_tiling::SnapTarget;
+        Some(match target {
+            SnapTarget::None => return None,
+            SnapTarget::Left => SnapZone::Left,
+            SnapTarget::Right => SnapZone::Right,
+            SnapTarget::Top => SnapZone::Top,
+            SnapTarget::Bottom => SnapZone::Bottom,
+            SnapTarget::TopLeft => SnapZone::TopLeft,
+            SnapTarget::TopRight => SnapZone::TopRight,
+            SnapTarget::BottomLeft => SnapZone::BottomLeft,
+            SnapTarget::BottomRight => SnapZone::BottomRight,
+            SnapTarget::Center => SnapZone::Center,
+        })
+    }
+}
+
 /// Visual preview shown while the user drags a window near a snap zone.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapPreview {
@@ -216,6 +266,17 @@ pub struct TilingPreset {
 // Engine
 // ---------------------------------------------------------------------------
 
+/// Slimmer-named handle for the shell-side tiling state.
+///
+/// The shell retains `TilingEngine` for the config/preset/rule/render-state and
+/// per-workspace layout-kind map that have **no canonical equivalent** (these
+/// stay shell-side by design — `liquide_tiling` is the layout/snap *policy*
+/// engine, not a config store). `TilingState` is the forward-looking name for
+/// that slimmer role; the struct keeps the `TilingEngine` name during migration
+/// so the `lib.rs` re-export (t52-e4) and `shell/mod.rs` field (t52-e5) keep
+/// compiling. Callers may use either name.
+pub type TilingState = TilingEngine;
+
 /// The tiling engine runtime.
 pub struct TilingEngine {
     config: TilingConfig,
@@ -239,326 +300,6 @@ impl TilingEngine {
             window_rules: Vec::new(),
             presets: Vec::new(),
             current_snap_preview: None,
-        }
-    }
-
-    // =======================================================================
-    // Layout dispatch
-    // =======================================================================
-
-    /// Arrange `window_count` windows using the given layout within `screen`.
-    ///
-    /// Returns one [`Rect`] per window.
-    #[must_use]
-    pub fn arrange(&self, kind: TilingLayoutKind, window_count: usize, screen: Rect) -> Vec<Rect> {
-        if window_count == 0 {
-            return Vec::new();
-        }
-        match kind {
-            TilingLayoutKind::SplitHorizontal => self.arrange_split_h(window_count, screen),
-            TilingLayoutKind::SplitVertical => self.arrange_split_v(window_count, screen),
-            TilingLayoutKind::Quadrant => self.arrange_quadrant(window_count, screen),
-            TilingLayoutKind::ThreeColumn => self.arrange_three_column(window_count, screen),
-            TilingLayoutKind::Spiral => self.arrange_spiral(window_count, screen),
-            TilingLayoutKind::Stacking => self.arrange_stacking(window_count, screen),
-            TilingLayoutKind::CustomGrid => self.arrange_custom_grid(window_count, screen),
-        }
-    }
-
-    // =======================================================================
-    // Individual layouts
-    // =======================================================================
-
-    /// Master-stack horizontal split.
-    ///
-    /// The first window takes `master_ratio` of the width; remaining windows
-    /// share the rest vertically.
-    #[must_use]
-    pub fn arrange_split_h(&self, n: usize, screen: Rect) -> Vec<Rect> {
-        let g = self.config.gap;
-        let og = self.config.outer_gap;
-        let usable = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-
-        if n == 1 {
-            return vec![usable];
-        }
-
-        let master_w = usable.width * self.config.master_ratio - g / 2.0;
-        let stack_w = usable.width - master_w - g;
-        let stack_count = (n - 1) as f32;
-        let stack_h = (usable.height - g * (stack_count - 1.0).max(0.0)) / stack_count;
-
-        let mut rects = vec![Rect::new(usable.x, usable.y, master_w, usable.height)];
-        let sx = usable.x + master_w + g;
-        for i in 0..(n - 1) {
-            let y = usable.y + i as f32 * (stack_h + g);
-            rects.push(Rect::new(sx, y, stack_w, stack_h));
-        }
-        rects
-    }
-
-    /// Master-stack vertical split.
-    #[must_use]
-    pub fn arrange_split_v(&self, n: usize, screen: Rect) -> Vec<Rect> {
-        let g = self.config.gap;
-        let og = self.config.outer_gap;
-        let usable = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-
-        if n == 1 {
-            return vec![usable];
-        }
-
-        let master_h = usable.height * self.config.master_ratio - g / 2.0;
-        let stack_h = usable.height - master_h - g;
-        let stack_count = (n - 1) as f32;
-        let stack_w = (usable.width - g * (stack_count - 1.0).max(0.0)) / stack_count;
-
-        let mut rects = vec![Rect::new(usable.x, usable.y, usable.width, master_h)];
-        let sy = usable.y + master_h + g;
-        for i in 0..(n - 1) {
-            let x = usable.x + i as f32 * (stack_w + g);
-            rects.push(Rect::new(x, sy, stack_w, stack_h));
-        }
-        rects
-    }
-
-    /// 2x2 quadrant layout — up to 4 windows.
-    #[must_use]
-    pub fn arrange_quadrant(&self, n: usize, screen: Rect) -> Vec<Rect> {
-        let g = self.config.gap;
-        let og = self.config.outer_gap;
-        let usable = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-
-        let half_w = (usable.width - g) / 2.0;
-        let half_h = (usable.height - g) / 2.0;
-
-        let slots = [
-            Rect::new(usable.x, usable.y, half_w, half_h),
-            Rect::new(usable.x + half_w + g, usable.y, half_w, half_h),
-            Rect::new(usable.x, usable.y + half_h + g, half_w, half_h),
-            Rect::new(usable.x + half_w + g, usable.y + half_h + g, half_w, half_h),
-        ];
-
-        slots.iter().take(n.min(4)).copied().collect()
-    }
-
-    /// Three-column layout: narrow–wide–narrow.
-    #[must_use]
-    pub fn arrange_three_column(&self, n: usize, screen: Rect) -> Vec<Rect> {
-        let g = self.config.gap;
-        let og = self.config.outer_gap;
-        let usable = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-
-        if n == 1 {
-            return vec![usable];
-        }
-
-        let side_w = usable.width * 0.2;
-        let center_w = usable.width - 2.0 * side_w - 2.0 * g;
-
-        // First window → center (master).
-        let center_rect = Rect::new(usable.x + side_w + g, usable.y, center_w, usable.height);
-
-        // Remaining windows alternate left / right columns.
-        let mut left_items = Vec::new();
-        let mut right_items = Vec::new();
-        for i in 1..n {
-            if i % 2 == 1 {
-                left_items.push(i);
-            } else {
-                right_items.push(i);
-            }
-        }
-
-        let layout_column = |items: &[usize], x: f32, w: f32| -> Vec<(usize, Rect)> {
-            if items.is_empty() {
-                return Vec::new();
-            }
-            let count = items.len() as f32;
-            let h = (usable.height - g * (count - 1.0).max(0.0)) / count;
-            items
-                .iter()
-                .enumerate()
-                .map(|(j, &idx)| {
-                    let y = usable.y + j as f32 * (h + g);
-                    (idx, Rect::new(x, y, w, h))
-                })
-                .collect()
-        };
-
-        let left_rects = layout_column(&left_items, usable.x, side_w);
-        let right_rects = layout_column(&right_items, usable.x + side_w + g + center_w + g, side_w);
-
-        // Merge into a flat Vec at the right indices.
-        let total = n;
-        let mut result = vec![Rect::new(0.0, 0.0, 0.0, 0.0); total];
-        result[0] = center_rect;
-        for (idx, r) in left_rects {
-            result[idx] = r;
-        }
-        for (idx, r) in right_rects {
-            result[idx] = r;
-        }
-        result
-    }
-
-    /// Fibonacci / spiral layout.
-    #[must_use]
-    pub fn arrange_spiral(&self, n: usize, screen: Rect) -> Vec<Rect> {
-        let g = self.config.gap;
-        let og = self.config.outer_gap;
-        let mut area = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-
-        let mut rects = Vec::with_capacity(n);
-        for i in 0..n {
-            if i == n - 1 {
-                rects.push(area);
-                break;
-            }
-            // Alternate splitting direction.
-            if i % 2 == 0 {
-                // Split horizontally (left / right).
-                let w = area.width * self.config.master_ratio - g / 2.0;
-                rects.push(Rect::new(area.x, area.y, w, area.height));
-                area = Rect::new(area.x + w + g, area.y, area.width - w - g, area.height);
-            } else {
-                // Split vertically (top / bottom).
-                let h = area.height * self.config.master_ratio - g / 2.0;
-                rects.push(Rect::new(area.x, area.y, area.width, h));
-                area = Rect::new(area.x, area.y + h + g, area.width, area.height - h - g);
-            }
-        }
-        rects
-    }
-
-    /// Stacking (monocle) layout — all windows occupy the full area.
-    #[must_use]
-    pub fn arrange_stacking(&self, n: usize, screen: Rect) -> Vec<Rect> {
-        let og = self.config.outer_gap;
-        let usable = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-        vec![usable; n]
-    }
-
-    /// Custom grid layout using [`CustomGridConfig`].
-    #[must_use]
-    pub fn arrange_custom_grid(&self, n: usize, screen: Rect) -> Vec<Rect> {
-        let g = self.config.gap;
-        let og = self.config.outer_gap;
-        let usable = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-
-        let rows = self.custom_grid.rows as usize;
-        let cols = self.custom_grid.columns as usize;
-        let total_slots = rows * cols;
-
-        let col_ratios = &self.custom_grid.col_ratios;
-        let row_ratios = &self.custom_grid.row_ratios;
-
-        let total_col_gap = g * (cols as f32 - 1.0).max(0.0);
-        let total_row_gap = g * (rows as f32 - 1.0).max(0.0);
-        let avail_w = usable.width - total_col_gap;
-        let avail_h = usable.height - total_row_gap;
-
-        let mut rects = Vec::new();
-        let mut y_offset = usable.y;
-        for r in 0..rows {
-            let rh = avail_h * row_ratios.get(r).copied().unwrap_or(1.0 / rows as f32);
-            let mut x_offset = usable.x;
-            for c in 0..cols {
-                let cw = avail_w * col_ratios.get(c).copied().unwrap_or(1.0 / cols as f32);
-                if rects.len() < n.min(total_slots) {
-                    rects.push(Rect::new(x_offset, y_offset, cw, rh));
-                }
-                x_offset += cw + g;
-            }
-            y_offset += rh + g;
-        }
-        rects
-    }
-
-    // =======================================================================
-    // Snap zones
-    // =======================================================================
-
-    /// Detect which snap zone a cursor position falls into, if any.
-    #[must_use]
-    pub fn detect_snap_zone(&self, cursor_x: f32, cursor_y: f32, screen: Rect) -> Option<SnapZone> {
-        let t = self.config.snap_threshold;
-        let near_left = cursor_x - screen.x < t;
-        let near_right = (screen.x + screen.width) - cursor_x < t;
-        let near_top = cursor_y - screen.y < t;
-        let near_bottom = (screen.y + screen.height) - cursor_y < t;
-
-        match (near_left, near_right, near_top, near_bottom) {
-            (true, _, true, _) => Some(SnapZone::TopLeft),
-            (true, _, _, true) => Some(SnapZone::BottomLeft),
-            (_, true, true, _) => Some(SnapZone::TopRight),
-            (_, true, _, true) => Some(SnapZone::BottomRight),
-            (true, _, _, _) => Some(SnapZone::Left),
-            (_, true, _, _) => Some(SnapZone::Right),
-            (_, _, true, _) => Some(SnapZone::Top),
-            (_, _, _, true) => Some(SnapZone::Bottom),
-            _ => None,
-        }
-    }
-
-    /// Compute the rectangle that a window would occupy when snapped to `zone`.
-    #[must_use]
-    pub fn snap_zone_rect(&self, zone: SnapZone, screen: Rect) -> Rect {
-        let og = self.config.outer_gap;
-        let usable = Rect::new(
-            screen.x + og,
-            screen.y + og,
-            screen.width - 2.0 * og,
-            screen.height - 2.0 * og,
-        );
-        let hw = usable.width / 2.0;
-        let hh = usable.height / 2.0;
-
-        match zone {
-            SnapZone::Left => Rect::new(usable.x, usable.y, hw, usable.height),
-            SnapZone::Right => Rect::new(usable.x + hw, usable.y, hw, usable.height),
-            SnapZone::Top => Rect::new(usable.x, usable.y, usable.width, hh),
-            SnapZone::Bottom => Rect::new(usable.x, usable.y + hh, usable.width, hh),
-            SnapZone::TopLeft => Rect::new(usable.x, usable.y, hw, hh),
-            SnapZone::TopRight => Rect::new(usable.x + hw, usable.y, hw, hh),
-            SnapZone::BottomLeft => Rect::new(usable.x, usable.y + hh, hw, hh),
-            SnapZone::BottomRight => Rect::new(usable.x + hw, usable.y + hh, hw, hh),
-            SnapZone::Center => usable,
         }
     }
 
@@ -678,5 +419,178 @@ impl fmt::Display for TilingEngine {
             self.config.default_layout,
             self.window_rules.len(),
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Canonical `liquide-tiling` drive (t51-e13)
+// ---------------------------------------------------------------------------
+//
+// Wires the canonical `liquide_tiling::TilingEngine` / `SnapZones` (held in
+// `Shell::chrome_tiling`) into the running shell so tiling is actually driven
+// (fixes t49-e5-F05: the engine + snap zones previously had zero production
+// callers and `tile_layout` had no caller). Layout *computation* and snap
+// geometry are now SINGLE-SOURCED onto these canonical paths; the shell-side
+// `TilingEngine` above is retained only for its config/preset/window-rule/
+// snap-preview render-state (consumed by the scene cache via
+// `Window::tiled`/`tile_zone`) and the per-workspace layout-kind/mode maps that
+// other shell modules still read.
+//
+// t52-e3/e4 single-sourcing status (COMPLETE):
+//   * SNAP/COMPUTE TYPE unified at the edge — the shell `SnapZone` is bridged to
+//     the canonical `liquide_tiling::SnapTarget` via `From` impls above (a lossy
+//     type-alias was rejected: `SnapTarget` is not `serde`-derived and carries
+//     an extra `None` variant, but `Window::tile_zone`/`WindowRule`/`SnapPreview`
+//     are serialized — Rule-4 thin-enum + From-impl outcome). The canonical
+//     `SnapZones` geometry/detection is consumed through that single bridge.
+//   * The shell compute methods (`arrange`/`arrange_*`, `detect_snap_zone`,
+//     `snap_zone_rect`) have been DELETED (t52-e4). The production caller
+//     `shell/batch.rs::tile_visible_windows` now delegates to
+//     `tile_visible_windows_canonical` below, and the layout/snap geometry
+//     tests (`tests/tiling_tests.rs` + the external
+//     `liquide-session/tests/e2e_alignment_tiling.rs`) were migrated to assert
+//     against the canonical `liquide_tiling` surface (canonical geometry
+//     differs: no outer-gap inset on a single window via smart-gaps, and
+//     `Top`/`Center` map to full-screen in `SnapZones::zone_preview`).
+//     See `.orchestration/logs/t52-e3.md` and `t52-e4.md`.
+
+use crate::shell::Shell;
+use crate::shell::batch::WindowBatch;
+use crate::window::{WindowId, WindowState};
+
+impl Shell {
+    /// Lazily construct the canonical `liquide_tiling::TilingEngine` held in
+    /// `chrome_tiling`, returning a mutable reference.
+    fn canonical_tiling(&mut self) -> &mut liquide_tiling::TilingEngine {
+        self.chrome_tiling
+            .get_or_insert_with(liquide_tiling::TilingEngine::new)
+    }
+
+    /// Consult the canonical snap zones for the current drag cursor position and
+    /// record the resulting preview (used by the scene render-state). Returns
+    /// the detected zone, if any. Called from `events.rs` during a move drag.
+    ///
+    /// The detection uses the work area (screen minus statusbar/dock) and the
+    /// shell-internal tiling config's snap threshold, so the snap region matches
+    /// the tiled bounds that `apply_snap_on_release` will assign.
+    pub(crate) fn update_snap_preview_for_drag(&mut self, x: f32, y: f32) -> Option<SnapZone> {
+        let work = self.work_area();
+        let threshold = self.tiling().config().snap_threshold;
+        let target = liquide_tiling::SnapZones::detect_zone((x, y), work, threshold);
+        let zone: Option<SnapZone> = SnapZone::from_target(target);
+        let preview = zone.map(|z| SnapPreview {
+            zone: z,
+            preview_rect: liquide_tiling::SnapZones::zone_preview(target, work),
+            active: true,
+        });
+        self.tiling_mut().set_snap_preview(preview);
+        zone
+    }
+
+    /// Clear any active snap preview (called when a drag ends without snapping).
+    pub(crate) fn clear_snap_preview(&mut self) {
+        if self.tiling().snap_preview().is_some() {
+            self.tiling_mut().set_snap_preview(None);
+        }
+    }
+
+    /// On drag release, if a snap zone is currently active, tile the dragged
+    /// window into that zone via the canonical `liquide_tiling::SnapZones`
+    /// geometry. Sets the window's `tiled`/`tile_zone` render-state, applies the
+    /// new bounds through the canonical batch path, and clears the preview.
+    /// Returns `true` if the window was snapped.
+    pub(crate) fn apply_snap_on_release(&mut self, window_id: WindowId) -> bool {
+        let zone = match self.tiling().snap_preview().map(|p| p.zone) {
+            Some(z) => z,
+            None => return false,
+        };
+        let work = self.work_area();
+        let target: liquide_tiling::SnapTarget = zone.into();
+        let rect = liquide_tiling::SnapZones::zone_preview(target, work);
+
+        // Apply the snapped bounds through the canonical batch entry point.
+        let mut batch = WindowBatch::with_capacity(1);
+        batch.tile_layout(&[(window_id, rect)]);
+        self.apply_batch(batch);
+
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            window.tiled = true;
+            window.tile_zone = Some(zone);
+            if window.state == WindowState::Maximized {
+                window.state = WindowState::Normal;
+            }
+        }
+        self.tiling_mut().set_snap_preview(None);
+        true
+    }
+
+    /// Tile all visible (non-minimized) windows on the active workspace using
+    /// the canonical `liquide_tiling::TilingEngine` and apply the computed
+    /// arrangement through the canonical batch path. This is the production
+    /// driver for `tile_layout` (fixes t49-e5-F05). Returns the number of
+    /// windows arranged.
+    pub fn tile_visible_windows_canonical(&mut self) -> usize {
+        let work = self.work_area();
+
+        // Visible, non-minimized windows in deterministic order.
+        let mut visible_ids: Vec<WindowId> = self
+            .windows
+            .values()
+            .filter(|w| w.visible && w.state != WindowState::Minimized)
+            .map(|w| w.id)
+            .collect();
+        visible_ids.sort_by_key(|id| id.0);
+        if visible_ids.is_empty() {
+            // Nothing to tile; drop any stale engine windows.
+            let stale: Vec<u64> = self.canonical_tiling().windows().to_vec();
+            for wid in stale {
+                self.canonical_tiling().remove_window(wid);
+            }
+            return 0;
+        }
+
+        // Bring the canonical engine's window set into lockstep with the shell's
+        // visible set (add new, remove gone) while preserving tiling order for
+        // windows that persist.
+        {
+            let engine = self.canonical_tiling();
+            let stale: Vec<u64> = engine
+                .windows()
+                .iter()
+                .copied()
+                .filter(|w| !visible_ids.iter().any(|id| id.0 == *w))
+                .collect();
+            for wid in stale {
+                engine.remove_window(wid);
+            }
+            for id in &visible_ids {
+                engine.add_window(id.0);
+            }
+        }
+
+        // Compute the layout and map canonical ids back to shell window ids.
+        let layout: Vec<(WindowId, liquide_compositor::geometry::Rect)> = self
+            .canonical_tiling()
+            .compute_layout(work)
+            .into_iter()
+            .map(|(wid, rect)| (WindowId(wid), rect))
+            .collect();
+        let count = layout.len();
+
+        let mut batch = WindowBatch::with_capacity(count);
+        batch.tile_layout(&layout);
+        self.apply_batch(batch);
+
+        // Mark the arranged windows as tiled (render-state for the scene cache).
+        for (id, _) in &layout {
+            if let Some(window) = self.windows.get_mut(id) {
+                window.tiled = true;
+                window.tile_zone = None;
+                if window.state == WindowState::Maximized {
+                    window.state = WindowState::Normal;
+                }
+            }
+        }
+        count
     }
 }

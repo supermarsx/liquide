@@ -113,7 +113,7 @@ pub fn is_admin(subject: &Subject) -> bool {
 }
 
 /// A simple resource descriptor for ownership checks.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resource {
     /// The user-id of the resource owner.
     pub owner_uid: u32,
@@ -122,12 +122,19 @@ pub struct Resource {
 }
 
 impl Resource {
+    /// Create a resource descriptor.
     #[must_use]
     pub fn new(owner_uid: u32, path: impl Into<String>) -> Self {
         Self {
             owner_uid,
             path: path.into(),
         }
+    }
+
+    /// Stable identifier used for resource-scoped audit entries.
+    #[must_use]
+    pub fn resource_id(&self) -> &str {
+        &self.path
     }
 }
 

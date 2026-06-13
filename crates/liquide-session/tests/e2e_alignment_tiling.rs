@@ -3,10 +3,29 @@
 //! the tiling engine generates non-overlapping layouts.
 
 use liquide_compositor::geometry::Rect;
-use liquide_shell::{Shell, ShellAction, SnapZone, TilingConfig, TilingEngine, TilingLayoutKind};
+use liquide_shell::{Shell, ShellAction};
+use liquide_tiling::{SnapTarget, SnapZones, TilingEngine, TilingGaps, TilingLayout};
 
 fn new_shell() -> Shell {
     Shell::new(1920.0, 1080.0)
+}
+
+/// Build a canonical tiling engine for `layout` with `n` windows added (default
+/// gaps + master ratio) and return the computed rects for a 1920x1080 screen.
+///
+/// Window-geometry computation is single-sourced onto `liquide_tiling`
+/// (t52-e3/e4); these tests assert against that canonical surface.
+fn canonical_rects(layout: TilingLayout, n: usize) -> Vec<Rect> {
+    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+    let mut engine = TilingEngine::with_config(layout, TilingGaps::default(), 0.55);
+    for i in 0..n {
+        engine.add_window(i as u64);
+    }
+    engine
+        .compute_layout(screen)
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect()
 }
 
 // ── Tile Left / Right via ShellAction ───────────────────────────────────────
@@ -128,18 +147,14 @@ fn maximize_action_fills_screen() {
     );
 }
 
-// ── TilingEngine Directly ───────────────────────────────────────────────────
+// ── Canonical tiling engine (layout geometry, single-sourced) ───────────────
 
 #[test]
-fn tiling_engine_split_horizontal_no_overlap() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-
-    let rects = engine.arrange_split_h(3, screen);
+fn tiling_engine_columns_no_overlap() {
+    let rects = canonical_rects(TilingLayout::Columns, 3);
     assert_eq!(rects.len(), 3, "should produce 3 rects for 3 windows");
 
-    // No overlap between any pair
+    // No overlap between any pair.
     for i in 0..rects.len() {
         for j in (i + 1)..rects.len() {
             let r1 = &rects[i];
@@ -157,12 +172,8 @@ fn tiling_engine_split_horizontal_no_overlap() {
 }
 
 #[test]
-fn tiling_engine_split_vertical_no_overlap() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-
-    let rects = engine.arrange_split_v(3, screen);
+fn tiling_engine_rows_no_overlap() {
+    let rects = canonical_rects(TilingLayout::Rows, 3);
     assert_eq!(rects.len(), 3);
 
     for i in 0..rects.len() {
@@ -180,24 +191,20 @@ fn tiling_engine_split_vertical_no_overlap() {
 }
 
 #[test]
-fn tiling_engine_quadrant_layout() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+fn tiling_engine_grid_layout() {
+    let rects = canonical_rects(TilingLayout::Grid, 4);
+    assert_eq!(rects.len(), 4, "grid should produce 4 rects");
 
-    let rects = engine.arrange_quadrant(4, screen);
-    assert_eq!(rects.len(), 4, "quadrant should produce 4 rects");
-
-    // Each quadrant should fit within the screen
+    // Each cell should fit within the screen.
     for (i, r) in rects.iter().enumerate() {
         assert!(r.x >= 0.0, "rect {i} x should be >= 0");
         assert!(r.y >= 0.0, "rect {i} y should be >= 0");
         assert!(
-            r.x + r.width <= screen.width + 1.0,
+            r.x + r.width <= 1920.0 + 1.0,
             "rect {i} should fit in screen width"
         );
         assert!(
-            r.y + r.height <= screen.height + 1.0,
+            r.y + r.height <= 1080.0 + 1.0,
             "rect {i} should fit in screen height"
         );
     }
@@ -205,14 +212,9 @@ fn tiling_engine_quadrant_layout() {
 
 #[test]
 fn tiling_engine_spiral_layout() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-
-    let rects = engine.arrange_spiral(5, screen);
+    let rects = canonical_rects(TilingLayout::Spiral, 5);
     assert_eq!(rects.len(), 5);
 
-    // All rects should be within screen
     for (i, r) in rects.iter().enumerate() {
         assert!(r.width > 0.0, "spiral rect {i} should have positive width");
         assert!(
@@ -220,45 +222,37 @@ fn tiling_engine_spiral_layout() {
             "spiral rect {i} should have positive height"
         );
         assert!(
-            r.x + r.width <= screen.width + 1.0,
+            r.x + r.width <= 1920.0 + 1.0,
             "spiral rect {i} should fit in screen"
         );
     }
 }
 
 #[test]
-fn tiling_engine_stacking_all_full_area() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-
-    let rects = engine.arrange_stacking(3, screen);
+fn tiling_engine_monocle_all_full_area() {
+    let rects = canonical_rects(TilingLayout::Monocle, 3);
     assert_eq!(rects.len(), 3);
 
-    // In stacking (monocle) mode, all windows should be roughly full-area
+    // Monocle: all windows occupy roughly the full work area.
     for (i, r) in rects.iter().enumerate() {
         assert!(
-            r.width >= screen.width * 0.8,
-            "stacking rect {i} should be near full width"
+            r.width >= 1920.0 * 0.8,
+            "monocle rect {i} should be near full width"
         );
         assert!(
-            r.height >= screen.height * 0.8,
-            "stacking rect {i} should be near full height"
+            r.height >= 1080.0 * 0.8,
+            "monocle rect {i} should be near full height"
         );
     }
 }
 
 #[test]
 fn tiling_engine_three_column() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-
-    let rects = engine.arrange_three_column(3, screen);
+    let rects = canonical_rects(TilingLayout::ThreeColumn, 3);
     assert_eq!(rects.len(), 3);
 
-    // Three-column layout: rects[0] = center (master), rects[1] = left, rects[2] = right
-    // So rects[1].x < rects[0].x < rects[2].x
+    // Three-column: rects[0] = center (master); index 1 → left, index 2 → right.
+    // So rects[1].x < rects[0].x < rects[2].x.
     assert!(
         rects[1].x < rects[0].x,
         "left column (idx 1) should be left of center (idx 0): {} vs {}",
@@ -275,45 +269,33 @@ fn tiling_engine_three_column() {
 
 #[test]
 fn tiling_engine_single_window_fills_screen() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-
-    let rects = engine.arrange_split_h(1, screen);
+    // smart_gaps collapses gaps for a single window → fills the full screen.
+    let rects = canonical_rects(TilingLayout::Columns, 1);
     assert_eq!(rects.len(), 1);
 
     let r = &rects[0];
-    // Single window in split-h should fill (accounting for gaps)
-    assert!(
-        r.width >= screen.width * 0.9,
-        "single window should fill width"
-    );
-    assert!(
-        r.height >= screen.height * 0.9,
-        "single window should fill height"
-    );
+    assert!(r.width >= 1920.0 * 0.9, "single window should fill width");
+    assert!(r.height >= 1080.0 * 0.9, "single window should fill height");
 }
 
-// ── Snap Zones ──────────────────────────────────────────────────────────────
+// ── Canonical snap zones (detection + preview, single-sourced) ───────────────
 
 #[test]
 fn snap_zone_left_right_cover_screen_halves() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
 
-    let left = engine.snap_zone_rect(SnapZone::Left, screen);
-    let right = engine.snap_zone_rect(SnapZone::Right, screen);
+    let left = SnapZones::zone_preview(SnapTarget::Left, screen);
+    let right = SnapZones::zone_preview(SnapTarget::Right, screen);
 
-    // Left zone should be on the left
+    // Left zone should be on the left.
     assert!(left.x < screen.width / 2.0);
     assert!(left.width > 0.0);
 
-    // Right zone should be on the right
+    // Right zone should be on the right.
     assert!(right.x >= screen.width / 2.0 - 2.0);
     assert!(right.width > 0.0);
 
-    // Together should approximately cover the screen
+    // Together they should cover the full screen width.
     let total_width = left.width + right.width;
     assert!(
         total_width >= screen.width * 0.9,
@@ -323,89 +305,82 @@ fn snap_zone_left_right_cover_screen_halves() {
 
 #[test]
 fn snap_zone_corners() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
 
-    let tl = engine.snap_zone_rect(SnapZone::TopLeft, screen);
-    let tr = engine.snap_zone_rect(SnapZone::TopRight, screen);
-    let bl = engine.snap_zone_rect(SnapZone::BottomLeft, screen);
-    let br = engine.snap_zone_rect(SnapZone::BottomRight, screen);
+    let tl = SnapZones::zone_preview(SnapTarget::TopLeft, screen);
+    let tr = SnapZones::zone_preview(SnapTarget::TopRight, screen);
+    let bl = SnapZones::zone_preview(SnapTarget::BottomLeft, screen);
+    let br = SnapZones::zone_preview(SnapTarget::BottomRight, screen);
 
-    // Top-left should be in the top-left of screen
+    // Top-left should be in the top-left of screen.
     assert!(tl.x < screen.width / 2.0);
     assert!(tl.y < screen.height / 2.0);
 
-    // Top-right should be in the top-right
+    // Top-right should be in the top-right.
     assert!(tr.x >= screen.width / 2.0 - 2.0);
     assert!(tr.y < screen.height / 2.0);
 
-    // Bottom-left
+    // Bottom-left.
     assert!(bl.x < screen.width / 2.0);
     assert!(bl.y >= screen.height / 2.0 - 2.0);
 
-    // Bottom-right
+    // Bottom-right.
     assert!(br.x >= screen.width / 2.0 - 2.0);
     assert!(br.y >= screen.height / 2.0 - 2.0);
 }
 
 #[test]
 fn detect_snap_zone_at_screen_edges() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
     let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
+    let threshold = 32.0;
 
-    // Cursor at far left should detect Left zone
-    let left = engine.detect_snap_zone(0.0, 540.0, screen);
+    // Cursor at far left should detect Left zone.
+    let left = SnapZones::detect_zone((0.0, 540.0), screen, threshold);
     assert!(
-        left.is_some(),
+        left.is_active(),
         "cursor at left edge should detect snap zone"
     );
-    assert_eq!(
-        left.unwrap(),
-        SnapZone::Left,
-        "left edge should be Left snap zone"
-    );
+    assert_eq!(left, SnapTarget::Left, "left edge should be Left snap zone");
 
-    // Cursor at far right
-    let right = engine.detect_snap_zone(1919.0, 540.0, screen);
+    // Cursor at far right.
+    let right = SnapZones::detect_zone((1919.0, 540.0), screen, threshold);
     assert!(
-        right.is_some(),
+        right.is_active(),
         "cursor at right edge should detect snap zone"
     );
-    assert_eq!(right.unwrap(), SnapZone::Right);
+    assert_eq!(right, SnapTarget::Right);
 }
 
-// ── Arrange via TilingLayoutKind ────────────────────────────────────────────
+// ── Arrange via every cycling layout ─────────────────────────────────────────
 
 #[test]
-fn arrange_dispatches_all_layout_kinds() {
-    let config = TilingConfig::default();
-    let engine = TilingEngine::new(config);
-    let screen = Rect::new(0.0, 0.0, 1920.0, 1080.0);
-
+fn arrange_produces_rects_for_all_layout_kinds() {
     let layouts = [
-        TilingLayoutKind::SplitHorizontal,
-        TilingLayoutKind::SplitVertical,
-        TilingLayoutKind::Quadrant,
-        TilingLayoutKind::ThreeColumn,
-        TilingLayoutKind::Spiral,
-        TilingLayoutKind::Stacking,
+        TilingLayout::Columns,
+        TilingLayout::Rows,
+        TilingLayout::Grid,
+        TilingLayout::ThreeColumn,
+        TilingLayout::Spiral,
+        TilingLayout::Monocle,
     ];
 
-    for kind in layouts {
-        let rects = engine.arrange(kind, 4, screen);
-        assert!(!rects.is_empty(), "{:?} layout should produce rects", kind);
+    for layout in layouts {
+        let rects = canonical_rects(layout.clone(), 4);
+        assert!(
+            !rects.is_empty(),
+            "{:?} layout should produce rects",
+            layout
+        );
         for r in &rects {
             assert!(
                 r.width > 0.0,
                 "{:?} layout rect should have positive width",
-                kind
+                layout
             );
             assert!(
                 r.height > 0.0,
                 "{:?} layout rect should have positive height",
-                kind
+                layout
             );
         }
     }

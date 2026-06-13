@@ -33,6 +33,14 @@ pub enum XWaylandState {
     Stopped,
     /// Starting up (display socket allocated, process spawning).
     Starting,
+    /// Binary resolved and configuration staged, but the real fork/exec is
+    /// not yet implemented, so **no XWayland process exists**.
+    ///
+    /// This is an explicit "not-yet-implemented" state: it is reachable on
+    /// success of `start()` while the socketpair/fork/exec machinery is
+    /// unimplemented, and it deliberately does NOT claim the server is
+    /// `Running`. A process in this state is not alive (see `check_alive`).
+    Staged,
     /// Running and accepting X11 clients.
     Running,
     /// Process has exited (cleanly or crashed).
@@ -76,8 +84,19 @@ impl XWaylandProcess {
 
     /// Start the XWayland process.
     ///
-    /// Creates socket pairs, allocates a display number, and spawns the
-    /// Xwayland binary.
+    /// Resolves the Xwayland binary and stages the launch configuration.
+    ///
+    /// # Honesty / fail-closed contract
+    ///
+    /// The real fork/exec path (socketpair creation, X11 display socket,
+    /// `fork`+`exec` of the Xwayland binary) is **not yet implemented**.
+    /// Rather than falsely reporting a running X11 server, a successful
+    /// `start()` leaves the process in [`XWaylandState::Staged`] — binary
+    /// resolved, but no process spawned. The state is **never** set to
+    /// [`XWaylandState::Running`] until a real child pid exists, and
+    /// [`check_alive`](Self::check_alive) reports `false` for a staged (or any
+    /// non-running) process. Callers must not assume an X11 server is
+    /// listening just because `start()` returned `Ok`.
     pub fn start(&mut self) -> Result<()> {
         if self.state == XWaylandState::Running {
             return Ok(());
@@ -97,23 +116,30 @@ impl XWaylandProcess {
             tracing::info!(
                 display = self.display_number,
                 binary = %binary,
-                "starting XWayland"
+                "staging XWayland (process spawn not yet implemented)"
             );
 
-            // In a real implementation, we would:
+            // The real implementation would, from here:
             // 1. Create a socketpair for the Wayland connection
             // 2. Create a socketpair for the WM connection
             // 3. Create the X11 display socket
             // 4. Fork & exec Xwayland with appropriate arguments
-            // For now, record the state transition.
-            self.state = XWaylandState::Running;
+            //    and record the resulting child pid.
+            //
+            // Until that machinery lands we MUST NOT claim the server is
+            // Running: no socketpair, no fork/exec and no pid exist. Record
+            // an explicit Staged state so liveness checks fail closed instead
+            // of reporting a process that was never spawned as healthy.
+            debug_assert_eq!(self.pid, 0, "no process is spawned yet");
+            self.state = XWaylandState::Staged;
             Ok(())
         }
     }
 
     /// Stop the XWayland process gracefully.
     pub fn stop(&mut self) -> Result<()> {
-        if self.state != XWaylandState::Running {
+        // Nothing to tear down unless we actually got past staging.
+        if self.state != XWaylandState::Running && self.state != XWaylandState::Staged {
             return Ok(());
         }
         self.state = XWaylandState::Exited;
@@ -138,7 +164,17 @@ impl XWaylandProcess {
     }
 
     /// Check if the process is still alive (non-blocking).
+    ///
+    /// Liveness is derived from a real child pid: a process is only considered
+    /// alive if it has been spawned (`pid != 0`) and is in the `Running` state.
+    /// A `Staged`, `Stopped`, `Starting` or `Exited` process — including one
+    /// that was never actually forked/exec'd — is **not** alive. This fails
+    /// closed: it will not report healthy for a process that does not exist.
     pub fn check_alive(&mut self) -> bool {
+        // No pid means no process was ever spawned, regardless of state.
+        if self.pid == 0 {
+            return false;
+        }
         self.state == XWaylandState::Running
     }
 

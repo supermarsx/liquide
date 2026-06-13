@@ -150,10 +150,15 @@ impl AuthBackend for BiometricAuth {
 // AuthChain — tries multiple backends in order
 // ---------------------------------------------------------------------------
 
-/// Tries multiple auth backends in sequence until one succeeds.
+/// Tries multiple auth backends in sequence until one produces a terminal
+/// result.
 ///
-/// If a backend returns `Success`, the chain stops. If all backends fail,
-/// the last failure result is returned.
+/// The chain stops (and returns that result) as soon as a backend returns
+/// `Success`, `Locked`, or `RequiresMfa`. Only a plain `Failed` result allows
+/// the chain to fall through to the next backend. This prevents a later, more
+/// permissive backend from overriding an account lockout or an MFA requirement
+/// reported by an earlier backend (see t49-e5-F11). If all backends return
+/// `Failed`, the last failure result is returned.
 pub struct AuthChain {
     backends: Vec<Box<dyn AuthBackend>>,
 }
@@ -187,10 +192,15 @@ impl AuthBackend for AuthChain {
         let mut last_result = AuthResult::Failed("No auth backends configured.".into());
         for backend in &self.backends {
             let result = backend.authenticate(username, credential);
-            if result == AuthResult::Success {
-                return AuthResult::Success;
+            match result {
+                // Terminal results stop the chain immediately. A later backend
+                // must not be able to override a lockout or MFA requirement.
+                AuthResult::Success | AuthResult::Locked(_) | AuthResult::RequiresMfa => {
+                    return result;
+                }
+                // Only a plain failure falls through to the next backend.
+                AuthResult::Failed(_) => last_result = result,
             }
-            last_result = result;
         }
         last_result
     }
@@ -540,6 +550,34 @@ mod tests {
         chain.add(Box::new(MockAuth::failing("second")));
         let result = chain.authenticate("alice", "pass");
         assert_eq!(result, AuthResult::Failed("second".into()));
+    }
+
+    /// t49-e5-F11: a backend reporting `Locked` must stop the chain — a later,
+    /// more permissive backend must NOT override the lockout with Success.
+    #[test]
+    fn chain_stops_on_locked() {
+        let mut chain = AuthChain::new();
+        chain.add(Box::new(MockAuth::with_result(AuthResult::Locked(5000))));
+        chain.add(Box::new(MockAuth::succeeding()));
+        assert_eq!(
+            chain.authenticate("alice", "pass"),
+            AuthResult::Locked(5000),
+            "Locked must be terminal; later Success must not override it"
+        );
+    }
+
+    /// t49-e5-F11: a backend reporting `RequiresMfa` must stop the chain — a
+    /// later backend returning Success must NOT bypass the MFA requirement.
+    #[test]
+    fn chain_stops_on_requires_mfa() {
+        let mut chain = AuthChain::new();
+        chain.add(Box::new(MockAuth::with_result(AuthResult::RequiresMfa)));
+        chain.add(Box::new(MockAuth::succeeding()));
+        assert_eq!(
+            chain.authenticate("alice", "pass"),
+            AuthResult::RequiresMfa,
+            "RequiresMfa must be terminal; later Success must not override it"
+        );
     }
 
     #[test]

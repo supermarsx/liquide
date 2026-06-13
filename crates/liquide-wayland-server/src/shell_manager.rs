@@ -12,6 +12,11 @@ pub struct ToplevelInfo {
     pub configured: bool,
     pub pending_width: u32,
     pub pending_height: u32,
+    /// Serials of configure events sent to this surface that the client has
+    /// not yet acknowledged, in ascending (send) order. Per xdg-shell, an
+    /// `ack_configure` for serial `S` acknowledges that configure and discards
+    /// every older pending serial for this surface.
+    pub pending_configures: Vec<u32>,
 }
 
 /// State for an XDG popup surface.
@@ -54,6 +59,7 @@ impl ShellManager {
                 configured: false,
                 pending_width: 0,
                 pending_height: 0,
+                pending_configures: Vec::new(),
             },
         );
         id
@@ -72,17 +78,32 @@ impl ShellManager {
             tl.pending_width = width;
             tl.pending_height = height;
             tl.states = states;
+            tl.pending_configures.push(serial);
         }
         serial
     }
 
-    pub fn ack_configure(&mut self, _serial: u32) {
-        // Mark all unconfigured toplevels as configured when serial is acked.
-        for tl in self.toplevels.values_mut() {
-            if !tl.configured {
-                tl.configured = true;
-            }
+    /// Acknowledge a configure event for a specific surface.
+    ///
+    /// Per xdg-shell semantics, the client acks a *specific* configure by its
+    /// serial on a *specific* surface. We mark only that surface as configured
+    /// (and only if it actually had `serial` pending), discarding that serial
+    /// and every older pending serial for that surface. Other surfaces — and
+    /// other clients — are left untouched. Unknown serials are ignored.
+    ///
+    /// Returns `true` if a matching pending configure was found and acked.
+    pub fn ack_configure(&mut self, surface_id: u32, serial: u32) -> bool {
+        let Some(tl) = self.toplevels.get_mut(&surface_id) else {
+            return false;
+        };
+        // Only honor a serial this surface was actually waiting on.
+        if !tl.pending_configures.contains(&serial) {
+            return false;
         }
+        // Drop the acked serial and every older one for this surface.
+        tl.pending_configures.retain(|&s| s > serial);
+        tl.configured = true;
+        true
     }
 
     pub fn destroy_toplevel(&mut self, id: u32) -> Option<ToplevelInfo> {

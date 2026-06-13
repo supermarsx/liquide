@@ -874,6 +874,224 @@ mod stats_tests {
 }
 
 #[cfg(test)]
+mod text_measure_tests {
+    use std::mem;
+
+    use crate::constraints::{Direction, WritingMode};
+    use crate::text_measure::*;
+
+    fn key(text: &str) -> TextMeasureKey {
+        TextMeasureKey::from_text(text, vec!["Manrope".to_string()], 16.0)
+            .with_width_constraint(240.0)
+            .with_wrap_mode(TextWrapMode::Normal)
+            .with_language("en")
+    }
+
+    fn value(width: f32) -> TextMeasureValue {
+        TextMeasureValue::new(width, 19.2, 12.8, 1)
+            .with_vertical_metrics(12.8, 6.4)
+            .with_intrinsic_widths(width, width)
+    }
+
+    #[test]
+    fn text_measure_cache_records_hit_and_miss_stats() {
+        let mut cache = TextMeasureCache::new();
+        let cache_key = key("Hello cache");
+
+        assert!(cache.lookup(&cache_key).is_none());
+        assert!(cache.insert(cache_key.clone(), value(94.0)));
+
+        let cached = cache.lookup(&cache_key).unwrap();
+        assert_eq!(cached.width, 94.0);
+
+        let stats = cache.stats();
+        assert_eq!(stats.requests, 2);
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.inserts, 1);
+        assert_eq!(stats.entries, 1);
+        assert!(stats.approximate_bytes > 0);
+        assert!((stats.hit_rate() - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn text_measure_key_distinguishes_layout_and_font_dimensions() {
+        let mut cache = TextMeasureCache::new();
+        let base_key = key("Hello cache");
+        assert!(cache.insert(base_key.clone(), value(94.0)));
+
+        let different_width = key("Hello cache").with_width_constraint(320.0);
+        let different_weight = key("Hello cache").with_font_weight(700);
+        let different_spacing = key("Hello cache").with_letter_spacing(1.0);
+        let different_direction = key("Hello cache").with_direction(Direction::RTL);
+        let different_writing_mode = key("Hello cache").with_writing_mode(WritingMode::VerticalRl);
+        let different_language = key("Hello cache").with_language("ja");
+        let different_hash_identity = TextMeasureKey::from_text_hash(
+            0x0123_4567_89ab_cdef,
+            "Hello cache".len(),
+            vec!["Manrope".to_string()],
+            16.0,
+        )
+        .with_width_constraint(240.0)
+        .with_language("en");
+
+        assert!(cache.lookup(&base_key).is_some());
+        assert!(cache.lookup(&different_width).is_none());
+        assert!(cache.lookup(&different_weight).is_none());
+        assert!(cache.lookup(&different_spacing).is_none());
+        assert!(cache.lookup(&different_direction).is_none());
+        assert!(cache.lookup(&different_writing_mode).is_none());
+        assert!(cache.lookup(&different_language).is_none());
+        assert!(cache.lookup(&different_hash_identity).is_none());
+    }
+
+    #[test]
+    fn text_measure_cache_evicts_least_recent_entry_at_capacity() {
+        let mut cache = TextMeasureCache::with_limits(TextMeasureCacheLimits::new(2, 64 * 1024));
+        let first_key = key("first");
+        let second_key = key("second");
+        let third_key = key("third");
+
+        assert!(cache.insert(first_key.clone(), value(40.0)));
+        assert!(cache.insert(second_key.clone(), value(50.0)));
+        assert!(cache.lookup(&first_key).is_some());
+        assert!(cache.insert(third_key.clone(), value(60.0)));
+
+        assert_eq!(cache.len(), 2);
+        assert!(cache.contains_key(&first_key));
+        assert!(!cache.contains_key(&second_key));
+        assert!(cache.contains_key(&third_key));
+        assert_eq!(cache.stats().evictions, 1);
+        assert_eq!(cache.entry_utilization(), 1.0);
+        assert!(cache.byte_utilization() > 0.0);
+        assert!(cache.byte_utilization() <= 1.0);
+    }
+
+    #[test]
+    fn text_measure_cache_stats_report_rates_and_eviction_pressure() {
+        let stats = TextMeasureCacheStats {
+            requests: 4,
+            hits: 1,
+            misses: 3,
+            inserts: 4,
+            evictions: 1,
+            entries: 3,
+            approximate_bytes: 128,
+        };
+
+        assert!((stats.hit_rate() - 0.25).abs() < 0.001);
+        assert!((stats.miss_rate() - 0.75).abs() < 0.001);
+        assert!((stats.eviction_rate() - 0.25).abs() < 0.001);
+        assert!(stats.has_eviction_pressure());
+
+        let empty = TextMeasureCacheStats::default();
+        assert_eq!(empty.hit_rate(), 0.0);
+        assert_eq!(empty.miss_rate(), 0.0);
+        assert_eq!(empty.eviction_rate(), 0.0);
+        assert!(!empty.has_eviction_pressure());
+    }
+
+    #[test]
+    fn text_measure_cache_rejects_entries_over_byte_limit() {
+        let mut cache = TextMeasureCache::with_limits(TextMeasureCacheLimits::new(8, 32));
+        let cache_key = key("this entry is intentionally larger than the tiny byte budget");
+
+        assert!(!cache.insert(cache_key.clone(), value(80.0)));
+        assert!(!cache.contains_key(&cache_key));
+
+        let stats = cache.stats();
+        assert_eq!(stats.inserts, 0);
+        assert_eq!(stats.evictions, 0);
+        assert_eq!(stats.entries, 0);
+        assert_eq!(stats.approximate_bytes, 0);
+    }
+
+    #[test]
+    fn text_measure_cache_can_clear_entries_and_reset_counters() {
+        let mut cache = TextMeasureCache::new();
+        let cache_key = key("clear me");
+
+        assert!(cache.insert(cache_key.clone(), value(70.0)));
+        assert!(cache.lookup(&cache_key).is_some());
+        cache.clear();
+
+        let stats_after_clear = cache.stats();
+        assert_eq!(stats_after_clear.entries, 0);
+        assert_eq!(stats_after_clear.approximate_bytes, 0);
+        assert_eq!(stats_after_clear.requests, 1);
+        assert!(cache.lookup(&cache_key).is_none());
+
+        cache.reset_stats();
+        let stats_after_reset = cache.stats();
+        assert_eq!(stats_after_reset.requests, 0);
+        assert_eq!(stats_after_reset.hits, 0);
+        assert_eq!(stats_after_reset.misses, 0);
+        assert_eq!(stats_after_reset.inserts, 0);
+        assert_eq!(stats_after_reset.entries, 0);
+    }
+
+    #[test]
+    fn text_measure_cache_supports_batched_lookup_and_insert() {
+        let mut cache = TextMeasureCache::new();
+        let first_key = key("alpha");
+        let second_key = key("beta");
+        let third_key = key("gamma");
+
+        let inserted = cache.insert_batch([
+            (first_key.clone(), value(40.0)),
+            (second_key.clone(), value(48.0)),
+        ]);
+        assert_eq!(inserted, 2);
+
+        let results = cache.lookup_batch([&first_key, &second_key, &third_key]);
+        assert_eq!(results[0].unwrap().width, 40.0);
+        assert_eq!(results[1].unwrap().width, 48.0);
+        assert!(results[2].is_none());
+
+        let stats = cache.stats();
+        assert_eq!(stats.requests, 3);
+        assert_eq!(stats.hits, 2);
+        assert_eq!(stats.misses, 1);
+    }
+
+    #[test]
+    fn text_measure_value_is_plain_metrics_without_pixel_storage() {
+        assert!(!mem::needs_drop::<TextMeasureValue>());
+        assert!(mem::size_of::<TextMeasureValue>() <= 40);
+
+        let metrics = value(128.0);
+        assert_eq!(metrics.width, 128.0);
+        assert_eq!(metrics.height, 19.2);
+        assert_eq!(metrics.baseline, 12.8);
+        assert_eq!(metrics.ascent, 12.8);
+        assert_eq!(metrics.descent, 6.4);
+        assert_eq!(metrics.line_count, 1);
+
+        let mut cache = TextMeasureCache::new();
+        assert!(cache.insert(key("pixels are not accepted here"), value(128.0)));
+
+        let synthetic_rgba_glyph_bytes = 64 * 64 * 4;
+        assert!(cache.approximate_bytes() < synthetic_rgba_glyph_bytes);
+    }
+
+    #[test]
+    fn text_measure_api_is_reexported_from_crate_root() {
+        let mut cache =
+            crate::TextMeasureCache::with_limits(crate::TextMeasureCacheLimits::new(4, 64 * 1024));
+        let cache_key = crate::TextMeasureKey::from_text(
+            "crate root export",
+            vec!["Manrope".to_string()],
+            16.0,
+        );
+        let cache_value =
+            crate::TextMeasureValue::new(120.0, 20.0, 14.0, 1).with_vertical_metrics(14.0, 6.0);
+
+        assert!(cache.insert(cache_key.clone(), cache_value));
+        assert_eq!(cache.lookup(&cache_key).unwrap().width, 120.0);
+    }
+}
+
+#[cfg(test)]
 mod integration_tests {
     use crate::cache::LayoutCache;
     use crate::constraints::*;

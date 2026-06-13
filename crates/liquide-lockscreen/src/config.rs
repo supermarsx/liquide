@@ -27,7 +27,10 @@ pub struct LockScreenConfig {
     pub max_failed_attempts: u32,
     /// Lockout duration in seconds after max failed attempts
     pub lockout_duration_secs: u64,
-    /// Grace period in seconds (unlock without password right after locking)
+    /// Grace period in seconds. This ONLY affects how soon the password prompt
+    /// is revealed after locking (a renderer hint); it NEVER unlocks the screen
+    /// without a successful authentication. Default is 0 (no grace window).
+    /// See t49-e8-F5: a non-zero grace window must never bypass auth.
     pub grace_period_secs: u64,
 }
 
@@ -47,7 +50,9 @@ impl Default for LockScreenConfig {
             show_power_options: true,
             max_failed_attempts: 5,
             lockout_duration_secs: 30,
-            grace_period_secs: 5,
+            // Secure default: no grace window. Even when non-zero, the grace
+            // period never bypasses authentication (see t49-e8-F5).
+            grace_period_secs: 0,
         }
     }
 }

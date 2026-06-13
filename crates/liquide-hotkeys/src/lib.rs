@@ -1,3 +1,26 @@
+//! Global (system-wide) hotkey registration and dispatch.
+//!
+//! # Wiring status: STAGED, not driven by the runtime
+//!
+//! This crate is an *above-queue* hotkey handler: it registers global key
+//! combinations and would dispatch them when matching input arrives. As of
+//! 2026-06-12 it has **zero production consumers** — no crate outside this one
+//! constructs a [`GlobalHotkeyManager`] or drives it from real input. It is
+//! staged as a library, not wired.
+//!
+//! Note also that the Linux platform backend is X11-only (raw FFI in
+//! `platform/linux.rs`); there is no Wayland path.
+//!
+//! The canonical, runtime-wired input path is [`liquide-message-queue`], which
+//! is consumed by `liquide-session`. Global hotkey handling sits *above* that
+//! queue and is **not** a queue duplicate, so it should not be folded into the
+//! message queue. Whether the shell should drive this handler is an open
+//! decision tracked in the t51 input plan
+//! (`.orchestration/plans/t51.md`, Mandate 3) and the redirect note
+//! (`.orchestration/notes/t51-input-redirect.md`).
+//!
+//! [`liquide-message-queue`]: https://docs.rs/liquide-message-queue
+
 mod platform;
 pub use platform::GlobalHotkeyManager;
 

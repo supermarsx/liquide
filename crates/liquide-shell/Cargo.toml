@@ -26,6 +26,22 @@ liquide-components.workspace = true
 liquide-statusbar = { path = "../liquide-statusbar" }
 liquide-font-rasterizer.workspace = true
 liquide-animation = { path = "../liquide-animation" }
+# ── Canonical chrome crates (t51 mandate 2; dormant scaffolding in C0) ──
+liquide-workspaces = { path = "../liquide-workspaces" }
+liquide-tiling.workspace = true
+liquide-window-tree.workspace = true
+liquide-window-groups = { path = "../liquide-window-groups" }
+liquide-window-class = { path = "../liquide-window-class" }
+liquide-window-effects = { path = "../liquide-window-effects" }
+liquide-lockscreen = { path = "../liquide-lockscreen" }
+liquide-dialogs = { path = "../liquide-dialogs" }
+liquide-tooltip.workspace = true
+liquide-notification-daemon = { path = "../liquide-notification-daemon" }
+liquide-shell-services.workspace = true
+# Supports shell-services consumption (DesktopEntry for app registration; t51-e10).
+liquide-xdg.workspace = true
+# WidgetId for the canonical tooltip manager hover slot (t51-e9 tooltip adapter).
+liquide-ui-core.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

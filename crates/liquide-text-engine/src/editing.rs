@@ -138,7 +138,7 @@ impl TextEditor {
 
     /// Set the selection.
     pub fn set_selection(&mut self, selection: Selection) {
-        self.selection = clamp_selection(selection, self.text.len());
+        self.selection = clamp_selection_to_text(selection, &self.text);
     }
 
     /// Get the change version number.
@@ -172,8 +172,10 @@ impl TextEditor {
 
         // Delete selected text first.
         if !self.selection.is_cursor() {
-            let start = self.selection.start().0;
-            let end = self.selection.end().0;
+            // Snap endpoints to grapheme/char boundaries so the slice below can
+            // never land mid-codepoint and panic.
+            let start = snap_offset_to_boundary(&self.text, self.selection.start().0).0;
+            let end = snap_offset_to_boundary(&self.text, self.selection.end().0).0;
             let deleted = self.text[start..end].to_string();
             actions.push(EditAction::Delete {
                 offset: start,
@@ -233,8 +235,10 @@ impl TextEditor {
         }
 
         let selection_before = self.selection;
-        let start = self.selection.start().0;
-        let end = self.selection.end().0;
+        // Snap endpoints to grapheme/char boundaries so the slice below can
+        // never land mid-codepoint and panic.
+        let start = snap_offset_to_boundary(&self.text, self.selection.start().0).0;
+        let end = snap_offset_to_boundary(&self.text, self.selection.end().0).0;
         let deleted = self.text[start..end].to_string();
 
         self.text.replace_range(start..end, "");
@@ -252,8 +256,10 @@ impl TextEditor {
 
     /// Replace a range with new text.
     pub fn replace_range(&mut self, start: usize, end: usize, new_text: &str) {
-        let start = start.min(self.text.len());
-        let end = end.min(self.text.len());
+        // Snap to grapheme/char boundaries so the slice below cannot land
+        // mid-codepoint and panic.
+        let start = snap_offset_to_boundary(&self.text, start).0;
+        let end = snap_offset_to_boundary(&self.text, end).0;
         if start > end {
             return;
         }
@@ -391,13 +397,35 @@ impl TextEditor {
     }
 }
 
-/// Clamp a selection to valid byte boundaries within the text.
-fn clamp_selection(sel: Selection, text_len: usize) -> Selection {
+/// Clamp a selection so both endpoints lie on valid char boundaries within
+/// `text`.
+///
+/// Each endpoint is bounded to `text.len()` and rounded down to the enclosing
+/// char (codepoint) boundary. This guarantees that every later slice of `text`
+/// at a selection endpoint cannot land mid-codepoint and panic, even if a
+/// caller hands us an offset that fell inside a multi-byte character (e.g. an
+/// offset produced by vertical caret movement over emoji/CJK text).
+///
+/// Char-boundary (not grapheme-cluster) snapping is intentional: it matches the
+/// editor's native edit granularity (`backspace`/`delete` already move by char
+/// boundary via `prev_char_boundary`/`next_char_boundary`), so this is the
+/// minimal change that removes the panic without altering caret semantics.
+fn clamp_selection_to_text(sel: Selection, text: &str) -> Selection {
     Selection {
-        anchor: TextOffset(sel.anchor.0.min(text_len)),
-        focus: TextOffset(sel.focus.0.min(text_len)),
+        anchor: snap_offset_to_boundary(text, sel.anchor.0),
+        focus: snap_offset_to_boundary(text, sel.focus.0),
         affinity: sel.affinity,
     }
+}
+
+/// Snap a byte offset down to the enclosing char (codepoint) boundary, clamped
+/// to `text.len()`. The result is always a valid index for slicing `text`.
+fn snap_offset_to_boundary(text: &str, offset: usize) -> TextOffset {
+    let mut pos = offset.min(text.len());
+    while pos > 0 && !text.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    TextOffset(pos)
 }
 
 /// Find the previous character boundary before `offset`.
@@ -591,5 +619,66 @@ mod tests {
         };
         let inv = insert.inverse();
         assert!(matches!(inv, EditAction::Delete { offset: 0, .. }));
+    }
+
+    // ─── Boundary safety after vertical movement (regression: t49-e3-F13) ──
+
+    #[test]
+    fn test_set_selection_snaps_midcodepoint_offset() {
+        // "😀" is 4 bytes; offsets 1,2,3 are mid-codepoint.
+        let editor = {
+            let mut e = TextEditor::new("😀abc");
+            e.set_selection(Selection::cursor(2)); // bogus mid-emoji offset
+            e
+        };
+        // Snapped down to the cluster start (0), a valid char boundary.
+        assert!(editor.text().is_char_boundary(editor.selection().focus.0));
+        assert_eq!(editor.selection().focus.0, 0);
+    }
+
+    #[test]
+    fn test_insert_after_midcodepoint_selection_does_not_panic() {
+        // Simulate a caret that landed mid-codepoint (the F13 failure mode):
+        // a range whose endpoints fall inside multi-byte characters. Insert
+        // must snap and slice safely rather than panic.
+        let mut editor = TextEditor::new("日本語"); // 9 bytes, boundaries 0,3,6,9
+        editor.set_selection(Selection::range(1, 7)); // both endpoints mid-CJK
+        editor.insert("x");
+        // Endpoints snapped to 0 and 6 → "日本" replaced by "x" leaving "x語".
+        assert_eq!(editor.text(), "x語");
+        assert!(editor.text().is_char_boundary(editor.selection().focus.0));
+    }
+
+    #[test]
+    fn test_delete_selection_after_midcodepoint_selection_does_not_panic() {
+        let mut editor = TextEditor::new("a😀b😀c"); // emoji at 1..5 and 6..10
+        editor.set_selection(Selection::range(3, 8)); // both mid-emoji
+        editor.delete_selection();
+        // 3 snaps down to 1, 8 snaps down to 6 → delete "😀b" leaving "a😀c".
+        assert_eq!(editor.text(), "a😀c");
+        assert!(editor.text().is_char_boundary(editor.selection().focus.0));
+    }
+
+    #[test]
+    fn test_replace_range_midcodepoint_does_not_panic() {
+        let mut editor = TextEditor::new("héllo"); // é = 2 bytes at 1..3
+        editor.replace_range(2, 4, "X"); // start mid-é, end mid-?
+        // 2 snaps to 1, 4 stays (l boundary) → replace "él" with "X" → "hXlo".
+        assert!(editor.text().is_char_boundary(editor.selection().focus.0));
+        // No panic; result is well-formed UTF-8.
+        assert!(std::str::from_utf8(editor.text().as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn test_combining_marks_edit_is_well_formed() {
+        // "e" + combining acute (U+0301, 2 bytes): "é" as 2 codepoints (3 bytes).
+        let mut editor = TextEditor::new("e\u{0301}x");
+        // Offset 1 is a valid char boundary (between base and combining mark);
+        // it is preserved, and editing around it stays well-formed.
+        editor.set_selection(Selection::cursor(1));
+        assert_eq!(editor.selection().focus.0, 1);
+        assert!(editor.text().is_char_boundary(editor.selection().focus.0));
+        editor.insert("z");
+        assert!(std::str::from_utf8(editor.text().as_bytes()).is_ok());
     }
 }

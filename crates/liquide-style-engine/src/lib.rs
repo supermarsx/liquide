@@ -10,6 +10,7 @@ pub mod cascade;
 pub mod computed;
 pub mod dimension;
 pub mod engine;
+pub mod impact;
 pub mod inheritance;
 pub mod rules;
 pub mod selector;
@@ -26,6 +27,10 @@ pub use dimension::Dimension;
 pub use engine::EnvironmentValues;
 pub use engine::RestyleResult;
 pub use engine::StyleEngine;
+pub use impact::{
+    StyleChangeImpact, StyleDiffSummary, StylePropertyChange, classify_style_property,
+    conservative_style_impact,
+};
 pub use rules::{ElementRule, RuleEngine, Severity, ValidationReport, Violation};
 pub use selector::{Combinator, ComplexSelector, CompoundSelector, PseudoClassSelector};
 pub use shorthand::expand_shorthand;

@@ -1,3 +1,4 @@
+use crate::SessionAuditEvent;
 use crate::config::{JailConfig, ResourceLimits, ResumeConfig, SessionConfig, SupervisorConfig};
 use crate::crash::RestartAction;
 use crate::ipc::SupervisorCommand;
@@ -176,6 +177,57 @@ fn test_runtime_handle_crash_exceeds_max_enters_failed() {
 }
 
 #[test]
+fn test_runtime_handle_crash_valid_transition_audits_and_restarts() {
+    // A crash from a state that *accepts* the transition into Crashed must emit
+    // the StateTransition audit event and restart workers (positive path for
+    // t49-e6-08).
+    let mut rt = make_runtime("rt-crash-ok");
+    rt.initialize().unwrap();
+    assert_eq!(rt.state(), SessionState::Running);
+    rt.drain_audit_events();
+
+    let action = rt.handle_crash();
+
+    assert_eq!(action, RestartAction::RestartNormal);
+    assert_eq!(rt.state(), SessionState::Running);
+    let events = rt.drain_audit_events();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            SessionAuditEvent::StateTransition { to, .. }
+                if to == &SessionState::Crashed.to_string()
+        )),
+        "a valid crash must audit the transition into Crashed"
+    );
+}
+
+#[test]
+fn test_runtime_handle_crash_refused_transition_does_not_audit_or_restart() {
+    // Drive the runtime into Failed (which refuses any transition into
+    // Crashed), then crash again: the state machine rejects the transition, so
+    // handle_crash must NOT emit a StateTransition/RestartAttempt audit event
+    // and must NOT restart workers (t49-e6-08 negative path).
+    let mut rt = make_runtime("rt-crash-refused");
+    rt.initialize().unwrap();
+    for _ in 0..6 {
+        rt.handle_crash();
+    }
+    assert_eq!(rt.state(), SessionState::Failed);
+    rt.drain_audit_events();
+
+    let action = rt.handle_crash();
+
+    // State is unchanged — the refused transition did not move the machine.
+    assert_eq!(rt.state(), SessionState::Failed);
+    assert_eq!(action, RestartAction::EnterFailed);
+    let events = rt.drain_audit_events();
+    assert!(
+        events.is_empty(),
+        "a refused crash transition must not audit anything, got: {events:?}"
+    );
+}
+
+#[test]
 fn test_runtime_audit_events_on_initialize() {
     let mut rt = make_runtime("rt-1");
     rt.initialize().unwrap();
@@ -201,6 +253,125 @@ fn test_runtime_audit_events_drain_empties() {
 
     let second = rt.drain_audit_events();
     assert!(second.is_empty());
+}
+
+#[test]
+fn test_runtime_owner_refs_emit_last_owner_cleanup_events() {
+    let mut rt = make_runtime("rt-owners");
+    rt.drain_audit_events();
+
+    assert_eq!(rt.attach_owner("client:1"), 1);
+    assert_eq!(rt.attach_owner("manager:1"), 2);
+    assert_eq!(rt.owner_count(), 2);
+
+    assert_eq!(rt.detach_owner("client:1"), 1);
+    assert_eq!(rt.detach_owner("manager:1"), 0);
+
+    let events = rt.drain_audit_events();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionAuditEvent::OwnerAttached { owner_id, owner_count, .. }
+            if owner_id == "client:1" && *owner_count == 1
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionAuditEvent::OwnerDetached { owner_id, owner_count, .. }
+            if owner_id == "manager:1" && *owner_count == 0
+    )));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, SessionAuditEvent::LastOwnerDetached { .. }))
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        SessionAuditEvent::CleanupStarted { reason, .. } if reason == "last_owner_detached"
+    )));
+}
+
+#[test]
+fn test_runtime_drains_audit_events_into_structured_sink() {
+    // B6b (session side): the structured EventLogService sink is actually
+    // driven from the session audit plane. Initialization produces audit
+    // events; draining them into an InMemoryEventLog must populate the sink
+    // with Session-category records, and leave the runtime buffer empty.
+    use liquide_common::event_log::{EventCategory, InMemoryEventLog};
+
+    let mut rt = make_runtime("rt-sink");
+    rt.initialize().unwrap();
+
+    let mut sink = InMemoryEventLog::new();
+    let recorded = rt.drain_audit_events_to(&mut sink).unwrap();
+
+    assert!(
+        recorded >= 4,
+        "expected several init audit events, got {recorded}"
+    );
+    assert_eq!(sink.len(), recorded);
+    // Every forwarded record is a Session-category structured event.
+    assert!(
+        sink.records()
+            .iter()
+            .all(|r| r.category == EventCategory::Session)
+    );
+    // A session_created record made it through the structured path.
+    assert!(
+        sink.records()
+            .iter()
+            .any(|r| r.event_id == "session_created"),
+        "session_created must reach the structured sink"
+    );
+    // The buffer is now empty — a second structured drain records nothing.
+    assert_eq!(rt.drain_audit_events_to(&mut sink).unwrap(), 0);
+}
+
+#[test]
+fn test_runtime_structured_sink_error_preserves_audit_events() {
+    // Negative path: a failing sink must NOT silently drop audit history.
+    // After a sink error, the events remain in the runtime buffer so they can
+    // be retried or drained another way (fail-safe audit, no silent loss).
+    use liquide_common::event_log::{EventLogService, EventRecord};
+
+    struct FailingSink;
+    impl EventLogService for FailingSink {
+        fn record_event(&mut self, _record: EventRecord) -> liquide_common::Result<()> {
+            Err(liquide_common::LiquideError::Internal(
+                "sink down".to_string(),
+            ))
+        }
+    }
+
+    // A runtime with a populated, undrained audit buffer (initialization
+    // produces several events).
+    let mut rt = make_runtime("rt-sink-fail");
+    rt.initialize().unwrap();
+    let mut sink = FailingSink;
+    let err = rt.drain_audit_events_to(&mut sink);
+    assert!(err.is_err(), "failing sink must surface an error");
+
+    // No audit event was lost: the buffer still holds them.
+    let preserved = rt.drain_audit_events();
+    assert!(
+        !preserved.is_empty(),
+        "a sink error must preserve audit events, not drop them"
+    );
+}
+
+#[test]
+fn test_runtime_complete_cleanup_emits_event_record_ready_audit() {
+    let mut rt = make_runtime("rt-cleanup");
+    rt.drain_audit_events();
+
+    rt.complete_cleanup();
+
+    let events = rt.drain_audit_events();
+    let cleanup = events
+        .iter()
+        .find(|event| matches!(event, SessionAuditEvent::CleanupCompleted { .. }))
+        .expect("cleanup completion event");
+    let record = cleanup.to_event_record();
+    assert_eq!(record.event_id, "cleanup_completed");
+    assert_eq!(record.session_id.as_deref(), Some("rt-cleanup"));
 }
 
 #[test]

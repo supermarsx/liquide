@@ -13,4 +13,12 @@ liquide-compositor = { path = "../liquide-compositor" }
 thiserror.workspace = true
 tracing.workspace = true
 
+# `libc` is used by the Linux-gated shm mmap/mremap/munmap paths and by the
+# fd-ownership `OwnedFd` handling in src/shm.rs. It was previously referenced
+# without being declared, so the crate did not build for its real (Linux)
+# target; declaring it here fixes that and is required for the fd-leak fix
+# and its regression test to compile on Linux.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]

@@ -4,8 +4,8 @@
 //! [`TileBatch`] transmission. It is intended for integration tests and
 //! local development smoke testing, not for production network transport.
 
-use std::sync::mpsc;
 use liquide_encoder::tile::TileBatch;
+use std::sync::mpsc;
 
 /// Sender half of a tile batch channel.
 #[derive(Clone)]
@@ -25,7 +25,9 @@ impl TileSender {
     pub fn try_send(&self, batch: TileBatch) -> Result<(), mpsc::TrySendError<TileBatch>> {
         // mpsc::Sender doesn't have try_send in std, only send which blocks
         // if the channel is full. For unbounded channels this is fine.
-        self.tx.send(batch).map_err(|e| mpsc::TrySendError::Disconnected(e.0))
+        self.tx
+            .send(batch)
+            .map_err(|e| mpsc::TrySendError::Disconnected(e.0))
     }
 }
 

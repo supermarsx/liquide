@@ -6,10 +6,11 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use liquide_common::event_log::{EventCategory, EventLevel, EventRecord};
 use serde::{Deserialize, Serialize};
 
 use crate::policy_db::AuthDecision;
-use crate::subject::Subject;
+use crate::subject::{Resource, Subject};
 
 // ── AuditPolicy ─────────────────────────────────────────────────────
 
@@ -55,6 +56,15 @@ pub struct AuditEntry {
     /// The authorization decision that was made.
     pub decision: AuthDecision,
 
+    /// Optional resource identifier for object-scoped authorization.
+    pub resource_id: Option<String>,
+
+    /// Optional resource scope, such as `window`, `session`, or `device`.
+    pub resource_scope: Option<String>,
+
+    /// Optional correlation identifier tying this decision to a request flow.
+    pub correlation_id: Option<String>,
+
     /// Optional free-form details (e.g., "matched rule #3", "timeout").
     pub details: Option<String>,
 }
@@ -70,6 +80,9 @@ impl AuditEntry {
             subject_pid: subject.pid,
             subject_session: subject.session_id.clone(),
             decision,
+            resource_id: None,
+            resource_scope: None,
+            correlation_id: None,
             details: None,
         }
     }
@@ -87,6 +100,71 @@ impl AuditEntry {
         self.details = Some(details.into());
         self
     }
+
+    /// Attach resource context.
+    #[must_use]
+    pub fn with_resource(
+        mut self,
+        resource_id: impl Into<String>,
+        resource_scope: impl Into<String>,
+    ) -> Self {
+        self.resource_id = Some(resource_id.into());
+        self.resource_scope = Some(resource_scope.into());
+        self
+    }
+
+    /// Attach context from a [`Resource`].
+    #[must_use]
+    pub fn for_resource(self, resource: &Resource, resource_scope: impl Into<String>) -> Self {
+        self.with_resource(resource.resource_id(), resource_scope)
+    }
+
+    /// Attach a request correlation identifier.
+    #[must_use]
+    pub fn with_correlation(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    /// Convert this audit entry into the shared structured event model.
+    #[must_use]
+    pub fn to_event_record(&self) -> EventRecord {
+        let level = if self.decision.is_deny() {
+            EventLevel::Warn
+        } else if self.decision.is_auth_required() {
+            EventLevel::Info
+        } else {
+            EventLevel::Debug
+        };
+
+        let mut event = EventRecord::new(
+            level,
+            EventCategory::Authorization,
+            "liquide-authorization",
+            self.action_id.clone(),
+            format!("authorization decision: {:?}", self.decision),
+        )
+        .with_timestamp_us(self.timestamp.saturating_mul(1_000_000))
+        .with_session(self.subject_session.clone())
+        .with_context("subject_uid", self.subject_uid.to_string())
+        .with_context("subject_pid", self.subject_pid.to_string())
+        .with_context("decision", format!("{:?}", self.decision));
+
+        if let Some(resource_id) = &self.resource_id {
+            event = event.with_resource(resource_id.clone());
+        }
+        if let Some(resource_scope) = &self.resource_scope {
+            event = event.with_context("resource_scope", resource_scope.clone());
+        }
+        if let Some(correlation_id) = &self.correlation_id {
+            event = event.with_correlation(correlation_id.clone());
+        }
+        if let Some(details) = &self.details {
+            event = event.with_context("details", details.clone());
+        }
+
+        event
+    }
 }
 
 impl std::fmt::Display for AuditEntry {
@@ -103,6 +181,12 @@ impl std::fmt::Display for AuditEntry {
         )?;
         if let Some(ref details) = self.details {
             write!(f, " details={details}")?;
+        }
+        if let Some(ref resource_id) = self.resource_id {
+            write!(f, " resource={resource_id}")?;
+        }
+        if let Some(ref correlation_id) = self.correlation_id {
+            write!(f, " correlation={correlation_id}")?;
         }
         Ok(())
     }
@@ -156,6 +240,33 @@ impl AuditLog {
         let mut entry = AuditEntry::new(action_id, subject, decision.clone());
         if let Some(d) = details {
             entry = entry.with_details(d);
+        }
+        self.entries.push(entry);
+        true
+    }
+
+    /// Record an authorization event with resource and correlation context.
+    pub fn record_resource(
+        &mut self,
+        action_id: &str,
+        subject: &Subject,
+        decision: &AuthDecision,
+        resource: &Resource,
+        resource_scope: &str,
+        correlation_id: Option<&str>,
+        details: Option<&str>,
+    ) -> bool {
+        if !self.should_record(decision) {
+            return false;
+        }
+
+        let mut entry = AuditEntry::new(action_id, subject, decision.clone())
+            .for_resource(resource, resource_scope);
+        if let Some(correlation_id) = correlation_id {
+            entry = entry.with_correlation(correlation_id);
+        }
+        if let Some(details) = details {
+            entry = entry.with_details(details);
         }
         self.entries.push(entry);
         true
@@ -217,6 +328,24 @@ impl AuditLog {
         self.entries
             .iter()
             .filter(|e| &e.decision == decision)
+            .collect()
+    }
+
+    /// Query entries for a specific resource identifier.
+    #[must_use]
+    pub fn query_by_resource(&self, resource_id: &str) -> Vec<&AuditEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.resource_id.as_deref() == Some(resource_id))
+            .collect()
+    }
+
+    /// Query entries for a specific correlation identifier.
+    #[must_use]
+    pub fn query_by_correlation(&self, correlation_id: &str) -> Vec<&AuditEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.correlation_id.as_deref() == Some(correlation_id))
             .collect()
     }
 
@@ -326,6 +455,35 @@ mod tests {
         assert_eq!(back.decision, entry.decision);
     }
 
+    #[test]
+    fn entry_resource_context_and_event_conversion() {
+        let resource = Resource::new(1000, "window:42");
+        let entry = AuditEntry::new(
+            "org.liquide.window.capture",
+            &test_subject(),
+            AuthDecision::Deny,
+        )
+        .for_resource(&resource, "window")
+        .with_correlation("corr-7")
+        .with_details("descriptor deny ACE #0")
+        .with_timestamp(123);
+
+        assert_eq!(entry.resource_id.as_deref(), Some("window:42"));
+        assert_eq!(entry.resource_scope.as_deref(), Some("window"));
+        assert_eq!(entry.correlation_id.as_deref(), Some("corr-7"));
+
+        let event = entry.to_event_record();
+        assert_eq!(event.category, EventCategory::Authorization);
+        assert_eq!(event.level, EventLevel::Warn);
+        assert_eq!(event.session_id.as_deref(), Some("session-1"));
+        assert_eq!(event.resource_id.as_deref(), Some("window:42"));
+        assert_eq!(event.correlation_id.as_deref(), Some("corr-7"));
+        assert_eq!(
+            event.context.get("resource_scope").map(String::as_str),
+            Some("window")
+        );
+    }
+
     // ── AuditLog tests ──────────────────────────────────────────────
 
     #[test]
@@ -403,6 +561,27 @@ mod tests {
             Some("rule #1 matched"),
         );
         assert_eq!(log.entries()[0].details.as_deref(), Some("rule #1 matched"));
+    }
+
+    #[test]
+    fn log_record_resource_and_query_context() {
+        let mut log = AuditLog::new(AuditPolicy::All);
+        let subject = test_subject();
+        let resource = Resource::new(1000, "session:abc");
+
+        assert!(log.record_resource(
+            "org.liquide.session.terminate",
+            &subject,
+            &AuthDecision::Deny,
+            &resource,
+            "session",
+            Some("corr-session"),
+            Some("last owner cleanup blocked"),
+        ));
+
+        assert_eq!(log.query_by_resource("session:abc").len(), 1);
+        assert_eq!(log.query_by_correlation("corr-session").len(), 1);
+        assert!(log.query_by_resource("session:other").is_empty());
     }
 
     #[test]

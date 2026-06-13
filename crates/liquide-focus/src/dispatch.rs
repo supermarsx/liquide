@@ -3,6 +3,15 @@
 //! The [`Dispatcher`] maintains a per-window handler registry and a
 //! default-handler callback.  Messages are routed through the hook chain
 //! (see [`crate::hooks`]) before reaching the target handler.
+//!
+//! Wiring note: this dispatcher sits alongside the focus protocol and is part
+//! of the same staged, currently-unconsumed crate. The underlying
+//! [`crate::MessageQueue`] it drains is a divergent duplicate of the canonical
+//! [`liquide-message-queue`] (`ThreadQueue`, consumed by `liquide-session`) and
+//! is slated for retirement in favor of it. See the crate root docs and the
+//! t51 input plan (`.orchestration/plans/t51.md`, Mandate 3).
+//!
+//! [`liquide-message-queue`]: https://docs.rs/liquide-message-queue
 
 use std::collections::HashMap;
 

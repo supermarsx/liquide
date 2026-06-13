@@ -1,5 +1,7 @@
 //! Audit events for session lifecycle tracking.
 
+use liquide_common::event_log::{EventCategory, EventLevel, EventRecord};
+
 /// Severity level of an audit event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditLevel {
@@ -46,6 +48,24 @@ pub enum SessionAuditEvent {
         session_id: String,
         token_id: String,
     },
+    /// A runtime owner/reference was attached to a session.
+    OwnerAttached {
+        session_id: String,
+        owner_id: String,
+        owner_count: usize,
+    },
+    /// A runtime owner/reference was detached from a session.
+    OwnerDetached {
+        session_id: String,
+        owner_id: String,
+        owner_count: usize,
+    },
+    /// The last owner/reference was detached from a session.
+    LastOwnerDetached { session_id: String },
+    /// Cleanup started for a session.
+    CleanupStarted { session_id: String, reason: String },
+    /// Cleanup completed for a session.
+    CleanupCompleted { session_id: String },
     /// The session was terminated.
     SessionTerminated { reason: String },
 }
@@ -59,11 +79,16 @@ impl SessionAuditEvent {
             | Self::StateTransition { .. }
             | Self::WorkerStarted { .. }
             | Self::WorkerStopped { .. }
-            | Self::SessionResumed { .. } => AuditLevel::Info,
+            | Self::SessionResumed { .. }
+            | Self::OwnerAttached { .. }
+            | Self::OwnerDetached { .. }
+            | Self::CleanupCompleted { .. } => AuditLevel::Info,
 
             Self::HeartbeatTimeout { .. }
             | Self::ResourceLimitWarning { .. }
-            | Self::RestartAttempt { .. } => AuditLevel::Warn,
+            | Self::RestartAttempt { .. }
+            | Self::LastOwnerDetached { .. }
+            | Self::CleanupStarted { .. } => AuditLevel::Warn,
 
             Self::WorkerFailed { .. }
             | Self::SafeModeEntered
@@ -89,7 +114,151 @@ impl SessionAuditEvent {
             Self::SandboxViolation { .. } => "sandbox_violation",
             Self::ResourceLimitWarning { .. } => "resource_limit_warning",
             Self::SessionResumed { .. } => "session_resumed",
+            Self::OwnerAttached { .. } => "owner_attached",
+            Self::OwnerDetached { .. } => "owner_detached",
+            Self::LastOwnerDetached { .. } => "last_owner_detached",
+            Self::CleanupStarted { .. } => "cleanup_started",
+            Self::CleanupCompleted { .. } => "cleanup_completed",
             Self::SessionTerminated { .. } => "session_terminated",
         }
+    }
+
+    /// Convert this session audit event into the shared structured event model.
+    #[must_use]
+    pub fn to_event_record(&self) -> EventRecord {
+        let level = match self.level() {
+            AuditLevel::Debug => EventLevel::Debug,
+            AuditLevel::Info => EventLevel::Info,
+            AuditLevel::Warn => EventLevel::Warn,
+            AuditLevel::Error => EventLevel::Error,
+        };
+
+        let mut event = EventRecord::new(
+            level,
+            EventCategory::Session,
+            "liquide-session",
+            self.event_name(),
+            self.event_name().replace('_', " "),
+        );
+
+        match self {
+            Self::SessionCreated { session_id, user } => {
+                event = event
+                    .with_session(session_id.clone())
+                    .with_context("user", user.clone());
+            }
+            Self::StateTransition { from, to } => {
+                event = event
+                    .with_context("from", from.clone())
+                    .with_context("to", to.clone());
+            }
+            Self::HeartbeatTimeout { missed } => {
+                event = event.with_context("missed", missed.to_string());
+            }
+            Self::WorkerStarted { worker } | Self::WorkerStopped { worker } => {
+                event = event.with_context("worker", worker.clone());
+            }
+            Self::WorkerFailed { worker, reason } => {
+                event = event
+                    .with_context("worker", worker.clone())
+                    .with_context("reason", reason.clone());
+            }
+            Self::RestartAttempt { count, backoff_ms } => {
+                event = event
+                    .with_context("count", count.to_string())
+                    .with_context("backoff_ms", backoff_ms.to_string());
+            }
+            Self::SafeModeEntered => {}
+            Self::PluginQuarantined { plugin_id } => {
+                event = event.with_context("plugin_id", plugin_id.clone());
+            }
+            Self::SandboxViolation { detail } => {
+                event = event.with_context("detail", detail.clone());
+            }
+            Self::ResourceLimitWarning {
+                resource,
+                usage_percent,
+            } => {
+                event = event
+                    .with_resource(resource.clone())
+                    .with_context("usage_percent", usage_percent.to_string());
+            }
+            Self::SessionResumed {
+                session_id,
+                token_id,
+            } => {
+                event = event
+                    .with_session(session_id.clone())
+                    .with_context("token_id", token_id.clone());
+            }
+            Self::OwnerAttached {
+                session_id,
+                owner_id,
+                owner_count,
+            }
+            | Self::OwnerDetached {
+                session_id,
+                owner_id,
+                owner_count,
+            } => {
+                event = event
+                    .with_session(session_id.clone())
+                    .with_context("owner_id", owner_id.clone())
+                    .with_context("owner_count", owner_count.to_string());
+            }
+            Self::LastOwnerDetached { session_id } | Self::CleanupCompleted { session_id } => {
+                event = event.with_session(session_id.clone());
+            }
+            Self::CleanupStarted { session_id, reason } => {
+                event = event
+                    .with_session(session_id.clone())
+                    .with_context("reason", reason.clone());
+            }
+            Self::SessionTerminated { reason } => {
+                event = event.with_context("reason", reason.clone());
+            }
+        }
+
+        event
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_audit_owner_event_converts_to_event_record() {
+        let event = SessionAuditEvent::OwnerDetached {
+            session_id: "session-1".to_string(),
+            owner_id: "client:1".to_string(),
+            owner_count: 0,
+        };
+
+        let record = event.to_event_record();
+
+        assert_eq!(record.category, EventCategory::Session);
+        assert_eq!(record.event_id, "owner_detached");
+        assert_eq!(record.session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            record.context.get("owner_id").map(String::as_str),
+            Some("client:1")
+        );
+        assert_eq!(
+            record.context.get("owner_count").map(String::as_str),
+            Some("0")
+        );
+    }
+
+    #[test]
+    fn session_audit_cleanup_started_is_warning() {
+        let event = SessionAuditEvent::CleanupStarted {
+            session_id: "session-1".to_string(),
+            reason: "last_owner_detached".to_string(),
+        };
+
+        assert_eq!(event.level(), AuditLevel::Warn);
+        assert_eq!(event.event_name(), "cleanup_started");
+        assert_eq!(event.to_event_record().level, EventLevel::Warn);
     }
 }

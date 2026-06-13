@@ -4,16 +4,38 @@ use liquide_compositor::damage::{DamageClass, DamageSet};
 use liquide_encoder::encoder::TileEncoder;
 use liquide_encoder::tile::{TileBatch, TileConfig};
 use liquide_encoder::{BandwidthBudget, BandwidthEstimator};
+use liquide_transport::tile_channel::TileSender;
 use tracing::warn;
 
 const BANDWIDTH_ESTIMATOR_WINDOW: usize = 10;
 const BANDWIDTH_SAFETY_MARGIN: f64 = 0.1;
 const DEFAULT_SESSION_TARGET_FPS: u32 = 60;
 
+/// Maximum number of encoded `TileBatch`es retained in `pending_batches`.
+///
+/// `encode_frame` pushes one batch per presented frame. When no remote
+/// consumer is attached (the local-display desktop path), `pending_batches`
+/// is the only sink and would otherwise grow once per frame for the lifetime
+/// of the session — an unbounded leak on the primary path (t49-e6-01). This
+/// cap turns `pending_batches` into a bounded ring that drops the oldest batch
+/// when full, so a missing/idle consumer can never grow memory without limit.
+/// The value is a few frames' worth — enough for a consumer to drain a short
+/// backlog, far below any leak threshold.
+///
+/// When a real transport sink IS attached via [`TileEncoderState::attach_sink`]
+/// (t55-E8), newly encoded batches plus any retained backlog are forwarded to
+/// the sink each frame, so `pending_batches` stays drained on the wired path.
+/// The cap still applies as a safety net if the sink disconnects mid-session.
+const MAX_PENDING_BATCHES: usize = 8;
+
 /// Tile encoding for remote frame transmission.
 pub(super) struct TileEncoderState {
     encoder: Option<TileEncoder>,
     pending_batches: Vec<TileBatch>,
+    /// Optional remote transport sink. When `Some`, encoded batches are
+    /// forwarded to it each frame (the wired drain path); when `None`, batches
+    /// accumulate in the bounded `pending_batches` ring (local-display path).
+    sink: Option<TileSender>,
     bandwidth_estimator: BandwidthEstimator,
     current_budget: BandwidthBudget,
     last_batch_compressed_bytes: Option<u64>,
@@ -28,11 +50,56 @@ impl TileEncoderState {
         Self {
             encoder: Some(Self::new_encoder(width, height, tile_size)),
             pending_batches: Vec::new(),
+            sink: None,
             current_budget: bandwidth_estimator.frame_budget(BANDWIDTH_SAFETY_MARGIN),
             bandwidth_estimator,
             last_batch_compressed_bytes: None,
             tile_size,
             target_fps,
+        }
+    }
+
+    /// Attach a remote transport sink to drain encoded tile batches into.
+    ///
+    /// Once attached, every encoded frame (plus any batch already buffered in
+    /// the bounded ring) is forwarded to the sink, so `pending_batches` no
+    /// longer accumulates on the live path. Passing the sink here is the
+    /// wired-drain counterpart to the bounded-ring fallback used when no
+    /// consumer exists. Any backlog already buffered is flushed immediately.
+    pub(super) fn attach_sink(&mut self, sink: TileSender) {
+        self.sink = Some(sink);
+        self.flush_to_sink();
+    }
+
+    /// Forward all buffered batches to the attached sink, if any.
+    ///
+    /// Returns silently when no sink is attached (batches stay in the bounded
+    /// ring). If the sink has disconnected, the sink is dropped and batches
+    /// remain in the bounded ring (which still caps memory) rather than being
+    /// silently lost.
+    fn flush_to_sink(&mut self) {
+        let Some(sink) = self.sink.as_ref() else {
+            return;
+        };
+        // Forward in FIFO order, stopping (and retaining the remainder) if the
+        // receiver has hung up so nothing is silently dropped beyond the cap.
+        let mut disconnected = false;
+        let mut sent = 0usize;
+        for batch in self.pending_batches.iter() {
+            if sink.send(batch.clone()).is_err() {
+                disconnected = true;
+                break;
+            }
+            sent += 1;
+        }
+        if sent > 0 {
+            self.pending_batches.drain(..sent);
+        }
+        if disconnected {
+            // The transport went away; stop forwarding and fall back to the
+            // bounded-ring behaviour so memory stays capped without a consumer.
+            warn!("tile transport sink disconnected; falling back to bounded ring");
+            self.sink = None;
         }
     }
 
@@ -139,7 +206,20 @@ impl TileEncoderState {
         ) {
             Ok(batch) => {
                 self.record_encoded_batch(batch.compressed_bytes);
+                // Bound the buffer regardless of whether a consumer is draining
+                // it: drop the oldest batch once the cap is reached so the
+                // primary desktop loop can never grow `pending_batches`
+                // unbounded (t49-e6-01 contained fix, t50-e18). The cap holds
+                // even with a sink attached, as a safety net for a stalled or
+                // disconnected transport.
+                if self.pending_batches.len() >= MAX_PENDING_BATCHES {
+                    self.pending_batches.remove(0);
+                }
                 self.pending_batches.push(batch);
+                // If a real transport sink is attached, drain the buffered
+                // batches into it now so they actually reach the remote
+                // consumer instead of only being capped (t55-E8 wired drain).
+                self.flush_to_sink();
             }
             Err(e) => {
                 warn!("tile encode failed: {e}");
@@ -171,6 +251,7 @@ mod tests {
     use liquide_compositor::damage::{DamageClass, DamageTile};
     use liquide_encoder::bandwidth::BudgetPressure;
     use liquide_encoder::strategy::CompressionMethod;
+    use liquide_transport::tile_channel::tile_channel;
 
     fn bitmap_damage(tile_size: u32) -> DamageSet {
         let mut damage = DamageSet::new(tile_size);
@@ -317,5 +398,147 @@ mod tests {
             batches_2[0].sequence > batches[0].sequence,
             "sequences should advance"
         );
+    }
+
+    #[test]
+    fn t50_e18_pending_batches_are_bounded_without_a_consumer() {
+        let width = 64;
+        let height = 64;
+        let tile_size = 64;
+        let mut state = TileEncoderState::new(width, height, tile_size);
+
+        let grid_w = width.div_ceil(tile_size);
+        let grid_h = height.div_ceil(tile_size);
+        let damage = DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive);
+
+        // Encode far more frames than the cap, never draining (simulating the
+        // live desktop loop where `drain_batches` has no caller).
+        let frames = MAX_PENDING_BATCHES * 5 + 3;
+        for i in 0..frames {
+            let pixels = patterned_pixels(width, height, i as u8);
+            state.encode_frame(&pixels, width, height, width * 4, Some(&damage));
+            assert!(
+                state.pending_batches.len() <= MAX_PENDING_BATCHES,
+                "pending_batches must never exceed the cap (len={}, cap={})",
+                state.pending_batches.len(),
+                MAX_PENDING_BATCHES
+            );
+        }
+
+        // The buffer is saturated at exactly the cap, and retains the newest
+        // batches (oldest dropped): the last drained sequence is the most recent.
+        assert_eq!(state.pending_batches.len(), MAX_PENDING_BATCHES);
+        let drained = state.drain_batches();
+        assert_eq!(drained.len(), MAX_PENDING_BATCHES);
+        assert!(
+            drained.windows(2).all(|w| w[1].sequence > w[0].sequence),
+            "retained batches should be the newest, in ascending sequence order"
+        );
+    }
+
+    #[test]
+    fn t55_e8_attached_sink_drains_encoded_batches() {
+        let width = 64;
+        let height = 64;
+        let tile_size = 64;
+        let mut state = TileEncoderState::new(width, height, tile_size);
+
+        let (tx, rx) = tile_channel();
+        state.attach_sink(tx);
+
+        let grid_w = width.div_ceil(tile_size);
+        let grid_h = height.div_ceil(tile_size);
+        let damage = DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive);
+
+        // Encode several times the cap. With a sink attached, every batch is
+        // forwarded, so the buffer stays drained and the receiver gets them all.
+        let frames = MAX_PENDING_BATCHES * 4 + 1;
+        for i in 0..frames {
+            let pixels = patterned_pixels(width, height, i as u8);
+            state.encode_frame(&pixels, width, height, width * 4, Some(&damage));
+            assert!(
+                state.pending_batches.is_empty(),
+                "buffer should stay drained while a sink is attached (len={})",
+                state.pending_batches.len()
+            );
+        }
+
+        let received: Vec<_> = rx.try_iter().collect();
+        assert_eq!(
+            received.len(),
+            frames,
+            "every encoded batch should reach the transport sink (no loss, no cap drops)"
+        );
+        assert!(
+            received.windows(2).all(|w| w[1].sequence > w[0].sequence),
+            "sink should receive batches in ascending sequence order"
+        );
+    }
+
+    #[test]
+    fn t55_e8_attach_sink_flushes_existing_backlog() {
+        let width = 64;
+        let height = 64;
+        let tile_size = 64;
+        let mut state = TileEncoderState::new(width, height, tile_size);
+
+        let grid_w = width.div_ceil(tile_size);
+        let grid_h = height.div_ceil(tile_size);
+        let damage = DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive);
+
+        // Encode a few frames BEFORE attaching the sink: they buffer in the ring.
+        for i in 0..3 {
+            let pixels = patterned_pixels(width, height, i as u8);
+            state.encode_frame(&pixels, width, height, width * 4, Some(&damage));
+        }
+        assert_eq!(state.pending_batches.len(), 3);
+
+        // Attaching the sink flushes the existing backlog immediately.
+        let (tx, rx) = tile_channel();
+        state.attach_sink(tx);
+
+        assert!(
+            state.pending_batches.is_empty(),
+            "attaching a sink should flush the buffered backlog"
+        );
+        let received: Vec<_> = rx.try_iter().collect();
+        assert_eq!(received.len(), 3, "backlog should be forwarded to the sink");
+    }
+
+    #[test]
+    fn t55_e8_disconnected_sink_falls_back_to_bounded_ring() {
+        let width = 64;
+        let height = 64;
+        let tile_size = 64;
+        let mut state = TileEncoderState::new(width, height, tile_size);
+
+        let (tx, rx) = tile_channel();
+        state.attach_sink(tx);
+
+        let grid_w = width.div_ceil(tile_size);
+        let grid_h = height.div_ceil(tile_size);
+        let damage = DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive);
+
+        // Drop the receiver: the transport has hung up.
+        drop(rx);
+
+        // Keep encoding well past the cap. With the sink disconnected the
+        // encoder must fall back to the bounded ring — never an unbounded leak.
+        let frames = MAX_PENDING_BATCHES * 5 + 3;
+        for i in 0..frames {
+            let pixels = patterned_pixels(width, height, i as u8);
+            state.encode_frame(&pixels, width, height, width * 4, Some(&damage));
+            assert!(
+                state.pending_batches.len() <= MAX_PENDING_BATCHES,
+                "after sink disconnect, the bounded ring cap must still hold (len={})",
+                state.pending_batches.len()
+            );
+        }
+
+        assert!(
+            state.sink.is_none(),
+            "a disconnected sink should be dropped so it is not retried forever"
+        );
+        assert_eq!(state.pending_batches.len(), MAX_PENDING_BATCHES);
     }
 }

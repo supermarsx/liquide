@@ -5,12 +5,14 @@
 //! the system from sleeping while work is in progress.
 
 pub mod battery;
+pub mod gated;
 pub mod idle;
 pub mod inhibitor;
 mod platform;
 pub mod policy;
 pub mod thermal;
 
+pub use gated::GatedPowerManager;
 pub use platform::PowerManager;
 
 /// Power states.

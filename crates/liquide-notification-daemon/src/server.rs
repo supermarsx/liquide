@@ -241,6 +241,17 @@ impl NotificationServer {
             .map(|(_, n, _)| n)
     }
 
+    /// Returns the currently active (displayed) notifications in display order,
+    /// as `(id, notification, displayed_at_ms)` triples.
+    ///
+    /// Read-only accessor (t52-e1): lets a consumer (the shell notification
+    /// center) render directly off the daemon's canonical active set instead of
+    /// keeping a duplicate cache. The daemon remains the single source of the
+    /// active notification data.
+    pub fn active_notifications(&self) -> &[(u32, Notification, u64)] {
+        &self.active
+    }
+
     /// Dispatches queued notifications to the handler.
     fn dispatch(&mut self, now_ms: u64) {
         if self.handler.is_none() {

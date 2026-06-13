@@ -1,0 +1,12 @@
+[package]
+name = "liquide-authz-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Canonical authorization enforcement facade for the Liquide desktop"
+
+[dependencies]
+liquide-authorization.workspace = true
+liquide-common.workspace = true
+
+[dev-dependencies]
