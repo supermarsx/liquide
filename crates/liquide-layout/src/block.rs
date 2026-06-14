@@ -903,7 +903,12 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                     crate::intrinsic::min_content_width(doc, child_id, styles, text_measurer);
                 let max_cw =
                     crate::intrinsic::max_content_width(doc, child_id, styles, text_measurer);
-                min_cw.max(content_width.min(max_cw))
+                // CSS 2.1 §10.3.5 shrink-to-fit: the "available" width is the
+                // space actually available to this child, which floats reduce.
+                // Using the float-adjusted `child_avail_w` (rather than the full
+                // `content_width`) prevents an inline-block next to a float from
+                // sizing as if the float weren't there (t60 finding #6).
+                min_cw.max(child_avail_w.min(max_cw))
             };
             layout_block(
                 doc,
@@ -1083,13 +1088,15 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                         mb.margin_rect = mb.content_rect;
                     }
                     ListStylePosition::Outside => {
-                        // Outside: marker is positioned to the left
-                        mb.content_rect = Rect::new(
-                            child_float_offset_x - marker_width,
-                            child_y,
-                            marker_width,
-                            marker_h,
-                        );
+                        // Outside: marker sits in the gutter to the LEFT of the
+                        // content. Normally that is `content_origin - marker_w`,
+                        // but when a left float has pushed the content start
+                        // (`child_float_offset_x`) closer to the edge than the
+                        // marker is wide, that would place the marker off-screen
+                        // at a negative x. Clamp to 0 so the bullet/number stays
+                        // visible (t60 finding #10).
+                        let marker_x = (child_float_offset_x - marker_width).max(0.0);
+                        mb.content_rect = Rect::new(marker_x, child_y, marker_width, marker_h);
                         mb.border_rect = mb.content_rect;
                         mb.padding_rect = mb.content_rect;
                         mb.margin_rect = mb.content_rect;

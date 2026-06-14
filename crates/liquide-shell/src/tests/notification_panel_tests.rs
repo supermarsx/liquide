@@ -28,8 +28,18 @@ fn mouse_move(x: f32, y: f32) -> PlatformEvent {
     }
 }
 
-/// Clicking the notification indicator region in the status bar should toggle
-/// `notification_panel_visible` and return `OpenNotificationCenter`.
+/// Clicking the notification indicator region in the status bar must toggle the
+/// notification center EXACTLY ONCE over the full integrated input path.
+///
+/// Single-owner toggle contract (t59-shell): the click handler returns
+/// `OpenNotificationCenter` WITHOUT mutating state; `execute_action` is the sole
+/// owner of the toggle. Driving handler + execute_action (exactly as
+/// `DesktopCompositor::handle_event` does) must flip the panel open, then a
+/// second full click must flip it closed. The previous version of this test
+/// drove only `handle_platform_event` and asserted the handler ALONE mutated —
+/// which encoded the double-toggle bug (handler mutated AND execute_action
+/// toggled again, cancelling the click). This version drives the real path so a
+/// regression to double-toggle is caught.
 #[test]
 fn notification_indicator_click_toggles_panel() {
     let mut shell = Shell::new(1920.0, 1080.0);
@@ -40,14 +50,23 @@ fn notification_indicator_click_toggles_panel() {
     let click_x = 1920.0 - 58.0; // middle of the 36..80 region
     let click_y = 15.0; // inside the status bar
 
+    // Full integrated path: handler returns the action, execute_action toggles.
     let action = shell.handle_platform_event(&mouse_click(click_x, click_y));
     assert!(matches!(action, Some(ShellAction::OpenNotificationCenter)));
-    assert!(shell.notification_panel_visible);
+    assert!(shell.execute_action(&action.unwrap()));
+    assert!(
+        shell.notification_panel_visible,
+        "one full click must OPEN the center (single toggle, not double)"
+    );
 
-    // Second click should toggle it off.
+    // Second full click should toggle it off.
     let action2 = shell.handle_platform_event(&mouse_click(click_x, click_y));
     assert!(matches!(action2, Some(ShellAction::OpenNotificationCenter)));
-    assert!(!shell.notification_panel_visible);
+    assert!(shell.execute_action(&action2.unwrap()));
+    assert!(
+        !shell.notification_panel_visible,
+        "a second full click must CLOSE the center"
+    );
 }
 
 /// When a window is maximized and auto-hide is enabled, the status bar should

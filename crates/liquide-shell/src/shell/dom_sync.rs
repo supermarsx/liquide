@@ -20,7 +20,7 @@ use liquide_dom::template_registry::TemplateContext;
 use liquide_interop::notification::Urgency;
 use liquide_statusbar::{StatusBarItem, StatusBarItemKind, StatusBarSlot};
 
-use super::{CONTEXT_MENU_WIDTH, MENU_ITEM_HEIGHT, MENU_PADDING, Shell};
+use super::Shell;
 
 const NOTIFICATION_ITEM_CACHE_PREFIX: &str = "notifications:";
 
@@ -811,9 +811,9 @@ impl Shell {
             // Position the context menu at the right-click location, clamped to screen.
             let ctx_x = self.context_menu_pos.x;
             let ctx_y = self.context_menu_pos.y;
-            let menu_h = MENU_PADDING * 2.0 + ctx_items.len() as f32 * MENU_ITEM_HEIGHT;
+            let menu_h = self.menu_padding() * 2.0 + ctx_items.len() as f32 * self.menu_item_height();
             let clamped_x = ctx_x
-                .min(self.screen_rect.width - CONTEXT_MENU_WIDTH - 4.0)
+                .min(self.screen_rect.width - self.context_menu_width() - 4.0)
                 .max(0.0);
             let clamped_y = ctx_y.min(self.screen_rect.height - menu_h - 4.0).max(0.0);
             ctx.set("pos_left", &format!("{}px", clamped_x.round() as i32));

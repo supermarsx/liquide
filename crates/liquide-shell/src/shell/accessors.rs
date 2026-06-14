@@ -271,6 +271,51 @@ impl Shell {
         self.style_resolver.as_ref()
     }
 
+    /// Resolve a CSS custom property (e.g. `--menu-item-height`) to a pixel
+    /// value from the loaded stylesheets, returning `None` when the variable is
+    /// undefined or not length/number-valued.
+    ///
+    /// This is the single bridge that lets shell *geometry logic* (hit-testing,
+    /// on-screen clamping) read the same custom properties the menus are
+    /// *painted* from, so a theme change moves the click-zones with the pixels
+    /// (t61-pipeline S1–S3).
+    #[must_use]
+    pub(crate) fn resolve_css_length_var(&self, name: &str) -> Option<f32> {
+        let engine = &self.css_pipeline.style_engine;
+        let value = engine.resolve_variable(name)?;
+        let vw = engine.viewport.width;
+        let vh = engine.viewport.height;
+        let base = engine.base_font_size;
+        value.resolve_px(base, vw, vh)
+    }
+
+    /// Per-item menu height used for menu sizing, hit-test index math, and
+    /// on-screen clamping. Resolved from CSS `--menu-item-height`; falls back to
+    /// the [`MENU_ITEM_HEIGHT`](super::MENU_ITEM_HEIGHT) constant when undefined.
+    #[must_use]
+    pub(crate) fn menu_item_height(&self) -> f32 {
+        self.resolve_css_length_var("--menu-item-height")
+            .unwrap_or(super::MENU_ITEM_HEIGHT)
+    }
+
+    /// Inner vertical padding of context/session/app menus. Resolved from CSS
+    /// `--menu-padding`; falls back to [`MENU_PADDING`](super::MENU_PADDING).
+    #[must_use]
+    pub(crate) fn menu_padding(&self) -> f32 {
+        self.resolve_css_length_var("--menu-padding")
+            .unwrap_or(super::MENU_PADDING)
+    }
+
+    /// Rendered width of the context menu used for right-edge clamping and
+    /// hit-testing. Resolved from CSS `--menu-min-width` (the context menu's
+    /// `min-width`); falls back to
+    /// [`CONTEXT_MENU_WIDTH`](super::CONTEXT_MENU_WIDTH).
+    #[must_use]
+    pub(crate) fn context_menu_width(&self) -> f32 {
+        self.resolve_css_length_var("--menu-min-width")
+            .unwrap_or(super::CONTEXT_MENU_WIDTH)
+    }
+
     /// Handle a key event, returning the matching shell action if any.
     #[must_use]
     pub fn handle_key_event(&self, event: &KeyEvent) -> Option<&ShellAction> {

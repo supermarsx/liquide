@@ -471,12 +471,140 @@ fn query_window_dpi_scale(hwnd: ffi::HWND) -> f32 {
 
 /// Metadata for a window managed by the platform backend.
 #[allow(dead_code)]
+/// Per-window off-screen GDI back-buffer used by the `SetDIBitsToDevice` /
+/// `BitBlt` present path.
+///
+/// The GDI fallback path runs whenever there is no hardware DXGI swap chain —
+/// which is *always* the case over RDP. Writing the framebuffer directly to the
+/// visible window DC (the old behaviour) let the remote/DWM compositor sample
+/// the DC mid-write, producing partial-frame tearpoints and visible flicker.
+///
+/// This buffer is a DIB section backed compatible DC: we copy the frame into the
+/// off-screen DIB memory, then a *single* `BitBlt` flips it onto the window DC.
+/// From the compositor's perspective the on-screen pixels change in one atomic
+/// blit rather than row-by-row, eliminating the mid-write tearing.
+///
+/// The buffer is created on first present (or after a resize) and destroyed when
+/// the window is destroyed (via `Drop`). It is recreated whenever the requested
+/// frame size changes.
+struct GdiBackBuffer {
+    /// Memory DC compatible with the window, holding `bitmap` selected in.
+    mem_dc: ffi::HDC,
+    /// DIB section bitmap selected into `mem_dc`.
+    bitmap: ffi::HBITMAP,
+    /// Object originally selected in `mem_dc`, restored before deletion.
+    old_bitmap: ffi::HGDIOBJ,
+    /// Pointer to the DIB section's pixel memory (top-down BGRA8, packed).
+    bits: *mut c_void,
+    /// Width of the back-buffer in pixels.
+    width: u32,
+    /// Height of the back-buffer in pixels.
+    height: u32,
+}
+
+impl GdiBackBuffer {
+    /// Create an off-screen DIB-section back-buffer of `width` x `height`
+    /// compatible with `window_hdc`. Returns `None` if any GDI allocation fails
+    /// (the caller falls back to direct presentation for that frame).
+    ///
+    /// # Safety
+    ///
+    /// `window_hdc` must be a valid DC for the target window.
+    unsafe fn create(window_hdc: ffi::HDC, width: u32, height: u32) -> Option<Self> {
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        // SAFETY: window_hdc is a valid DC supplied by the caller.
+        let mem_dc = unsafe { ffi::CreateCompatibleDC(window_hdc) };
+        if mem_dc.is_null() {
+            return None;
+        }
+
+        let bmi = ffi::BITMAPINFO {
+            bmiHeader: ffi::BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<ffi::BITMAPINFOHEADER>() as ffi::DWORD,
+                biWidth: width as ffi::LONG,
+                // Negative height → top-down DIB (row 0 is the top row), so our
+                // top-down BGRA framebuffer copies in without a vertical flip.
+                biHeight: -(height as ffi::LONG),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: ffi::BI_RGB,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [ffi::RGBQUAD::default()],
+        };
+
+        let mut bits: *mut c_void = ptr::null_mut();
+        // SAFETY: mem_dc is valid; bmi is a fully-initialized BITMAPINFO; bits
+        // receives the DIB memory pointer. hSection null → GDI owns the memory.
+        let bitmap = unsafe {
+            ffi::CreateDIBSection(
+                mem_dc,
+                &bmi,
+                ffi::DIB_RGB_COLORS,
+                &mut bits,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if bitmap.is_null() || bits.is_null() {
+            // SAFETY: mem_dc was created above and not yet selected into.
+            unsafe {
+                ffi::DeleteDC(mem_dc);
+            }
+            return None;
+        }
+
+        // SAFETY: both handles are valid; SelectObject returns the previously
+        // selected bitmap so we can restore it before deleting the DC.
+        let old_bitmap = unsafe { ffi::SelectObject(mem_dc, bitmap) };
+
+        Some(GdiBackBuffer {
+            mem_dc,
+            bitmap,
+            old_bitmap,
+            bits,
+            width,
+            height,
+        })
+    }
+}
+
+impl Drop for GdiBackBuffer {
+    fn drop(&mut self) {
+        // SAFETY: restore the original bitmap before deleting ours, then delete
+        // both the bitmap and the memory DC. All handles were created by us and
+        // are not used elsewhere.
+        unsafe {
+            if !self.mem_dc.is_null() {
+                if !self.old_bitmap.is_null() {
+                    ffi::SelectObject(self.mem_dc, self.old_bitmap);
+                }
+                if !self.bitmap.is_null() {
+                    ffi::DeleteObject(self.bitmap);
+                }
+                ffi::DeleteDC(self.mem_dc);
+            }
+        }
+    }
+}
+
 struct WindowInfo {
     hwnd: ffi::HWND,
     handle: NativeWindowHandle,
     _data: Box<WindowData>,
     /// DXGI swap-chain presenter (lazily initialized on first present).
     dxgi: Option<dxgi::DxgiPresenter>,
+    /// Off-screen GDI back-buffer for the `SetDIBitsToDevice`/`BitBlt` present
+    /// path (created on first GDI present, recreated on resize). `None` until
+    /// the first GDI present or when the DXGI path is active.
+    gdi_back_buffer: Option<GdiBackBuffer>,
     /// Set once the first present path (DXGI vs GDI/WARP fallback) has been
     /// logged, so the diagnostic line is emitted exactly once per window.
     present_path_logged: bool,
@@ -843,6 +971,7 @@ impl NativeWindowHost for Win32WindowHost {
             handle,
             _data: data,
             dxgi: None,
+            gdi_back_buffer: None,
             present_path_logged: false,
         };
         self.windows.insert(handle.0, info);
@@ -1602,22 +1731,27 @@ impl PlatformBackend for Win32Platform {
             }
         }
 
-        // GDI fallback: SetDIBitsToDevice.
+        // GDI fallback: off-screen DIB-section back-buffer + atomic BitBlt.
         //
-        // SetDIBitsToDevice expects the source DIB rows to be packed at the
-        // bitmap's natural stride (width * 4 for 32bpp, which is already
-        // DWORD-aligned). It has no way to express a custom source stride, so a
-        // padded framebuffer (stride > width * 4) would be read incorrectly and
-        // produce a sheared/garbage image. Guard that here rather than present
-        // corruption (t55 flicker fix, H3 hardening).
+        // This is the path hardware-less / remote (RDP) sessions take. The old
+        // implementation wrote the framebuffer directly to the visible window DC
+        // via `SetDIBitsToDevice`, which let the DWM/RDP compositor sample the DC
+        // mid-write → partial-frame tearpoints/flicker. Instead we copy the
+        // frame into an off-screen DIB section and then perform a *single*
+        // `BitBlt` to the window DC, which the compositor observes as one atomic
+        // pixel update (t62 flicker fix #1).
+        //
+        // The framebuffer rows must be packed (stride == width * 4) so the BGRA
+        // memcpy into the DIB lines up with the DIB's natural stride. A padded
+        // framebuffer would otherwise be read incorrectly and shear; guard it
+        // here (carried over from t55 flicker fix, H3 hardening).
         let packed_stride = width.saturating_mul(4);
         if stride != packed_stride {
             return Err(PlatformError::Presentation(format!(
                 "GDI fallback requires packed BGRA rows (stride {stride} != {packed_stride} for width {width})"
             )));
         }
-        // Validate the buffer is large enough for the full frame before handing
-        // a raw pointer to GDI.
+        // Validate the buffer is large enough for the full frame before copying.
         let required = (packed_stride as usize).saturating_mul(height as usize);
         if pixels.len() < required {
             return Err(PlatformError::Presentation(format!(
@@ -1628,72 +1762,88 @@ impl PlatformBackend for Win32Platform {
                 height
             )));
         }
-        let mut bmi = ffi::BITMAPINFO {
-            bmiHeader: ffi::BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<ffi::BITMAPINFOHEADER>() as ffi::DWORD,
-                biWidth: width as ffi::LONG,
-                // Negative height → top-down bitmap (row 0 is the top row).
-                biHeight: -(height as ffi::LONG),
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: ffi::BI_RGB,
-                biSizeImage: 0,
-                biXPelsPerMeter: 0,
-                biYPelsPerMeter: 0,
-                biClrUsed: 0,
-                biClrImportant: 0,
-            },
-            bmiColors: [ffi::RGBQUAD::default()],
-        };
 
-        // SAFETY: GetDC / SetDIBitsToDevice / ReleaseDC are standard GDI
-        // calls. The pixel buffer is valid for `width * height * 4` bytes.
-        // The HWND and bitmap info are valid for the duration of this call.
+        // Re-borrow the window to manage its off-screen back-buffer lifecycle.
+        let info = self
+            .window_host
+            .windows
+            .get_mut(&handle.0)
+            .ok_or_else(|| PlatformError::Presentation("unknown window handle".into()))?;
+
+        // SAFETY: All GDI calls below operate on a valid HWND/DC. The pixel
+        // buffer was bounds-checked above. The back-buffer's DIB memory is
+        // `width * height * 4` bytes (matching the bitmap we created).
         unsafe {
-            let hdc = ffi::GetDC(hwnd);
-            if hdc.is_null() {
+            let window_hdc = ffi::GetDC(hwnd);
+            if window_hdc.is_null() {
                 return Err(PlatformError::Presentation("GetDC returned null".into()));
             }
 
-            let scan_lines = ffi::SetDIBitsToDevice(
-                hdc,
-                0,      // xDest
-                0,      // yDest
-                width,  // dwWidth
-                height, // dwHeight
-                0,      // xSrc
-                0,      // ySrc
-                0,      // uStartScan
-                height, // cScanLines
-                pixels.as_ptr() as *const c_void,
-                &mut bmi,
-                ffi::DIB_RGB_COLORS,
+            // (Re)create the off-screen buffer if missing or the frame size
+            // changed (window resize). Dropping the old buffer frees its DC and
+            // bitmap before the new one is allocated.
+            let needs_realloc = match &info.gdi_back_buffer {
+                Some(bb) => bb.width != width || bb.height != height,
+                None => true,
+            };
+            if needs_realloc {
+                info.gdi_back_buffer = None;
+                info.gdi_back_buffer = GdiBackBuffer::create(window_hdc, width, height);
+            }
+
+            let Some(back_buffer) = info.gdi_back_buffer.as_ref() else {
+                ffi::ReleaseDC(hwnd, window_hdc);
+                return Err(PlatformError::Presentation(
+                    "failed to create GDI off-screen back-buffer".into(),
+                ));
+            };
+
+            // Copy the frame into the off-screen DIB memory. Both source and
+            // destination are top-down packed BGRA8 of identical dimensions, so
+            // this is a single contiguous copy of `required` bytes.
+            ptr::copy_nonoverlapping(
+                pixels.as_ptr(),
+                back_buffer.bits as *mut u8,
+                required,
             );
 
-            ffi::ReleaseDC(hwnd, hdc);
+            // Atomic flip: one BitBlt of the whole frame onto the window DC.
+            let ok = ffi::BitBlt(
+                window_hdc,
+                0,
+                0,
+                width as i32,
+                height as i32,
+                back_buffer.mem_dc,
+                0,
+                0,
+                ffi::SRCCOPY,
+            );
 
-            if scan_lines == 0 {
+            ffi::ReleaseDC(hwnd, window_hdc);
+
+            if ok == ffi::FALSE {
                 return Err(PlatformError::Presentation(
-                    "SetDIBitsToDevice set 0 scan lines (GDI present failed)".into(),
+                    "BitBlt failed (GDI back-buffer present failed)".into(),
                 ));
             }
         }
 
         // One-time present-path diagnostic for the GDI/WARP fallback. This is
         // the path hardware-less / remote (RDP) sessions usually take, so the
-        // line confirms the DE is blitting via GDI rather than DXGI. Re-borrow
-        // the window in its own scope so the borrow ends before we touch
-        // `self.present_feedback` below.
-        if let Some(info) = self.window_host.windows.get_mut(&handle.0) {
-            if !info.present_path_logged {
-                info.present_path_logged = true;
-                eprintln!(
-                    "[liquide][win32] present path: GDI fallback (SetDIBitsToDevice) \
-                     — no hardware DXGI swap-chain (window {}, dpi_scale {:.2})",
-                    handle.0,
-                    info.dpi_scale()
-                );
-            }
+        // line confirms the DE is blitting via GDI rather than DXGI, and whether
+        // it detected a Remote Desktop session.
+        if !info.present_path_logged {
+            info.present_path_logged = true;
+            // SAFETY: GetSystemMetrics is a pure query with no preconditions.
+            let remote = unsafe { ffi::GetSystemMetrics(ffi::SM_REMOTESESSION) } != 0;
+            eprintln!(
+                "[liquide][win32] present path: GDI fallback (off-screen DIB + BitBlt) \
+                 — no hardware DXGI swap-chain (window {}, dpi_scale {:.2}, remote_session {})",
+                handle.0,
+                info.dpi_scale(),
+                remote
+            );
         }
 
         self.present_feedback

@@ -373,6 +373,9 @@ pub const SWP_NOZORDER: UINT = 0x0004;
 
 pub const SM_CXSCREEN: i32 = 0;
 pub const SM_CYSCREEN: i32 = 1;
+/// Non-zero when the calling process is running in a Remote Desktop (RDP)
+/// session. Used to log the present path and (potentially) tune presentation.
+pub const SM_REMOTESESSION: i32 = 0x1000;
 
 // ---------------------------------------------------------------------------
 // Monitor constants

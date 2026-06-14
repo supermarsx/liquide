@@ -11,6 +11,64 @@ use super::paint_state::TimerAction;
 use super::{DesktopCompositor, RenderMsg};
 
 impl DesktopCompositor {
+    /// Flush any in-flight render frame so the final desktop state is presented
+    /// before the loop exits on quit (t60-runtime #1).
+    ///
+    /// If a render job is still in flight when a quit is requested, give the
+    /// worker a brief, bounded window to complete and present that last frame.
+    /// Bounded so a hung render thread cannot block shutdown indefinitely
+    /// (mirrors the in-loop watchdog rationale, t60-runtime #3).
+    fn flush_pending_present_for_quit(&mut self, platform: &mut dyn PlatformBackend) {
+        if !self.render_in_flight {
+            // Nothing pending — still try a present in case a completed frame is
+            // sitting in the channel unconsumed.
+            let _ = self.try_present(platform);
+            return;
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while self.render_in_flight && Instant::now() < deadline {
+            let _ = self.refresh_present_pacing(platform);
+            if self.try_present(platform) {
+                break;
+            }
+            thread::sleep(Duration::from_micros(200));
+        }
+    }
+
+    /// Maximum time a single render job may be in flight before the watchdog
+    /// assumes the render thread is hung and recovers (t60-runtime #3).
+    const RENDER_WATCHDOG_TIMEOUT: Duration = Duration::from_millis(500);
+
+    /// Recover from a hung render thread: if a job has been in flight longer than
+    /// [`Self::RENDER_WATCHDOG_TIMEOUT`], release the in-flight flag, log a
+    /// warning, and mark the frame dirty so a fresh job is submitted. This stops
+    /// the main loop from spin-yielding at 100% CPU forever when the worker
+    /// stalls without panicking (which would otherwise disconnect the channel).
+    ///
+    /// Returns `true` if the watchdog fired.
+    fn check_render_watchdog(&mut self) -> bool {
+        if !self.render_in_flight {
+            return false;
+        }
+        let Some(since) = self.render_inflight_since else {
+            return false;
+        };
+        if since.elapsed() < Self::RENDER_WATCHDOG_TIMEOUT {
+            return false;
+        }
+
+        tracing::warn!(
+            elapsed_ms = format!("{:.0}", since.elapsed().as_secs_f64() * 1000.0),
+            "render thread watchdog fired: render job stuck in flight; \
+             releasing and re-marking dirty"
+        );
+        self.render_in_flight = false;
+        self.render_inflight_since = None;
+        self.mark_full_dirty();
+        true
+    }
+
     /// Run the desktop event loop using the given platform backend.
     ///
     /// Detects the primary screen size, creates a borderless fullscreen
@@ -115,6 +173,21 @@ impl DesktopCompositor {
         // Transition from loading to desktop.
         debug!("rendering first desktop frame");
         self.loading = false;
+        // Seed the shell clock (and other periodic state) from the REAL
+        // wall-clock BEFORE the first desktop frame is rendered. `tick()` reads
+        // `SystemTime::now()` and drives `Shell::tick_detailed(now_us)`, which
+        // updates the status-bar clock item from its constructed epoch default
+        // (`last_update_us == 0`, which formats as 00:00) to the current local
+        // time. Without this seed the first frame — and every frame until the
+        // first ~1s periodic timer tick fires below — would render the Unix
+        // epoch ("00:00"). The periodic timer keeps it advancing thereafter.
+        //
+        // DETERMINISM: this wall-clock seed lives ONLY on the real `run()`
+        // path. The headless capture path
+        // (`render_thread.rs::capture_once_scripted_with`) deliberately does
+        // NOT call `tick()`; it renders at time `t0` and lets tests inject time
+        // explicitly via the `mutate` closure, so goldens stay deterministic.
+        self.tick();
         self.dirty = true;
         self.render_frame_sync(platform);
         let _ = self.wait_for_present_ready(platform, "initial desktop frame");
@@ -150,6 +223,17 @@ impl DesktopCompositor {
                 }
             }
 
+            // Honour a pending quit ONLY after flushing the final frame
+            // (t60-runtime #1). A Quit/close event sets `quit_requested` rather
+            // than stopping the loop outright, so any in-flight render job is
+            // presented before exit — without this the last desktop frame is
+            // orphaned and the window flashes black/stale on close.
+            if self.quit_requested {
+                self.flush_pending_present_for_quit(platform);
+                self.running = false;
+                break;
+            }
+
             // Sync hardware cursor shape to the platform backend.
             // This is a cheap Win32 SetCursor call — no rendering needed.
             if let Some(shape) = self.cursor.consume_hw_sync() {
@@ -163,6 +247,13 @@ impl DesktopCompositor {
             if self.cursor.use_hardware {
                 self.cursor.dirty = false;
             }
+
+            // Watchdog: recover from a hung (non-panicking) render thread.
+            // Without this, a stuck worker leaves `render_in_flight` true
+            // forever and the main loop spin-yields at 100% CPU indefinitely
+            // (t60-runtime #3). After the timeout we release the in-flight flag,
+            // mark the frame dirty, and let the loop submit a fresh job.
+            self.check_render_watchdog();
 
             // Check for completed frames from the render thread.
             if self.try_present(platform) {
@@ -281,5 +372,65 @@ impl DesktopCompositor {
             uptime_s = format!("{:.1}", run_start.elapsed().as_secs_f64()),
             "event loop exited"
         );
+    }
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    use super::*;
+
+    #[test]
+    fn watchdog_fires_after_timeout_and_recovers() {
+        // REGRESSION (t60-runtime #3): a hung render thread leaves
+        // render_in_flight stuck true; the watchdog must release it so the loop
+        // does not spin at 100% CPU forever.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.render_in_flight = true;
+        desktop.render_inflight_since =
+            Some(Instant::now() - DesktopCompositor::RENDER_WATCHDOG_TIMEOUT - Duration::from_millis(50));
+        desktop.dirty = false;
+
+        assert!(desktop.check_render_watchdog(), "watchdog should fire");
+        assert!(!desktop.render_in_flight, "in-flight flag must be released");
+        assert!(desktop.render_inflight_since.is_none());
+        assert!(desktop.dirty, "frame must be re-marked dirty for re-submit");
+    }
+
+    #[test]
+    fn watchdog_does_not_fire_before_timeout() {
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.render_in_flight = true;
+        desktop.render_inflight_since = Some(Instant::now());
+
+        assert!(!desktop.check_render_watchdog(), "watchdog must not fire early");
+        assert!(desktop.render_in_flight, "in-flight flag must be preserved");
+    }
+
+    #[test]
+    fn watchdog_noop_when_nothing_in_flight() {
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.render_in_flight = false;
+        desktop.render_inflight_since = None;
+
+        assert!(!desktop.check_render_watchdog());
+    }
+
+    #[test]
+    fn quit_event_requests_shutdown_without_stopping_loop_immediately() {
+        // REGRESSION (t60-runtime #1): Quit must NOT stop the loop outright —
+        // it requests shutdown so the final frame can flush first. `running`
+        // stays true; only `quit_requested` is set.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.loading = false;
+        assert!(desktop.running);
+        assert!(!desktop.quit_requested);
+
+        desktop.handle_event(&liquide_platform::PlatformEvent::Quit);
+
+        assert!(
+            desktop.running,
+            "loop must keep running until the final frame is flushed"
+        );
+        assert!(desktop.quit_requested, "quit must be recorded as requested");
     }
 }

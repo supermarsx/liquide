@@ -933,3 +933,86 @@ fn workflow_damage_set_collect_and_sort() {
         DamageClass::CursorOnly
     );
 }
+
+// --- Regression: HIGH-005 damage-merge overflow auto-escalation ---
+
+/// A partial set whose unique-tile coverage reaches the whole grid must be
+/// promoted to a full-frame refresh; otherwise downstream under-damages.
+#[test]
+fn escalate_if_saturated_promotes_when_grid_covered() {
+    let grid_w = 2u32;
+    let grid_h = 2u32;
+    let mut damage = DamageSet::new(64);
+    // Build coverage of all 4 tiles by merging partial sets (as the session
+    // does when combining classified + changed damage).
+    for (x, y) in [(0u32, 0u32), (1, 0), (0, 1), (1, 1)] {
+        let mut part = DamageSet::new(64);
+        part.add(DamageTile {
+            x,
+            y,
+            class: DamageClass::UiPrimitive,
+        });
+        damage.merge(&part);
+    }
+    assert!(!damage.is_full(), "precondition: still partial after merges");
+
+    let escalated =
+        damage.escalate_if_saturated(grid_w, grid_h, DamageClass::UiPrimitive);
+    assert!(escalated, "full grid coverage must escalate to full-frame");
+    assert!(damage.is_full());
+    assert_eq!(damage.len(), (grid_w * grid_h) as usize);
+}
+
+/// Duplicate tile coordinates must not inflate coverage and trigger a spurious
+/// full-frame escalation.
+#[test]
+fn escalate_if_saturated_ignores_duplicates() {
+    let mut damage = DamageSet::new(64);
+    // Push the same tile 4 times; real unique coverage is just 1 tile.
+    for _ in 0..4 {
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
+    }
+    let escalated = damage.escalate_if_saturated(2, 2, DamageClass::UiPrimitive);
+    assert!(!escalated, "duplicates must not be counted as full coverage");
+    assert!(!damage.is_full());
+    assert_eq!(damage.len(), 1, "dedup should collapse duplicates");
+}
+
+/// Escalation must preserve the strongest (highest-priority) class present so
+/// the encoding contract is never downgraded.
+#[test]
+fn escalate_if_saturated_preserves_strongest_class() {
+    let mut damage = DamageSet::new(64);
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::UiPrimitive,
+    });
+    damage.add(DamageTile {
+        x: 1,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    // Default class is the weakest; the TextGlyph tile must still win.
+    let escalated = damage.escalate_if_saturated(2, 1, DamageClass::CursorOnly);
+    assert!(escalated);
+    let (gw, gh, class) = damage.full_grid_dimensions().unwrap();
+    assert_eq!((gw, gh), (2, 1));
+    assert_eq!(
+        class,
+        DamageClass::TextGlyph,
+        "escalation must keep the strongest class"
+    );
+}
+
+/// An already-full set stays full and reports so.
+#[test]
+fn escalate_if_saturated_noop_when_already_full() {
+    let mut damage = DamageSet::full(64, 4, 4, DamageClass::UiPrimitive);
+    assert!(damage.escalate_if_saturated(4, 4, DamageClass::CursorOnly));
+    assert!(damage.is_full());
+}

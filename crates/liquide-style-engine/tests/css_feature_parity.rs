@@ -270,6 +270,58 @@ fn margin_percent() {
     assert_dim_pct!(s.margin.top, 5.0);
 }
 
+// Regression (t59-cssspacing): padding/margin SHORTHANDS (1/2/3/4-value) must
+// expand to the correct four sides and reach ComputedStyle. An earlier
+// escalation claimed every padding/margin longhand AND shorthand resolved to
+// Zero; this proves they do not.
+#[test]
+fn padding_shorthand_four_values() {
+    let s = style_for("x { padding: 5px 10px 15px 20px; }", "x");
+    assert_dim_px!(s.padding.top, 5.0);
+    assert_dim_px!(s.padding.right, 10.0);
+    assert_dim_px!(s.padding.bottom, 15.0);
+    assert_dim_px!(s.padding.left, 20.0);
+}
+
+#[test]
+fn margin_shorthand_two_values() {
+    // `margin: 5px 10px` => top/bottom = 5, left/right = 10.
+    let s = style_for("x { margin: 5px 10px; }", "x");
+    assert_dim_px!(s.margin.top, 5.0);
+    assert_dim_px!(s.margin.right, 10.0);
+    assert_dim_px!(s.margin.bottom, 5.0);
+    assert_dim_px!(s.margin.left, 10.0);
+}
+
+// Regression (t59-cssspacing): the bundled themes write spacing as UNITLESS
+// numbers (e.g. `menu-item { padding-left: 12 }`, `menu-item-icon { margin-right:
+// 8 }`). These must resolve to Px just like the explicit `12px` form, otherwise
+// every flex/block surface collapses to zero spacing. This is the exact menu
+// CSS from liquid_glass.rs.
+#[test]
+fn unitless_padding_left_resolves_to_px() {
+    let s = style_for("menu-item { padding-left: 12; padding-right: 12; }", "menu-item");
+    assert_dim_px!(s.padding.left, 12.0);
+    assert_dim_px!(s.padding.right, 12.0);
+}
+
+#[test]
+fn unitless_margin_right_resolves_to_px() {
+    let s = style_for("menu-item-icon { width: 16; margin-right: 8; }", "menu-item-icon");
+    assert_dim_px!(s.width, 16.0);
+    assert_dim_px!(s.margin.right, 8.0);
+}
+
+// `padding-left: 12px` followed by the `padding: 5px` shorthand: per CSS source
+// order the later shorthand wins on ALL four sides (this is correct, not a
+// drop). Locks that the shorthand reset reaches all sides as Px(5), not Zero.
+#[test]
+fn later_padding_shorthand_overrides_earlier_longhand() {
+    let s = style_for("x { padding-left: 12px; padding: 5px; }", "x");
+    assert_dim_px!(s.padding.top, 5.0);
+    assert_dim_px!(s.padding.left, 5.0);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // BORDER
 // ═══════════════════════════════════════════════════════════════════════════

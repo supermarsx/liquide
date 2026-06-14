@@ -317,7 +317,14 @@ impl Shell {
             .windows
             .remove(&id)
             .ok_or(ShellError::WindowNotFound { id })?;
-        self.workspaces.active_mut().remove_window(id);
+        // Remove from the OWNING workspace (which may be inactive), not just the
+        // active one — otherwise a window closed while another workspace is
+        // active leaves a dangling membership entry that resurfaces on the next
+        // switch (t60-windows CRITICAL-1). Falls back to the active-workspace
+        // removal only if canonical ownership cannot be resolved.
+        if !self.workspaces.remove_window_from_owner(id) {
+            self.workspaces.active_mut().remove_window(id);
+        }
         self.focus.remove_window(id);
         // Drop the window's typed-text buffer + any pending double-click state
         // so closed windows leave no stale input state (t57-fG).
@@ -632,6 +639,17 @@ impl Shell {
             Some(app_id.clone())
         };
         self.focus.note_focus_context(ctx_app, ts2);
+        // Mirror the activation into the canonical WindowTree z-order so that
+        // hit-testing favours the newly focused window. Without this, focusing a
+        // background window (e.g. via a click) updates the focus manager but
+        // leaves the tree's topmost entry pointing at the previous window, so
+        // subsequent clicks route to the wrong (background) window
+        // (t60-windows MAJOR-4). `raise_window` already does this on restack.
+        if let Some(tree_id) = self.tree_id_of(id) {
+            if let Some(tree) = self.chrome_window_tree.as_mut() {
+                tree.bring_to_top(tree_id);
+            }
+        }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowActivated { window_id: id.0 });
         // Drive the canonical focus-highlight effect.
@@ -706,13 +724,20 @@ impl Shell {
         visible
     }
 
-    /// Apply the current layout to visible windows.
+    /// Apply the current layout to visible windows on the **active workspace**.
+    ///
+    /// Mirrors the membership filter used by [`Self::visible_windows`]: layout
+    /// must only position windows that are both `visible` AND members of the
+    /// active workspace, otherwise it relocates windows belonging to inactive
+    /// workspaces and causes flicker/disappear on switch (t60-windows
+    /// CRITICAL-2).
     pub fn arrange_windows(&mut self) {
         let screen = self.screen_rect;
+        let active = self.workspaces.active();
         let mut visible_ids: Vec<WindowId> = self
             .windows
             .values()
-            .filter(|w| w.visible)
+            .filter(|w| w.visible && active.contains(w.id))
             .map(|w| w.id)
             .collect();
         visible_ids.sort_by_key(|id| id.0);

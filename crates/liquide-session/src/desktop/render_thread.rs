@@ -388,6 +388,14 @@ impl DesktopCompositor {
         // 6. Render into the back buffer.
         if let (Some(renderer), Some(compositor)) = (&mut self.renderer, &mut self.compositor) {
             let fb = compositor.frame_buffer_mut();
+            // Clear the damaged region BEFORE repainting so content that has been
+            // REMOVED from the scene (a minimised window, a window hidden by a
+            // workspace switch) does not survive as stale pixels into the
+            // captured/presented framebuffer. The threaded path
+            // (`render_full_job`) does this via `clear_damage_tiles`; the
+            // synchronous path previously skipped it, which left removed windows
+            // painted on the read-back frame (t59-winvis #5/#8/#12).
+            clear_damage_tiles(fb, &damage);
             let _ = renderer.render(&flat_nodes, fb, &damage);
             compositor.end_frame();
             compositor.present_frame();
@@ -698,6 +706,7 @@ impl DesktopCompositor {
             match tx.send(RenderMsg::Job(job)) {
                 Ok(()) => {
                     self.render_in_flight = true;
+                    self.render_inflight_since = Some(Instant::now());
                     self.render_metrics.record_submission();
                     // Update previous cursor position so subsequent cursor-only
                     // renders know where the cursor was in this full frame.
@@ -738,6 +747,7 @@ impl DesktopCompositor {
         if let Some(ref tx) = self.render_tx {
             if tx.send(RenderMsg::CursorOnly(job)).is_ok() {
                 self.render_in_flight = true;
+                self.render_inflight_since = Some(Instant::now());
                 self.render_metrics.record_submission();
             }
         }
@@ -763,10 +773,32 @@ impl DesktopCompositor {
         match rx.try_recv() {
             Ok(frame) => {
                 self.render_in_flight = false;
+                self.render_inflight_since = None;
 
                 // Record render metrics.
                 let render_duration = std::time::Duration::from_secs_f64(frame.render_ms / 1000.0);
                 self.render_metrics.record_completion(render_duration, true);
+
+                // Present-on-damage gate (t59-present #2): the worker may hand
+                // back a frame whose tile damage trimmed to EMPTY because nothing
+                // actually changed (the tile-hash tracker found identical pixels).
+                // Presenting such a no-op frame floods the platform/RDP present
+                // path with refresh notifications for a static scene → visible
+                // flashing. Skip the present for an empty-damage frame, but allow
+                // a periodic keepalive present so a long-lived static scene still
+                // re-asserts itself (and any backend that needs a heartbeat is
+                // served). The frame is still consumed and render_in_flight is
+                // cleared regardless, so the loop never stalls.
+                const PRESENT_KEEPALIVE_FRAMES: u64 = 60;
+                self.present_gate_counter = self.present_gate_counter.saturating_add(1);
+                let damage_empty = frame
+                    .damage
+                    .as_ref()
+                    .is_some_and(|damage| damage.is_empty());
+                let keepalive = self.present_gate_counter % PRESENT_KEEPALIVE_FRAMES == 0;
+                if damage_empty && !keepalive {
+                    return false;
+                }
 
                 // Encode tiles for remote transmission from the completed
                 // frame snapshot before handing those same pixels to the
@@ -877,6 +909,7 @@ impl DesktopCompositor {
         }
 
         self.render_in_flight = false;
+        self.render_inflight_since = None;
         self.dirty = false;
         self.dirty_damage = None;
         self.running = false;
@@ -951,6 +984,13 @@ impl DesktopCompositor {
                 RenderMsg::CursorOnly(mut cursor_job) => {
                     // Drain any queued messages — a full Job supersedes cursor-only.
                     let mut upgrade_to_full: Option<RenderJob> = None;
+                    // Track whether the LATEST message in the drain was a
+                    // cursor-only update that arrived AFTER the most recent full
+                    // job. If so, the cursor moved past the position baked into
+                    // that full job and we must carry the newer cursor position
+                    // into the full render — otherwise the rendered cursor lags a
+                    // frame behind the pointer (t60-runtime #2).
+                    let mut cursor_after_job = false;
                     while let Ok(msg) = rx.try_recv() {
                         match msg {
                             RenderMsg::Shutdown => return,
@@ -961,15 +1001,25 @@ impl DesktopCompositor {
                             }
                             RenderMsg::Job(j) => {
                                 upgrade_to_full = Some(j);
+                                cursor_after_job = false;
                             }
                             RenderMsg::CursorOnly(c) => {
                                 cursor_job = c;
+                                cursor_after_job = true;
                             }
                         }
                     }
 
-                    // If a full job arrived while draining, process it instead.
-                    if let Some(full_job) = upgrade_to_full {
+                    // If a full job arrived while draining, process it instead —
+                    // but first fold in the latest cursor position if the cursor
+                    // moved after that job was queued, so the rendered cursor does
+                    // not lag the pointer (t60-runtime #2).
+                    if let Some(mut full_job) = upgrade_to_full {
+                        if cursor_after_job {
+                            full_job.cursor_x = cursor_job.cursor_x;
+                            full_job.cursor_y = cursor_job.cursor_y;
+                            full_job.cursor_shape = cursor_job.cursor_shape;
+                        }
                         Self::render_full_job(
                             full_job,
                             &mut *renderer,
@@ -1153,7 +1203,30 @@ impl DesktopCompositor {
             flat_nodes_buf.clear();
         }
 
-        // 3. Skeleton mode filtering during drag.
+        // 3. Cache the FULL (unfiltered) flat scene for cursor-only reuse.
+        //
+        // The cursor-only fast path reuses `cached_flat_nodes` verbatim and just
+        // moves the cursor. If we cached the skeleton-FILTERED scene (as the
+        // previous code did, after step 4 below), then the first cursor move
+        // after a drag ends would re-present a scene with the dragged window's
+        // body stripped out — only its decoration border survives — making the
+        // window appear to DISAPPEAR until the next full repaint. Caching here,
+        // before the skeleton filter, guarantees the cached scene always carries
+        // every window's full content (escalated from t62-compositor;
+        // t59-winvis stale-cache class).
+        if latest_job.dragged_window.is_none() {
+            *cached_flat_nodes = Some(flat_nodes_buf.clone());
+        } else {
+            // During an active drag the scene is mid-interaction and partially
+            // skeletonised for the render; do NOT publish it as the reusable
+            // cursor cache. Drop the stale cache so the cursor-only path falls
+            // back to waiting for the next full frame rather than reusing a
+            // skeleton/stale scene.
+            *cached_flat_nodes = None;
+        }
+
+        // 4. Skeleton mode filtering during drag (applied to the RENDER buffer
+        //    only, never to the cached scene above).
         if let Some(window_id) = latest_job.dragged_window {
             const NODE_WINDOW_BASE: u64 = 10_000;
             const NODE_WINDOW_STRIDE: u64 = 10;
@@ -1173,8 +1246,6 @@ impl DesktopCompositor {
                 }
             });
         }
-
-        *cached_flat_nodes = Some(flat_nodes_buf.clone());
 
         if !latest_job.hardware_cursor {
             flat_nodes_buf.push(cursor_flat_node(
@@ -1426,6 +1497,50 @@ mod tests {
             });
         }
         damage
+    }
+
+    /// Window-node flatten id layout the skeleton filter keys off.
+    const NODE_WINDOW_BASE: u64 = 10_000;
+    const NODE_WINDOW_STRIDE: u64 = 10;
+
+    /// Build a render job whose scene contains one window (`window_id`) with a
+    /// Content node carrying the flatten id the skeleton filter keys off
+    /// (`NODE_WINDOW_BASE + window_id * STRIDE + 1`). When `dragged` is set, the
+    /// job requests skeleton mode for that window — which strips the Content node
+    /// from the RENDER buffer (only Decoration would survive). The cache must
+    /// still retain the full (unfiltered) Content node.
+    fn windowed_render_job(window_id: u64, dragged: bool) -> RenderJob {
+        let win_base = NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE;
+
+        let mut root = SceneNode::new(
+            1,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 128.0, 128.0)),
+        );
+        // Content node (stripped during skeleton filtering of a dragged window,
+        // but must remain in the reusable cursor cache).
+        root.add_child(SceneNode::new(
+            win_base + 1,
+            SceneNodeKind::Content,
+            NodeProperties::new(Rect::new(0.0, 16.0, 64.0, 48.0)),
+        ));
+
+        RenderJob {
+            scene: root,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            cursor_shape: CursorShape::Arrow,
+            width: 128,
+            height: 128,
+            tile_size: 64,
+            damage: None,
+            dragged_window: dragged.then_some(window_id),
+            hardware_cursor: true,
+        }
+    }
+
+    fn dragged_content_node_id(window_id: u64) -> u64 {
+        NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE + 1
     }
 
     fn test_render_job(id: u64) -> RenderJob {
@@ -1719,6 +1834,124 @@ mod tests {
         assert!(!desktop.running);
         assert!(!desktop.dirty);
         assert!(desktop.dirty_damage.is_none());
+    }
+
+    #[test]
+    fn t62_render_full_job_caches_unfiltered_scene_when_not_dragging() {
+        let mut renderer = NoopRenderer;
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, _rx) = mpsc::channel();
+
+        DesktopCompositor::render_full_job(
+            windowed_render_job(3, false),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+
+        let cached = cached_flat_nodes.expect("non-drag frame should publish a reusable cache");
+        assert!(
+            cached.iter().any(|n| n.id == dragged_content_node_id(3)),
+            "cache must contain the window's content node when not dragging"
+        );
+    }
+
+    #[test]
+    fn t62_render_full_job_does_not_cache_skeleton_scene_during_drag() {
+        // REGRESSION: previously the cursor cache was published AFTER the
+        // skeleton filter, so the first cursor move after a drag re-presented a
+        // scene with the dragged window's body stripped (window appears to
+        // disappear). The cache must never be a skeleton scene: during a drag we
+        // drop the cache so the cursor-only path waits for a full frame instead
+        // of reusing a stripped scene.
+        let mut renderer = NoopRenderer;
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        // Seed a stale cache from a prior non-drag frame.
+        let mut cached_flat_nodes = Some(vec![cursor_flat_node(0.0, 0.0, CursorShape::Arrow)]);
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, _rx) = mpsc::channel();
+
+        DesktopCompositor::render_full_job(
+            windowed_render_job(3, true),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+
+        assert!(
+            cached_flat_nodes.is_none(),
+            "a dragging frame must NOT publish a skeleton/stale cursor cache"
+        );
+    }
+
+    #[test]
+    fn t62_try_present_skips_empty_damage_frame_but_keepalive_presents() {
+        // REGRESSION (t59-present #2): a frame whose damage trimmed to EMPTY
+        // (nothing changed) must NOT be presented every loop iteration — that
+        // floods the present/RDP path for a static scene. A periodic keepalive
+        // still presents so the backend gets a heartbeat.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+
+        let mut platform = RecordingPresentPlatform::default();
+
+        // 59 empty-damage frames: none should present (no keepalive yet).
+        let (tx, rx) = mpsc::channel();
+        desktop.frame_rx = Some(rx);
+        for i in 0..59 {
+            let mut frame = test_rendered_frame(i as u8, 0x1000 + i);
+            frame.damage = Some(DamageSet::new(64)); // empty
+            tx.send(frame).unwrap();
+        }
+        for _ in 0..59 {
+            assert!(!desktop.try_present(&mut platform));
+        }
+        assert_eq!(
+            platform.presents.len(),
+            0,
+            "empty-damage frames must not be presented"
+        );
+
+        // The 60th empty-damage frame is a keepalive and DOES present.
+        let mut keepalive = test_rendered_frame(60, 0x2000);
+        keepalive.damage = Some(DamageSet::new(64));
+        tx.send(keepalive).unwrap();
+        assert!(desktop.try_present(&mut platform));
+        assert_eq!(platform.presents.len(), 1, "keepalive frame must present");
+    }
+
+    #[test]
+    fn t62_try_present_presents_non_empty_damage_frame() {
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+
+        let (tx, rx) = mpsc::channel();
+        desktop.frame_rx = Some(rx);
+        let mut frame = test_rendered_frame(5, 0x3333);
+        let mut damage = DamageSet::new(64);
+        damage.mark_tile(0, 0);
+        frame.damage = Some(damage);
+        tx.send(frame).unwrap();
+
+        let mut platform = RecordingPresentPlatform::default();
+        assert!(desktop.try_present(&mut platform));
+        assert_eq!(platform.presents.len(), 1, "a damaged frame must present");
     }
 
     #[test]

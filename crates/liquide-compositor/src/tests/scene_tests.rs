@@ -418,3 +418,176 @@ fn walk_mut_modifies_nodes() {
     // Verify root opacity changed
     assert_eq!(tree.properties.opacity, 0.5);
 }
+
+// --- Regression: CRITICAL-002 zero-area / non-overlapping clip pruning ---
+
+/// A node whose own clip does not overlap its parent's clip must be pruned
+/// entirely from the flattened output rather than emitted with a zero-area
+/// clip (which renders invisible and used to leave a "hole").
+#[test]
+fn flatten_non_overlapping_clips_prunes_node() {
+    let mut root = SceneNode::new(
+        0,
+        SceneNodeKind::Root,
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)),
+    );
+
+    // Parent clips to the left half; its child clips to a disjoint region on
+    // the right. The intersection is empty -> the child (id 2) must vanish.
+    let mut parent = SceneNode::new(
+        1,
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        },
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0))
+            .with_clip(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    );
+    let child = SceneNode::new(
+        2,
+        SceneNodeKind::Surface {
+            surface_id: 7,
+            buffer: None,
+        },
+        // Clip (in parent coords) is far to the right, disjoint from parent's.
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0))
+            .with_clip(Rect::new(500.0, 500.0, 100.0, 100.0)),
+    );
+    parent.add_child(child);
+    root.add_child(parent);
+
+    let flat = root.flatten();
+    // Parent is still visible (it has a non-empty clip).
+    assert!(flat.iter().any(|n| n.id == 1), "parent must remain visible");
+    // Child must be pruned: empty clip intersection.
+    assert!(
+        !flat.iter().any(|n| n.id == 2),
+        "node with empty clip intersection must be pruned, not emitted invisible"
+    );
+}
+
+/// An overlapping clip hierarchy must still emit the child with the trimmed
+/// (non-empty) intersection clip — the prune must not be over-eager.
+#[test]
+fn flatten_overlapping_clips_keeps_node_with_intersection() {
+    let mut root = SceneNode::new(
+        0,
+        SceneNodeKind::Root,
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)),
+    );
+    let mut parent = SceneNode::new(
+        1,
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        },
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0))
+            .with_clip(Rect::new(0.0, 0.0, 200.0, 200.0)),
+    );
+    let child = SceneNode::new(
+        2,
+        SceneNodeKind::Surface {
+            surface_id: 7,
+            buffer: None,
+        },
+        NodeProperties::new(Rect::new(0.0, 0.0, 200.0, 200.0))
+            .with_clip(Rect::new(100.0, 100.0, 200.0, 200.0)),
+    );
+    parent.add_child(child);
+    root.add_child(parent);
+
+    let flat = root.flatten();
+    let child = flat
+        .iter()
+        .find(|n| n.id == 2)
+        .expect("overlapping clip child must be emitted");
+    let clip = child.clip.expect("child must carry an intersection clip");
+    // Intersection of [0,200]x[0,200] and [100,300]x[100,300] = [100,200]^2.
+    assert!((clip.x - 100.0).abs() < f32::EPSILON);
+    assert!((clip.y - 100.0).abs() < f32::EPSILON);
+    assert!((clip.width - 100.0).abs() < f32::EPSILON);
+    assert!((clip.height - 100.0).abs() < f32::EPSILON);
+}
+
+/// A node clipping to an explicitly zero-area rect is unpaintable and must be
+/// pruned even when there is no parent clip.
+#[test]
+fn flatten_zero_area_clip_prunes_node() {
+    let mut root = SceneNode::new(
+        0,
+        SceneNodeKind::Root,
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)),
+    );
+    let node = SceneNode::new(
+        1,
+        SceneNodeKind::Surface {
+            surface_id: 7,
+            buffer: None,
+        },
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0))
+            .with_clip(Rect::new(10.0, 10.0, 0.0, 0.0)),
+    );
+    root.add_child(node);
+    let flat = root.flatten();
+    assert!(
+        flat.is_empty(),
+        "node clipped to a zero-area rect must be pruned"
+    );
+}
+
+// --- Regression: HIGH-001 zero-opacity culling ---
+
+/// A fully transparent node (and its subtree) must not be emitted.
+#[test]
+fn flatten_zero_opacity_node_culled() {
+    let mut root = SceneNode::new(
+        0,
+        SceneNodeKind::Root,
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)),
+    );
+    let mut invisible = SceneNode::new(
+        1,
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        },
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)).with_opacity(0.0),
+    );
+    // A child under a zero-opacity parent inherits opacity 0 and must also be
+    // pruned (opacity is multiplicative down the tree).
+    invisible.add_child(SceneNode::new(
+        2,
+        SceneNodeKind::Surface {
+            surface_id: 7,
+            buffer: None,
+        },
+        NodeProperties::new(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    ));
+    root.add_child(invisible);
+
+    let flat = root.flatten();
+    assert!(
+        flat.is_empty(),
+        "zero-opacity node and its subtree must be culled"
+    );
+}
+
+/// A nearly-but-not-fully transparent node must still be emitted (the cull
+/// threshold must not swallow faint-but-visible content).
+#[test]
+fn flatten_low_opacity_node_kept() {
+    let mut root = SceneNode::new(
+        0,
+        SceneNodeKind::Root,
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)),
+    );
+    root.add_child(SceneNode::new(
+        1,
+        SceneNodeKind::Background {
+            color: Color::BLACK,
+        },
+        NodeProperties::new(Rect::new(0.0, 0.0, 1000.0, 1000.0)).with_opacity(0.02),
+    ));
+    let flat = root.flatten();
+    assert!(
+        flat.iter().any(|n| n.id == 1),
+        "faint-but-visible node must not be culled"
+    );
+}

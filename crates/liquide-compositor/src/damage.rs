@@ -551,6 +551,53 @@ impl DamageSet {
         });
         true
     }
+
+    /// Auto-promote a partial damage set to a lazy full-frame refresh when its
+    /// damaged-tile coverage meets or exceeds the whole grid (HIGH-005).
+    ///
+    /// `merge`/`add` on two partial sets carry no grid dimensions, so a
+    /// sequence of merges can accumulate a tile count that equals (or, with
+    /// out-of-grid or duplicate coordinates that survive a coarse count,
+    /// exceeds) the grid size while the set still *claims* to be partial. A
+    /// partial set that no longer fits the grid under-damages downstream: the
+    /// session may skip clearing/painting tiles it believes are untouched.
+    ///
+    /// This deduplicates first (so the count reflects genuine unique tiles),
+    /// then, if the unique tile count is at least `grid_width * grid_height`,
+    /// collapses to a full-frame refresh whose class preserves the strongest
+    /// (lowest-priority-number) class already present, falling back to
+    /// `default_class` for an empty set. Escalation therefore never downgrades
+    /// the encoding contract. Returns `true` if the set is full afterwards.
+    pub fn escalate_if_saturated(
+        &mut self,
+        grid_width: u32,
+        grid_height: u32,
+        default_class: DamageClass,
+    ) -> bool {
+        if self.is_full() {
+            return true;
+        }
+        // Count unique tiles, not raw pushes: duplicates must not inflate
+        // coverage and trigger a spurious full refresh.
+        self.dedup();
+        let grid_tiles = grid_width.saturating_mul(grid_height);
+        if grid_tiles == 0 || (self.tiles.len() as u64) < u64::from(grid_tiles) {
+            return false;
+        }
+        let mut class = default_class;
+        for t in &self.tiles {
+            if t.class.priority() < class.priority() {
+                class = t.class;
+            }
+        }
+        self.tiles.clear();
+        self.full = Some(FullDamage {
+            grid_width,
+            grid_height,
+            class,
+        });
+        true
+    }
 }
 
 // ── CRC-32C (Castagnoli) ────────────────────────────────────────────────

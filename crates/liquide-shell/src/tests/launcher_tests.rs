@@ -237,11 +237,22 @@ fn search_matches_description() {
 }
 
 #[test]
-fn search_empty_query_shows_no_results() {
+fn search_empty_query_shows_default_app_listing() {
+    // t59-shell: an empty query now seeds the default listing (favorites / all
+    // registered apps) so the launcher grid is populated on open, instead of
+    // rendering an empty card. The section stays Favorites.
     let mut launcher = default_launcher();
     launcher.add_app(make_app("foo", "Foo"));
     launcher.set_query("");
-    assert_eq!(launcher.result_count(), 0);
+    assert_eq!(
+        launcher.result_count(),
+        1,
+        "empty query must list the registered app(s), not render an empty grid"
+    );
+    assert!(matches!(
+        launcher.results()[0].kind,
+        SearchResultKind::Application { .. }
+    ));
     assert_eq!(launcher.active_section(), LauncherSection::Favorites);
 }
 
@@ -466,7 +477,13 @@ fn open_makes_visible_and_resets_state() {
     launcher.open();
     assert!(launcher.is_visible());
     assert_eq!(launcher.query(), "");
-    assert_eq!(launcher.result_count(), 0);
+    // t59-shell: open() clears the query AND seeds the default app listing, so
+    // the grid shows the registered apps immediately (was previously empty).
+    assert_eq!(
+        launcher.result_count(),
+        1,
+        "open() must seed the default app listing so the grid is not blank"
+    );
     assert_eq!(launcher.selected_index(), 0);
     assert_eq!(launcher.active_section(), LauncherSection::Favorites);
 }

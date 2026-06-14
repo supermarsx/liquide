@@ -269,6 +269,8 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                         main_end_auto_margin: false,
                         cross_start_auto_margin: false,
                         cross_end_auto_margin: false,
+                        main_start_margin: 0.0,
+                        main_end_margin: 0.0,
                     });
                     continue;
                 }
@@ -470,6 +472,41 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             )
         };
 
+        // Resolve the non-auto main-axis margins to px so they reserve space
+        // along the main axis (CSS Flexbox §9.5 — margins are part of the item's
+        // outer/main size). Auto margins resolve to 0 here; they are absorbed
+        // from free space later in Step 5. Percentages resolve against the
+        // container's content width (the flex container's inline size).
+        let (start_margin_dim, end_margin_dim) = if is_row {
+            (&child_style.margin.left, &child_style.margin.right)
+        } else {
+            (&child_style.margin.top, &child_style.margin.bottom)
+        };
+        let main_start_margin = if ms_auto {
+            0.0
+        } else {
+            rdim(
+                start_margin_dim,
+                content_width,
+                base_font_size,
+                child_style.font_size,
+                viewport_w,
+                viewport_h,
+            )
+        };
+        let main_end_margin = if me_auto {
+            0.0
+        } else {
+            rdim(
+                end_margin_dim,
+                content_width,
+                base_font_size,
+                child_style.font_size,
+                viewport_w,
+                viewport_h,
+            )
+        };
+
         items.push(FlexItem {
             box_id: child_box,
             node_id: child_id,
@@ -482,6 +519,8 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             main_end_auto_margin: me_auto,
             cross_start_auto_margin: cs_auto,
             cross_end_auto_margin: ce_auto,
+            main_start_margin,
+            main_end_margin,
             cross_size: {
                 let intrinsic_cross = if is_row {
                     intrinsic.height
@@ -564,7 +603,18 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         let mut line_main = 0.0f32;
 
         for i in 0..items.len() {
-            let item_main = items[i].base_main_size;
+            // Wrap on the item's OUTER main size (border-box base size plus its
+            // non-auto main-axis margins), since margins occupy main-axis space.
+            // CSS Flexbox §4.4: a `visibility: collapse` item is treated as
+            // having a zero main size (it is collapsed to a strut later in
+            // Step 4a), so it must NOT influence the wrap decision (t60
+            // finding #9) — otherwise lines wrap at positions computed from
+            // space the collapsed item never actually occupies.
+            let item_main = if items[i].collapsed {
+                0.0
+            } else {
+                items[i].base_main_size + items[i].main_start_margin + items[i].main_end_margin
+            };
             let gap_before = if i > line_start { gap } else { 0.0 };
 
             if i > line_start && line_main + gap_before + item_main > available_main {
@@ -603,7 +653,14 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         } else {
             0.0
         };
-        let total_main: f32 = line_items.iter().map(|i| i.main_size).sum::<f32>() + total_gaps;
+        // Non-auto main-axis margins are part of each item's outer main size,
+        // so they consume free space before grow/shrink is distributed.
+        let total_margins: f32 = line_items
+            .iter()
+            .map(|i| i.main_start_margin + i.main_end_margin)
+            .sum();
+        let total_main: f32 =
+            line_items.iter().map(|i| i.main_size).sum::<f32>() + total_gaps + total_margins;
         let free_space = available_main - total_main;
 
         if free_space > 0.0 {
@@ -623,7 +680,8 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 }
                 let remaining: f32 = available_main
                     - line_items.iter().map(|i| i.main_size).sum::<f32>()
-                    - total_gaps;
+                    - total_gaps
+                    - total_margins;
                 if remaining <= 0.0 {
                     break;
                 }
@@ -660,7 +718,8 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 }
                 let remaining: f32 = available_main
                     - line_items.iter().map(|i| i.main_size).sum::<f32>()
-                    - total_gaps;
+                    - total_gaps
+                    - total_margins;
                 if remaining >= 0.0 {
                     break;
                 }
@@ -813,7 +872,14 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         } else {
             0.0
         };
-        let used_main: f32 = line_items.iter().map(|i| i.main_size).sum::<f32>() + total_gaps;
+        // The outer main size of each item includes its (non-auto) main-axis
+        // margins, which reserve space along the main axis (CSS Flexbox §9.5).
+        let total_margins: f32 = line_items
+            .iter()
+            .map(|i| i.main_start_margin + i.main_end_margin)
+            .sum();
+        let used_main: f32 =
+            line_items.iter().map(|i| i.main_size).sum::<f32>() + total_gaps + total_margins;
         let remaining = available_main - used_main;
 
         // CSS Flexbox §8.1: Auto margins on the main axis absorb remaining
@@ -854,7 +920,10 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             }
 
             // (x, y) is the desired LOCAL margin-edge position within the
-            // flex container's content area (offsets from 0,0).
+            // flex container's content area (offsets from 0,0). Snapping the
+            // item's margin_rect to this position places its whole margin box —
+            // the (non-auto) leading margin is already part of that box, so the
+            // item's content lands after the leading margin automatically.
             let (x, y) = if is_row {
                 (main_pos, cross_offset)
             } else {
@@ -867,7 +936,11 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 shift_box(b, dx, dy);
             }
 
-            main_pos += item.main_size;
+            // Advance past the item's full outer main size: leading margin +
+            // border-box main size + trailing margin. This reserves the
+            // trailing margin (and the leading margin) so the following item
+            // starts clear of them (CSS Flexbox §9.5).
+            main_pos += item.main_start_margin + item.main_size + item.main_end_margin;
             if has_auto_margins && item.main_end_auto_margin {
                 main_pos += auto_margin_size;
             }
@@ -1101,6 +1174,13 @@ struct FlexItem {
     /// CSS Flexbox §8.3: auto margins on the cross axis center/push the item.
     cross_start_auto_margin: bool,
     cross_end_auto_margin: bool,
+    /// Resolved (non-auto) main-axis margins in px. These reserve space along
+    /// the main axis: the leading margin shifts the item's content start past
+    /// the previous item, and the trailing margin pushes following items along.
+    /// Auto main-axis margins are tracked separately via the `*_auto_margin`
+    /// flags and resolved later from free space, so they are 0 here.
+    main_start_margin: f32,
+    main_end_margin: f32,
 }
 
 struct FlexLine {
@@ -1188,5 +1268,193 @@ fn align_content(ac: AlignContent, free: f32, line_count: usize) -> (f32, f32) {
             let gap = free / (line_count + 1) as f32;
             (gap, gap)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::LayoutEngine;
+    use crate::geometry::Size;
+    use crate::{DefaultImageMeasurer, DefaultTextMeasurer};
+    use liquide_dom::Document;
+    use liquide_style_engine::StyleMap;
+    use liquide_style_engine::computed::{ComputedStyle, Display, FlexDirection};
+    use liquide_style_engine::dimension::Dimension;
+
+    /// Regression (t59-flex): a fixed-width FIRST flex child with a
+    /// `margin-right` (the menu-item-icon scenario) must reserve both the
+    /// container's `padding-left` (content-box origin) AND its own trailing
+    /// main-axis margin, so the following `flex-grow` child (the label) starts
+    /// after padding-left + icon width + icon margin-right.
+    ///
+    /// Built programmatically from `ComputedStyle` so it exercises the layout
+    /// engine directly, independent of CSS parsing.
+    #[test]
+    fn fixed_width_first_child_honours_padding_and_margin() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let item = doc.create_element("menu-item");
+        let icon = doc.create_element("menu-item-icon");
+        let label = doc.create_element("menu-item-label");
+        doc.append_child(root, item);
+        doc.append_child(item, icon);
+        doc.append_child(item, label);
+
+        let mut sm = StyleMap::new();
+        let mut item_s = ComputedStyle::default();
+        item_s.display = Display::Flex;
+        item_s.flex_direction = FlexDirection::Row;
+        item_s.width = Dimension::Px(200.0);
+        item_s.height = Dimension::Px(28.0);
+        item_s.padding.left = Dimension::Px(12.0);
+        item_s.padding.right = Dimension::Px(12.0);
+        sm.insert(item, item_s);
+
+        let mut icon_s = ComputedStyle::default();
+        icon_s.width = Dimension::Px(16.0);
+        icon_s.height = Dimension::Px(16.0);
+        icon_s.margin.right = Dimension::Px(8.0);
+        sm.insert(icon, icon_s);
+
+        let mut label_s = ComputedStyle::default();
+        label_s.flex_grow = 1.0;
+        label_s.height = Dimension::Px(16.0);
+        sm.insert(label, label_s);
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let icon_abs =
+            tree.absolute_content_rect(tree.find_box_id_by_node(icon).unwrap());
+        let label_abs =
+            tree.absolute_content_rect(tree.find_box_id_by_node(label).unwrap());
+
+        // Icon content starts at the container's content-box origin (padding-left).
+        assert!(
+            (icon_abs.x - 12.0).abs() < 0.5,
+            "icon content x = {}, expected ~12 (padding-left honoured)",
+            icon_abs.x
+        );
+        assert!(
+            (icon_abs.width - 16.0).abs() < 0.5,
+            "icon width = {}, expected 16",
+            icon_abs.width
+        );
+        // Label starts after padding-left(12) + icon width(16) + icon margin-right(8).
+        assert!(
+            label_abs.x >= 36.0 - 0.5,
+            "label content x = {}, expected >= 36 (icon margin-right reserved)",
+            label_abs.x
+        );
+    }
+
+    /// Multiple fixed-width children each with main-axis margins accumulate
+    /// correctly along the main axis (no overlap, margins not dropped).
+    #[test]
+    fn sequential_main_axis_margins_accumulate() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let row = doc.create_element("row");
+        let a = doc.create_element("a");
+        let b = doc.create_element("b");
+        doc.append_child(root, row);
+        doc.append_child(row, a);
+        doc.append_child(row, b);
+
+        let mut sm = StyleMap::new();
+        let mut row_s = ComputedStyle::default();
+        row_s.display = Display::Flex;
+        row_s.flex_direction = FlexDirection::Row;
+        row_s.width = Dimension::Px(300.0);
+        row_s.height = Dimension::Px(40.0);
+        sm.insert(row, row_s);
+
+        let mut a_s = ComputedStyle::default();
+        a_s.width = Dimension::Px(20.0);
+        a_s.height = Dimension::Px(20.0);
+        a_s.margin.left = Dimension::Px(10.0);
+        a_s.margin.right = Dimension::Px(6.0);
+        sm.insert(a, a_s);
+
+        let mut b_s = ComputedStyle::default();
+        b_s.width = Dimension::Px(30.0);
+        b_s.height = Dimension::Px(20.0);
+        b_s.margin.left = Dimension::Px(4.0);
+        sm.insert(b, b_s);
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let a_abs = tree.absolute_content_rect(tree.find_box_id_by_node(a).unwrap());
+        let b_abs = tree.absolute_content_rect(tree.find_box_id_by_node(b).unwrap());
+
+        // a: margin-left 10 -> content at 10, width 20.
+        assert!((a_abs.x - 10.0).abs() < 0.5, "a x = {}, expected 10", a_abs.x);
+        // b: 10 + 20 + 6(a margin-right) + 4(b margin-left) = 40.
+        assert!((b_abs.x - 40.0).abs() < 0.5, "b x = {}, expected 40", b_abs.x);
+    }
+
+    /// Regression (t60 finding #9): a `visibility: collapse` flex item is
+    /// treated as zero main size and must NOT trigger a wrap. With a 100px-wide
+    /// wrapping row holding a 60px collapsed item followed by two 60px items,
+    /// the two visible items (120px > 100px) wrap onto two lines, while the
+    /// collapsed item adds no width — i.e. the collapsed item does not push the
+    /// first visible item onto its own extra line.
+    #[test]
+    fn collapsed_item_does_not_affect_wrap() {
+        use liquide_style_engine::computed::{FlexWrap, Visibility};
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let row = doc.create_element("row");
+        let c = doc.create_element("c"); // collapsed
+        let a = doc.create_element("a");
+        let b = doc.create_element("b");
+        doc.append_child(root, row);
+        doc.append_child(row, c);
+        doc.append_child(row, a);
+        doc.append_child(row, b);
+
+        let mut sm = StyleMap::new();
+        let mut row_s = ComputedStyle::default();
+        row_s.display = Display::Flex;
+        row_s.flex_direction = FlexDirection::Row;
+        row_s.flex_wrap = FlexWrap::Wrap;
+        row_s.width = Dimension::Px(100.0);
+        row_s.height = Dimension::Px(200.0);
+        sm.insert(row, row_s);
+
+        let mk = |w: f32, collapse: bool| {
+            let mut s = ComputedStyle::default();
+            s.width = Dimension::Px(w);
+            s.height = Dimension::Px(20.0);
+            s.flex_shrink = 0.0;
+            if collapse {
+                s.visibility = Visibility::Collapse;
+            }
+            s
+        };
+        sm.insert(c, mk(60.0, true));
+        sm.insert(a, mk(60.0, false));
+        sm.insert(b, mk(60.0, false));
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let a_abs = tree.absolute_content_rect(tree.find_box_id_by_node(a).unwrap());
+        let b_abs = tree.absolute_content_rect(tree.find_box_id_by_node(b).unwrap());
+
+        // a and b each 60px wide; 60+60=120 > 100 so they occupy two lines.
+        // The collapsed `c` (zero main size) must not add a third line nor shift
+        // a's line: a is the first item on the first line at x≈0.
+        assert!((a_abs.x - 0.0).abs() < 0.5, "a x = {} (expected 0)", a_abs.x);
+        // b wrapped to the next line, so it also starts at x≈0 but lower.
+        assert!((b_abs.x - 0.0).abs() < 0.5, "b x = {} (expected 0)", b_abs.x);
+        assert!(
+            b_abs.y > a_abs.y + 0.5,
+            "b should wrap below a (a.y={}, b.y={})",
+            a_abs.y,
+            b_abs.y
+        );
     }
 }

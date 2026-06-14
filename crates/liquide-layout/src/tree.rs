@@ -58,6 +58,14 @@ pub enum PseudoElementKind {
     After,
 }
 
+/// True for box types that `layout_positioned` fills with ABSOLUTE (rather than
+/// parent-local) coordinates: `Absolute`, `Fixed`, and `Sticky`. Used by
+/// `accumulated_offset` to avoid double-counting ancestor offsets across a
+/// positioning containing-block boundary.
+fn is_positioned_box(box_type: &BoxType) -> bool {
+    matches!(box_type, BoxType::Absolute | BoxType::Fixed | BoxType::Sticky)
+}
+
 /// A line box within a text layout.
 #[derive(Debug, Clone)]
 pub struct LineBox {
@@ -336,7 +344,29 @@ impl LayoutTree {
     /// Walk ancestors to accumulate the paint offset for a box.
     /// Each ancestor contributes its `content_rect.(x,y)` since children
     /// are positioned relative to the parent's content area.
+    ///
+    /// Positioned boxes (`Absolute`/`Fixed`/`Sticky`) break the parent-local
+    /// invariant: `layout_positioned` writes ABSOLUTE coordinates into their
+    /// rects (computed from the containing block, e.g. `cb.x + left`). So:
+    ///
+    /// 1. If the box itself is positioned, its rects are already absolute —
+    ///    its accumulated offset is `(0, 0)` (otherwise the offset of its DOM
+    ///    parent's content box would be added on top of an already-absolute
+    ///    coordinate, shifting it by the parent's padding/position).
+    /// 2. When walking ancestors of an in-flow box, a positioned ancestor's
+    ///    `content_rect` is itself absolute, so once it is added the walk must
+    ///    STOP — continuing past it would double-count every offset above the
+    ///    positioned ancestor (CSS positioning containing-block boundary).
     fn accumulated_offset(&self, box_id: LayoutBoxId) -> (f32, f32) {
+        // A positioned box already carries absolute coordinates.
+        if self
+            .get(box_id)
+            .map(|b| is_positioned_box(&b.box_type))
+            .unwrap_or(false)
+        {
+            return (0.0, 0.0);
+        }
+
         let mut ox = 0.0f32;
         let mut oy = 0.0f32;
         let mut current = self.get(box_id).and_then(|b| b.parent);
@@ -344,6 +374,11 @@ impl LayoutTree {
             if let Some(p) = self.get(pid) {
                 ox += p.content_rect.x - p.scroll_offset.0;
                 oy += p.content_rect.y - p.scroll_offset.1;
+                // A positioned ancestor's content_rect is absolute; everything
+                // above it is already folded into that coordinate, so stop.
+                if is_positioned_box(&p.box_type) {
+                    break;
+                }
                 current = p.parent;
             } else {
                 break;
@@ -451,5 +486,72 @@ mod tests {
         let mut names: Vec<&str> = reg.names().collect();
         names.sort();
         assert_eq!(names, vec!["--a", "--b"]);
+    }
+
+    // ── accumulated_offset / positioned containing-block boundary (t62) ──
+
+    /// Regression (t60 finding #8): a positioned box (`Absolute`/`Fixed`/
+    /// `Sticky`) carries ABSOLUTE coordinates written by `layout_positioned`.
+    /// Its accumulated paint offset must be `(0, 0)` — otherwise the offset of
+    /// its in-flow DOM parent's content box (e.g. the parent's padding-left) is
+    /// added on top of the already-absolute coordinate, shifting the element.
+    #[test]
+    fn positioned_box_has_zero_accumulated_offset() {
+        let mut tree = LayoutTree::new();
+        let parent = tree.alloc(1, BoxType::Block);
+        if let Some(b) = tree.get_mut(parent) {
+            b.content_rect = Rect::new(50.0, 50.0, 400.0, 400.0);
+            b.padding_rect = b.content_rect;
+            b.border_rect = b.content_rect;
+            b.margin_rect = b.content_rect;
+        }
+        let abs = tree.alloc(2, BoxType::Absolute);
+        if let Some(b) = tree.get_mut(abs) {
+            b.content_rect = Rect::new(100.0, 100.0, 200.0, 200.0);
+            b.border_rect = b.content_rect;
+        }
+        tree.add_child(parent, abs);
+
+        // Without the boundary rule the offset would be (50, 50), making the
+        // absolute rect read 150 instead of its true 100.
+        let off = tree.accumulated_offset(abs);
+        assert_eq!(off, (0.0, 0.0), "positioned box must have zero offset");
+        let r = tree.absolute_border_rect(abs);
+        assert_eq!(
+            (r.x, r.y),
+            (100.0, 100.0),
+            "abs box stays at its absolute coords"
+        );
+    }
+
+    /// Regression (t60 finding #8): an in-flow descendant of a positioned box
+    /// accumulates the positioned ancestor's (absolute) content origin and then
+    /// STOPS — offsets above the positioned ancestor are already folded into
+    /// that absolute coordinate, so continuing would double-count them.
+    #[test]
+    fn descendant_of_positioned_stops_at_boundary() {
+        let mut tree = LayoutTree::new();
+        let gp = tree.alloc(1, BoxType::Block);
+        if let Some(b) = tree.get_mut(gp) {
+            b.content_rect = Rect::new(50.0, 50.0, 400.0, 400.0);
+        }
+        let pos = tree.alloc(2, BoxType::Absolute);
+        if let Some(b) = tree.get_mut(pos) {
+            b.content_rect = Rect::new(100.0, 100.0, 200.0, 200.0);
+        }
+        tree.add_child(gp, pos);
+        let child = tree.alloc(3, BoxType::Block);
+        if let Some(b) = tree.get_mut(child) {
+            b.content_rect = Rect::new(10.0, 10.0, 50.0, 50.0);
+            b.border_rect = b.content_rect;
+        }
+        tree.add_child(pos, child);
+
+        // child absolute = pos.content (100) + child.local (10) = 110.
+        // The grandparent's (50) offset must NOT be added again.
+        let off = tree.accumulated_offset(child);
+        assert_eq!(off, (100.0, 100.0));
+        let r = tree.absolute_border_rect(child);
+        assert_eq!((r.x, r.y), (110.0, 110.0));
     }
 }

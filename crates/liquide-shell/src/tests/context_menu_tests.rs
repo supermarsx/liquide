@@ -71,6 +71,45 @@ fn context_menu_initially_hidden() {
     assert!(shell.context_menu_hover_index.is_none());
 }
 
+/// t62 menu-geometry single-sourcing: hit-test / clamp geometry must be read
+/// from the SAME CSS custom properties the menus are painted from
+/// (`--menu-item-height`, `--menu-padding`, `--menu-min-width`), falling back to
+/// the engine constants only when the variable is undefined. Before this fix the
+/// hit zones used hardcoded constants that could diverge from the painted size
+/// after a theme change (t61-pipeline S1–S3).
+#[test]
+fn menu_geometry_is_resolved_from_css_custom_properties() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+
+    // With no menu vars loaded, the accessors fall back to the engine constants
+    // (28 / 4 / 200) — confirming the documented fallback path.
+    assert_eq!(shell.menu_item_height(), ITEM_H, "fallback to constant");
+    assert_eq!(shell.menu_padding(), MENU_PAD, "fallback to constant");
+    assert_eq!(shell.context_menu_width(), MENU_W, "fallback to constant");
+
+    // Load a theme that defines the menu custom properties with DISTINCT values.
+    // The accessors must now report the CSS-resolved values, proving hit-test /
+    // clamp geometry tracks the painted pixels rather than the constants.
+    shell.add_stylesheet(
+        ":root { --menu-item-height: 30; --menu-padding: 6; --menu-min-width: 175px; }",
+    );
+    assert_eq!(
+        shell.menu_item_height(),
+        30.0,
+        "menu item height must come from --menu-item-height once defined"
+    );
+    assert_eq!(
+        shell.menu_padding(),
+        6.0,
+        "menu padding must come from --menu-padding once defined"
+    );
+    assert_eq!(
+        shell.context_menu_width(),
+        175.0,
+        "context menu width must come from --menu-min-width once defined"
+    );
+}
+
 #[test]
 fn context_menu_has_correct_item_count() {
     let items = ContextMenuItem::defaults();

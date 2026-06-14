@@ -340,6 +340,29 @@ impl WorkspaceManager {
             .workspace(canonical)
             .map(|ws| WorkspaceId(ws.index as u32))
     }
+
+    /// Remove a window from whichever workspace owns it (canonical truth),
+    /// rather than only the active workspace. Returns `true` if the window was
+    /// found in some workspace and removed.
+    ///
+    /// This is the correct close-path primitive: closing a window that lives on
+    /// an inactive workspace must remove it from its *owning* workspace, not the
+    /// active one, otherwise a stale membership entry dangles and reappears on a
+    /// later workspace switch (t60-windows CRITICAL-1).
+    pub fn remove_window_from_owner(&mut self, id: WindowId) -> bool {
+        let Some(canonical) = self.inner.workspace_for_window(id.0) else {
+            return false;
+        };
+        let removed = self
+            .inner
+            .workspace_mut(canonical)
+            .map(|ws| ws.remove_window(id.0))
+            .unwrap_or(false);
+        if removed {
+            self.resync_view();
+        }
+        removed
+    }
 }
 
 /// Write-back guard for the active workspace projection.

@@ -14,9 +14,7 @@ use liquide_hit_test::event::{DomEventKind, MouseButton as DomMouseButton};
 use liquide_statusbar::{StatusBarItemKind, StatusBarSlot};
 
 use super::hooks::ShellHookEvent;
-use super::{
-    CONTEXT_MENU_WIDTH, ContextMenuItem, DragState, MENU_ITEM_HEIGHT, MENU_PADDING, Shell,
-};
+use super::{ContextMenuItem, DragState, Shell};
 
 const SHELL_BAR_MENU_WIDTH: f32 = 180.0;
 const SHELL_BAR_PADDING_X: f32 = 8.0;
@@ -211,7 +209,8 @@ impl Shell {
     }
 
     pub(crate) fn session_menu_bounds(&self) -> Rect {
-        let menu_h = MENU_PADDING * 2.0 + self.session_menu_items.len() as f32 * MENU_ITEM_HEIGHT;
+        let menu_h =
+            self.menu_padding() * 2.0 + self.session_menu_items.len() as f32 * self.menu_item_height();
         let anchor = self.status_bar_item_bounds("session").unwrap_or_else(|| {
             let bar_bounds = self.status_bar.compute_bounds(self.screen_rect);
             Rect::new(
@@ -245,7 +244,7 @@ impl Shell {
     pub(crate) fn app_menu_bounds(&self, item_count: usize) -> Option<Rect> {
         let target_window = self.app_menu_target_window_id()?;
         let window = self.windows.get(&target_window)?;
-        let menu_h = MENU_PADDING * 2.0 + item_count as f32 * MENU_ITEM_HEIGHT;
+        let menu_h = self.menu_padding() * 2.0 + item_count as f32 * self.menu_item_height();
         let screen_right = self.screen_rect.x + self.screen_rect.width;
         let screen_bottom = self.screen_rect.y + self.screen_rect.height;
         let menu_x = (window.bounds.x + 8.0)
@@ -664,24 +663,27 @@ impl Shell {
 
         // Context menu hover
         if self.context_menu_visible {
+            let menu_padding = self.menu_padding();
+            let menu_item_height = self.menu_item_height();
+            let context_menu_width = self.context_menu_width();
             let ctx_items = ContextMenuItem::defaults();
-            let ctx_h = MENU_PADDING * 2.0 + ctx_items.len() as f32 * MENU_ITEM_HEIGHT;
+            let ctx_h = menu_padding * 2.0 + ctx_items.len() as f32 * menu_item_height;
             let ctx_x = self
                 .context_menu_pos
                 .x
-                .min(self.screen_rect.width - CONTEXT_MENU_WIDTH - 4.0)
+                .min(self.screen_rect.width - context_menu_width - 4.0)
                 .max(0.0);
             let ctx_y = self
                 .context_menu_pos
                 .y
                 .min(self.screen_rect.height - ctx_h - 4.0)
                 .max(0.0);
-            let ctx_bounds = Rect::new(ctx_x, ctx_y, CONTEXT_MENU_WIDTH, ctx_h);
+            let ctx_bounds = Rect::new(ctx_x, ctx_y, context_menu_width, ctx_h);
             let prev_hover = self.context_menu_hover_index;
             if ctx_bounds.contains(pt) {
-                let rel_y = y - ctx_y - MENU_PADDING;
+                let rel_y = y - ctx_y - menu_padding;
                 if rel_y >= 0.0 {
-                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    let idx = (rel_y / menu_item_height) as usize;
                     self.context_menu_hover_index = if idx < ctx_items.len() {
                         Some(idx)
                     } else {
@@ -700,12 +702,14 @@ impl Shell {
 
         // Session menu hover
         if self.session_menu_visible {
+            let menu_padding = self.menu_padding();
+            let menu_item_height = self.menu_item_height();
             let menu_bounds = self.session_menu_bounds();
             let prev_hover = self.session_menu_hover_index;
             if menu_bounds.contains(pt) {
-                let rel_y = y - menu_bounds.y - MENU_PADDING;
+                let rel_y = y - menu_bounds.y - menu_padding;
                 if rel_y >= 0.0 {
-                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    let idx = (rel_y / menu_item_height) as usize;
                     self.session_menu_hover_index = if idx < self.session_menu_items.len() {
                         Some(idx)
                     } else {
@@ -724,13 +728,15 @@ impl Shell {
 
         // App menu hover
         if self.app_menu_open.is_some() {
+            let menu_padding = self.menu_padding();
+            let menu_item_height = self.menu_item_height();
             let menu_item_count = 5usize; // Minimize, Maximize, Close, Settings, About
             let prev_hover = self.app_menu_hover_index;
             if let Some(menu_bounds) = self.app_menu_bounds(menu_item_count) {
                 if menu_bounds.contains(pt) {
-                    let rel_y = y - menu_bounds.y - MENU_PADDING;
+                    let rel_y = y - menu_bounds.y - menu_padding;
                     if rel_y >= 0.0 {
-                        let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                        let idx = (rel_y / menu_item_height) as usize;
                         self.app_menu_hover_index = if idx < menu_item_count {
                             Some(idx)
                         } else {
@@ -904,25 +910,28 @@ impl Shell {
 
         // Context menu click
         if self.context_menu_visible {
+            let menu_padding = self.menu_padding();
+            let menu_item_height = self.menu_item_height();
+            let context_menu_width = self.context_menu_width();
             let ctx_items = ContextMenuItem::defaults();
-            let ctx_h = MENU_PADDING * 2.0 + ctx_items.len() as f32 * MENU_ITEM_HEIGHT;
+            let ctx_h = menu_padding * 2.0 + ctx_items.len() as f32 * menu_item_height;
             let ctx_x = self
                 .context_menu_pos
                 .x
-                .min(self.screen_rect.width - CONTEXT_MENU_WIDTH - 4.0)
+                .min(self.screen_rect.width - context_menu_width - 4.0)
                 .max(0.0);
             let ctx_y = self
                 .context_menu_pos
                 .y
                 .min(self.screen_rect.height - ctx_h - 4.0)
                 .max(0.0);
-            let ctx_bounds = Rect::new(ctx_x, ctx_y, CONTEXT_MENU_WIDTH, ctx_h);
+            let ctx_bounds = Rect::new(ctx_x, ctx_y, context_menu_width, ctx_h);
             if ctx_bounds.contains(pt) {
-                let rel_y = y - ctx_y - MENU_PADDING;
+                let rel_y = y - ctx_y - menu_padding;
                 self.context_menu_visible = false;
                 self.context_menu_hover_index = None;
                 if rel_y >= 0.0 {
-                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    let idx = (rel_y / menu_item_height) as usize;
                     if idx < ctx_items.len() {
                         return Some(ctx_items[idx].action.clone());
                     }
@@ -936,13 +945,15 @@ impl Shell {
 
         // Session menu click
         if self.session_menu_visible {
+            let menu_padding = self.menu_padding();
+            let menu_item_height = self.menu_item_height();
             let menu_bounds = self.session_menu_bounds();
             if menu_bounds.contains(pt) {
-                let rel_y = y - menu_bounds.y - MENU_PADDING;
+                let rel_y = y - menu_bounds.y - menu_padding;
                 self.session_menu_visible = false;
                 self.session_menu_hover_index = None;
                 if rel_y >= 0.0 {
-                    let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                    let idx = (rel_y / menu_item_height) as usize;
                     if idx < self.session_menu_items.len() {
                         return Some(self.session_menu_items[idx].action.clone());
                     }
@@ -956,12 +967,14 @@ impl Shell {
 
         // App menu click (window-specific: Minimize/Maximize/Close/Settings/About)
         if self.app_menu_open.is_some() {
+            let menu_padding = self.menu_padding();
+            let menu_item_height = self.menu_item_height();
             let menu_item_count = 5usize;
             if let Some(menu_bounds) = self.app_menu_bounds(menu_item_count) {
                 if menu_bounds.contains(pt) {
-                    let rel_y = y - menu_bounds.y - MENU_PADDING;
+                    let rel_y = y - menu_bounds.y - menu_padding;
                     if rel_y >= 0.0 {
-                        let idx = (rel_y / MENU_ITEM_HEIGHT) as usize;
+                        let idx = (rel_y / menu_item_height) as usize;
                         if idx < menu_item_count {
                             return self.activate_app_menu_index(idx);
                         }
@@ -1029,13 +1042,12 @@ impl Shell {
                 .status_bar_item_bounds("session")
                 .map_or(false, |bounds| bounds.contains(pt))
             {
-                let opening = !self.session_menu_visible;
-                self.session_menu_visible = opening;
-                self.session_menu_hover_index = if opening && !self.session_menu_items.is_empty() {
-                    Some(0)
-                } else {
-                    None
-                };
+                // Single-owner toggle contract (t59-shell): the click handler must
+                // NOT mutate `session_menu_visible` here — it only returns the
+                // action, and `execute_action(OpenSessionMenu)` (tick.rs) performs
+                // the one-and-only toggle. Mutating here AND returning the action
+                // caused a DOUBLE-TOGGLE (open-then-instantly-close) once the
+                // integrated input path runs `execute_action` on the result.
                 return Some(ShellAction::OpenSessionMenu);
             }
             // The notification indicator occupies a fixed 36..80 px hit
@@ -1054,15 +1066,20 @@ impl Shell {
                 // Route through the canonical notification center (t51-e14):
                 // the panel that dom_sync now renders reads the live
                 // (daemon-mirrored) notification set rather than a dead flag, so
-                // this toggle opens a real center (fixes t49-e5-F03).
-                self.toggle_notification_center();
+                // this opens a real center (fixes t49-e5-F03).
+                //
+                // Single-owner toggle contract (t59-shell): do NOT call
+                // `toggle_notification_center()` here — only return the action.
+                // `execute_action(OpenNotificationCenter)` (tick.rs) is the single
+                // owner of the toggle. Toggling here AND returning the action
+                // caused a DOUBLE-TOGGLE that cancelled the click.
                 return Some(ShellAction::OpenNotificationCenter);
             }
             if self
                 .status_bar_item_bounds("notifications")
                 .map_or(false, |bounds| bounds.contains(pt))
             {
-                self.toggle_notification_center();
+                // Single-owner toggle: return the action only (see above).
                 return Some(ShellAction::OpenNotificationCenter);
             }
             return None;

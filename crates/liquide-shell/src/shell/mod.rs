@@ -102,6 +102,30 @@ const SHELL_STATUSBAR_TEMPLATE: &str = r#"<statusbar-slot class="left" id="statu
   {{right_items_html}}
 </statusbar-slot>"#;
 
+/// Embedded shell `launcher` template — overrides the minimal default in
+/// `liquide-dom`, which renders only the search box and omits the
+/// `{{#each results}}` app grid (so the launcher opened to an empty card —
+/// t59-shell). This mirrors `assets/templates/launcher.html` but is built into
+/// the binary so it applies regardless of the working directory at runtime (the
+/// on-disk template is not reliably loaded on the capture/headless path). It
+/// uses only the flat `{{#each}}` form the `liquide-dom` engine supports (same
+/// shape as `SHELL_DOCK_TEMPLATE`).
+const SHELL_LAUNCHER_TEMPLATE: &str = r#"<launcher-overlay id="launcher-overlay" data-state-hash="{{state_hash}}">
+  <launcher id="shell-launcher">
+    <launcher-search id="launcher-search" data-query="{{query}}">
+      {{#if query}}{{query}}{{else}}Search applications...{{/if}}
+    </launcher-search>
+    <launcher-results>
+      {{#each results}}
+      <launcher-item data-key="{{key}}" data-app-id="{{app_id}}" data-icon="{{icon}}" data-index="{{index}}">
+        <launcher-item-icon data-icon="{{icon}}" />
+        <launcher-item-label>{{label}}</launcher-item-label>
+      </launcher-item>
+      {{/each}}
+    </launcher-results>
+  </launcher>
+</launcher-overlay>"#;
+
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
 pub struct SessionMenuItem {
@@ -654,6 +678,10 @@ impl Shell {
         // directory at runtime.
         registry.register("dock", SHELL_DOCK_TEMPLATE);
         registry.register("statusbar", SHELL_STATUSBAR_TEMPLATE);
+        // Override the minimal default `launcher` template (search box only) with
+        // one that renders the `{{#each results}}` app grid (t59-shell — fixes the
+        // empty-launcher defect; the default omitted the results loop).
+        registry.register("launcher", SHELL_LAUNCHER_TEMPLATE);
         // Try loading from assets/templates on disk (overrides embedded defaults).
         //
         // NOTE (t57-f1): the search path is intentionally the CWD-relative

@@ -389,7 +389,18 @@ impl Shell {
                 true
             }
             ShellAction::OpenSessionMenu => {
-                self.session_menu_visible = !self.session_menu_visible;
+                // Single owner of the session-menu toggle (t59-shell): the
+                // status-bar click handler (events.rs) now ONLY returns this
+                // action and no longer mutates `session_menu_visible`, so the
+                // toggle happens exactly once here (previously both fired,
+                // cancelling each other → open-then-instantly-close).
+                let opening = !self.session_menu_visible;
+                self.session_menu_visible = opening;
+                self.session_menu_hover_index = if opening && !self.session_menu_items.is_empty() {
+                    Some(0)
+                } else {
+                    None
+                };
                 true
             }
             ShellAction::LockSession => {

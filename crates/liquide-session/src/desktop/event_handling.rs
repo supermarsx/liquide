@@ -160,7 +160,12 @@ impl DesktopCompositor {
                 needs_redraw = true;
             }
             PlatformEvent::WindowCloseRequested { .. } | PlatformEvent::Quit => {
-                self.running = false;
+                // Request shutdown, but DON'T tear down the loop immediately.
+                // Stopping here would orphan an in-flight render job (the final
+                // desktop frame never reaches the screen → black/stale flash on
+                // close). The event loop drains and presents any pending frame
+                // first, then honours `quit_requested` (t60-runtime #1).
+                self.quit_requested = true;
             }
             PlatformEvent::WindowRedraw { .. } => {
                 needs_redraw = true;

@@ -87,6 +87,10 @@ pub struct DesktopCompositor {
     window_handle: Option<NativeWindowHandle>,
     frame_count: u64,
     running: bool,
+    /// Set when a Quit / close event arrives. The event loop honours this only
+    /// AFTER flushing any in-flight frame so the final desktop state is
+    /// presented before exit (no black/stale flash on close — t60-runtime #1).
+    quit_requested: bool,
     dirty: bool,
     /// Optional accumulated damage for the pending dirty frame.
     ///
@@ -107,8 +111,18 @@ pub struct DesktopCompositor {
     render_thread: Option<thread::JoinHandle<()>>,
     /// Whether a render job is currently in flight (avoid double-submit).
     render_in_flight: bool,
+    /// When the current in-flight render job was submitted. Used by the event
+    /// loop's watchdog to recover from a hung (non-panicking) render thread that
+    /// would otherwise leave `render_in_flight` stuck true and spin the main
+    /// loop at 100% CPU forever (t60-runtime #3). `None` when nothing is in
+    /// flight.
+    render_inflight_since: Option<Instant>,
     /// Tracks backend present readiness for queued standalone pacing.
     present_pacing: PresentPacingState,
+    /// Counts completed render frames received from the worker, used to gate
+    /// presents on dirty/damage with a periodic keepalive (so a fully static
+    /// scene does not flood the present/RDP path every frame — t59-present #2).
+    present_gate_counter: u64,
     /// Telemetry system for performance monitoring.
     telemetry: TelemetryHandle,
     /// Cursor position, shape, and hardware/software cursor management.
@@ -218,6 +232,7 @@ impl DesktopCompositor {
             window_handle: None,
             frame_count: 0,
             running: true,
+            quit_requested: false,
             dirty: true,
             dirty_damage: None,
             last_render: Instant::now(),
@@ -228,7 +243,9 @@ impl DesktopCompositor {
             frame_rx: None,
             render_thread: None,
             render_in_flight: false,
+            render_inflight_since: None,
             present_pacing: PresentPacingState::default(),
+            present_gate_counter: 0,
             telemetry: create_telemetry(DEFAULT_TARGET_FPS),
             cursor: CursorState::new(width as f32 / 2.0, height as f32 / 2.0),
             dt: DevToolsState::new(),

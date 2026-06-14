@@ -69,6 +69,39 @@ fn lower_window_restacks_tree_so_other_window_wins_hit_test() {
     );
 }
 
+/// t62 MAJOR-4 regression: focusing a background window must sync the canonical
+/// `WindowTree` z-order so that subsequent hit-tests route to the now-focused
+/// window. Before the fix, `set_focus` updated only the focus manager, leaving
+/// the tree's topmost entry pointing at the previously-raised window — so a
+/// click on a background window focused it but input still went to the old
+/// topmost window.
+#[test]
+fn set_focus_raises_window_in_tree_z_order() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+    // B was created last, so it is topmost at the overlap point.
+    assert_eq!(shell.window_at_point(300.0, 300.0), Some(b));
+
+    // Focus A (the background window). This must bring A to the top of the tree
+    // z-order so the very same overlap point now hit-tests to A — otherwise
+    // input would keep routing to B despite A being focused.
+    shell.set_focus(a).unwrap();
+    assert_eq!(
+        shell.window_at_point(300.0, 300.0),
+        Some(a),
+        "focusing a background window must sync the tree z-order so it wins the hit-test"
+    );
+
+    // Symmetric: focusing B again restores B as the topmost-at-point.
+    shell.set_focus(b).unwrap();
+    assert_eq!(
+        shell.window_at_point(300.0, 300.0),
+        Some(b),
+        "re-focusing B must raise it back to the top of the tree z-order"
+    );
+}
+
 #[test]
 fn minimized_window_is_skipped_by_tree_hit_test() {
     let mut shell = Shell::new(1920.0, 1080.0);

@@ -713,6 +713,14 @@ impl SceneNode {
 
         let effective_opacity = parent_opacity * self.properties.opacity;
 
+        // Fully transparent nodes (and their subtrees, since opacity is
+        // multiplicative down the tree) contribute no visible pixels. Emitting
+        // them risks z-order anomalies and wasted work in renderers that do not
+        // themselves skip opacity==0 (HIGH-001). Prune them here.
+        if effective_opacity < 1e-5 {
+            return;
+        }
+
         let local = Affine2D::translation(self.properties.bounds.x, self.properties.bounds.y)
             .then(&self.properties.transform);
         let abs_transform = local.then(parent_transform);
@@ -728,15 +736,31 @@ impl SceneNode {
             .properties
             .clip
             .map(|c| parent_transform.transform_rect(c));
+        // When two clips are present but do not overlap, the intersection is
+        // empty: this node and its whole subtree are fully clipped out and can
+        // never paint a visible pixel. Earlier code substituted a zero-area
+        // `Rect::new(0,0,0,0)` clip and still emitted the node, which made it
+        // (and its descendants) silently invisible — a visual "hole" in
+        // non-overlapping clip hierarchies. Detect the empty intersection and
+        // prune the subtree instead (CRITICAL-002).
         let effective_clip = match (parent_clip, node_abs_clip) {
-            (Some(pc), Some(nc)) => Some(
-                pc.intersection(&nc)
-                    .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)),
-            ),
+            (Some(pc), Some(nc)) => match pc.intersection(&nc) {
+                Some(clip) => Some(clip),
+                // Empty intersection: nothing here (or below) is visible.
+                None => return,
+            },
             (Some(pc), None) => Some(pc),
             (None, Some(nc)) => Some(nc),
             (None, None) => None,
         };
+        // A clip that is itself zero-area (e.g. a node clipping to an empty
+        // rect, or a parent clip already collapsed to nothing) is equally
+        // unpaintable; prune it too rather than emit an invisible node.
+        if let Some(clip) = effective_clip {
+            if clip.width <= 0.0 || clip.height <= 0.0 {
+                return;
+            }
+        }
 
         // Accumulate clip radius: if the child has its own clip with a
         // radius, use the child's; otherwise inherit the parent's radius

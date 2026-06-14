@@ -12,6 +12,7 @@ use liquide_platform::event_loop::PlatformEvent;
 use liquide_platform::window_host::NativeWindowHandle;
 
 use crate::shell::{DragState, Shell};
+use crate::shortcuts::ShellAction;
 
 fn mouse_move(x: f32, y: f32) -> PlatformEvent {
     PlatformEvent::MouseInput {
@@ -275,4 +276,48 @@ fn tile_layout_single_window_fills_work_area() {
         work.width
     );
     assert!(win.tiled);
+}
+
+/// t62 CRITICAL-3 regression: `tile_visible_windows_canonical` must only tile
+/// windows that belong to the **active** workspace. A window living on an
+/// inactive workspace must not be picked up by the tiler (which runs on every
+/// workspace switch) — otherwise its bounds get rewritten and it flickers into
+/// view on the active workspace.
+#[test]
+fn tile_layout_ignores_windows_on_inactive_workspaces() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.execute_action(&ShellAction::WorkspaceAdd);
+
+    // A is opened on workspace 0 (active).
+    let a = shell.open_window("A", Rect::new(0.0, 0.0, 100.0, 100.0));
+
+    // Switch to workspace 1 and open B there.
+    assert!(shell.execute_action(&ShellAction::SwitchToWorkspace(1)));
+    let b = shell.open_window("B", Rect::new(10.0, 10.0, 100.0, 100.0));
+
+    // Force A's `visible` flag back on so the ONLY thing that can exclude it
+    // from tiling is the workspace-membership filter (the switch path flips
+    // `visible=false` for inactive-workspace windows, which would otherwise mask
+    // the bug). This isolates the t62 membership filter as the unit under test.
+    shell.window_mut(a).unwrap().visible = true;
+    let a_bounds_before = shell.window(a).unwrap().bounds;
+
+    // Tiling on workspace 1 must arrange only B, leaving A (workspace 0)
+    // completely untouched.
+    let count = shell.tile_visible_windows_canonical();
+    assert_eq!(count, 1, "only the active-workspace window (B) should tile");
+
+    let a_after = shell.window(a).unwrap();
+    assert_eq!(
+        a_after.bounds, a_bounds_before,
+        "an inactive-workspace window's bounds must not be rewritten by tiling"
+    );
+    assert!(
+        !a_after.tiled,
+        "an inactive-workspace window must not be flagged tiled"
+    );
+    assert!(
+        shell.window(b).unwrap().tiled,
+        "the active-workspace window should be tiled"
+    );
 }

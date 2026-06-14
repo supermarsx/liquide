@@ -334,6 +334,10 @@ impl Launcher {
         // ----- empty query: show favourites / recent -----------------------
         if query.is_empty() {
             self.active_section = LauncherSection::Favorites;
+            // Repopulate the default listing so clearing the query (e.g. via
+            // backspace) restores the app grid instead of leaving it blank
+            // (t59-shell).
+            self.populate_default_results();
             return;
         }
 
@@ -464,6 +468,57 @@ impl Launcher {
                 relevance: 0.1,
             });
         }
+    }
+
+    /// Seed [`results`](Launcher::results) with the default empty-query listing:
+    /// the user's favorite apps first (in favorites order), then every other
+    /// non-hidden registered app. This is what the launcher shows when it opens
+    /// with no query typed, so the app grid is never blank when apps are
+    /// registered (t59-shell — fixes the empty-launcher defect).
+    ///
+    /// Each entry is an [`SearchResultKind::Application`] result mirroring the
+    /// shape produced by [`Launcher::search`], so the launcher template renders
+    /// them identically to query matches.
+    fn populate_default_results(&mut self) {
+        self.selected_index = 0;
+
+        let make_result = |app: &LauncherApp, relevance: f64| SearchResult {
+            title: app.name.clone(),
+            description: app.description.clone(),
+            icon: app.icon.clone(),
+            kind: SearchResultKind::Application {
+                app_id: app.app_id.clone(),
+            },
+            relevance,
+        };
+
+        // Build into a temporary so we never hold a `&self.apps` borrow and a
+        // `&mut self.results` borrow simultaneously.
+        let mut results: Vec<SearchResult> = Vec::new();
+        let mut seen: Vec<&str> = Vec::new();
+
+        // Favorites first, in the configured favorites order, skipping hidden
+        // apps and ids that no longer resolve to a registered app.
+        for fav_id in &self.favorites {
+            if let Some(app) = self.apps.iter().find(|a| &a.app_id == fav_id) {
+                if app.no_display {
+                    continue;
+                }
+                results.push(make_result(app, 2.0));
+                seen.push(app.app_id.as_str());
+            }
+        }
+
+        // Then every other visible app (so the grid lists the full catalog even
+        // when no favorites are configured).
+        for app in &self.apps {
+            if app.no_display || seen.contains(&app.app_id.as_str()) {
+                continue;
+            }
+            results.push(make_result(app, 1.0));
+        }
+
+        self.results = results;
     }
 
     /// Heuristic: returns `true` if the query looks like a mathematical
@@ -751,14 +806,22 @@ impl Launcher {
 
     /// Open the launcher overlay.
     ///
-    /// Resets the query, clears results, and sets the section back to
-    /// [`LauncherSection::Favorites`].
+    /// Resets the query and sets the section back to
+    /// [`LauncherSection::Favorites`], then SEEDS the results with the default
+    /// (empty-query) listing so the app grid is populated immediately.
+    ///
+    /// t59-shell fix: `open()` previously did `self.results.clear()` and never
+    /// repopulated, so on the capture/render path (which opens the launcher with
+    /// an empty query and never types) `sync_launcher_template`'s
+    /// `{{#each results}}` rendered an empty grid. Seeding the default results on
+    /// open shows the favorites / all-apps grid right away; typing a query then
+    /// re-filters via [`Launcher::search`].
     pub fn open(&mut self) {
         self.visible = true;
         self.query.clear();
-        self.results.clear();
         self.selected_index = 0;
         self.active_section = LauncherSection::Favorites;
+        self.populate_default_results();
     }
 
     /// Close the launcher overlay.

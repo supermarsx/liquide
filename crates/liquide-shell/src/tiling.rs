@@ -541,11 +541,17 @@ impl Shell {
     pub fn tile_visible_windows_canonical(&mut self) -> usize {
         let work = self.work_area();
 
-        // Visible, non-minimized windows in deterministic order.
+        // Visible, non-minimized windows **on the active workspace**, in
+        // deterministic order. The workspace-membership filter (mirroring
+        // `visible_windows`) is essential: tiling runs on every workspace
+        // switch, so without it the canonical engine would compute and apply
+        // layout for windows belonging to inactive workspaces, relocating them
+        // into view and causing flicker/disappear (t60-windows CRITICAL-3).
+        let active = self.workspaces.active();
         let mut visible_ids: Vec<WindowId> = self
             .windows
             .values()
-            .filter(|w| w.visible && w.state != WindowState::Minimized)
+            .filter(|w| w.visible && w.state != WindowState::Minimized && active.contains(w.id))
             .map(|w| w.id)
             .collect();
         visible_ids.sort_by_key(|id| id.0);

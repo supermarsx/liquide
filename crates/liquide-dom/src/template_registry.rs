@@ -259,7 +259,18 @@ const DEFAULT_APP_MENU: &str = r#"<app-menu id="{{id}}" style="left: {{pos_left}
 
 const DEFAULT_DOCK_ITEM: &str = r#"<dock-item data-app-id="{{app_id}}" data-label="{{label}}" {{#if is_active}}class="active"{{/if}}>{{label}}</dock-item>"#;
 
-const DEFAULT_MENU_ITEM: &str = r#"<menu-item data-action="{{action}}" {{#if icon}}data-icon="{{icon}}"{{/if}}>{{label}}</menu-item>"#;
+// The icon and label are emitted as SEPARATE child elements so the menu CSS
+// can lay them out side-by-side: `menu-item` is `display:flex`, `menu-item-icon`
+// occupies a fixed 16px gutter with an 8px right margin, and `menu-item-label`
+// (`flex-grow:1`) takes the remaining width to the right of the icon. Carrying
+// the icon glyph only as a `data-icon` ATTRIBUTE on `<menu-item>` (as this
+// partial previously did) left the CSS's `menu-item-icon`/`menu-item-label`
+// child rules with no elements to target, so the icon glyph and the label text
+// painted in the same columns (the icon overprinted the label). The icon
+// element is only emitted when an icon is present, so icon-less menus do not get
+// an empty gutter shifting their labels. `{{label}}` is interpolated as a
+// `String` value and is therefore HTML-escaped on output.
+const DEFAULT_MENU_ITEM: &str = r#"<menu-item data-action="{{action}}">{{#if icon}}<menu-item-icon data-icon="{{icon}}" />{{/if}}<menu-item-label>{{label}}</menu-item-label></menu-item>"#;
 
 const DEFAULT_TOOLTIP: &str = r#"<tooltip id="{{id}}" data-position="{{position}}" style="left: {{pos_left}}; top: {{pos_top}}">
   <tooltip-arrow />
@@ -317,6 +328,93 @@ const DEFAULT_DOCK: &str = r#"{{#each dock_items}}
   {{/if}}
 </dock-item>
 {{/each}}"#;
+
+// ---------------------------------------------------------------------------
+// Depth-tracking block matching
+// ---------------------------------------------------------------------------
+//
+// The mustache-like block syntax (`{{#if}}`/`{{/if}}`, `{{#each}}`/`{{/each}}`)
+// can nest arbitrarily. A naive first-match `body.find("{{/each}}")` matches the
+// FIRST close tag in the remaining input, which — for two same-type nested blocks
+// — is the INNER block's close, silently truncating the outer block's body. These
+// helpers track nesting depth so a block is matched to its true partner.
+//
+// `body` is the input *after* an open `{{#TAG ...}}` tag, so the opener is already
+// consumed and depth conceptually starts at 1 (the block we are inside). We scan
+// forward, incrementing on each same-type opener and decrementing on each
+// same-type closer, returning when depth returns to 0.
+
+/// Find the byte offset, within `body`, of the `{{` that begins the `{{/tag}}`
+/// closing the block whose opener was just consumed.
+///
+/// `body` must be the slice *following* the open `{{#tag ...}}` tag. Returns
+/// `None` if no matching close tag exists (malformed template), letting the
+/// caller skip the block rather than emit truncated output.
+///
+/// Only same-type nesting is tracked: a `{{/each}}` cannot legally appear inside
+/// a balanced `{{#if}}...{{/if}}` without its own `{{#each}}` also being inside,
+/// so for well-formed templates tracking the matching tag type alone is correct
+/// (and matches the proven `template.rs::find_block_end` behaviour).
+fn find_block_end(body: &str, tag: &str) -> Option<usize> {
+    let open_prefix = format!("{{{{#{tag} ");
+    let open_no_arg = format!("{{{{#{tag}}}}}"); // e.g. `{{#if}}` with no argument
+    let close = format!("{{{{/{tag}}}}}");
+
+    let mut depth = 1usize;
+    let mut pos = 0usize;
+    while let Some(rel) = body[pos..].find("{{") {
+        let at = pos + rel;
+        let here = &body[at..];
+        if here.starts_with(&close) {
+            depth -= 1;
+            if depth == 0 {
+                return Some(at);
+            }
+            pos = at + close.len();
+        } else if here.starts_with(&open_prefix) || here.starts_with(&open_no_arg) {
+            depth += 1;
+            pos = at + 2;
+        } else {
+            pos = at + 2;
+        }
+    }
+    None
+}
+
+/// Split a block body on its top-level `{{else}}`.
+///
+/// `block` is the body *between* an open `{{#tag ...}}` and its matching
+/// `{{/tag}}` (as returned by [`find_block_end`]). Returns
+/// `(then_part, Some(else_part))` when a depth-0 `{{else}}` is present, otherwise
+/// `(block, None)`. Nesting of the same tag type is tracked so an `{{else}}`
+/// belonging to a nested block of the same kind is not mistaken for this block's.
+fn split_else<'a>(block: &'a str, tag: &str) -> (&'a str, Option<&'a str>) {
+    let else_tag = "{{else}}";
+    let open_prefix = format!("{{{{#{tag} ");
+    let open_no_arg = format!("{{{{#{tag}}}}}");
+    let close = format!("{{{{/{tag}}}}}");
+
+    let mut depth = 0usize;
+    let mut pos = 0usize;
+    while let Some(rel) = block[pos..].find("{{") {
+        let at = pos + rel;
+        let here = &block[at..];
+        if here.starts_with(&open_prefix) || here.starts_with(&open_no_arg) {
+            depth += 1;
+            pos = at + 2;
+        } else if here.starts_with(&close) {
+            // A nested close at depth 0 should not occur (the block is balanced),
+            // but guard against underflow defensively.
+            depth = depth.saturating_sub(1);
+            pos = at + close.len();
+        } else if depth == 0 && here.starts_with(else_tag) {
+            return (&block[..at], Some(&block[at + else_tag.len()..]));
+        } else {
+            pos = at + 2;
+        }
+    }
+    (block, None)
+}
 
 // ---------------------------------------------------------------------------
 // TemplateRegistry
@@ -530,31 +628,36 @@ impl TemplateRegistry {
                 // Missing partial → empty string (graceful degradation).
             } else if let Some(block_var) = tag.strip_prefix("#if ") {
                 // ---------- conditional block ----------
+                //
+                // `rest` is the input *after* the `{{#if X}}` open tag. Find the
+                // matching `{{/if}}` at the SAME nesting depth (so an inner
+                // `{{#if}}...{{/if}}` does not falsely close this block), then
+                // recurse into the selected branch.
                 let block_var = block_var.trim();
                 let end_tag = "{{/if}}";
-                if let Some(end_pos) = rest.find(end_tag) {
+                if let Some(end_pos) = find_block_end(rest, "if") {
                     let block_body = &rest[..end_pos];
                     rest = &rest[end_pos + end_tag.len()..];
-                    // Split on {{else}} if present
-                    let (if_body, else_body) = match block_body.find("{{else}}") {
-                        Some(else_pos) => (
-                            &block_body[..else_pos],
-                            &block_body[else_pos + "{{else}}".len()..],
-                        ),
-                        None => (block_body, ""),
-                    };
+                    // Split on the top-level {{else}} (depth-aware so an `{{else}}`
+                    // belonging to a nested `{{#if}}` is not mistaken for ours).
+                    let (if_body, else_body) = split_else(block_body, "if");
                     if ctx.is_truthy(block_var) {
                         out.push_str(&self.render_source(if_body, ctx, visited));
-                    } else if !else_body.is_empty() {
+                    } else if let Some(else_body) = else_body {
                         out.push_str(&self.render_source(else_body, ctx, visited));
                     }
                 }
                 // Malformed (no closing tag) — silently skip.
             } else if let Some(list_var) = tag.strip_prefix("#each ") {
                 // ---------- iteration block ----------
+                //
+                // `rest` is the input *after* the `{{#each X}}` open tag. Find the
+                // matching `{{/each}}` at the SAME nesting depth so a nested
+                // `{{#each}}...{{/each}}` (or an inner `{{/each}}` belonging to a
+                // deeper loop) does not truncate this block's body.
                 let list_var = list_var.trim();
                 let end_tag = "{{/each}}";
-                if let Some(end_pos) = rest.find(end_tag) {
+                if let Some(end_pos) = find_block_end(rest, "each") {
                     let body = &rest[..end_pos];
                     rest = &rest[end_pos + end_tag.len()..];
                     if let Some(items) = ctx.get_list(list_var) {
@@ -1431,6 +1534,308 @@ mod tests {
         let ctx = TemplateContext::new();
         let result = reg.render("page", &ctx).unwrap();
         assert_eq!(result, "X+X");
+    }
+
+    // -- Nested control structures (depth-tracking block matcher) --
+
+    #[test]
+    fn nested_each_inside_each() {
+        // Regression: R2 / t60-dom. The flat first-match parser matched the
+        // OUTER `{{#each}}` to the INNER `{{/each}}`, truncating the outer body
+        // after the first inner loop. With depth tracking the outer block spans
+        // to its true `{{/each}}`.
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "test",
+            "<g>{{#each groups}}<group>{{name}}{{#each members}}<m>{{label}}</m>{{/each}}</group>{{/each}}</g>",
+        );
+
+        let mut ctx = TemplateContext::new();
+        let mut g1 = TemplateContext::new();
+        g1.set("name", "G1");
+        let mut m1 = TemplateContext::new();
+        m1.set("label", "a");
+        let mut m2 = TemplateContext::new();
+        m2.set("label", "b");
+        g1.set("members", TemplateValue::List(vec![m1, m2]));
+        let mut g2 = TemplateContext::new();
+        g2.set("name", "G2");
+        let mut m3 = TemplateContext::new();
+        m3.set("label", "c");
+        g2.set("members", TemplateValue::List(vec![m3]));
+        ctx.set("groups", TemplateValue::List(vec![g1, g2]));
+
+        let result = reg.render("test", &ctx).unwrap();
+        assert_eq!(
+            result,
+            "<g><group>G1<m>a</m><m>b</m></group><group>G2<m>c</m></group></g>"
+        );
+    }
+
+    #[test]
+    fn nested_if_inside_each() {
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "test",
+            "{{#each items}}<i>{{name}}{{#if flag}}!{{/if}}</i>{{/each}}",
+        );
+
+        let mut ctx = TemplateContext::new();
+        let mut a = TemplateContext::new();
+        a.set("name", "A");
+        a.set("flag", true);
+        let mut b = TemplateContext::new();
+        b.set("name", "B");
+        b.set("flag", false);
+        ctx.set("items", TemplateValue::List(vec![a, b]));
+
+        let result = reg.render("test", &ctx).unwrap();
+        assert_eq!(result, "<i>A!</i><i>B</i>");
+    }
+
+    #[test]
+    fn nested_each_inside_if() {
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "test",
+            "{{#if show}}<list>{{#each items}}<li>{{name}}</li>{{/each}}</list>{{/if}}",
+        );
+
+        let mut ctx = TemplateContext::new();
+        ctx.set("show", true);
+        let mut a = TemplateContext::new();
+        a.set("name", "One");
+        let mut b = TemplateContext::new();
+        b.set("name", "Two");
+        ctx.set("items", TemplateValue::List(vec![a, b]));
+
+        let result = reg.render("test", &ctx).unwrap();
+        assert_eq!(result, "<list><li>One</li><li>Two</li></list>");
+    }
+
+    #[test]
+    fn deeply_nested_if_chains() {
+        // Three same-type blocks nested; the matcher must pair each open with the
+        // correct close at its own depth.
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "test",
+            "{{#if a}}A{{#if b}}B{{#if c}}C{{/if}}B2{{/if}}A2{{/if}}",
+        );
+
+        let mut all = TemplateContext::new();
+        all.set("a", true);
+        all.set("b", true);
+        all.set("c", true);
+        assert_eq!(reg.render("test", &all).unwrap(), "ABCB2A2");
+
+        let mut no_c = TemplateContext::new();
+        no_c.set("a", true);
+        no_c.set("b", true);
+        no_c.set("c", false);
+        assert_eq!(reg.render("test", &no_c).unwrap(), "ABB2A2");
+
+        let mut only_a = TemplateContext::new();
+        only_a.set("a", true);
+        assert_eq!(reg.render("test", &only_a).unwrap(), "AA2");
+    }
+
+    #[test]
+    fn nested_if_else_inside_each_picks_correct_branch() {
+        // An `{{else}}` belonging to a nested `{{#if}}` must not be confused with
+        // any outer split, and the depth-aware else splitter must select the right
+        // branch per item.
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "test",
+            "{{#each items}}<i>{{#if on}}ON{{else}}OFF{{/if}}</i>{{/each}}",
+        );
+
+        let mut ctx = TemplateContext::new();
+        let mut a = TemplateContext::new();
+        a.set("on", true);
+        let mut b = TemplateContext::new();
+        b.set("on", false);
+        ctx.set("items", TemplateValue::List(vec![a, b]));
+
+        assert_eq!(reg.render("test", &ctx).unwrap(), "<i>ON</i><i>OFF</i>");
+    }
+
+    #[test]
+    fn nested_if_with_else_chain_outer_else_preserved() {
+        // Outer if has its own {{else}} AFTER a fully-nested inner if/else. The
+        // depth-aware splitter must pick the OUTER else, not the inner one.
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "test",
+            "{{#if outer}}O{{#if inner}}I{{else}}NI{{/if}}{{else}}NO{{/if}}",
+        );
+
+        let mut t = TemplateContext::new();
+        t.set("outer", true);
+        t.set("inner", false);
+        assert_eq!(reg.render("test", &t).unwrap(), "ONI");
+
+        let mut f = TemplateContext::new();
+        f.set("outer", false);
+        assert_eq!(reg.render("test", &f).unwrap(), "NO");
+    }
+
+    #[test]
+    fn notifications_like_template_with_nested_actions() {
+        // End-to-end shape of assets/templates/notifications.html: an outer
+        // `{{#each notifications}}` whose body contains `{{#if has_actions}}` →
+        // `{{#each actions}}`. Under the old flat parser the outer each matched
+        // the INNER `{{/each}}` (the actions loop), truncating each notification
+        // after its first action block and dropping subsequent notifications.
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "notifications",
+            concat!(
+                "<notification-area>",
+                "{{#each notifications}}",
+                "<notification id=\"{{id}}\">",
+                "<notification-title>{{title}}</notification-title>",
+                "<notification-body>{{body}}</notification-body>",
+                "{{#if has_actions}}",
+                "<notification-actions>",
+                "{{#each actions}}",
+                "<notification-action data-action-id=\"{{action_id}}\">{{label}}</notification-action>",
+                "{{/each}}",
+                "</notification-actions>",
+                "{{/if}}",
+                "</notification>",
+                "{{/each}}",
+                "</notification-area>",
+            ),
+        );
+
+        let mut ctx = TemplateContext::new();
+
+        // First notification: has two actions.
+        let mut n1 = TemplateContext::new();
+        n1.set("id", "n1");
+        n1.set("title", "Build done");
+        n1.set("body", "Success");
+        n1.set("has_actions", true);
+        let mut act1 = TemplateContext::new();
+        act1.set("action_id", "open");
+        act1.set("label", "Open");
+        let mut act2 = TemplateContext::new();
+        act2.set("action_id", "dismiss");
+        act2.set("label", "Dismiss");
+        n1.set("actions", TemplateValue::List(vec![act1, act2]));
+
+        // Second notification: no actions — must STILL render (proves the outer
+        // loop was not truncated by the inner {{/each}}).
+        let mut n2 = TemplateContext::new();
+        n2.set("id", "n2");
+        n2.set("title", "Reminder");
+        n2.set("body", "Standup at 10");
+        n2.set("has_actions", false);
+
+        ctx.set("notifications", TemplateValue::List(vec![n1, n2]));
+
+        let result = reg.render("notifications", &ctx).unwrap();
+
+        // Both notifications present (outer loop not truncated).
+        assert!(result.contains("id=\"n1\""), "n1 missing: {result}");
+        assert!(result.contains("id=\"n2\""), "n2 missing: {result}");
+        // First notification's full body survives past the nested actions block.
+        assert!(result.contains("<notification-body>Success</notification-body>"));
+        assert!(result.contains("<notification-body>Standup at 10</notification-body>"));
+        // Both actions of n1 render.
+        assert!(result.contains("data-action-id=\"open\">Open<"));
+        assert!(result.contains("data-action-id=\"dismiss\">Dismiss<"));
+        // n2 has no actions block.
+        let n2_pos = result.find("id=\"n2\"").unwrap();
+        assert!(!result[n2_pos..].contains("notification-action"));
+        // Exact full render.
+        assert_eq!(
+            result,
+            concat!(
+                "<notification-area>",
+                "<notification id=\"n1\">",
+                "<notification-title>Build done</notification-title>",
+                "<notification-body>Success</notification-body>",
+                "<notification-actions>",
+                "<notification-action data-action-id=\"open\">Open</notification-action>",
+                "<notification-action data-action-id=\"dismiss\">Dismiss</notification-action>",
+                "</notification-actions>",
+                "</notification>",
+                "<notification id=\"n2\">",
+                "<notification-title>Reminder</notification-title>",
+                "<notification-body>Standup at 10</notification-body>",
+                "</notification>",
+                "</notification-area>",
+            )
+        );
+    }
+
+    #[test]
+    fn default_statusbar_nested_if_chain_renders_each_type() {
+        // The embedded DEFAULT_STATUSBAR has deeply nested if/else chains inside
+        // {{#each right_items}}. Verify each item type selects the correct branch
+        // and the chain is not truncated.
+        let mut reg = TemplateRegistry::new();
+        reg.register_defaults();
+
+        let mut ctx = TemplateContext::new();
+        ctx.set("left_items", TemplateValue::List(vec![]));
+        ctx.set("center_items", TemplateValue::List(vec![]));
+
+        let mut notif = TemplateContext::new();
+        notif.set("type_notification", true);
+        notif.set("id", "ni");
+        notif.set("classes", "");
+        notif.set("text", "3");
+        let mut session = TemplateContext::new();
+        session.set("type_session", true);
+        session.set("id", "se");
+        session.set("text", "user");
+        ctx.set("right_items", TemplateValue::List(vec![notif, session]));
+
+        let result = reg.render("statusbar", &ctx).unwrap();
+        // Notification branch chosen for first item.
+        assert!(result.contains("<notification-indicator id=\"ni\""));
+        // Session branch (the LAST else in the chain) chosen for second item —
+        // proves the chain was not truncated before reaching type_session.
+        assert!(result.contains("<session-button id=\"se\">user</session-button>"));
+    }
+
+    // -- Block matcher unit tests --
+
+    #[test]
+    fn find_block_end_skips_nested_same_tag() {
+        // body is everything after `{{#each outer}}`.
+        let body = "X{{#each inner}}Y{{/each}}Z{{/each}}TAIL";
+        let end = find_block_end(body, "each").unwrap();
+        assert_eq!(&body[..end], "X{{#each inner}}Y{{/each}}Z");
+        assert_eq!(&body[end..], "{{/each}}TAIL");
+    }
+
+    #[test]
+    fn find_block_end_missing_close_returns_none() {
+        assert_eq!(find_block_end("no close here", "if"), None);
+        // Unbalanced: inner closes but outer never does.
+        assert_eq!(find_block_end("{{#if a}}x{{/if}}", "if"), None);
+    }
+
+    #[test]
+    fn split_else_ignores_nested_else() {
+        // Block body of an outer `{{#if}}`: nested if has its own else, then the
+        // outer else follows.
+        let block = "A{{#if x}}B{{else}}C{{/if}}D{{else}}E";
+        let (then_part, else_part) = split_else(block, "if");
+        assert_eq!(then_part, "A{{#if x}}B{{else}}C{{/if}}D");
+        assert_eq!(else_part, Some("E"));
+    }
+
+    #[test]
+    fn split_else_none_when_absent() {
+        let (then_part, else_part) = split_else("just{{#if y}}z{{/if}}body", "if");
+        assert_eq!(then_part, "just{{#if y}}z{{/if}}body");
+        assert_eq!(else_part, None);
     }
 
     // -- HTML parser edge cases --

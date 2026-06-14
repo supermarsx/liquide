@@ -186,8 +186,12 @@ fn indicator_click_opens_live_center_end_to_end() {
     assert!(!shell.notification_center_open());
 
     // Click the notification indicator hit-region (36..80 px from the right).
+    // Single-owner toggle contract (t59-shell): the handler returns the action
+    // WITHOUT mutating; execute_action performs the one-and-only toggle. Drive
+    // the full integrated path so this exercises the real open behavior.
     let action = shell.handle_platform_event(&mouse_click(1920.0 - 58.0, 15.0));
     assert!(matches!(action, Some(ShellAction::OpenNotificationCenter)));
+    assert!(shell.execute_action(&action.unwrap()));
     assert!(shell.notification_center_open());
 
     shell.sync_dom();

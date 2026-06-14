@@ -26,6 +26,17 @@ use filters::{backdrop_spec_to_op, filter_spec_to_op};
 use gradients::emit_gradient;
 use transforms::{compose_transform_matrix_ext, resolve_origin_dimension};
 
+/// True for box types whose layout rects carry ABSOLUTE (rather than
+/// parent-content-local) coordinates: `Absolute`, `Fixed`, and `Sticky`. The
+/// layout engine's `layout_positioned` fills these boxes with absolute coords,
+/// so the painter must reset its accumulated `paint_offset` to `(0, 0)` when it
+/// descends into one — mirroring `LayoutTree::accumulated_offset`, which treats
+/// a positioned box's accumulated offset as `(0, 0)` to avoid double-counting
+/// ancestor offsets across the positioning containing-block boundary.
+fn is_positioned_box(box_type: &BoxType) -> bool {
+    matches!(box_type, BoxType::Absolute | BoxType::Fixed | BoxType::Sticky)
+}
+
 /// The painter walks the layout tree and emits paint commands.
 pub struct Painter;
 
@@ -77,6 +88,29 @@ impl Painter {
         };
 
         let style = styles.get(layout_box.node).cloned().unwrap_or_default();
+
+        // Positioned-box offset boundary (CSS positioning containing-block).
+        //
+        // `layout_positioned` writes ABSOLUTE coordinates into a positioned
+        // box's rects (`BoxType::Absolute | Fixed | Sticky`), unlike in-flow
+        // boxes whose rects are parent-content-local. The painter accumulates a
+        // parallel `paint_offset` by recursive descent through ancestor content
+        // boxes. If we applied the inherited `paint_offset` to a positioned
+        // box, its already-absolute rects would be shifted by the ancestor
+        // chain (e.g. an in-flow parent's padding-left) — a double-count, and
+        // every in-flow descendant of the positioned box would inherit that
+        // error too.
+        //
+        // Mirror `LayoutTree::accumulated_offset`: a positioned box's
+        // accumulated offset is `(0, 0)`. Resetting to the origin here both
+        // paints the positioned box at its own absolute rects AND re-roots the
+        // subtree's `child_offset` at the (absolute) content box, so descendants
+        // never fold in offsets above the positioning boundary.
+        let paint_offset = if is_positioned_box(&layout_box.box_type) {
+            (0.0, 0.0)
+        } else {
+            paint_offset
+        };
 
         // Compute absolute rects by applying accumulated paint offset
         let (ox, oy) = paint_offset;
@@ -1637,6 +1671,108 @@ mod tests {
         assert!(
             !has_broken,
             "Failed cache entry should NOT emit an Image item"
+        );
+    }
+
+    /// Regression (t62-paint): a positioned box's subtree must paint at the
+    /// layout-assigned ABSOLUTE coordinates, not at the inherited ancestor
+    /// offset added on top of them.
+    ///
+    /// Setup: a `position: relative` parent with `padding-left: 50px` containing
+    /// a `position: absolute; left: 100px` child that itself has a text child.
+    /// The layout engine writes absolute coords into the absolute box (its
+    /// content x ≈ 100, NOT 150 = 100 + parent padding). Before the fix the
+    /// painter re-added the parent's content offset (the +50 padding-left),
+    /// double-counting it and painting the child's text at x ≈ 150. After the
+    /// fix the painter resets `paint_offset` to (0,0) at the positioned box, so
+    /// the text paints at the absolute layout x (~100).
+    #[test]
+    fn positioned_box_subtree_not_double_offset() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent = doc.create_element("div");
+        doc.append_child(root, parent);
+        let abs = doc.create_element("abschild");
+        doc.append_child(parent, abs);
+        let text = doc.create_text("X");
+        doc.append_child(abs, text);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(
+            "div { display: block; position: relative; width: 400px; height: 200px; } \
+             abschild { display: block; position: absolute; left: 100px; top: 0; width: 40px; height: 20px; }",
+        );
+
+        let mut style_map = se.restyle_all(&doc);
+
+        // Force a non-trivial content offset on the relatively-positioned parent
+        // by giving it padding-left directly on the computed style. This makes
+        // the parent's content box start at x = PARENT_PAD, so the painter's
+        // accumulated `paint_offset` for children is non-zero — exactly the
+        // condition that surfaces the positioned-box double-count.
+        const PARENT_PAD: f32 = 50.0;
+        if let Some(arc_style) = style_map.get(parent) {
+            let mut s = (**arc_style).clone();
+            s.padding.left = liquide_style_engine::dimension::Dimension::Px(PARENT_PAD);
+            style_map.insert(parent, s);
+        }
+
+        let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        // Precondition: the parent's content box really is offset by the padding,
+        // so a buggy painter would have a non-zero offset to (double-)apply.
+        let parent_content_x = layout_tree
+            .find_by_node(parent)
+            .expect("parent box")
+            .content_rect
+            .x;
+        assert!(
+            (parent_content_x - PARENT_PAD).abs() < 1.0,
+            "test precondition: parent content box should start at x≈{PARENT_PAD}, \
+             got {parent_content_x}"
+        );
+
+        // The engine's positioned pass makes the `BoxType::Absolute` box the
+        // canonical box for the node (node_index points to it). Its content_rect
+        // already carries ABSOLUTE coordinates (CB = parent's padding box, so
+        // left:100 → x≈100).
+        let abs_box_id = layout_tree
+            .find_box_id_by_node(abs)
+            .expect("absolute box present in layout tree");
+        let abs_box = layout_tree.get(abs_box_id).unwrap();
+        assert!(
+            matches!(abs_box.box_type, BoxType::Absolute),
+            "child should be laid out as an Absolute box, got {:?}",
+            abs_box.box_type
+        );
+        let layout_abs_x = abs_box.content_rect.x;
+        assert!(
+            (layout_abs_x - 100.0).abs() < 1.0,
+            "layout should place absolute box at absolute x≈100, got {layout_abs_x}"
+        );
+
+        let painter = Painter::new();
+        let display_list = painter.paint(&doc, &layout_tree, &style_map);
+
+        // The painted text (child of the absolute box) must sit at the absolute
+        // box's content x, NOT shifted right by the parent's padding-left.
+        // The double-offset bug would paint it at layout_abs_x + PARENT_PAD.
+        let text_x = display_list
+            .items
+            .iter()
+            .find_map(|item| match item {
+                DisplayItem::Text { rect, text, .. } if text == "X" => Some(rect.x),
+                _ => None,
+            })
+            .expect("text item painted");
+
+        assert!(
+            (text_x - layout_abs_x).abs() < 1.0,
+            "positioned-box child text painted at x={text_x}, expected layout \
+             absolute x≈{layout_abs_x} (double-offset bug would give \
+             ≈{})",
+            layout_abs_x + PARENT_PAD
         );
     }
 

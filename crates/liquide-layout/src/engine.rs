@@ -1572,4 +1572,99 @@ mod tests {
         assert!((relaid_leaf.border_rect.width - 120.0).abs() < 0.1);
         assert!((relaid_leaf.border_rect.height - 40.0).abs() < 0.1);
     }
+
+    /// Regression (t60 finding #5): `position: absolute; height: 50%` must
+    /// resolve against the containing block's HEIGHT, not its width. With a
+    /// 400x200 relatively-positioned container, a 50%-tall absolute child is
+    /// 100px tall (50% of 200), NOT 200px (50% of 400 width).
+    #[test]
+    fn absolute_height_percent_resolves_against_cb_height() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let outer = doc.create_element("outer");
+        let inner = doc.create_element("inner");
+        doc.append_child(root, outer);
+        doc.append_child(outer, inner);
+
+        let mut style_engine = StyleEngine::new(
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            16.0,
+        );
+        style_engine.add_stylesheet(
+            r#"
+            outer { position: relative; width: 400px; height: 200px; }
+            inner { position: absolute; top: 0; left: 0; width: 50%; height: 50%; }
+            "#,
+        );
+
+        let styles = style_engine.restyle_all(&doc);
+        let mut layout = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let tree = layout.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let inner_box = tree.find_box_id_by_node(inner).expect("inner box");
+        let r = tree.get(inner_box).unwrap().border_rect;
+        // width 50% of 400 = 200; height 50% of 200 = 100 (NOT 200).
+        assert!(
+            (r.width - 200.0).abs() < 1.0,
+            "inner width = {} (expected 200)",
+            r.width
+        );
+        assert!(
+            (r.height - 100.0).abs() < 1.0,
+            "inner height = {} (expected 100 = 50% of cb HEIGHT, not width)",
+            r.height
+        );
+    }
+
+    /// Regression (t60 finding #8, end-to-end): an absolutely-positioned child
+    /// of a *padded* relatively-positioned container must paint at its
+    /// containing-block-relative coordinates, NOT shifted by the parent's
+    /// padding. The absolute CB is the parent's padding box, so `left: 100`
+    /// places the child at absolute x=100 — the parent's `padding-left: 50`
+    /// must not be double-counted into the child's absolute rect.
+    #[test]
+    fn absolute_child_not_shifted_by_parent_padding() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let outer = doc.create_element("outer");
+        let abs = doc.create_element("abs");
+        doc.append_child(root, outer);
+        doc.append_child(outer, abs);
+
+        let mut style_engine = StyleEngine::new(
+            ViewportSize {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            16.0,
+        );
+        style_engine.add_stylesheet(
+            r#"
+            outer { position: relative; width: 500px; height: 500px; padding-left: 50px; padding-top: 50px; }
+            abs { position: absolute; left: 100px; top: 100px; width: 200px; height: 200px; }
+            "#,
+        );
+
+        let styles = style_engine.restyle_all(&doc);
+        let mut layout = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let tree = layout.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let abs_box = tree.find_box_id_by_node(abs).expect("abs box");
+        let r = tree.absolute_border_rect(abs_box);
+        // CB = outer's padding box; with no border its left edge is the element
+        // origin (0), so left:100 → absolute x=100. NOT 150 (100 + padding 50).
+        assert!(
+            (r.x - 100.0).abs() < 1.0,
+            "abs x = {} (expected 100, parent padding must not double-count)",
+            r.x
+        );
+        assert!(
+            (r.y - 100.0).abs() < 1.0,
+            "abs y = {} (expected 100)",
+            r.y
+        );
+    }
 }

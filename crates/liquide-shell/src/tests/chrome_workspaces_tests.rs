@@ -174,6 +174,84 @@ fn switching_workspaces_does_not_leak_inactive_windows_into_input() {
     );
 }
 
+/// t62 CRITICAL-2 regression: `arrange_windows` must apply the active layout
+/// only to windows that are members of the active workspace. With a non-trivial
+/// (tiling) layout policy installed, a window on an inactive workspace must keep
+/// its original bounds — otherwise the layout engine relocates inactive-
+/// workspace windows and they flicker into view on switch.
+#[test]
+fn arrange_windows_ignores_inactive_workspace_windows() {
+    use crate::layout::TilingLayout;
+    use liquide_compositor::geometry::Rect as GRect;
+
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.set_layout(Box::new(TilingLayout::new(8.0, 2)));
+    shell.execute_action(&ShellAction::WorkspaceAdd);
+
+    // A on workspace 0 (active).
+    let a = shell.open_window("A", GRect::new(5.0, 5.0, 123.0, 77.0));
+
+    // B on workspace 1.
+    assert!(shell.execute_action(&ShellAction::SwitchToWorkspace(1)));
+    let _b = shell.open_window("B", GRect::new(0.0, 0.0, 100.0, 100.0));
+
+    // Force A's `visible` flag back on so the membership filter is the sole
+    // guard under test (the switch path otherwise sets `visible=false`, masking
+    // the bug). t62 CRITICAL-2 is specifically about the membership filter.
+    shell.window_mut(a).unwrap().visible = true;
+    let a_before = shell.window(a).unwrap().bounds;
+
+    // Arrange while workspace 1 is active — A (workspace 0) must be untouched.
+    shell.arrange_windows();
+    assert_eq!(
+        shell.window(a).unwrap().bounds,
+        a_before,
+        "arrange_windows must not lay out windows belonging to inactive workspaces"
+    );
+}
+
+/// t62 CRITICAL-1 regression: closing a window that lives on an *inactive*
+/// workspace must remove it from its **owning** workspace, not the active one.
+/// Otherwise a stale membership entry dangles and the (now-destroyed) window id
+/// resurfaces when switching back to that workspace.
+#[test]
+fn close_window_on_inactive_workspace_removes_from_owning_workspace() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.execute_action(&ShellAction::WorkspaceAdd);
+
+    // A on workspace 0 (active).
+    let a = open(&mut shell, "A");
+
+    // B on workspace 1.
+    assert!(shell.execute_action(&ShellAction::SwitchToWorkspace(1)));
+    let b = open(&mut shell, "B");
+
+    // Back to workspace 0 (B's workspace is now inactive) and close B from here.
+    assert!(shell.execute_action(&ShellAction::SwitchToWorkspace(0)));
+    shell.close_window(b).expect("closing B succeeds");
+
+    // B must no longer be a member of any workspace — in particular it must not
+    // dangle on workspace 1.
+    assert_eq!(
+        shell.workspace_manager().find_window(b),
+        None,
+        "closed window must be removed from its owning (inactive) workspace, not left dangling"
+    );
+
+    // Switching back to workspace 1 must not resurrect B as visible.
+    assert!(shell.execute_action(&ShellAction::SwitchToWorkspace(1)));
+    assert!(
+        !shell.visible_windows().iter().any(|w| w.id == b),
+        "a window closed while its workspace was inactive must not reappear on switch"
+    );
+
+    // A is unaffected and still owned by workspace 0.
+    assert_eq!(
+        shell.workspace_manager().find_window(a),
+        Some(crate::workspace::WorkspaceId(0)),
+    );
+}
+
 #[test]
 fn lock_session_action_drives_canonical_lockscreen() {
     let mut shell = Shell::new(1920.0, 1080.0);
