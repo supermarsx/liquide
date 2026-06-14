@@ -1,20 +1,14 @@
 <!-- LiquiDE Session Menu Template
-     Power/session actions dropdown.
-     Instantiated by DesktopDocument::show_session_menu().
-     Appended as child of root.
+     Power/session actions dropdown (Lock / Log Out / Restart / Shut Down).
+     Instantiated by DesktopDocument::show_session_menu(), appended as child of
+     root. Position set via inline style by the shell.
 
-     Each menu-item has data-action for event dispatch and
-     optional data-icon for icon rendering.
-     Typical actions: lock, logout, restart, shutdown, suspend.
+     Uses the single-level {{#each items}}{{> menu-item}}{{/each}} form,
+     byte-compatible with the embedded DEFAULT_SESSION_MENU (t57-f1: the FLAT
+     liquide-dom engine cannot reliably express deeper nesting). The shell
+     supplies each item's `action`, `icon`, and `label`.
 -->
 
 <session-menu id="{{id}}" style="left: {{pos_left}}; top: {{pos_top}}">
-  {{#each items}}
-  <menu-item data-action="{{action}}" data-index="{{index}}" {{#if icon}}data-icon="{{icon}}"{{/if}}>
-    {{#if icon}}
-    <menu-item-icon data-icon="{{icon}}" />
-    {{/if}}
-    <menu-item-label>{{label}}</menu-item-label>
-  </menu-item>
-  {{/each}}
+  {{#each items}}{{> menu-item}}{{/each}}
 </session-menu>

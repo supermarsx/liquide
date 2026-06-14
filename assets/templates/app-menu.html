@@ -1,27 +1,17 @@
 <!-- LiquiDE App Menu Template
-     Window-level application actions menu.
-     Instantiated by DesktopDocument::show_app_menu().
-     Appended as child of root.
+     Window-level application actions menu. Instantiated by
+     DesktopDocument::show_app_menu(), appended as child of root.
 
-     Each menu-item has data-action for event dispatch.
-     Optional data-icon for icon rendering and keyboard shortcut display.
-     Separators via <menu-separator>.
+     IMPORTANT — template-engine contract (t57-f1):
+     The liquide-dom engine is FLAT and cannot express the deeply nested
+     {{#each}} -> {{#if is_separator}}{{else}}<menu-item>{{#if icon}}/{{#if shortcut}}
+     blocks this file used to carry (the engine mis-parsed them, garbling the
+     menu on the real binary). It now uses the single-level
+     {{#each items}}{{> menu-item}}{{/each}} form, byte-compatible with the
+     embedded DEFAULT_APP_MENU. Per-item markup is the `menu-item` partial; the
+     shell supplies each item's `action`, `icon`, and `label`.
 -->
 
-<app-menu id="app-menu" role="menu" data-window-id="{{window_id}}" style="left: {{pos_left}}; top: {{pos_top}}">
-  {{#each items}}
-  {{#if is_separator}}
-  <menu-separator />
-  {{else}}
-  <menu-item role="menuitem" tabindex="{{tab_index}}" aria-selected="{{aria_selected}}" data-action="{{action}}" data-index="{{index}}" {{#if icon}}data-icon="{{icon}}"{{/if}} {{#if selected_class}}class="{{selected_class}}"{{/if}}>
-    {{#if icon}}
-    <menu-item-icon data-icon="{{icon}}" />
-    {{/if}}
-    <menu-item-label>{{label}}</menu-item-label>
-    {{#if shortcut}}
-    <menu-item-shortcut>{{shortcut}}</menu-item-shortcut>
-    {{/if}}
-  </menu-item>
-  {{/if}}
-  {{/each}}
+<app-menu id="{{id}}" data-window-id="{{window_id}}" style="left: {{pos_left}}; top: {{pos_top}}">
+  {{#each items}}{{> menu-item}}{{/each}}
 </app-menu>

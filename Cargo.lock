@@ -3842,8 +3842,10 @@ dependencies = [
  "image",
  "liquide-compositor",
  "liquide-input",
+ "liquide-interop",
  "liquide-platform",
  "liquide-session",
+ "liquide-shell",
  "tracing",
 ]
 

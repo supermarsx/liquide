@@ -879,6 +879,7 @@ impl Shell {
     /// previously-active workspace) and show the windows of the newly-active
     /// one, via a single batched `workspace_switch`.
     fn commit_workspace_switch(&mut self, prev_members: Vec<WindowId>) {
+        self.mark_wired(crate::shell::WiringBit::Workspace);
         let show: Vec<WindowId> = self.workspaces.active().windows.clone();
         let mut batch = WindowBatch::with_capacity(prev_members.len() + show.len());
         batch.workspace_switch(&prev_members, &show);

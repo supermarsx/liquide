@@ -428,6 +428,92 @@ where
     Ok(Frame::from_captured(&captured))
 }
 
+/// Deterministic scripted capture with a direct shell mutation.
+///
+/// Like [`capture_desktop_scripted_sync`] (single-threaded `capture_once`
+/// path), but in addition to the scripted [`PlatformEvent`] sequence it runs a
+/// caller-supplied closure against the live `liquide_shell::Shell` *after* the
+/// events are dispatched and *before* the captured frame is rendered.
+///
+/// This is the seam for chrome surfaces that have **no** hotkey or pointer
+/// trigger reachable from a `PlatformEvent` (e.g. injecting a notification toast,
+/// opening the notification center panel, requesting a dialog). The closure
+/// drives the shell directly through its public API (`post_notification`,
+/// `toggle_notification_center`, `request_message_dialog`, …) so the resulting
+/// chrome state is reflected in the read-back frame. Determinism is identical to
+/// [`capture_desktop_scripted_sync`].
+///
+/// The window handle the `script` targets is [`NativeWindowHandle`]`(1)`.
+pub fn capture_desktop_scripted_with<S, M>(
+    opts: &CaptureOptions,
+    script: S,
+    mutate: M,
+) -> Result<Frame, VisualTestError>
+where
+    S: FnOnce(NativeWindowHandle) -> Vec<PlatformEvent>,
+    M: FnOnce(&mut liquide_shell::Shell),
+{
+    let _guard = capture_lock().lock().unwrap_or_else(|p| p.into_inner());
+    let (mut desktop, mut platform) = build(opts)?;
+
+    let events = script(NativeWindowHandle(1));
+    let captured = desktop
+        .capture_once_scripted_with(&mut platform, events, mutate)
+        .ok_or(VisualTestError::NoFrame)?;
+    Ok(Frame::from_captured(&captured))
+}
+
+/// Deterministic scripted capture that returns BOTH the post-state pixel frame
+/// AND a caller-extracted value read off the live shell (t57-e5 / A4).
+///
+/// This is the state-AND-pixel seam for the interaction/e2e harness: a single
+/// capture drives a scripted [`PlatformEvent`] sequence (which the desktop
+/// dispatches through the real `handle_event` -> `handle_platform_event` ->
+/// `execute_action` path, so returned shell actions actually run), then runs a
+/// `readback` closure against the live `liquide_shell::Shell` *after* the events
+/// are processed and *before* the captured frame is rendered. The closure
+/// returns an arbitrary `T` (e.g. a window count, a window's bounds, a maximize
+/// flag, the notification-center-open bit) which is handed back alongside the
+/// [`Frame`].
+///
+/// The `readback` closure may also drive additional shell state if a sequence
+/// needs a setup step that has no `PlatformEvent` trigger (e.g. opening a window
+/// to drag before the drag events run is NOT possible here — for that, drive the
+/// setup in a preceding capture and re-derive geometry; see the interaction
+/// tests). For the common case it is a pure read.
+///
+/// Determinism is identical to [`capture_desktop_scripted_with`]: single
+/// threaded, time `t0`, capture-lock serialised. The window handle the `script`
+/// targets is [`NativeWindowHandle`]`(1)`.
+pub fn capture_desktop_scripted_readback<S, R, T>(
+    opts: &CaptureOptions,
+    script: S,
+    readback: R,
+) -> Result<(Frame, T), VisualTestError>
+where
+    S: FnOnce(NativeWindowHandle) -> Vec<PlatformEvent>,
+    R: FnOnce(&mut liquide_shell::Shell) -> T,
+{
+    let _guard = capture_lock().lock().unwrap_or_else(|p| p.into_inner());
+    let (mut desktop, mut platform) = build(opts)?;
+
+    // Capture the readback value out of the FnOnce via an Option cell so the
+    // returned T need not be Default/Clone.
+    let mut readback_slot: Option<T> = None;
+    let mut readback = Some(readback);
+    let events = script(NativeWindowHandle(1));
+    let captured = desktop
+        .capture_once_scripted_with(&mut platform, events, |shell| {
+            if let Some(rb) = readback.take() {
+                readback_slot = Some(rb(shell));
+            }
+        })
+        .ok_or(VisualTestError::NoFrame)?;
+
+    let value = readback_slot.expect("readback closure must have run during capture");
+    Ok((Frame::from_captured(&captured), value))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

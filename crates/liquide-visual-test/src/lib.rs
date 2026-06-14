@@ -44,5 +44,16 @@ pub mod scenarios;
 
 pub use capture::{
     CaptureOptions, Frame, VisualTestError, capture_desktop, capture_desktop_scripted,
-    capture_desktop_scripted_sync,
+    capture_desktop_scripted_readback, capture_desktop_scripted_sync, capture_desktop_scripted_with,
+};
+
+// t57-e1 (A0): typed scripted-scenario builder, per-surface scenario builders,
+// and named crop regions — the foundation all Thrust-A test slices (e2-e7) call.
+pub use scenarios::{
+    Region, ScriptedScenario, capture_scripted, context_menu_capture, crop_region, dialog_open,
+    dock_capture, launcher_open, lockscreen, notification_center_open, notification_shown, overview,
+    region_dock_band, region_launcher, region_notification_area, region_status_bar,
+    region_status_bar_center, region_status_bar_right, region_wallpaper, scenario_options,
+    status_bar_capture, themed_desktop_capture, tooltip_shown, wallpaper_capture, window_decorations,
+    workspace_switch,
 };

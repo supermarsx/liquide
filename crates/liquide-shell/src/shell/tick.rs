@@ -404,6 +404,25 @@ impl Shell {
                 let _events = self.lock_session();
                 true
             }
+            ShellAction::LogOut => {
+                // Record the request only — the shell never terminates the
+                // session itself (t57-f9). The host launcher/compositor reads
+                // `pending_session_request` and performs the real teardown. The
+                // session menu is closed so the gesture has a visible effect.
+                self.pending_session_request = Some(crate::shell::SessionRequest::LogOut);
+                self.session_menu_visible = false;
+                true
+            }
+            ShellAction::Restart => {
+                self.pending_session_request = Some(crate::shell::SessionRequest::Restart);
+                self.session_menu_visible = false;
+                true
+            }
+            ShellAction::Shutdown => {
+                self.pending_session_request = Some(crate::shell::SessionRequest::Shutdown);
+                self.session_menu_visible = false;
+                true
+            }
             ShellAction::Redraw => {
                 // No-op — just triggers a redraw.
                 true
@@ -416,6 +435,27 @@ impl Shell {
                         self.open_app_window(&aid);
                     }
                 }
+                true
+            }
+            ShellAction::OpenNotificationCenter => {
+                // Toggle the notification center panel (t57-f4). This action is
+                // returned from the status-bar notification-indicator click
+                // (events.rs:1019/1026) and the keyboard shortcut, but used to
+                // fall through to `_ => false` so neither user gesture toggled
+                // the panel — only the test-only `toggle_notification_center`
+                // public helper did. Wiring the arm makes the user action live.
+                self.toggle_notification_center();
+                true
+            }
+            ShellAction::TaskOverview | ShellAction::WorkspaceOverview => {
+                // Toggle the overview overlay (t57-f-overview). Both the task
+                // overview (Super+Tab) and workspace overview shortcuts used to
+                // fall through to `_ => false`, so the overview never appeared.
+                // The arm flips the shell's `overview_visible` state; the scene
+                // builder emits the overview overlay (tiles of visible windows)
+                // when it is set.
+                self.overview_visible = !self.overview_visible;
+                self.mark_window_scene_dirty();
                 true
             }
             _ => false,

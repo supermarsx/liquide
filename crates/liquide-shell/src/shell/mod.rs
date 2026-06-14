@@ -13,6 +13,7 @@ mod theme;
 mod tick;
 mod windows;
 
+pub use accessors::{WiringBit, WiringReport};
 pub use batch::*;
 pub use hooks::*;
 pub use tick::ShellTickResult;
@@ -26,6 +27,14 @@ const MENU_ITEM_HEIGHT: f32 = 28.0;
 const MENU_PADDING: f32 = 4.0;
 /// Rendered width of the context menu.
 const CONTEXT_MENU_WIDTH: f32 = 200.0;
+/// Maximum interval between two title-bar presses to count as a double-click
+/// (t57-fG feature 1). 500 ms is a conventional desktop double-click window;
+/// scripted/headless tests dispatch the two presses synchronously (well under
+/// this), while live double-clicks fall comfortably inside it.
+const DOUBLE_CLICK_MS: u128 = 500;
+/// Maximum distance (px) between two title-bar presses to count as a
+/// double-click — a larger move is treated as two separate clicks/drags.
+const DOUBLE_CLICK_DIST_PX: f32 = 6.0;
 
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::scene::{CursorShape, ResizeDirection};
@@ -120,9 +129,9 @@ impl SessionMenuItem {
     pub fn defaults() -> Vec<Self> {
         vec![
             Self::new("Lock", "power", ShellAction::LockSession),
-            Self::new("Log Out", "power", ShellAction::ShowDesktop),
-            Self::new("Restart", "power", ShellAction::ShowDesktop),
-            Self::new("Shut Down", "power", ShellAction::ShowDesktop),
+            Self::new("Log Out", "power", ShellAction::LogOut),
+            Self::new("Restart", "power", ShellAction::Restart),
+            Self::new("Shut Down", "power", ShellAction::Shutdown),
         ]
     }
 }
@@ -196,6 +205,40 @@ pub enum DragState {
     },
 }
 
+/// Renderable content for the active canonical dialog (t57-f9).
+///
+/// The canonical `liquide-dialogs` value (a `MessageBox` / `InputDialog`) is
+/// consumed when the dialog is requested — only its `DialogId` is retained in
+/// `chrome_active_dialog`. This lightweight projection keeps just what the
+/// scene builder needs to paint the dialog surface (title, message, button
+/// count) so the dialog actually appears instead of being state-only.
+#[derive(Debug, Clone)]
+pub struct DialogContent {
+    /// Dialog title shown in the header band.
+    pub title: String,
+    /// Dialog body message.
+    pub message: String,
+    /// Number of buttons in the button bar (drives the painted button count).
+    pub button_count: usize,
+}
+
+/// A session-lifecycle request recorded by the shell (t57-f9).
+///
+/// The shell NEVER terminates the process itself — the session menu's Log Out /
+/// Restart / Shut Down items record the request here so the host launcher /
+/// compositor can carry out the real teardown (or, in tests, observe that the
+/// action fired). This keeps the destructive action out of the shell while
+/// still wiring the menu items to real, observable behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionRequest {
+    /// End the current session (log out).
+    LogOut,
+    /// Restart the machine.
+    Restart,
+    /// Shut the machine down.
+    Shutdown,
+}
+
 /// The top-level shell managing all windows and workspaces.
 pub struct Shell {
     pub(crate) windows: HashMap<WindowId, Window>,
@@ -231,6 +274,15 @@ pub struct Shell {
     pub(crate) cursor_shape: CursorShape,
     pub(crate) status_bar_visible: bool,
     pub(crate) notification_panel_visible: bool,
+    /// Whether the task/workspace overview overlay is currently shown
+    /// (toggled by the `TaskOverview` / `WorkspaceOverview` actions; the scene
+    /// builder emits a tiled overview overlay of the visible windows when set).
+    pub(crate) overview_visible: bool,
+    /// Pending session-lifecycle request (Log Out / Restart / Shut Down)
+    /// recorded by the session menu (t57-f9). The shell never terminates the
+    /// process itself; the host launcher/compositor consumes this. `None` until
+    /// a session item is activated.
+    pub(crate) pending_session_request: Option<SessionRequest>,
     /// Last known cursor Y position for status-bar auto-reveal on top-edge hover.
     pub(crate) last_cursor_y: f32,
     pub(crate) app_menu_open: Option<String>,
@@ -265,6 +317,29 @@ pub struct Shell {
     pub(crate) cursor_blink_time_us: u64,
     /// Frame delta fed into the CSS pipeline for time-based updates.
     pub(crate) frame_delta_ms: f32,
+    /// Last title-bar press used to detect a double-click (t57-fG feature 1).
+    ///
+    /// Records `(window, press position, press instant)` on the FIRST title-bar
+    /// press. A subsequent title-bar press on the SAME window within
+    /// [`DOUBLE_CLICK_MS`] and [`DOUBLE_CLICK_DIST_PX`] is treated as a
+    /// double-click and toggles maximize/restore instead of starting a drag.
+    /// Cleared after a double-click fires (so a 3rd click starts fresh).
+    pub(crate) last_titlebar_click: Option<(WindowId, Point, std::time::Instant)>,
+    /// Per-window typed-text buffer — the shell side of the shell↔app
+    /// text-input seam (t57-fG feature 2).
+    ///
+    /// When a key with a printable character arrives and no shell overlay
+    /// (launcher / context / session / app menu) is capturing it, the shell
+    /// routes the character into the FOCUSED window's buffer here, proving that
+    /// keyboard text reaches the focused app/window. The scene builder paints
+    /// this buffer in the focused window's body so typed glyphs appear, and
+    /// [`Shell::focused_app_text`] exposes it read-only for tests/hosts.
+    ///
+    /// NOTE: the shell does not embed the app crates' own models (text-editor,
+    /// terminal, …); delivering this buffer INTO an app crate's model (so e.g.
+    /// the text-editor's own `handle_char` consumes it) is a cross-crate seam
+    /// that is ESCALATED — see `.orchestration/logs/t57-fG.md`.
+    pub(crate) focused_app_text: HashMap<WindowId, String>,
     // ── Canonical chrome-crate managers (t51 mandate 2, Wave C0) ────────
     // Dormant injection points wired to nothing yet; later C1/C2/C3
     // executors construct/drive these and retire the shell duplicates.
@@ -295,6 +370,12 @@ pub struct Shell {
     /// Active canonical dialog (`liquide-dialogs`) — file/color/font/input/
     /// message-box. Driven by t51-e14.
     pub(crate) chrome_active_dialog: Option<liquide_dialogs::DialogId>,
+    /// Renderable content for the active dialog (title / message / button
+    /// count), retained so the scene builder can paint the dialog surface
+    /// (t57-f9). `None` when no dialog is open. Kept separate from
+    /// `chrome_active_dialog` (which is just the canonical id) because the
+    /// canonical `MessageBox`/`InputDialog` value is consumed at request time.
+    pub(crate) chrome_dialog_content: Option<DialogContent>,
     /// Canonical tooltip manager (`liquide-tooltip`) — replaces the inline
     /// `tooltip_*` fields above. Driven by t51-e9.
     pub(crate) chrome_tooltip: Option<liquide_tooltip::TooltipManager>,
@@ -305,6 +386,12 @@ pub struct Shell {
     /// (`liquide-shell-services`) — ShellExecute-style verb/app resolution.
     /// Driven by t51-e10.
     pub(crate) chrome_shell_services: Option<liquide_shell_services::ShellAssociationRegistry>,
+    /// Read-only runtime wiring-audit bitset (t57-e7 / A6). Each canonical
+    /// manager / chrome adapter sets its [`WiringBit`] the first time it runs
+    /// its LIVE drive path this session. Never feeds back into behavior — it is
+    /// a pure audit channel consumed by `wiring_report()` / the wiring_audit
+    /// test, so removing a live consumer flips its bit off and fails CI.
+    pub(crate) wiring_touched: u32,
 }
 
 impl Shell {
@@ -387,6 +474,8 @@ impl Shell {
             cursor_shape: CursorShape::Arrow,
             status_bar_visible: true,
             notification_panel_visible: false,
+            overview_visible: false,
+            pending_session_request: None,
             last_cursor_y: 0.0,
             app_menu_open: None,
             #[cfg(windows)]
@@ -407,6 +496,8 @@ impl Shell {
             cursor_blink_on: true,
             cursor_blink_time_us: 0,
             frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
+            last_titlebar_click: None,
+            focused_app_text: HashMap::new(),
             // Canonical chrome managers: dormant (None) until wired in C1+.
             // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
             chrome_tiling: None,
@@ -416,9 +507,11 @@ impl Shell {
             chrome_window_effects: None,
             chrome_lockscreen: None,
             chrome_active_dialog: None,
+            chrome_dialog_content: None,
             chrome_tooltip: None,
             chrome_notification_server: None,
             chrome_shell_services: None,
+            wiring_touched: 0,
         }
     }
 
@@ -507,6 +600,8 @@ impl Shell {
             cursor_shape: CursorShape::Arrow,
             status_bar_visible: true,
             notification_panel_visible: false,
+            overview_visible: false,
+            pending_session_request: None,
             last_cursor_y: 0.0,
             app_menu_open: None,
             #[cfg(windows)]
@@ -527,6 +622,8 @@ impl Shell {
             cursor_blink_on: true,
             cursor_blink_time_us: 0,
             frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
+            last_titlebar_click: None,
+            focused_app_text: HashMap::new(),
             // Canonical chrome managers: dormant (None) until wired in C1+.
             // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
             chrome_tiling: None,
@@ -536,9 +633,11 @@ impl Shell {
             chrome_window_effects: None,
             chrome_lockscreen: None,
             chrome_active_dialog: None,
+            chrome_dialog_content: None,
             chrome_tooltip: None,
             chrome_notification_server: None,
             chrome_shell_services: None,
+            wiring_touched: 0,
         }
     }
 
@@ -556,6 +655,24 @@ impl Shell {
         registry.register("dock", SHELL_DOCK_TEMPLATE);
         registry.register("statusbar", SHELL_STATUSBAR_TEMPLATE);
         // Try loading from assets/templates on disk (overrides embedded defaults).
+        //
+        // NOTE (t57-f1): the search path is intentionally the CWD-relative
+        // `assets/templates` (historical behaviour) and does NOT honour
+        // `LIQUIDE_ASSETS_DIR`. Honouring it was tried and reverted: the
+        // `liquide-dom` template engine is a FLAT renderer (first-match
+        // `{{/if}}`/`{{/each}}`) and several on-disk templates (context-menu,
+        // notifications, app-menu, session-menu) still use DEEPLY NESTED
+        // `{{#if}}`/`{{#each}}` blocks the engine mis-parses — so eagerly
+        // loading the full on-disk template set (via an `LIQUIDE_ASSETS_DIR`
+        // search path during tests) produced garbled menus/notifications.
+        //
+        // The real status-bar bug (recon §3 / e2 / e6) is instead fixed by
+        // making the on-disk `statusbar.html` byte-compatible with the embedded
+        // `SHELL_STATUSBAR_TEMPLATE` (the flat `{{*_items_html}}` contract), so
+        // whichever template wins for the real binary (which loads on-disk
+        // templates from the repo-root CWD) the status bar now renders the
+        // clock/tray/session cluster correctly. The dock + statusbar embedded
+        // overrides above remain authoritative when no disk override is found.
         registry.add_search_path("assets/templates");
         registry.load_from_disk();
         registry

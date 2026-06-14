@@ -993,6 +993,7 @@ impl Shell {
     /// `chrome_notification_server` field (t51-e7), registering the shell's
     /// passthrough handler so the daemon's queue/active/history pipeline runs.
     fn notification_server(&mut self) -> &mut NotificationServer {
+        self.mark_wired(crate::shell::WiringBit::NotificationServer);
         if self.chrome_notification_server.is_none() {
             let mut server = NotificationServer::new();
             server.register_handler(Box::new(ShellNotificationHandler));
@@ -1162,6 +1163,14 @@ impl Shell {
             ShellDialogKind::Confirm => MessageBox::confirm(title, message),
         };
         let id = dialog.id();
+        // Retain a renderable projection so the scene builder paints the dialog
+        // surface (t57-f9). Without this the dialog was state-only and never
+        // appeared on screen.
+        self.chrome_dialog_content = Some(crate::shell::DialogContent {
+            title: dialog.title.clone(),
+            message: dialog.message.clone(),
+            button_count: dialog.buttons.len().max(1),
+        });
         self.chrome_active_dialog = Some(id);
         id
     }
@@ -1175,6 +1184,11 @@ impl Shell {
         let id = liquide_dialogs::DialogId(self.next_dialog_id());
         let dialog = InputDialog::new(id, title, label);
         let id = dialog.id();
+        self.chrome_dialog_content = Some(crate::shell::DialogContent {
+            title: title.to_string(),
+            message: label.to_string(),
+            button_count: 2, // OK / Cancel
+        });
         self.chrome_active_dialog = Some(id);
         id
     }
@@ -1194,6 +1208,7 @@ impl Shell {
     /// Dismiss the currently-open canonical dialog, if any.
     pub fn dismiss_active_dialog(&mut self) {
         self.chrome_active_dialog = None;
+        self.chrome_dialog_content = None;
     }
 
     /// Monotonic id source for shell-constructed input/picker dialogs that take

@@ -1,28 +1,18 @@
 <!-- LiquiDE Context Menu Template
-     Right-click popup menu.
-     Instantiated by DesktopDocument::add_context_menu().
-     Appended as child of root.
+     Right-click popup menu. Instantiated by DesktopDocument::add_context_menu(),
+     appended as child of root. Position set via inline style by the shell.
 
-     Position is set via inline style (left, top) by the shell.
-     Items have data-index for event dispatch.
-     Separators are <menu-separator> elements.
-     Disabled items have class="disabled" and :disabled pseudo-state.
+     IMPORTANT — template-engine contract (t57-f1):
+     The liquide-dom template engine is FLAT (first-match {{/if}}/{{/each}}) and
+     cannot express DEEPLY NESTED blocks. This file used to nest
+     {{#each items}} -> {{#if is_separator}}{{else}}<menu-item>{{#if icon}}...
+     which the engine mis-parsed, producing garbled menus on the real binary.
+     It now uses the single-level {{#each items}}{{> menu-item}}{{/each}} form,
+     byte-compatible with the embedded DEFAULT_CONTEXT_MENU, so disk and embedded
+     render identically. Per-item markup lives in the `menu-item` partial; the
+     shell supplies each item's `action`, `icon`, and `label`.
 -->
 
 <context-menu id="{{id}}" style="left: {{pos_left}}; top: {{pos_top}}">
-  {{#each items}}
-  {{#if is_separator}}
-  <menu-separator />
-  {{else}}
-  <menu-item data-index="{{index}}" {{#if disabled}}class="disabled"{{/if}}>
-    {{#if icon}}
-    <menu-item-icon data-icon="{{icon}}" />
-    {{/if}}
-    <menu-item-label>{{label}}</menu-item-label>
-    {{#if shortcut}}
-    <menu-item-shortcut>{{shortcut}}</menu-item-shortcut>
-    {{/if}}
-  </menu-item>
-  {{/if}}
-  {{/each}}
+  {{#each items}}{{> menu-item}}{{/each}}
 </context-menu>

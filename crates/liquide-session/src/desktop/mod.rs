@@ -428,11 +428,43 @@ impl DesktopCompositor {
         None
     }
 
+    /// Load a packaged base-layer stylesheet (`themes/{file_name}`) into the
+    /// shell's style pipeline via `add_stylesheet`.
+    ///
+    /// Base layers (design-token variables + shared component defaults) must be
+    /// loaded BEFORE the active per-theme file so theme rules can override them
+    /// via normal source-order cascade. Resolves through the t56 asset resolver
+    /// (`resolve_asset_root`), and emits a loud `warn!` if the file is expected
+    /// but missing (consistent with t56's loud-failure pattern), since a missing
+    /// base layer leaves shared components — e.g. tooltips/popovers — unstyled.
+    fn load_base_layer_css(shell: &mut Shell, themes_dir: &std::path::Path, file_name: &str) {
+        let candidate = themes_dir.join(file_name);
+        match std::fs::read_to_string(&candidate) {
+            Ok(css) => {
+                info!("loaded base-layer CSS from {:?}", candidate);
+                shell.add_stylesheet(&css);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    ?candidate,
+                    error = %err,
+                    "base-layer CSS not loaded; shared component styling \
+                     (tooltips, popovers, etc.) may render unstyled"
+                );
+            }
+        }
+    }
+
     /// Try loading external CSS theme files and user overrides.
     ///
-    /// Search order:
-    /// 1. `<asset-root>/themes/{theme_name}.css` — packaged themes
-    /// 2. `~/.config/liquide/custom.css` — user overrides
+    /// Load order (later stylesheets cascade over earlier ones at equal
+    /// specificity):
+    /// 1. `<asset-root>/themes/variables.css` — design-token `:root` defaults
+    /// 2. `<asset-root>/themes/components.css` — shared component defaults
+    ///    (tooltip/popover/etc.), which consume the tokens above
+    /// 3. `<asset-root>/themes/{theme_name}.css` — the active packaged theme
+    ///    (overrides the base layers)
+    /// 4. `~/.config/liquide/custom.css` — user overrides (highest priority)
     ///
     /// Any CSS found is appended to the shell's stylesheet pipeline.
     fn load_external_css(shell: &mut Shell) {
@@ -451,6 +483,17 @@ impl DesktopCompositor {
             }
         };
         let themes_dir = Self::resolve_asset_root().join("themes");
+
+        // BASE LAYERS first (before the active theme) so theme rules win on
+        // equal-specificity selectors. variables.css defines the `:root` design
+        // tokens that components.css references via `var(--…)`, so it must load
+        // before components.css. components.css carries the shared component
+        // styling (notably `tooltip { position: fixed; z-index: … }` plus
+        // popover/dialog/search-bar/etc.) that no per-theme file defines — if it
+        // is not loaded those components fall into normal flow at (0,0) (t57-f6b).
+        Self::load_base_layer_css(shell, &themes_dir, "variables.css");
+        Self::load_base_layer_css(shell, &themes_dir, "components.css");
+
         match Self::resolve_theme_file(&themes_dir, &theme_name) {
             Some(candidate) => match std::fs::read_to_string(&candidate) {
                 Ok(css) => {

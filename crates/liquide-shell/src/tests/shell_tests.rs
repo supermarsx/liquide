@@ -477,3 +477,221 @@ fn shell_sync_dom_renders_live_tray_items() {
         Some("true")
     );
 }
+
+// ── t57-fG feature 1: double-click titlebar -> maximize ──────────────
+
+mod fg_double_click {
+    use super::*;
+    use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
+    use liquide_platform::event_loop::PlatformEvent;
+    use liquide_platform::window_host::NativeWindowHandle;
+
+    fn press(x: f32, y: f32) -> PlatformEvent {
+        PlatformEvent::MouseInput {
+            handle: NativeWindowHandle(0),
+            event: MouseEvent::Button {
+                button: MouseButton::Left,
+                state: ButtonState::Pressed,
+                x,
+                y,
+            },
+        }
+    }
+
+    fn release(x: f32, y: f32) -> PlatformEvent {
+        PlatformEvent::MouseInput {
+            handle: NativeWindowHandle(0),
+            event: MouseEvent::Button {
+                button: MouseButton::Left,
+                state: ButtonState::Released,
+                x,
+                y,
+            },
+        }
+    }
+
+    /// Two quick title-bar clicks maximize the window (not a zero-length drag).
+    #[test]
+    fn double_click_titlebar_maximizes() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        let id = shell.open_window("W", Rect::new(200.0, 200.0, 400.0, 300.0));
+        let _ = shell.set_focus(id);
+        assert_eq!(shell.window(id).unwrap().state, WindowState::Normal);
+
+        // Title-bar y just inside the top edge.
+        let (tx, ty) = (260.0, 206.0);
+        shell.handle_platform_event(&press(tx, ty));
+        shell.handle_platform_event(&release(tx, ty));
+        shell.handle_platform_event(&press(tx, ty));
+        shell.handle_platform_event(&release(tx, ty));
+
+        assert_eq!(
+            shell.window(id).unwrap().state,
+            WindowState::Maximized,
+            "double-click on the title bar should maximize"
+        );
+    }
+
+    /// A second double-click restores the window (toggle behavior).
+    #[test]
+    fn second_double_click_restores() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        let id = shell.open_window("W", Rect::new(200.0, 200.0, 400.0, 300.0));
+        let _ = shell.set_focus(id);
+        let (tx, ty) = (260.0, 206.0);
+
+        for _ in 0..2 {
+            shell.handle_platform_event(&press(tx, ty));
+            shell.handle_platform_event(&release(tx, ty));
+        }
+        assert_eq!(shell.window(id).unwrap().state, WindowState::Maximized);
+
+        // The window is now maximized to the work area; its title bar moved to
+        // the top of the work area, so double-click there to restore.
+        let mb = shell.window(id).unwrap().bounds;
+        let (mx, my) = (mb.x + mb.width / 2.0, mb.y + 6.0);
+        for _ in 0..2 {
+            shell.handle_platform_event(&press(mx, my));
+            shell.handle_platform_event(&release(mx, my));
+        }
+        assert_eq!(
+            shell.window(id).unwrap().state,
+            WindowState::Normal,
+            "a second double-click should restore the window"
+        );
+    }
+
+    /// A single title-bar press still starts a move drag (no regression).
+    #[test]
+    fn single_titlebar_press_starts_drag() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        let id = shell.open_window("W", Rect::new(200.0, 200.0, 400.0, 300.0));
+        let _ = shell.set_focus(id);
+        shell.handle_platform_event(&press(260.0, 206.0));
+        assert!(shell.is_dragging(), "a single title-bar press should drag");
+        assert_eq!(shell.window(id).unwrap().state, WindowState::Normal);
+    }
+}
+
+// ── t57-fG feature 2: keyboard text -> focused window buffer ──────────
+
+mod fg_text_input {
+    use super::*;
+    use liquide_input::keyboard::{KeyCode, KeyEvent, KeyState, Modifiers};
+    use liquide_platform::event_loop::PlatformEvent;
+    use liquide_platform::window_host::NativeWindowHandle;
+
+    fn type_key(key: KeyCode, modifiers: Modifiers) -> PlatformEvent {
+        PlatformEvent::KeyInput {
+            handle: NativeWindowHandle(0),
+            event: KeyEvent {
+                key,
+                state: KeyState::Pressed,
+                modifiers,
+                scancode: 0,
+                timestamp_us: 0,
+            },
+        }
+    }
+
+    /// Plain printable keys are routed into the focused window's text buffer and
+    /// surfaced through the read-only accessor.
+    #[test]
+    fn typed_text_reaches_focused_window_buffer() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        let id = shell.open_window("W", Rect::new(200.0, 200.0, 400.0, 300.0));
+        let _ = shell.set_focus(id);
+        assert_eq!(shell.focused_app_text(), None);
+
+        for key in [KeyCode::H, KeyCode::I] {
+            shell.handle_platform_event(&type_key(key, Modifiers::new()));
+        }
+
+        assert_eq!(shell.focused_app_text(), Some("hi"));
+        assert_eq!(shell.window_text_input(id), Some("hi"));
+    }
+
+    /// Command-modified keys (ctrl/alt/super) are NOT swallowed as text — they
+    /// fall through to the shortcut table.
+    #[test]
+    fn ctrl_keys_do_not_enter_text_buffer() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        let id = shell.open_window("W", Rect::new(200.0, 200.0, 400.0, 300.0));
+        let _ = shell.set_focus(id);
+
+        shell.handle_platform_event(&type_key(
+            KeyCode::C,
+            Modifiers::from_bits(Modifiers::CTRL),
+        ));
+
+        assert_eq!(
+            shell.window_text_input(id),
+            None,
+            "ctrl-modified keys must not be captured as text"
+        );
+    }
+
+    /// With nothing focused, typed text is not captured (no window buffer).
+    #[test]
+    fn no_focus_no_capture() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        shell.handle_platform_event(&type_key(KeyCode::A, Modifiers::new()));
+        assert_eq!(shell.focused_app_text(), None);
+    }
+
+    /// Closing a window drops its typed-text buffer.
+    #[test]
+    fn closing_window_clears_buffer() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        let id = shell.open_window("W", Rect::new(200.0, 200.0, 400.0, 300.0));
+        let _ = shell.set_focus(id);
+        shell.handle_platform_event(&type_key(KeyCode::X, Modifiers::new()));
+        assert_eq!(shell.window_text_input(id), Some("x"));
+        let _ = shell.close_window(id);
+        assert_eq!(shell.window_text_input(id), None);
+    }
+
+    fn find_text_node(
+        node: &liquide_compositor::scene::SceneNode,
+        needle: &str,
+    ) -> Option<liquide_compositor::geometry::Rect> {
+        if let liquide_compositor::scene::SceneNodeKind::Text { text, .. } = &node.kind {
+            if text == needle {
+                return Some(node.properties.bounds);
+            }
+        }
+        node.children.iter().find_map(|c| find_text_node(c, needle))
+    }
+
+    /// The typed text PAINTS as a Text node inside the focused window's body,
+    /// in the same region the e5 `keyboard_into_text_field_reaches_app_and_paints`
+    /// scenario crops (a Files window opened over the desktop centre). This is
+    /// the pixel half of feature 2's acceptance.
+    #[test]
+    fn typed_text_paints_in_focused_files_window_field() {
+        let mut shell = Shell::new(1280.0, 720.0);
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        // Mirror the e5 scenario: open the Files app (first dock item) window.
+        let id = shell.open_app_window("com.liquide.files");
+        let _ = shell.set_focus(id);
+        for key in [KeyCode::H, KeyCode::E, KeyCode::L, KeyCode::L, KeyCode::O] {
+            shell.handle_platform_event(&type_key(key, Modifiers::new()));
+        }
+        assert_eq!(shell.window_text_input(id), Some("hello"));
+
+        let scene = shell.build_scene();
+        let bounds = find_text_node(&scene, "hello")
+            .expect("typed text should paint as a Text node in the window body");
+
+        // The e5 field crop is (540, 360, 200, 40). The painted text must
+        // horizontally and vertically overlap that crop so glyphs land in it.
+        let crop = liquide_compositor::geometry::Rect::new(540.0, 360.0, 200.0, 40.0);
+        let overlaps_x = bounds.x < crop.x + crop.width && bounds.x + bounds.width > crop.x;
+        let overlaps_y = bounds.y < crop.y + crop.height && bounds.y + bounds.height > crop.y;
+        assert!(
+            overlaps_x && overlaps_y,
+            "typed text node {bounds:?} does not overlap the e5 field crop {crop:?}"
+        );
+    }
+}

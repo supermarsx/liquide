@@ -490,6 +490,39 @@ impl DesktopCompositor {
         platform: &mut dyn liquide_platform::PlatformBackend,
         scripted_events: Vec<liquide_platform::PlatformEvent>,
     ) -> Option<CapturedFrame> {
+        self.capture_once_scripted_with(platform, scripted_events, |_shell| {})
+    }
+
+    /// Like [`capture_once_scripted`](Self::capture_once_scripted) but also runs
+    /// a caller-supplied mutation against the live [`Shell`](liquide_shell::Shell)
+    /// AFTER the scripted input sequence is dispatched and BEFORE the captured
+    /// desktop frame is rendered.
+    ///
+    /// This is the headless seam for chrome surfaces that have **no** hotkey or
+    /// pointer trigger reachable from a `PlatformEvent` sequence — e.g. injecting
+    /// a notification, opening the notification center panel, or requesting a
+    /// dialog. The `liquide-visual-test` scenario builders use it to drive the
+    /// shell directly into a target chrome state (via the shell's public,
+    /// read/write API such as `post_notification` / `toggle_notification_center`
+    /// / `request_message_dialog`) so that state is reflected in the very next
+    /// synchronous desktop render that is read back.
+    ///
+    /// Determinism is preserved exactly as for
+    /// [`capture_once_scripted`](Self::capture_once_scripted): single-threaded, no
+    /// render thread, time `t0`, with the same glyph-reflush pass. The mutation
+    /// runs once, after `loading` is `false`, so any state it sets is rendered.
+    ///
+    /// The `scripted_events` are applied first (so a builder can, for example,
+    /// position the pointer over a dock item) and then `mutate` runs.
+    pub fn capture_once_scripted_with<F>(
+        &mut self,
+        platform: &mut dyn liquide_platform::PlatformBackend,
+        scripted_events: Vec<liquide_platform::PlatformEvent>,
+        mutate: F,
+    ) -> Option<CapturedFrame>
+    where
+        F: FnOnce(&mut liquide_shell::Shell),
+    {
         // 1. Create the desktop window if one is not already present. We reuse
         //    the dev-mode windowed params so the requested resolution is kept
         //    verbatim (run() only resizes to the monitor when !dev_mode).
@@ -524,6 +557,13 @@ impl DesktopCompositor {
         for event in &scripted_events {
             let _ = self.handle_event(event);
         }
+
+        // 3b. Run the caller-supplied shell mutation (no-op for the plain
+        //     `capture_once` / `capture_once_scripted` paths). This drives chrome
+        //     surfaces that have no PlatformEvent trigger (notifications, dialogs,
+        //     notification-center toggle) directly into their target state before
+        //     the captured render.
+        mutate(self.shell_mut());
 
         // 4. Render the desktop frame that is read back.
         self.dirty = true;

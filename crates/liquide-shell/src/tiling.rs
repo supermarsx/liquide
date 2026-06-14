@@ -462,6 +462,7 @@ impl Shell {
     /// Lazily construct the canonical `liquide_tiling::TilingEngine` held in
     /// `chrome_tiling`, returning a mutable reference.
     fn canonical_tiling(&mut self) -> &mut liquide_tiling::TilingEngine {
+        self.mark_wired(crate::shell::WiringBit::Tiling);
         self.chrome_tiling
             .get_or_insert_with(liquide_tiling::TilingEngine::new)
     }
@@ -507,6 +508,14 @@ impl Shell {
         let work = self.work_area();
         let target: liquide_tiling::SnapTarget = zone.into();
         let rect = liquide_tiling::SnapZones::zone_preview(target, work);
+
+        // Register the snapped window with the canonical tiling engine so the
+        // drag-to-snap gesture has a LIVE consumer of `liquide_tiling`
+        // (t57-f10 / t49-e5-F05): previously the snap geometry came only from
+        // the static `SnapZones` helper and the engine itself was never driven
+        // by an input/action path. Idempotent — re-snapping keeps one entry.
+        // `add_window` is idempotent (it ignores ids already in the set).
+        self.canonical_tiling().add_window(window_id.0);
 
         // Apply the snapped bounds through the canonical batch entry point.
         let mut batch = WindowBatch::with_capacity(1);

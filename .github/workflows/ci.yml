@@ -139,6 +139,93 @@ jobs:
           path: target/e2e/
           retention-days: 7
 
+  visual-test:
+    name: Visual + Smoke (headless)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libpipewire-0.3-dev \
+            libpam0g-dev \
+            libdbus-1-dev \
+            libfreetype-dev \
+            libfontconfig-dev \
+            libharfbuzz-dev \
+            libvulkan-dev \
+            libva-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: visual-test-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            visual-test-${{ runner.os }}-cargo-
+
+      # Populate the registry so the --offline runs below succeed on a cold cache.
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      # Headless visual regression + overlays + windows + interaction e2e +
+      # full-boot smoke + wiring audit. The suite is deterministic: each test
+      # self-pins its own test-assets root via LIQUIDE_ASSETS_DIR internally
+      # (see crates/liquide-visual-test/src/capture.rs), so we deliberately do
+      # NOT set LIQUIDE_ASSETS_DIR here — doing so would un-pin the goldens.
+      #
+      # The suite carries a small number of intentional #[ignore]s (the
+      # assert-after-fix gates) that the gate-closer (Wave B3) un-ignores as the
+      # matching f-slices land. We do NOT pass --include-ignored, so those gated
+      # cases stay skipped and never fail the job; every non-ignored test must
+      # pass for the suite to be green.
+      - name: Run visual-test suite (headless)
+        run: cargo test -p liquide-visual-test --offline
+
+      # Per-app headless smoke tests (added by t57-e8: tests/smoke.rs in each
+      # app crate). Each asserts a real model/behavior, not just construction.
+      - name: Run per-app smoke tests (headless)
+        run: |
+          for crate in \
+            liquide-apps-terminal \
+            liquide-apps-files \
+            liquide-apps-settings \
+            liquide-apps-text-editor \
+            liquide-apps-task-manager \
+            liquide-apps-software-center; do
+            echo "==> smoke: $crate"
+            cargo test -p "$crate" --test smoke --offline
+          done
+
+      # On any failure above, the golden differ has written expected/actual/diff
+      # PNGs under target/visual-test/<scenario>/ (see golden.rs::output_dir).
+      # Upload them so a reviewer can eyeball the regression without reproducing.
+      - name: Upload visual diff artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-test-diffs
+          path: target/visual-test/
+          retention-days: 7
+          if-no-files-found: ignore
+
   test:
     name: Test
     runs-on: ubuntu-latest

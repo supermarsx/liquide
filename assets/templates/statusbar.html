@@ -1,14 +1,31 @@
 <!-- LiquiDE StatusBar Component Template
-     Three slots: left, center, right. Items placed by StatusBarComponent.
-     Rendered as CHILDREN of the existing <statusbar id="shell-statusbar">
-     element via apply_template().
+     Three slots: left, center, right.
 
-     Item tag names:
+     IMPORTANT — template-engine contract (t57-f1):
+     The liquide-dom template engine is a FLAT renderer: its `{{#if}}` / `{{#each}}`
+     handling uses first-match `{{/if}}` / `{{/each}}` scanning and therefore CANNOT
+     correctly express NESTED blocks (e.g. the per-item notification/status/tray/
+     session dispatch). Earlier versions of this file used 4-deep nested
+     `{{#each}}`/`{{#if}}` blocks that the engine truncated at the first `{{/if}}`,
+     so the center/right slots collapsed to empty and the real binary showed ONLY
+     the LiquiDE logo.
+
+     The per-slot item HTML (including the nested tray structure) is therefore
+     assembled in Rust in `shell/dom_sync.rs::sync_statusbar_template` and injected
+     verbatim through the three `{{*_items_html}}` raw-HTML placeholders below. Every
+     dynamic value is HTML-escaped at its build site in Rust (T49-e5-F06), so the
+     structural markup is authored here / there and only the data is escaped.
+
+     This file MUST stay byte-compatible with the embedded SHELL_STATUSBAR_TEMPLATE
+     in shell/mod.rs so that the on-disk override and the embedded fallback render
+     identically regardless of the working directory / asset layout.
+
+     Item tag names produced into the *_items_html fragments:
        statusbar-item         — generic item (clock, etc.)
        statusbar-logo         — OS logo / branding
        notification-indicator — notification badge
        status-indicator       — connection/status (.connected, .degraded, .disconnected)
-       status-tray            — system tray area
+       status-tray            — system tray area (with status-tray-item children)
        session-button         — user/session button
 -->
 
@@ -16,43 +33,11 @@
   {{#if show_branding}}
   <statusbar-logo id="logo">{{branding_text}}</statusbar-logo>
   {{/if}}
-  {{#each left_items}}
-  <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
-  {{/each}}
+  {{left_items_html}}
 </statusbar-slot>
-
 <statusbar-slot class="center" id="statusbar-slot-center">
-  {{#each center_items}}
-  <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
-  {{/each}}
+  {{center_items_html}}
 </statusbar-slot>
-
 <statusbar-slot class="right" id="statusbar-slot-right">
-  {{#each right_items}}
-  {{#if type_notification}}
-  <notification-indicator id="{{id}}" class="{{classes}}">{{text}}</notification-indicator>
-  {{else}}
-  {{#if type_status}}
-  <status-indicator id="{{id}}" class="{{classes}}">{{text}}</status-indicator>
-  {{else}}
-  {{#if type_tray}}
-  <status-tray id="{{id}}" data-count="{{tray_item_count}}">
-    {{#each tray_items}}
-    <status-tray-item id="{{id}}" data-source="{{source}}" data-label="{{label}}" data-tooltip="{{tooltip}}" {{#if has_icon}}data-icon="{{icon}}"{{/if}} {{#if has_menu}}data-has-menu="true"{{/if}} {{#if has_icon_data}}data-has-icon-data="true"{{/if}} {{#if classes}}class="{{classes}}"{{/if}}>
-      {{#if has_badge}}
-      <status-tray-badge>{{badge}}</status-tray-badge>
-      {{/if}}
-    </status-tray-item>
-    {{/each}}
-  </status-tray>
-  {{else}}
-  {{#if type_session}}
-  <session-button id="{{id}}">{{text}}</session-button>
-  {{else}}
-  <statusbar-item id="{{id}}" class="{{classes}}">{{text}}</statusbar-item>
-  {{/if}}
-  {{/if}}
-  {{/if}}
-  {{/if}}
-  {{/each}}
+  {{right_items_html}}
 </statusbar-slot>

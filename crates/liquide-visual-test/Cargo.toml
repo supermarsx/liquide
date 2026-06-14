@@ -24,6 +24,11 @@ liquide-platform.workspace = true
 liquide-compositor.workspace = true
 # MouseEvent / MouseButton / ButtonState for scripted scenario input (t56-f7).
 liquide-input.workspace = true
+# Shell handle for direct chrome-state drive (notifications/dialogs/center toggle)
+# in scenario builders that have no PlatformEvent trigger (t57-e1 / A0).
+liquide-shell.workspace = true
+# Notification value object for the notification_shown scenario builder.
+liquide-interop.workspace = true
 # PNG encode/decode for goldens, diffs, and snapshot output.
 image = { version = "0.25", features = ["png"] }
 tracing.workspace = true

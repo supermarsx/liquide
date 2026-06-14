@@ -22,8 +22,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use liquide_visual_test::scenarios::{
-    SCENARIO_HEIGHT, SCENARIO_WIDTH, context_menu_capture, scenario_options, status_bar_capture,
-    themed_desktop_capture,
+    SCENARIO_HEIGHT, SCENARIO_WIDTH, context_menu_capture, dialog_open, dock_capture, launcher_open,
+    lockscreen, notification_center_open, notification_shown, overview, scenario_options,
+    status_bar_capture, themed_desktop_capture, tooltip_shown, wallpaper_capture, window_decorations,
+    workspace_switch,
 };
 use liquide_visual_test::{Frame, capture_desktop};
 
@@ -35,7 +37,10 @@ fn print_usage() {
            --theme <name>       theme: liquid-glass | night | sunset | midday (default liquid-glass)\n\
            --width <px>         surface width  (default {SCENARIO_WIDTH})\n\
            --height <px>        surface height (default {SCENARIO_HEIGHT})\n\
-           --scenario <name>    desktop | status_bar | context_menu (default desktop)\n\
+           --scenario <name>    desktop | status_bar | context_menu | launcher |\n\
+          \x20                    notification | notification_center | dialog | tooltip |\n\
+          \x20                    lockscreen | workspace_switch | overview |\n\
+          \x20                    window_decorations | dock | wallpaper (default desktop)\n\
            --out <path>         output PNG path (default target/visual-test/snapshot.png)\n\
            -h, --help           show this help"
     );
@@ -115,8 +120,23 @@ fn render(
             // Right-click near the centre of the desktop area (below the bar).
             context_menu_capture(theme, (width / 2) as f32, (height / 2) as f32)
         }
+        // t57-e1 (A0): per-surface chrome-state scenarios. These render at the
+        // canonical size; custom --width/--height is ignored for them.
+        "launcher" | "launcher_open" => launcher_open(theme),
+        "notification" | "notification_shown" => notification_shown(theme),
+        "notification_center" | "notification_center_open" => notification_center_open(theme),
+        "dialog" | "dialog_open" => dialog_open(theme),
+        "tooltip" | "tooltip_shown" => tooltip_shown(theme),
+        "lockscreen" => lockscreen(theme),
+        "workspace_switch" => workspace_switch(theme),
+        "overview" => overview(theme),
+        "window_decorations" => window_decorations(theme),
+        "dock" => dock_capture(theme),
+        "wallpaper" => wallpaper_capture(theme),
         other => Err(liquide_visual_test::VisualTestError::Platform(format!(
-            "unknown scenario '{other}' (expected desktop | status_bar | context_menu)"
+            "unknown scenario '{other}' (expected desktop | status_bar | context_menu | \
+             launcher | notification | notification_center | dialog | tooltip | lockscreen | \
+             workspace_switch | overview | window_decorations | dock | wallpaper)"
         ))),
     }
 }

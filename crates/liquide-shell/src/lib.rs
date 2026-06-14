@@ -174,6 +174,7 @@ pub use screen_time::{
     ScreenTimeAlert, ScreenTimeTracker, UsageLimit, WeeklySummary,
 };
 pub use shell::Shell;
+pub use shell::{DialogContent, SessionRequest, WiringBit, WiringReport};
 pub use shell::batch::{WindowBatch, WindowOp, ZOrderOp};
 pub use shell::hooks::{HookId, HookManager, HookPriority, HookResult, ShellHookEvent};
 pub use stats::{AppStats, StatsCollector, SystemStats, WindowStats};

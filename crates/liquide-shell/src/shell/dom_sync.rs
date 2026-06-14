@@ -356,6 +356,7 @@ impl Shell {
         ctx.set_raw_html("right_items_html", right_html);
 
         self.apply_template("statusbar", "shell-statusbar", &ctx);
+        self.mark_wired(crate::shell::WiringBit::StatusBar);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -411,6 +412,7 @@ impl Shell {
         ctx.set("dock_items", dock_items);
 
         self.apply_template("dock", "shell-dock", &ctx);
+        self.mark_wired(crate::shell::WiringBit::Dock);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -653,6 +655,7 @@ impl Shell {
 
     fn sync_launcher_template(&mut self) {
         if self.launcher.is_visible() {
+            self.mark_wired(crate::shell::WiringBit::Launcher);
             let mut ctx = TemplateContext::new();
             ctx.set("query", self.launcher.query());
 
@@ -783,6 +786,7 @@ impl Shell {
 
     fn sync_context_menu_template(&mut self) {
         if self.context_menu_visible {
+            self.mark_wired(crate::shell::WiringBit::ContextMenu);
             use super::ContextMenuItem;
             let ctx_items = ContextMenuItem::defaults();
             let items: Vec<TemplateContext> = ctx_items
@@ -912,6 +916,7 @@ impl Shell {
         // `tooltip_adapter`).
         self.sync_tooltip_manager(self.frame_delta_ms);
         if self.tooltip_manager_visible() {
+            self.mark_wired(crate::shell::WiringBit::Tooltip);
             // Cannot fail while visible: the manager only reports visible while
             // a hover label is present, but guard defensively rather than panic.
             let Some(text) = self.tooltip_text.clone() else {

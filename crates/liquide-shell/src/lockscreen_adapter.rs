@@ -70,6 +70,7 @@ impl Shell {
     /// This is the canonical replacement for the old no-op `LockSession`
     /// handler (t49-e5-F02).
     pub(crate) fn lock_session(&mut self) -> Vec<LockScreenEvent> {
+        self.mark_wired(crate::shell::WiringBit::LockScreen);
         let auth = ShellLockAuth;
         let state = self.ensure_lockscreen();
         state.handle_action(LockScreenAction::Lock, &auth)

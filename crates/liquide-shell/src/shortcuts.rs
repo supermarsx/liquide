@@ -74,6 +74,14 @@ pub enum ShellAction {
     LockSession,
     OpenSessionMenu,
     ShowDesktop,
+    /// End the current session (log out). State-level only in the shell — the
+    /// real process teardown is the host launcher's responsibility; the shell
+    /// records the request so the compositor/launcher can act on it.
+    LogOut,
+    /// Restart the machine. State-level request only (no real reboot here).
+    Restart,
+    /// Shut the machine down. State-level request only (no real poweroff here).
+    Shutdown,
 
     // Utilities
     OpenSettings,
@@ -143,6 +151,9 @@ impl fmt::Display for ShellAction {
             Self::LockSession => write!(f, "Lock Session"),
             Self::OpenSessionMenu => write!(f, "Open Session Menu"),
             Self::ShowDesktop => write!(f, "Show Desktop"),
+            Self::LogOut => write!(f, "Log Out"),
+            Self::Restart => write!(f, "Restart"),
+            Self::Shutdown => write!(f, "Shut Down"),
             Self::OpenSettings => write!(f, "Open Settings"),
             Self::OpenFileManager => write!(f, "Open File Manager"),
             Self::OpenTerminal => write!(f, "Open Terminal"),

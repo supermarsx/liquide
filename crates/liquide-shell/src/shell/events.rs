@@ -422,6 +422,22 @@ impl Shell {
                         _ => {}
                     }
                 }
+                // Text-input seam (t57-fG feature 2): when no shell overlay is
+                // capturing the key (handled above) and a printable character is
+                // typed with no command modifier (ctrl/alt/super), route it into
+                // the FOCUSED window's text buffer so keyboard text reaches the
+                // focused app/window. Command-modified keys fall through to the
+                // shortcut table below so hotkeys are unaffected.
+                if !ke.modifiers.ctrl() && !ke.modifiers.alt() && !ke.modifiers.super_key() {
+                    if let Some(ch) = Self::keycode_to_char(ke.key) {
+                        if let Some(wid) = self.focus.focused() {
+                            if self.windows.contains_key(&wid) {
+                                self.route_char_to_focused_app(wid, ch);
+                                return Some(ShellAction::Redraw);
+                            }
+                        }
+                    }
+                }
                 self.shortcuts.handle_key_event(ke).cloned()
             }
             PlatformEvent::MouseInput { event: me, .. } => {
@@ -779,6 +795,30 @@ impl Shell {
         }
     }
 
+    /// Append a typed character to the focused window's text buffer (the shell
+    /// side of the shell↔app text-input seam, t57-fG feature 2) and mark the
+    /// window scene dirty so the typed glyphs repaint.
+    fn route_char_to_focused_app(&mut self, wid: WindowId, ch: char) {
+        let buf = self.focused_app_text.entry(wid).or_default();
+        buf.push(ch);
+        self.mark_window_scene_dirty();
+    }
+
+    /// Whether a title-bar press on `wid` at `pt` is the second click of a
+    /// double-click: same window, within [`DOUBLE_CLICK_MS`] of the recorded
+    /// previous title-bar press, and within [`DOUBLE_CLICK_DIST_PX`] of it.
+    fn is_titlebar_double_click(&self, wid: WindowId, pt: Point) -> bool {
+        match self.last_titlebar_click {
+            Some((prev_id, prev_pt, prev_at)) => {
+                prev_id == wid
+                    && prev_at.elapsed().as_millis() <= super::DOUBLE_CLICK_MS
+                    && (pt.x - prev_pt.x).abs() <= super::DOUBLE_CLICK_DIST_PX
+                    && (pt.y - prev_pt.y).abs() <= super::DOUBLE_CLICK_DIST_PX
+            }
+            None => false,
+        }
+    }
+
     fn handle_mouse_button(
         &mut self,
         button: MouseButton,
@@ -1107,6 +1147,28 @@ impl Shell {
                     HitZone::TitleBar => {
                         let _ = self.set_focus(wid);
                         let _ = self.raise_window(wid);
+                        // Double-click detection (t57-fG feature 1): a second
+                        // title-bar press on the SAME window within the
+                        // double-click time + distance window toggles maximize/
+                        // restore instead of starting a drag.
+                        if self.is_titlebar_double_click(wid, pt) {
+                            self.last_titlebar_click = None;
+                            let is_maximized = self
+                                .windows
+                                .get(&wid)
+                                .map(|w| w.state == WindowState::Maximized)
+                                .unwrap_or(false);
+                            if is_maximized {
+                                let _ = self.restore(wid);
+                            } else {
+                                let _ = self.maximize(wid);
+                            }
+                            return Some(ShellAction::Redraw);
+                        }
+                        // First (or stale) title-bar press: record it for
+                        // double-click detection and begin a move drag. A single
+                        // click/drag is unaffected (the drag still starts here).
+                        self.last_titlebar_click = Some((wid, pt, std::time::Instant::now()));
                         self.drag_state = Some(DragState::Moving {
                             window_id: wid,
                             offset_x: x - bounds.x,

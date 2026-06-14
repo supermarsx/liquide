@@ -41,6 +41,8 @@ impl Shell {
     /// The managers are constructed lazily on the first window so the shell
     /// stays inert until windows actually exist.
     fn register_window_chrome(&mut self, id: WindowId, app_id: &str) {
+        self.mark_wired(crate::shell::WiringBit::WindowClass);
+        self.mark_wired(crate::shell::WiringBit::WindowGroups);
         // --- Window class registry: one class per app (instance counting). ---
         let registry = self
             .chrome_window_class
@@ -111,6 +113,8 @@ impl Shell {
             Some(w) => (w.bounds, w.title.clone()),
             None => return,
         };
+        self.mark_wired(crate::shell::WiringBit::WindowTree);
+        self.mark_wired(crate::shell::WiringBit::WindowEffects);
         let screen = self.screen_rect;
         let tree = self.chrome_window_tree.get_or_insert_with(|| {
             WindowTree::new(
@@ -315,6 +319,12 @@ impl Shell {
             .ok_or(ShellError::WindowNotFound { id })?;
         self.workspaces.active_mut().remove_window(id);
         self.focus.remove_window(id);
+        // Drop the window's typed-text buffer + any pending double-click state
+        // so closed windows leave no stale input state (t57-fG).
+        self.focused_app_text.remove(&id);
+        if matches!(self.last_titlebar_click, Some((wid, _, _)) if wid == id) {
+            self.last_titlebar_click = None;
+        }
         self.unregister_window_chrome(id, &window.app_id);
         self.unregister_window_tree_node(window.tree_id.map(TreeWindowId), id, window.bounds);
         let ts = self.next_timestamp();

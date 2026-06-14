@@ -14,7 +14,17 @@
 #   run          launch the standalone DE binary (liquid-standalone); extra args are forwarded
 #   run-example  run an example target (e.g. run-example optimizations); lists examples if omitted
 #   snapshot     render the headless desktop to a PNG (fast eyeball-debug loop); args forwarded
+#   visual-test  run the headless visual regression + smoke suite (see BLESS notes below)
 #   help         show this help
+#
+# Blessing goldens (visual-test): the golden PNGs under
+# crates/liquide-visual-test/golden/ ARE the spec. To (re)generate them after an
+# intentional visual change, set LIQUIDE_UPDATE_GOLDEN=1 (or BLESS=1) and re-run
+# the visual-test task, then re-run WITHOUT the flag to confirm determinism:
+#   LIQUIDE_UPDATE_GOLDEN=1 ./scripts/dev/dev.sh visual-test
+#   ./scripts/dev/dev.sh visual-test      # must now pass clean
+# On a mismatch the differ writes expected/actual/diff PNGs under
+# target/visual-test/<scenario>/ and prints their absolute paths.
 #
 # All tasks operate on the whole workspace unless a -p/--package argument is given.
 # Extra arguments are forwarded to cargo verbatim. CARGO_TARGET_DIR is honored.
@@ -54,6 +64,7 @@ Tasks:
   run          launch the standalone DE binary (${STANDALONE_BIN}); extra args forwarded
   run-example  run an example target; lists available examples when none is given
   snapshot     render the headless desktop to a PNG (fast eyeball-debug loop)
+  visual-test  run the headless visual regression + smoke suite
   help         show this help
 
 Examples:
@@ -68,6 +79,12 @@ Snapshot (no window / GPU; writes target/visual-test/snapshot.png):
   ./scripts/dev/dev.sh snapshot --theme night --width 800 --height 600
   ./scripts/dev/dev.sh snapshot --scenario context_menu
   ./scripts/dev/dev.sh snapshot --scenario status_bar
+
+Visual regression + smoke suite (headless; deterministic test-assets root):
+  ./scripts/dev/dev.sh visual-test                       # run the full suite
+  # Bless goldens after an intentional visual change, then confirm determinism:
+  LIQUIDE_UPDATE_GOLDEN=1 ./scripts/dev/dev.sh visual-test
+  ./scripts/dev/dev.sh visual-test                       # must pass clean afterwards
 
 Windowed mode at 1270x768:
   # --dev-mode opens a resizable host window; --width/--height set its size.
@@ -223,6 +240,17 @@ case "$TASK" in
             cmd+=(-- "${PROGRAM_ARGS[@]}")
         fi
         run_cargo "${cmd[@]}"
+        ;;
+    visual-test)
+        # Headless visual regression + overlays + windows + interaction e2e +
+        # full-boot smoke + wiring audit. Deterministic: each test self-pins its
+        # own test-assets root, so do NOT set LIQUIDE_ASSETS_DIR here.
+        #
+        # BLESS workflow: set LIQUIDE_UPDATE_GOLDEN=1 (or BLESS=1) to (re)write
+        # goldens from the current render after an intentional visual change,
+        # then re-run without it to confirm determinism. On mismatch the differ
+        # writes expected/actual/diff PNGs under target/visual-test/<scenario>/.
+        run_cargo test -p liquide-visual-test --offline "$@"
         ;;
     *)
         error "Unknown task '$TASK'."

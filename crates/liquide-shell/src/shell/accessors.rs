@@ -56,6 +56,29 @@ impl Shell {
         self.cursor_shape
     }
 
+    /// Read-only view of the typed-text buffer for a given window — the shell
+    /// side of the shell↔app text-input seam (t57-fG feature 2).
+    ///
+    /// Returns the characters routed into `window`'s buffer by the keyboard
+    /// path (`route_char_to_focused_app`), or `None` if nothing has been typed
+    /// into that window. Hosts/apps consume this to deliver text into the app's
+    /// own model; tests assert it to prove keyboard text reached the window.
+    #[must_use]
+    pub fn window_text_input(&self, window: WindowId) -> Option<&str> {
+        self.focused_app_text.get(&window).map(String::as_str)
+    }
+
+    /// Read-only view of the FOCUSED window's typed-text buffer (t57-fG
+    /// feature 2). `None` when nothing is focused or no text has been typed
+    /// into the focused window yet.
+    #[must_use]
+    pub fn focused_app_text(&self) -> Option<&str> {
+        self.focus
+            .focused()
+            .and_then(|wid| self.focused_app_text.get(&wid))
+            .map(String::as_str)
+    }
+
     /// Whether the user is currently dragging a window (move or resize).
     #[must_use]
     pub fn is_dragging(&self) -> bool {
@@ -280,5 +303,172 @@ impl Shell {
     /// Get the hook manager mutably.
     pub fn hook_manager_mut(&mut self) -> &mut HookManager {
         &mut self.hook_manager
+    }
+
+    /// Whether the task/workspace overview overlay is currently shown (t57).
+    #[must_use]
+    pub fn overview_visible(&self) -> bool {
+        self.overview_visible
+    }
+
+    /// Whether the session is currently locked (public read of the canonical
+    /// lock-screen state driven by the Lock action) (t57-f9).
+    #[must_use]
+    pub fn session_locked(&self) -> bool {
+        self.is_session_locked()
+    }
+
+    /// The pending session-lifecycle request (Log Out / Restart / Shut Down)
+    /// recorded by the session menu, if any. The shell never terminates the
+    /// process itself; a host launcher/compositor consumes this (t57-f9).
+    #[must_use]
+    pub fn pending_session_request(&self) -> Option<crate::shell::SessionRequest> {
+        self.pending_session_request
+    }
+
+    /// Clear a consumed session-lifecycle request (called by the host after it
+    /// has acted on it).
+    pub fn take_session_request(&mut self) -> Option<crate::shell::SessionRequest> {
+        self.pending_session_request.take()
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Runtime wiring-audit (t57-e7 / A6)
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// Record that a canonical manager / chrome adapter ran its LIVE drive path
+    /// this session. Pure audit channel — never feeds back into behavior.
+    pub(crate) fn mark_wired(&mut self, bit: WiringBit) {
+        self.wiring_touched |= bit.mask();
+    }
+
+    /// Read the current wiring report (which audited managers have run their
+    /// live drive path this session). Read-only; does not run any sync.
+    #[must_use]
+    pub fn wiring_report(&self) -> WiringReport {
+        WiringReport {
+            touched: self.wiring_touched,
+        }
+    }
+
+    /// Run one idempotent live DOM sync (the same `sync_dom` the compositor runs
+    /// each frame) so the render-path wiring bits — status bar, dock, launcher,
+    /// context menu, tooltip — are recorded, then return the wiring report.
+    ///
+    /// This lets the wiring-audit observe the render-path bits without touching
+    /// the (peer-owned) capture harness.
+    pub fn wiring_report_after_sync(&mut self) -> WiringReport {
+        self.sync_dom();
+        self.wiring_report()
+    }
+}
+
+/// A canonical manager / chrome adapter tracked by the runtime wiring audit
+/// (t57-e7). Each variant flips a bit in `Shell::wiring_touched` the first time
+/// its LIVE drive path runs this session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WiringBit {
+    /// Status bar render path (`sync_statusbar_template`).
+    StatusBar,
+    /// Dock render path (`sync_dock_template`).
+    Dock,
+    /// Launcher overlay render path (when visible).
+    Launcher,
+    /// Context-menu render path (when visible).
+    ContextMenu,
+    /// Canonical notification daemon (`chrome_notification_server`).
+    NotificationServer,
+    /// Canonical window-class chrome (`register_window_chrome`).
+    WindowClass,
+    /// Canonical window-groups chrome (`register_window_chrome`).
+    WindowGroups,
+    /// Canonical window-tree topology (`register_window_tree`).
+    WindowTree,
+    /// Canonical window-effects manager (`register_window_tree`).
+    WindowEffects,
+    /// Canonical lock-screen state machine (`lock_session`).
+    LockScreen,
+    /// Canonical workspace switch (`commit_workspace_switch`).
+    Workspace,
+    /// Canonical tiling engine (`canonical_tiling`).
+    Tiling,
+    /// Canonical tooltip manager (only when it surfaces a tooltip).
+    Tooltip,
+}
+
+impl WiringBit {
+    /// Every audited manager bit (used by the partition test).
+    pub const ALL: [WiringBit; 13] = [
+        WiringBit::StatusBar,
+        WiringBit::Dock,
+        WiringBit::Launcher,
+        WiringBit::ContextMenu,
+        WiringBit::NotificationServer,
+        WiringBit::WindowClass,
+        WiringBit::WindowGroups,
+        WiringBit::WindowTree,
+        WiringBit::WindowEffects,
+        WiringBit::LockScreen,
+        WiringBit::Workspace,
+        WiringBit::Tiling,
+        WiringBit::Tooltip,
+    ];
+
+    /// The single-bit mask for this manager.
+    #[must_use]
+    pub const fn mask(self) -> u32 {
+        1u32 << (self as u32)
+    }
+
+    /// Stable lower-snake-case name for diagnostics.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            WiringBit::StatusBar => "status_bar",
+            WiringBit::Dock => "dock",
+            WiringBit::Launcher => "launcher",
+            WiringBit::ContextMenu => "context_menu",
+            WiringBit::NotificationServer => "chrome_notification_server",
+            WiringBit::WindowClass => "chrome_window_class",
+            WiringBit::WindowGroups => "chrome_window_groups",
+            WiringBit::WindowTree => "chrome_window_tree",
+            WiringBit::WindowEffects => "chrome_window_effects",
+            WiringBit::LockScreen => "chrome_lockscreen",
+            WiringBit::Workspace => "workspace",
+            WiringBit::Tiling => "chrome_tiling",
+            WiringBit::Tooltip => "chrome_tooltip",
+        }
+    }
+}
+
+/// A read-only snapshot of which audited managers ran their live drive path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WiringReport {
+    touched: u32,
+}
+
+impl WiringReport {
+    /// Whether `bit`'s manager ran its live drive path this session.
+    #[must_use]
+    pub fn is_driven(&self, bit: WiringBit) -> bool {
+        self.touched & bit.mask() != 0
+    }
+
+    /// All audited managers that ran their live drive path.
+    #[must_use]
+    pub fn driven(&self) -> Vec<WiringBit> {
+        WiringBit::ALL
+            .into_iter()
+            .filter(|b| self.is_driven(*b))
+            .collect()
+    }
+
+    /// All audited managers that did NOT run their live drive path.
+    #[must_use]
+    pub fn not_driven(&self) -> Vec<WiringBit> {
+        WiringBit::ALL
+            .into_iter()
+            .filter(|b| !self.is_driven(*b))
+            .collect()
     }
 }

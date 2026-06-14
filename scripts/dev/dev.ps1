@@ -14,7 +14,17 @@
 #   run          launch the standalone DE binary (liquid-standalone); extra args are forwarded
 #   run-example  run an example target (e.g. run-example optimizations); lists examples if omitted
 #   snapshot     render the headless desktop to a PNG (fast eyeball-debug loop); args forwarded
+#   visual-test  run the headless visual regression + smoke suite (see BLESS notes below)
 #   help         show this help
+#
+# Blessing goldens (visual-test): the golden PNGs under
+# crates/liquide-visual-test/golden/ ARE the spec. To (re)generate them after an
+# intentional visual change, set LIQUIDE_UPDATE_GOLDEN=1 (or BLESS=1) and re-run
+# the visual-test task, then re-run WITHOUT the flag to confirm determinism:
+#   $env:LIQUIDE_UPDATE_GOLDEN = "1"; ./scripts/dev/dev.ps1 visual-test; $env:LIQUIDE_UPDATE_GOLDEN = $null
+#   ./scripts/dev/dev.ps1 visual-test     # must now pass clean
+# On a mismatch the differ writes expected/actual/diff PNGs under
+# target/visual-test/<scenario>/ and prints their absolute paths.
 #
 # All tasks operate on the whole workspace unless a -p/--package argument is given.
 # Extra arguments are forwarded to cargo verbatim. CARGO_TARGET_DIR is honored.
@@ -55,6 +65,7 @@ function Show-Usage {
     Write-Host "  run          launch the standalone DE binary ($standaloneBin); extra args forwarded"
     Write-Host "  run-example  run an example target; lists available examples when none is given"
     Write-Host "  snapshot     render the headless desktop to a PNG (fast eyeball-debug loop)"
+    Write-Host "  visual-test  run the headless visual regression + smoke suite"
     Write-Host "  help         show this help"
     Write-Host ""
     Write-Host "Examples:"
@@ -69,6 +80,12 @@ function Show-Usage {
     Write-Host "  ./scripts/dev/dev.ps1 snapshot --theme night --width 800 --height 600"
     Write-Host "  ./scripts/dev/dev.ps1 snapshot --scenario context_menu"
     Write-Host "  ./scripts/dev/dev.ps1 snapshot --scenario status_bar"
+    Write-Host ""
+    Write-Host "Visual regression + smoke suite (headless; deterministic test-assets root):"
+    Write-Host "  ./scripts/dev/dev.ps1 visual-test                       # run the full suite"
+    Write-Host "  # Bless goldens after an intentional visual change, then confirm determinism:"
+    Write-Host "  `$env:LIQUIDE_UPDATE_GOLDEN = '1'; ./scripts/dev/dev.ps1 visual-test; `$env:LIQUIDE_UPDATE_GOLDEN = `$null"
+    Write-Host "  ./scripts/dev/dev.ps1 visual-test                       # must pass clean afterwards"
     Write-Host ""
     Write-Host "Windowed mode at 1270x768:"
     Write-Host "  # --dev-mode opens a resizable host window; --width/--height set its size."
@@ -282,6 +299,19 @@ switch ($Task.ToLowerInvariant()) {
             $cargoArgs += "--"
             $cargoArgs += $split.ProgramArgs
         }
+        $exitCode = Invoke-Cargo -Arguments $cargoArgs
+    }
+    "visual-test" {
+        # Headless visual regression + overlays + windows + interaction e2e +
+        # full-boot smoke + wiring audit. Deterministic: each test self-pins its
+        # own test-assets root, so do NOT set LIQUIDE_ASSETS_DIR here.
+        #
+        # BLESS workflow: set LIQUIDE_UPDATE_GOLDEN=1 (or BLESS=1) to (re)write
+        # goldens from the current render after an intentional visual change,
+        # then re-run without it to confirm determinism. On mismatch the differ
+        # writes expected/actual/diff PNGs under target/visual-test/<scenario>/.
+        $cargoArgs = @("test", "-p", "liquide-visual-test", "--offline")
+        $cargoArgs += $arguments
         $exitCode = Invoke-Cargo -Arguments $cargoArgs
     }
     default {

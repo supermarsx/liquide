@@ -96,6 +96,9 @@ struct WindowSceneSignature {
     decoration_layout: DecorationLayoutSignature,
     theme: WindowThemeSignature,
     windows: Vec<WindowRenderSignature>,
+    /// Focused window's typed-text buffer (t57-fG feature 2): typing changes
+    /// the painted field, so it must invalidate the window scene cache.
+    focused_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -465,7 +468,228 @@ impl Shell {
         );
         root.add_child(ws_node);
 
+        // ── Active dialog (message box / input) ───────────────────
+        // When a canonical dialog is open (`request_message_dialog` /
+        // `request_input_dialog` set `chrome_dialog_content`), paint a modal
+        // dialog surface centred on screen, above windows and chrome (t57-f9).
+        // Previously the dialog state was set but nothing painted.
+        if let Some(content) = self.chrome_dialog_content.clone() {
+            const DIALOG_Z_BASE: u32 = 40_000;
+            Self::add_dialog_overlay(&mut root, screen, DIALOG_Z_BASE, &content);
+        }
+
+        // ── Overview overlay (task / workspace overview) ──────────
+        // Emitted ABOVE both windows and chrome when the overview is toggled
+        // (t57-f-overview): a dim scrim plus a tile per visible window. The
+        // overview z-base sits above the chrome overlay band so it occludes the
+        // dock/statusbar like a real overview.
+        if self.overview_visible {
+            const OVERVIEW_Z_BASE: u32 = 50_000;
+            self.add_overview_overlay(&mut root, screen, OVERVIEW_Z_BASE);
+        }
+
+        // ── Lock screen (topmost) ─────────────────────────────────
+        // When the canonical lock-screen state is engaged (driven by the Lock
+        // action through `chrome_lockscreen`), paint the lock surface above
+        // everything else (t57-f9): a full-screen scrim plus a centred
+        // clock/prompt cluster. Previously the Lock action transitioned the
+        // canonical state but nothing painted, so the desktop stayed visible.
+        if self.is_session_locked() {
+            const LOCK_Z_BASE: u32 = 80_000;
+            Self::add_lockscreen_overlay(&mut root, screen, LOCK_Z_BASE);
+        }
+
         root
+    }
+
+    /// Emit a modal dialog surface: a dimming scrim plus a centred panel with a
+    /// title band, body, and a button bar with one rect per button (t57-f9).
+    ///
+    /// Filled rects rather than live text so the surface unambiguously paints
+    /// content the visual regression can assert on; full text/glyph rendering of
+    /// the title/message flows through the CSS pipeline elsewhere and is a
+    /// follow-up. The point of this slice is that the dialog APPEARS when
+    /// `request_message_dialog` is called instead of being state-only.
+    fn add_dialog_overlay(
+        root: &mut SceneNode,
+        screen: Rect,
+        base_z: u32,
+        content: &crate::shell::DialogContent,
+    ) {
+        // Modal scrim.
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 40,
+            SceneNodeKind::Background {
+                color: Color::new(0, 0, 0, 120),
+            },
+            NodeProperties::new(screen).with_z_order(base_z),
+        ));
+
+        // Centred dialog panel.
+        let panel_w = (screen.width * 0.34).clamp(320.0, 520.0);
+        let panel_h = (screen.height * 0.28).clamp(160.0, 280.0);
+        let px = (screen.width - panel_w) / 2.0;
+        let py = (screen.height - panel_h) / 2.0;
+        let panel = Rect::new(px, py, panel_w, panel_h);
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 41,
+            SceneNodeKind::Background {
+                color: Color::new(34, 40, 60, 245),
+            },
+            NodeProperties::new(panel).with_z_order(base_z + 1),
+        ));
+
+        // Title band (top strip), tinted by whether there is a title.
+        let title_h = 40.0;
+        let title_alpha = if content.title.is_empty() { 180 } else { 255 };
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 42,
+            SceneNodeKind::Background {
+                color: Color::new(52, 62, 92, title_alpha),
+            },
+            NodeProperties::new(Rect::new(px, py, panel_w, title_h)).with_z_order(base_z + 2),
+        ));
+
+        // Body band (message area) — present when there is a message.
+        if !content.message.is_empty() {
+            let body = Rect::new(
+                px + 16.0,
+                py + title_h + 14.0,
+                panel_w - 32.0,
+                panel_h - title_h - 70.0,
+            );
+            root.add_child(SceneNode::new(
+                NODE_ROOT + 43,
+                SceneNodeKind::Background {
+                    color: Color::new(70, 80, 112, 220),
+                },
+                NodeProperties::new(body).with_z_order(base_z + 3),
+            ));
+        }
+
+        // Button bar — one rect per button along the bottom-right.
+        let count = content.button_count.max(1);
+        let btn_w = 96.0;
+        let btn_h = 32.0;
+        let gap = 12.0;
+        let by = py + panel_h - btn_h - 14.0;
+        for i in 0..count {
+            let bx = px + panel_w - 14.0 - (i as f32 + 1.0) * btn_w - i as f32 * gap;
+            root.add_child(SceneNode::new(
+                NODE_ROOT + 44 + i as u64,
+                SceneNodeKind::Background {
+                    color: Color::new(0, 132, 255, 235),
+                },
+                NodeProperties::new(Rect::new(bx, by, btn_w, btn_h))
+                    .with_z_order(base_z + 4 + i as u32),
+            ));
+        }
+    }
+
+    /// Emit the lock-screen surface: a full-screen dimming scrim plus a centred
+    /// clock and password-prompt cluster, above all other layers (t57-f9).
+    ///
+    /// Uses the dedicated `LockScreen` scene kind for the scrim (so the renderer
+    /// applies its backdrop blur + dark veil) and explicit filled rects for the
+    /// clock / prompt cluster so the surface unambiguously paints content the
+    /// visual regression can assert on. Hit-testing the password field is a
+    /// follow-up; this wires the rendering half so the Lock action is no longer
+    /// a no-op visually.
+    fn add_lockscreen_overlay(root: &mut SceneNode, screen: Rect, base_z: u32) {
+        // Full-screen lock scrim (dark veil + backdrop blur via the renderer).
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 80,
+            SceneNodeKind::LockScreen,
+            NodeProperties::new(screen).with_z_order(base_z),
+        ));
+
+        // Centred clock band (top of the cluster).
+        let cluster_w = (screen.width * 0.32).clamp(220.0, 520.0);
+        let cx = (screen.width - cluster_w) / 2.0;
+        let clock = Rect::new(cx, screen.height * 0.28, cluster_w, 64.0);
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 81,
+            SceneNodeKind::Background {
+                color: Color::new(235, 240, 255, 235),
+            },
+            NodeProperties::new(clock).with_z_order(base_z + 1),
+        ));
+
+        // Password prompt field (below the clock).
+        let prompt = Rect::new(cx, screen.height * 0.28 + 96.0, cluster_w, 44.0);
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 82,
+            SceneNodeKind::Background {
+                color: Color::new(60, 70, 110, 235),
+            },
+            NodeProperties::new(prompt).with_z_order(base_z + 2),
+        ));
+    }
+
+    /// Emit the task/workspace overview overlay: a dim full-screen scrim and a
+    /// grid of tiles, one per visible window, above all other layers.
+    ///
+    /// Kept deliberately simple (filled tiles, not live thumbnails): the goal is
+    /// a real, painted overview surface the user can see and that the visual
+    /// regression (`overview_paints_tiles`) can assert on. Hit-testing /
+    /// click-to-activate is a follow-up; this wires the rendering half so the
+    /// `TaskOverview` / `WorkspaceOverview` actions are no longer no-ops.
+    fn add_overview_overlay(&self, root: &mut SceneNode, screen: Rect, base_z: u32) {
+        use liquide_compositor::scene::GlassParams;
+
+        // Dim scrim across the whole screen.
+        root.add_child(SceneNode::new(
+            NODE_ROOT + 50,
+            SceneNodeKind::Background {
+                color: Color::new(8, 10, 24, 200),
+            },
+            NodeProperties::new(screen).with_z_order(base_z),
+        ));
+
+        let windows = self.visible_windows();
+        if windows.is_empty() {
+            return;
+        }
+
+        // Lay the tiles out on a grid sized to the window count.
+        let count = windows.len();
+        let cols = (count as f32).sqrt().ceil().max(1.0) as usize;
+        let rows = count.div_ceil(cols);
+        let margin = (screen.width.min(screen.height) * 0.06).max(24.0);
+        let gap = margin * 0.6;
+        let grid_w = screen.width - margin * 2.0;
+        let grid_h = screen.height - margin * 2.0;
+        let cell_w = (grid_w - gap * (cols as f32 - 1.0)) / cols as f32;
+        let cell_h = (grid_h - gap * (rows as f32 - 1.0)) / rows as f32;
+
+        for (i, window) in windows.iter().enumerate() {
+            let col = i % cols;
+            let row = i / cols;
+            let tile = Rect::new(
+                margin + col as f32 * (cell_w + gap),
+                margin + row as f32 * (cell_h + gap),
+                cell_w.max(1.0),
+                cell_h.max(1.0),
+            );
+            let tile_z = base_z + 1 + i as u32 * 2;
+            let tile_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE + 7;
+
+            // Glass tile backing so the tile reads as a window proxy.
+            root.add_child(SceneNode::new(
+                tile_base,
+                SceneNodeKind::Glass(GlassParams::default()),
+                NodeProperties::new(tile).with_z_order(tile_z),
+            ));
+            // Solid fill so the tile is unambiguously painted (and visible even
+            // when glass blur degrades to a no-op on the fast path).
+            root.add_child(SceneNode::new(
+                tile_base + 1,
+                SceneNodeKind::Background {
+                    color: Color::new(30, 38, 64, 235),
+                },
+                NodeProperties::new(tile).with_z_order(tile_z + 1),
+            ));
+        }
     }
 
     fn cached_window_workspace_node(
@@ -517,6 +741,7 @@ impl Shell {
                 .into_iter()
                 .map(WindowRenderSignature::from_window)
                 .collect(),
+            focused_text: self.focused_app_text().map(str::to_string),
         }
     }
 
@@ -928,6 +1153,37 @@ impl Shell {
                     z + 1,
                     1,
                 ));
+            }
+        }
+
+        // Typed-text input field (t57-fG feature 2): when this window is focused
+        // and the shell has routed keyboard text into its buffer, paint the text
+        // as an input field in the body so the typed glyphs appear. This is the
+        // visible end of the shell↔app text-input seam; the field sits at the
+        // body's vertical midpoint so it reads as an editable text area.
+        if self.focus.focused() == Some(window.id) {
+            if let Some(text) = self.window_text_input(window.id) {
+                if !text.is_empty() {
+                    let field_h = 28.0_f32;
+                    let field_y = cy + (content.height * 0.5 - field_h * 0.5).max(0.0);
+                    let field = Rect::new(cx + 16.0, field_y, (cw - 32.0).max(0.0), field_h);
+                    // Field background so the input area is unambiguous.
+                    parent.add_child(solid_rect(
+                        win_base + 900,
+                        theme.app_browser_urlbar,
+                        field,
+                        z + 4,
+                    ));
+                    // The typed text itself.
+                    parent.add_child(text_node(
+                        win_base + 901,
+                        text.to_string(),
+                        text_color,
+                        Rect::new(field.x + 8.0, field.y + 5.0, (field.width - 16.0).max(0.0), 20.0),
+                        z + 5,
+                        1,
+                    ));
+                }
             }
         }
     }
