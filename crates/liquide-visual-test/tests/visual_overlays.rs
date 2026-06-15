@@ -19,12 +19,13 @@
 //! toast paint (or the notification-area crop) collapses the region diff/non-bg
 //! count below threshold and the test fails (see .orchestration/logs/t57-e3.md).
 //!
-//! IGNORE GATES (un-ignored by the paired f-slice as ITS acceptance gate,
-//! mirroring the t56-f4 menu pattern):
-//!   - `dialog_message_box_paints`  -> t57-f9 (or the dialog f-slice)
-//!   - `tooltip_paints_near_anchor` -> t57-f6
-//! These surfaces are STATE-wired (the shell mutation lands) but do NOT paint
-//! yet, so they are gated rather than blessed. Do not bless their goldens.
+//! IGNORE GATES — ALL RESOLVED. Both formerly-gated surfaces now paint and are
+//! blessed:
+//!   - `dialog_message_box_paints`  — RESOLVED (t65-s3 paint; t67-dialog
+//!     vertical-centering; t69-effects2 shadow). Blessed by t69-harden.
+//!   - `tooltip_paints_near_anchor` — RESOLVED (t67-tooltip scene overlay).
+//!     Un-ignored + blessed by t69-harden (verified painting, 1248 px stable).
+//! No overlay tests remain `#[ignore]`d.
 
 use liquide_visual_test::diff::{DiffOptions, diff_frames};
 use liquide_visual_test::golden::assert_golden;
@@ -202,22 +203,23 @@ fn notification_center_panel_paints() {
 /// driven by `chrome_active_dialog`), so a real themed dialog now paints WITH
 /// text: a dark-slate rounded panel carrying the title ("Confirm action"), the
 /// body message ("Are you sure you want to proceed?"), and a labelled "OK"
-/// button — verified by inspecting the captured frame
-/// (`target/visual-test/diag_dialog_full.png`).
+/// button — verified by inspecting the captured frame.
 ///
-/// REGION CORRECTION: the dialog is HORIZONTALLY centred but TOP-ANCHORED (the
-/// known `%`-height vertical-centering limit in the overlay layout — the dialog
-/// box sits at the top of the screen, ~y0..140, not vertically centred). The
-/// previous central-half crop (`width/4, height/4, width/2, height/2`) therefore
-/// missed the dialog entirely and read only ~332 changed pixels ("DIALOG DID NOT
-/// PAINT"). That was a TEST-REGION bug, not a paint/wiring gap: the dialog does
-/// paint, just above the old crop. We now crop the top-centre band where the
-/// dialog actually anchors and verify it there.
+/// VERTICAL-CENTERING FIX (t67-dialog, this wave). The dialog is now BOTH
+/// horizontally AND vertically centred over the desktop — the `liquide-layout`
+/// flex engine previously failed to expand a single (nowrap) flex line to the
+/// container's definite cross size, so `align-items:center` had no free space
+/// and the dialog overlay stayed top-anchored (~y0..140). That layout gap is
+/// fixed, so the dialog now anchors at the screen centre. VERIFIED by inspecting
+/// the full-frame capture (t69-harden): the "Confirm action" panel sits centred
+/// at ~(530..750, 293..453) on the 1280x720 surface, carrying its title, body,
+/// the "OK" button, AND a blue drop-shadow halo beneath it (the t69-effects2
+/// elevation now renders). The crop below therefore moves from the old
+/// top-centre band back to the CENTRE band where the dialog now lands.
 ///
-/// PRODUCTION FOLLOW-UP (not a wiring gap, does not block this test): the dialog
-/// should be VERTICALLY centred over the desktop. The overlay layout currently
-/// top-anchors it (percentage-height centering limitation in `liquide-layout` /
-/// the dialog overlay positioning). Tracked for the shell/layout owner.
+/// SHADOW (t69-effects2, this wave): the dialog's `box-shadow` literal (12px/40px
+/// elevation) now renders a real drop-shadow halo under the panel — captured
+/// inside the centre crop and baked into the re-blessed golden.
 #[test]
 fn dialog_message_box_paints() {
     let base = themed_desktop_capture(THEME).expect("baseline desktop capture");
@@ -229,27 +231,28 @@ fn dialog_message_box_paints() {
         "baseline and dialog frames must share dimensions"
     );
 
-    // The dialog is horizontally centred and TOP-ANCHORED: crop a top-centre band
-    // (centre half of the width, top ~140 px) where the dialog box paints.
+    // The dialog is now horizontally AND vertically centred (t67-dialog flex
+    // fix): crop the CENTRE band (centre half of the width, centre half of the
+    // height) where the dialog box + its drop-shadow now paint.
     let bw = (dialog.width / 2).max(1);
     let bx = dialog.width / 4;
-    let by = 0u32;
-    let bh = 140u32.min(dialog.height);
+    let bh = (dialog.height / 2).max(1);
+    let by = dialog.height / 4;
     let before = base.crop(bx, by, bw, bh);
     let after = dialog.crop(bx, by, bw, bh);
 
     // DIFFERENTIAL TOOTH: the dialog adds a large block of new pixels over the
-    // bare desktop in this band (panel + title + body + button). A no-paint
-    // regression (the pre-s3 state, or a broken sync_dialog_template) collapses
-    // this far below threshold.
+    // bare desktop in this band (panel + title + body + button + shadow). A
+    // no-paint regression (the pre-s3 state, or a broken sync_dialog_template)
+    // collapses this far below threshold.
     let delta = diff_frames(&before, &after, DiffOptions::default());
     assert!(
         !delta.matched && delta.differing_pixels > 1_000,
         "DIALOG DID NOT PAINT. Requesting a message-box produced only {} changed \
-         pixels in the top-centre region where the dialog anchors — expected a \
+         pixels in the centre region where the dialog now anchors — expected a \
          dialog (title + body + buttons) to paint. Check the dom_sync dialog \
-         template (sync_dialog_template / chrome_active_dialog). NOTE: the dialog \
-         is top-anchored, not vertically centred (a known layout limit); if you \
+         template (sync_dialog_template / chrome_active_dialog) and the overlay \
+         vertical-centering (liquide-layout flex single-line cross sizing). If you \
          see paint elsewhere, the dialog moved — re-crop to where it lands.",
         delta.differing_pixels
     );
@@ -273,45 +276,31 @@ fn dialog_message_box_paints() {
 
 /// tooltip_shown: hovering a dock item shows a tooltip near the anchor.
 ///
-/// STATUS (t66-harden): RED — KEPT RED on purpose; this is a REAL, still-broken
-/// production gap, not a golden drift. **Do NOT bless `overlay_tooltip`.**
+/// STATUS (t69-harden): RESOLVED — GREEN, un-ignored, golden re-blessed.
 ///
-/// What works now: t65-s3 wired the dock `:hover` PSEUDO-state (`set_dock_hover`),
-/// so the hovered dock ICON does change (the icon-swap repaints ~1.4k px). What
-/// is STILL broken: the dock-hover TOOLTIP BUBBLE ("Files" label in a
-/// `var(--tooltip-bg)` box) never surfaces on the capture render. Proven (t66-
-/// harden, corroborated by `e2e_hover::diag_hover_paint_sweep`): in the bleed-free
-/// band ABOVE the icon row — where ONLY the floating tooltip can paint — the
-/// hovered-vs-base change is EXACTLY 0 px, and it stays 0 across every animation
-/// delta swept 50 ms … 6000 ms (so it is not a dwell/timing miss — the tooltip
-/// overlay is simply not emitted/painted).
+/// FIXED (t67-tooltip, this wave). The dock-hover tooltip bubble is now emitted
+/// as a manual scene overlay on the render path (`liquide-shell` `scene.rs::
+/// add_tooltip_overlay`, gated on `tooltip_manager_visible()`), mirroring the
+/// overview/lockscreen overlays. The canonical `TooltipManager` state was always
+/// wired (`tooltip_adapter.rs` / `dom_sync.rs::sync_tooltip_template`), but the
+/// CSS pipeline produced ZERO paintable scene nodes for the fixed-position
+/// `<tooltip>` block (no `display`/width → it collapsed); the scene overlay is
+/// now the authoritative painter. The adapter also uses
+/// `display_duration_ms: 0` so a steady hover does not auto-hide.
 ///
-/// The committed `overlay_tooltip.png` golden (blessed at f046183, before the
-/// 6499a2d hover rework) shows a real "Files" bubble + a hover-highlight box; the
-/// CURRENT render shows neither. Re-blessing it would bake the REGRESSION in, so
-/// it is intentionally left mismatching and this test stays RED.
+/// VERIFIED (t69-harden): inspected the full-frame hover capture — the "Files"
+/// label bubble now paints in the bleed-free float band ABOVE the first dock
+/// icon (the previously-absent surface). Corroborated by
+/// `e2e_hover::diag_hover_paint_sweep` (t67-tooltip): the float-band change went
+/// from EXACTLY 0 px (all deltas) to **1248 px, stable at every delta 510–6000
+/// ms** (and correctly 0 px below the 500 ms show-delay).
 ///
-/// IMPORTANT — this test previously passed dishonestly: it cropped a band that
-/// INCLUDED the dock icon row, so the icon hover-swap (~1.4k px) cleared the
-/// `> 150` differential even though the tooltip painted nothing. The differential
-/// below is now restricted to the bleed-free float band (above the icon tops), so
-/// it fails for the RIGHT reason — the tooltip is genuinely absent.
-///
-/// PRODUCTION FOLLOW-UP (liquide-shell — outside the visual-test lock): emit/paint
-/// the dock-hover tooltip overlay on the render path. The canonical
-/// `TooltipManager` state is wired (`tooltip_adapter.rs`, driven from
-/// `dom_sync.rs::sync_tooltip_template`), but its overlay does not reach the
-/// painted scene on a steady dock hover. See `.orchestration/logs/t66-hover.md`
-/// (ROOT CAUSE) and `.orchestration/logs/t66-harden.md`.
-///
-/// `#[ignore]`d (NOT blessed, NOT deleted) so the suite stays green while this
-/// genuinely-broken surface is reported as a production gap. The assertion keeps
-/// full teeth: remove `#[ignore]` once the tooltip-render gap is fixed, then
-/// bless `overlay_tooltip` from the verified-correct render.
+/// The differential tooth below keeps FULL teeth: it is restricted to the
+/// bleed-free float band ABOVE the icon row (so the dock icon hover-swap cannot
+/// leak in and mask an absent tooltip). It cleared `0 px` while the tooltip was
+/// broken and now clears the now-painting bubble — do NOT relax the band back
+/// over the icon row.
 #[test]
-#[ignore = "REAL GAP: dock-hover tooltip overlay never paints (liquide-shell render path); \
-            0 px in the bleed-free float band at all deltas — see t66-hover.md / t66-harden.md. \
-            Do NOT bless overlay_tooltip (would bake in the regression)."]
 fn tooltip_paints_near_anchor() {
     let base = themed_desktop_capture(THEME).expect("baseline desktop capture");
     let hovered = tooltip_shown(THEME).expect("tooltip capture");
@@ -334,20 +323,18 @@ fn tooltip_paints_near_anchor() {
     let after = hovered.crop(0, float_top, hovered.width, float_h);
 
     // DIFFERENTIAL TOOTH (bleed-free): the styled tooltip bubble must paint a
-    // cluster of new pixels in the float band above the dock. Currently 0 — the
-    // tooltip overlay is not painted (see doc comment). This stays RED until the
-    // production tooltip-render gap is fixed; do NOT relax the band back over the
-    // icon row to make it green (that would be fake-green via icon-swap bleed).
+    // cluster of new pixels in the float band above the dock. Now ~1248 px (was
+    // 0 px before t67-tooltip wired the scene overlay). Do NOT relax the band
+    // back over the icon row (that would be fake-green via icon-swap bleed).
     let delta = diff_frames(&before, &after, DiffOptions::default());
     assert!(
         !delta.matched && delta.differing_pixels > 150,
         "TOOLTIP DID NOT PAINT NEAR THE ANCHOR. Hovering a dock item produced only \
          {} changed pixels in the FLOAT BAND above the dock icon (bleed-free of the \
-         icon hover-swap) — expected the styled tooltip bubble (\"Files\" label in a \
-         `var(--tooltip-bg)` box) to paint here. PROVEN 0 px across all animation \
-         deltas, so this is the unwired dock-hover tooltip OVERLAY render path \
-         (liquide-shell: emit the TooltipManager overlay into the painted scene; \
-         see .orchestration/logs/t66-hover.md), NOT a dwell/timing miss.",
+         icon hover-swap) — expected the styled tooltip bubble (\"Files\" label) to \
+         paint here. This regressed the t67-tooltip scene overlay (liquide-shell: \
+         `scene.rs::add_tooltip_overlay`, gated on `tooltip_manager_visible()`); it \
+         is NOT a dwell/timing miss (the bubble is delta-stable 510–6000 ms).",
         delta.differing_pixels
     );
 
