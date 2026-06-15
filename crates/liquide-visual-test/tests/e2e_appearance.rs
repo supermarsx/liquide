@@ -212,18 +212,43 @@ fn status_bar_spans_full_width() {
 /// catch a dock that renders e.g. one giant icon, overlapping icons, or fewer
 /// icons than configured. The state cross-check means "it rendered something"
 /// cannot pass when the count is wrong.
-/// The dock band's GLASS background reference: a point in the dock band well left
-/// of the centred icon cluster. Icons are isolated by measuring lift off the
-/// translucent glass (NOT off pure black — the glass panel spans the full width at
-/// low brightness, so a black reference would count the whole band as "content").
-fn dock_band_and_glass_ref(frame: &Frame) -> (Frame, [u8; 4]) {
+/// Brightness threshold (max RGB channel) above which a dock-band pixel is treated
+/// as ICON ink rather than background/glass/wallpaper.
+///
+/// GRADIENT-WALLPAPER DRIFT (t69-harden2): the desktop background is now a designed
+/// gradient (t69-wallpaper) whose purple/blue bloom bleeds into the dock band's LEFT
+/// edge. The OLD detection isolated icons by lift off a single sampled "glass
+/// reference" pixel; because the new bloom is a SMOOTH gradient, columns near the
+/// bloom differ from any single reference pixel and were miscounted as a spurious
+/// wide cluster on the far left (verified: a ~44–224px content run at the band's
+/// left, in addition to the four real ~40px icons centred at band-x ~558–749).
+///
+/// The robust, gradient-immune signal is ABSOLUTE column brightness. Measured peak
+/// max-channel per column (t69-harden2 diagnostic): the four icons peak at 158–249,
+/// while ALL background — flat glass AND the brightest wallpaper bloom — peaks at
+/// only 79–97. A threshold of 120 sits cleanly in that ~60-wide gap: it admits
+/// every icon (incl. the dimmest at ~158) and rejects the entire glass band + bloom
+/// (max ~97). This keeps full count teeth — 4 separated icons read as 4 clusters; a
+/// merged blob reads as 1; a missing/clipped icon reads as < 4 — without depending
+/// on the (now non-uniform) band background.
+const DOCK_ICON_MIN_PEAK: u8 = 120;
+
+/// Per-column mask over the dock band: a column is `true` when it contains at least
+/// one pixel whose max RGB channel exceeds [`DOCK_ICON_MIN_PEAK`] (i.e. icon ink,
+/// not glass/wallpaper). Returns `(band, mask)`.
+fn dock_band_and_icon_columns(frame: &Frame) -> (Frame, Vec<bool>) {
     let band = crop_region(frame, region_dock_band(frame.width, frame.height));
-    // Sample the glass background ~50px from the left, vertical middle (clear of
-    // the centred icon cluster which lives around x in [540,740]).
-    let glass = band
-        .pixel(50, band.height / 2)
-        .unwrap_or([18, 24, 45, 255]);
-    (band, glass)
+    let mut mask = vec![false; band.width as usize];
+    for x in 0..band.width {
+        for y in 0..band.height {
+            let p = band.pixel(x, y).unwrap();
+            if p[0].max(p[1]).max(p[2]) > DOCK_ICON_MIN_PEAK {
+                mask[x as usize] = true;
+                break;
+            }
+        }
+    }
+    (band, mask)
 }
 
 #[test]
@@ -242,15 +267,13 @@ fn dock_shows_exactly_four_distinct_icons() {
          Settings). Got {item_count}."
     );
 
-    // Count distinct icon clusters by their lift off the dock GLASS background
-    // (tol 40 isolates the bright icon glyphs from the translucent panel; a
-    // 6-column gap separates adjacent icons but not AA fuzz within one icon).
-    let (band, glass) = dock_band_and_glass_ref(&frame);
-    let cols = column_has_content(&band, glass, 40);
-    // A pinned icon is ~42–44px wide; the inter-icon gap is only a few px and the
-    // themed (lifted) desktop background can leave a 1px AA speck in a gap. Suppress
-    // sub-8px specks so a stray pixel cannot bridge two real icons into one cluster
-    // (nor be miscounted as an icon). Real icons survive this trivially.
+    // Count distinct icon clusters by ABSOLUTE icon brightness (see
+    // DOCK_ICON_MIN_PEAK): immune to the gradient wallpaper bloom in the band.
+    let (_band, cols) = dock_band_and_icon_columns(&frame);
+    // A pinned icon is ~42–44px wide; the inter-icon gap is only a few px and AA can
+    // leave a 1px speck. Suppress sub-8px specks so a stray pixel cannot bridge two
+    // real icons into one cluster (nor be miscounted as an icon). Real icons survive
+    // this trivially.
     let cols = suppress_specks(&cols, 8);
     let clusters = horizontal_clusters(&cols, 6);
 
@@ -273,9 +296,9 @@ fn dock_shows_exactly_four_distinct_icons() {
 #[test]
 fn dock_icons_are_not_a_single_overlapping_blob() {
     let frame = themed_desktop_capture(THEME).expect("desktop capture");
-    let (band, glass) = dock_band_and_glass_ref(&frame);
-    // Isolate icons off the glass background (not pure black).
-    let cols = column_has_content(&band, glass, 40);
+    // Isolate icons by ABSOLUTE icon brightness (see DOCK_ICON_MIN_PEAK): immune to
+    // the gradient wallpaper bloom that bleeds into the band edges.
+    let (_band, cols) = dock_band_and_icon_columns(&frame);
 
     let first = cols.iter().position(|&c| c);
     let last = cols.iter().rposition(|&c| c);

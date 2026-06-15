@@ -168,9 +168,11 @@ fn capture_right_click(rx: f32, ry: f32) -> Frame {
 
 #[test]
 fn context_menu_opens_at_cursor() {
-    // A click point comfortably inside the screen so the menu is NOT clamped:
-    // 300 < 1280-200-4, 250 < 720-148-4. Menu top-left must equal (300, 250).
-    let (rx, ry) = (300.0_f32, 250.0_f32);
+    // A click point comfortably inside the screen so the menu is NOT clamped, AND
+    // over the DARKER (right) part of the gradient wallpaper so the translucent
+    // panel separates cleanly from the background (see TOLERANCE note below):
+    // 700 < 1280-200-4, 300 < 720-148-4. Menu top-left must equal (700, 300).
+    let (rx, ry) = (700.0_f32, 300.0_f32);
     let base = base_desktop();
     let frame = capture_right_click(rx, ry);
     let (ox, oy) = menu_origin(rx, ry);
@@ -178,20 +180,20 @@ fn context_menu_opens_at_cursor() {
     // The menu rect [ox, ox+200] x [oy, oy+148] must carry substantial paint
     // that differs from the bare desktop (the panel + 5 item rows).
     //
-    // PANEL-vs-BACKGROUND TOLERANCE (recalibrated, t65-harden2): the context menu
-    // is a TRANSLUCENT "liquid glass" panel. After the hardcoded dark backdrop was
-    // removed (the themed CSS `desktop-background` rgb(12,14,28) is now the visible
-    // background, vs the old hardcoded rgb(5,8,20)), the panel-fill's max-channel
-    // delta vs the background dropped from ~24.6 to ~17. At the OLD `tol=24` the
-    // panel fill no longer crosses the threshold, so only the bright glyph/border
-    // ink (~2.3k px) counts and a fully-painted menu reads as "not painted". The
-    // menu opening also lays a faint full-screen scrim (delta ~12). `tol=16` sits
-    // ABOVE the scrim + the bare-capture noise (both excluded → the corner / wrong-
-    // spot teeth below still read ~0) and BELOW the panel-fill delta (~17 → the
-    // whole panel counts: 25_456/29_600 px). This keeps full teeth: a menu painted
-    // at the wrong location reads ~0 in this rect (verified: wrong-spot probe = 0 at
-    // tol 16), so an absent/mispositioned menu still fails. See `.orchestration/
-    // logs/t65-s2b.md` (proven cause) and `t65-harden2.md`.
+    // PANEL-vs-BACKGROUND TOLERANCE (recalibrated, t69-harden2): the context menu
+    // is a TRANSLUCENT "liquid glass" panel. The desktop background is now a
+    // DESIGNED GRADIENT wallpaper (t69-wallpaper) — a purple/blue bloom on the LEFT
+    // fading to near-black on the RIGHT. Over the bloom, the translucent panel fill
+    // composites to almost exactly the bloom colour (measured max-channel delta ~7
+    // at the old (300,250) click point), so the panel fill no longer crosses any
+    // tolerance and a fully-painted menu read as "not painted" — the original
+    // failure. The fix is geometric, not a weakened threshold: clicking over the
+    // DARK side of the gradient (700,300: bg ~rgb(8,9,23)) restores a clean panel
+    // separation — the panel fill ~rgb(16,22,47) gives a max-channel delta well
+    // above `tol=16`, so the WHOLE panel counts (measured 25_454/29_600 px, 86%).
+    // `tol=16` still excludes the faint full-screen scrim the menu lays (delta ~12).
+    // This keeps full teeth: a menu painted at the wrong spot reads near-0 panel
+    // coverage in this rect, so an absent/mispositioned menu still fails.
     let panel_tol = 16u8;
     let menu_changed = changed_vs_base(
         &frame,
@@ -211,15 +213,22 @@ fn context_menu_opens_at_cursor() {
     );
 
     // NOT at the origin: the top-left 200x148 corner of the screen (where a
-    // broken (0,0)-anchored menu would land) must be ~unchanged from base, since
-    // our click was at (300,250) well away from the corner and the status bar
-    // band is excluded by starting the probe below it.
+    // broken (0,0)-anchored menu would land) must carry FAR less change than the
+    // menu rect. RELATIVE (not absolute) tooth, t69-harden2: the menu open lays a
+    // faint full-screen scrim, and over the bright LEFT-side wallpaper bloom that
+    // scrim now crosses `tol=16` for ~35% of the corner — so the old absolute
+    // "corner ~unchanged" probe no longer holds. The discriminating signal is that
+    // the real menu's PANEL makes its rect change ~2.3x more than the bare scrim
+    // changes the corner; a corner-anchored menu would invert that ratio. We
+    // require the menu rect to change at least 1.5x the corner.
     let corner_changed =
         changed_vs_base(&frame, &base, 0, 40, CONTEXT_MENU_WIDTH as u32, 108, panel_tol);
     assert!(
-        corner_changed < (CONTEXT_MENU_WIDTH as usize * 108) / 8,
-        "context menu appears anchored near the screen origin (corner has {corner_changed} \
-         changed pixels) instead of the click point ({ox},{oy})."
+        menu_changed > corner_changed * 3 / 2,
+        "context menu does not appear anchored at the click point: the menu rect at ({ox},{oy}) \
+         changed {menu_changed} px but the screen corner changed {corner_changed} px — the menu \
+         rect should change far more than the corner (a corner-anchored or absent menu inverts \
+         this)."
     );
 
     // NOT offscreen: the menu's bottom-right must be on-screen.
@@ -464,8 +473,6 @@ fn context_menu_item_activation_fires_action_and_dismisses() {
     let item_x = rx + CONTEXT_MENU_WIDTH / 2.0;
     let item_y = ry + MENU_PADDING + 0.5 * MENU_ITEM_HEIGHT;
 
-    let base = base_desktop();
-
     let (frame, window_count) = capture_desktop_scripted_readback(
         &scenario_options(THEME),
         |handle| {
@@ -486,22 +493,35 @@ fn context_menu_item_activation_fires_action_and_dismisses() {
          execute_action(OpenTerminal)."
     );
 
-    // DISMISSED (pixels): the LEFT strip of the former menu rect, BELOW the
-    // opened window's titlebar band, must read close to the bare desktop — NOT a
-    // menu panel. The opened app window is centred; this left strip at x in
-    // [rx, rx+24] within the former menu rect is a clean dismissal probe.
+    // DISMISSED (pixels): the LEFT strip of the former menu rect, BELOW the opened
+    // window's titlebar band, must contain NO menu PANEL — no panel border or item
+    // ink. The opened app window is centred; this left strip at x in [rx, rx+24]
+    // within the former menu rect is a clean dismissal probe.
+    //
+    // INTERNAL-INK probe, not diff-vs-base (t69-harden2): the old probe required
+    // the strip to read close to the BARE desktop. That broke with the new depth /
+    // gradient work — activating "Open Terminal" lays a faint full-screen scrim that
+    // DIMS the desktop (and, over the gradient wallpaper's bright LEFT-side bloom,
+    // that dimming alone shifts the strip by ~30/channel vs the bare desktop), so a
+    // correctly DISMISSED menu still "differed from base" everywhere. The robust
+    // dismissal signal is INTERNAL contrast: a stale menu panel carries border +
+    // glyph ink (measured strip ink = 82 while OPEN), whereas a dismissed strip is
+    // uniform desktop fill — even when scrim-dimmed — and carries ZERO ink
+    // (measured: 0 dismissed, 0 bare). `column_ink_profile` deviates from the
+    // strip's OWN mean, so a uniform-but-dimmed strip reads clean. Teeth intact: a
+    // persistent menu reads tens of ink columns and fails.
     let (ox, oy) = menu_origin(rx, ry);
     // Probe the lower portion of the former menu rect (rows 2..5), 24px wide at
     // the menu's left edge — clear of a centred window's body at this x.
     let probe_y = oy + (MENU_PADDING + 2.0 * MENU_ITEM_HEIGHT) as u32;
     let probe_h = (3.0 * MENU_ITEM_HEIGHT) as u32;
-    let still_painted = changed_vs_base(&frame, &base, ox, probe_y, 24, probe_h, 24);
-    let probe_area = 24 * probe_h as usize;
+    let profile = column_ink_profile(&frame, ox, probe_y, 24, probe_h);
+    let stale_ink: usize = profile.iter().sum();
     assert!(
-        still_painted < probe_area / 5,
-        "context menu appears STILL PAINTED after activation: {still_painted}/{probe_area} pixels \
-         in the former menu's left strip still differ from the bare desktop (expected the menu to \
-         be dismissed, i.e. < 1/5). A persistent menu after activation is a dismissal bug."
+        stale_ink < 16,
+        "context menu appears STILL PAINTED after activation: the former menu's left strip carries \
+         {stale_ink} ink pixels (panel border / item glyphs) — expected ~0 once dismissed. A \
+         persistent menu after activation is a dismissal bug."
     );
 }
 
