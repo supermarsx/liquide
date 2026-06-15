@@ -184,6 +184,18 @@ impl TransitionManager {
         self.transitions.clear();
         self.previous_values.clear();
     }
+
+    /// Drop all in-flight transitions while **keeping** the recorded baseline
+    /// (`previous_values`) for change detection.
+    ///
+    /// Use this to treat the current frame as the established baseline state
+    /// rather than a user-visible transition: any transitions started during
+    /// the initial style computation are discarded, but the per-property
+    /// baseline values are retained so the *next* change is still detected
+    /// (and animated) correctly.
+    pub fn clear_running(&mut self) {
+        self.transitions.clear();
+    }
 }
 
 /// Extract a numeric (f32) representation of a CSS property from computed style.

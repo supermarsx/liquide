@@ -488,7 +488,6 @@ mod transition_integration_tests {
     use super::*;
     use liquide_dom::Document;
 
-    #[ignore = "legacy transition manager no longer overrides first-frame style-map values for this path"]
     #[test]
     fn apply_transitions_detects_opacity_change() {
         let mut engine = StyleEngine::default();
@@ -512,8 +511,10 @@ mod transition_integration_tests {
         let mut map = engine.restyle_all(&doc);
         engine.apply_transitions(&mut map);
 
-        // Treat the first frame as baseline state, not a user-visible transition.
-        engine.transition_manager.borrow_mut().clear();
+        // Treat the first frame as baseline state, not a user-visible transition:
+        // drop any first-frame transitions but KEEP the recorded baseline values
+        // so the subsequent opacity change is still detected.
+        engine.transition_manager.borrow_mut().clear_running();
 
         assert!(
             !engine.has_running_transitions(),
