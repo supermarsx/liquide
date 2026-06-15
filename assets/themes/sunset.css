@@ -573,6 +573,109 @@ loading-panel {
 
 cursor { color: rgba(255, 245, 230, 1.0); }
 
+/* ── Dialog (modal message / confirm box) ── */
+
+dialog-overlay {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    background: rgba(20, 10, 0, 0.58);
+}
+
+dialog {
+    display: flex;
+    flex-direction: column;
+    min-width: 360;
+    max-width: 520;
+    border-radius: 16;
+    background: rgba(32, 22, 10, 0.97);
+    border-color: rgba(255, 180, 80, 0.16);
+    border-width: 1;
+    border-style: solid;
+    blur-radius: 30;
+    glass-tint: rgba(30, 20, 8, 0.92);
+    box-shadow: 0px 12px 40px rgba(20, 10, 0, 0.50);
+    overflow: hidden;
+}
+
+dialog-header {
+    display: flex;
+    align-items: center;
+    padding-left: 20;
+    padding-right: 20;
+    padding-top: 18;
+}
+
+dialog-title {
+    flex-grow: 1;
+    font-size: 16;
+    font-weight: 600;
+    color: rgba(255, 245, 230, 1.0);
+}
+
+dialog-body {
+    display: flex;
+    flex-direction: column;
+    padding-left: 20;
+    padding-right: 20;
+    padding-top: 10;
+    padding-bottom: 16;
+}
+
+dialog-message {
+    font-size: 13;
+    color: rgba(255, 245, 230, 0.78);
+    line-height: 1.4;
+}
+
+dialog-actions {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    gap: 8;
+    padding-left: 16;
+    padding-right: 16;
+    padding-bottom: 16;
+}
+
+dialog-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 32;
+    padding-left: 18;
+    padding-right: 18;
+    border-radius: 8;
+    font-size: 13;
+    font-weight: 500;
+    color: rgba(255, 245, 230, 0.90);
+    background: rgba(255, 200, 120, 0.08);
+    border-color: rgba(255, 180, 80, 0.16);
+    border-width: 1;
+}
+
+dialog-button:hover {
+    background: rgba(255, 200, 120, 0.14);
+    color: rgba(255, 245, 230, 1.0);
+}
+
+dialog-button.primary {
+    background: rgba(255, 159, 10, 0.95);
+    color: rgba(40, 20, 4, 1.0);
+    border-color: rgba(255, 159, 10, 0.0);
+}
+
+dialog-button.primary:hover {
+    background: rgba(255, 179, 64, 1.0);
+    color: rgba(40, 20, 4, 1.0);
+}
+
 app-settings.sidebar-item { background: rgba(255, 200, 120, 0.06); }
 app-terminal { background: rgb(18, 10, 2); color: rgb(255, 179, 64); }
 app-browser.urlbar { background: rgba(255, 200, 120, 0.08); }
