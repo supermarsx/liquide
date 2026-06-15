@@ -146,17 +146,16 @@ impl DesktopPipeline {
         let has_layout_work = !doc.dirty.layout.is_empty();
         let has_paint_work = !doc.dirty.paint.is_empty();
 
-        // Fast path: when nothing is dirty and all caches are populated,
-        // return Arc clones (16-byte pointer copy) without running any pipeline stage.
-        if !has_style_work
-            && !has_layout_work
-            && !has_paint_work
-            && self.last_styles.is_some()
+        let caches_populated = self.last_styles.is_some()
             && self.last_layout.is_some()
-            && self.last_display_list.is_some()
-            && self.transition_engine.active_count() == 0
-            && self.animation_scheduler.active_count() == 0
-        {
+            && self.last_display_list.is_some();
+        let animating =
+            self.transition_engine.active_count() > 0 || self.animation_scheduler.active_count() > 0;
+
+        // Fast path: when nothing is dirty, nothing is animating, and all
+        // caches are populated, return Arc clones (16-byte pointer copy)
+        // without running any pipeline stage.
+        if !has_style_work && !has_layout_work && !has_paint_work && caches_populated && !animating {
             return (
                 PipelineOutput {
                     styles: Arc::clone(self.last_styles.as_ref().unwrap()),
@@ -165,6 +164,33 @@ impl DesktopPipeline {
                 },
                 false,
             );
+        }
+
+        // Scoped-animation path: an animation/transition is running but NOTHING
+        // in the DOM is dirty and every cache is populated. Previously this fell
+        // through to the FULL pipeline (restyle_all + full layout + full paint)
+        // every frame for the whole tree — so a single 1-element fade re-styled
+        // and re-laid-out all static chrome each frame (t68-perf cause #3).
+        //
+        // Instead, reuse the cached styles/layout and re-derive ONLY the
+        // animating subtrees: apply the per-frame animation/transition overrides
+        // (already scoped to animating nodes by `tick_and_apply`), then relayout
+        // just those nodes' subtrees against the cached layout. The style and
+        // layout caches for every NON-animating node are kept verbatim.
+        if !has_style_work
+            && !has_layout_work
+            && !has_paint_work
+            && caches_populated
+            && animating
+        {
+            if let Some(out) =
+                self.run_scoped_animation(doc, dt_ms, text_measurer, &image_measurer)
+            {
+                return out;
+            }
+            // Fall through to the full pipeline if scoping was not applicable
+            // (e.g. an animating node's subtree could not be relayout-ed
+            // incrementally — correctness first).
         }
 
         // 1. Style — unwrap Arc for mutation (try_unwrap succeeds when we're
@@ -369,6 +395,125 @@ impl DesktopPipeline {
             },
             animations_active,
         )
+    }
+
+    /// Scoped per-frame advance for active animations/transitions when no DOM
+    /// mutation occurred.
+    ///
+    /// Reuses the cached `StyleMap` and `LayoutTree` and only re-derives the
+    /// animating subtrees:
+    ///   1. Clone the cached styles (so non-animating nodes keep their exact
+    ///      cached `ComputedStyle`), then run `tick_and_apply`, which writes the
+    ///      interpolated transition/animation values onto the animating nodes
+    ///      ONLY.
+    ///   2. Relayout just the animating nodes' subtrees against the cached
+    ///      layout tree (the layout engine keeps every other box untouched and
+    ///      falls back to a full pass only if a subtree cannot be relaid
+    ///      incrementally).
+    ///   3. Repaint into a fresh display list (the painter has no public partial
+    ///      API; the win here is skipping the whole-tree restyle + full layout
+    ///      that the old path did every animation frame).
+    ///
+    /// Returns `None` to signal the caller should run the full pipeline instead
+    /// (no animating nodes resolved, or the cache was unexpectedly empty).
+    fn run_scoped_animation(
+        &mut self,
+        doc: &Document,
+        dt_ms: f32,
+        text_measurer: &dyn liquide_layout::TextMeasurer,
+        image_measurer: &liquide_layout::DefaultImageMeasurer,
+    ) -> Option<(PipelineOutput, bool)> {
+        // Clone cached styles — non-animating nodes are preserved verbatim;
+        // `tick_and_apply` mutates only the animating nodes.
+        let cached_styles = self.last_styles.take()?;
+        let mut styles = match Arc::try_unwrap(cached_styles) {
+            Ok(s) => s,
+            Err(a) => (*a).clone(),
+        };
+
+        // Bridge @keyframes from style engine → scheduler (cheap no-op when
+        // already registered) so newly-registered keyframes resolve.
+        for (_name, kf_rule) in &self.style_engine.keyframes {
+            if !self.animation_scheduler.has_keyframes(&kf_rule.name) {
+                self.animation_scheduler.register_keyframes(kf_rule.clone());
+            }
+        }
+
+        // Snapshot the set of animating nodes BEFORE the tick (their cached
+        // styles still carry `animation_name`, and the transition engine still
+        // lists their running properties). These are the ONLY subtrees we will
+        // relayout.
+        let mut animating_nodes: std::collections::HashSet<liquide_dom::NodeId> =
+            std::collections::HashSet::new();
+        for (node_id, _prop, _val) in self.transition_engine.active_overrides() {
+            animating_nodes.insert(node_id);
+        }
+        for (node_id, style) in styles.iter() {
+            if style.animation_name.is_some() {
+                animating_nodes.insert(*node_id);
+            }
+        }
+
+        // Apply this frame's interpolated values onto the animating nodes only.
+        let animations_active = self.tick_and_apply(dt_ms, &mut styles);
+        // Snapshot for next-frame transition detection (mirrors the full path).
+        self.snapshot_styles(&styles);
+
+        if animating_nodes.is_empty() {
+            // Nothing actually animating after the tick — let the full pipeline
+            // (or the next-frame fast path) take over. Restore the cache.
+            self.last_styles = Some(Arc::new(styles));
+            return None;
+        }
+
+        // Relayout ONLY the animating subtrees against the cached layout.
+        let cached_layout = self.last_layout.take()?;
+        let mut layout = match Arc::try_unwrap(cached_layout) {
+            Ok(l) => l,
+            Err(a) => (*a).clone(),
+        };
+        let input = LayoutInput::new(doc, &styles, text_measurer, image_measurer);
+
+        // Collapse animating descendants under animating ancestors so we never
+        // relayout the same subtree twice.
+        let mut roots: Vec<liquide_dom::NodeId> = Vec::new();
+        let mut sorted: Vec<liquide_dom::NodeId> = animating_nodes.iter().copied().collect();
+        sorted.sort_by_key(|node_id| doc.ancestors(*node_id).len());
+        for node_id in sorted {
+            let ancestors = doc.ancestors(node_id);
+            if roots
+                .iter()
+                .any(|selected| ancestors.iter().any(|a| a == selected))
+            {
+                continue;
+            }
+            roots.push(node_id);
+        }
+        for node_id in roots {
+            layout = self
+                .layout_engine
+                .relayout_subtree(&input, node_id, &layout);
+        }
+
+        // Repaint (whole-tree paint; the avoided cost is the full restyle +
+        // full layout the old animating path ran every frame).
+        let display_list = self.painter.paint(doc, &layout, &styles);
+
+        let styles = Arc::new(styles);
+        let layout = Arc::new(layout);
+        let display_list = Arc::new(display_list);
+        self.last_styles = Some(Arc::clone(&styles));
+        self.last_layout = Some(Arc::clone(&layout));
+        self.last_display_list = Some(Arc::clone(&display_list));
+
+        Some((
+            PipelineOutput {
+                styles,
+                layout,
+                display_list,
+            },
+            animations_active,
+        ))
     }
 
     /// Run the full pipeline and convert the result to compositor SceneNodes.

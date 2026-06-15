@@ -91,6 +91,70 @@ fn theme_switching() {
 }
 
 #[test]
+fn active_animation_does_not_force_full_tree_restyle() {
+    // t68-perf cause #3b: an active transition/animation used to disable the
+    // pipeline fast path for the WHOLE tree, re-styling and re-laying-out every
+    // static node every frame. After the scoped-invalidation fix, a frame with
+    // an active transition but no DOM mutation must NOT restyle non-animating
+    // nodes — their cached `ComputedStyle` Arc must survive (pointer-identical).
+    let config = PipelineConfig::default();
+    let mut pipeline = DesktopPipeline::new(&config);
+    let mut desktop = DesktopDocument::new();
+
+    // Frame 0: full pipeline populates the caches.
+    let (out0, _) = pipeline.run(&mut desktop.doc, 16.0);
+    assert!(out0.styles.len() > 0);
+
+    // Pick an animating node and a DIFFERENT static node.
+    let mut node_ids: Vec<liquide_dom::NodeId> = out0.styles.iter().map(|(id, _)| *id).collect();
+    node_ids.sort();
+    assert!(
+        node_ids.len() >= 2,
+        "need at least two styled nodes for the scoping test"
+    );
+    let animating = node_ids[0];
+    let static_node = node_ids[1];
+
+    // Capture the static node's cached style Arc (pointer identity).
+    let static_style_before = std::sync::Arc::clone(out0.styles.get(static_node).unwrap());
+
+    // Clear DOM dirty flags so the NEXT frame has no DOM-driven work — the only
+    // reason to do any pipeline work is the active transition.
+    desktop.doc.dirty.clear_all();
+
+    // Start a real transition on `animating` (opacity 1 → 0 over 1s). This makes
+    // the transition engine active without dirtying the DOM.
+    pipeline
+        .transition_engine
+        .start(
+            animating,
+            "opacity",
+            1.0,
+            0.0,
+            1000.0,
+            0.0,
+            liquide_animation::EasingFunction::Linear,
+        );
+    assert!(pipeline.transition_engine.active_count() > 0);
+
+    // Frame 1: animation active, DOM clean → scoped-animation path.
+    let (out1, animations_active) = pipeline.run(&mut desktop.doc, 16.0);
+    assert!(
+        animations_active,
+        "the active transition should report animations_active"
+    );
+
+    // The static (non-animating) node's computed style must be the SAME Arc —
+    // proving it was NOT restyled (the whole-tree restyle would allocate fresh
+    // Arcs for every node).
+    let static_style_after = out1.styles.get(static_node).unwrap();
+    assert!(
+        std::sync::Arc::ptr_eq(&static_style_before, static_style_after),
+        "a non-animating node must keep its cached style across an animation frame"
+    );
+}
+
+#[test]
 fn viewport_update() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);

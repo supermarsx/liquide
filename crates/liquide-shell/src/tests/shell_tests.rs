@@ -311,6 +311,129 @@ fn shell_sync_dom_formats_clock_from_status_bar_model() {
 }
 
 #[test]
+fn shell_clock_tick_patches_text_in_place_without_rebuilding_statusbar() {
+    // A once-per-minute clock change must NOT tear down and reparse the whole
+    // status-bar subtree (t68-perf cause #3a). The statusbar element and every
+    // item node must keep their identity; only the clock's text node content
+    // changes. This keeps the pipeline fast path alive and avoids re-requesting
+    // glyphs for the unchanged chrome.
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.status_bar.set_clock_offset_minutes(0);
+    shell.status_bar.set_clock_show_seconds(false);
+    shell.status_bar.update_clock(13 * 3600 * 1_000_000);
+    shell.sync_dom();
+
+    let statusbar = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("shell-statusbar")
+        .expect("statusbar element");
+    let center_slot = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("statusbar-slot-center")
+        .expect("center slot");
+    // Capture identities of the whole statusbar subtree before the tick.
+    let statusbar_children_before: Vec<liquide_dom::NodeId> =
+        shell.desktop_dom.doc.children(statusbar).to_vec();
+    let clock_item = shell.desktop_dom.doc.children(center_slot)[0];
+    let clock_text = shell.desktop_dom.doc.children(clock_item)[0];
+    assert_eq!(
+        shell.desktop_dom.doc.get(clock_text).unwrap().text_content(),
+        Some("13:00")
+    );
+
+    // Advance to the next minute.
+    shell
+        .status_bar
+        .update_clock((13 * 3600 + 60) * 1_000_000);
+    shell.sync_dom();
+
+    // The statusbar element, its children, the clock item and the clock text
+    // node must all be the SAME nodes (in-place patch, not rebuild).
+    assert_eq!(
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("shell-statusbar"),
+        Some(statusbar),
+        "statusbar element must not be recreated by a clock tick"
+    );
+    assert_eq!(
+        shell.desktop_dom.doc.children(statusbar).to_vec(),
+        statusbar_children_before,
+        "statusbar children must keep identity across a clock tick"
+    );
+    let clock_item_after = shell.desktop_dom.doc.children(center_slot)[0];
+    assert_eq!(
+        clock_item_after, clock_item,
+        "clock item node must not be recreated"
+    );
+    let clock_text_after = shell.desktop_dom.doc.children(clock_item_after)[0];
+    assert_eq!(
+        clock_text_after, clock_text,
+        "clock text node must be patched in place, not recreated"
+    );
+    // ...and its content actually updated.
+    assert_eq!(
+        shell
+            .desktop_dom
+            .doc
+            .get(clock_text_after)
+            .unwrap()
+            .text_content(),
+        Some("13:01")
+    );
+}
+
+#[test]
+fn shell_statusbar_structural_change_still_rebuilds() {
+    // Correctness guard: when the structure actually changes (an item appears),
+    // the in-place patch must decline and the subtree must rebuild so the new
+    // node is present.
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.status_bar.update_clock(0);
+    shell.sync_dom();
+
+    let center_slot = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("statusbar-slot-center")
+        .expect("center slot");
+    let before = shell.desktop_dom.doc.children(center_slot).len();
+
+    // Add a custom center item → one more child → structural change.
+    shell
+        .status_bar
+        .add_item(liquide_statusbar::StatusBarItem {
+            id: "custom-extra".to_string(),
+            kind: liquide_statusbar::StatusBarItemKind::Custom {
+                plugin_id: "test".to_string(),
+                content: "EXTRA".to_string(),
+            },
+            slot: liquide_statusbar::StatusBarSlot::Center,
+            visible: true,
+            cached: false,
+            last_update_us: 0,
+        });
+    shell.sync_dom();
+
+    // Re-fetch the center slot: a structural change rebuilds the statusbar
+    // subtree, so the old slot node id may have been replaced.
+    let center_slot_after = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("statusbar-slot-center")
+        .expect("center slot after rebuild");
+    let after = shell.desktop_dom.doc.children(center_slot_after).len();
+    assert_eq!(
+        after,
+        before + 1,
+        "a new status-bar item must appear (structural change rebuilds)"
+    );
+}
+
+#[test]
 fn shell_sync_dom_hides_branding_when_app_menu_is_disabled() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.config.status_bar.show_app_menu = false;

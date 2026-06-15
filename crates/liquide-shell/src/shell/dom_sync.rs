@@ -1056,6 +1056,15 @@ impl Shell {
 
     /// Render a template and replace the children of the element with the given
     /// DOM id.  Skips the DOM rebuild if the rendered HTML hasn't changed.
+    ///
+    /// When the rendered HTML differs only in text content and/or a small set
+    /// of attributes (e.g. the once-per-minute clock tick, a changing unread
+    /// count), the changed nodes are patched **in place** instead of tearing
+    /// down and reparsing the whole subtree.  This keeps the styling/layout of
+    /// unchanged siblings intact (so the pipeline fast path can survive a clock
+    /// tick) and avoids re-requesting glyphs for text that did not change.
+    /// A structural change (added/removed/reordered/retagged nodes) still falls
+    /// back to the full teardown + reparse for correctness.
     fn apply_template(&mut self, template_name: &str, element_id: &str, ctx: &TemplateContext) {
         let html = match self.template_registry.render(template_name, ctx) {
             Some(h) => h,
@@ -1069,17 +1078,210 @@ impl Shell {
             }
         }
 
-        // Find the target element and replace its children.
+        // Find the target element and update its children.
         if let Some(node_id) = self.desktop_dom.doc.get_element_by_id(element_id) {
-            let children: Vec<_> = self.desktop_dom.doc.children(node_id).to_vec();
-            for child in children {
-                self.desktop_dom.doc.remove_child(node_id, child);
-                self.desktop_dom.doc.destroy_node(child);
+            // Try an in-place patch first — only tears down + reparses when the
+            // structure actually changed.
+            if !self.patch_template_children(node_id, &html) {
+                let children: Vec<_> = self.desktop_dom.doc.children(node_id).to_vec();
+                for child in children {
+                    self.desktop_dom.doc.remove_child(node_id, child);
+                    self.desktop_dom.doc.destroy_node(child);
+                }
+                parse_html_into(&mut self.desktop_dom.doc, node_id, &html);
             }
-            parse_html_into(&mut self.desktop_dom.doc, node_id, &html);
         }
 
         self.template_cache.insert(template_name.to_string(), html);
+    }
+
+    /// Attempt to patch the children of `parent` to match `html` **in place**.
+    ///
+    /// Parses `html` into a scratch document and structurally diffs it against
+    /// the live subtree rooted at `parent`.  If (and only if) the two trees
+    /// have identical structure — same tags, same `id`/class sets, same child
+    /// counts at every level — the differing text content and attribute values
+    /// are applied directly to the existing live nodes (via `set_text_content`
+    /// / `set_attribute` / `remove_attribute`), preserving node identity and
+    /// the cached style/layout of everything that did not change.
+    ///
+    /// Returns `true` when the subtree was patched in place, `false` when a
+    /// structural difference means the caller must fall back to a full rebuild.
+    fn patch_template_children(&mut self, parent: NodeId, html: &str) -> bool {
+        use liquide_dom::html_parser::parse_html;
+
+        let new_doc = parse_html(html);
+        let new_root = new_doc.root();
+
+        let live_children: Vec<NodeId> = self.desktop_dom.doc.children(parent).to_vec();
+        let new_children: Vec<NodeId> = new_doc.children(new_root).to_vec();
+
+        if live_children.len() != new_children.len() {
+            return false;
+        }
+
+        // First pass: verify the entire pairing is structurally compatible
+        // before mutating anything, so a deep structural mismatch never leaves
+        // the live tree half-patched.
+        for (&live, &new) in live_children.iter().zip(new_children.iter()) {
+            if !Self::subtrees_structurally_match(&self.desktop_dom.doc, live, &new_doc, new) {
+                return false;
+            }
+        }
+
+        // Second pass: apply text/attribute differences in place.
+        for (&live, &new) in live_children.iter().zip(new_children.iter()) {
+            self.patch_node_in_place(live, &new_doc, new);
+        }
+
+        true
+    }
+
+    /// Structural-only comparison: do `live` (in the live doc) and `new` (in
+    /// `new_doc`) describe the same tree shape — same kind, same tag, same
+    /// `id`, same class set, same child count, recursively?  Text content and
+    /// attribute *values* are intentionally ignored here (those are patchable).
+    fn subtrees_structurally_match(
+        live_doc: &liquide_dom::Document,
+        live: NodeId,
+        new_doc: &liquide_dom::Document,
+        new: NodeId,
+    ) -> bool {
+        use liquide_dom::node::NodeData;
+
+        let (Some(ln), Some(nn)) = (live_doc.get(live), new_doc.get(new)) else {
+            return false;
+        };
+
+        // Node kind must match (Element vs Text vs Image vs …). We only patch
+        // Element and Text nodes in place; any other kind must structurally
+        // match by discriminant and is otherwise left alone.
+        match (&ln.data, &nn.data) {
+            (NodeData::Text(_), NodeData::Text(_)) => return true,
+            (NodeData::Element, NodeData::Element) => {}
+            // Same non-element/non-text kind: require an exact value match,
+            // because we have no in-place patch for these (Image src, etc.).
+            (a, b) => {
+                return std::mem::discriminant(a) == std::mem::discriminant(b)
+                    && Self::node_data_equal(a, b);
+            }
+        }
+
+        // Element: tag, id and class set must be identical (those drive
+        // selector matching, so a change there is a real structural/style
+        // change that warrants a rebuild path).
+        if ln.tag != nn.tag {
+            return false;
+        }
+        if ln.element_id != nn.element_id {
+            return false;
+        }
+        if ln.classes != nn.classes {
+            return false;
+        }
+
+        let live_kids = live_doc.children(live);
+        let new_kids = new_doc.children(new);
+        if live_kids.len() != new_kids.len() {
+            return false;
+        }
+        for (&lk, &nk) in live_kids.iter().zip(new_kids.iter()) {
+            if !Self::subtrees_structurally_match(live_doc, lk, new_doc, nk) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn node_data_equal(a: &liquide_dom::node::NodeData, b: &liquide_dom::node::NodeData) -> bool {
+        use liquide_dom::node::NodeData;
+        match (a, b) {
+            (NodeData::Text(x), NodeData::Text(y)) => x == y,
+            (NodeData::Comment(x), NodeData::Comment(y)) => x == y,
+            (
+                NodeData::Image { src: s1, alt: a1, .. },
+                NodeData::Image { src: s2, alt: a2, .. },
+            ) => s1 == s2 && a1 == a2,
+            (NodeData::Surface { surface_id: x }, NodeData::Surface { surface_id: y }) => x == y,
+            _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+        }
+    }
+
+    /// Apply text-content and attribute differences from `new` (in `new_doc`)
+    /// onto `live` (in the live doc).  Assumes the two subtrees have already
+    /// been verified structurally compatible by
+    /// [`Self::subtrees_structurally_match`].
+    fn patch_node_in_place(&mut self, live: NodeId, new_doc: &liquide_dom::Document, new: NodeId) {
+        use liquide_dom::node::NodeData;
+
+        // Snapshot the new node's data we need, then drop the borrow before we
+        // mutate the live doc.
+        let (new_text, new_attrs): (Option<String>, Vec<(String, String)>) = {
+            let Some(nn) = new_doc.get(new) else {
+                return;
+            };
+            let text = match &nn.data {
+                NodeData::Text(s) => Some(s.clone()),
+                _ => None,
+            };
+            let attrs: Vec<(String, String)> = nn
+                .attrs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            (text, attrs)
+        };
+
+        // Text node: update content only when it actually changed (so an
+        // unchanged text node stays clean and does not re-request glyphs).
+        if let Some(new_text) = new_text {
+            let changed = self
+                .desktop_dom
+                .doc
+                .get(live)
+                .and_then(|n| match &n.data {
+                    NodeData::Text(s) => Some(s.as_str() != new_text),
+                    _ => Some(true),
+                })
+                .unwrap_or(true);
+            if changed {
+                self.desktop_dom.doc.set_text_content(live, &new_text);
+            }
+            return;
+        }
+
+        // Element: diff attributes (set changed/added, remove deleted).
+        let live_attrs: Vec<(String, Option<String>)> = self
+            .desktop_dom
+            .doc
+            .get(live)
+            .map(|n| {
+                n.attrs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), Some(v.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (key, new_val) in &new_attrs {
+            let current = self.desktop_dom.doc.get_attribute(live, key);
+            if current.as_deref() != Some(new_val.as_str()) {
+                self.desktop_dom.doc.set_attribute(live, key, new_val);
+            }
+        }
+        // Remove attributes that no longer exist in the new node.
+        for (key, _) in &live_attrs {
+            if !new_attrs.iter().any(|(k, _)| k == key) {
+                self.desktop_dom.doc.remove_attribute(live, key);
+            }
+        }
+
+        // Recurse into children (counts already verified equal).
+        let live_kids: Vec<NodeId> = self.desktop_dom.doc.children(live).to_vec();
+        let new_kids: Vec<NodeId> = new_doc.children(new).to_vec();
+        for (lk, nk) in live_kids.into_iter().zip(new_kids.into_iter()) {
+            self.patch_node_in_place(lk, new_doc, nk);
+        }
     }
 
     /// Render a template as a top-level overlay (appended to root), creating
@@ -1101,14 +1303,45 @@ impl Shell {
             }
         }
 
-        // Remove existing overlay
-        self.remove_overlay(element_id);
+        // Try to patch the existing overlay in place first (e.g. the tooltip's
+        // per-frame position attribute / text changes during a fade). Only when
+        // there is no existing overlay, or its structure changed, do we tear it
+        // down and reparse.
+        if !self.patch_overlay_in_place(element_id, &html) {
+            // Remove existing overlay
+            self.remove_overlay(element_id);
 
-        // Append new overlay to root
-        let root = self.desktop_dom.doc.root();
-        parse_html_into(&mut self.desktop_dom.doc, root, &html);
+            // Append new overlay to root
+            let root = self.desktop_dom.doc.root();
+            parse_html_into(&mut self.desktop_dom.doc, root, &html);
+        }
 
         self.template_cache.insert(template_name.to_string(), html);
+    }
+
+    /// Attempt to patch an existing overlay element (identified by
+    /// `element_id`) to match `html` in place. The overlay's root element in
+    /// `html` is matched against the live overlay element of the same id; if
+    /// they are structurally compatible, only text/attribute differences are
+    /// applied. Returns `false` (caller rebuilds) when the overlay does not yet
+    /// exist or its structure changed.
+    fn patch_overlay_in_place(&mut self, element_id: &str, html: &str) -> bool {
+        use liquide_dom::html_parser::parse_html;
+
+        let Some(live) = self.desktop_dom.doc.get_element_by_id(element_id) else {
+            return false;
+        };
+
+        let new_doc = parse_html(html);
+        let Some(new) = new_doc.get_element_by_id(element_id) else {
+            return false;
+        };
+
+        if !Self::subtrees_structurally_match(&self.desktop_dom.doc, live, &new_doc, new) {
+            return false;
+        }
+        self.patch_node_in_place(live, &new_doc, new);
+        true
     }
 
     /// Remove an overlay element from the DOM.
