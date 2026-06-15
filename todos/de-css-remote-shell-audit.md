@@ -13,15 +13,17 @@ Severity legend:
 - High: advertised or expected feature is materially incomplete, unreliable, or split across incompatible paths.
 - Medium: important completeness or coverage gap that can produce visible drift, but is not the first blocker.
 
-## Verification Update — 2026-06-15 (re-checked against current code post t56–t64)
+## Remediation Status — 2026-06-15 (post t65; authoritative — supersedes per-item "Status:" lines below)
 
-Reports: `.orchestration/reports/tv-remote-verify.md`, `tv-css-verify.md`, `tv-complete-verify.md`.
+Verify reports: `.orchestration/reports/tv-{remote,css,complete}-verify.md`. Commits: f2afa68 (SHM), 9f31f61 (S1 props), 8cda7bc (remote 1-7), 7e5b468 (CSS-engine).
 
-- **Remote-first (TODO 1–7): all STILL-OPEN.** This session was rendering/shell only; the gateway/client/protocol/transport/supervisor path is unchanged. (Nuance: a library-level `set_tls_config` setter now exists for TODO 1, but the binary never calls it.)
-- **CSS engine (TODO 8–16): 8 STILL-OPEN, TODO 10 PARTIAL** — t62-logical fixed the padding/margin clobber on the restyle path; the compute_style↔restyle parity gap (container/var-scope/assembly) and the parity tests using compute_style remain.
-- **CSS completeness (TODO 17–21): 17/18/20/21 STILL-OPEN; TODO 19 PARTIAL** (::before/::after/::first-line/::first-letter now computed; the `pseudo_elements_use_local_custom_properties` regression is still `#[ignore]`d).
-- **Related (not in this file) — FIXED since the audits:** plaintext ws:// (loud opt-in), notification rate-limit (token-bucket), AuthChain terminal-state ordering, LDAP empty-password; the cluster-convention "Critical" was a false alarm. **font-style: italic FIXED** (t64); word-break/text-emphasis now supported in compositor+painter, dropped only at scene_bridge (one-hop, = the S1 shell wave); background-size/caret-color primitives now exist (t64-p0).
-- **Related — STILL-OPEN security:** SHM size-overflow/UB (`client-renderer/surface.rs`, `encoder/tile.rs`); authorization + audit/event-log planes have zero production consumers.
+- **Remote-first (TODO 1–7): ALL DONE (8cda7bc).** Gateway TLS (--tls-cert/key + handshake test), stream relay to backend, --backend registration, client --password/--token, resume tokens (build/parse/validate), protocol↔transport frame unification (canonical 22-byte), supervisor real process spawn + liveness. Remainder: signal_session terminating-signals-only (no libc dep).
+- **CSS engine (TODO 8–16):**
+  - DONE: 10 (compute_style↔restyle parity + 14 tests migrated), 12 (subgrid), 13 (!important cascade), 14 (responsive units — library ready; **shell must call StyleResolver::set_context**), 16 partially via prior load-chain (variables+components loaded; split components/*.css still orphaned — STILL-OPEN).
+  - STILL-OPEN (shell/session-side, queued for shell chain): 8 (pipeline cache invalidation), 9 (load_css_theme→pipeline), 11 (container-query 2nd pass), 15 (decoration selector mismatch), 16 (load split components/*.css).
+- **CSS completeness (TODO 17–21):** DONE: 17 (border width>0⇒solid), 19 (pseudo custom-props un-ignored + fixed), 21 (`all` whole-value + list-style-image). PARTIAL: 20 (transition write-back at t=0 still #[ignore]d — escalated). STILL-OPEN: 18 (hardcoded add_default_backdrop — queued for shell S4).
+- **Related security:** SHM size-overflow/UB **FIXED (f2afa68)**; ws://, notification rate-limit, AuthChain, LDAP fixed; **authorization + audit/event-log planes STILL UNWIRED** (zero production consumers). **font-style italic FIXED**; word-break/text-emphasis/caret-color/background-size **wired (9f31f61)**.
+- **Remaining shell-chain waves (queued):** S2 input (capture-phase wiring, keyboard→DOM, 14 dead action arms, StyleResolver::set_context, preventDefault) · S3 dialogs/lockscreen→DOM · S4 overview/cursor/loading + backdrop (TODO 18) · S5 windows→DOM + decoration selectors (TODO 15) · S6 link apps. Plus shell-side CSS TODOs 8/9/11/16.
 
 ## Critical
 
