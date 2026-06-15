@@ -66,9 +66,19 @@ impl Shell {
     /// change for shells that never hover.
     fn ensure_tooltip_manager(&mut self) -> &mut liquide_tooltip::TooltipManager {
         if self.chrome_tooltip.is_none() {
-            self.chrome_tooltip = Some(liquide_tooltip::TooltipManager::new(
-                TooltipConfig::default(),
-            ));
+            // A dock-hover tooltip must PERSIST for as long as the pointer dwells
+            // on the item — it is not a transient toast. The default
+            // `display_duration_ms` (5000) drives Visible → FadingOut after 5 s
+            // even though the cursor never left, flashing the tooltip off under a
+            // steady hover (the `dock_hover_tooltip_does_not_auto_hide_while_hovered`
+            // tooth / t66-hover finding). Setting it to 0 (= indefinite) keeps the
+            // tooltip up until `on_hover_end` fires, which is the correct
+            // hover-tooltip lifecycle.
+            let config = TooltipConfig {
+                display_duration_ms: 0,
+                ..TooltipConfig::default()
+            };
+            self.chrome_tooltip = Some(liquide_tooltip::TooltipManager::new(config));
         }
         self.chrome_tooltip
             .as_mut()

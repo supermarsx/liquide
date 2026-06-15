@@ -490,6 +490,22 @@ impl Shell {
             self.add_overview_overlay(&mut root, screen, OVERVIEW_Z_BASE);
         }
 
+        // ── Dock-hover tooltip (above chrome) ─────────────────────
+        // The canonical `TooltipManager` owns the show-delay / dwell lifecycle
+        // (driven each frame by `sync_tooltip_template` → `sync_tooltip_manager`).
+        // Once it reports visible we emit the tooltip bubble HERE as a manual
+        // scene overlay — mirroring the overview/lockscreen overlays above —
+        // rather than relying on the DOM/CSS overlay, which never painted (the
+        // `tooltip` element is `display:block` with no width and its fixed
+        // `left`/`top` were not laid out, so it collapsed to 0 px; t66-hover).
+        // Painting it manually puts the bubble at the already-clamped anchor
+        // (`tooltip_pos`, set above the hovered dock item in events.rs) and at a
+        // CONSTANT opacity, so a held hover is byte-stable (no fade oscillation).
+        if self.tooltip_manager_visible() {
+            const TOOLTIP_Z_BASE: u32 = 60_000;
+            self.add_tooltip_overlay(&mut root, TOOLTIP_Z_BASE);
+        }
+
         // ── Lock screen (topmost) ─────────────────────────────────
         // When the canonical lock-screen state is engaged (driven by the Lock
         // action through `chrome_lockscreen`), paint the lock surface above
@@ -541,6 +557,99 @@ impl Shell {
                 color: themed_alpha(self.theme.launcher_search_bar, 235),
             },
             NodeProperties::new(prompt).with_z_order(base_z + 2),
+        ));
+    }
+
+    /// Emit the dock-hover tooltip bubble as a manual scene overlay.
+    ///
+    /// Mirrors the overview / lockscreen overlays: a themed rounded bubble
+    /// (glass backing + solid fill + border) carrying the hovered item's label,
+    /// anchored at the already-clamped `tooltip_pos` (set above the hovered dock
+    /// item in `events.rs`). Painted at a CONSTANT opacity whenever the canonical
+    /// manager reports the tooltip visible, so a held hover renders the same
+    /// pixels frame-to-frame (no fade oscillation) — the stability the
+    /// `dock_hover_tooltip_steady_is_stable_during_fade` tooth asserts.
+    fn add_tooltip_overlay(&self, root: &mut SceneNode, base_z: u32) {
+        let Some(text) = self.tooltip_text.as_ref() else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+
+        // Reserved node id range for the tooltip overlay (above all chrome ids).
+        const NODE_TOOLTIP_BASE: u64 = 600_000;
+
+        // Approximate the bubble size from the label. ~7 px per glyph at the
+        // status font, plus horizontal padding; a fixed comfortable height.
+        let font_scale = 1u32;
+        let pad_x = 8.0_f32;
+        let pad_y = 5.0_f32;
+        let glyph_w = 7.0_f32;
+        let text_w = (text.chars().count() as f32) * glyph_w;
+        let bubble_w = (text_w + pad_x * 2.0).clamp(40.0, 300.0);
+        let bubble_h = 24.0_f32;
+
+        // Anchor at the clamped tooltip position, then keep the bubble fully on
+        // screen (the anchor is the box's top-left; clamp the right/bottom edges).
+        let screen = self.screen_rect;
+        let x = self
+            .tooltip_pos
+            .x
+            .clamp(screen.x + 2.0, (screen.x + screen.width - bubble_w - 2.0).max(screen.x + 2.0));
+        let y = self
+            .tooltip_pos
+            .y
+            .clamp(screen.y + 2.0, (screen.y + screen.height - bubble_h - 2.0).max(screen.y + 2.0));
+        let bubble = Rect::new(x, y, bubble_w, bubble_h);
+
+        use liquide_compositor::scene::GlassParams;
+
+        // Glass backing so the bubble reads as a frosted overlay.
+        root.add_child(SceneNode::new(
+            NODE_TOOLTIP_BASE,
+            SceneNodeKind::Glass(GlassParams {
+                blur_radius: 10,
+                tint_color: self.theme.dock_glass_tint,
+                inner_glow: false,
+                parallax: false,
+            }),
+            NodeProperties::new(bubble).with_z_order(base_z),
+        ));
+
+        // Solid dark fill so the bubble is unambiguously painted even when the
+        // glass blur degrades to a no-op on the fast path.
+        root.add_child(SceneNode::new(
+            NODE_TOOLTIP_BASE + 1,
+            SceneNodeKind::Background {
+                color: themed_alpha(self.theme.launcher_search_bar, 240),
+            },
+            NodeProperties::new(bubble).with_z_order(base_z + 1),
+        ));
+
+        // 1px border for definition.
+        root.add_child(SceneNode::new(
+            NODE_TOOLTIP_BASE + 2,
+            SceneNodeKind::Background {
+                color: themed_alpha(self.theme.dock_border, 200),
+            },
+            NodeProperties::new(Rect::new(bubble.x, bubble.y, bubble.width, 1.0))
+                .with_z_order(base_z + 2),
+        ));
+
+        // The label text.
+        root.add_child(text_node(
+            NODE_TOOLTIP_BASE + 3,
+            text.clone(),
+            self.theme.status_bar_text,
+            Rect::new(
+                bubble.x + pad_x,
+                bubble.y + pad_y,
+                (bubble.width - pad_x * 2.0).max(1.0),
+                bubble.height - pad_y * 2.0,
+            ),
+            base_z + 3,
+            font_scale,
         ));
     }
 

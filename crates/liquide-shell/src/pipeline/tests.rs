@@ -148,6 +148,115 @@ fn theme_switch_after_render_invalidates_cached_scene_output() {
     );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TODO 11 — container-query forced SECOND PASS.
+//
+// The first style pass evaluates `@container` with NO measured container size
+// (it falls back to the viewport). After layout records the real host size, the
+// pipeline must force a bounded second style+layout pass so `@container` rules
+// re-evaluate against the REAL container dimensions, not the viewport.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A container host narrower than the `@container` threshold must NOT match the
+/// query, even though the (much larger) VIEWPORT would. Before the second pass
+/// this evaluated against the viewport and wrongly matched.
+#[test]
+fn container_query_uses_real_host_size_not_viewport() {
+    // Large viewport (1000px) so a viewport-fallback `@container (min-width:
+    // 400px)` would WRONGLY match; the real host is only 120px wide.
+    let config = PipelineConfig {
+        width: 1000.0,
+        height: 600.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    pipeline.set_theme(
+        r#"
+        host {
+            display: block;
+            container-type: inline-size;
+            width: 120;
+            height: 80;
+        }
+        child { display: block; width: 40; height: 10; color: rgb(10, 10, 10); }
+        @container (min-width: 400px) {
+            child { color: rgb(200, 0, 0); }
+        }
+        "#,
+    );
+    let mut desktop =
+        DesktopDocument::from_html(r#"<host id="host"><child id="child" /></host>"#);
+
+    let (output, _a) = pipeline.run(&mut desktop.doc, 16.0);
+
+    let child_id = desktop.doc.get_element_by_id("child").expect("child node");
+    let child_style = output.styles.get(child_id).expect("child style");
+
+    // Host content width is 120px < 400px, so the `@container` rule must NOT
+    // apply: the child keeps its default color. If the pipeline evaluated the
+    // query against the 1000px viewport (the pre-TODO-11 bug) the color would be
+    // the red override.
+    assert_eq!(
+        (child_style.color.r, child_style.color.g, child_style.color.b),
+        (10, 10, 10),
+        "@container (min-width:400px) must NOT match a 120px-wide container — it \
+         must evaluate against the REAL host size, not the {}px viewport",
+        1000
+    );
+
+    // The host's measured container size was recorded for the cascade to read.
+    assert_eq!(
+        output.styles.container_size(host_id(&desktop)),
+        Some((120.0, 80.0)),
+        "the measured container size must be recorded after layout"
+    );
+}
+
+/// The complement: a host WIDER than the threshold matches the query. Proves the
+/// test above is not vacuously green (the rule does apply when the real host is
+/// large enough).
+#[test]
+fn container_query_matches_when_real_host_is_large_enough() {
+    let config = PipelineConfig {
+        width: 1000.0,
+        height: 600.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    pipeline.set_theme(
+        r#"
+        host {
+            display: block;
+            container-type: inline-size;
+            width: 500;
+            height: 80;
+        }
+        child { display: block; width: 40; height: 10; color: rgb(10, 10, 10); }
+        @container (min-width: 400px) {
+            child { color: rgb(200, 0, 0); }
+        }
+        "#,
+    );
+    let mut desktop =
+        DesktopDocument::from_html(r#"<host id="host"><child id="child" /></host>"#);
+
+    let (output, _a) = pipeline.run(&mut desktop.doc, 16.0);
+
+    let child_id = desktop.doc.get_element_by_id("child").expect("child node");
+    let child_style = output.styles.get(child_id).expect("child style");
+
+    assert_eq!(
+        (child_style.color.r, child_style.color.g, child_style.color.b),
+        (200, 0, 0),
+        "@container (min-width:400px) must match a 500px-wide host (after the \
+         second pass re-evaluates against the measured size)"
+    );
+}
+
+fn host_id(desktop: &DesktopDocument) -> liquide_dom::NodeId {
+    desktop.doc.get_element_by_id("host").expect("host node")
+}
+
 #[test]
 fn added_stylesheet_after_render_invalidates_cached_scene_output() {
     let config = PipelineConfig {

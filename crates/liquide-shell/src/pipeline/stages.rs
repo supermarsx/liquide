@@ -192,6 +192,11 @@ impl DesktopPipeline {
 
         // 2. Layout — unwrap Arc for mutation
         let recompute_layout = has_style_work || has_layout_work || self.last_layout.is_none();
+        // `layout_was_full` gates the TODO-11 container second pass: a fresh full
+        // style+layout is the only case whose first style pass used viewport-
+        // fallback container sizes (an incremental relayout reuses prior styles
+        // that already carried measured container sizes).
+        let layout_was_full = has_style_work || self.last_layout.is_none();
         let layout = if has_style_work || self.last_layout.is_none() {
             // Full style recompute invalidates layout cache
             let _ = self.last_layout.take();
@@ -245,9 +250,11 @@ impl DesktopPipeline {
         // Elements with container-type != normal get their resolved dimensions
         // stored in the StyleMap so that `evaluate_container_condition` can use
         // real dimensions instead of falling back to the viewport.
+        let mut container_hosts: Vec<liquide_dom::NodeId> = Vec::new();
         for layout_box in &layout.boxes {
             if let Some(style) = styles.get(layout_box.node) {
                 if style.is_container_query_host() {
+                    container_hosts.push(layout_box.node);
                     styles.set_container_size(
                         layout_box.node,
                         layout_box.content_rect.width,
@@ -256,6 +263,61 @@ impl DesktopPipeline {
                 }
             }
         }
+
+        // 2b-ii. TODO 11 — forced container-query SECOND PASS.
+        //
+        // The first style pass (step 1) evaluated every `@container` rule with NO
+        // container sizes recorded yet, so `find_matching_container` fell back to
+        // the VIEWPORT size (media.rs). Step 2b has now recorded the REAL
+        // resolved container dimensions. When those differ from the viewport the
+        // first pass used, the `@container` rules were evaluated against the wrong
+        // size, so we must re-style the container subtrees (now that the real
+        // sizes are present in `styles`) and re-run layout.
+        //
+        // This is BOUNDED: a single extra style+layout pass per frame. We do NOT
+        // loop — a container whose own size depends on its descendants' restyled
+        // sizes could otherwise oscillate; one corrective pass is the documented
+        // contract (CSS container queries are explicitly single-pass per the
+        // spec's "containment" requirement, but our hosts are not size-contained,
+        // so one re-evaluation against the measured size is the pragmatic fix).
+        let needs_container_pass = layout_was_full
+            && !container_hosts.is_empty()
+            && container_hosts.iter().any(|&host| {
+                styles
+                    .container_size(host)
+                    .is_some_and(|(cw, ch)| {
+                        (cw - self.layout_engine.viewport.width).abs() > 0.5
+                            || (ch - self.layout_engine.viewport.height).abs() > 0.5
+                    })
+            });
+
+        let layout = if needs_container_pass {
+            // Re-cascade each container host subtree WITH the measured sizes now
+            // present in `styles`, so descendant `@container` rules re-evaluate.
+            for &host in &container_hosts {
+                self.style_engine.restyle_subtree(doc, host, &mut styles);
+            }
+            // Re-run layout against the corrected styles.
+            let relaid = self
+                .layout_engine
+                .layout(doc, &styles, text_measurer, &image_measurer);
+            // Refresh stored container sizes from the corrected layout so the
+            // cached output (and any consumer) reflects the second-pass geometry.
+            for layout_box in &relaid.boxes {
+                if let Some(style) = styles.get(layout_box.node) {
+                    if style.is_container_query_host() {
+                        styles.set_container_size(
+                            layout_box.node,
+                            layout_box.content_rect.width,
+                            layout_box.content_rect.height,
+                        );
+                    }
+                }
+            }
+            relaid
+        } else {
+            layout
+        };
 
         // 2c. Animation — detect transitions/animations and tick.
         // Must run after style computation but before paint so that

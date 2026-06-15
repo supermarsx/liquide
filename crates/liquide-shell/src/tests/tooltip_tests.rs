@@ -555,6 +555,156 @@ fn tooltip_position_updates_for_different_items() {
 }
 
 // ---------------------------------------------------------------------------
+// Tooltip SCENE-overlay paint tests (t67-tooltip)
+// ---------------------------------------------------------------------------
+
+use liquide_compositor::scene::{SceneNode, SceneNodeKind};
+
+/// Collect every text string painted anywhere in the scene subtree.
+fn collect_scene_text(node: &SceneNode, out: &mut Vec<String>) {
+    if let SceneNodeKind::Text { text, .. } = &node.kind {
+        out.push(text.clone());
+    }
+    for c in &node.children {
+        collect_scene_text(c, out);
+    }
+}
+
+/// Count scene nodes whose bounds intersect the float band ABOVE the dock item
+/// (where only the floating tooltip can paint) — bleed-free of the icon row.
+fn nodes_in_float_band(node: &SceneNode, band_top: f32, band_bottom: f32, count: &mut usize) {
+    let b = &node.properties.bounds;
+    let n_top = b.y;
+    let n_bottom = b.y + b.height;
+    if n_bottom > band_top && n_top < band_bottom && b.width > 1.0 && b.height > 0.0 {
+        *count += 1;
+    }
+    for c in &node.children {
+        nodes_in_float_band(c, band_top, band_bottom, count);
+    }
+}
+
+/// Once the canonical manager reports the tooltip visible on a steady dock
+/// hover, the SCENE must carry the tooltip bubble (its label text) painted near
+/// the anchor — the production gap t66-hover found (the DOM/CSS overlay never
+/// painted; the bubble is now a manual scene overlay in `scene.rs`).
+#[test]
+fn tooltip_overlay_paints_into_scene_near_anchor() {
+    let mut shell = Shell::new(1280.0, 720.0);
+    let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
+    let (_, first_rect) = &item_rects[0];
+    let icon_top = first_rect.y;
+    shell.handle_platform_event(&make_mouse_move(
+        first_rect.x + first_rect.width / 2.0,
+        first_rect.y + first_rect.height / 2.0,
+    ));
+    dwell_past_show_delay(&mut shell);
+
+    let scene = shell.build_scene();
+
+    // The label text appears in the scene (it never did before — the DOM tooltip
+    // produced 0 paint nodes).
+    let mut texts = Vec::new();
+    collect_scene_text(&scene, &mut texts);
+    assert!(
+        texts.iter().any(|t| t == "Files"),
+        "tooltip label 'Files' must be painted into the scene on a steady dock \
+         hover; scene texts = {texts:?}"
+    );
+
+    // And the bubble paints in the bleed-free float band ABOVE the icon row.
+    let band_bottom = icon_top - 2.0; // strictly above the icon tops
+    let band_top = band_bottom - 60.0;
+    let mut count = 0usize;
+    nodes_in_float_band(&scene, band_top, band_bottom, &mut count);
+    assert!(
+        count >= 2,
+        "expected the tooltip bubble (bg + border + text nodes) to paint in the \
+         float band above the dock icon (y {band_top}..{band_bottom}); found {count} nodes"
+    );
+}
+
+/// A held hover must render a STABLE tooltip: two scene builds advanced by
+/// DIFFERENT frame deltas (so the manager could be at different fade phases)
+/// must place the tooltip bubble identically — no oscillation under a steady
+/// cursor (the `dock_hover_tooltip_steady_is_stable_during_fade` tooth).
+#[test]
+fn tooltip_overlay_is_stable_across_frame_deltas() {
+    fn bubble_rects(scene: &SceneNode) -> Vec<(u32, u32, u32, u32)> {
+        fn walk(node: &SceneNode, out: &mut Vec<(u32, u32, u32, u32)>) {
+            // The tooltip overlay nodes live at z >= 60_000.
+            if node.properties.z_order >= 60_000 {
+                let b = &node.properties.bounds;
+                out.push((
+                    b.x as u32,
+                    b.y as u32,
+                    b.width as u32,
+                    b.height as u32,
+                ));
+            }
+            for c in &node.children {
+                walk(c, out);
+            }
+        }
+        let mut v = Vec::new();
+        walk(scene, &mut v);
+        v
+    }
+
+    fn hovered_scene(delta: f32) -> Vec<(u32, u32, u32, u32)> {
+        let mut shell = Shell::new(1280.0, 720.0);
+        let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
+        let (_, first_rect) = &item_rects[0];
+        shell.handle_platform_event(&make_mouse_move(
+            first_rect.x + first_rect.width / 2.0,
+            first_rect.y + first_rect.height / 2.0,
+        ));
+        // Single large frame past the show-delay; `is_visible()` is true for both
+        // a mid-fade-in and a fully-visible manager, so different deltas must not
+        // move the painted bubble.
+        shell.set_frame_delta_ms(delta);
+        shell.sync_dom();
+        bubble_rects(&shell.build_scene())
+    }
+
+    let a = hovered_scene(600.0); // just past show-delay (manager fading in)
+    let b = hovered_scene(5000.0); // long past fade-in (fully visible, no auto-hide)
+    assert!(!a.is_empty(), "tooltip overlay must paint at delta 600");
+    assert!(!b.is_empty(), "tooltip overlay must paint at delta 5000");
+    assert_eq!(
+        a, b,
+        "tooltip bubble geometry must be IDENTICAL across frame deltas under a \
+         steady hover (no fade oscillation / no auto-hide flash): {a:?} != {b:?}"
+    );
+}
+
+/// A steady hover must NOT auto-hide while the cursor stays on the item: with
+/// `display_duration_ms = 0` (indefinite) the manager stays visible past the old
+/// 5 s display duration (the `dock_hover_tooltip_does_not_auto_hide_while_hovered`
+/// finding).
+#[test]
+fn tooltip_does_not_auto_hide_under_steady_hover() {
+    let mut shell = Shell::new(1280.0, 720.0);
+    let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
+    let (_, first_rect) = &item_rects[0];
+    shell.handle_platform_event(&make_mouse_move(
+        first_rect.x + first_rect.width / 2.0,
+        first_rect.y + first_rect.height / 2.0,
+    ));
+    // Show it.
+    dwell_past_show_delay(&mut shell);
+    assert!(shell.tooltip_manager_visible());
+    // Advance WELL past the legacy 5 s display-duration; still hovered.
+    shell.sync_tooltip_manager(6000.0);
+    shell.sync_tooltip_manager(6000.0);
+    assert!(
+        shell.tooltip_manager_visible(),
+        "a dock-hover tooltip must persist while the cursor dwells, not auto-hide \
+         after the old 5 s display-duration"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Tooltip delay tests
 // ---------------------------------------------------------------------------
 
