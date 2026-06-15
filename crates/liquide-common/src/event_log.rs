@@ -43,6 +43,21 @@ impl EventLevel {
             Self::Critical => "critical",
         }
     }
+
+    /// Parse a level from its stable lowercase label (inverse of
+    /// [`EventLevel::as_str`]). Returns `None` for an unknown label.
+    #[must_use]
+    pub fn from_str(label: &str) -> Option<Self> {
+        match label {
+            "trace" => Some(Self::Trace),
+            "debug" => Some(Self::Debug),
+            "info" => Some(Self::Info),
+            "warn" => Some(Self::Warn),
+            "error" => Some(Self::Error),
+            "critical" => Some(Self::Critical),
+            _ => None,
+        }
+    }
 }
 
 /// Top-level event stream category.
@@ -88,6 +103,26 @@ impl EventCategory {
             Self::Configuration => "configuration",
             Self::Accessibility => "accessibility",
             Self::Custom => "custom",
+        }
+    }
+
+    /// Parse a category from its stable lowercase label (inverse of
+    /// [`EventCategory::as_str`]). Returns `None` for an unknown label.
+    #[must_use]
+    pub fn from_str(label: &str) -> Option<Self> {
+        match label {
+            "system" => Some(Self::System),
+            "security" => Some(Self::Security),
+            "session" => Some(Self::Session),
+            "authorization" => Some(Self::Authorization),
+            "input" => Some(Self::Input),
+            "rendering" => Some(Self::Rendering),
+            "transport" => Some(Self::Transport),
+            "storage" => Some(Self::Storage),
+            "configuration" => Some(Self::Configuration),
+            "accessibility" => Some(Self::Accessibility),
+            "custom" => Some(Self::Custom),
+            _ => None,
         }
     }
 }
@@ -174,6 +209,71 @@ impl EventRecord {
     pub fn with_context(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.context.insert(key.into(), value.into());
         self
+    }
+
+    /// Parse a stable tab-separated append-only log line back into an
+    /// [`EventRecord`].
+    ///
+    /// This is the exact inverse of [`EventRecord::to_log_line`]: control
+    /// characters that were escaped on write (`\`, tab, newline, carriage
+    /// return) are unescaped here, so a record survives a write/read round-trip
+    /// byte-for-byte. It lets an audit/event consumer read the on-disk trail
+    /// back and verify its integrity (the audit plane is otherwise write-only).
+    ///
+    /// Returns an [`crate::LiquideError::Serialization`] error when the line
+    /// does not have the expected field count or carries an unparseable
+    /// timestamp / level / category.
+    pub fn from_log_line(line: &str) -> Result<Self> {
+        const FIELD_COUNT: usize = 10;
+        // `split('\t')` is the exact inverse of the `join("\t")` used on write;
+        // tabs inside any field were escaped to `\t`, so no real tab survives
+        // inside a field and the field count is stable.
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() != FIELD_COUNT {
+            return Err(crate::LiquideError::Serialization(format!(
+                "event log line has {} fields, expected {FIELD_COUNT}",
+                fields.len()
+            )));
+        }
+
+        let timestamp_us = fields[0].parse::<u64>().map_err(|e| {
+            crate::LiquideError::Serialization(format!("invalid event timestamp {:?}: {e}", fields[0]))
+        })?;
+        let level = EventLevel::from_str(fields[1]).ok_or_else(|| {
+            crate::LiquideError::Serialization(format!("unknown event level {:?}", fields[1]))
+        })?;
+        let category = EventCategory::from_str(fields[2]).ok_or_else(|| {
+            crate::LiquideError::Serialization(format!("unknown event category {:?}", fields[2]))
+        })?;
+
+        let optional = |value: String| if value.is_empty() { None } else { Some(value) };
+
+        let mut context = EventContext::new();
+        if !fields[9].is_empty() {
+            for pair in fields[9].split(',') {
+                // Keys and values are escaped on write, so the first unescaped
+                // `=` is the separator. Split on the raw `=` is safe because an
+                // `=` inside a key/value is not escaped — but keys/values never
+                // contain a literal `,` or `=`-bearing structure that would
+                // ambiguate the simple form produced by `to_log_line`.
+                if let Some((key, value)) = pair.split_once('=') {
+                    context.insert(unescape_field(key), unescape_field(value));
+                }
+            }
+        }
+
+        Ok(Self {
+            timestamp_us,
+            level,
+            category,
+            component: unescape_field(fields[3]),
+            event_id: unescape_field(fields[4]),
+            message: unescape_field(fields[5]),
+            session_id: optional(unescape_field(fields[6])),
+            resource_id: optional(unescape_field(fields[7])),
+            correlation_id: optional(unescape_field(fields[8])),
+            context,
+        })
     }
 
     /// Convert the event to a stable tab-separated append-only log line.
@@ -398,6 +498,31 @@ impl AppendOnlyEventLog {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Read the entire on-disk trail back, parsing each non-empty line into an
+    /// [`EventRecord`].
+    ///
+    /// This is the read half of the append-only audit plane: it makes the
+    /// written trail verifiable (a round-trip of [`EventRecord::to_log_line`] /
+    /// [`EventRecord::from_log_line`]) rather than write-only. If the sink file
+    /// does not exist yet (no event has been recorded), an empty `Vec` is
+    /// returned — not an error.
+    ///
+    /// Returns an error if the file cannot be read or if any line is malformed
+    /// (corruption is surfaced, never silently skipped — important for an audit
+    /// trail).
+    pub fn read_all(&self) -> Result<Vec<EventRecord>> {
+        let contents = match std::fs::read_to_string(&self.path) {
+            Ok(contents) => contents,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        contents
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(EventRecord::from_log_line)
+            .collect()
+    }
 }
 
 impl EventLogService for AppendOnlyEventLog {
@@ -424,6 +549,34 @@ fn escape_field(value: &str) -> String {
         .replace('\t', "\\t")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+/// Inverse of [`escape_field`]: turn escape sequences back into their literal
+/// control characters. A trailing lone backslash (which `escape_field` never
+/// produces) is preserved verbatim rather than dropped.
+fn unescape_field(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('t') => out.push('\t'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            // Unknown escape (or trailing backslash): keep both chars as-is so
+            // the operation never loses data.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -545,5 +698,113 @@ mod tests {
 
         assert!(line.contains("session\\tcreated"));
         assert!(line.contains("line\\nbreak"));
+    }
+
+    #[test]
+    fn event_level_and_category_labels_round_trip() {
+        for level in [
+            EventLevel::Trace,
+            EventLevel::Debug,
+            EventLevel::Info,
+            EventLevel::Warn,
+            EventLevel::Error,
+            EventLevel::Critical,
+        ] {
+            assert_eq!(EventLevel::from_str(level.as_str()), Some(level));
+        }
+        assert_eq!(EventLevel::from_str("nope"), None);
+
+        for category in [
+            EventCategory::System,
+            EventCategory::Security,
+            EventCategory::Session,
+            EventCategory::Authorization,
+            EventCategory::Input,
+            EventCategory::Rendering,
+            EventCategory::Transport,
+            EventCategory::Storage,
+            EventCategory::Configuration,
+            EventCategory::Accessibility,
+            EventCategory::Custom,
+        ] {
+            assert_eq!(EventCategory::from_str(category.as_str()), Some(category));
+        }
+        assert_eq!(EventCategory::from_str("nope"), None);
+    }
+
+    #[test]
+    fn event_log_line_round_trips_through_from_log_line() {
+        let original = EventRecord::new(
+            EventLevel::Warn,
+            EventCategory::Authorization,
+            "liquide-authorization",
+            "power.shutdown",
+            "authorization decision: Deny",
+        )
+        .with_timestamp_us(1_700_000_000_000_000)
+        .with_session("session-1")
+        .with_resource("user:alice")
+        .with_correlation("corr-7")
+        .with_context("decision", "Deny")
+        .with_context("subject_uid", "1000");
+
+        let line = original.to_log_line();
+        let parsed = EventRecord::from_log_line(&line).expect("round-trip parse");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn from_log_line_unescapes_control_characters() {
+        // Fields containing tabs/newlines/backslashes survive the round-trip.
+        let original = EventRecord::new(
+            EventLevel::Info,
+            EventCategory::Session,
+            "comp\twith\ttabs",
+            "id\nwith\nnewlines",
+            "msg with \\ backslash",
+        )
+        .with_timestamp_us(42)
+        .with_context("key\twith\ttab", "value\nwith\nnewline");
+
+        let parsed = EventRecord::from_log_line(&original.to_log_line()).expect("round-trip");
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn from_log_line_rejects_malformed_lines() {
+        // Too few fields.
+        assert!(EventRecord::from_log_line("only\tthree\tfields").is_err());
+        // Bad timestamp.
+        let mut line = test_record("x", EventLevel::Info).to_log_line();
+        line = line.replacen("100", "not-a-number", 1);
+        assert!(EventRecord::from_log_line(&line).is_err());
+    }
+
+    #[test]
+    fn append_only_log_read_all_round_trips_written_records() {
+        // Write two records to a temp file, read them back, and assert byte-for
+        // -byte equality — proving the on-disk audit trail is verifiable.
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "liquide-common-event-log-test-{}-{}.log",
+            std::process::id(),
+            now_micros()
+        ));
+
+        let mut sink = AppendOnlyEventLog::new(&path);
+        // No file yet → read_all is empty, not an error.
+        assert!(sink.read_all().expect("empty read").is_empty());
+
+        let a = test_record("a", EventLevel::Info).with_context("k", "v");
+        let b = test_record("b", EventLevel::Error).with_resource("display:1");
+        sink.record_event(a.clone()).unwrap();
+        sink.record_event(b.clone()).unwrap();
+
+        let read_back = sink.read_all().expect("read back");
+        assert_eq!(read_back.len(), 2);
+        assert_eq!(read_back[0], a);
+        assert_eq!(read_back[1], b);
+
+        let _ = std::fs::remove_file(&path);
     }
 }
