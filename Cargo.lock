@@ -2403,6 +2403,7 @@ dependencies = [
  "anyhow",
  "flate2",
  "liquide-app-harness",
+ "liquide-interop",
  "liquide-ui-core",
  "liquide-ui-widgets",
  "serde",
@@ -2423,6 +2424,7 @@ dependencies = [
  "anyhow",
  "liquide-app-harness",
  "liquide-gateway",
+ "liquide-interop",
  "liquide-theme-engine",
  "liquide-ui-core",
  "serde",
@@ -2438,6 +2440,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "liquide-app-harness",
+ "liquide-interop",
  "liquide-ui-widgets",
  "reqwest",
  "serde",
@@ -2455,6 +2458,7 @@ dependencies = [
  "bytes",
  "clap",
  "liquide-app-harness",
+ "liquide-interop",
  "liquide-ui-widgets",
  "serde",
  "serde_json",
@@ -2472,6 +2476,7 @@ dependencies = [
  "anyhow",
  "liquide-app-harness",
  "liquide-ime",
+ "liquide-interop",
  "liquide-ui-core",
  "liquide-ui-widgets",
  "serde",
@@ -2490,6 +2495,7 @@ dependencies = [
  "liquide-app-harness",
  "liquide-clipboard",
  "liquide-ime",
+ "liquide-interop",
  "liquide-ui-core",
  "liquide-ui-widgets",
  "ropey",
@@ -3298,6 +3304,7 @@ name = "liquide-power"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "liquide-authorization",
  "liquide-authz-runtime",
 ]
 
@@ -3461,6 +3468,7 @@ dependencies = [
  "clap",
  "liquide-a11y",
  "liquide-audio",
+ "liquide-authz-runtime",
  "liquide-client-renderer",
  "liquide-clipboard",
  "liquide-common",
@@ -3477,6 +3485,7 @@ dependencies = [
  "liquide-message-queue",
  "liquide-platform",
  "liquide-plugin-host",
+ "liquide-power",
  "liquide-protocol",
  "liquide-render-coordinator",
  "liquide-render-thread",
