@@ -104,6 +104,105 @@ fn renderer_creates() {
     assert!(r.glyph_atlas().is_empty());
 }
 
+/// `compute_font_id` must map distinct (family, weight, italic) tuples to
+/// distinct ids — otherwise two different fonts share a glyph-atlas key and the
+/// cache returns the WRONG glyph (the text-garbling regression). This pins the
+/// collision-free property the renderer relies on, including the weight bits
+/// that the old `(weight & 0xFF) << 16` packing truncated and aliased.
+#[test]
+fn font_id_is_collision_free_across_family_weight_italic() {
+    use std::collections::HashSet;
+
+    let families = ["", "Inter", "Segoe UI", "Inter Display", "Arial"];
+    let weights: [u16; 9] = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+    let mut ids = HashSet::new();
+    for fam in families {
+        for w in weights {
+            for italic in [false, true] {
+                let id = compute_font_id(fam, w, italic);
+                assert!(
+                    ids.insert(id),
+                    "font_id collision: ({fam:?}, {w}, italic={italic}) aliased to an \
+                     existing id {id:#010x} — distinct fonts would share atlas keys and \
+                     return wrong glyphs"
+                );
+            }
+        }
+    }
+
+    // The id is a pure function of its inputs (stable run-to-run).
+    assert_eq!(
+        compute_font_id("Inter", 700, true),
+        compute_font_id("Inter", 700, true),
+    );
+    // Italic and weight each flip the id (no aliasing into the upright/other-weight key).
+    assert_ne!(
+        compute_font_id("Inter", 400, false),
+        compute_font_id("Inter", 400, true),
+    );
+    assert_ne!(
+        compute_font_id("Inter", 400, false),
+        compute_font_id("Inter", 700, false),
+    );
+}
+
+/// DETERMINISM REGRESSION (t65): rendering the SAME text scene through the full
+/// async font-worker path must produce a BYTE-IDENTICAL framebuffer every time.
+///
+/// The regression this guards: glyphs rasterise on a background thread, so a
+/// non-blocking poll committed only whatever happened to have arrived, and text
+/// layout reads glyph advances out of the atlas — a partially-populated atlas
+/// reflowed/garbled text differently each run. Driving each render to quiescence
+/// (`has_pending_glyphs` clear) must now land on the same pixels regardless of
+/// worker thread timing.
+#[test]
+fn identical_text_scene_renders_byte_identically_across_renderers() {
+    // Render a fresh renderer to quiescence and return the final framebuffer.
+    fn render_to_quiescence(text: &str, family: &str) -> Vec<u8> {
+        let mut renderer = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(256, 64, PixelFormat::Bgra8);
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::TextGlyph,
+        });
+        // Drive render passes until no glyphs remain pending (mirrors the
+        // capture path's reflush). Bounded so a missing system font can't hang.
+        for _ in 0..8 {
+            renderer
+                .render(&[text_node(text, family)], &mut fb, &damage)
+                .unwrap();
+            if !renderer.has_pending_glyphs() {
+                break;
+            }
+        }
+        fb.pixels().to_vec()
+    }
+
+    // Use a real system font when present (exercises the async rasteriser); the
+    // bitmap fallback is fine too — both must be deterministic.
+    let family = if fixture_font_bytes().is_some() {
+        "Arial"
+    } else {
+        ""
+    };
+    let text = "Open Terminal File Manager Settings";
+
+    let a = render_to_quiescence(text, family);
+    let b = render_to_quiescence(text, family);
+    let c = render_to_quiescence(text, family);
+
+    assert_eq!(
+        a, b,
+        "identical text scene rendered to two byte-different framebuffers — \
+         glyph render path is nondeterministic"
+    );
+    assert_eq!(a, c, "third render diverged — glyph render path is nondeterministic");
+    // Sanity: the text actually painted something (not a vacuously-equal blank).
+    assert!(a.iter().any(|&p| p != 0), "scene produced an all-zero framebuffer");
+}
+
 #[test]
 fn renderer_options_disable_common_glyph_prewarm() {
     let mut renderer = SoftwareRenderer::with_options(SoftwareRendererOptions {
@@ -573,11 +672,16 @@ fn render_text_damage_overrides_bitmap_damage_on_same_tile() {
 //
 // These use a renderer with synthetically-inserted glyphs (no system font
 // dependency) so wrapping/emphasis behaviour is deterministic. An empty
-// font_family yields font_id = (400 & 0xFF) << 16 and glyph_height = 16,
-// and suppresses the common-glyph prewarm path.
+// font_family with weight 400, upright, yields the `compute_font_id` value used
+// by the text path (the single source of truth for atlas keying) and
+// glyph_height = 16, and suppresses the common-glyph prewarm path. We derive the
+// id via the same function the renderer uses so the inserted glyphs are found.
 
-const TEST_FONT_ID: u32 = (400u32 & 0xFF) << 16;
 const TEST_SIZE_PX: u16 = 16;
+
+fn test_font_id() -> u32 {
+    crate::renderer::compute_font_id("", 400, false)
+}
 
 /// Insert a solid square glyph of the given logical width/height with a known
 /// advance into the atlas, so text layout is fully deterministic.
@@ -589,7 +693,7 @@ fn insert_block_glyph(renderer: &mut SoftwareRenderer, ch: char, advance: f32) {
         .glyph_atlas_mut()
         .insert(
             GlyphKey {
-                font_id: TEST_FONT_ID,
+                font_id: test_font_id(),
                 glyph_id: ch as u32,
                 size_px: TEST_SIZE_PX,
                 subpixel: false,
@@ -615,7 +719,7 @@ fn insert_mark_glyph(renderer: &mut SoftwareRenderer, ch: char) {
         .glyph_atlas_mut()
         .insert(
             GlyphKey {
-                font_id: TEST_FONT_ID,
+                font_id: test_font_id(),
                 glyph_id: ch as u32,
                 size_px: 8,
                 subpixel: false,

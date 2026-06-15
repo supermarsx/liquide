@@ -191,6 +191,48 @@ impl FontWorker {
         results
     }
 
+    /// Block until every glyph that is currently pending for the active
+    /// generation has been rasterised and drained, then return all the glyphs
+    /// produced.
+    ///
+    /// This is the **determinism seam**: the async worker rasterises glyphs on a
+    /// background thread, so a plain [`poll_results`](Self::poll_results) only
+    /// collects whatever happens to have arrived by the time it is called —
+    /// which depends on thread timing and therefore differs run-to-run. The
+    /// renderer uses glyph *advances* from the atlas to lay out / word-wrap
+    /// text, so a partially-populated atlas produces a *different layout* (and
+    /// dropped glyphs) every run. Blocking until the pending set drains
+    /// guarantees an identical, fully-populated atlas for an identical scene, so
+    /// the rendered frame is byte-identical across runs.
+    ///
+    /// A `deadline` bounds the wait so a wedged/slow worker cannot hang the
+    /// render loop forever; if it elapses, the remaining still-pending keys are
+    /// left pending (the caller falls back to estimated advances exactly as
+    /// before, preserving liveness). Stale results from a previous generation
+    /// are discarded.
+    pub fn drain_pending_blocking(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> Vec<RasterizedGlyph> {
+        let mut results = self.poll_results();
+        while !self.pending.is_empty() {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            match self.result_rx.recv_timeout(deadline - now) {
+                Ok(glyph) => {
+                    if glyph.generation == self.generation {
+                        self.pending.remove(&glyph.key);
+                        results.push(glyph);
+                    }
+                }
+                Err(_) => break, // timeout or disconnect — stop waiting
+            }
+        }
+        results
+    }
+
     /// Return file-backed font faces whose sources changed since load.
     pub fn stale_faces(&self) -> Vec<FontFaceId> {
         let db = self

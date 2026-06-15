@@ -10,6 +10,32 @@ use crate::rasterizer;
 
 use super::{SoftwareRenderer, WordSplitter};
 
+/// Derive a collision-resistant 32-bit `font_id` from a (family, weight,
+/// italic) tuple for use as the `GlyphKey::font_id` discriminator.
+///
+/// This is the single source of truth for the renderer-local font identity used
+/// to key the glyph atlas. It folds the full family name, the full 16-bit
+/// weight, and the italic flag through FNV-1a so that distinct font selections
+/// never alias to the same atlas key (which would return the wrong glyph for a
+/// distinct font and garble text). It is a pure function of its inputs, so the
+/// id is stable across runs (no nondeterminism). `size_px` and the glyph
+/// codepoint are tracked separately in `GlyphKey`, so they are intentionally
+/// not folded in here.
+pub(crate) fn compute_font_id(font_family: &str, font_weight: u16, italic: bool) -> u32 {
+    const FNV_OFFSET: u32 = 0x811c_9dc5;
+    const FNV_PRIME: u32 = 0x0100_0193;
+    let mut h = FNV_OFFSET;
+    for b in font_family.bytes() {
+        h = (h ^ b as u32).wrapping_mul(FNV_PRIME);
+    }
+    // Separator so "family"+weight cannot collide with a differently-split tuple.
+    h = (h ^ 0xFF).wrapping_mul(FNV_PRIME);
+    h = (h ^ (font_weight as u32 & 0xFF)).wrapping_mul(FNV_PRIME);
+    h = (h ^ ((font_weight as u32 >> 8) & 0xFF)).wrapping_mul(FNV_PRIME);
+    h = (h ^ u32::from(italic)).wrapping_mul(FNV_PRIME);
+    h
+}
+
 impl SoftwareRenderer {
     /// Render a Text scene node.
     #[allow(clippy::too_many_arguments)]
@@ -75,20 +101,21 @@ impl SoftwareRenderer {
                 16 * scale.max(&1)
             };
 
-            // Encode font_weight and letter_spacing into the font_id
-            let family_hash = if font_family.is_empty() {
-                0_u32
-            } else {
-                let mut h: u32 = 5381;
-                for b in font_family.bytes() {
-                    h = h.wrapping_mul(33).wrapping_add(b as u32);
-                }
-                h & 0xFFFF
-            };
-            // Encode italic into the font_id so italic and upright glyphs for
-            // the same family/weight/size do not collide in the glyph atlas.
-            let italic_bit = if *font_style_italic { 1_u32 << 24 } else { 0 };
-            let font_id = italic_bit | (((*font_weight as u32) & 0xFF) << 16) | family_hash;
+            // Derive a collision-resistant font_id from the full (family,
+            // weight, italic) tuple.
+            //
+            // The old packing — `italic<<24 | (weight & 0xFF)<<16 | (hash &
+            // 0xFFFF)` — truncated the weight to 8 bits (so weights ≥256, and
+            // any two weights congruent mod 256, aliased to the SAME id) and
+            // squeezed the family hash into 16 bits (raising the family-vs-family
+            // collision rate). A collision returns the WRONG glyph from the atlas
+            // for a distinct (family,weight,italic) combo, garbling text. We hash
+            // the entire tuple into the full 32-bit space (FNV-1a) so distinct
+            // combos map to distinct ids; `size_px` and `glyph_id` are separate
+            // fields of `GlyphKey`, so they need not be folded in here. The hash
+            // is a pure function of the inputs, so the id is identical run-to-run
+            // (no nondeterminism introduced).
+            let font_id = compute_font_id(font_family, *font_weight, *font_style_italic);
 
             let size_px = glyph_height as u16;
             #[allow(unused_assignments)]

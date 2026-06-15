@@ -9,6 +9,8 @@ mod gradients;
 mod helpers;
 mod images;
 mod text;
+#[cfg(test)]
+pub(crate) use text::compute_font_id;
 
 use std::collections::HashMap;
 
@@ -51,6 +53,14 @@ pub(crate) struct CachedShadow {
 
 /// Maximum number of entries in the shadow mask cache before eviction.
 const MAX_SHADOW_CACHE: usize = 256;
+
+/// Upper bound (milliseconds) on how long a single `render()` will block
+/// waiting for already-in-flight glyph rasterizations to complete before
+/// painting text. This makes glyph presence deterministic for a given scene
+/// (identical atlas → byte-identical frame) without risking an unbounded hang
+/// if the font-worker thread stalls; on timeout the renderer falls back to the
+/// estimated-advance path exactly as it did before this seam existed.
+const GLYPH_DRAIN_BUDGET_MS: u64 = 2_000;
 
 // Re-export the Renderer trait from liquide-compositor so downstream crates
 // can import it from either location.
@@ -720,7 +730,22 @@ impl Renderer for SoftwareRenderer {
         self.blur_worker.poll_results();
 
         // Drain completed glyph rasterizations into the atlas.
-        let rasterized = self.font_worker.poll_results();
+        //
+        // DETERMINISM: glyphs are rasterised asynchronously on the font-worker
+        // thread, so a non-blocking poll commits only whatever happens to have
+        // arrived by now — a per-run race. Because text layout (word-wrap, pen
+        // advance) reads glyph advances out of the atlas, a partially populated
+        // atlas yields a *different layout and dropped/garbled glyphs every
+        // run*. Any glyph already requested on a prior pass (i.e. currently
+        // pending) MUST be in the atlas before this frame paints text, so we
+        // block-drain the outstanding pending set first. Newly-requested glyphs
+        // (this frame's first sighting of a run) are still resolved on the
+        // follow-up render pass, exactly as before; this only removes the
+        // timing race on glyphs already in flight. The deadline bounds the wait
+        // so a wedged worker can never hang the render loop.
+        let drain_deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(GLYPH_DRAIN_BUDGET_MS);
+        let rasterized = self.font_worker.drain_pending_blocking(drain_deadline);
         for glyph in &rasterized {
             let _ = self
                 .glyph_atlas
