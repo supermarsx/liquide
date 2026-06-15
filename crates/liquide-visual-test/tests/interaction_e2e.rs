@@ -460,10 +460,25 @@ fn keyboard_into_text_field_reaches_app_and_paints() {
                 .into_events()
         },
         |shell| {
-            // t57-fG wired the shell side of the shell<->app text-input seam:
-            // typed chars route into the focused window's buffer, exposed
-            // read-only via `focused_app_text()`.
-            shell.focused_app_text() == Some("hello")
+            // t70-s6 made app windows run the REAL app: the host installs an
+            // app-view factory, so opening the Files window registers a live
+            // `FilesRuntime` and typed chars route into THAT app's model (its
+            // search buffer), not the shell's legacy `focused_app_text` buffer.
+            // Verify the text reached the app by rendering its content view and
+            // looking for the typed string. (When no app view is registered the
+            // legacy `focused_app_text()` path still applies — see the shell's
+            // `without_factory_open_keeps_placeholder` test.)
+            if let Some(view) = shell.focused_app_view() {
+                let model = view.content_view(80, 24);
+                model
+                    .title
+                    .iter()
+                    .map(String::as_str)
+                    .chain(model.rows.iter().map(|r| r.text.as_str()))
+                    .any(|t| t.contains("hello"))
+            } else {
+                shell.focused_app_text() == Some("hello")
+            }
         },
     )
     .expect("keyboard capture");
