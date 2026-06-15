@@ -177,6 +177,22 @@ fn context_menu_opens_at_cursor() {
 
     // The menu rect [ox, ox+200] x [oy, oy+148] must carry substantial paint
     // that differs from the bare desktop (the panel + 5 item rows).
+    //
+    // PANEL-vs-BACKGROUND TOLERANCE (recalibrated, t65-harden2): the context menu
+    // is a TRANSLUCENT "liquid glass" panel. After the hardcoded dark backdrop was
+    // removed (the themed CSS `desktop-background` rgb(12,14,28) is now the visible
+    // background, vs the old hardcoded rgb(5,8,20)), the panel-fill's max-channel
+    // delta vs the background dropped from ~24.6 to ~17. At the OLD `tol=24` the
+    // panel fill no longer crosses the threshold, so only the bright glyph/border
+    // ink (~2.3k px) counts and a fully-painted menu reads as "not painted". The
+    // menu opening also lays a faint full-screen scrim (delta ~12). `tol=16` sits
+    // ABOVE the scrim + the bare-capture noise (both excluded → the corner / wrong-
+    // spot teeth below still read ~0) and BELOW the panel-fill delta (~17 → the
+    // whole panel counts: 25_456/29_600 px). This keeps full teeth: a menu painted
+    // at the wrong location reads ~0 in this rect (verified: wrong-spot probe = 0 at
+    // tol 16), so an absent/mispositioned menu still fails. See `.orchestration/
+    // logs/t65-s2b.md` (proven cause) and `t65-harden2.md`.
+    let panel_tol = 16u8;
     let menu_changed = changed_vs_base(
         &frame,
         &base,
@@ -184,7 +200,7 @@ fn context_menu_opens_at_cursor() {
         oy,
         CONTEXT_MENU_WIDTH as u32,
         CONTEXT_MENU_HEIGHT as u32,
-        24,
+        panel_tol,
     );
     let menu_area = (CONTEXT_MENU_WIDTH * CONTEXT_MENU_HEIGHT) as usize;
     assert!(
@@ -198,7 +214,8 @@ fn context_menu_opens_at_cursor() {
     // broken (0,0)-anchored menu would land) must be ~unchanged from base, since
     // our click was at (300,250) well away from the corner and the status bar
     // band is excluded by starting the probe below it.
-    let corner_changed = changed_vs_base(&frame, &base, 0, 40, CONTEXT_MENU_WIDTH as u32, 108, 24);
+    let corner_changed =
+        changed_vs_base(&frame, &base, 0, 40, CONTEXT_MENU_WIDTH as u32, 108, panel_tol);
     assert!(
         corner_changed < (CONTEXT_MENU_WIDTH as usize * 108) / 8,
         "context menu appears anchored near the screen origin (corner has {corner_changed} \
@@ -342,10 +359,20 @@ fn context_menu_icon_and_label_do_not_overlap() {
         let profile = column_ink_profile(&frame, ox, row_y, CONTEXT_MENU_WIDTH as u32, row_h);
 
         // Decompose the row into ink clusters. `bridge = 2` keeps a glyph/icon
-        // with thin internal hollows as one cluster; `min_ink = 0` counts any
-        // column with ≥1 ink pixel (column_ink_profile already thresholds on
-        // contrast, so a non-zero column is real ink).
-        let clusters = ink_clusters(&profile, 0, 2);
+        // with thin internal hollows as one cluster. `min_ink = 2` (a column counts
+        // only when its contrast-ink height is ≥3 px) suppresses 1–2px antialiasing
+        // SPECKS at the panel border edge. (t65-harden2: removing the hardcoded
+        // backdrop so the themed `desktop-background` shows lowered the panel-vs-bg
+        // contrast just enough that a 2px AA speck appears at col 0 of the top row;
+        // at the old `min_ink = 0` that speck registered as the row's first ink
+        // cluster, left of the icon box, falsely tripping the "collapsed to border"
+        // overlap check. Real icon/label glyph columns start at ≥3px (the icon box
+        // begins at col ~18 with 3–8px ink), so they survive this threshold intact —
+        // see `.orchestration/logs/t65-harden2.md`.) TEETH PRESERVED: a genuine
+        // collapse-to-border or icon overrun paints far more than 2px per column and
+        // is still detected (the `teeth_overlap_cluster_logic` test, with 10px ink,
+        // continues to fire).
+        let clusters = ink_clusters(&profile, 2, 2);
         if clusters.is_empty() {
             // No ink at all -> a blank row is the all-items test's concern; we
             // cannot judge icon/label overlap with nothing drawn.
@@ -671,7 +698,17 @@ fn session_menu_opens_and_paints() {
     // hard-code its exact rect we assert a meaningful number of pixels changed
     // overall AND that the change is concentrated (a menu-sized cluster), not
     // just AA noise.
-    let changed = changed_vs_base(&frame, &base, 0, 0, frame.width, frame.height, 24);
+    //
+    // TOLERANCE (recalibrated, t65-harden2): the session menu shares the same
+    // translucent "liquid glass" panel as the context menu, so the same backdrop
+    // change (hardcoded rgb(5,8,20) → themed rgb(12,14,28)) dropped its panel-fill
+    // delta below the old `tol=24` (at 24 only ~1.5k px crossed — right on the
+    // threshold and fragile). `tol=16` (below the ~17 panel-fill delta, above the
+    // 0-px bare-capture noise) counts the full panel: 22_037 px, a wide margin over
+    // the 1_500 floor while KEEPING TEETH — two bare desktops differ by 0 px at this
+    // tolerance, so a menu that fails to paint reads ~0 and fails. See
+    // `.orchestration/logs/t65-harden2.md`.
+    let changed = changed_vs_base(&frame, &base, 0, 0, frame.width, frame.height, 16);
     assert!(
         changed > 1_500,
         "session menu did not paint: only {changed} pixels changed vs the bare desktop \
