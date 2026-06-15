@@ -479,10 +479,41 @@ impl Shell {
                         }
                     }
                 }
-                if self.context_menu_visible && ke.key == KeyCode::Escape {
-                    self.context_menu_visible = false;
-                    self.context_menu_hover_index = None;
-                    return Some(ShellAction::Redraw);
+                if self.context_menu_visible {
+                    // Keyboard nav for the desktop right-click context menu,
+                    // mirroring the session-menu arms below: ArrowDown/ArrowUp
+                    // advance/wrap the highlight, Enter activates the highlighted
+                    // item, Escape closes. The highlight renders via the
+                    // `menu-item:hover` pseudo-state set in `sync_context_menu_template`.
+                    let ctx_len = ContextMenuItem::defaults().len();
+                    match ke.key {
+                        KeyCode::Escape => {
+                            self.context_menu_visible = false;
+                            self.context_menu_hover_index = None;
+                            return Some(ShellAction::Redraw);
+                        }
+                        KeyCode::ArrowDown => {
+                            self.context_menu_hover_index =
+                                Self::cycle_menu_index(self.context_menu_hover_index, ctx_len, 1);
+                            return Some(ShellAction::Redraw);
+                        }
+                        KeyCode::ArrowUp => {
+                            self.context_menu_hover_index =
+                                Self::cycle_menu_index(self.context_menu_hover_index, ctx_len, -1);
+                            return Some(ShellAction::Redraw);
+                        }
+                        KeyCode::Enter => {
+                            let idx = self.context_menu_hover_index.unwrap_or(0);
+                            self.context_menu_visible = false;
+                            self.context_menu_hover_index = None;
+                            let ctx_items = ContextMenuItem::defaults();
+                            if idx < ctx_items.len() {
+                                return Some(ctx_items[idx].action.clone());
+                            }
+                            return Some(ShellAction::Redraw);
+                        }
+                        _ => {}
+                    }
                 }
                 if self.session_menu_visible {
                     match ke.key {

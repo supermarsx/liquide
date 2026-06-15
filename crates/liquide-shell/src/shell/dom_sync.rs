@@ -831,6 +831,11 @@ impl Shell {
             ctx.set("pos_top", &format!("{}px", clamped_y.round() as i32));
 
             self.apply_overlay_template("context-menu", "context-menu", &ctx);
+            // Set the `:hover` pseudo-state on the highlighted item so the themed
+            // `menu-item:hover` rule paints the keyboard-nav highlight, mirroring
+            // the session-menu highlight (t66-navfix).
+            self.desktop_dom
+                .set_menu_hover("context-menu", self.context_menu_hover_index);
         } else {
             self.remove_overlay("context-menu");
             self.template_cache.remove("context-menu");

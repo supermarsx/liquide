@@ -97,6 +97,12 @@ pub enum ShellAction {
     SwitchWindowBackward,
     TaskOverview,
 
+    // Focus traversal — plain Tab / Shift-Tab move focus forward/backward
+    // through the focusable shell elements (visible windows on the active
+    // workspace, in z-order) without getting stuck.
+    FocusForward,
+    FocusBackward,
+
     // Window management
     CloseWindow,
     MaximizeWindow,
@@ -164,6 +170,8 @@ impl fmt::Display for ShellAction {
             Self::SwitchWindowForward => write!(f, "Switch Window Forward"),
             Self::SwitchWindowBackward => write!(f, "Switch Window Backward"),
             Self::TaskOverview => write!(f, "Task Overview"),
+            Self::FocusForward => write!(f, "Focus Next Element"),
+            Self::FocusBackward => write!(f, "Focus Previous Element"),
             Self::CloseWindow => write!(f, "Close Window"),
             Self::MaximizeWindow => write!(f, "Maximize Window"),
             Self::RestoreMinimize => write!(f, "Restore / Minimize"),
@@ -280,6 +288,19 @@ impl ShortcutManager {
         bindings.insert(
             KeyBinding::new(KeyCode::Tab, Modifiers::from_bits(sup)),
             ShellAction::TaskOverview,
+        );
+
+        // --- Focus traversal (plain Tab / Shift-Tab) ---
+        // Bare Tab moves focus to the next focusable shell element; Shift-Tab
+        // moves to the previous one. These have NO command modifier so they
+        // sit alongside the Alt/Super window-switch bindings above.
+        bindings.insert(
+            KeyBinding::new(KeyCode::Tab, Modifiers::new()),
+            ShellAction::FocusForward,
+        );
+        bindings.insert(
+            KeyBinding::new(KeyCode::Tab, Modifiers::from_bits(shift)),
+            ShellAction::FocusBackward,
         );
 
         // --- Window management ---

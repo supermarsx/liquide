@@ -274,6 +274,34 @@ impl Shell {
                 }
                 true
             }
+            ShellAction::FocusForward | ShellAction::FocusBackward => {
+                // Element focus traversal: build a focus ring from the focusable
+                // shell elements (visible windows on the active workspace, in
+                // z-order) and move focus to the next/previous one, wrapping at
+                // the ends so Tab never gets stuck. `set_focus` updates the
+                // focused-window visual (title-bar/border) so the move is visible.
+                let ring: Vec<WindowId> = self.visible_windows().iter().map(|w| w.id).collect();
+                if !ring.is_empty() {
+                    let forward = matches!(action, ShellAction::FocusForward);
+                    let current = self.focus.focused();
+                    let cur_pos = current.and_then(|id| ring.iter().position(|&w| w == id));
+                    let len = ring.len();
+                    let next_idx = match cur_pos {
+                        Some(i) if forward => (i + 1) % len,
+                        Some(i) => (i + len - 1) % len,
+                        // No focusable element currently focused: enter the ring
+                        // at the first element forward, last element backward.
+                        None if forward => 0,
+                        None => len - 1,
+                    };
+                    let target = ring[next_idx];
+                    if Some(target) != current {
+                        let _ = self.set_focus(target);
+                        let _ = self.raise_window(target);
+                    }
+                }
+                true
+            }
             ShellAction::TileLeft => {
                 if let Some(wid) = self.focus.focused() {
                     let work = self.work_area();
