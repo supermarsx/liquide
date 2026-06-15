@@ -5,7 +5,15 @@
    ═══════════════════════════════════════════════════════ */
 
 desktop-background {
-    background: rgb(245, 240, 232);
+    /* Designed wallpaper: a light, airy daytime wash — a soft cool sky tint at
+       the top settling into warm paper-cream below. Kept high-key so the dark
+       chrome text and icons stay crisp and readable. */
+    background: linear-gradient(
+        180deg,
+        rgb(236, 240, 247) 0%,
+        rgb(244, 242, 236) 48%,
+        rgb(248, 243, 233) 100%
+    );
     position: fixed;
     top: 0;
     left: 0;

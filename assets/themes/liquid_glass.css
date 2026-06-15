@@ -8,7 +8,23 @@
 /* ── Base structure ────────────────────────────────── */
 
 desktop-background {
-    background: rgb(12, 14, 28);
+    /* Designed wallpaper: a deep blue-to-violet diagonal wash with a darker
+       lower-right anchor, so the dock/menus keep contrast while the desktop
+       reads as a real liquid-glass backdrop rather than a flat slab. */
+    /* Blue-to-violet wash with the bloom kept in the upper band and a falloff to a
+       deep, even dark across the lower two-thirds — so the desktop body stays
+       clearly darker than the translucent status bar (which samples the brighter
+       top strip) while still reading as a designed liquid-glass backdrop with a
+       violet glow beneath the bar, rather than a flat slab. */
+    background: linear-gradient(
+        180deg,
+        rgb(14, 16, 44) 0%,
+        rgb(32, 25, 78) 12%,
+        rgb(16, 15, 46) 28%,
+        rgb(9, 10, 26) 44%,
+        rgb(7, 8, 20) 70%,
+        rgb(6, 7, 16) 100%
+    );
     position: fixed;
     top: 0;
     left: 0;

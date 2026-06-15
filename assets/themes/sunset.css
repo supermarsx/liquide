@@ -5,7 +5,16 @@
    ═══════════════════════════════════════════════════════ */
 
 desktop-background {
-    background: rgb(26, 16, 8);
+    /* Designed wallpaper: a warm dusk wash — deep cocoa at the top easing into a
+       burnt-amber glow toward the lower edge, evoking a setting sun while staying
+       dark enough to keep the warm-cream chrome legible. */
+    background: linear-gradient(
+        160deg,
+        rgb(28, 16, 8) 0%,
+        rgb(46, 22, 10) 40%,
+        rgb(74, 34, 14) 72%,
+        rgb(40, 20, 10) 100%
+    );
     position: fixed;
     top: 0;
     left: 0;

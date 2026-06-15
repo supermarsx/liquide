@@ -5,7 +5,15 @@
    ═══════════════════════════════════════════════════════ */
 
 desktop-background {
-    background: rgb(10, 10, 10);
+    /* Designed wallpaper: a near-black vertical gradient with a faint cool lift
+       at the top, giving the terminal-mono theme subtle depth without lightening
+       the surface enough to wash out the bright mono chrome text. */
+    background: linear-gradient(
+        180deg,
+        rgb(16, 17, 20) 0%,
+        rgb(11, 11, 13) 46%,
+        rgb(7, 7, 8) 100%
+    );
     position: fixed;
     top: 0;
     left: 0;
