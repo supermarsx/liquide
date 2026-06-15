@@ -308,6 +308,19 @@ fn parse_key(s: &str) -> Option<Key> {
         "pause" | "break" => Some(Key::Pause),
         "minus" | "-" => Some(Key::Minus),
         "equal" | "=" => Some(Key::Equal),
+        // Punctuation / OEM keys — accept both the symbolic form emitted by
+        // `key_name` and a spelled-out alias, so `parse(display())` round-trips
+        // for every `Key` variant (required when the shell folds bindings in by
+        // parsing display strings).
+        "bracketleft" | "[" => Some(Key::BracketLeft),
+        "bracketright" | "]" => Some(Key::BracketRight),
+        "backslash" | "\\" => Some(Key::Backslash),
+        "semicolon" | ";" => Some(Key::Semicolon),
+        "quote" | "'" => Some(Key::Quote),
+        "comma" | "," => Some(Key::Comma),
+        "period" | "." => Some(Key::Period),
+        "slash" | "/" => Some(Key::Slash),
+        "grave" | "`" => Some(Key::Grave),
         _ => None,
     }
 }
@@ -684,6 +697,52 @@ mod tests {
             let kb2 = KeyBinding::parse(&displayed).unwrap();
             assert_eq!(kb, kb2, "round-trip failed for '{}'", s);
         }
+    }
+
+    #[test]
+    fn display_parse_round_trip_all_keys() {
+        // Every Key variant that key_name can emit must parse back, otherwise
+        // folding bindings into the shell ShortcutManager (which round-trips via
+        // display strings) silently drops punctuation/media/special bindings.
+        let keys = [
+            Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H,
+            Key::I, Key::J, Key::K, Key::L, Key::M, Key::N, Key::O, Key::P,
+            Key::Q, Key::R, Key::S, Key::T, Key::U, Key::V, Key::W, Key::X,
+            Key::Y, Key::Z,
+            Key::Digit0, Key::Digit1, Key::Digit2, Key::Digit3, Key::Digit4,
+            Key::Digit5, Key::Digit6, Key::Digit7, Key::Digit8, Key::Digit9,
+            Key::F1, Key::F2, Key::F3, Key::F4, Key::F5, Key::F6, Key::F7,
+            Key::F8, Key::F9, Key::F10, Key::F11, Key::F12,
+            Key::Escape, Key::Tab, Key::Space, Key::Enter, Key::Backspace,
+            Key::Delete, Key::Insert, Key::Home, Key::End, Key::PageUp,
+            Key::PageDown, Key::ArrowUp, Key::ArrowDown, Key::ArrowLeft,
+            Key::ArrowRight,
+            Key::VolumeUp, Key::VolumeDown, Key::VolumeMute, Key::MediaPlay,
+            Key::MediaStop, Key::MediaNext, Key::MediaPrev,
+            Key::PrintScreen, Key::ScrollLock, Key::Pause,
+            Key::Minus, Key::Equal, Key::BracketLeft, Key::BracketRight,
+            Key::Backslash, Key::Semicolon, Key::Quote, Key::Comma,
+            Key::Period, Key::Slash, Key::Grave,
+        ];
+        for key in keys {
+            let kb = KeyBinding::new(Modifiers::CTRL, key);
+            let displayed = kb.display();
+            let parsed = KeyBinding::parse(&displayed)
+                .unwrap_or_else(|| panic!("parse failed for displayed binding {displayed:?}"));
+            assert_eq!(parsed.key, key, "round-trip mismatch for {displayed:?}");
+            assert!(parsed.modifiers.has(Modifiers::CTRL));
+        }
+    }
+
+    #[test]
+    fn modifier_bits_match_liquide_input_layout() {
+        // hotkeys Modifiers must stay byte-compatible with liquide_input::Modifiers
+        // (SHIFT=0x01, CTRL=0x02, ALT=0x04, SUPER=0x08) so the shell can fold
+        // bindings in without re-encoding modifier flags.
+        assert_eq!(Modifiers::SHIFT.0, 0x01);
+        assert_eq!(Modifiers::CTRL.0, 0x02);
+        assert_eq!(Modifiers::ALT.0, 0x04);
+        assert_eq!(Modifiers::SUPER.0, 0x08);
     }
 
     #[test]

@@ -8,18 +8,41 @@ use crate::compose::{ComposeResult, ComposeTable, default_compose_table};
 use crate::emoji::EmojiPicker;
 use crate::state::{InputMethodState, InputMode, PreeditSegment, PreeditString, SegmentStyle};
 
-/// A key event from the platform.
+/// A key event fed into the [`InputMethodEngine`].
+///
+/// # Modifier bit contract (shell-wiring)
+///
+/// The `modifiers` bitmask is deliberately byte-compatible with the live
+/// shell input identity (`liquide_input::Modifiers`, whose raw bits are
+/// `SHIFT=0x01`, `CTRL=0x02`, `ALT=0x04`, `SUPER=0x08`). A shell driving this
+/// engine can therefore pass `liquide_input::Modifiers::bits()` straight into
+/// [`KeyEvent::new`] without re-encoding, or use the convenience constructor
+/// [`KeyEvent::from_parts`].
+///
+/// - bit 0 (`0x01`) = Shift
+/// - bit 1 (`0x02`) = Ctrl
+/// - bit 2 (`0x04`) = Alt / Meta
+/// - bit 3 (`0x08`) = Super (reserved; not consumed by the engine today)
 #[derive(Debug, Clone)]
 pub struct KeyEvent {
     /// X11/XKB keysym value.
     pub keysym: u32,
     /// Text produced by this key (if any), after platform keymap processing.
     pub text: Option<String>,
-    /// Modifier flags (bitmask: bit 0 = Shift, bit 1 = Ctrl, bit 2 = Alt/Meta).
+    /// Modifier flags (see the type-level "Modifier bit contract").
     pub modifiers: u32,
 }
 
 impl KeyEvent {
+    /// Shift modifier bit (matches `liquide_input::Modifiers::SHIFT`).
+    pub const MOD_SHIFT: u32 = 0x01;
+    /// Ctrl modifier bit (matches `liquide_input::Modifiers::CTRL`).
+    pub const MOD_CTRL: u32 = 0x02;
+    /// Alt/Meta modifier bit (matches `liquide_input::Modifiers::ALT`).
+    pub const MOD_ALT: u32 = 0x04;
+    /// Super modifier bit (matches `liquide_input::Modifiers::SUPER`).
+    pub const MOD_SUPER: u32 = 0x08;
+
     /// Create a new key event.
     #[must_use]
     pub fn new(keysym: u32, text: Option<String>, modifiers: u32) -> Self {
@@ -30,22 +53,65 @@ impl KeyEvent {
         }
     }
 
+    /// Ergonomic constructor for shell-wiring: build a key event from the
+    /// keysym, optional committed text, and explicit modifier booleans.
+    ///
+    /// This is the constructor the shell should prefer when translating a
+    /// `liquide_input::KeyEvent` (which exposes `modifiers.shift()`,
+    /// `.ctrl()`, `.alt()`, `.super_key()` and the produced text) into an
+    /// engine key event, so the bit layout never has to be reconstructed by
+    /// hand at the call site.
+    #[must_use]
+    pub fn from_parts(
+        keysym: u32,
+        text: Option<String>,
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+        super_key: bool,
+    ) -> Self {
+        let mut modifiers = 0;
+        if shift {
+            modifiers |= Self::MOD_SHIFT;
+        }
+        if ctrl {
+            modifiers |= Self::MOD_CTRL;
+        }
+        if alt {
+            modifiers |= Self::MOD_ALT;
+        }
+        if super_key {
+            modifiers |= Self::MOD_SUPER;
+        }
+        Self {
+            keysym,
+            text,
+            modifiers,
+        }
+    }
+
     /// Whether Shift is held.
     #[must_use]
     pub fn shift(&self) -> bool {
-        self.modifiers & 1 != 0
+        self.modifiers & Self::MOD_SHIFT != 0
     }
 
     /// Whether Ctrl is held.
     #[must_use]
     pub fn ctrl(&self) -> bool {
-        self.modifiers & 2 != 0
+        self.modifiers & Self::MOD_CTRL != 0
     }
 
     /// Whether Alt/Meta is held.
     #[must_use]
     pub fn alt(&self) -> bool {
-        self.modifiers & 4 != 0
+        self.modifiers & Self::MOD_ALT != 0
+    }
+
+    /// Whether Super (the OS/meta key) is held.
+    #[must_use]
+    pub fn super_key(&self) -> bool {
+        self.modifiers & Self::MOD_SUPER != 0
     }
 }
 

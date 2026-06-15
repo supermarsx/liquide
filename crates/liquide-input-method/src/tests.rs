@@ -1251,3 +1251,60 @@ fn switcher_set_for_window_invalid_index_ignored() {
     // Should still use global default.
     assert_eq!(sw.get_for_window(100).unwrap().id, "en");
 }
+
+// ===== KeyEvent shell-wiring contract tests =====
+
+#[test]
+fn key_event_from_parts_sets_bits() {
+    let k = KeyEvent::from_parts(0x0061, Some("a".to_string()), true, true, false, false);
+    assert!(k.shift());
+    assert!(k.ctrl());
+    assert!(!k.alt());
+    assert!(!k.super_key());
+    assert_eq!(k.modifiers, KeyEvent::MOD_SHIFT | KeyEvent::MOD_CTRL);
+    assert_eq!(k.text.as_deref(), Some("a"));
+    assert_eq!(k.keysym, 0x0061);
+}
+
+#[test]
+fn key_event_from_parts_super() {
+    let k = KeyEvent::from_parts(0x0020, None, false, false, false, true);
+    assert!(k.super_key());
+    assert!(!k.shift());
+    assert_eq!(k.modifiers, KeyEvent::MOD_SUPER);
+}
+
+#[test]
+fn key_event_modifier_bits_match_liquide_input_layout() {
+    // The engine's modifier bit layout MUST stay byte-compatible with
+    // liquide_input::Modifiers (SHIFT=0x01, CTRL=0x02, ALT=0x04, SUPER=0x08)
+    // so the shell can pass `liquide_input::Modifiers::bits()` straight in.
+    assert_eq!(KeyEvent::MOD_SHIFT, 0x01);
+    assert_eq!(KeyEvent::MOD_CTRL, 0x02);
+    assert_eq!(KeyEvent::MOD_ALT, 0x04);
+    assert_eq!(KeyEvent::MOD_SUPER, 0x08);
+}
+
+#[test]
+fn key_event_accessors_read_raw_modifiers() {
+    // Building via `new` with a raw bitmask (as the shell would when forwarding
+    // liquide_input::Modifiers::bits()) yields the same accessor results.
+    let raw = KeyEvent::MOD_CTRL | KeyEvent::MOD_ALT;
+    let k = KeyEvent::new(0x0074, Some("t".to_string()), raw);
+    assert!(k.ctrl());
+    assert!(k.alt());
+    assert!(!k.shift());
+    assert!(!k.super_key());
+}
+
+#[test]
+fn key_event_from_parts_drives_engine_ctrl_space_activation() {
+    // Ctrl+Space is the activation hotkey; verify a from_parts-built event
+    // (the shell's preferred constructor) drives the engine correctly.
+    let mut engine = InputMethodEngine::new();
+    assert!(!engine.state().active);
+    let ctrl_space = KeyEvent::from_parts(0x0020, None, false, true, false, false);
+    let action = engine.process_key(ctrl_space);
+    assert!(engine.state().active);
+    assert_eq!(action, InputAction::SwitchMode(InputMode::Direct));
+}
