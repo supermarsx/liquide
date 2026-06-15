@@ -204,6 +204,10 @@ fn run_desktop(
     desktop.set_fps_cap(fps_cap);
     desktop.set_debug_perf(debug_perf);
     desktop.set_dev_mode(dev_mode);
+    // This is the real session binary: host-consumed Shut Down / Restart
+    // requests should perform real OS power calls (t73-session item 2). Tests
+    // and headless runs leave this off and only transition state.
+    desktop.set_real_runtime(true);
 
     info!("Entering desktop event loop");
     desktop.run(platform.as_mut());

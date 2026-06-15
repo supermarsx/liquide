@@ -25,6 +25,8 @@ pub mod lockfree_queue;
 mod paint_state;
 mod render_thread;
 mod scene_split;
+mod screenshot;
+mod session_actions;
 mod tile_state;
 mod window_render;
 
@@ -148,6 +150,55 @@ pub struct DesktopCompositor {
     window_render: WindowRenderManager,
     /// Telemetry viewer metrics registry — counters, gauges, histograms.
     viewer_metrics: MetricsRegistry,
+    /// Snapshot of the most recently PRESENTED frame, retained so a host-side
+    /// screenshot request can be fulfilled from the real rendered framebuffer
+    /// without re-rendering (t73-session item 3). `None` until the first frame
+    /// is presented.
+    last_presented_frame: Option<PresentedFrameSnapshot>,
+    /// Content hash of the most recently PRESENTED frame, used by the
+    /// new-surface glyph-pop-in defer (t73-session item 1) to detect when a
+    /// freshly-changed surface (e.g. a just-opened menu) is about to be
+    /// presented with not-yet-rasterised text.
+    last_presented_content_hash: Option<u64>,
+    /// How many consecutive times the current new/changed surface frame has been
+    /// deferred while waiting for its glyphs to fill in. Bounds the defer so a
+    /// font worker that never delivers can still get the frame on screen
+    /// (t73-session item 1).
+    pending_glyph_defers: u8,
+    /// When `true`, host-consumed destructive session actions (Restart /
+    /// Shutdown / Suspend) are executed as REAL OS power calls. Defaults to
+    /// `false` so tests and headless runs only transition state and never power
+    /// off the machine (t73-session item 2). Gated on by the binary's real
+    /// runtime via [`Self::set_real_runtime`].
+    real_runtime: bool,
+    /// The last session-lifecycle action the host consumed and dispatched.
+    /// Recorded for tests/telemetry so consumption is observable without
+    /// performing a real power action (t73-session item 2).
+    last_session_action: Option<DispatchedSessionAction>,
+}
+
+/// A retained copy of a presented frame's pixels for host-side screenshot
+/// fulfillment (t73-session item 3).
+#[derive(Clone)]
+struct PresentedFrameSnapshot {
+    pixels: Arc<Vec<u8>>,
+    width: u32,
+    height: u32,
+    stride: u32,
+}
+
+/// A session-lifecycle action the host has consumed from the shell and
+/// dispatched (t73-session item 2). Mirrors
+/// [`liquide_shell::SessionRequest`] plus the `Lock` path, which the shell
+/// drives directly rather than via a recorded request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchedSessionAction {
+    /// End the current session (log out): tear the desktop loop down.
+    LogOut,
+    /// Restart the machine.
+    Restart,
+    /// Shut the machine down.
+    Shutdown,
 }
 
 impl DesktopCompositor {
@@ -210,7 +261,29 @@ impl DesktopCompositor {
             render_metrics: Arc::new(MetricsCollector::new()),
             window_render: WindowRenderManager::new(),
             viewer_metrics: MetricsRegistry::with_builtins(),
+            last_presented_frame: None,
+            last_presented_content_hash: None,
+            pending_glyph_defers: 0,
+            real_runtime: false,
+            last_session_action: None,
         }
+    }
+
+    /// Enable REAL OS power actions for host-consumed session requests.
+    ///
+    /// Off by default so tests/headless runs only transition shell/session
+    /// state. The live `liquid-session` / standalone host turns this on so a
+    /// Shut Down / Restart / Suspend from the session menu performs the real
+    /// platform power call (t73-session item 2).
+    pub fn set_real_runtime(&mut self, enabled: bool) {
+        self.real_runtime = enabled;
+    }
+
+    /// The last session-lifecycle action the host consumed and dispatched, if
+    /// any (test/telemetry observability for t73-session item 2).
+    #[must_use]
+    pub fn last_session_action(&self) -> Option<DispatchedSessionAction> {
+        self.last_session_action
     }
 
     /// Build the renderer's font database: load the packaged TrueType faces and

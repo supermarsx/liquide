@@ -223,6 +223,16 @@ impl DesktopCompositor {
                 }
             }
 
+            // Consume any host-side requests the shell recorded this iteration
+            // (t73-session items 2 & 3). The shell only RECORDS intent
+            // (pending_session_request / pending_screenshot); the host performs
+            // the effect. Session-lifecycle actions may set `quit_requested`
+            // (handled by the flush-and-exit path just below); the screenshot
+            // request is fulfilled from the last presented framebuffer (a PNG on
+            // disk).
+            let _ = self.consume_session_request();
+            let _ = self.consume_screenshot_request();
+
             // Honour a pending quit ONLY after flushing the final frame
             // (t60-runtime #1). A Quit/close event sets `quit_requested` rather
             // than stopping the loop outright, so any in-flight render job is

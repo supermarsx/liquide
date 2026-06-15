@@ -610,6 +610,9 @@ impl StandaloneLauncher {
         let mut desktop = DesktopCompositor::new(launch_plan.width, launch_plan.height);
         desktop.set_dev_mode(self.config.dev_mode);
         desktop.set_fps_cap(launch_plan.effective_fps_cap);
+        // Real standalone host: host-consumed Shut Down / Restart requests
+        // perform real OS power calls (t73-session item 2).
+        desktop.set_real_runtime(true);
 
         info!(
             width = launch_plan.width,
@@ -655,6 +658,9 @@ impl StandaloneLauncher {
         let mut desktop = DesktopCompositor::new(launch_plan.width, launch_plan.height);
         desktop.set_dev_mode(true);
         desktop.set_fps_cap(launch_plan.effective_fps_cap);
+        // Real standalone host (windowed dev): host-consumed power requests
+        // perform real OS power calls (t73-session item 2).
+        desktop.set_real_runtime(true);
 
         info!(
             width = launch_plan.width,

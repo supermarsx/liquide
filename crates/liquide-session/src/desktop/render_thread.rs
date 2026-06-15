@@ -874,6 +874,52 @@ impl DesktopCompositor {
                     self.schedule_glyph_fill_resubmit(frame.damage.as_ref());
                 }
 
+                // New-surface glyph pop-in defer (t73-session item 1): the live
+                // `render_live(LiveFull)` path waits only LIVE_GLYPH_DRAIN_BUDGET_MS
+                // (4 ms) for glyphs, so the FIRST frame of a brand-new/changed
+                // surface — e.g. a context menu just opened on right-click — is
+                // often painted with its label glyphs still rasterising. Without
+                // intervention that blank-text frame is presented and the
+                // follow-up fills it in, producing a visible 1-frame
+                // blank-then-fill flash on the menu.
+                //
+                // Fix: when a frame reports pending glyphs AND its content
+                // differs from the last PRESENTED frame (a new/changed surface,
+                // not steady state), DEFER presenting it. The pending-glyph
+                // resubmit was already scheduled above, so the loop renders a
+                // follow-up; once the glyphs land (`pending_glyphs` clears) the
+                // filled frame — not the blank one — is the one that reaches the
+                // screen, so text never flashes blank.
+                //
+                // Bounded by MAX_NEW_SURFACE_GLYPH_DEFERS so a font worker that
+                // never delivers still gets the frame on screen (no permanent
+                // black hole). The cursor-only path always reports
+                // `pending_glyphs == false`, so a pointer move is NEVER deferred
+                // and the fast cursor path keeps its non-blocking behaviour. A
+                // steady-state full frame whose content hash is unchanged is also
+                // never deferred — only the genuinely-new surface's first frames.
+                const MAX_NEW_SURFACE_GLYPH_DEFERS: u8 = 3;
+                let is_new_surface = self
+                    .last_presented_content_hash
+                    .is_some_and(|prev| prev != frame.content_hash);
+                if frame.pending_glyphs
+                    && is_new_surface
+                    && self.pending_glyph_defers < MAX_NEW_SURFACE_GLYPH_DEFERS
+                {
+                    self.pending_glyph_defers = self.pending_glyph_defers.saturating_add(1);
+                    debug!(
+                        defers = self.pending_glyph_defers,
+                        frame_content_hash = format!("{:016x}", frame.content_hash),
+                        "deferring new-surface frame present until glyphs fill in"
+                    );
+                    // Consume the frame but do NOT present it; the follow-up
+                    // (already scheduled) carries the filled text.
+                    return false;
+                }
+                // Either the glyphs are ready, this is steady state, or we hit
+                // the defer budget — present and reset the defer counter.
+                self.pending_glyph_defers = 0;
+
                 // Record render metrics.
                 let render_duration = std::time::Duration::from_secs_f64(frame.render_ms / 1000.0);
                 self.render_metrics.record_completion(render_duration, true);
@@ -941,6 +987,18 @@ impl DesktopCompositor {
                 let present_ms = t4.elapsed().as_secs_f64() * 1000.0;
 
                 self.frame_count += 1;
+
+                // Track the presented frame for the new-surface glyph defer
+                // (t73-session item 1) and retain a snapshot of its pixels so a
+                // host-side screenshot request can be fulfilled from the real
+                // presented framebuffer (t73-session item 3).
+                self.last_presented_content_hash = Some(frame.content_hash);
+                self.last_presented_frame = Some(super::PresentedFrameSnapshot {
+                    pixels: Arc::clone(&frame.pixels),
+                    width: frame.width,
+                    height: frame.height,
+                    stride: frame.stride,
+                });
 
                 // Record telemetry.
                 let total_frame_ms = frame.render_ms + present_ms;
@@ -2047,6 +2105,119 @@ mod tests {
         assert!(
             !desktop.dirty_damage.as_ref().unwrap().is_full(),
             "follow-up damage must not be a full repaint when a tile hint exists"
+        );
+    }
+
+    #[test]
+    fn new_surface_pending_glyph_frame_is_deferred_not_presented() {
+        // t73-session item 1 (flicker fix): a frame that reports pending glyphs
+        // AND whose content differs from the last presented frame (a new/changed
+        // surface, e.g. a just-opened menu) must NOT be presented — it would
+        // flash blank text. It is deferred (consumed, not presented) and a
+        // follow-up is scheduled so the FILLED frame reaches the screen.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        let (tx, rx) = mpsc::channel();
+
+        // A prior presented frame establishes the "steady state" baseline.
+        desktop.last_presented_content_hash = Some(0xAAAA);
+
+        let mut pending = test_rendered_frame(11, 0xBBBB); // different content
+        pending.pending_glyphs = true;
+        let mut damage = DamageSet::new(64);
+        damage.mark_tile(0, 0);
+        pending.damage = Some(damage);
+        tx.send(pending).unwrap();
+
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.frame_rx = Some(rx);
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let mut platform = RecordingPresentPlatform::default();
+        let presented = desktop.try_present(&mut platform);
+
+        assert!(
+            !presented,
+            "a new-surface frame with pending glyphs must be DEFERRED, not presented"
+        );
+        assert!(
+            platform.presents.is_empty(),
+            "the blank-text frame must never reach the platform present path"
+        );
+        assert_eq!(
+            desktop.pending_glyph_defers, 1,
+            "the defer must be counted so it can be bounded"
+        );
+        assert!(
+            desktop.dirty,
+            "a follow-up must be scheduled so the filled frame is rendered"
+        );
+        assert!(
+            !desktop.render_in_flight,
+            "the deferred frame is still consumed; the loop must not stall"
+        );
+    }
+
+    #[test]
+    fn new_surface_glyph_defer_is_bounded_and_then_presents() {
+        // The defer must be bounded: after MAX defers, even a still-pending
+        // frame is presented so a font worker that never delivers can't leave
+        // the surface permanently blank.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.last_presented_content_hash = Some(0xAAAA);
+        let mut platform = RecordingPresentPlatform::default();
+
+        // Feed 4 identical-content pending frames (same new-surface content).
+        for _ in 0..4 {
+            let (tx, rx) = mpsc::channel();
+            let mut pending = test_rendered_frame(11, 0xBBBB);
+            pending.pending_glyphs = true;
+            let mut damage = DamageSet::new(64);
+            damage.mark_tile(0, 0);
+            pending.damage = Some(damage);
+            tx.send(pending).unwrap();
+            desktop.frame_rx = Some(rx);
+            let _ = desktop.try_present(&mut platform);
+        }
+
+        // The first 3 were deferred; the 4th (budget hit) presented.
+        assert_eq!(
+            platform.presents.len(),
+            1,
+            "after the defer budget is hit the frame must be presented"
+        );
+        assert_eq!(
+            desktop.pending_glyph_defers, 0,
+            "the defer counter resets once the frame is presented"
+        );
+    }
+
+    #[test]
+    fn steady_state_pending_glyph_frame_is_not_deferred() {
+        // A full frame whose content hash is UNCHANGED from the last presented
+        // frame is steady state, not a new surface — it must present even if it
+        // (spuriously) reports pending glyphs, so the cursor/steady path is
+        // never stalled by the defer.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.last_presented_content_hash = Some(0xCAFE);
+
+        let (tx, rx) = mpsc::channel();
+        let mut frame = test_rendered_frame(11, 0xCAFE); // same content
+        frame.pending_glyphs = true;
+        let mut damage = DamageSet::new(64);
+        damage.mark_tile(0, 0);
+        frame.damage = Some(damage);
+        tx.send(frame).unwrap();
+        desktop.frame_rx = Some(rx);
+
+        let mut platform = RecordingPresentPlatform::default();
+        assert!(desktop.try_present(&mut platform));
+        assert_eq!(
+            platform.presents.len(),
+            1,
+            "a steady-state frame (unchanged content) must present, never defer"
         );
     }
 
