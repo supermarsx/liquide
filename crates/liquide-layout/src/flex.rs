@@ -958,7 +958,12 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         } else {
             0.0
         };
-    let container_cross = if is_row {
+    // Whether the flex container has a DEFINITE cross size. For a row
+    // container the cross axis is the block (height) axis, which is definite
+    // only when `height` resolves to a length/percentage; for a column
+    // container the cross axis is the inline (width) axis, which is always
+    // definite (content_width).
+    let definite_cross = if is_row {
         style
             .height
             .resolve_px(
@@ -968,10 +973,29 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 viewport_w,
                 viewport_h,
             )
-            .unwrap_or(total_cross)
     } else {
-        content_width
+        Some(content_width)
     };
+    let container_cross = definite_cross.unwrap_or(total_cross);
+
+    // CSS Flexbox §9.4 (Cross Sizing → "Determine the used cross size of
+    // each flex line"): a SINGLE-LINE flex container's line cross-size is
+    // clamped to the container's definite inner cross size. Without this, the
+    // line keeps only its intrinsic (max item) cross size, so `align-items`
+    // (center / flex-end / etc.) has no free space to distribute and items
+    // stay pinned to the cross-start edge — e.g. a `position:fixed; inset:0;
+    // display:flex; align-items:center` overlay would render its child
+    // top-anchored instead of vertically centred (t67-dialog).
+    //
+    // Multi-line containers distribute cross free space via align-content
+    // (handled below), so this expansion applies only to the single-line case.
+    if !should_wrap && line_cross_sizes.len() == 1 {
+        if let Some(def_cross) = definite_cross {
+            if def_cross > line_cross_sizes[0] {
+                line_cross_sizes[0] = def_cross;
+            }
+        }
+    }
 
     // Align-content (distributes space between lines).
     // CSS Flexbox §8.4: align-content has no effect on single-line flex
@@ -1455,6 +1479,119 @@ mod tests {
             "b should wrap below a (a.y={}, b.y={})",
             a_abs.y,
             b_abs.y
+        );
+    }
+
+    /// Regression (t67-dialog): a full-screen `position:fixed; inset:0;
+    /// display:flex; align-items:center; justify-content:center` overlay must
+    /// vertically AND horizontally centre its single child. Previously the
+    /// single (nowrap) flex line kept only its intrinsic cross size, so
+    /// `align-items:center` had no free space and the child rendered
+    /// top-anchored (the dialog/launcher overlay bug). With the single-line
+    /// cross-size clamp to the container's definite height, the child centres.
+    #[test]
+    fn fixed_fullscreen_flex_centers_child_both_axes() {
+        use liquide_style_engine::computed::{AlignItems, JustifyContent, Position};
+
+        let vw = 1000.0f32;
+        let vh = 800.0f32;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let overlay = doc.create_element("overlay");
+        let child = doc.create_element("child");
+        doc.append_child(root, overlay);
+        doc.append_child(overlay, child);
+
+        let mut sm = StyleMap::new();
+
+        let mut overlay_s = ComputedStyle::default();
+        overlay_s.display = Display::Flex;
+        overlay_s.flex_direction = FlexDirection::Row;
+        overlay_s.position = Position::Fixed;
+        overlay_s.top = Dimension::Px(0.0);
+        overlay_s.left = Dimension::Px(0.0);
+        overlay_s.width = Dimension::Percent(100.0);
+        overlay_s.height = Dimension::Percent(100.0);
+        overlay_s.align_items = AlignItems::Center;
+        overlay_s.justify_content = JustifyContent::Center;
+        sm.insert(overlay, overlay_s);
+
+        let mut child_s = ComputedStyle::default();
+        child_s.width = Dimension::Px(400.0);
+        child_s.height = Dimension::Px(200.0);
+        child_s.flex_grow = 0.0;
+        child_s.flex_shrink = 0.0;
+        sm.insert(child, child_s);
+
+        let mut layout = LayoutEngine::new(Size::new(vw, vh), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let child_abs = tree.absolute_content_rect(tree.find_box_id_by_node(child).unwrap());
+
+        // Horizontal centre: (1000 - 400) / 2 = 300.
+        assert!(
+            (child_abs.x - 300.0).abs() < 1.0,
+            "child x = {} (expected 300, horizontally centred)",
+            child_abs.x
+        );
+        // Vertical centre: (800 - 200) / 2 = 300. The whole point of the fix —
+        // pre-fix this was ~0 (top-anchored).
+        assert!(
+            (child_abs.y - 300.0).abs() < 1.0,
+            "child y = {} (expected 300, vertically centred — overlay v-centering)",
+            child_abs.y
+        );
+    }
+
+    /// Companion: `align-items: flex-end` on a definite-height single-line row
+    /// container pushes the child to the cross-end (bottom) edge — proves the
+    /// single-line cross clamp distributes free space generally, not just for
+    /// `center`.
+    #[test]
+    fn fixed_fullscreen_flex_align_end_bottom_anchors_child() {
+        use liquide_style_engine::computed::{AlignItems, Position};
+
+        let vw = 1000.0f32;
+        let vh = 800.0f32;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let overlay = doc.create_element("overlay");
+        let child = doc.create_element("child");
+        doc.append_child(root, overlay);
+        doc.append_child(overlay, child);
+
+        let mut sm = StyleMap::new();
+
+        let mut overlay_s = ComputedStyle::default();
+        overlay_s.display = Display::Flex;
+        overlay_s.flex_direction = FlexDirection::Row;
+        overlay_s.position = Position::Fixed;
+        overlay_s.top = Dimension::Px(0.0);
+        overlay_s.left = Dimension::Px(0.0);
+        overlay_s.width = Dimension::Percent(100.0);
+        overlay_s.height = Dimension::Percent(100.0);
+        overlay_s.align_items = AlignItems::FlexEnd;
+        sm.insert(overlay, overlay_s);
+
+        let mut child_s = ComputedStyle::default();
+        child_s.width = Dimension::Px(400.0);
+        child_s.height = Dimension::Px(200.0);
+        child_s.flex_grow = 0.0;
+        child_s.flex_shrink = 0.0;
+        sm.insert(child, child_s);
+
+        let mut layout = LayoutEngine::new(Size::new(vw, vh), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let child_abs = tree.absolute_content_rect(tree.find_box_id_by_node(child).unwrap());
+
+        // flex-end: child bottom flush with container bottom → y = 800 - 200 = 600.
+        assert!(
+            (child_abs.y - 600.0).abs() < 1.0,
+            "child y = {} (expected 600, bottom-anchored via align-items:flex-end)",
+            child_abs.y
         );
     }
 }
