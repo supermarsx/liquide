@@ -102,6 +102,24 @@ impl Shell {
             self.mark_window_scene_dirty();
         }
         self.screen_rect = screen_rect;
+        // Keep the CSS responsive-unit context in sync with the live viewport
+        // so %, vw/vh, dvh, cq* units resolve against the real screen size
+        // (t65-cssengine TODO 14 shell wiring; t65-s2 item 5).
+        self.update_style_resolver_context();
+    }
+
+    /// Push the live viewport size into the `StyleResolver` so responsive CSS
+    /// units (`%`, `vw`/`vh`, dynamic-viewport, container units, `em`/`rem`)
+    /// resolve against the real screen instead of the 1920×1080 default
+    /// (t65-cssengine TODO 14 ESCALATE — shell wiring, t65-s2 item 5).
+    pub(crate) fn update_style_resolver_context(&mut self) {
+        if let Some(resolver) = self.style_resolver.as_mut() {
+            let context = liquide_renderer_css::ResolveContext::from_viewport(
+                self.screen_rect.width,
+                self.screen_rect.height,
+            );
+            resolver.set_context(context);
+        }
     }
 
     /// Get the focus manager.
@@ -354,6 +372,58 @@ impl Shell {
     #[must_use]
     pub fn overview_visible(&self) -> bool {
         self.overview_visible
+    }
+
+    // ── t65-s2: accessors for the newly-wired action arms ───────────────────
+
+    /// Whether the clipboard-history overlay is shown (Super+V).
+    #[must_use]
+    pub fn clipboard_history_visible(&self) -> bool {
+        self.clipboard_history_visible
+    }
+
+    /// Whether the quick-settings overlay is shown (Super+K).
+    #[must_use]
+    pub fn quick_settings_visible(&self) -> bool {
+        self.quick_settings_visible
+    }
+
+    /// Whether the screen reader is enabled (accessibility toggle).
+    #[must_use]
+    pub fn screen_reader_enabled(&self) -> bool {
+        self.screen_reader_enabled
+    }
+
+    /// Whether the screen magnifier is enabled (accessibility toggle).
+    #[must_use]
+    pub fn magnifier_enabled(&self) -> bool {
+        self.magnifier_enabled
+    }
+
+    /// The current magnifier/desktop zoom factor (1.0 == 100%).
+    #[must_use]
+    pub fn zoom_level(&self) -> f32 {
+        self.zoom_level
+    }
+
+    /// Whether a screen recording is currently in progress.
+    #[must_use]
+    pub fn screen_recording(&self) -> bool {
+        self.screen_recording
+    }
+
+    /// The pending screenshot/recording request recorded by a screenshot
+    /// shortcut, if any. The shell records intent; the host performs the real
+    /// OS capture (t65-s2).
+    #[must_use]
+    pub fn pending_screenshot(&self) -> Option<crate::shell::ScreenshotRequest> {
+        self.pending_screenshot
+    }
+
+    /// Clear and return a consumed screenshot request (called by the host after
+    /// it has performed the capture).
+    pub fn take_screenshot_request(&mut self) -> Option<crate::shell::ScreenshotRequest> {
+        self.pending_screenshot.take()
     }
 
     /// Whether the session is currently locked (public read of the canonical

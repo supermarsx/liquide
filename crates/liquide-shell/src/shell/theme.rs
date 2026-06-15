@@ -48,10 +48,18 @@ impl Shell {
     /// shell.load_css_theme("themes/nord.css")?;
     /// ```
     pub fn load_css_theme<P: AsRef<std::path::Path>>(&mut self, path: P) {
+        let path = path.as_ref();
         match theme_loader::load_css_theme_with_engine(path) {
             Ok((theme, engine)) => {
                 self.theme = theme;
                 self.style_resolver = Some(StyleResolver::from_arc(engine));
+                match std::fs::read_to_string(path) {
+                    Ok(css) => self.css_pipeline.set_theme(&css),
+                    Err(e) => tracing::warn!("Failed to load CSS into shell pipeline: {}", e),
+                }
+                // Re-seed the responsive-unit context on the fresh resolver
+                // (t65-s2 item 5 / TODO 14 shell wiring).
+                self.update_style_resolver_context();
                 self.sync_pipeline_color_scheme();
             }
             Err(e) => tracing::warn!("Failed to load CSS theme: {}", e),
@@ -63,6 +71,9 @@ impl Shell {
         let (theme, resolver) = Self::build_default_theme();
         self.theme = theme;
         self.style_resolver = Some(resolver);
+        self.css_pipeline
+            .set_theme(theme_loader::default_theme_css());
+        self.update_style_resolver_context();
         self.sync_pipeline_color_scheme();
     }
 

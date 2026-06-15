@@ -112,6 +112,22 @@ fn scale_mouse_event_to_logical(
     }
 }
 
+/// Return a copy of `te` with its contact-point coordinates converted from
+/// physical to logical (CSS-pixel) space for the given window, mirroring
+/// [`scale_mouse_event_to_logical`]. Without this, touch contacts on a scaled
+/// display land at the wrong place because the layout/hit-test space is logical
+/// (t60-input Medium: "Touch input NOT DPI-scaled"; t65-s2 item 6).
+fn scale_touch_event_to_logical(
+    handle_id: u64,
+    te: &liquide_input::touch::TouchEvent,
+) -> liquide_input::touch::TouchEvent {
+    let (x, y) = to_logical_coords(handle_id, te.point.x, te.point.y);
+    let mut scaled = *te;
+    scaled.point.x = x;
+    scaled.point.y = y;
+    scaled
+}
+
 impl DesktopCompositor {
     /// Handle a platform event: route through shell and input state.
     ///
@@ -132,6 +148,15 @@ impl DesktopCompositor {
                 normalized = PlatformEvent::MouseInput {
                     handle: *handle,
                     event: scale_mouse_event_to_logical(handle.0, me),
+                };
+                &normalized
+            }
+            PlatformEvent::TouchInput { event: te, handle } => {
+                // Normalize touch contacts to logical space too (t65-s2 item 6),
+                // so touch hit-testing matches mouse on scaled displays.
+                normalized = PlatformEvent::TouchInput {
+                    handle: *handle,
+                    event: scale_touch_event_to_logical(handle.0, te),
                 };
                 &normalized
             }
@@ -529,6 +554,36 @@ mod dpi_tests {
             }
             other => panic!("expected Button, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn touch_event_coords_are_scaled_other_fields_preserved() {
+        // t65-s2 item 6: a physical touch at (200, 200) on a 2x display maps to
+        // logical (100, 100); phase/id/pressure/timestamp are preserved.
+        use liquide_input::touch::{TouchEvent, TouchPhase, TouchPoint};
+        set_dpi_scale(20, 2.0);
+        let scaled = scale_touch_event_to_logical(
+            20,
+            &TouchEvent::new(TouchPhase::Begin, TouchPoint::new(7, 200.0, 200.0, 0.5), 1234),
+        );
+        assert_eq!(scaled.phase, TouchPhase::Begin);
+        assert_eq!(scaled.point.id, 7);
+        assert!((scaled.point.x - 100.0).abs() < 1e-3, "x: {}", scaled.point.x);
+        assert!((scaled.point.y - 100.0).abs() < 1e-3, "y: {}", scaled.point.y);
+        assert!((scaled.point.pressure - 0.5).abs() < 1e-3);
+        assert_eq!(scaled.timestamp_us, 1234);
+    }
+
+    #[test]
+    fn touch_unscaled_is_identity() {
+        use liquide_input::touch::{TouchEvent, TouchPhase, TouchPoint};
+        // Unknown handle → 1.0 scale → identity.
+        let scaled = scale_touch_event_to_logical(
+            9002,
+            &TouchEvent::new(TouchPhase::Move, TouchPoint::new(1, 320.0, 240.0, 1.0), 0),
+        );
+        assert_eq!(scaled.point.x, 320.0);
+        assert_eq!(scaled.point.y, 240.0);
     }
 
     #[test]

@@ -513,13 +513,12 @@ impl DesktopCompositor {
 
         match Self::resolve_theme_file(&themes_dir, &theme_name) {
             Some(candidate) => match std::fs::read_to_string(&candidate) {
-                Ok(css) => {
+                Ok(_) => {
                     info!(
                         theme = theme_name,
                         "loaded external CSS theme from {:?}", candidate
                     );
                     shell.load_css_theme(&candidate);
-                    shell.add_stylesheet(&css);
                 }
                 Err(err) => {
                     tracing::warn!(

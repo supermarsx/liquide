@@ -469,7 +469,128 @@ impl Shell {
                 self.mark_window_scene_dirty();
                 true
             }
+
+            // ── t65-s2: previously-dead execute_action arms ──────────────────
+            // Every arm below used to fall through to `_ => false`, so the
+            // shortcut/menu gesture had no effect. Each is now wired to a real,
+            // observable state mutation (headless-safe). The few that need a true
+            // OS capability (screen capture / video encode) record a documented
+            // intent for the host to consume rather than calling an OS API here.
+            ShellAction::TitleBarMenu => {
+                // Open the app (title-bar) menu for the focused window — the
+                // keyboard equivalent of right-clicking the title bar.
+                if let Some(wid) = self.focus.focused() {
+                    if self.windows.contains_key(&wid) {
+                        self.app_menu_open = Some(format!("window-{}", wid.0));
+                        self.app_menu_hover_index = Some(0);
+                        self.context_menu_visible = false;
+                        self.context_menu_hover_index = None;
+                    }
+                }
+                true
+            }
+            ShellAction::OpenClipboardHistory => {
+                // Toggle the clipboard-history overlay (Super+V).
+                self.clipboard_history_visible = !self.clipboard_history_visible;
+                self.mark_window_scene_dirty();
+                true
+            }
+            ShellAction::OpenQuickSettings => {
+                // Toggle the quick-settings overlay (Super+K).
+                self.quick_settings_visible = !self.quick_settings_visible;
+                self.mark_window_scene_dirty();
+                true
+            }
+            ShellAction::ToggleScreenReader => {
+                self.screen_reader_enabled = !self.screen_reader_enabled;
+                true
+            }
+            ShellAction::ToggleMagnifier => {
+                self.magnifier_enabled = !self.magnifier_enabled;
+                // Enabling the magnifier at 100% has no visible effect, so seed a
+                // sensible zoom; disabling resets to 1.0.
+                if self.magnifier_enabled {
+                    if self.zoom_level <= 1.0 {
+                        self.zoom_level = 2.0;
+                    }
+                } else {
+                    self.zoom_level = 1.0;
+                }
+                self.mark_window_scene_dirty();
+                true
+            }
+            ShellAction::ZoomIn => {
+                // Step the magnifier zoom up (cap at 8x). ZoomIn implicitly
+                // engages the magnifier so the desktop actually scales.
+                self.magnifier_enabled = true;
+                self.zoom_level = (self.zoom_level + 0.25).min(8.0);
+                self.mark_window_scene_dirty();
+                true
+            }
+            ShellAction::ZoomOut => {
+                // Step the magnifier zoom down (floor at 1x). Reaching 1x
+                // disengages the magnifier.
+                self.zoom_level = (self.zoom_level - 0.25).max(1.0);
+                if self.zoom_level <= 1.0 {
+                    self.magnifier_enabled = false;
+                }
+                self.mark_window_scene_dirty();
+                true
+            }
+            ShellAction::MoveToMonitorLeft => {
+                // Headless monitor proxy: shift the focused window one screen
+                // width to the left (the simulated shell has a single logical
+                // screen, so "monitors" are adjacent screen-width slots). The
+                // host multi-monitor compositor performs the real monitor move.
+                self.move_focused_window_by_monitor(-1.0)
+            }
+            ShellAction::MoveToMonitorRight => self.move_focused_window_by_monitor(1.0),
+            ShellAction::ScreenshotFull => {
+                self.request_screenshot(crate::shell::ScreenshotRequest::Full)
+            }
+            ShellAction::ScreenshotWindow => {
+                self.request_screenshot(crate::shell::ScreenshotRequest::Window)
+            }
+            ShellAction::ScreenshotRegion => {
+                self.request_screenshot(crate::shell::ScreenshotRequest::Region)
+            }
+            ShellAction::ScreenshotToClipboard => {
+                self.request_screenshot(crate::shell::ScreenshotRequest::ToClipboard)
+            }
+            ShellAction::ScreenRecord => {
+                // Toggle recording state AND record the intent for the host.
+                self.screen_recording = !self.screen_recording;
+                self.pending_screenshot = Some(crate::shell::ScreenshotRequest::Record);
+                true
+            }
             _ => false,
         }
+    }
+
+    /// Move the focused window by `direction` screen-widths (-1 = left monitor,
+    /// +1 = right monitor). Headless single-screen proxy for `MoveToMonitor*`.
+    /// Returns `true` (the gesture is always handled, even with no focused
+    /// window — the action is acknowledged so it never silently no-ops).
+    fn move_focused_window_by_monitor(&mut self, direction: f32) -> bool {
+        if let Some(wid) = self.focus.focused() {
+            let dx = self.screen_rect.width * direction;
+            if let Some(window) = self.windows.get_mut(&wid) {
+                window.bounds.x += dx;
+                if window.state == WindowState::Maximized {
+                    window.state = WindowState::Normal;
+                }
+                window.tiled = false;
+                window.tile_zone = None;
+            }
+            self.mark_window_scene_dirty();
+        }
+        true
+    }
+
+    /// Record a screenshot request for the host to fulfil (headless-safe) and
+    /// return `true`. See [`ScreenshotRequest`](crate::shell::ScreenshotRequest).
+    fn request_screenshot(&mut self, request: crate::shell::ScreenshotRequest) -> bool {
+        self.pending_screenshot = Some(request);
+        true
     }
 }

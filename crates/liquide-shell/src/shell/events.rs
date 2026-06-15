@@ -109,7 +109,7 @@ impl Shell {
         }
     }
 
-    /// Register an event handler on a DOM node.
+    /// Register an event handler on a DOM node (bubble phase).
     pub fn add_event_handler(
         &mut self,
         node: liquide_dom::NodeId,
@@ -118,6 +118,121 @@ impl Shell {
     ) {
         self.event_dispatcher
             .add_handler(node, kind_filter, handler);
+    }
+
+    /// Register an event listener on a DOM node with an explicit capture flag
+    /// (W3C `addEventListener` semantics) — `capture = true` fires during the
+    /// capture phase (root → target), so a modal/overlay root can swallow a
+    /// descendant event via `stopPropagation` (t64-p1 capability, wired here in
+    /// t65-s2). These listeners are driven by [`Self::dispatch_dom_event_path`]
+    /// (the three-phase `dispatch_events` path), NOT the legacy hover-chain
+    /// `dispatch_dom_mouse_event` path.
+    pub fn add_capturing_event_handler(
+        &mut self,
+        node: liquide_dom::NodeId,
+        kind_filter: Option<DomEventKind>,
+        capture: bool,
+        handler: liquide_hit_test::dispatch::EventHandler,
+    ) {
+        self.event_dispatcher
+            .add_event_listener(node, kind_filter, capture, handler);
+    }
+
+    /// Register a listener that can call `preventDefault` to suppress the shell's
+    /// default action (e.g. a shortcut) for an event (t65-s2).
+    ///
+    /// The wrapped predicate runs inside the listener; returning `true` means
+    /// "preventDefault" — it flips the shared [`Shell::dom_default_prevented`]
+    /// flag that [`Self::dispatch_dom_event_path`] reads after dispatch. The
+    /// listener always returns [`Propagation::Continue`] so it does not by itself
+    /// stop propagation (preventDefault is independent of propagation per W3C).
+    pub fn add_preventable_event_handler<F>(
+        &mut self,
+        node: liquide_dom::NodeId,
+        kind_filter: Option<DomEventKind>,
+        capture: bool,
+        predicate: F,
+    ) where
+        F: Fn(&liquide_hit_test::event::DomEvent) -> bool + Send + 'static,
+    {
+        use std::sync::atomic::Ordering;
+        let flag = std::sync::Arc::clone(&self.dom_default_prevented);
+        self.event_dispatcher.add_event_listener(
+            node,
+            kind_filter,
+            capture,
+            Box::new(move |event| {
+                if predicate(event) {
+                    flag.store(true, Ordering::SeqCst);
+                }
+                liquide_hit_test::event::Propagation::Continue
+            }),
+        );
+    }
+
+    /// Build the root-first `event_path` for `target` and dispatch the given DOM
+    /// events through the W3C three-phase [`EventDispatcher::dispatch_events`]
+    /// path (capture → target → bubble).
+    ///
+    /// Per t64-p1, the path is `doc.ancestors(target).rev()` (the DOM
+    /// `ancestors` returns leaf→root; the dispatcher wants root→parent). The
+    /// shared [`Shell::dom_default_prevented`] flag is reset before dispatch and
+    /// its post-dispatch value is returned so callers can gate default actions
+    /// (e.g. shortcuts) on `preventDefault` (t65-s2 item 3).
+    ///
+    /// Returns `true` if a listener called `preventDefault`.
+    pub fn dispatch_dom_event_path(
+        &mut self,
+        target: liquide_dom::NodeId,
+        mut events: Vec<liquide_hit_test::event::DomEvent>,
+    ) -> bool {
+        use std::sync::atomic::Ordering;
+        let mut path = self.desktop_dom.doc.ancestors(target);
+        path.reverse();
+        for ev in &mut events {
+            ev.event_path = path.clone();
+        }
+        self.dom_default_prevented.store(false, Ordering::SeqCst);
+        self.event_dispatcher.dispatch_events(&events);
+        self.dom_default_prevented.load(Ordering::SeqCst)
+    }
+
+    /// Set the DOM-focused node on the event dispatcher (disjoint-borrow helper
+    /// so callers don't have to split `self.event_dispatcher` and
+    /// `self.desktop_dom.doc`). The dispatcher's focus drives which node
+    /// [`Self::dispatch_dom_keyboard_event`] targets.
+    pub fn set_dom_focus(&mut self, node: Option<liquide_dom::NodeId>) {
+        self.event_dispatcher
+            .set_focus(node, &mut self.desktop_dom.doc);
+    }
+
+    /// Dispatch a keyboard event into the DOM event pipeline (t65-s2 item 2).
+    ///
+    /// Keyboard input previously reached `input_state` + the shortcut table but
+    /// NEVER the DOM `event_dispatcher`, so focused DOM/app KeyDown/KeyUp
+    /// listeners were ignored and text input to a focused DOM field was broken.
+    /// This routes the key into the DOM-focused node (the dispatcher's own focus)
+    /// using full three-phase propagation, and returns whether a listener called
+    /// `preventDefault` so the caller can suppress the matching shortcut.
+    pub(crate) fn dispatch_dom_keyboard_event(
+        &mut self,
+        ke: &liquide_input::keyboard::KeyEvent,
+    ) -> bool {
+        use liquide_hit_test::event::{DomEvent, DomEventKind};
+        use liquide_input::keyboard::KeyState;
+
+        let Some(focused) = self.event_dispatcher.focus() else {
+            return false;
+        };
+        let key = ke.key as u32;
+        let modifiers = ke.modifiers.bits() as u32;
+        let kind = match ke.state {
+            KeyState::Released => DomEventKind::KeyUp { key, modifiers },
+            // Pressed and Repeat both deliver a KeyDown to the DOM.
+            _ => DomEventKind::KeyDown { key, modifiers },
+        };
+        let event = DomEvent::new(focused, kind);
+        self.dispatch_dom_event_path(focused, vec![event])
     }
 
     /// Get a reference to the DOM event dispatcher.
@@ -303,6 +418,13 @@ impl Shell {
 
         match event {
             PlatformEvent::KeyInput { event: ke, .. } => {
+                // Route the key into the DOM event dispatcher FIRST (t65-s2
+                // item 2) so a focused DOM/app KeyDown/KeyUp listener sees it.
+                // A listener may call `preventDefault`, which gates the shell
+                // shortcut below (t65-s2 item 3). KeyUp/Repeat are forwarded to
+                // the DOM too, then non-Pressed states return (the shell shortcut
+                // table is press-only).
+                let default_prevented = self.dispatch_dom_keyboard_event(ke);
                 if ke.state != KeyState::Pressed {
                     return None;
                 }
@@ -421,6 +543,14 @@ impl Shell {
                         _ => {}
                     }
                 }
+                // preventDefault gate (t65-s2 item 3): if a focused DOM/app
+                // listener consumed this key via `preventDefault`, the key has
+                // already been handled by the DOM — do NOT also run the shell's
+                // default action (text-input fall-through or a global shortcut).
+                if default_prevented {
+                    return Some(ShellAction::Redraw);
+                }
+
                 // Text-input seam (t57-fG feature 2): when no shell overlay is
                 // capturing the key (handled above) and a printable character is
                 // typed with no command modifier (ctrl/alt/super), route it into

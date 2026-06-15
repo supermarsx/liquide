@@ -66,6 +66,7 @@ impl DesktopPipeline {
     /// Load an additional stylesheet (e.g. a user theme override).
     pub fn add_stylesheet(&mut self, css: &str) {
         self.style_engine.add_stylesheet(css);
+        self.invalidate_cached_output();
     }
 
     /// Get the list of @font-face rules parsed from loaded stylesheets.
@@ -80,18 +81,38 @@ impl DesktopPipeline {
         self.style_engine =
             StyleEngine::new(self.style_engine.viewport, self.style_engine.base_font_size);
         self.style_engine.add_stylesheet(preset_css);
+        self.prev_styles.clear();
+        self.transition_engine = TransitionEngine::new();
+        self.animation_scheduler = AnimationScheduler::new();
+        self.invalidate_cached_output();
     }
 
     /// Update viewport dimensions (e.g. on monitor resolution change).
     pub fn set_viewport(&mut self, width: f32, height: f32) {
+        let viewport_changed = (self.style_engine.viewport.width - width).abs() > f32::EPSILON
+            || (self.style_engine.viewport.height - height).abs() > f32::EPSILON
+            || (self.layout_engine.viewport.width - width).abs() > f32::EPSILON
+            || (self.layout_engine.viewport.height - height).abs() > f32::EPSILON;
+
         self.style_engine
             .set_viewport(ViewportSize { width, height });
         self.layout_engine.viewport = Size { width, height };
+
+        if viewport_changed {
+            self.invalidate_cached_output();
+        }
     }
 
     /// Set preferred color scheme used by style media queries.
     pub fn set_preferred_color_scheme(&mut self, scheme: &str) {
         self.style_engine.set_preferred_color_scheme(scheme);
+        self.invalidate_cached_output();
+    }
+
+    fn invalidate_cached_output(&mut self) {
+        self.last_styles = None;
+        self.last_layout = None;
+        self.last_display_list = None;
     }
 
     /// Set the font database for real text measurement.

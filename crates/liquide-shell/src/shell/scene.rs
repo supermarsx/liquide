@@ -25,6 +25,11 @@ pub struct WindowSceneCacheStats {
     pub cached: bool,
 }
 
+fn themed_alpha(mut color: Color, alpha: u8) -> Color {
+    color.a = alpha;
+    color
+}
+
 /// Retains the manually assembled active-workspace/window subtree.
 #[derive(Debug)]
 pub(crate) struct WindowSceneCache {
@@ -457,8 +462,6 @@ impl Shell {
             root.add_child(node);
         }
 
-        Self::add_default_backdrop(&mut root, screen, bg_z);
-
         // ── Windows (manual — complex interactive decorations) ────
         let ws_node = self.cached_window_workspace_node(
             screen,
@@ -475,7 +478,7 @@ impl Shell {
         // Previously the dialog state was set but nothing painted.
         if let Some(content) = self.chrome_dialog_content.clone() {
             const DIALOG_Z_BASE: u32 = 40_000;
-            Self::add_dialog_overlay(&mut root, screen, DIALOG_Z_BASE, &content);
+            self.add_dialog_overlay(&mut root, screen, DIALOG_Z_BASE, &content);
         }
 
         // ── Overview overlay (task / workspace overview) ──────────
@@ -496,7 +499,7 @@ impl Shell {
         // canonical state but nothing painted, so the desktop stayed visible.
         if self.is_session_locked() {
             const LOCK_Z_BASE: u32 = 80_000;
-            Self::add_lockscreen_overlay(&mut root, screen, LOCK_Z_BASE);
+            self.add_lockscreen_overlay(&mut root, screen, LOCK_Z_BASE);
         }
 
         root
@@ -511,6 +514,7 @@ impl Shell {
     /// follow-up. The point of this slice is that the dialog APPEARS when
     /// `request_message_dialog` is called instead of being state-only.
     fn add_dialog_overlay(
+        &self,
         root: &mut SceneNode,
         screen: Rect,
         base_z: u32,
@@ -520,7 +524,7 @@ impl Shell {
         root.add_child(SceneNode::new(
             NODE_ROOT + 40,
             SceneNodeKind::Background {
-                color: Color::new(0, 0, 0, 120),
+                color: themed_alpha(self.theme.launcher_overlay, 120),
             },
             NodeProperties::new(screen).with_z_order(base_z),
         ));
@@ -534,7 +538,7 @@ impl Shell {
         root.add_child(SceneNode::new(
             NODE_ROOT + 41,
             SceneNodeKind::Background {
-                color: Color::new(34, 40, 60, 245),
+                color: themed_alpha(self.theme.notification_glass_tint, 245),
             },
             NodeProperties::new(panel).with_z_order(base_z + 1),
         ));
@@ -545,7 +549,7 @@ impl Shell {
         root.add_child(SceneNode::new(
             NODE_ROOT + 42,
             SceneNodeKind::Background {
-                color: Color::new(52, 62, 92, title_alpha),
+                color: themed_alpha(self.theme.window_title_bar_focused, title_alpha),
             },
             NodeProperties::new(Rect::new(px, py, panel_w, title_h)).with_z_order(base_z + 2),
         ));
@@ -561,7 +565,7 @@ impl Shell {
             root.add_child(SceneNode::new(
                 NODE_ROOT + 43,
                 SceneNodeKind::Background {
-                    color: Color::new(70, 80, 112, 220),
+                    color: themed_alpha(self.theme.window_content_background, 220),
                 },
                 NodeProperties::new(body).with_z_order(base_z + 3),
             ));
@@ -578,7 +582,7 @@ impl Shell {
             root.add_child(SceneNode::new(
                 NODE_ROOT + 44 + i as u64,
                 SceneNodeKind::Background {
-                    color: Color::new(0, 132, 255, 235),
+                    color: themed_alpha(self.theme.window_border_focused, 235),
                 },
                 NodeProperties::new(Rect::new(bx, by, btn_w, btn_h))
                     .with_z_order(base_z + 4 + i as u32),
@@ -589,17 +593,17 @@ impl Shell {
     /// Emit the lock-screen surface: a full-screen dimming scrim plus a centred
     /// clock and password-prompt cluster, above all other layers (t57-f9).
     ///
-    /// Uses the dedicated `LockScreen` scene kind for the scrim (so the renderer
-    /// applies its backdrop blur + dark veil) and explicit filled rects for the
-    /// clock / prompt cluster so the surface unambiguously paints content the
-    /// visual regression can assert on. Hit-testing the password field is a
-    /// follow-up; this wires the rendering half so the Lock action is no longer
-    /// a no-op visually.
-    fn add_lockscreen_overlay(root: &mut SceneNode, screen: Rect, base_z: u32) {
-        // Full-screen lock scrim (dark veil + backdrop blur via the renderer).
+    /// Uses themed filled rects for the scrim, clock, and prompt cluster so the
+    /// surface unambiguously paints content the visual regression can assert on.
+    /// Hit-testing the password field is a follow-up; this wires the rendering
+    /// half so the Lock action is no longer a no-op visually.
+    fn add_lockscreen_overlay(&self, root: &mut SceneNode, screen: Rect, base_z: u32) {
+        // Full-screen lock scrim.
         root.add_child(SceneNode::new(
             NODE_ROOT + 80,
-            SceneNodeKind::LockScreen,
+            SceneNodeKind::Background {
+                color: themed_alpha(self.theme.launcher_overlay, 220),
+            },
             NodeProperties::new(screen).with_z_order(base_z),
         ));
 
@@ -610,7 +614,7 @@ impl Shell {
         root.add_child(SceneNode::new(
             NODE_ROOT + 81,
             SceneNodeKind::Background {
-                color: Color::new(235, 240, 255, 235),
+                color: themed_alpha(self.theme.status_bar_text, 235),
             },
             NodeProperties::new(clock).with_z_order(base_z + 1),
         ));
@@ -620,7 +624,7 @@ impl Shell {
         root.add_child(SceneNode::new(
             NODE_ROOT + 82,
             SceneNodeKind::Background {
-                color: Color::new(60, 70, 110, 235),
+                color: themed_alpha(self.theme.launcher_search_bar, 235),
             },
             NodeProperties::new(prompt).with_z_order(base_z + 2),
         ));
@@ -641,7 +645,7 @@ impl Shell {
         root.add_child(SceneNode::new(
             NODE_ROOT + 50,
             SceneNodeKind::Background {
-                color: Color::new(8, 10, 24, 200),
+                color: themed_alpha(self.theme.launcher_overlay, 200),
             },
             NodeProperties::new(screen).with_z_order(base_z),
         ));
@@ -677,7 +681,12 @@ impl Shell {
             // Glass tile backing so the tile reads as a window proxy.
             root.add_child(SceneNode::new(
                 tile_base,
-                SceneNodeKind::Glass(GlassParams::default()),
+                SceneNodeKind::Glass(GlassParams {
+                    blur_radius: 12,
+                    tint_color: self.theme.window_glass_tint,
+                    inner_glow: false,
+                    parallax: false,
+                }),
                 NodeProperties::new(tile).with_z_order(tile_z),
             ));
             // Solid fill so the tile is unambiguously painted (and visible even
@@ -685,7 +694,7 @@ impl Shell {
             root.add_child(SceneNode::new(
                 tile_base + 1,
                 SceneNodeKind::Background {
-                    color: Color::new(30, 38, 64, 235),
+                    color: themed_alpha(self.theme.window_content_background, 235),
                 },
                 NodeProperties::new(tile).with_z_order(tile_z + 1),
             ));
@@ -881,71 +890,6 @@ impl Shell {
         }
 
         ws_node
-    }
-
-    fn add_default_backdrop(root: &mut SceneNode, screen: Rect, base_z: u32) {
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 10,
-            SceneNodeKind::Background {
-                color: Color::new(5, 8, 20, 255),
-            },
-            NodeProperties::new(screen).with_z_order(base_z),
-        ));
-
-        let accent_a = Rect::new(
-            0.0,
-            screen.height * 0.10,
-            screen.width,
-            screen.height * 0.18,
-        );
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 11,
-            SceneNodeKind::Background {
-                color: Color::new(0, 132, 255, 26),
-            },
-            NodeProperties::new(accent_a).with_z_order(base_z + 1),
-        ));
-
-        let accent_b = Rect::new(
-            0.0,
-            screen.height * 0.62,
-            screen.width,
-            screen.height * 0.16,
-        );
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 12,
-            SceneNodeKind::Background {
-                color: Color::new(180, 72, 255, 18),
-            },
-            NodeProperties::new(accent_b).with_z_order(base_z + 2),
-        ));
-
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 13,
-            SceneNodeKind::Background {
-                color: Color::new(255, 255, 255, 10),
-            },
-            NodeProperties::new(Rect::new(
-                screen.width * 0.06,
-                screen.height * 0.11,
-                screen.width * 0.26,
-                1.0,
-            ))
-            .with_z_order(base_z + 3),
-        ));
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 14,
-            SceneNodeKind::Background {
-                color: Color::new(115, 210, 255, 16),
-            },
-            NodeProperties::new(Rect::new(
-                screen.width * 0.60,
-                screen.height * 0.78,
-                screen.width * 0.30,
-                1.0,
-            ))
-            .with_z_order(base_z + 4),
-        ));
     }
 
     fn normalize_threaded_scene_nodes(nodes: &mut Vec<SceneNode>) {
@@ -1179,7 +1123,12 @@ impl Shell {
                         win_base + 901,
                         text.to_string(),
                         text_color,
-                        Rect::new(field.x + 8.0, field.y + 5.0, (field.width - 16.0).max(0.0), 20.0),
+                        Rect::new(
+                            field.x + 8.0,
+                            field.y + 5.0,
+                            (field.width - 16.0).max(0.0),
+                            20.0,
+                        ),
                         z + 5,
                         1,
                     ));

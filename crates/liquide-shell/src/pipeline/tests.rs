@@ -101,6 +101,154 @@ fn viewport_update() {
 }
 
 #[test]
+fn theme_switch_after_render_invalidates_cached_scene_output() {
+    let config = PipelineConfig {
+        width: 200.0,
+        height: 100.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    let desktop = DesktopDocument::from_html(r#"<desktop-background id="desktop-bg" />"#);
+
+    pipeline.set_theme(
+        r#"
+        desktop-background {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 200;
+            height: 100;
+            background: rgb(1, 2, 3);
+        }
+        "#,
+    );
+    let before = pipeline.render_to_scene(&desktop.doc, 0, 16.0).0;
+
+    pipeline.set_theme(
+        r#"
+        desktop-background {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 200;
+            height: 100;
+            background: rgb(4, 5, 6);
+        }
+        "#,
+    );
+    let after = pipeline.render_to_scene(&desktop.doc, 0, 16.0).0;
+
+    assert_eq!(
+        first_background_color(&before),
+        Some(Color::new(1, 2, 3, 255))
+    );
+    assert_eq!(
+        first_background_color(&after),
+        Some(Color::new(4, 5, 6, 255))
+    );
+}
+
+#[test]
+fn added_stylesheet_after_render_invalidates_cached_scene_output() {
+    let config = PipelineConfig {
+        width: 200.0,
+        height: 100.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    let desktop = DesktopDocument::from_html(r#"<desktop-background id="desktop-bg" />"#);
+
+    pipeline.set_theme(
+        r#"
+        desktop-background {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 200;
+            height: 100;
+            background: rgb(10, 20, 30);
+        }
+        "#,
+    );
+    let before = pipeline.render_to_scene(&desktop.doc, 0, 16.0).0;
+
+    pipeline.add_stylesheet(
+        r#"
+        desktop-background {
+            background: rgb(40, 50, 60);
+        }
+        "#,
+    );
+    let after = pipeline.render_to_scene(&desktop.doc, 0, 16.0).0;
+
+    assert_eq!(
+        first_background_color(&before),
+        Some(Color::new(10, 20, 30, 255))
+    );
+    assert_eq!(
+        first_background_color(&after),
+        Some(Color::new(40, 50, 60, 255))
+    );
+}
+
+#[test]
+fn viewport_change_after_render_invalidates_cached_scene_output() {
+    let config = PipelineConfig {
+        width: 200.0,
+        height: 100.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    let desktop = DesktopDocument::from_html(r#"<desktop-background id="desktop-bg" />"#);
+
+    pipeline.set_theme(
+        r#"
+        desktop-background {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgb(1, 2, 3);
+        }
+        "#,
+    );
+    let before = pipeline.render_to_scene(&desktop.doc, 0, 16.0).0;
+
+    pipeline.set_viewport(320.0, 180.0);
+    let after = pipeline.render_to_scene(&desktop.doc, 0, 16.0).0;
+
+    assert_eq!(
+        first_background_bounds(&before).map(|b| b.width),
+        Some(200.0)
+    );
+    assert_eq!(
+        first_background_bounds(&after).map(|b| b.width),
+        Some(320.0)
+    );
+    assert_eq!(
+        first_background_bounds(&after).map(|b| b.height),
+        Some(180.0)
+    );
+}
+
+fn first_background_color(nodes: &[liquide_compositor::scene::SceneNode]) -> Option<Color> {
+    nodes.iter().find_map(|node| match node.kind {
+        SceneNodeKind::Background { color } => Some(color),
+        _ => None,
+    })
+}
+
+fn first_background_bounds(
+    nodes: &[liquide_compositor::scene::SceneNode],
+) -> Option<liquide_compositor::geometry::Rect> {
+    nodes.iter().find_map(|node| match node.kind {
+        SceneNodeKind::Background { .. } => Some(node.properties.bounds),
+        _ => None,
+    })
+}
+
+#[test]
 fn display_list_bridge() {
     let config = PipelineConfig::default();
     let mut pipeline = DesktopPipeline::new(&config);
@@ -271,7 +419,10 @@ fn caret_color_emits_text_caret_node() {
         })
         .expect("a TextCaret node for an editable with caret-color (t64-f12)");
 
-    assert_eq!(caret.0, caret_col, "caret colour must match CSS caret-color");
+    assert_eq!(
+        caret.0, caret_col,
+        "caret colour must match CSS caret-color"
+    );
     assert!(caret.1 > 0.0, "caret has a positive width");
     // Caret sits at the text box's leading edge.
     assert!((caret.2.x - 5.0).abs() < 0.01);

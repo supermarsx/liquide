@@ -263,6 +263,29 @@ pub enum SessionRequest {
     Shutdown,
 }
 
+/// A screenshot / screen-recording request recorded by the screenshot shortcut
+/// arms (t65-s2).
+///
+/// The shell does NOT invoke an OS screen-capture API itself (that requires a
+/// platform capability unavailable on the headless test path). Instead it
+/// records the requested capture mode here; the host launcher/compositor reads
+/// [`Shell::pending_screenshot`] and performs the real capture (mirrors the
+/// `SessionRequest` host-delegation pattern). This keeps the screenshot
+/// shortcuts wired to real, observable state instead of a silent `_ => false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenshotRequest {
+    /// Capture the entire desktop (all monitors).
+    Full,
+    /// Capture the focused/active window.
+    Window,
+    /// Capture an interactively-selected region.
+    Region,
+    /// Capture the desktop directly to the clipboard.
+    ToClipboard,
+    /// Start a screen recording (also toggles [`Shell::screen_recording`]).
+    Record,
+}
+
 /// The top-level shell managing all windows and workspaces.
 pub struct Shell {
     pub(crate) windows: HashMap<WindowId, Window>,
@@ -302,6 +325,26 @@ pub struct Shell {
     /// (toggled by the `TaskOverview` / `WorkspaceOverview` actions; the scene
     /// builder emits a tiled overview overlay of the visible windows when set).
     pub(crate) overview_visible: bool,
+    /// Whether the clipboard-history overlay is shown (Super+V). State-level
+    /// toggle consumed by the scene/DOM (t65-s2 dead-arm wiring).
+    pub(crate) clipboard_history_visible: bool,
+    /// Whether the quick-settings overlay is shown (Super+K). State-level
+    /// toggle consumed by the scene/DOM (t65-s2 dead-arm wiring).
+    pub(crate) quick_settings_visible: bool,
+    /// Whether the screen reader is enabled (Super+Alt+S accessibility toggle).
+    pub(crate) screen_reader_enabled: bool,
+    /// Whether the screen magnifier is enabled (Super+Alt+M accessibility
+    /// toggle). The active zoom factor is held in [`Self::zoom_level`].
+    pub(crate) magnifier_enabled: bool,
+    /// Magnifier / desktop zoom factor (1.0 == 100%). Driven by ZoomIn/ZoomOut;
+    /// consumed by the renderer/scene to scale the magnified view (t65-s2).
+    pub(crate) zoom_level: f32,
+    /// Pending screenshot / screen-recording request recorded by the screenshot
+    /// shortcut arms. Headless-safe intent (t65-s2).
+    pub(crate) pending_screenshot: Option<ScreenshotRequest>,
+    /// Whether a screen recording is currently in progress (toggled by
+    /// `ScreenRecord`). State-level; the real encoder lives in the host (t65-s2).
+    pub(crate) screen_recording: bool,
     /// Pending session-lifecycle request (Log Out / Restart / Shut Down)
     /// recorded by the session menu (t57-f9). The shell never terminates the
     /// process itself; the host launcher/compositor consumes this. `None` until
@@ -317,6 +360,15 @@ pub struct Shell {
     pub(crate) window_scene_cache: scene::WindowSceneCache,
     pub(crate) dom_dirty: bool,
     pub(crate) event_dispatcher: EventDispatcher,
+    /// Shared "default prevented" flag for the DOM dispatch path (t65-s2).
+    ///
+    /// `EventDispatcher::dispatch_events` clones the event per handler and
+    /// returns nothing, so a handler that calls `preventDefault` cannot signal
+    /// the shell through the event object. Instead, listeners registered via
+    /// [`Shell::add_preventable_event_handler`] flip this shared flag; the shell
+    /// resets it before each DOM dispatch and reads it afterwards to gate
+    /// shortcut execution (the `events.rs` preventDefault wiring).
+    pub(crate) dom_default_prevented: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) hit_test_engine: Option<HitTestEngine>,
     pub(crate) thread_coordinator: Option<crate::threading::ShellThreadCoordinator>,
     pub(crate) sandbox_manager: crate::sandboxing::SandboxManager,
@@ -464,7 +516,7 @@ impl Shell {
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
         sandbox_manager.register_app("com.liquide.shell".to_string());
 
-        Self {
+        let mut shell = Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
             focus: FocusManager::new(FocusPolicy::ClickToFocus),
@@ -499,6 +551,13 @@ impl Shell {
             status_bar_visible: true,
             notification_panel_visible: false,
             overview_visible: false,
+            clipboard_history_visible: false,
+            quick_settings_visible: false,
+            screen_reader_enabled: false,
+            magnifier_enabled: false,
+            zoom_level: 1.0,
+            pending_screenshot: None,
+            screen_recording: false,
             pending_session_request: None,
             last_cursor_y: 0.0,
             app_menu_open: None,
@@ -509,6 +568,7 @@ impl Shell {
             window_scene_cache: scene::WindowSceneCache::new(),
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
+            dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             hit_test_engine: None,
             thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
@@ -536,7 +596,11 @@ impl Shell {
             chrome_notification_server: None,
             chrome_shell_services: None,
             wiring_touched: 0,
-        }
+        };
+        // Seed the CSS responsive-unit context with the live viewport so %, vw,
+        // dvh, cq* units resolve against the real screen (t65-s2 item 5).
+        shell.update_style_resolver_context();
+        shell
     }
 
     /// Set the frame delta used by the CSS pipeline and scene assembly.
@@ -590,7 +654,7 @@ impl Shell {
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
         sandbox_manager.register_app("com.liquide.shell".to_string());
 
-        Self {
+        let mut shell = Self {
             windows: HashMap::new(),
             workspaces: WorkspaceManager::new(),
             focus: FocusManager::new(FocusPolicy::ClickToFocus),
@@ -625,6 +689,13 @@ impl Shell {
             status_bar_visible: true,
             notification_panel_visible: false,
             overview_visible: false,
+            clipboard_history_visible: false,
+            quick_settings_visible: false,
+            screen_reader_enabled: false,
+            magnifier_enabled: false,
+            zoom_level: 1.0,
+            pending_screenshot: None,
+            screen_recording: false,
             pending_session_request: None,
             last_cursor_y: 0.0,
             app_menu_open: None,
@@ -635,6 +706,7 @@ impl Shell {
             window_scene_cache: scene::WindowSceneCache::new(),
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
+            dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             hit_test_engine: None,
             thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
@@ -662,7 +734,9 @@ impl Shell {
             chrome_notification_server: None,
             chrome_shell_services: None,
             wiring_touched: 0,
-        }
+        };
+        shell.update_style_resolver_context();
+        shell
     }
 
     /// Create and initialize the template registry with defaults and optional

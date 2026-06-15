@@ -94,9 +94,7 @@ pub fn border_from_style(style: &RenderStyle) -> Option<(Color, f32)> {
 /// Resolve decoration button colors from CSS.
 ///
 /// Queries CSS selectors like `close-button`, `maximize-button`, etc.
-/// with `:hover` and `.active` pseudo/class states. Falls back to the
-/// hardcoded defaults (same as the original renderer values) when CSS
-/// rules are not present.
+/// with `:hover` and `.active` pseudo/class states.
 pub fn resolve_decoration_colors(
     resolver: &StyleResolver,
 ) -> liquide_compositor::scene::DecorationColors {
@@ -168,9 +166,8 @@ pub fn resolve_decoration_colors(
 
 /// Resolve decoration layout dimensions from CSS.
 ///
-/// Queries CSS selectors like `titlebar` and `titlebar-button` for
-/// height, width, margin, and border-radius. Falls back to defaults
-/// matching the original hardcoded values.
+/// Queries the selectors used by `assets/templates/window.html` first, with
+/// legacy selector names kept as a compatibility fallback.
 pub fn resolve_decoration_layout(
     resolver: &StyleResolver,
 ) -> liquide_compositor::scene::DecorationLayout {
@@ -179,26 +176,56 @@ pub fn resolve_decoration_layout(
     let defaults = DecorationLayout::default();
 
     let titlebar = resolver
+        .resolve("window-titlebar", &[], &[], None)
+        .unwrap_or_else(|_| RenderStyle::new());
+    let legacy_titlebar = resolver
         .resolve("titlebar", &[], &[], None)
         .unwrap_or_else(|_| RenderStyle::new());
-    let button = resolver
+
+    let close = resolver
+        .resolve("close-button", &[], &[], None)
+        .unwrap_or_else(|_| RenderStyle::new());
+    let maximize = resolver
+        .resolve("maximize-button", &[], &[], None)
+        .unwrap_or_else(|_| RenderStyle::new());
+    let minimize = resolver
+        .resolve("minimize-button", &[], &[], None)
+        .unwrap_or_else(|_| RenderStyle::new());
+    let legacy_button = resolver
         .resolve("titlebar-button", &[], &[], None)
         .unwrap_or_else(|_| RenderStyle::new());
 
     DecorationLayout {
-        title_bar_height: titlebar.height.unwrap_or(defaults.title_bar_height),
-        button_width: button.width.unwrap_or(defaults.button_width),
-        button_height: button.height.unwrap_or(defaults.button_height),
-        button_right_margin: if button.margin.right > 0.0 {
-            button.margin.right
-        } else {
-            defaults.button_right_margin
-        },
-        button_corner_radius: if button.border_radius > 0.0 {
-            button.border_radius
-        } else {
-            defaults.button_corner_radius
-        },
+        title_bar_height: titlebar
+            .height
+            .or(legacy_titlebar.height)
+            .unwrap_or(defaults.title_bar_height),
+        button_width: close
+            .width
+            .or(maximize.width)
+            .or(minimize.width)
+            .or(legacy_button.width)
+            .unwrap_or(defaults.button_width),
+        button_height: close
+            .height
+            .or(maximize.height)
+            .or(minimize.height)
+            .or(legacy_button.height)
+            .unwrap_or(defaults.button_height),
+        button_right_margin: first_positive(&[
+            close.margin.right,
+            maximize.margin.right,
+            minimize.margin.right,
+            legacy_button.margin.right,
+        ])
+        .unwrap_or(defaults.button_right_margin),
+        button_corner_radius: first_positive(&[
+            close.border_radius,
+            maximize.border_radius,
+            minimize.border_radius,
+            legacy_button.border_radius,
+        ])
+        .unwrap_or(defaults.button_corner_radius),
     }
 }
 
@@ -214,7 +241,8 @@ pub fn resolve_decoration_style(resolver: &StyleResolver) -> crate::decoration::
         .resolve("window", &[], &[], None)
         .unwrap_or_else(|_| RenderStyle::new());
     let titlebar = resolver
-        .resolve("titlebar", &[], &[], None)
+        .resolve("window-titlebar", &[], &[], None)
+        .or_else(|_| resolver.resolve("titlebar", &[], &[], None))
         .unwrap_or_else(|_| RenderStyle::new());
 
     // Resolve the same button layout the renderer uses, so hit-testing
@@ -233,12 +261,16 @@ pub fn resolve_decoration_style(resolver: &StyleResolver) -> crate::decoration::
         } else {
             defaults.corner_radius
         },
-        button_size: defaults.button_size,
+        button_size: btn_layout.button_width.max(btn_layout.button_height),
         resize_tolerance: defaults.resize_tolerance,
         button_width: btn_layout.button_width,
         button_height: btn_layout.button_height,
         button_right_margin: btn_layout.button_right_margin,
     }
+}
+
+fn first_positive(values: &[f32]) -> Option<f32> {
+    values.iter().copied().find(|value| *value > 0.0)
 }
 
 /// Resolve glass params for a named element with fallback defaults.
@@ -565,5 +597,33 @@ mod tests {
         let (color, width) = border_from_style(&style).unwrap();
         assert_eq!(width, 2.0);
         assert_eq!(color.r, 100);
+    }
+
+    #[test]
+    fn decoration_layout_uses_window_template_selectors() {
+        let css = r#"
+            window-titlebar {
+                height: 42;
+            }
+
+            close-button {
+                width: 18;
+                height: 16;
+                margin-right: 9;
+                border-radius: 5;
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let stylesheet = parser.parse_str(css).unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+        let resolver = create_style_resolver(Arc::new(engine));
+
+        let layout = resolve_decoration_layout(&resolver);
+        assert_eq!(layout.title_bar_height, 42.0);
+        assert_eq!(layout.button_width, 18.0);
+        assert_eq!(layout.button_height, 16.0);
+        assert_eq!(layout.button_right_margin, 9.0);
+        assert_eq!(layout.button_corner_radius, 5.0);
     }
 }
