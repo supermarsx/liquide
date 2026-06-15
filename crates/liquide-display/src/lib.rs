@@ -8,6 +8,7 @@ pub mod arrangement;
 pub mod color_profile;
 pub mod display;
 pub mod dpms;
+pub mod layout;
 pub mod night_light;
 pub mod output_profile;
 pub mod platform;
@@ -25,6 +26,7 @@ pub use arrangement::{
 pub use color_profile::{ColorProfile, ColorSpace, IccProfileStore};
 pub use display::{DisplayId, DisplayInfo, Resolution, Rotation};
 pub use dpms::{DpmsController, DpmsPolicy, DpmsState};
+pub use layout::{DesktopLayout, Rect as LayoutRect, WorkAreaInsets};
 pub use night_light::{NightLight, NightLightSchedule, color_temperature_matrix};
 pub use output_profile::{
     OutputProfile, ProfileStore, builtin_docked, builtin_laptop_only, builtin_presentation,

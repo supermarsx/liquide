@@ -373,6 +373,14 @@ pub const SWP_NOZORDER: UINT = 0x0004;
 
 pub const SM_CXSCREEN: i32 = 0;
 pub const SM_CYSCREEN: i32 = 1;
+/// Left edge of the virtual screen (union of all monitors).
+pub const SM_XVIRTUALSCREEN: i32 = 76;
+/// Top edge of the virtual screen (union of all monitors).
+pub const SM_YVIRTUALSCREEN: i32 = 77;
+/// Width of the virtual screen (union of all monitors).
+pub const SM_CXVIRTUALSCREEN: i32 = 78;
+/// Height of the virtual screen (union of all monitors).
+pub const SM_CYVIRTUALSCREEN: i32 = 79;
 /// Non-zero when the calling process is running in a Remote Desktop (RDP)
 /// session. Used to log the present path and (potentially) tune presentation.
 pub const SM_REMOTESESSION: i32 = 0x1000;
@@ -784,6 +792,26 @@ unsafe extern "system" {
     pub fn GetWindowLongPtrW(hWnd: HWND, nIndex: i32) -> LONG_PTR;
 
     pub fn GetKeyState(nVirtKey: i32) -> i16;
+}
+
+// ---------------------------------------------------------------------------
+// Per-monitor DPI — shcore.dll (Windows 8.1+)
+// ---------------------------------------------------------------------------
+
+/// `MONITOR_DPI_TYPE::MDT_EFFECTIVE_DPI` — the DPI that reflects the user's
+/// per-monitor scaling choice (what window layout should use).
+pub const MDT_EFFECTIVE_DPI: u32 = 0;
+
+#[link(name = "shcore")]
+unsafe extern "system" {
+    /// Query the effective DPI of a monitor. Returns `S_OK` (0) on success and
+    /// writes the X/Y DPI into the out-pointers. Available on Windows 8.1+.
+    pub fn GetDpiForMonitor(
+        hmonitor: HMONITOR,
+        dpi_type: u32,
+        dpi_x: *mut UINT,
+        dpi_y: *mut UINT,
+    ) -> i32;
 }
 
 // ---------------------------------------------------------------------------

@@ -746,6 +746,7 @@ unsafe extern "system" fn monitor_enum_callback(
     let name = from_wide(&mi.szDevice);
     let primary = (mi.base.dwFlags & ffi::MONITORINFOF_PRIMARY) != 0;
     let refresh_rate_hz = query_refresh_rate_hz(&mi.szDevice).unwrap_or(60);
+    let dpi_scale = query_monitor_dpi_scale(hmonitor);
 
     let geometry = Rect::new(
         mi.base.rcMonitor.left as f32,
@@ -765,12 +766,39 @@ unsafe extern "system" fn monitor_enum_callback(
         name,
         geometry,
         work_area,
-        dpi_scale: 1.0, // proper DPI requires shcore; default to 1.0
+        dpi_scale,
         primary,
         refresh_rate_hz,
     });
 
     ffi::TRUE
+}
+
+/// Query a monitor's effective DPI scale via `GetDpiForMonitor` (shcore).
+///
+/// Returns the scale relative to the 96-DPI baseline (1.0 == 100%, 1.5 == 150%,
+/// 2.0 == 200%). Falls back to `1.0` if the call fails — e.g. on a Windows
+/// version without per-monitor DPI, or for a monitor that has been disconnected
+/// between enumeration and the query. This is the per-monitor scale the session
+/// needs to convert physical coordinates into logical layout space on each
+/// display independently.
+fn query_monitor_dpi_scale(hmonitor: ffi::HMONITOR) -> f32 {
+    if hmonitor.is_null() {
+        return 1.0;
+    }
+    let mut dpi_x: ffi::UINT = 0;
+    let mut dpi_y: ffi::UINT = 0;
+    // SAFETY: GetDpiForMonitor accepts a valid HMONITOR and two writable
+    // UINT out-pointers. On failure it returns a non-zero HRESULT and we ignore
+    // the (untouched) outputs.
+    let hr = unsafe {
+        ffi::GetDpiForMonitor(hmonitor, ffi::MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y)
+    };
+    if hr == 0 && dpi_x > 0 {
+        dpi_x as f32 / 96.0
+    } else {
+        1.0
+    }
 }
 
 impl DisplayBackend for Win32DisplayBackend {
@@ -783,10 +811,25 @@ impl DisplayBackend for Win32DisplayBackend {
     }
 
     fn virtual_screen_rect(&self) -> Rect {
-        // Safety: GetSystemMetrics is always safe to call.
-        let w = unsafe { ffi::GetSystemMetrics(ffi::SM_CXSCREEN) };
-        let h = unsafe { ffi::GetSystemMetrics(ffi::SM_CYSCREEN) };
-        Rect::new(0.0, 0.0, w as f32, h as f32)
+        // The virtual screen is the union of ALL monitors (which can start at a
+        // negative origin when a secondary monitor sits left of / above the
+        // primary), not just the primary monitor's resolution. Using
+        // SM_*VIRTUALSCREEN keeps point→monitor hit-testing and multi-monitor
+        // window placement correct.
+        // SAFETY: GetSystemMetrics is always safe to call.
+        let x = unsafe { ffi::GetSystemMetrics(ffi::SM_XVIRTUALSCREEN) };
+        let y = unsafe { ffi::GetSystemMetrics(ffi::SM_YVIRTUALSCREEN) };
+        let w = unsafe { ffi::GetSystemMetrics(ffi::SM_CXVIRTUALSCREEN) };
+        let h = unsafe { ffi::GetSystemMetrics(ffi::SM_CYVIRTUALSCREEN) };
+        if w > 0 && h > 0 {
+            Rect::new(x as f32, y as f32, w as f32, h as f32)
+        } else {
+            // Fallback for the rare case the virtual-screen metrics are
+            // unavailable: use the primary monitor's resolution.
+            let pw = unsafe { ffi::GetSystemMetrics(ffi::SM_CXSCREEN) };
+            let ph = unsafe { ffi::GetSystemMetrics(ffi::SM_CYSCREEN) };
+            Rect::new(0.0, 0.0, pw as f32, ph as f32)
+        }
     }
 }
 
