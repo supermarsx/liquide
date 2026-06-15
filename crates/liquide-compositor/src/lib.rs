@@ -31,8 +31,9 @@ pub use framebuffer::{DoubleBuffer, FrameBuffer, FrameMemory, FrameMemoryPool};
 pub use geometry::{Affine2D, Point, Rect, Size};
 pub use pixel::{BlendMode, Color, PixelFormat};
 pub use renderer::{
-    FallbackReason, FallbackRenderer, FallbackState, FrameMemoryKind, RenderError, RenderQuality,
-    RenderResult, Renderer, RendererBackendInfo, RendererBackendKind, RendererCapabilities,
+    FallbackReason, FallbackRenderer, FallbackState, FrameMemoryKind, RenderError, RenderMode,
+    RenderQuality, RenderResult, Renderer, RendererBackendInfo, RendererBackendKind,
+    RendererCapabilities,
     RendererDecision, RendererNegotiation, RendererNegotiationError, RendererRejectReason,
     RendererSelectionAttempt, RendererSelectionError, RendererSelectionResult, RendererSelector,
 };

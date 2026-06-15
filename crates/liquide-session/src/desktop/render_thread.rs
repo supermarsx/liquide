@@ -6,6 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use liquide_compositor::RenderMode;
 use liquide_compositor::Renderer;
 use liquide_compositor::damage::{DamageClass, DamageSet, DamageTracker};
 use liquide_compositor::framebuffer::FrameBuffer;
@@ -55,6 +56,12 @@ pub(super) struct RenderedFrame {
     pub(super) damage: Option<DamageSet>,
     /// Fingerprint of the rendered pixel snapshot handed to present.
     pub(super) content_hash: u64,
+    /// Whether text glyphs were still being rasterised when this frame was
+    /// painted (live path only). When set, the main loop schedules ONE
+    /// damage-only follow-up frame so the text fills in; once the renderer
+    /// reports no pending glyphs the resubmit stops (no busy-loop). Always
+    /// `false` for the cursor-only path (it never resubmits on pending).
+    pub(super) pending_glyphs: bool,
 }
 
 /// A single captured desktop frame produced by [`DesktopCompositor::capture_once`].
@@ -102,6 +109,23 @@ pub(super) enum RenderMsg {
         height: u32,
     },
     Shutdown,
+}
+
+/// Upper bound (ms) on a single measured inter-frame delta fed into the
+/// per-frame animation/transition dt (de-choppy #2). Roughly three 60fps frames.
+/// Clamping here prevents a stall (or the very first measured frame) from
+/// producing a huge time jump that snaps animations forward.
+const MAX_MEASURED_FRAME_DT_MS: f32 = 50.0;
+
+/// Clamp a measured inter-frame elapsed time (ms) for use as the live animation
+/// dt. Returns `None` for a non-positive delta (no advance applied), otherwise
+/// the elapsed time capped at [`MAX_MEASURED_FRAME_DT_MS`].
+fn clamp_measured_frame_dt_ms(elapsed_ms: f32) -> Option<f32> {
+    if elapsed_ms > 0.0 {
+        Some(elapsed_ms.min(MAX_MEASURED_FRAME_DT_MS))
+    } else {
+        None
+    }
 }
 
 fn classified_damage_or_fallback(
@@ -614,6 +638,37 @@ impl DesktopCompositor {
         self.dirty_damage = None;
     }
 
+    /// Schedule a bounded, damage-only follow-up frame to fill in text whose
+    /// glyphs were still rasterising when a [`RenderMode::LiveFull`] frame was
+    /// presented (de-choppy #1).
+    ///
+    /// The follow-up reuses the just-rendered frame's tile damage so only the
+    /// text region is repainted (falling back to a full repaint if no damage
+    /// hint is available). It does NOT loop on its own: it merely marks the
+    /// desktop dirty so the standard render loop submits one more frame, and the
+    /// loop stops scheduling further follow-ups as soon as the renderer reports
+    /// no pending glyphs. A full repaint already pending is left untouched (the
+    /// stronger hint wins).
+    fn schedule_glyph_fill_resubmit(&mut self, frame_damage: Option<&DamageSet>) {
+        let full_repaint_already_pending = self.dirty && self.dirty_damage.is_none();
+        self.dirty = true;
+
+        match frame_damage {
+            Some(damage) if !damage.is_empty() && !damage.is_full() => {
+                let mut resubmit = damage.clone();
+                resubmit.dedup();
+                match &mut self.dirty_damage {
+                    Some(existing) => existing.merge(&resubmit),
+                    None if full_repaint_already_pending => {}
+                    None => self.dirty_damage = Some(resubmit),
+                }
+            }
+            // No usable damage hint (empty/full/None): fall back to a full
+            // repaint so the pending text is guaranteed to be covered.
+            _ => self.dirty_damage = None,
+        }
+    }
+
     pub(super) fn mark_rect_dirty(&mut self, rect: Rect) {
         let full_repaint_already_pending = self.dirty && self.dirty_damage.is_none();
         self.dirty = true;
@@ -664,6 +719,27 @@ impl DesktopCompositor {
         if self.render_in_flight || self.render_tx.is_none() {
             return;
         }
+
+        // Feed the REAL measured inter-frame elapsed time into the shell's
+        // per-frame animation/transition dt (de-choppy #2) BEFORE building the
+        // scene (which advances transitions/keyframes/tooltip-fade). Previously
+        // `frame_delta_ms` was a fixed constant from the fps cap and never
+        // updated, so animations advanced by an assumed-uniform dt regardless of
+        // how long the real frame actually took — judder whenever a frame ran
+        // late. We clamp to a sane max so a stall (or the very first frame) does
+        // not produce a huge time jump that snaps animations forward.
+        //
+        // This lives ONLY on the live submit path; the deterministic capture
+        // path (`render_frame_sync`) never calls this and keeps its injected
+        // fixed dt, so goldens stay byte-stable.
+        let now = Instant::now();
+        if let Some(prev) = self.last_live_frame_at {
+            let elapsed_ms = prev.elapsed().as_secs_f32() * 1000.0;
+            if let Some(dt_ms) = clamp_measured_frame_dt_ms(elapsed_ms) {
+                self.shell.set_frame_delta_ms(dt_ms);
+            }
+        }
+        self.last_live_frame_at = Some(now);
 
         // Build the scene graph (lightweight tree construction).
         self.sync_devtools_template();
@@ -774,6 +850,20 @@ impl DesktopCompositor {
             Ok(frame) => {
                 self.render_in_flight = false;
                 self.render_inflight_since = None;
+
+                // Bounded glyph-fill follow-up (de-choppy #1): a LiveFull frame
+                // may have painted before all its text glyphs finished
+                // rasterising. Schedule ONE damage-only follow-up frame so the
+                // text fills in. This goes through the normal dirty -> submit path
+                // (which respects pacing and single-in-flight gating), and it
+                // self-terminates: each follow-up re-renders and, once the glyph
+                // atlas has quiesced, `pending_glyphs` comes back false and we
+                // stop marking dirty — so it can never busy-loop forever. The
+                // cursor-only path always reports `pending_glyphs == false`, so a
+                // pointer move never triggers a resubmit.
+                if frame.pending_glyphs {
+                    self.schedule_glyph_fill_resubmit(frame.damage.as_ref());
+                }
 
                 // Record render metrics.
                 let render_duration = std::time::Duration::from_secs_f64(frame.render_ms / 1000.0);
@@ -1107,7 +1197,11 @@ impl DesktopCompositor {
                     }
 
                     clear_damage_tiles(framebuf, &damage);
-                    let render_result = renderer.render(&flat_nodes, framebuf, &damage);
+                    // LIVE cursor-only fast path (de-choppy #1): pure non-blocking
+                    // poll — a pointer move must NEVER stall on text glyphs from an
+                    // earlier full frame. The cached scene already has its glyphs.
+                    let render_result =
+                        renderer.render_live(&flat_nodes, framebuf, &damage, RenderMode::LiveCursor);
                     compositor.end_frame();
                     compositor.present_frame();
                     let mut damage =
@@ -1137,6 +1231,10 @@ impl DesktopCompositor {
                         scene_split: SplitScene::default(), // cursor-only: scene unchanged
                         damage: Some(damage),
                         content_hash,
+                        // Cursor-only path never resubmits on pending glyphs: the
+                        // cached scene's text is already rasterised, and we must
+                        // not turn pointer motion into a glyph-driven render loop.
+                        pending_glyphs: false,
                     };
                     if tx.send(result).is_err() {
                         break;
@@ -1297,9 +1395,15 @@ impl DesktopCompositor {
         }
         renderer.set_skeleton_window(latest_job.dragged_window);
 
-        let render_result = renderer.render(flat_nodes_buf, framebuf, &damage);
+        // LIVE full-scene render (de-choppy #1): non-blocking glyph drain so the
+        // single in-flight render job never block-stalls present cadence on text.
+        let render_result =
+            renderer.render_live(flat_nodes_buf, framebuf, &damage, RenderMode::LiveFull);
         compositor.end_frame();
         compositor.present_frame();
+        // Capture whether glyphs were still rasterising so the main loop can
+        // schedule a bounded damage-only follow-up frame (text fills in).
+        let pending_glyphs = renderer.has_pending_glyphs();
         let damage = classified_damage_or_fallback(latest_job.tile_size, damage, render_result);
         let damage = tile_hash_tracker.trim_damage(latest_job.tile_size, framebuf, damage);
 
@@ -1338,6 +1442,7 @@ impl DesktopCompositor {
             scene_split,
             damage: Some(damage),
             content_hash,
+            pending_glyphs,
         };
         let _ = tx.send(result);
     }
@@ -1581,6 +1686,7 @@ mod tests {
             scene_split: SplitScene::default(),
             damage: None,
             content_hash,
+            pending_glyphs: false,
         }
     }
 
@@ -1811,6 +1917,105 @@ mod tests {
             platform.presents[0].first_pixel,
             platform.presents[1].first_pixel
         );
+    }
+
+    #[test]
+    fn pending_glyph_frame_schedules_bounded_damage_only_resubmit() {
+        // A LiveFull frame that reports pending glyphs must mark the desktop
+        // dirty (so the loop renders one more frame to fill in the text) and use
+        // the frame's own damage as a damage-only hint.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        let (tx, rx) = mpsc::channel();
+
+        let mut pending = test_rendered_frame(11, 0x1111);
+        pending.pending_glyphs = true;
+        let mut damage = DamageSet::new(64);
+        damage.mark_tile(0, 0);
+        pending.damage = Some(damage);
+        tx.send(pending).unwrap();
+
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.frame_rx = Some(rx);
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let mut platform = RecordingPresentPlatform::default();
+        assert!(desktop.try_present(&mut platform));
+
+        assert!(desktop.dirty, "pending-glyph frame must schedule a follow-up");
+        assert!(
+            desktop.dirty_damage.is_some(),
+            "follow-up must be damage-only (reusing the frame's tile damage)"
+        );
+        assert!(
+            !desktop.dirty_damage.as_ref().unwrap().is_full(),
+            "follow-up damage must not be a full repaint when a tile hint exists"
+        );
+    }
+
+    #[test]
+    fn resubmit_stops_when_no_pending_glyphs() {
+        // Once the renderer reports no pending glyphs, no follow-up is scheduled
+        // — this is what bounds the resubmit and prevents a busy-loop.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        let (tx, rx) = mpsc::channel();
+
+        let mut quiesced = test_rendered_frame(11, 0x1111);
+        quiesced.pending_glyphs = false; // glyph atlas has quiesced
+        let mut damage = DamageSet::new(64);
+        damage.mark_tile(0, 0);
+        quiesced.damage = Some(damage);
+        tx.send(quiesced).unwrap();
+
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.frame_rx = Some(rx);
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let mut platform = RecordingPresentPlatform::default();
+        assert!(desktop.try_present(&mut platform));
+
+        assert!(
+            !desktop.dirty,
+            "a frame with no pending glyphs must NOT schedule another frame"
+        );
+        assert!(desktop.dirty_damage.is_none());
+    }
+
+    #[test]
+    fn pending_glyph_resubmit_falls_back_to_full_repaint_without_damage_hint() {
+        // No usable damage hint (None) must fall back to a full repaint so the
+        // pending text is guaranteed to be covered.
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.dirty = false;
+        desktop.dirty_damage = Some(DamageSet::new(64));
+
+        desktop.schedule_glyph_fill_resubmit(None);
+
+        assert!(desktop.dirty);
+        assert!(
+            desktop.dirty_damage.is_none(),
+            "missing damage hint must escalate to a full repaint"
+        );
+    }
+
+    #[test]
+    fn measured_frame_dt_is_clamped_and_guards_nonpositive() {
+        // Normal frame: passed through unchanged.
+        assert_eq!(clamp_measured_frame_dt_ms(16.6), Some(16.6));
+        // A long stall is clamped to the max so animations don't snap forward.
+        assert_eq!(
+            clamp_measured_frame_dt_ms(500.0),
+            Some(MAX_MEASURED_FRAME_DT_MS)
+        );
+        // Exactly at the cap stays at the cap.
+        assert_eq!(
+            clamp_measured_frame_dt_ms(MAX_MEASURED_FRAME_DT_MS),
+            Some(MAX_MEASURED_FRAME_DT_MS)
+        );
+        // Non-positive deltas produce no advance.
+        assert_eq!(clamp_measured_frame_dt_ms(0.0), None);
+        assert_eq!(clamp_measured_frame_dt_ms(-3.0), None);
     }
 
     #[test]

@@ -26,6 +26,36 @@ pub type RenderError = Box<dyn Error + Send + Sync>;
 /// Result type for renderer operations.
 pub type RenderResult<T> = std::result::Result<T, RenderError>;
 
+/// Glyph-drain / liveness policy selector for a single render call.
+///
+/// This is the seam between the **deterministic capture path** and the
+/// **responsive live path**. The variant ONLY controls how a renderer drains
+/// not-yet-rasterized glyphs before painting text; the actual pixel-painting is
+/// identical, so a fully-quiesced glyph atlas renders byte-identical output
+/// regardless of mode.
+///
+/// Defined here (in `liquide-compositor`) so the [`Renderer`] trait can name it
+/// without depending on any concrete backend crate; backends re-use this single
+/// definition rather than mirroring their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderMode {
+    /// Deterministic capture/headless render. Block-drains every in-flight
+    /// glyph before painting text so the frame is byte-identical across runs.
+    /// This is the behaviour of [`Renderer::render`]. Default so the trait's
+    /// `render_live` default (which delegates to `render`) is consistent.
+    #[default]
+    Capture,
+    /// Live full-scene render. Polls completed glyphs and waits only a tiny
+    /// per-frame budget for more, then paints with whatever is ready and sets
+    /// `has_pending_glyphs` so the caller can request a follow-up frame. Never
+    /// blocks for a perceptible duration.
+    LiveFull,
+    /// Live cursor-only render (the cheap pointer-move fast path). Does a pure
+    /// non-blocking poll of completed glyphs and NEVER waits — the cached scene
+    /// already has its glyphs, and a pointer move must not stall on text.
+    LiveCursor,
+}
+
 /// Quality / performance trade-off hint for renderers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderQuality {
@@ -451,6 +481,25 @@ pub trait Renderer: Send {
         damage: &DamageSet,
     ) -> RenderResult<Vec<DamageTile>>;
 
+    /// Live, non-blocking render entry used by the interactive desktop loop.
+    ///
+    /// `mode` selects the glyph-drain / liveness policy (see [`RenderMode`]).
+    /// The default delegates to [`Renderer::render`] (the deterministic,
+    /// block-draining path), so renderers that do not implement a dedicated live
+    /// path keep working unchanged — they simply ignore `mode`. Backends with an
+    /// async glyph pipeline (the CPU software renderer) override this to honour
+    /// the live budget and avoid stalling present cadence.
+    fn render_live(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage: &DamageSet,
+        mode: RenderMode,
+    ) -> RenderResult<Vec<DamageTile>> {
+        let _ = mode;
+        self.render(nodes, fb, damage)
+    }
+
     /// Renderer backend metadata.
     fn backend_info(&self) -> RendererBackendInfo {
         RendererBackendInfo::default()
@@ -612,6 +661,41 @@ impl Renderer for FallbackRenderer {
                     FallbackReason::PrimaryRenderFailed(error.to_string()),
                 ),
             },
+            RendererDecision::Rejected(reason) => self.select_fallback(
+                nodes,
+                fb,
+                damage,
+                FallbackReason::NegotiationRejected(reason),
+            ),
+        }
+    }
+
+    fn render_live(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage: &DamageSet,
+        mode: RenderMode,
+    ) -> RenderResult<Vec<DamageTile>> {
+        match self
+            .primary
+            .negotiate_render(nodes, fb, damage)
+            .into_decision()
+        {
+            RendererDecision::Accepted => {
+                match self.primary.render_live(nodes, fb, damage, mode) {
+                    Ok(tiles) => {
+                        self.state = FallbackState::Primary;
+                        Ok(tiles)
+                    }
+                    Err(error) => self.select_fallback(
+                        nodes,
+                        fb,
+                        damage,
+                        FallbackReason::PrimaryRenderFailed(error.to_string()),
+                    ),
+                }
+            }
             RendererDecision::Rejected(reason) => self.select_fallback(
                 nodes,
                 fb,
@@ -867,6 +951,54 @@ impl Renderer for RendererSelector {
             }
 
             match self.renderers[index].render(nodes, fb, damage) {
+                Ok(tiles) => {
+                    attempts.push(RendererSelectionAttempt {
+                        index,
+                        backend,
+                        result: RendererSelectionResult::Accepted,
+                    });
+                    self.active_index = Some(index);
+                    self.last_attempts = attempts;
+                    return Ok(tiles);
+                }
+                Err(error) => {
+                    attempts.push(RendererSelectionAttempt {
+                        index,
+                        backend,
+                        result: RendererSelectionResult::RenderFailed(error.to_string()),
+                    });
+                }
+            }
+        }
+
+        self.active_index = None;
+        self.last_attempts = attempts.clone();
+        Err(Box::new(RendererSelectionError { attempts }))
+    }
+
+    fn render_live(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage: &DamageSet,
+        mode: RenderMode,
+    ) -> RenderResult<Vec<DamageTile>> {
+        let mut attempts = Vec::with_capacity(self.renderers.len());
+
+        for index in 0..self.renderers.len() {
+            let backend = self.renderers[index].backend_info();
+            let negotiation = self.renderers[index].negotiate_render(nodes, fb, damage);
+
+            if let Some(reason) = negotiation.reject_reason().cloned() {
+                attempts.push(RendererSelectionAttempt {
+                    index,
+                    backend,
+                    result: RendererSelectionResult::NegotiationRejected(reason),
+                });
+                continue;
+            }
+
+            match self.renderers[index].render_live(nodes, fb, damage, mode) {
                 Ok(tiles) => {
                     attempts.push(RendererSelectionAttempt {
                         index,
@@ -1335,6 +1467,67 @@ mod tests {
             selector.last_attempts()[2].result,
             RendererSelectionResult::Accepted
         );
+    }
+
+    #[test]
+    fn default_render_live_delegates_to_render() {
+        // A renderer that does NOT override `render_live` must fall through to
+        // the trait default, which delegates to the blocking `render`. This is
+        // what keeps non-CPU renderers working unchanged on the live path.
+        let (renderer, state) = MockRenderer::new("mock", RendererBackendKind::Software);
+        let mut renderer = renderer;
+        let mut fb = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
+
+        for mode in [RenderMode::Capture, RenderMode::LiveFull, RenderMode::LiveCursor] {
+            renderer
+                .render_live(&[], &mut fb, &test_damage(), mode)
+                .unwrap();
+        }
+
+        // One `render` call per `render_live` call, regardless of mode.
+        assert_eq!(state.lock().unwrap().renders, 3);
+    }
+
+    #[test]
+    fn selector_render_live_forwards_to_active_backend() {
+        let reject_reason = RendererRejectReason::BackendUnavailable("no adapter".to_string());
+        let (first, first_state) = MockRenderer::new("wgpu", RendererBackendKind::Wgpu);
+        let (second, second_state) = MockRenderer::new("cpu", RendererBackendKind::Software);
+        let mut selector = RendererSelector::from_renderers(vec![
+            Box::new(first.rejecting(reject_reason)),
+            Box::new(second.with_tile_class(DamageClass::TextGlyph)),
+        ]);
+        let mut fb = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
+
+        let tiles = selector
+            .render_live(&[], &mut fb, &test_damage(), RenderMode::LiveFull)
+            .unwrap();
+
+        assert_eq!(tiles[0].class, DamageClass::TextGlyph);
+        assert_eq!(selector.active_index(), Some(1));
+        assert_eq!(first_state.lock().unwrap().renders, 0);
+        assert_eq!(second_state.lock().unwrap().renders, 1);
+    }
+
+    #[test]
+    fn fallback_render_live_uses_fallback_when_primary_rejects() {
+        let reject_reason = RendererRejectReason::BackendUnavailable("device lost".to_string());
+        let (primary, primary_state) = MockRenderer::new("primary", RendererBackendKind::Wgpu);
+        let (fallback, fallback_state) =
+            MockRenderer::new("software", RendererBackendKind::Software);
+        let mut renderer = FallbackRenderer::new(
+            Box::new(primary.rejecting(reject_reason)),
+            Box::new(fallback.with_tile_class(DamageClass::BitmapRegion)),
+        );
+        let mut fb = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
+
+        let tiles = renderer
+            .render_live(&[], &mut fb, &test_damage(), RenderMode::LiveCursor)
+            .unwrap();
+
+        assert_eq!(primary_state.lock().unwrap().renders, 0);
+        assert_eq!(fallback_state.lock().unwrap().renders, 1);
+        assert_eq!(tiles[0].class, DamageClass::BitmapRegion);
     }
 
     #[test]

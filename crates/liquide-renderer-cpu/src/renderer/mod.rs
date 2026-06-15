@@ -76,41 +76,26 @@ const GLYPH_DRAIN_BUDGET_MS: u64 = 2_000;
 /// frame can never trip it (t68 cause #1 / C2).
 const LIVE_GLYPH_DRAIN_BUDGET_MS: u64 = 4;
 
-/// Selects how a render call resolves not-yet-rasterized glyphs.
-///
-/// This is the seam between the deterministic capture path and the responsive
-/// live path. The variant ONLY controls the glyph-drain policy; the actual
-/// pixel-painting code is identical, so a fully-quiesced atlas renders the same
-/// bytes regardless of mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderMode {
-    /// Deterministic capture/headless render. Block-drains every in-flight
-    /// glyph (up to [`GLYPH_DRAIN_BUDGET_MS`]) before painting text so the
-    /// frame is byte-identical across runs. This is exactly the behaviour of
-    /// [`SoftwareRenderer::render`].
-    Capture,
-    /// Live full-scene render. Polls completed glyphs and waits at most
-    /// [`LIVE_GLYPH_DRAIN_BUDGET_MS`] for more, then paints with whatever is
-    /// ready (estimated advances / last-good for the rest) and sets
-    /// `has_pending_glyphs` so the caller requests another frame. Never blocks
-    /// for a perceptible duration.
-    LiveFull,
-    /// Live cursor-only render (the cheap pointer-move fast path). Does a pure
-    /// non-blocking poll of completed glyphs and NEVER waits — the cached scene
-    /// already has its glyphs, and a pointer move must not stall on text.
-    LiveCursor,
-}
+// `RenderMode` is the single shared glyph-drain / liveness selector. It is
+// defined in `liquide-compositor` (so the `Renderer` trait can name it without a
+// backend dependency) and re-exported here so existing `RenderMode::*` call
+// sites in this crate (and its tests) keep working unchanged.
+pub use liquide_compositor::RenderMode;
 
-impl RenderMode {
-    /// Drain deadline for this mode, or `None` for a pure non-blocking poll.
-    fn drain_deadline(self) -> Option<std::time::Instant> {
-        let budget_ms = match self {
-            RenderMode::Capture => GLYPH_DRAIN_BUDGET_MS,
-            RenderMode::LiveFull => LIVE_GLYPH_DRAIN_BUDGET_MS,
-            RenderMode::LiveCursor => return None,
-        };
-        Some(std::time::Instant::now() + std::time::Duration::from_millis(budget_ms))
-    }
+/// Drain deadline for `mode`, or `None` for a pure non-blocking poll.
+///
+/// This is the ONLY behavioural difference between render modes: how long the
+/// renderer waits for in-flight glyph rasterizations before painting text.
+/// [`RenderMode::Capture`] block-drains up to [`GLYPH_DRAIN_BUDGET_MS`] for
+/// determinism; [`RenderMode::LiveFull`] waits only [`LIVE_GLYPH_DRAIN_BUDGET_MS`];
+/// [`RenderMode::LiveCursor`] never waits.
+fn drain_deadline(mode: RenderMode) -> Option<std::time::Instant> {
+    let budget_ms = match mode {
+        RenderMode::Capture => GLYPH_DRAIN_BUDGET_MS,
+        RenderMode::LiveFull => LIVE_GLYPH_DRAIN_BUDGET_MS,
+        RenderMode::LiveCursor => return None,
+    };
+    Some(std::time::Instant::now() + std::time::Duration::from_millis(budget_ms))
 }
 
 // Re-export the Renderer trait from liquide-compositor so downstream crates
@@ -779,6 +764,20 @@ impl Renderer for SoftwareRenderer {
         self.render_with_mode(nodes, fb, damage, RenderMode::Capture)
     }
 
+    /// Live, non-blocking render entry. Overrides the trait default (which would
+    /// delegate to the blocking `render`) so the interactive desktop loop honours
+    /// the live glyph-drain budget and never stalls present cadence. Forwards to
+    /// the inherent [`SoftwareRenderer::render_live`].
+    fn render_live(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage: &DamageSet,
+        mode: RenderMode,
+    ) -> liquide_compositor::RenderResult<Vec<DamageTile>> {
+        SoftwareRenderer::render_live(self, nodes, fb, damage, mode)
+    }
+
     fn blur_enabled(&self) -> bool {
         self.blur_enabled
     }
@@ -898,7 +897,7 @@ impl SoftwareRenderer {
         // all (LiveCursor), paints with whatever is ready, and relies on
         // `has_pending_glyphs` (set while painting text) to request a follow-up
         // frame. Any still-pending glyphs simply resolve on the next frame.
-        let rasterized = match mode.drain_deadline() {
+        let rasterized = match drain_deadline(mode) {
             Some(deadline) => self.font_worker.drain_pending_blocking(deadline),
             None => self.font_worker.poll_results(),
         };

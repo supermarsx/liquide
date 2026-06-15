@@ -98,6 +98,14 @@ pub struct DesktopCompositor {
     /// `Some` means the renderer can use those tiles as a damage hint.
     dirty_damage: Option<liquide_compositor::damage::DamageSet>,
     last_render: Instant,
+    /// Wall-clock instant the previous LIVE full-scene render job was submitted.
+    ///
+    /// Used to feed the REAL measured inter-frame elapsed time into the shell's
+    /// per-frame animation/transition dt (de-choppy #2) instead of a fixed
+    /// constant derived from the fps cap. `None` until the first live submit.
+    /// The deterministic capture path never reads or writes this — it keeps its
+    /// injected fixed dt so goldens stay byte-stable.
+    last_live_frame_at: Option<Instant>,
     loading: bool,
     /// Minimum interval between frames. 0 = unlimited.
     frame_interval: Duration,
@@ -236,6 +244,7 @@ impl DesktopCompositor {
             dirty: true,
             dirty_damage: None,
             last_render: Instant::now(),
+            last_live_frame_at: None,
             loading: true,
             frame_interval: Duration::from_micros(1_000_000 / DEFAULT_TARGET_FPS as u64),
             debug_perf: false,
