@@ -194,6 +194,67 @@ fn column_ink_profile(frame: &Frame, x: u32, y: u32, w: u32, h: u32) -> Vec<usiz
     profile
 }
 
+/// STRUCTURED "added ink" of a region in `frame` RELATIVE to the same region in
+/// `base` (the bare desktop with the identical wallpaper). Returns the count of
+/// pixels whose per-pixel change (frame - base) deviates strongly from the
+/// region's MEAN change.
+///
+/// WHY (wallpaper-IMAGE-IMMUNE, t74-harden): this double-cancels everything that
+/// is not a newly-introduced structured panel:
+///   1. The wallpaper appears IDENTICALLY in `frame` and `base`, so its (frame -
+///      base) delta is ~0 there — any wallpaper texture/brightness at the origin
+///      cancels exactly, regardless of the image. (The old probe measured ink as
+///      deviation-from-local-mean of the menu frame ALONE, so a textured/bright
+///      wallpaper at (0,0) read as false "ink"; it only passed because the sample
+///      aurora.png was hand-smoothed at the corner — a fragile coupling.)
+///   2. The legitimate menu-open scrim is a ~UNIFORM dim, so its (frame - base)
+///      delta is ~constant across the probe → it deviates ~0 from the delta-mean
+///      → reads ~0 structured ink.
+///   3. A real origin-TWIN glass panel adds STRUCTURE (panel border + item ink),
+///      so its delta image has high local variance → reads high structured ink.
+fn delta_structured_ink(frame: &Frame, base: &Frame, x: u32, y: u32, w: u32, h: u32) -> usize {
+    let x1 = (x + w).min(frame.width).min(base.width);
+    let y1 = (y + h).min(frame.height).min(base.height);
+    if x1 <= x || y1 <= y {
+        return 0;
+    }
+    // Mean per-channel signed delta across the region (the uniform-scrim baseline).
+    let (mut sr, mut sg, mut sb) = (0i64, 0i64, 0i64);
+    let mut count = 0i64;
+    for py in y..y1 {
+        for px in x..x1 {
+            let f = frame.pixel(px, py).unwrap();
+            let b = base.pixel(px, py).unwrap();
+            sr += f[0] as i64 - b[0] as i64;
+            sg += f[1] as i64 - b[1] as i64;
+            sb += f[2] as i64 - b[2] as i64;
+            count += 1;
+        }
+    }
+    let (mr, mg, mb) = (
+        (sr / count) as i32,
+        (sg / count) as i32,
+        (sb / count) as i32,
+    );
+    // Count pixels whose delta deviates strongly from that mean delta — i.e.
+    // structure on top of any uniform scrim. Threshold 90 mirrors the absolute
+    // ink probe's stroke threshold so the menu-vs-origin comparison is like-for-like.
+    let mut ink = 0usize;
+    for py in y..y1 {
+        for px in x..x1 {
+            let f = frame.pixel(px, py).unwrap();
+            let b = base.pixel(px, py).unwrap();
+            let dr = (f[0] as i32 - b[0] as i32) - mr;
+            let dg = (f[1] as i32 - b[1] as i32) - mg;
+            let db = (f[2] as i32 - b[2] as i32) - mb;
+            if dr.abs() + dg.abs() + db.abs() > 90 {
+                ink += 1;
+            }
+        }
+    }
+    ink
+}
+
 /// Total label ink across all 5 menu item rows of a menu opened at `(ox, oy)`.
 /// A fully-painted menu carries thousands of ink pixels; a blank-text
 /// (glyph-pop-in) menu reads near-zero.
@@ -317,6 +378,10 @@ fn origin_twin_no_glass_panel_at_origin_on_menu_open() {
     // the corner probe.
     let (rx, ry) = (700.0_f32, 400.0_f32);
     let frame = capture_right_click(rx, ry);
+    // Bare desktop with the SAME wallpaper — the delta reference (see
+    // `delta_structured_ink`: wallpaper cancels, uniform scrim cancels, only a
+    // newly-added structured panel survives).
+    let base = base_desktop();
 
     // Probe a menu-sized region anchored at the origin but BELOW the status bar
     // (rows 40..188), so the legitimate status-bar chrome is excluded.
@@ -325,29 +390,39 @@ fn origin_twin_no_glass_panel_at_origin_on_menu_open() {
     let probe_w = CONTEXT_MENU_WIDTH as u32;
     let probe_h = CONTEXT_MENU_HEIGHT as u32;
 
-    // INK probe (not diff-vs-base): a twin glass PANEL carries border + item ink;
-    // the legitimate menu-open scrim is a uniform dim and carries ~0 ink. Sum the
-    // per-column ink across the probe; a real panel would read in the hundreds+.
-    let profile = column_ink_profile(&frame, probe_x, probe_y, probe_w, probe_h);
-    let origin_ink: usize = profile.iter().sum();
+    // DELTA-vs-BASE structured-ink probe (wallpaper-image-immune): measures only
+    // STRUCTURE newly introduced at the origin by the menu-open, on top of the
+    // bare desktop. A twin glass PANEL adds border + item ink (high); the
+    // wallpaper (identical in both frames) and the uniform menu scrim both cancel
+    // to ~0. This replaces the old menu-frame-alone deviation probe, which read
+    // any textured/bright wallpaper at (0,0) as false ink.
+    let origin_ink = delta_structured_ink(&frame, &base, probe_x, probe_y, probe_w, probe_h);
 
-    // Teeth reference: the REAL menu at the click point carries this much ink — we
-    // compute it so the threshold is anchored to a real panel, not a guess.
+    // Teeth reference: the REAL menu at the click point, measured the SAME way
+    // (delta-vs-base structured ink), so the threshold is anchored to a real
+    // panel rather than a guess — and the two sides are like-for-like.
     let (ox, oy) = menu_origin(rx, ry);
-    let menu_ink = menu_total_label_ink(&frame, ox, oy);
+    let menu_ink = delta_structured_ink(
+        &frame,
+        &base,
+        ox,
+        oy,
+        CONTEXT_MENU_WIDTH as u32,
+        CONTEXT_MENU_HEIGHT as u32,
+    );
     assert!(
         menu_ink > 400,
-        "precondition: the real menu did not paint (menu_ink={menu_ink}) — cannot calibrate the \
-         origin-twin probe"
+        "precondition: the real menu did not paint (delta structured ink={menu_ink}) — cannot \
+         calibrate the origin-twin probe"
     );
 
     assert!(
         origin_ink < menu_ink / 4,
-        "ORIGIN-TWIN GLASS reproduces: opening a menu at ({rx},{ry}) put {origin_ink} ink px at \
-         the screen origin (probe [{probe_x},{probe_y}] {probe_w}x{probe_h}) — comparable to the \
-         real menu's {menu_ink} ink px. A duplicate glass panel at (0,0) is a flicker source \
-         (it appears on open and vanishes on close). Fix crate: liquide-shell (scene/template \
-         build) — confirm with peer t71-fix's origin-twin work."
+        "ORIGIN-TWIN GLASS reproduces: opening a menu at ({rx},{ry}) added {origin_ink} structured \
+         ink px at the screen origin vs the bare desktop (probe [{probe_x},{probe_y}] \
+         {probe_w}x{probe_h}) — comparable to the real menu's {menu_ink} added ink px. A duplicate \
+         glass panel at (0,0) is a flicker source (it appears on open and vanishes on close). Fix \
+         crate: liquide-shell (scene/template build) — confirm with peer t71-fix's origin-twin work."
     );
 }
 

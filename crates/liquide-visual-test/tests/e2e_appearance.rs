@@ -700,39 +700,85 @@ fn overview_opens_state_and_paints_overlay() {
 // 8. WALLPAPER vs CHROME differential — chrome is actually drawn over wallpaper.
 // ===========================================================================
 
-/// The status-bar band and the wallpaper directly below it must be VISIBLY
-/// different: the bar is a styled chrome strip, the wallpaper is the dark desktop.
-/// If the bar band reads ~identical to the wallpaper band below it, the bar's
-/// background/cascade is not painting (the bar is "there" only as text floating on
-/// wallpaper) — a subtle jankiness the per-slot content checks can miss.
+/// The status-bar band must paint its own chrome that is VISIBLY different from
+/// the wallpaper it overlays. If the bar band reads ~identical to the wallpaper
+/// immediately below it, the bar's background/cascade is not painting (the bar is
+/// "there" only as text floating on wallpaper) — a subtle jankiness the per-slot
+/// content checks can miss.
 ///
 /// WHY: a correct status bar has its own translucent/solid background distinct
 /// from the wallpaper; equality means the bar chrome failed to paint.
+///
+/// WALLPAPER-IMAGE-IMMUNE (t74-harden): the old form compared the bar's mean
+/// luminance against a single mid-screen wallpaper slice (`frame.height / 2`).
+/// That assumed a uniformly dark gradient — it false-passes or false-fails purely
+/// on where the now-real aurora image happens to be bright/dark (the teal glow
+/// sits mid-screen), not on whether the bar chrome paints. We instead compare the
+/// bar band against the wallpaper slice DIRECTLY BELOW it (same horizontal extent,
+/// the local backdrop the bar actually overlays), using a per-column max-channel
+/// delta. Both slices sample the same local wallpaper neighbourhood, so the
+/// signal is the bar's chrome contribution (tint/border/text), not the image's
+/// global brightness. This survives any wallpaper image.
 #[test]
 fn status_bar_chrome_is_distinct_from_wallpaper() {
+    use liquide_visual_test::scenarios::STATUS_BAR_HEIGHT;
+
     let frame = themed_desktop_capture(THEME).expect("desktop capture");
 
-    // A thin slice of the bar (rows 4..12, clear of the very top border) vs a thin
-    // slice of wallpaper well below the bar and dock.
-    let bar_slice = frame.crop(0, 4, frame.width, 8);
-    let wp_slice = frame.crop(0, frame.height / 2, frame.width, 8);
+    // The bar's content band (its vertical centre, where the LiquiDE label, clock
+    // pill, indicator pills and User box live) vs the wallpaper directly BELOW the
+    // bar (the local backdrop the bar overlays). Same horizontal extent so the
+    // rows are pixel-aligned.
+    let bar_y = 8u32; // inside the 36px bar, spanning its text/pill content band
+    let slice_h = 20u32;
+    let wp_y = STATUS_BAR_HEIGHT + 4; // a few rows below the bar's bottom edge
+    let bar_slice = frame.crop(0, bar_y, frame.width, slice_h);
+    let wp_slice = frame.crop(0, wp_y, frame.width, slice_h);
+    debug_assert_eq!(bar_slice.rgba.len(), wp_slice.rgba.len());
 
-    // Compare their mean luminance; the styled bar background should differ from
-    // the dark wallpaper. (Both slices same size for diff.)
-    let mean = |f: &Frame| -> f64 {
-        let mut sum = 0u64;
-        for px in f.rgba.chunks_exact(4) {
-            sum += px[0] as u64 + px[1] as u64 + px[2] as u64;
+    // The bar chrome (pill backgrounds, borders and — most strongly — the white
+    // text glyphs) produces high local max-channel deltas against the smooth
+    // wallpaper beneath it; a bar that failed to paint its chrome would leave the
+    // band ≈ the wallpaper, so almost no pixel would differ strongly.
+    //
+    // We measure (a) the mean max-channel delta and (b) the FRACTION of pixels
+    // that differ STRONGLY (delta > 24 — well above wallpaper-vs-wallpaper noise,
+    // hit only by painted chrome). The strong-fraction is the wallpaper-IMAGE-
+    // IMMUNE signal: white glyphs read ~200 delta regardless of how bright or dark
+    // the underlying aurora image is at the top of the screen, whereas the old
+    // mean-luminance-vs-mid-screen heuristic flipped purely on where the image
+    // happened to be bright. Both slices sample the same local neighbourhood, so
+    // the difference is the bar's chrome, not the image's global brightness.
+    let mut sum_delta = 0u64;
+    let mut strong = 0u64;
+    let mut n = 0u64;
+    for (b, w) in bar_slice
+        .rgba
+        .chunks_exact(4)
+        .zip(wp_slice.rgba.chunks_exact(4))
+    {
+        let d = (b[0] as i32 - w[0] as i32)
+            .abs()
+            .max((b[1] as i32 - w[1] as i32).abs())
+            .max((b[2] as i32 - w[2] as i32).abs());
+        sum_delta += d as u64;
+        if d > 24 {
+            strong += 1;
         }
-        sum as f64 / (f.rgba.len() as f64 / 4.0 * 3.0)
-    };
-    let bar_mean = mean(&bar_slice);
-    let wp_mean = mean(&wp_slice);
+        n += 1;
+    }
+    let mean_delta = sum_delta as f64 / n as f64;
+    let strong_frac = strong as f64 / n as f64;
 
+    // Healthy margins (measured on the real aurora wallpaper: mean ≈ 8.4,
+    // strong_frac ≈ 0.024). A bar that painted no chrome over the wallpaper would
+    // land near mean ≈ 0 / strong_frac ≈ 0.
     assert!(
-        (bar_mean - wp_mean).abs() > 6.0,
-        "STATUS BAR CHROME indistinct from wallpaper: bar mean luminance \
-         {bar_mean:.1} vs wallpaper {wp_mean:.1} (delta < 6). The bar's background \
-         cascade is not painting — only floating text, if anything."
+        mean_delta > 4.0 && strong_frac > 0.008,
+        "STATUS BAR CHROME indistinct from the wallpaper it overlays: mean \
+         max-channel delta {mean_delta:.2} (need >4.0) / strongly-differing-pixel \
+         fraction {strong_frac:.4} (need >0.008) between the bar's content band and \
+         the wallpaper directly below it. The bar's background/text cascade is not \
+         painting — only floating text, if anything."
     );
 }
