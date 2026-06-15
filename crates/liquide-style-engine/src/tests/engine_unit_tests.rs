@@ -752,3 +752,83 @@ fn restyle_path_real_logical_property_still_maps() {
         "padding-inline-start must map to physical padding.left (LTR)"
     );
 }
+
+// t73 fix #1: `box-shadow: var(--token)` must reparse the substituted multi-token
+// shorthand through the full property parser and yield a real BoxShadowSpec with
+// offset/blur/spread/color — not a dropped Keyword.
+#[test]
+fn box_shadow_via_var_renders_multi_token_shadow() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            window {
+                --window-shadow: 0px 8px 32px rgba(0, 0, 0, 0.50);
+                box-shadow: var(--window-shadow);
+            }
+            "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let win = doc.create_element("window");
+    doc.append_child(root, win);
+
+    let map = engine.restyle_all(&doc);
+    let style = map.get(win).unwrap();
+
+    assert_eq!(
+        style.box_shadow.len(),
+        1,
+        "box-shadow: var(--window-shadow) must produce exactly one shadow"
+    );
+    let sh = &style.box_shadow[0];
+    assert_eq!(sh.offset_x, 0.0, "offset-x must come from the var() shorthand");
+    assert_eq!(sh.offset_y, 8.0, "offset-y (elevation) must come from the var() shorthand");
+    assert_eq!(sh.blur_radius, 32.0, "blur must come from the var() shorthand");
+    assert_eq!(sh.color.a, 128, "shadow alpha (0.50) must survive var() substitution");
+    assert!(
+        sh.offset_y > 0.0 && sh.blur_radius > sh.offset_y,
+        "must be a real elevated drop-shadow, not a tight glow"
+    );
+}
+
+// t73 fix #2: the custom `box-shadow-color` longhand must honor companion
+// offset/blur/spread longhands so elevation is expressible (it no longer
+// hardcodes blur=2 / offset=0 producing a tight glow).
+#[test]
+fn custom_shadow_longhands_express_elevation() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            dock {
+                box-shadow-color: rgba(0, 0, 0, 0.40);
+                shadow-offset-y: 8px;
+                shadow-blur: 32px;
+                shadow-spread: 2px;
+            }
+            "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let dock = doc.create_element("dock");
+    doc.append_child(root, dock);
+
+    let map = engine.restyle_all(&doc);
+    let style = map.get(dock).unwrap();
+
+    assert_eq!(
+        style.box_shadow.len(),
+        1,
+        "custom shadow longhands must build a single shadow"
+    );
+    let sh = &style.box_shadow[0];
+    assert_eq!(sh.offset_y, 8.0, "shadow-offset-y must drive elevation");
+    assert_eq!(sh.blur_radius, 32.0, "shadow-blur must override the old hardcoded 2.0");
+    assert_eq!(sh.spread_radius, 2.0, "shadow-spread must be honored");
+    assert_eq!(sh.color.a, 102, "box-shadow-color alpha (0.40) must apply");
+    assert!(
+        sh.blur_radius > 2.0 && sh.offset_y > 0.0,
+        "elevation must be expressible — not the old tight glow (blur=2, offset=0)"
+    );
+}

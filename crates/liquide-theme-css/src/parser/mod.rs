@@ -44,6 +44,31 @@ impl ThemeParser {
         self.parse_str_with_filename(css, "<inline>".to_string())
     }
 
+    /// Parse a single CSS declaration (`name: value`) and return the converted
+    /// property set.
+    ///
+    /// This runs the *full* lightningcss property parser on the declaration, so
+    /// multi-token shorthands (e.g. `box-shadow: 0 8px 32px rgba(0,0,0,.5)`) are
+    /// expanded into their structured `PropertyValue` (e.g.
+    /// [`PropertyValue::BoxShadow`]) and longhands — exactly as if the
+    /// declaration had appeared in a stylesheet. This is what the style engine
+    /// uses to re-parse `var()`-substituted shorthand values, which the
+    /// single-value inline parser cannot handle.
+    ///
+    /// Returns `None` if the declaration does not parse or yields no recognized
+    /// property for `name`.
+    pub fn parse_declaration(&self, name: &str, value: &str) -> Option<PropertySet> {
+        // Wrap in a trivial rule so lightningcss applies its real property
+        // grammar (not our single-value inline fallback).
+        let css = format!("x{{{}:{}}}", name, value);
+        let sheet = self.parse_str(&css).ok()?;
+        let props = sheet.rules().first().map(|rule| rule.properties.clone())?;
+        if props.iter().next().is_none() {
+            return None;
+        }
+        Some(props)
+    }
+
     /// Parse CSS from a file.
     pub fn parse_file<P: AsRef<Path>>(&self, path: P) -> Result<StyleSheet> {
         let path = path.as_ref();

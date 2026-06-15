@@ -131,6 +131,32 @@ fn stop_position_to_unit(position: &GradientStopPosition) -> Option<f32> {
     }
 }
 
+/// Return a mutable reference to the element's primary box-shadow spec,
+/// creating a default one if none exists yet.
+///
+/// Used by the custom shadow longhands (`box-shadow-color`, `shadow-offset-*`,
+/// `shadow-blur`, `shadow-spread`) so they can each contribute to one shared
+/// shadow regardless of cascade application order. The default starts at
+/// offset 0 / blur 0 (a no-op until a property gives it real extent), so a
+/// theme can build up an elevated shadow from the companion longhands.
+fn primary_box_shadow(
+    style: &mut ComputedStyle,
+) -> &mut liquide_compositor::scene::BoxShadowSpec {
+    if style.box_shadow.is_empty() {
+        style
+            .box_shadow
+            .push(liquide_compositor::scene::BoxShadowSpec {
+                offset_x: 0.0,
+                offset_y: 0.0,
+                blur_radius: 0.0,
+                spread_radius: 0.0,
+                color: Color::new(0, 0, 0, 255),
+                inset: false,
+            });
+    }
+    &mut style.box_shadow[0]
+}
+
 impl StyleEngine {
     pub(crate) fn apply_cascaded_property(
         &self,
@@ -203,7 +229,26 @@ impl StyleEngine {
         // ── var() resolution ──
         if let liquide_theme_css::value::PropertyValue::Keyword(kw) = val {
             if kw.contains("var(") {
-                if let Some(resolved) = self.resolve_var_in_value(kw, scope_vars) {
+                // First substitute all var()/env() references into a plain string.
+                if let Some(resolved_str) = self.resolve_var_to_string(kw, scope_vars) {
+                    // For multi-token shorthands (box-shadow, etc.) the single-value
+                    // inline parser cannot represent the result (it collapses to a
+                    // Keyword). Re-run the FULL lightningcss property parser so the
+                    // substituted text yields a real structured value
+                    // (e.g. PropertyValue::BoxShadow with offset/blur/spread).
+                    if let Some(props) =
+                        liquide_theme_css::ThemeParser::new().parse_declaration(key, &resolved_str)
+                    {
+                        for (prop_key, prop_val) in props.iter() {
+                            // Avoid infinite recursion: the parsed value is concrete
+                            // (no var()), so apply directly.
+                            self.apply_single_property(prop_key, prop_val, style, scope_vars);
+                        }
+                        return;
+                    }
+                    // Fall back to the inline single-value parser (numbers, colors,
+                    // keywords) when the property has no full-grammar parse.
+                    let resolved = crate::value_resolve::parse_inline_value(&resolved_str);
                     self.apply_single_property(key, &resolved, style, scope_vars);
                     return;
                 }
@@ -599,27 +644,38 @@ impl StyleEngine {
                     style.x_glass_tint = Some(c);
                 }
             }
-            // Standard box-shadow-color shorthand (non-standard, used in themes)
-            "box-shadow-color" => {
+            // ── Custom shadow longhands (non-standard, used in themes) ──
+            //
+            // These let a theme express a full elevated drop-shadow without the
+            // standard `box-shadow` shorthand grammar:
+            //   box-shadow-color / shadow-color  → shadow color
+            //   shadow-offset-x / shadow-offset-y → shadow offset (elevation)
+            //   shadow-blur                       → blur radius
+            //   shadow-spread                     → spread radius
+            //
+            // Cascade order between these longhands is not guaranteed, so every
+            // arm mutates the SAME primary shadow spec (created on first touch).
+            // This is what makes elevation expressible: `box-shadow-color` no
+            // longer hardcodes blur=2/offset=0 — it honors any companion
+            // offset/blur/spread set on the element. (The standard
+            // `box-shadow:` shorthand, now also reachable via var(), remains the
+            // preferred path; the parser emits these same longhands for it.)
+            "box-shadow-color" | "shadow-color" => {
                 if let Some(c) = resolve_color_with_current(val, style.color) {
-                    // Store as a single zero-offset shadow with only the color set.
-                    if style.box_shadow.is_empty() {
-                        style
-                            .box_shadow
-                            .push(liquide_compositor::scene::BoxShadowSpec {
-                                offset_x: 0.0,
-                                offset_y: 0.0,
-                                blur_radius: 2.0,
-                                spread_radius: 0.0,
-                                color: c,
-                                inset: false,
-                            });
-                    } else {
-                        for sh in &mut style.box_shadow {
-                            sh.color = c;
-                        }
-                    }
+                    primary_box_shadow(style).color = c;
                 }
+            }
+            "shadow-offset-x" => {
+                primary_box_shadow(style).offset_x = resolve_number(val);
+            }
+            "shadow-offset-y" => {
+                primary_box_shadow(style).offset_y = resolve_number(val);
+            }
+            "shadow-blur" => {
+                primary_box_shadow(style).blur_radius = resolve_number(val);
+            }
+            "shadow-spread" => {
+                primary_box_shadow(style).spread_radius = resolve_number(val);
             }
             // titlebar-background (legacy compat — maps to x_custom)
             "titlebar-background" => {

@@ -48,6 +48,22 @@ impl StyleEngine {
         value: &str,
         scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
     ) -> Option<liquide_theme_css::value::PropertyValue> {
+        self.resolve_var_to_string(value, scope_vars)
+            .as_deref()
+            .map(parse_inline_value)
+    }
+
+    /// Resolve all `var()` / `env()` references and return the fully substituted
+    /// value *string* (without collapsing it to a single `PropertyValue`).
+    ///
+    /// Callers that need multi-token shorthands (e.g. `box-shadow`) re-run the
+    /// full property parser on this string instead of the single-value inline
+    /// parser, which can only represent one number/color/keyword.
+    pub(crate) fn resolve_var_to_string(
+        &self,
+        value: &str,
+        scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
+    ) -> Option<String> {
         let mut resolution_stack: Vec<String> = Vec::new();
         self.resolve_var_recursive(value, scope_vars, &mut resolution_stack)
     }
@@ -57,7 +73,7 @@ impl StyleEngine {
         value: &str,
         scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
         resolution_stack: &mut Vec<String>,
-    ) -> Option<liquide_theme_css::value::PropertyValue> {
+    ) -> Option<String> {
         let mut result = value.to_string();
         // Limit iterations to prevent runaway resolution (safety valve)
         let mut iterations = 0;
@@ -103,14 +119,9 @@ impl StyleEngine {
                 if let Some(fb) = fallback {
                     // Resolve fallback, but don't allow it to reference the cyclic variable
                     if fb.contains("var(") {
-                        if let Some(resolved_fb) =
+                        if let Some(fb_str) =
                             self.resolve_var_recursive(fb, scope_vars, resolution_stack)
                         {
-                            let fb_str = match resolved_fb {
-                                liquide_theme_css::value::PropertyValue::Keyword(k) => k,
-                                liquide_theme_css::value::PropertyValue::String(s) => s,
-                                other => format!("{}", other),
-                            };
                             result = format!("{}{}{}", &result[..start], fb_str, &rest[end + 1..]);
                         } else {
                             return None;
@@ -138,11 +149,7 @@ impl StyleEngine {
                                 self.resolve_var_recursive(kw, scope_vars, resolution_stack);
                             resolution_stack.pop();
                             match resolved {
-                                Some(pv) => match pv {
-                                    liquide_theme_css::value::PropertyValue::Keyword(k) => k,
-                                    liquide_theme_css::value::PropertyValue::String(s) => s,
-                                    other => format!("{}", other),
-                                },
+                                Some(s) => s,
                                 None => {
                                     if let Some(fb) = fallback {
                                         fb.to_string()
@@ -162,11 +169,7 @@ impl StyleEngine {
                                 self.resolve_var_recursive(s, scope_vars, resolution_stack);
                             resolution_stack.pop();
                             match resolved {
-                                Some(pv) => match pv {
-                                    liquide_theme_css::value::PropertyValue::Keyword(k) => k,
-                                    liquide_theme_css::value::PropertyValue::String(s) => s,
-                                    other => format!("{}", other),
-                                },
+                                Some(rs) => rs,
                                 None => {
                                     if let Some(fb) = fallback {
                                         fb.to_string()
@@ -189,12 +192,7 @@ impl StyleEngine {
                     resolution_stack.push(var_name.to_string());
                     let resolved_fb = self.resolve_var_recursive(fb, scope_vars, resolution_stack);
                     resolution_stack.pop();
-                    if let Some(resolved_fb) = resolved_fb {
-                        let fb_str = match resolved_fb {
-                            liquide_theme_css::value::PropertyValue::Keyword(k) => k,
-                            liquide_theme_css::value::PropertyValue::String(s) => s,
-                            other => format!("{}", other),
-                        };
+                    if let Some(fb_str) = resolved_fb {
                         result = format!("{}{}{}", &result[..start], fb_str, &rest[end + 1..]);
                     } else {
                         return None;
@@ -252,8 +250,10 @@ impl StyleEngine {
             result = format!("{}{}{}", &result[..start], replacement, &rest[end + 1..]);
         }
 
-        // Re-parse the resolved string
-        Some(parse_inline_value(&result))
+        // Return the fully substituted string; the caller decides whether to
+        // collapse it via the single-value inline parser or re-run the full
+        // property parser (needed for multi-token shorthands like box-shadow).
+        Some(result)
     }
 
     /// Resolve a CSS `env()` variable name to its value.
