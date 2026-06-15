@@ -14,3 +14,10 @@ liquide-authz-runtime.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
+# Test-only: the gating tests need `AuthLevel` to seed a catalog entry whose
+# required level is `NoAuth` (deterministically grantable without a credential
+# prompt). `AuthLevel` is intentionally NOT re-exported by liquide-authz-runtime
+# (it is not part of the facade's public surface), so the test depends on
+# liquide-authorization directly. Dev-only: production code still routes solely
+# through the authz-runtime facade.
+liquide-authorization.workspace = true

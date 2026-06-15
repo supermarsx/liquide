@@ -126,7 +126,8 @@ mod tests {
     use crate::{
         BatteryInfo, DisplayPower, InhibitGuard, PowerEvent, PowerState, StubPowerManager,
     };
-    use liquide_authz_runtime::{ActionCatalog, InMemoryAuditSink, Subject};
+    use liquide_authorization::AuthLevel;
+    use liquide_authz_runtime::{ActionCatalog, CatalogEntry, InMemoryAuditSink, Subject};
 
     /// A backend that counts how many times each gated op was invoked, so the
     /// negative-path tests can assert the backend was NEVER reached on a deny.
@@ -223,15 +224,39 @@ mod tests {
 
     /// A runtime whose four power ops are gated but `NoAuth`, so the facade
     /// returns `Granted` without any credential verification — i.e. the grant
-    /// path. (Pins all four gated explicitly so the test does not depend on the
-    /// catalog defaults that e-cat is concurrently editing.)
+    /// path.
+    ///
+    /// The runtime is built from a hand-seeded catalog (not the shipped
+    /// defaults) so all four entries are explicitly `gated = true` AND
+    /// `NoAuth`. This matters: under the *default* catalog, shutdown/reboot/
+    /// hibernate require `AuthLevel::AdminPassword`, which routes the gated path
+    /// into platform credential verification and therefore denies in a headless
+    /// test. `NoAuth` is the documented self-contained grant seam — the agent
+    /// grants it without a prompt (see `AuthorizationAgent::request_authorization`),
+    /// exercising the exact `is_granted()` branch in `enforce` that a real
+    /// credential grant would. Self-contained: does not depend on the shipped
+    /// catalog defaults (which other executors are concurrently editing) or on
+    /// any host credential state.
     fn granting_runtime() -> AuthorizationRuntime {
-        let mut rt = AuthorizationRuntime::with_defaults("tester");
-        rt.catalog_mut().set_gated(ACTION_SHUTDOWN, true);
-        rt.catalog_mut().set_gated(ACTION_REBOOT, true);
-        rt.catalog_mut().set_gated(ACTION_SUSPEND, true);
-        rt.catalog_mut().set_gated(ACTION_HIBERNATE, true);
-        rt
+        let mut catalog = ActionCatalog::new();
+        for (key, reverse_domain) in [
+            (ACTION_SHUTDOWN, "org.liquide.system.shutdown"),
+            (ACTION_REBOOT, "org.liquide.system.reboot"),
+            (ACTION_SUSPEND, "org.liquide.system.suspend"),
+            (ACTION_HIBERNATE, "org.liquide.system.hibernate"),
+        ] {
+            catalog.insert(
+                key,
+                CatalogEntry::new(
+                    reverse_domain,
+                    "test power op",
+                    "test power op",
+                    AuthLevel::NoAuth,
+                    true,
+                ),
+            );
+        }
+        AuthorizationRuntime::new("tester", catalog, Box::new(InMemoryAuditSink::new()))
     }
 
     #[test]
