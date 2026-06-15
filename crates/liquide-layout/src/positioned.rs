@@ -329,8 +329,53 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let content_x = x + border_left + pad_left;
     let content_y = y + border_top + pad_top;
 
-    // ── Create the positioned box ───────────────────────────────────────
-    let box_id = tree.alloc(node_id, box_type);
+    // ── Create (or reuse) the positioned box ────────────────────────────
+    //
+    // When an intrinsic-measurement pass ran (`needs_intrinsic`/sticky), it
+    // already allocated a box for `node_id` via `layout_block`, with the
+    // element's children laid out in local coordinates.  We REUSE that box as
+    // the canonical positioned box rather than allocating a second one and
+    // re-parenting the children.
+    //
+    // Re-using the box (instead of `tree.alloc` + steal) is what guarantees
+    // exactly ONE layout box per positioned node.  The previous approach left
+    // the intrinsic box orphaned in the flat `tree.boxes` Vec — never removed,
+    // still mapped to `node_id`, with its `border_rect` stuck at the local
+    // origin (0,0).  Any consumer that iterates the flat `boxes` list (the
+    // glass/blur extractor, the layout cache populator, etc.) then saw TWO
+    // boxes for the node and double-counted it — producing the duplicate
+    // glass panel at the viewport origin for every no-explicit-width
+    // fixed/absolute flex+blur surface (context menu, launcher, dock, …).
+    let box_id = match intrinsic_box {
+        Some(intrinsic_id) => {
+            // Reuse the intrinsic box: repurpose it as the positioned box.
+            // Its children are already laid out in local coords relative to
+            // the content origin, so they need no offset adjustment — the
+            // positioned box is itself the parent and carries the absolute
+            // content origin.
+            if let Some(b) = tree.get_mut(intrinsic_id) {
+                b.box_type = box_type;
+                // Reset fields that `layout_block` may have populated on the
+                // intrinsic box but that the canonical positioned box must
+                // start from defaults (matching the prior fresh-`alloc` box),
+                // so reuse doesn't introduce a spurious scroll container or a
+                // stale block baseline.
+                b.scroll_size = None;
+                b.scroll_offset = (0.0, 0.0);
+                b.baseline = None;
+                b.grid_col_tracks.clear();
+                b.grid_row_tracks.clear();
+                b.text_overflow_ellipsis = false;
+            }
+            // The intrinsic pass left `node_index[node_id]` pointing at this
+            // box; make that explicit so it stays canonical even if a nested
+            // flex/grid pass repointed it.
+            tree.set_node_box(node_id, intrinsic_id);
+            intrinsic_id
+        }
+        None => tree.alloc(node_id, box_type),
+    };
+
     if let Some(b) = tree.get_mut(box_id) {
         b.content_rect = Rect::new(content_x, content_y, content_w, content_h);
         b.padding_rect = Rect::new(
@@ -344,22 +389,10 @@ pub fn layout_positioned<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     }
 
     // ── Layout children within this positioned element ──────────────────
-    // If we already did intrinsic layout, steal children from that box.
-    // Otherwise, do a proper child layout now.
-    if let Some(intrinsic_id) = intrinsic_box {
-        // Intrinsic layout already laid out children in local coords.
-        // Just re-parent them into the positioned box — no offset needed
-        // because in the local coordinate model, children are always
-        // positioned relative to their parent's content area.
-        let child_ids: Vec<LayoutBoxId> = tree
-            .get(intrinsic_id)
-            .map(|b| b.children.clone())
-            .unwrap_or_default();
-        for child_id in child_ids {
-            tree.add_child(box_id, child_id);
-        }
-    } else {
-        // Lay out children in the content area of this box
+    // When we reused the intrinsic box, its children are already laid out.
+    // Otherwise (explicit width/height, no intrinsic pass), do a proper
+    // child layout now.
+    if intrinsic_box.is_none() {
         layout_children_in_positioned(
             doc,
             node_id,

@@ -1667,4 +1667,101 @@ mod tests {
             r.y
         );
     }
+
+    /// Regression (t71): a `position: fixed` flex element with NO explicit
+    /// `width` (e.g. the right-click context menu — `min-width` only) must
+    /// produce EXACTLY ONE layout box in the flat `tree.boxes` list, anchored
+    /// at its real position — never a leftover twin box at the local origin.
+    ///
+    /// Root cause history: `layout_positioned` ran an intrinsic-measurement
+    /// `layout_block` pass at local (0,0) to size the element, then allocated a
+    /// *second* canonical box and stole the children — but the orphaned
+    /// intrinsic box was never removed from `tree.boxes` and stayed mapped to
+    /// the same node with a `border_rect` at (0,0). Consumers that iterate the
+    /// flat `boxes` Vec (the glass/blur extractor, the layout cache) then saw
+    /// two boxes for the node and double-counted it, painting a duplicate
+    /// frosted-glass panel at the viewport origin for every fixed/absolute
+    /// flex+blur surface. The fix reuses the intrinsic box as the canonical
+    /// positioned box, guaranteeing one box per node.
+    #[test]
+    fn fixed_flex_no_width_has_single_box_at_anchor() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let menu = doc.create_element("context-menu");
+        let item1 = doc.create_element("menu-item");
+        let item2 = doc.create_element("menu-item");
+        doc.append_child(root, menu);
+        doc.append_child(menu, item1);
+        doc.append_child(menu, item2);
+
+        let mut style_engine = StyleEngine::new(
+            ViewportSize {
+                width: 1280.0,
+                height: 720.0,
+            },
+            16.0,
+        );
+        // Mirror the real menu: fixed, flex, NO width (only min-width), anchored
+        // at the click point, with a blur backdrop. `needs_intrinsic` is true,
+        // so the intrinsic-measurement pass runs — the exact trigger condition.
+        style_engine.add_stylesheet(
+            r#"
+            context-menu {
+                position: fixed;
+                display: flex;
+                flex-direction: column;
+                left: 640px;
+                top: 360px;
+                min-width: 180px;
+                backdrop-filter: blur(12px);
+            }
+            menu-item { height: 30px; }
+            "#,
+        );
+
+        let styles = style_engine.restyle_all(&doc);
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        // EXACTLY ONE box in the flat list references the menu node.
+        let menu_boxes: Vec<&LayoutBox> =
+            tree.boxes.iter().filter(|b| b.node == menu).collect();
+        assert_eq!(
+            menu_boxes.len(),
+            1,
+            "menu node must have exactly ONE layout box (no leaked intrinsic twin); \
+             found {} at rects {:?}",
+            menu_boxes.len(),
+            menu_boxes
+                .iter()
+                .map(|b| (b.border_rect.x, b.border_rect.y))
+                .collect::<Vec<_>>()
+        );
+
+        // The single box is the canonical one and sits at the anchor, not (0,0).
+        let canonical = tree.find_box_id_by_node(menu).expect("menu box");
+        let r = tree.absolute_border_rect(canonical);
+        assert!(
+            (r.x - 640.0).abs() < 1.0 && (r.y - 360.0).abs() < 1.0,
+            "menu box must be at its anchor (640,360), got ({},{})",
+            r.x,
+            r.y
+        );
+
+        // No box for the menu node anywhere at the origin (the stray twin).
+        let origin_twin = tree.boxes.iter().any(|b| {
+            b.node == menu && b.border_rect.x.abs() < 0.01 && b.border_rect.y.abs() < 0.01
+        });
+        assert!(
+            !origin_twin,
+            "no leftover menu box at local origin (0,0) is allowed"
+        );
+
+        // Sizing still works: min-width is honored.
+        assert!(
+            r.width >= 180.0 - 1.0,
+            "menu width must honor min-width:180, got {}",
+            r.width
+        );
+    }
 }
