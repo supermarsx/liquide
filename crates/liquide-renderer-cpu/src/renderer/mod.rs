@@ -54,13 +54,64 @@ pub(crate) struct CachedShadow {
 /// Maximum number of entries in the shadow mask cache before eviction.
 const MAX_SHADOW_CACHE: usize = 256;
 
-/// Upper bound (milliseconds) on how long a single `render()` will block
-/// waiting for already-in-flight glyph rasterizations to complete before
-/// painting text. This makes glyph presence deterministic for a given scene
-/// (identical atlas → byte-identical frame) without risking an unbounded hang
-/// if the font-worker thread stalls; on timeout the renderer falls back to the
-/// estimated-advance path exactly as it did before this seam existed.
+/// Upper bound (milliseconds) on how long the deterministic capture render
+/// ([`SoftwareRenderer::render`]) will block waiting for already-in-flight glyph
+/// rasterizations to complete before painting text. This makes glyph presence
+/// deterministic for a given scene (identical atlas → byte-identical frame)
+/// without risking an unbounded hang if the font-worker thread stalls; on
+/// timeout the renderer falls back to the estimated-advance path exactly as it
+/// did before this seam existed.
 const GLYPH_DRAIN_BUDGET_MS: u64 = 2_000;
+
+/// Per-frame glyph-drain budget (milliseconds) for the **live** render path
+/// ([`SoftwareRenderer::render_live`] with [`RenderMode::LiveFull`]).
+///
+/// The live desktop loop runs a single render job in flight, so any time the
+/// render thread spends block-draining glyphs is a direct present stall. Unlike
+/// the capture path (which may block up to [`GLYPH_DRAIN_BUDGET_MS`] for
+/// determinism), the live path commits whatever glyphs have arrived within this
+/// tiny budget and signals `has_pending_glyphs` so the session schedules a
+/// follow-up frame — text fills in within a frame or two instead of freezing
+/// the desktop. Kept far below the 500 ms render watchdog so a single live
+/// frame can never trip it (t68 cause #1 / C2).
+const LIVE_GLYPH_DRAIN_BUDGET_MS: u64 = 4;
+
+/// Selects how a render call resolves not-yet-rasterized glyphs.
+///
+/// This is the seam between the deterministic capture path and the responsive
+/// live path. The variant ONLY controls the glyph-drain policy; the actual
+/// pixel-painting code is identical, so a fully-quiesced atlas renders the same
+/// bytes regardless of mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderMode {
+    /// Deterministic capture/headless render. Block-drains every in-flight
+    /// glyph (up to [`GLYPH_DRAIN_BUDGET_MS`]) before painting text so the
+    /// frame is byte-identical across runs. This is exactly the behaviour of
+    /// [`SoftwareRenderer::render`].
+    Capture,
+    /// Live full-scene render. Polls completed glyphs and waits at most
+    /// [`LIVE_GLYPH_DRAIN_BUDGET_MS`] for more, then paints with whatever is
+    /// ready (estimated advances / last-good for the rest) and sets
+    /// `has_pending_glyphs` so the caller requests another frame. Never blocks
+    /// for a perceptible duration.
+    LiveFull,
+    /// Live cursor-only render (the cheap pointer-move fast path). Does a pure
+    /// non-blocking poll of completed glyphs and NEVER waits — the cached scene
+    /// already has its glyphs, and a pointer move must not stall on text.
+    LiveCursor,
+}
+
+impl RenderMode {
+    /// Drain deadline for this mode, or `None` for a pure non-blocking poll.
+    fn drain_deadline(self) -> Option<std::time::Instant> {
+        let budget_ms = match self {
+            RenderMode::Capture => GLYPH_DRAIN_BUDGET_MS,
+            RenderMode::LiveFull => LIVE_GLYPH_DRAIN_BUDGET_MS,
+            RenderMode::LiveCursor => return None,
+        };
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(budget_ms))
+    }
+}
 
 // Re-export the Renderer trait from liquide-compositor so downstream crates
 // can import it from either location.
@@ -720,6 +771,107 @@ impl Renderer for SoftwareRenderer {
         fb: &mut FrameBuffer,
         damage: &DamageSet,
     ) -> liquide_compositor::RenderResult<Vec<DamageTile>> {
+        // The `render` trait entry is the DETERMINISTIC CAPTURE path. It MUST
+        // keep block-draining glyphs so the visual-test capture seam and the
+        // goldens stay byte-stable (e2e_temporal). The live desktop loop calls
+        // `render_live` instead (non-blocking). Do not change this to anything
+        // other than `RenderMode::Capture`.
+        self.render_with_mode(nodes, fb, damage, RenderMode::Capture)
+    }
+
+    fn blur_enabled(&self) -> bool {
+        self.blur_enabled
+    }
+
+    fn set_blur_enabled(&mut self, enabled: bool) {
+        self.blur_enabled = enabled;
+    }
+
+    fn has_pending_glyphs(&self) -> bool {
+        self.has_pending_glyphs
+    }
+
+    fn report_render_time(&mut self, ms: f64) {
+        let alpha = 0.1;
+        self.avg_render_ms = self.avg_render_ms * (1.0 - alpha) + ms * alpha;
+        if self.blur_enabled && self.avg_render_ms > self.blur_budget_ms {
+            self.blur_enabled = false;
+        } else if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.5 {
+            self.blur_enabled = true;
+        }
+    }
+
+    fn set_skeleton_window(&mut self, window_id: Option<u64>) {
+        self.skeleton_window = window_id;
+    }
+
+    fn get_quality_mode(&self) -> liquide_compositor::RenderQuality {
+        match self.lod_manager.get_performance_mode() {
+            crate::lod::PerformanceMode::Quality => liquide_compositor::RenderQuality::Quality,
+            crate::lod::PerformanceMode::Balanced => liquide_compositor::RenderQuality::Balanced,
+            crate::lod::PerformanceMode::Performance => {
+                liquide_compositor::RenderQuality::Performance
+            }
+        }
+    }
+
+    fn set_quality_mode(&mut self, mode: liquide_compositor::RenderQuality) {
+        let lod_mode = match mode {
+            liquide_compositor::RenderQuality::Quality => crate::lod::PerformanceMode::Quality,
+            liquide_compositor::RenderQuality::Balanced => crate::lod::PerformanceMode::Balanced,
+            liquide_compositor::RenderQuality::Performance => {
+                crate::lod::PerformanceMode::Performance
+            }
+        };
+        self.lod_manager.set_performance_mode(lod_mode);
+    }
+}
+
+impl SoftwareRenderer {
+    /// **Live, non-blocking render entry** for the desktop runtime.
+    ///
+    /// This is the responsive counterpart to the [`Renderer::render`] capture
+    /// path. It NEVER block-drains glyphs for a perceptible duration:
+    ///
+    /// - [`RenderMode::LiveFull`] polls completed glyphs and waits at most
+    ///   [`LIVE_GLYPH_DRAIN_BUDGET_MS`] (≪ the 500 ms render watchdog) for more,
+    ///   then paints with whatever is ready (estimated advances / last-good for
+    ///   the rest) and leaves `has_pending_glyphs()` set so the session can
+    ///   schedule a cheap follow-up frame — text fills in within a frame or two
+    ///   instead of stalling the desktop for up to 2 s.
+    /// - [`RenderMode::LiveCursor`] does a pure non-blocking poll and never
+    ///   waits at all — a pointer move must not stall on text glyphs requested
+    ///   by an earlier full frame.
+    ///
+    /// The capture path ([`Renderer::render`]) is intentionally left untouched
+    /// and still block-drains for determinism. Passing [`RenderMode::Capture`]
+    /// here is equivalent to calling `render`.
+    ///
+    /// Returns the per-tile damage classification exactly like `render`. Check
+    /// [`has_pending_glyphs`](Self::has_pending_glyphs) after the call: when it
+    /// is `true`, request another frame.
+    pub fn render_live(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage: &DamageSet,
+        mode: RenderMode,
+    ) -> liquide_compositor::RenderResult<Vec<DamageTile>> {
+        self.render_with_mode(nodes, fb, damage, mode)
+    }
+
+    /// Shared render body. The only behavioural difference between modes is how
+    /// not-yet-rasterized glyphs are drained (see [`RenderMode`]); the painting
+    /// code below is identical, so a fully-quiesced atlas produces byte-identical
+    /// output regardless of mode.
+    #[allow(unused_assignments)]
+    fn render_with_mode(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage: &DamageSet,
+        mode: RenderMode,
+    ) -> liquide_compositor::RenderResult<Vec<DamageTile>> {
         // Reset pending-glyph tracker for this frame.
         self.has_pending_glyphs = false;
 
@@ -731,21 +883,25 @@ impl Renderer for SoftwareRenderer {
 
         // Drain completed glyph rasterizations into the atlas.
         //
-        // DETERMINISM: glyphs are rasterised asynchronously on the font-worker
-        // thread, so a non-blocking poll commits only whatever happens to have
-        // arrived by now — a per-run race. Because text layout (word-wrap, pen
-        // advance) reads glyph advances out of the atlas, a partially populated
-        // atlas yields a *different layout and dropped/garbled glyphs every
-        // run*. Any glyph already requested on a prior pass (i.e. currently
-        // pending) MUST be in the atlas before this frame paints text, so we
-        // block-drain the outstanding pending set first. Newly-requested glyphs
-        // (this frame's first sighting of a run) are still resolved on the
-        // follow-up render pass, exactly as before; this only removes the
-        // timing race on glyphs already in flight. The deadline bounds the wait
-        // so a wedged worker can never hang the render loop.
-        let drain_deadline =
-            std::time::Instant::now() + std::time::Duration::from_millis(GLYPH_DRAIN_BUDGET_MS);
-        let rasterized = self.font_worker.drain_pending_blocking(drain_deadline);
+        // DETERMINISM (Capture mode): glyphs are rasterised asynchronously on
+        // the font-worker thread, so a non-blocking poll commits only whatever
+        // happens to have arrived by now — a per-run race. Because text layout
+        // (word-wrap, pen advance) reads glyph advances out of the atlas, a
+        // partially populated atlas yields a *different layout and
+        // dropped/garbled glyphs every run*. The capture path therefore
+        // block-drains the outstanding pending set first so the atlas is
+        // identical for an identical scene. The deadline bounds the wait so a
+        // wedged worker can never hang the render loop.
+        //
+        // LIVENESS (LiveFull / LiveCursor modes): the live desktop loop must not
+        // stall on glyphs, so it either waits a tiny budget (LiveFull) or not at
+        // all (LiveCursor), paints with whatever is ready, and relies on
+        // `has_pending_glyphs` (set while painting text) to request a follow-up
+        // frame. Any still-pending glyphs simply resolve on the next frame.
+        let rasterized = match mode.drain_deadline() {
+            Some(deadline) => self.font_worker.drain_pending_blocking(deadline),
+            None => self.font_worker.poll_results(),
+        };
         for glyph in &rasterized {
             let _ = self
                 .glyph_atlas
@@ -799,55 +955,6 @@ impl Renderer for SoftwareRenderer {
         Ok(self.classify_damage_tiles(nodes, damage, fb))
     }
 
-    fn blur_enabled(&self) -> bool {
-        self.blur_enabled
-    }
-
-    fn set_blur_enabled(&mut self, enabled: bool) {
-        self.blur_enabled = enabled;
-    }
-
-    fn has_pending_glyphs(&self) -> bool {
-        self.has_pending_glyphs
-    }
-
-    fn report_render_time(&mut self, ms: f64) {
-        let alpha = 0.1;
-        self.avg_render_ms = self.avg_render_ms * (1.0 - alpha) + ms * alpha;
-        if self.blur_enabled && self.avg_render_ms > self.blur_budget_ms {
-            self.blur_enabled = false;
-        } else if !self.blur_enabled && self.avg_render_ms < self.blur_budget_ms * 0.5 {
-            self.blur_enabled = true;
-        }
-    }
-
-    fn set_skeleton_window(&mut self, window_id: Option<u64>) {
-        self.skeleton_window = window_id;
-    }
-
-    fn get_quality_mode(&self) -> liquide_compositor::RenderQuality {
-        match self.lod_manager.get_performance_mode() {
-            crate::lod::PerformanceMode::Quality => liquide_compositor::RenderQuality::Quality,
-            crate::lod::PerformanceMode::Balanced => liquide_compositor::RenderQuality::Balanced,
-            crate::lod::PerformanceMode::Performance => {
-                liquide_compositor::RenderQuality::Performance
-            }
-        }
-    }
-
-    fn set_quality_mode(&mut self, mode: liquide_compositor::RenderQuality) {
-        let lod_mode = match mode {
-            liquide_compositor::RenderQuality::Quality => crate::lod::PerformanceMode::Quality,
-            liquide_compositor::RenderQuality::Balanced => crate::lod::PerformanceMode::Balanced,
-            liquide_compositor::RenderQuality::Performance => {
-                crate::lod::PerformanceMode::Performance
-            }
-        };
-        self.lod_manager.set_performance_mode(lod_mode);
-    }
-}
-
-impl SoftwareRenderer {
     fn classify_damage_tiles(
         &self,
         nodes: &[FlatNode],

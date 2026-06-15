@@ -30,7 +30,7 @@ pub mod text_layout;
 pub mod texture_cache;
 
 pub use liquide_compositor::Renderer;
-pub use renderer::{CursorTheme, SoftwareRenderer};
+pub use renderer::{CursorTheme, RenderMode, SoftwareRenderer};
 pub use text_layout::TextLayoutEngine;
 
 use thiserror::Error;

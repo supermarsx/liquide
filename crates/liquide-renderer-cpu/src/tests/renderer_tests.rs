@@ -203,6 +203,161 @@ fn identical_text_scene_renders_byte_identically_across_renderers() {
     assert!(a.iter().any(|&p| p != 0), "scene produced an all-zero framebuffer");
 }
 
+/// The live render entry must return PROMPTLY (no multi-second block-drain) and
+/// must signal pending glyphs so the session schedules a follow-up frame, while
+/// the deterministic capture entry stays byte-stable.
+///
+/// This is the t69-drain2 contract: `render_live` is the non-blocking live path
+/// (t68 cause #1 / C2), and `render` (capture) keeps block-draining for goldens.
+#[test]
+fn live_render_returns_promptly_with_pending_glyphs_then_quiesces() {
+    use std::time::{Duration, Instant};
+
+    let family = if fixture_font_bytes().is_some() {
+        "Arial"
+    } else {
+        ""
+    };
+    let text = "Open Terminal File Manager Settings";
+
+    let mut renderer = SoftwareRenderer::new();
+    let mut fb = FrameBuffer::new(256, 64, PixelFormat::Bgra8);
+    let mut damage = DamageSet::new(64);
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+
+    // First LiveFull frame: text is freshly requested, so glyphs are still in
+    // flight. The call must return well under the 500 ms render watchdog (it is
+    // budgeted at a few ms) and must flag pending glyphs so the caller asks for
+    // another frame.
+    let t0 = Instant::now();
+    renderer
+        .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveFull)
+        .unwrap();
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(250),
+        "live full render blocked for {elapsed:?} — it must not block-drain glyphs"
+    );
+    assert!(
+        renderer.has_pending_glyphs(),
+        "first live frame for fresh text must report pending glyphs to drive a follow-up frame"
+    );
+
+    // Follow-up LiveFull frames must also return promptly and eventually quiesce
+    // once the worker has rasterised everything (mirrors the session loop
+    // re-rendering while has_pending_glyphs() is true).
+    let mut quiesced = false;
+    for _ in 0..200 {
+        let t = Instant::now();
+        renderer
+            .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveFull)
+            .unwrap();
+        assert!(
+            t.elapsed() < Duration::from_millis(250),
+            "live full render must never block for a perceptible duration"
+        );
+        if !renderer.has_pending_glyphs() {
+            quiesced = true;
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        quiesced,
+        "live render never quiesced — pending glyphs were never resolved on follow-up frames"
+    );
+
+    // A LiveCursor frame is a pure non-blocking poll and must return immediately
+    // and never wait on text.
+    let t = Instant::now();
+    renderer
+        .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveCursor)
+        .unwrap();
+    assert!(
+        t.elapsed() < Duration::from_millis(100),
+        "cursor-only live render must never block"
+    );
+}
+
+/// The capture entry (`render`) and the live entry driven to quiescence
+/// (`render_live`) must converge on the SAME pixels for a fully-rasterised
+/// scene — the mode only controls glyph drain policy, not painting. This proves
+/// the live path does not perturb the deterministic capture output.
+#[test]
+fn capture_render_is_byte_deterministic_and_matches_quiesced_live() {
+    fn capture_to_quiescence(text: &str, family: &str) -> Vec<u8> {
+        let mut renderer = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(256, 64, PixelFormat::Bgra8);
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::TextGlyph,
+        });
+        for _ in 0..8 {
+            renderer
+                .render(&[text_node(text, family)], &mut fb, &damage)
+                .unwrap();
+            if !renderer.has_pending_glyphs() {
+                break;
+            }
+        }
+        fb.pixels().to_vec()
+    }
+
+    fn live_to_quiescence(text: &str, family: &str) -> Vec<u8> {
+        let mut renderer = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(256, 64, PixelFormat::Bgra8);
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::TextGlyph,
+        });
+        for _ in 0..400 {
+            renderer
+                .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveFull)
+                .unwrap();
+            if !renderer.has_pending_glyphs() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        // Intermediate live frames paint with estimated advances for glyphs that
+        // were not yet ready, leaving stale pixels in the reused buffer (the live
+        // session loop clears the damaged tiles each frame). Render the final,
+        // fully-quiesced frame into a CLEAN buffer so the comparison reflects the
+        // converged pixels, not leftovers from the fill-in frames.
+        let mut clean = FrameBuffer::new(256, 64, PixelFormat::Bgra8);
+        renderer
+            .render_live(&[text_node(text, family)], &mut clean, &damage, RenderMode::LiveFull)
+            .unwrap();
+        clean.pixels().to_vec()
+    }
+
+    let family = if fixture_font_bytes().is_some() {
+        "Arial"
+    } else {
+        ""
+    };
+    let text = "Open Terminal File Manager Settings";
+
+    let cap_a = capture_to_quiescence(text, family);
+    let cap_b = capture_to_quiescence(text, family);
+    assert_eq!(cap_a, cap_b, "capture render must be byte-deterministic");
+
+    let live = live_to_quiescence(text, family);
+    assert_eq!(
+        cap_a, live,
+        "quiesced live render must converge on the same pixels as the capture render"
+    );
+    assert!(cap_a.iter().any(|&p| p != 0), "scene produced an all-zero framebuffer");
+}
+
 #[test]
 fn renderer_options_disable_common_glyph_prewarm() {
     let mut renderer = SoftwareRenderer::with_options(SoftwareRendererOptions {
