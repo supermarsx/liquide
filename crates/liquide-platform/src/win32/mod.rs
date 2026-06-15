@@ -11,8 +11,9 @@ pub mod present_verify;
 
 pub use dxgi::{DxgiPresentCapabilities, DxgiPresentMode};
 pub use present_verify::{
-    compare_frames, encode_png_bgra, fill_dib_from_source, make_test_pattern, FrameComparison,
-    PresentPath, PresentVerifyMetrics,
+    changed_pixels_in_region, compare_frames, encode_png_bgra, evaluate_partial_present,
+    fill_dib_from_source, make_frame_with_cursor, make_test_pattern, FrameComparison,
+    PartialPresentCheck, PixelRect, PresentPath, PresentVerifyMetrics,
 };
 
 use std::cell::UnsafeCell;
@@ -91,6 +92,31 @@ struct WindowData {
     /// wndproc has no access to the Rust-side `WindowInfo`, so the live scale
     /// lives here) and read back through `WindowInfo::dpi_scale`.
     dpi_scale_bits: std::sync::atomic::AtomicU32,
+    /// Published handle to the live GDI off-screen back-buffer's memory DC, so
+    /// `WM_PAINT` can BitBlt the authoritative last-presented frame instead of
+    /// validating the update region without painting.
+    ///
+    /// The back-buffer is the single source of truth for the window's pixels
+    /// (every present — full OR cursor-only partial damage — composites the
+    /// whole frame into it and BitBlts it out). When the compositor / RDP client
+    /// asks the window to repaint a region (occlusion, focus, remote refresh)
+    /// between presents, replaying the back-buffer keeps that region correct;
+    /// without it the region keeps whatever the compositor last sampled, which
+    /// after a cursor-only present can be a stale cursor → smear/trail over RDP.
+    ///
+    /// Stored as the raw `HDC` value (an `isize`); `0` means "no back-buffer
+    /// yet — fall through to the default validate-only behaviour". Width/height
+    /// are published alongside so the paint blit copies the exact extent.
+    ///
+    /// SAFETY/threading: the message pump (wndproc) and the present path both
+    /// run on the window's owning thread, so the `HDC` is only ever touched on
+    /// that thread. The atomics exist solely to publish the value without
+    /// constructing a `&mut WindowData` in the reentrant wndproc.
+    backbuffer_dc: std::sync::atomic::AtomicIsize,
+    /// Width of the published back-buffer (see [`backbuffer_dc`]).
+    backbuffer_w: std::sync::atomic::AtomicU32,
+    /// Height of the published back-buffer (see [`backbuffer_dc`]).
+    backbuffer_h: std::sync::atomic::AtomicU32,
 }
 
 // ---------------------------------------------------------------------------
@@ -178,12 +204,48 @@ unsafe extern "system" fn wndproc(
         }
 
         ffi::WM_PAINT => {
-            // Must call BeginPaint/EndPaint to validate the update region.
+            // The off-screen GDI back-buffer is the authoritative copy of the
+            // last presented frame. When the compositor / RDP client asks us to
+            // repaint (occlusion, focus change, remote refresh) we MUST blit it
+            // back, otherwise the update region keeps whatever the compositor
+            // last sampled — which right after a cursor-only partial-damage
+            // present is a stale cursor, producing the mouse-move smear/trail
+            // over RDP. Replaying the whole back-buffer makes every repaint
+            // atomic and residue-free regardless of which present produced it.
             let mut ps = ffi::PAINTSTRUCT::default();
-            // SAFETY: BeginPaint/EndPaint are safe on a valid HWND during WM_PAINT.
-            // The PAINTSTRUCT is stack-allocated and properly initialized.
+            // SAFETY: BeginPaint/EndPaint are safe on a valid HWND during
+            // WM_PAINT. The PAINTSTRUCT is stack-allocated and zero-initialized.
             unsafe {
-                ffi::BeginPaint(hwnd, &mut ps);
+                let paint_dc = ffi::BeginPaint(hwnd, &mut ps);
+                // Read the published back-buffer (set by the present path on the
+                // same thread). `0` means no frame presented yet → just validate.
+                let bb_dc = wd
+                    .backbuffer_dc
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    as ffi::HDC;
+                if !paint_dc.is_null() && !bb_dc.is_null() {
+                    let w = wd
+                        .backbuffer_w
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let h = wd
+                        .backbuffer_h
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if w != 0 && h != 0 {
+                        // One BitBlt of the whole authoritative frame: atomic
+                        // from the compositor's view, no partial/stale region.
+                        ffi::BitBlt(
+                            paint_dc,
+                            0,
+                            0,
+                            w as i32,
+                            h as i32,
+                            bb_dc,
+                            0,
+                            0,
+                            ffi::SRCCOPY,
+                        );
+                    }
+                }
                 ffi::EndPaint(hwnd, &ps);
             }
             push_event!(PlatformEvent::WindowRedraw { handle });
@@ -916,6 +978,10 @@ impl NativeWindowHost for Win32WindowHost {
             cursor: std::sync::atomic::AtomicIsize::new(default_cursor as isize),
             // Seeded with the actual DPI just below (after the HWND exists).
             dpi_scale_bits: std::sync::atomic::AtomicU32::new(1.0f32.to_bits()),
+            // No back-buffer until the first GDI present publishes one.
+            backbuffer_dc: std::sync::atomic::AtomicIsize::new(0),
+            backbuffer_w: std::sync::atomic::AtomicU32::new(0),
+            backbuffer_h: std::sync::atomic::AtomicU32::new(0),
         });
 
         // Safety: CreateWindowExW creates a native Win32 window. All
@@ -1792,16 +1858,39 @@ impl PlatformBackend for Win32Platform {
                 None => true,
             };
             if needs_realloc {
+                // Un-publish the stale DC first so a concurrent WM_PAINT on this
+                // thread can never blit from a back-buffer we're about to drop.
+                info._data
+                    .backbuffer_dc
+                    .store(0, std::sync::atomic::Ordering::Release);
                 info.gdi_back_buffer = None;
                 info.gdi_back_buffer = GdiBackBuffer::create(window_hdc, width, height);
             }
 
             let Some(back_buffer) = info.gdi_back_buffer.as_ref() else {
+                info._data
+                    .backbuffer_dc
+                    .store(0, std::sync::atomic::Ordering::Release);
                 ffi::ReleaseDC(hwnd, window_hdc);
                 return Err(PlatformError::Presentation(
                     "failed to create GDI off-screen back-buffer".into(),
                 ));
             };
+
+            // Publish the back-buffer so WM_PAINT can replay the authoritative
+            // frame. Width/height are stored before the DC (release ordering on
+            // the DC publishes them) so a WM_PAINT that observes the DC also sees
+            // the matching extent.
+            info._data
+                .backbuffer_w
+                .store(back_buffer.width, std::sync::atomic::Ordering::Relaxed);
+            info._data
+                .backbuffer_h
+                .store(back_buffer.height, std::sync::atomic::Ordering::Relaxed);
+            info._data.backbuffer_dc.store(
+                back_buffer.mem_dc as isize,
+                std::sync::atomic::Ordering::Release,
+            );
 
             // Copy the frame into the off-screen DIB memory. Both source and
             // destination are top-down packed BGRA8 of identical dimensions, so

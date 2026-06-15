@@ -20,7 +20,8 @@
 #![cfg(target_os = "windows")]
 
 use liquide_platform::win32::present_verify::{
-    live, make_test_pattern, PresentPath, PresentVerifyMetrics,
+    evaluate_partial_present, live, make_frame_with_cursor, make_test_pattern, PixelRect,
+    PresentPath, PresentVerifyMetrics,
 };
 
 /// Read-back assertion (t64-rdp facility #1): present a known frame through the
@@ -91,6 +92,99 @@ fn live_gdi_self_test_n_distinct_frames_all_complete() {
         "metrics report an incomplete frame: {}",
         metrics.summary()
     );
+}
+
+/// PARTIAL-DAMAGE (cursor-move) present verification (t66-present): present a
+/// frame with the cursor at P1, then a frame with the cursor moved to P2 (P1
+/// cleared) through ONE reused off-screen back-buffer + atomic BitBlt — exactly
+/// as the production present path keeps a single `GdiBackBuffer` per window and
+/// re-fills + re-blits it on every present (full OR cursor-only). Read back the
+/// ACTUAL visible surface and assert it equals the cursor-moved frame: old cursor
+/// GONE at P1, new cursor PRESENT at P2, rest intact. Catches present-layer smear
+/// / residue (a stale region BitBlt would leave the old cursor at P1).
+#[test]
+fn live_gdi_partial_damage_cursor_move_no_smear() {
+    let (w, h) = (96u32, 72u32);
+    let bg = [10u8, 20, 30, 0xFF];
+    let cursor = [200u8, 210, 220, 0xFF];
+    let none = PixelRect { x: 0, y: 0, w: 0, h: 0 };
+    let p1 = PixelRect { x: 8, y: 8, w: 10, h: 10 };
+    let p2 = PixelRect { x: 60, y: 50, w: 10, h: 10 };
+
+    let frame_a = make_frame_with_cursor(w, h, bg, p1, cursor);
+    let frame_b = make_frame_with_cursor(w, h, bg, p2, cursor);
+    let background = make_frame_with_cursor(w, h, bg, none, cursor);
+
+    // Drive A then B through one reused back-buffer; read back the final surface.
+    let rt = live::present_sequence_offscreen(&[&frame_a, &frame_b], w, h)
+        .expect("partial-damage present sequence should succeed on a Windows host");
+
+    let check = evaluate_partial_present(&rt.readback, &frame_b, &background, w, h, p1, p2);
+    assert!(
+        check.comparison.is_complete(),
+        "visible surface must equal the cursor-moved frame: {:?}",
+        check.comparison
+    );
+    assert_eq!(
+        check.old_region_residue, 0,
+        "old cursor region must be clean (no smear/residue at present layer)"
+    );
+    assert!(
+        check.new_region_occupancy > 0,
+        "new cursor must be present at P2"
+    );
+    assert!(check.is_clean(), "partial-damage present must be clean");
+    // Byte-exact: the visible surface IS frame B.
+    assert_eq!(rt.readback, frame_b, "read-back != expected cursor-moved frame");
+}
+
+/// Multi-step cursor path (P1 -> P2 -> P3) through the reused back-buffer: after
+/// the last present only P3 is occupied; P1 and P2 are residue-free. Models the
+/// accumulation hazard where successive partial presents leave a trail.
+#[test]
+fn live_gdi_partial_damage_multi_step_no_trail() {
+    let (w, h) = (96u32, 72u32);
+    let bg = [5u8, 5, 5, 0xFF];
+    let cursor = [240u8, 240, 240, 0xFF];
+    let none = PixelRect { x: 0, y: 0, w: 0, h: 0 };
+    let p1 = PixelRect { x: 6, y: 6, w: 8, h: 8 };
+    let p2 = PixelRect { x: 40, y: 30, w: 8, h: 8 };
+    let p3 = PixelRect { x: 80, y: 60, w: 8, h: 8 };
+
+    let fa = make_frame_with_cursor(w, h, bg, p1, cursor);
+    let fb = make_frame_with_cursor(w, h, bg, p2, cursor);
+    let fc = make_frame_with_cursor(w, h, bg, p3, cursor);
+    let background = make_frame_with_cursor(w, h, bg, none, cursor);
+
+    let rt = live::present_sequence_offscreen(&[&fa, &fb, &fc], w, h)
+        .expect("multi-step present sequence should succeed");
+
+    // Each prior position must be residue-free; only P3 occupied.
+    let r1 = liquide_platform::win32::present_verify::changed_pixels_in_region(
+        &rt.readback,
+        &background,
+        w,
+        h,
+        p1,
+    );
+    let r2 = liquide_platform::win32::present_verify::changed_pixels_in_region(
+        &rt.readback,
+        &background,
+        w,
+        h,
+        p2,
+    );
+    let occ3 = liquide_platform::win32::present_verify::changed_pixels_in_region(
+        &rt.readback,
+        &background,
+        w,
+        h,
+        p3,
+    );
+    assert_eq!(r1, 0, "P1 must be clean after cursor moved away");
+    assert_eq!(r2, 0, "P2 must be clean after cursor moved away");
+    assert!(occ3 > 0, "cursor must be present at final position P3");
+    assert_eq!(rt.readback, fc, "final visible surface must equal last frame");
 }
 
 /// `is_remote_session()` must not panic; it simply reports whether this process

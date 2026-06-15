@@ -248,6 +248,148 @@ pub fn make_test_pattern(width: u32, height: u32, n: u32) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
+// Partial-damage (cursor-move) frame modelling (headless)
+// ---------------------------------------------------------------------------
+
+/// A rectangular region in pixels (used to model a cursor block / damage tile).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PixelRect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl PixelRect {
+    /// Clamp this rect to the `[0,width) x [0,height)` frame bounds.
+    #[must_use]
+    pub fn clamped(self, width: u32, height: u32) -> PixelRect {
+        let x = self.x.min(width);
+        let y = self.y.min(height);
+        PixelRect {
+            x,
+            y,
+            w: self.w.min(width - x),
+            h: self.h.min(height - y),
+        }
+    }
+}
+
+/// Build a full composited BGRA8 frame: a flat background with an opaque cursor
+/// block drawn at `cursor`. Models what the session hands the present path — the
+/// WHOLE frame, with the cursor at its current position and NO cursor anywhere
+/// else (the old position is already cleared in the framebuffer).
+///
+/// `bg` and `cursor_color` are `[B,G,R,A]`. Top-down packed BGRA8.
+#[must_use]
+pub fn make_frame_with_cursor(
+    width: u32,
+    height: u32,
+    bg: [u8; 4],
+    cursor: PixelRect,
+    cursor_color: [u8; 4],
+) -> Vec<u8> {
+    let w = width as usize;
+    let h = height as usize;
+    let mut buf = vec![0u8; w * h * BYTES_PER_PIXEL];
+    // Flat background.
+    for px in buf.chunks_exact_mut(BYTES_PER_PIXEL) {
+        px.copy_from_slice(&bg);
+    }
+    // Cursor block.
+    let c = cursor.clamped(width, height);
+    for y in c.y..c.y + c.h {
+        for x in c.x..c.x + c.w {
+            let i = ((y as usize) * w + x as usize) * BYTES_PER_PIXEL;
+            buf[i..i + BYTES_PER_PIXEL].copy_from_slice(&cursor_color);
+        }
+    }
+    buf
+}
+
+/// Count pixels inside `region` that differ between two equally-sized BGRA8
+/// frames (alpha-agnostic; compares B,G,R). Used to assert a region is residue-
+/// free (old cursor gone) or occupied (new cursor present) at the present layer.
+#[must_use]
+pub fn changed_pixels_in_region(
+    a: &[u8],
+    b: &[u8],
+    width: u32,
+    height: u32,
+    region: PixelRect,
+) -> u32 {
+    let w = width as usize;
+    let r = region.clamped(width, height);
+    let mut count = 0u32;
+    for y in r.y..r.y + r.h {
+        for x in r.x..r.x + r.w {
+            let i = ((y as usize) * w + x as usize) * BYTES_PER_PIXEL;
+            if i + 3 > a.len() || i + 3 > b.len() {
+                count = count.saturating_add(1);
+                continue;
+            }
+            if a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2] {
+                count = count.saturating_add(1);
+            }
+        }
+    }
+    let _ = height;
+    count
+}
+
+/// Outcome of a partial-damage (cursor-move) present verification: the visible
+/// read-back compared against the EXPECTED full composited frame, plus the
+/// residue (old-cursor region) and occupancy (new-cursor region) signatures.
+#[derive(Debug, Clone)]
+pub struct PartialPresentCheck {
+    /// Full-frame comparison: read-back vs expected (cursor-moved) frame.
+    pub comparison: FrameComparison,
+    /// Pixels in the OLD cursor region that still differ from the expected
+    /// (clean) frame — i.e. smear / residue left at the present layer. 0 == clean.
+    pub old_region_residue: u32,
+    /// Pixels in the NEW cursor region that differ from the clean background —
+    /// i.e. the new cursor actually landed. > 0 == cursor present.
+    pub new_region_occupancy: u32,
+}
+
+impl PartialPresentCheck {
+    /// True when the partial-damage present is atomic & residue-free: the whole
+    /// visible surface equals the expected cursor-moved frame, the old cursor is
+    /// gone, and the new cursor is present.
+    #[must_use]
+    pub fn is_clean(&self) -> bool {
+        self.comparison.is_complete() && self.old_region_residue == 0 && self.new_region_occupancy > 0
+    }
+}
+
+/// Compute a [`PartialPresentCheck`] from a presented read-back surface.
+///
+/// `readback` is what the visible surface actually shows after the cursor-move
+/// present. `expected` is the full frame with the cursor at the NEW position
+/// (old position cleared). `background` is the cursor-free frame (used to gauge
+/// occupancy / residue). `old`/`new` are the cursor regions before/after.
+#[must_use]
+pub fn evaluate_partial_present(
+    readback: &[u8],
+    expected: &[u8],
+    background: &[u8],
+    width: u32,
+    height: u32,
+    old: PixelRect,
+    new: PixelRect,
+) -> PartialPresentCheck {
+    PartialPresentCheck {
+        comparison: compare_frames(expected, readback, width, height),
+        // Residue: how much the OLD cursor region of the read-back still differs
+        // from the clean background (it should match the background == 0 diff).
+        old_region_residue: changed_pixels_in_region(readback, background, width, height, old),
+        // Occupancy: how much the NEW cursor region differs from the clean
+        // background (the cursor block should be there == many diffs).
+        new_region_occupancy: changed_pixels_in_region(readback, background, width, height, new),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Minimal PNG encoder (headless, no external deps)
 // ---------------------------------------------------------------------------
 
@@ -599,6 +741,91 @@ pub mod live {
         }
     }
 
+    /// Present a SEQUENCE of frames through ONE reused off-screen back-buffer
+    /// (mirroring production, which keeps a single `GdiBackBuffer` per window and
+    /// re-fills + re-blits it every present), reading back the visible surface
+    /// after the LAST frame.
+    ///
+    /// This is the partial-damage / cursor-move analogue of
+    /// [`present_and_readback`]: present frame A (cursor at P1), then frame B
+    /// (cursor at P2, P1 cleared) through the same back-buffer + BitBlt, then read
+    /// the actual presented pixels. The read-back must equal frame B exactly — if
+    /// a present left P1 stale (the live RDP smear bug), the read-back differs in
+    /// the old-cursor region and the check fails.
+    ///
+    /// # Safety
+    /// `target_dc` must be a valid DC at least `width` x `height` in extent. All
+    /// `frames` must be `width*height*4` packed top-down BGRA8.
+    pub unsafe fn present_sequence_readback_last(
+        target_dc: ffi::HDC,
+        frames: &[&[u8]],
+        width: u32,
+        height: u32,
+    ) -> Option<RoundTrip> {
+        if frames.is_empty() {
+            return None;
+        }
+        // One back-buffer reused for every frame — exactly as production does.
+        let mut back = unsafe { DibSurface::create(target_dc, width, height) }?;
+        for frame in frames {
+            if !unsafe { back.write_pixels(frame) } {
+                return None;
+            }
+            let ok = unsafe {
+                ffi::BitBlt(
+                    target_dc, 0, 0, width as i32, height as i32, back.mem_dc, 0, 0, ffi::SRCCOPY,
+                )
+            };
+            if ok == ffi::FALSE {
+                return None;
+            }
+        }
+        // Read back the ACTUAL visible surface after the last present.
+        let readback_surface = unsafe { DibSurface::create(target_dc, width, height) }?;
+        let ok = unsafe {
+            ffi::BitBlt(
+                readback_surface.mem_dc,
+                0,
+                0,
+                width as i32,
+                height as i32,
+                target_dc,
+                0,
+                0,
+                ffi::SRCCOPY,
+            )
+        };
+        if ok == ffi::FALSE {
+            return None;
+        }
+        let readback = unsafe { readback_surface.read_pixels() };
+        // The last frame is the authoritative expected result.
+        let last = frames[frames.len() - 1];
+        let comparison = compare_frames(last, &readback, width, height);
+        Some(RoundTrip { readback, comparison })
+    }
+
+    /// Self-contained (no window) partial-damage round-trip: present `frames` in
+    /// sequence through one reused off-screen back-buffer against an off-screen
+    /// memory DC, read back the final surface. Runs on any Windows host (CI-able).
+    #[must_use]
+    pub fn present_sequence_offscreen(
+        frames: &[&[u8]],
+        width: u32,
+        height: u32,
+    ) -> Option<RoundTrip> {
+        unsafe {
+            let screen_dc = ffi::GetDC(ptr::null_mut());
+            if screen_dc.is_null() {
+                return None;
+            }
+            let dest = DibSurface::create(screen_dc, width, height);
+            ffi::ReleaseDC(ptr::null_mut(), screen_dc);
+            let dest = dest?;
+            present_sequence_readback_last(dest.mem_dc, frames, width, height)
+        }
+    }
+
     /// Outcome of one frame in a live windowed capture.
     #[derive(Debug, Clone)]
     pub struct WindowedFrame {
@@ -732,6 +959,28 @@ pub mod live {
                     return None;
                 }
                 let result = present_and_readback(dc, source, width, height);
+                ffi::ReleaseDC(self.hwnd, dc);
+                result
+            }
+        }
+
+        /// Present a SEQUENCE of frames to this window through one reused
+        /// back-buffer (production-realistic), reading back the visible surface
+        /// after the LAST present. The partial-damage / cursor-move check for the
+        /// live RDP path: present cursor@P1 then cursor@P2 and verify the visible
+        /// surface equals the final frame (old cursor gone, no smear).
+        pub fn present_sequence_readback_last(
+            &self,
+            frames: &[&[u8]],
+            width: u32,
+            height: u32,
+        ) -> Option<RoundTrip> {
+            unsafe {
+                let dc = ffi::GetDC(self.hwnd);
+                if dc.is_null() {
+                    return None;
+                }
+                let result = present_sequence_readback_last(dc, frames, width, height);
                 ffi::ReleaseDC(self.hwnd, dc);
                 result
             }
@@ -907,6 +1156,92 @@ mod tests {
         assert_eq!(&png[20..24], &3u32.to_be_bytes());
         // Ends with IEND chunk.
         assert_eq!(&png[png.len() - 8..png.len() - 4], b"IEND");
+    }
+
+    // ── partial-damage (cursor-move) present verification ──────────────────
+
+    const BG: [u8; 4] = [10, 20, 30, 0xFF];
+    const CURSOR: [u8; 4] = [200, 210, 220, 0xFF];
+
+    #[test]
+    fn clean_cursor_move_present_is_clean() {
+        // Frame B (cursor moved P1 -> P2, P1 cleared) presented over Frame A.
+        let w = 64;
+        let h = 48;
+        let p1 = PixelRect { x: 4, y: 4, w: 8, h: 8 };
+        let p2 = PixelRect { x: 40, y: 30, w: 8, h: 8 };
+        let background = make_frame_with_cursor(w, h, BG, PixelRect { x: 0, y: 0, w: 0, h: 0 }, CURSOR);
+        let frame_b = make_frame_with_cursor(w, h, BG, p2, CURSOR);
+
+        // A correct atomic present makes the visible surface == frame_b exactly.
+        let readback = frame_b.clone();
+        let check = evaluate_partial_present(&readback, &frame_b, &background, w, h, p1, p2);
+        assert!(check.comparison.is_complete(), "read-back must equal expected frame");
+        assert_eq!(check.old_region_residue, 0, "old cursor region must be clean (no smear)");
+        assert!(check.new_region_occupancy > 0, "new cursor must be present");
+        assert!(check.is_clean());
+    }
+
+    #[test]
+    fn smeared_cursor_move_present_is_detected() {
+        // Model the BUG: the old-cursor region (P1) was NOT cleared on the
+        // partial present, leaving a stale cursor block → smear. The visible
+        // surface keeps the cursor at BOTH P1 and P2.
+        let w = 64;
+        let h = 48;
+        let p1 = PixelRect { x: 4, y: 4, w: 8, h: 8 };
+        let p2 = PixelRect { x: 40, y: 30, w: 8, h: 8 };
+        let background = make_frame_with_cursor(w, h, BG, PixelRect { x: 0, y: 0, w: 0, h: 0 }, CURSOR);
+        let frame_b = make_frame_with_cursor(w, h, BG, p2, CURSOR);
+
+        // Smeared read-back: start from the correct frame_b but stamp the stale
+        // cursor back at P1 (as if the present blitted a stale region).
+        let mut smeared = frame_b.clone();
+        for y in p1.y..p1.y + p1.h {
+            for x in p1.x..p1.x + p1.w {
+                let i = ((y as usize) * (w as usize) + x as usize) * BYTES_PER_PIXEL;
+                smeared[i..i + BYTES_PER_PIXEL].copy_from_slice(&CURSOR);
+            }
+        }
+        let check = evaluate_partial_present(&smeared, &frame_b, &background, w, h, p1, p2);
+        assert!(!check.comparison.is_complete(), "smear must break full-frame equality");
+        assert!(check.old_region_residue > 0, "smear must show as old-region residue");
+        assert!(!check.is_clean(), "smeared present must NOT be reported clean");
+    }
+
+    #[test]
+    fn changed_pixels_in_region_counts_only_region() {
+        let w = 16;
+        let h = 16;
+        let a = make_frame_with_cursor(w, h, BG, PixelRect { x: 0, y: 0, w: 0, h: 0 }, CURSOR);
+        let mut b = a.clone();
+        // Change exactly a 3x2 block at (5,6).
+        for y in 6..8 {
+            for x in 5..8 {
+                let i = ((y as usize) * (w as usize) + x as usize) * BYTES_PER_PIXEL;
+                b[i] ^= 0xFF;
+            }
+        }
+        // Counting INSIDE the changed block sees all 6 px.
+        let inside = changed_pixels_in_region(&a, &b, w, h, PixelRect { x: 5, y: 6, w: 3, h: 2 });
+        assert_eq!(inside, 6);
+        // Counting a disjoint region sees nothing.
+        let outside = changed_pixels_in_region(&a, &b, w, h, PixelRect { x: 0, y: 0, w: 4, h: 4 });
+        assert_eq!(outside, 0);
+    }
+
+    #[test]
+    fn make_frame_with_cursor_places_block_only_at_position() {
+        let w = 32;
+        let h = 32;
+        let pos = PixelRect { x: 10, y: 12, w: 4, h: 4 };
+        let frame = make_frame_with_cursor(w, h, BG, pos, CURSOR);
+        // Inside the block == cursor color.
+        let inside = ((12usize) * (w as usize) + 10) * BYTES_PER_PIXEL;
+        assert_eq!(&frame[inside..inside + 4], &CURSOR);
+        // A pixel well outside == background.
+        let outside = ((0usize) * (w as usize) + 0) * BYTES_PER_PIXEL;
+        assert_eq!(&frame[outside..outside + 4], &BG);
     }
 
     #[test]

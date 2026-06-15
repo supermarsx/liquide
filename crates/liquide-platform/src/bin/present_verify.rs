@@ -30,7 +30,8 @@ fn main() {
 #[cfg(target_os = "windows")]
 fn main() {
     use liquide_platform::win32::present_verify::{
-        encode_png_bgra, live, make_test_pattern, PresentPath, PresentVerifyMetrics,
+        encode_png_bgra, evaluate_partial_present, live, make_frame_with_cursor, make_test_pattern,
+        PixelRect, PresentPath, PresentVerifyMetrics,
     };
     use std::fmt::Write as _;
     use std::fs;
@@ -120,8 +121,70 @@ fn main() {
 
     let _ = writeln!(report, "----");
     let _ = writeln!(report, "metrics: {}", metrics.summary());
-    let verdict = if all_complete && !captured.is_empty() {
-        "ALL FRAMES COMPLETE — present path is atomic (no tearing/partial/missing rows)"
+
+    // ── PARTIAL-DAMAGE (cursor-move) live check (t66-present) ─────────────────
+    // The full-frame loop above proves whole-frame presents are atomic. This
+    // section proves the cursor-only / hover partial-damage present is ALSO
+    // smear-free over RDP: present cursor@P1, then cursor@P2 (P1 cleared) through
+    // one reused back-buffer (as production does), read back the visible surface,
+    // and assert the old cursor is GONE and the new cursor is PRESENT.
+    let _ = writeln!(report, "---- partial-damage (cursor-move) check ----");
+    let mut partial_ok = false;
+    {
+        let bg = [10u8, 20, 30, 0xFF];
+        let cursor_color = [200u8, 210, 220, 0xFF];
+        let none = PixelRect { x: 0, y: 0, w: 0, h: 0 };
+        match live::VerifyWindow::create(width, height, "liquide present-verify (cursor)") {
+            Some(window) => {
+                let (cw, ch) = window.client_size();
+                let (w, h) = if cw == 0 || ch == 0 { (width, height) } else { (cw, ch) };
+                let cs = (w.min(h) / 12).max(6);
+                let p1 = PixelRect { x: w / 8, y: h / 8, w: cs, h: cs };
+                let p2 = PixelRect {
+                    x: (w * 6 / 8).min(w.saturating_sub(cs)),
+                    y: (h * 6 / 8).min(h.saturating_sub(cs)),
+                    w: cs,
+                    h: cs,
+                };
+                let frame_a = make_frame_with_cursor(w, h, bg, p1, cursor_color);
+                let frame_b = make_frame_with_cursor(w, h, bg, p2, cursor_color);
+                let background = make_frame_with_cursor(w, h, bg, none, cursor_color);
+                window.pump_messages();
+                match window.present_sequence_readback_last(&[&frame_a, &frame_b], w, h) {
+                    Some(rt) => {
+                        window.pump_messages();
+                        let check =
+                            evaluate_partial_present(&rt.readback, &frame_b, &background, w, h, p1, p2);
+                        partial_ok = check.is_clean();
+                        let _ = writeln!(
+                            report,
+                            "cursor move P1({},{})->P2({},{}) cursor={}px : complete={} old_region_residue={} new_region_occupancy={} clean={}",
+                            p1.x, p1.y, p2.x, p2.y, cs,
+                            check.comparison.is_complete(),
+                            check.old_region_residue,
+                            check.new_region_occupancy,
+                            partial_ok,
+                        );
+                        // Dump the read-back so smear (if any) is visible.
+                        let png = encode_png_bgra(&rt.readback, w, h);
+                        let png_path = out_dir.join("cursor_move_readback.png");
+                        let _ = fs::write(&png_path, &png);
+                    }
+                    None => {
+                        let _ = writeln!(report, "cursor move: FAILED to present/read back");
+                    }
+                }
+            }
+            None => {
+                let _ = writeln!(report, "cursor move: FAILED to open verification window");
+            }
+        }
+    }
+
+    let verdict = if all_complete && !captured.is_empty() && partial_ok {
+        "ALL FRAMES COMPLETE + cursor-move partial-damage clean — present path is atomic (no tearing/partial/missing/smear)"
+    } else if !partial_ok {
+        "CURSOR-MOVE SMEAR/RESIDUE DETECTED — partial-damage present left the old cursor (see cursor-move line + cursor_move_readback.png)"
     } else {
         "INCOMPLETE FRAMES DETECTED — tearing / stale / missing rows (see torn_rows above)"
     };
@@ -136,7 +199,7 @@ fn main() {
     println!("report  : {}", report_path.display());
     println!("frames  : {}", out_dir.display());
 
-    if all_complete && !captured.is_empty() {
+    if all_complete && !captured.is_empty() && partial_ok {
         println!("PASS");
         std::process::exit(0);
     } else {
