@@ -4,6 +4,33 @@ use serde::{Deserialize, Serialize};
 
 use liquide_compositor::damage::DamageClass;
 
+/// Maximum allowed value for any single tile/grid dimension (pixels per axis).
+///
+/// Bounds frame-buffer width/height and grid `cols`/`rows` so that size
+/// products (`cols * rows`) computed below can never wrap a `u32` and
+/// under-allocate a buffer later indexed (memory-safety: t49-e7-F1). 16384
+/// comfortably exceeds 8K displays while keeping widened products small.
+pub const MAX_DIMENSION: u32 = 16384;
+
+/// Maximum allowed tile edge length (pixels). Real tiles are ~64 px; a value
+/// this large is already absurd, and `MAX_TILE_SIZE^2 * bpp` stays a modest,
+/// non-wrapping allocation. Larger tiles are clamped.
+pub const MAX_TILE_SIZE: u32 = 1024;
+
+/// Clamp a frame/grid dimension to [`MAX_DIMENSION`].
+#[inline]
+#[must_use]
+fn clamp_dim(value: u32) -> u32 {
+    value.min(MAX_DIMENSION)
+}
+
+/// Clamp a tile edge length to [`MAX_TILE_SIZE`].
+#[inline]
+#[must_use]
+fn clamp_tile(value: u32) -> u32 {
+    value.min(MAX_TILE_SIZE)
+}
+
 use crate::strategy::CompressionMethod;
 
 /// How a tile was encoded.
@@ -151,9 +178,16 @@ impl Default for TileConfig {
 
 impl TileConfig {
     /// Bytes per uncompressed tile.
+    ///
+    /// Clamped + `u64`-widened so a malformed `tile_size`/`bpp` cannot wrap and
+    /// produce an undersized allocation later indexed out of bounds
+    /// (memory-safety: t49-e7-F1).
     #[must_use]
     pub fn tile_bytes(&self) -> usize {
-        (self.tile_size * self.tile_size * self.bpp) as usize
+        let ts = u64::from(clamp_tile(self.tile_size));
+        let bpp = u64::from(self.bpp.min(16));
+        let bytes = ts.saturating_mul(ts).saturating_mul(bpp);
+        usize::try_from(bytes).unwrap_or(usize::MAX)
     }
 }
 
@@ -183,23 +217,30 @@ impl TileCodec {
         tx: u32,
         ty: u32,
     ) -> Vec<u8> {
-        let ts = self.config.tile_size;
-        let bpp = self.config.bpp;
+        let ts = clamp_tile(self.config.tile_size);
+        let bpp = self.config.bpp.min(16);
         let tile_bytes = self.config.tile_bytes();
         let mut buf = vec![0u8; tile_bytes];
 
-        let px_x = tx * ts;
-        let px_y = ty * ts;
+        // Saturating origin so a hostile tx/ty cannot wrap into a small offset.
+        let px_x = tx.saturating_mul(ts);
+        let px_y = ty.saturating_mul(ts);
 
         let rows = ts.min(fb_height.saturating_sub(px_y));
         let cols = ts.min(fb_width.saturating_sub(px_x));
         let row_bytes = cols as usize * bpp as usize;
 
         for row in 0..rows {
-            let src_off = ((px_y + row) * stride) as usize + px_x as usize * bpp as usize;
+            // Widened/saturating offset math; guard the copy against a src that
+            // runs past the supplied buffer (memory-safety: t49-e7-F1).
+            let src_off = (px_y as usize + row as usize)
+                .saturating_mul(stride as usize)
+                .saturating_add(px_x as usize * bpp as usize);
             let dst_off = row as usize * ts as usize * bpp as usize;
-            buf[dst_off..dst_off + row_bytes]
-                .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
+            if src_off + row_bytes <= pixels.len() && dst_off + row_bytes <= buf.len() {
+                buf[dst_off..dst_off + row_bytes]
+                    .copy_from_slice(&pixels[src_off..src_off + row_bytes]);
+            }
         }
 
         buf
@@ -226,26 +267,45 @@ impl TileGrid {
     /// Create a tile grid for the given frame buffer dimensions.
     #[must_use]
     pub fn new(fb_width: u32, fb_height: u32, config: TileConfig) -> Self {
-        let cols = fb_width.div_ceil(config.tile_size);
-        let rows = fb_height.div_ceil(config.tile_size);
+        // Clamp frame dims and guard zero tile size (div_ceil would panic) so
+        // cols/rows stay bounded and well-defined.
+        let fb_width = clamp_dim(fb_width);
+        let fb_height = clamp_dim(fb_height);
+        let tile_size = config.tile_size.max(1);
+        let cols = fb_width.div_ceil(tile_size);
+        let rows = fb_height.div_ceil(tile_size);
         Self { cols, rows, config }
     }
 
     /// Total number of tiles in the grid.
+    ///
+    /// Saturates instead of wrapping; for allocation sizing use
+    /// [`TileGrid::total_tiles_usize`].
     #[must_use]
     pub fn total_tiles(&self) -> u32 {
-        self.cols * self.rows
+        self.cols.saturating_mul(self.rows)
+    }
+
+    /// Total number of tiles as a `usize`, widened so it never wraps even when
+    /// `cols * rows` exceeds `u32::MAX`. Use this for allocation sizing.
+    #[must_use]
+    pub fn total_tiles_usize(&self) -> usize {
+        self.cols as usize * self.rows as usize
     }
 
     /// Convert a linear tile index to (tx, ty) coordinates.
     #[must_use]
     pub fn index_to_coords(&self, index: u32) -> (u32, u32) {
+        if self.cols == 0 {
+            return (0, 0);
+        }
         (index % self.cols, index / self.cols)
     }
 
-    /// Convert (tx, ty) to a linear tile index.
+    /// Convert (tx, ty) to a linear tile index, computed in `usize` so the
+    /// `ty * cols + tx` product cannot wrap into a small in-range-looking index.
     #[must_use]
-    pub fn coords_to_index(&self, tx: u32, ty: u32) -> u32 {
-        ty * self.cols + tx
+    pub fn coords_to_index(&self, tx: u32, ty: u32) -> usize {
+        ty as usize * self.cols as usize + tx as usize
     }
 }

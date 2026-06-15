@@ -71,7 +71,7 @@ pub use decoder::TileDecoder;
 pub use frame::{FrameAssembler, FrameResult};
 pub use presenter::{BufferPresenter, NullPresenter, Presenter};
 pub use stats::RenderStats;
-pub use surface::RenderSurface;
+pub use surface::{MAX_DIMENSION, MAX_PIXELS, RenderSurface};
 pub use swapchain::SwapChainPresenter;
 pub use video_decoder::{DecodedFrame, NullDecoder, VideoDecoder, make_decoder};
 

@@ -8,6 +8,19 @@ use liquide_encoder::strategy::CompressionMethod;
 use liquide_encoder::tile::{TileConfig, TileEncoding, TileUpdate};
 
 use crate::ClientRendererError;
+use crate::surface::MAX_DIMENSION;
+
+/// Number of grid slots for a `cols x rows` tile grid, computed with widened
+/// arithmetic so a malformed `cols`/`rows` cannot wrap a u32 and under-allocate
+/// the slot vector that is later indexed by `ty * cols + tx`
+/// (memory-safety: t49-e7-F1).
+#[inline]
+#[must_use]
+fn grid_slot_count(cols: u32, rows: u32) -> usize {
+    let cols = cols.min(MAX_DIMENSION) as usize;
+    let rows = rows.min(MAX_DIMENSION) as usize;
+    cols * rows
+}
 
 /// Decodes compressed tile updates back into raw pixel data.
 ///
@@ -27,7 +40,7 @@ impl TileDecoder {
     /// Create a new decoder for a grid of the given dimensions.
     #[must_use]
     pub fn new(cols: u32, rows: u32, config: TileConfig) -> Self {
-        let total = (cols * rows) as usize;
+        let total = grid_slot_count(cols, rows);
         let zero_tile: Arc<[u8]> = vec![0u8; config.tile_bytes()].into();
         Self {
             config,
@@ -164,7 +177,7 @@ impl TileDecoder {
     pub fn resize(&mut self, cols: u32, rows: u32) {
         self.cols = cols;
         self.rows = rows;
-        let total = (cols * rows) as usize;
+        let total = grid_slot_count(cols, rows);
         self.previous_tiles = vec![None; total];
         self.zero_tile = vec![0u8; self.config.tile_bytes()].into();
     }

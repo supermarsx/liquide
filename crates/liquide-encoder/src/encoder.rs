@@ -51,7 +51,7 @@ impl TileEncoder {
     #[must_use]
     pub fn new(fb_width: u32, fb_height: u32, config: TileConfig) -> Self {
         let grid = TileGrid::new(fb_width, fb_height, config.clone());
-        let total = grid.total_tiles() as usize;
+        let total = grid.total_tiles_usize();
         Self {
             codec: TileCodec::new(config),
             grid,
@@ -109,11 +109,11 @@ impl TileEncoder {
         // Use mem::take to avoid cloning prev_crcs (zero-copy swap).
         let mut current_crcs: Vec<u32> = std::mem::take(&mut self.prev_crcs);
         if current_crcs.is_empty() {
-            current_crcs = vec![0; self.grid.total_tiles() as usize];
+            current_crcs = vec![0; self.grid.total_tiles_usize()];
         }
         // Reuse current_tiles buffer
         self.current_tiles_buf.iter_mut().for_each(|s| *s = None);
-        let total_tiles = self.grid.total_tiles() as usize;
+        let total_tiles = self.grid.total_tiles_usize();
         let mut current_tiles = std::mem::take(&mut self.current_tiles_buf);
         if current_tiles.len() != total_tiles {
             current_tiles = vec![None; total_tiles];
@@ -124,7 +124,7 @@ impl TileEncoder {
         let prev_crc_for_tile: HashMap<usize, u32> = damage_tiles
             .iter()
             .map(|dt| {
-                let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+                let idx = self.grid.coords_to_index(dt.x, dt.y);
                 (idx, current_crcs[idx])
             })
             .collect();
@@ -132,7 +132,7 @@ impl TileEncoder {
         if damage_tiles.len() <= 2 {
             // Small number of tiles — not worth threading overhead.
             for dt in damage_tiles {
-                let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+                let idx = self.grid.coords_to_index(dt.x, dt.y);
                 let tile_data = self.codec.extract_tile(
                     fb.pixels(),
                     fb.stride,
@@ -156,7 +156,7 @@ impl TileEncoder {
             let work: Vec<(usize, u32, u32)> = damage_tiles
                 .iter()
                 .map(|dt| {
-                    let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+                    let idx = self.grid.coords_to_index(dt.x, dt.y);
                     (idx, dt.x, dt.y)
                 })
                 .collect();
@@ -224,7 +224,7 @@ impl TileEncoder {
 
         // Encode each damaged tile
         for dt in damage_tiles {
-            let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+            let idx = self.grid.coords_to_index(dt.x, dt.y);
             let empty_tile;
             let current = match current_tiles[idx].as_ref() {
                 Some(data) => data,
@@ -303,7 +303,7 @@ impl TileEncoder {
 
         // Update previous frame state — move current_crcs back and update prev_tiles
         for dt in damage_tiles {
-            let idx = self.grid.coords_to_index(dt.x, dt.y) as usize;
+            let idx = self.grid.coords_to_index(dt.x, dt.y);
             if let Some(tile_data) = current_tiles[idx].take() {
                 self.prev_tiles[idx] = tile_data;
             }
@@ -434,7 +434,7 @@ impl TileEncoder {
     pub fn resize(&mut self, fb_width: u32, fb_height: u32) {
         let config = self.codec.config().clone();
         self.grid = TileGrid::new(fb_width, fb_height, config.clone());
-        let total = self.grid.total_tiles() as usize;
+        let total = self.grid.total_tiles_usize();
         self.prev_crcs = vec![0; total];
         self.prev_tiles = vec![Vec::new(); total];
         self.codec = TileCodec::new(config);

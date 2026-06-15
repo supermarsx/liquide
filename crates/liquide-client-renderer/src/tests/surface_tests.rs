@@ -1,4 +1,4 @@
-use crate::surface::RenderSurface;
+use crate::surface::{MAX_DIMENSION, RenderSurface};
 use liquide_compositor::pixel::PixelFormat;
 
 #[test]
@@ -101,4 +101,80 @@ fn test_display() {
     let display = format!("{s}");
     assert!(display.contains("1920x1080"));
     assert!(display.contains("bgra8888"));
+}
+
+// --- Overflow / memory-safety regression tests (t49-e7-F1 / t65-shm) ---
+//
+// Prove hostile dimensions are rejected (collapsed to an empty surface), NOT
+// wrapped. The old code computed `width * height * bpp` as `u32 * u32` before
+// casting, so a huge width wrapped to a tiny allocation that later indexing
+// would write past (OOB / UB). With the fix, implausible/overflowing dims yield
+// a 0x0 surface with a 0-byte buffer, and the buffer length always matches
+// width*height*bpp — never an undersized wrapped value.
+
+#[test]
+fn new_surface_rejects_overflowing_width() {
+    let s = RenderSurface::new(u32::MAX, 4, PixelFormat::Bgra8);
+    assert_eq!(s.width(), 0, "implausible width must be rejected, not wrapped");
+    assert_eq!(s.height(), 0);
+    assert_eq!(s.byte_size(), 0);
+    assert_eq!(s.pixels().len(), s.byte_size());
+}
+
+#[test]
+fn new_surface_rejects_both_dimensions_overflow() {
+    let s = RenderSurface::new(u32::MAX, u32::MAX, PixelFormat::Bgra8);
+    assert_eq!(s.width(), 0);
+    assert_eq!(s.height(), 0);
+    assert_eq!(s.byte_size(), 0);
+}
+
+#[test]
+fn new_surface_rejects_oversized_within_axis_bound() {
+    // Each axis <= MAX_DIMENSION but the product blows the total-pixel budget.
+    let s = RenderSurface::new(MAX_DIMENSION, MAX_DIMENSION, PixelFormat::Bgra8);
+    assert_eq!(s.width(), 0);
+    assert_eq!(s.height(), 0);
+    assert_eq!(s.byte_size(), 0);
+}
+
+#[test]
+fn new_surface_accepts_plausible_max() {
+    let s = RenderSurface::new(3840, 2160, PixelFormat::Bgra8);
+    assert_eq!(s.width(), 3840);
+    assert_eq!(s.height(), 2160);
+    assert_eq!(s.byte_size(), 3840 * 2160 * 4);
+    assert_eq!(s.pixels().len(), s.byte_size());
+}
+
+#[test]
+fn resize_rejects_overflowing_dimensions() {
+    let mut s = RenderSurface::new(16, 16, PixelFormat::Bgra8);
+    s.resize(u32::MAX, u32::MAX);
+    assert_eq!(s.width(), 0);
+    assert_eq!(s.height(), 0);
+    assert_eq!(s.byte_size(), 0);
+    assert_eq!(s.pixels().len(), s.byte_size());
+}
+
+#[test]
+fn read_tile_overflowing_tile_size_does_not_wrap() {
+    let s = RenderSurface::new(64, 64, PixelFormat::Bgra8);
+    let buf = s.read_tile(0, 0, u32::MAX);
+    assert_eq!(buf.len(), 0, "implausible tile_size must collapse, not wrap");
+}
+
+#[test]
+fn write_tile_hostile_coords_do_not_panic_or_corrupt() {
+    let mut s = RenderSurface::new(64, 64, PixelFormat::Bgra8);
+    let data = vec![0xCDu8; 64 * 64 * 4];
+    // Off-screen tile coords: saturating offset math must not wrap into a valid
+    // region; the surface must be left untouched and the call must not panic.
+    let _ = s.write_tile(u32::MAX, u32::MAX, 64, &data);
+    assert!(
+        s.pixels().iter().all(|&b| b == 0),
+        "off-screen tile must not corrupt the surface"
+    );
+    // A partially in-range hostile tile_size must also not panic / OOB.
+    let _ = s.write_tile(0, 0, u32::MAX, &data);
 }

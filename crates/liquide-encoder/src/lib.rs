@@ -57,7 +57,10 @@ pub use fragment::{BatchFragment, FragmentError, fragment_batch, reassemble_batc
 pub use hash::crc32c;
 pub use header::CompressedTileHeader;
 pub use strategy::{CompressionMethod, EncodingStrategy, StrategyConfig, choose_strategy};
-pub use tile::{FrameStats, TileBatch, TileCodec, TileConfig, TileEncoding, TileGrid, TileUpdate};
+pub use tile::{
+    FrameStats, MAX_DIMENSION, MAX_TILE_SIZE, TileBatch, TileCodec, TileConfig, TileEncoding,
+    TileGrid, TileUpdate,
+};
 
 #[cfg(test)]
 mod tests;

@@ -164,6 +164,77 @@ fn tile_batch_compression_ratio() {
     assert_eq!(batch.dirty_count(), 2); // Full + Delta, not Skip
 }
 
+// --- Overflow / memory-safety regression tests (t49-e7-F1 / t65-shm) ---
+
+#[test]
+fn tile_bytes_does_not_wrap_on_huge_tile_size() {
+    let cfg = TileConfig {
+        tile_size: u32::MAX,
+        bpp: 4,
+    };
+    // Old: (u32::MAX * u32::MAX * 4) as usize -> wrapped tiny value.
+    // New: tile edge clamped to MAX_TILE_SIZE, widened -> bounded, non-wrapped.
+    let clamped = MAX_TILE_SIZE as usize;
+    assert_eq!(cfg.tile_bytes(), clamped * clamped * 4);
+}
+
+#[test]
+fn tile_bytes_clamps_huge_bpp() {
+    let cfg = TileConfig {
+        tile_size: 64,
+        bpp: u32::MAX,
+    };
+    // bpp clamped to a sane maximum (16) so it cannot blow up the product.
+    assert_eq!(cfg.tile_bytes(), 64usize * 64 * 16);
+}
+
+#[test]
+fn tile_grid_total_tiles_does_not_wrap() {
+    let cfg = TileConfig {
+        tile_size: 1,
+        bpp: 4,
+    };
+    let grid = TileGrid::new(u32::MAX, u32::MAX, cfg);
+    assert_eq!(grid.cols, MAX_DIMENSION);
+    assert_eq!(grid.rows, MAX_DIMENSION);
+    let expected = MAX_DIMENSION as usize * MAX_DIMENSION as usize;
+    assert_eq!(grid.total_tiles_usize(), expected);
+}
+
+#[test]
+fn tile_grid_new_handles_zero_tile_size() {
+    // tile_size 0 previously caused a divide-by-zero panic in div_ceil.
+    let cfg = TileConfig {
+        tile_size: 0,
+        bpp: 4,
+    };
+    let grid = TileGrid::new(128, 128, cfg);
+    assert_eq!(grid.cols, 128); // tile_size treated as 1
+    assert_eq!(grid.rows, 128);
+}
+
+#[test]
+fn coords_to_index_does_not_wrap() {
+    let grid = TileGrid::new(640, 480, TileConfig::default());
+    // ty * cols + tx computed in usize; large ty must not wrap a u32 product.
+    let idx = grid.coords_to_index(0, u32::MAX);
+    assert_eq!(idx, u32::MAX as usize * grid.cols as usize);
+}
+
+#[test]
+fn extract_tile_hostile_coords_do_not_panic() {
+    let cfg = TileConfig {
+        tile_size: 4,
+        bpp: 4,
+    };
+    let codec = TileCodec::new(cfg);
+    let pixels = vec![0u8; 8 * 8 * 4];
+    // Out-of-frame tile coords: must zero-pad, never panic / read OOB.
+    let tile = codec.extract_tile(&pixels, 8 * 4, 8, 8, u32::MAX, u32::MAX);
+    assert_eq!(tile.len(), 4 * 4 * 4);
+    assert!(tile.iter().all(|&b| b == 0));
+}
+
 #[test]
 fn tile_batch_total_payload_bytes() {
     let mut batch = TileBatch::new(1);
