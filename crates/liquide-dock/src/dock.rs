@@ -122,6 +122,101 @@ pub enum DockClickBehavior {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-hide mode
+// ---------------------------------------------------------------------------
+
+/// How the dock hides itself when not in use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AutoHideMode {
+    /// Dock is always shown; never hides.
+    Off,
+    /// Dock stays visible until a window overlaps its rectangle, then hides;
+    /// it reveals again when the cursor reaches the dock's screen edge.
+    OnOverlap,
+    /// Dock is always hidden and only reveals when the cursor reaches the
+    /// dock's screen edge (classic "auto-hide").
+    AlwaysHidden,
+}
+
+impl Default for AutoHideMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+impl fmt::Display for AutoHideMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Off => write!(f, "Off"),
+            Self::OnOverlap => write!(f, "OnOverlap"),
+            Self::AlwaysHidden => write!(f, "AlwaysHidden"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Item alignment
+// ---------------------------------------------------------------------------
+
+/// How items are distributed along the dock's main axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DockAlignment {
+    /// Items are packed together and centered on the screen edge (default,
+    /// macOS-style).
+    Centered,
+    /// Items are spread to fill the whole edge with equal gaps between them
+    /// (Windows-taskbar-style "justified").
+    Justified,
+}
+
+impl Default for DockAlignment {
+    fn default() -> Self {
+        Self::Centered
+    }
+}
+
+impl fmt::Display for DockAlignment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Centered => write!(f, "Centered"),
+            Self::Justified => write!(f, "Justified"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pinned app (serializable description)
+// ---------------------------------------------------------------------------
+
+/// A persistent description of a pinned application, suitable for saving in
+/// [`DockConfig`]. This is the serializable counterpart of a pinned
+/// [`DockItem`]; the runtime [`Dock`] materializes these into live items.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PinnedApp {
+    /// Application identifier (matches `DockItem::app_id`).
+    pub app_id: String,
+    /// Display label.
+    pub label: String,
+    /// Icon resource path or name.
+    pub icon: String,
+}
+
+impl PinnedApp {
+    /// Construct a new pinned app description.
+    pub fn new(
+        app_id: impl Into<String>,
+        label: impl Into<String>,
+        icon: impl Into<String>,
+    ) -> Self {
+        Self {
+            app_id: app_id.into(),
+            label: label.into(),
+            icon: icon.into(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Render config
 // ---------------------------------------------------------------------------
 
@@ -157,16 +252,51 @@ pub struct DockConfig {
     pub position: DockPosition,
     /// Base icon size in logical pixels.
     pub icon_size: u32,
+    /// Thickness of the dock perpendicular to its edge (height for top/bottom,
+    /// width for left/right), in logical pixels. When `None` the dock derives a
+    /// thickness from `icon_size + 2 * padding` (the historical behavior).
+    #[serde(default)]
+    pub thickness: Option<u32>,
+    /// Padding (in logical pixels) between the dock's edge/border and the items
+    /// along the cross axis, and at the two ends of the main axis.
+    #[serde(default = "default_padding")]
+    pub padding: f32,
+    /// Spacing (in logical pixels) between adjacent items along the main axis.
+    #[serde(default = "default_spacing")]
+    pub spacing: f32,
     /// Magnification scale factor when hovering (e.g. 1.5).
     pub magnification_factor: f32,
     /// Whether magnification is enabled.
     pub magnification_enabled: bool,
     /// Whether auto-hide is enabled.
+    ///
+    /// Retained for backward compatibility. The canonical control is
+    /// [`DockConfig::auto_hide_mode`]; `auto_hide == true` is equivalent to
+    /// [`AutoHideMode::AlwaysHidden`]. [`Dock::new`] reconciles the two so a
+    /// config that only sets `auto_hide` still behaves as expected.
     pub auto_hide: bool,
+    /// Auto-hide behavior (off / on-overlap / always-hidden). Takes precedence
+    /// over `auto_hide` when it is non-default; see [`Dock::new`].
+    #[serde(default)]
+    pub auto_hide_mode: AutoHideMode,
     /// Delay in ms before the dock hides after the cursor leaves.
     pub auto_hide_delay_ms: u64,
+    /// Width (in logical pixels) of the hot zone along the dock's edge that
+    /// triggers a reveal when auto-hide is active.
+    #[serde(default = "default_reveal_zone")]
+    pub reveal_zone: f32,
     /// Show running-app indicator dots.
     pub show_running_indicators: bool,
+    /// Show text labels next to/under each item.
+    #[serde(default)]
+    pub show_labels: bool,
+    /// How items are aligned along the main axis.
+    #[serde(default)]
+    pub alignment: DockAlignment,
+    /// Ordered list of pinned applications to materialize at startup. Empty by
+    /// default; the shell may supply its own pinned set programmatically.
+    #[serde(default)]
+    pub pinned_apps: Vec<PinnedApp>,
     /// Monitor display mode.
     pub monitor_mode: DockMonitorMode,
     /// Maximum recent items to keep.
@@ -175,20 +305,75 @@ pub struct DockConfig {
     pub click_running_behavior: DockClickBehavior,
 }
 
+fn default_padding() -> f32 {
+    8.0
+}
+
+fn default_spacing() -> f32 {
+    0.0
+}
+
+fn default_reveal_zone() -> f32 {
+    2.0
+}
+
 impl Default for DockConfig {
     fn default() -> Self {
         Self {
             position: DockPosition::Bottom,
             icon_size: 48,
+            thickness: None,
+            padding: default_padding(),
+            spacing: default_spacing(),
             magnification_factor: 1.5,
             magnification_enabled: true,
             auto_hide: false,
+            auto_hide_mode: AutoHideMode::Off,
             auto_hide_delay_ms: 500,
+            reveal_zone: default_reveal_zone(),
             show_running_indicators: true,
+            show_labels: false,
+            alignment: DockAlignment::Centered,
+            pinned_apps: Vec::new(),
             monitor_mode: DockMonitorMode::PrimaryOnly,
             max_recent_items: 10,
             click_running_behavior: DockClickBehavior::SmartToggle,
         }
+    }
+}
+
+impl DockConfig {
+    /// Resolve the effective auto-hide mode, reconciling the legacy `auto_hide`
+    /// boolean with the richer [`AutoHideMode`].
+    ///
+    /// If `auto_hide_mode` is non-default it wins. Otherwise a `true`
+    /// `auto_hide` maps to [`AutoHideMode::AlwaysHidden`] and `false` to
+    /// [`AutoHideMode::Off`].
+    #[must_use]
+    pub fn effective_auto_hide_mode(&self) -> AutoHideMode {
+        if self.auto_hide_mode != AutoHideMode::Off {
+            self.auto_hide_mode
+        } else if self.auto_hide {
+            AutoHideMode::AlwaysHidden
+        } else {
+            AutoHideMode::Off
+        }
+    }
+
+    /// The dock thickness (cross-axis size) in logical pixels, derived from
+    /// `thickness` if set or from `icon_size + 2 * padding` otherwise.
+    #[must_use]
+    pub fn effective_thickness(&self) -> f32 {
+        match self.thickness {
+            Some(t) => t as f32,
+            None => self.icon_size as f32 + self.padding,
+        }
+    }
+
+    /// Whether the dock lays out along the vertical axis (left/right edges).
+    #[must_use]
+    pub fn is_vertical(&self) -> bool {
+        matches!(self.position, DockPosition::Left | DockPosition::Right)
     }
 }
 
@@ -279,14 +464,26 @@ pub struct Dock {
     next_id: u32,
     /// `app_id` of the currently focused application (if any).
     focused_app: Option<String>,
+    /// Whether a window currently overlaps the dock rect (drives
+    /// [`AutoHideMode::OnOverlap`]). Updated by [`Dock::set_occluded`].
+    occluded: bool,
+    /// Whether the cursor is currently within the dock's reveal hot-zone or
+    /// over the revealed dock (drives the reveal state machine).
+    cursor_revealing: bool,
 }
 
 impl Dock {
     /// Create a new dock from the given configuration.
+    ///
+    /// Any [`PinnedApp`]s listed in `config.pinned_apps` are materialized into
+    /// live pinned items in order. The dock starts visible unless the effective
+    /// auto-hide mode is [`AutoHideMode::AlwaysHidden`].
     #[must_use]
     pub fn new(config: DockConfig) -> Self {
-        let visible = !config.auto_hide;
-        Self {
+        // Visible at startup unless we always start hidden.
+        let visible = config.effective_auto_hide_mode() != AutoHideMode::AlwaysHidden;
+        let pinned = config.pinned_apps.clone();
+        let mut dock = Self {
             config,
             items: Vec::new(),
             visible,
@@ -298,7 +495,13 @@ impl Dock {
             },
             next_id: 1,
             focused_app: None,
+            occluded: false,
+            cursor_revealing: false,
+        };
+        for app in pinned {
+            dock.add_pinned(app.app_id, app.label, app.icon);
         }
+        dock
     }
 
     /// Add a pinned application to the dock.
@@ -409,10 +612,81 @@ impl Dock {
         }
     }
 
+    /// Move a pinned item from one pinned position to another, shifting the
+    /// items in between (true list reorder, unlike the swap-based
+    /// [`Dock::reorder_pinned`]).
+    ///
+    /// This reorders the underlying item vector so that `items()` (and hence
+    /// the rendered/DOM order) reflects the new arrangement, then re-indexes
+    /// `pinned_position`. Out-of-range positions are a no-op.
+    pub fn move_pinned(&mut self, from_pos: usize, to_pos: usize) -> bool {
+        // Indices into `self.items` of pinned entries, in current order.
+        let pinned_idx: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.kind == DockItemKind::Pinned)
+            .map(|(idx, _)| idx)
+            .collect();
+        if from_pos >= pinned_idx.len() || to_pos >= pinned_idx.len() || from_pos == to_pos {
+            return false;
+        }
+        let src = pinned_idx[from_pos];
+        // Remove then reinsert at the target slot's underlying index.
+        let item = self.items.remove(src);
+        // After removal, recompute the destination underlying index.
+        let pinned_idx_after: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.kind == DockItemKind::Pinned)
+            .map(|(idx, _)| idx)
+            .collect();
+        let dst = if to_pos >= pinned_idx_after.len() {
+            // Insert after the last pinned item.
+            pinned_idx_after.last().map_or(0, |&i| i + 1)
+        } else {
+            pinned_idx_after[to_pos]
+        };
+        self.items.insert(dst, item);
+        self.reindex_pinned();
+        true
+    }
+
+    /// Materialize a new ordered pinned set from [`PinnedApp`] descriptions,
+    /// removing any currently-pinned items first. Running entries are left
+    /// untouched. Useful when applying a freshly loaded/edited config.
+    pub fn apply_pinned_apps(&mut self, apps: &[PinnedApp]) {
+        self.items.retain(|i| i.kind != DockItemKind::Pinned);
+        for app in apps {
+            self.add_pinned(app.app_id.clone(), app.label.clone(), app.icon.clone());
+        }
+    }
+
+    /// Snapshot the current pinned items as serializable [`PinnedApp`]s in
+    /// display order — suitable for persisting back into [`DockConfig`].
+    #[must_use]
+    pub fn pinned_apps(&self) -> Vec<PinnedApp> {
+        self.items
+            .iter()
+            .filter(|i| i.kind == DockItemKind::Pinned)
+            .map(|i| PinnedApp::new(i.app_id.clone(), i.label.clone(), i.icon.clone()))
+            .collect()
+    }
+
     /// All items in display order.
     #[must_use]
     pub fn items(&self) -> &[DockItem] {
         &self.items
+    }
+
+    /// Pinned items only, in display order.
+    #[must_use]
+    pub fn pinned_items(&self) -> Vec<&DockItem> {
+        self.items
+            .iter()
+            .filter(|i| i.kind == DockItemKind::Pinned)
+            .collect()
     }
 
     /// Look up an item by index.
@@ -428,60 +702,116 @@ impl Dock {
     }
 
     /// Compute the screen-space bounding rectangle for the dock.
+    ///
+    /// Honors [`DockConfig`]'s `position`, `icon_size`, `thickness`, `padding`,
+    /// `spacing` and `alignment`. For [`DockAlignment::Justified`] the dock
+    /// spans the entire screen edge; for [`DockAlignment::Centered`] it shrinks
+    /// to fit its items and is centered on the edge.
     #[must_use]
     pub fn compute_bounds(&self, screen: Rect) -> Rect {
-        let icon = self.config.icon_size as f32;
-        let count = self.items.len().max(1) as f32;
-        let pad = 8.0_f32; // horizontal/vertical padding around items
+        let thickness = self.config.effective_thickness();
+        let main_len = self.main_axis_length();
         match self.config.position {
             DockPosition::Bottom => {
-                let w = count * icon + pad * 2.0;
-                let x = screen.x + (screen.width - w) / 2.0;
-                Rect::new(x, screen.y + screen.height - icon - pad, w, icon + pad)
+                let (x, w) = self.main_axis_origin(screen.x, screen.width, main_len);
+                Rect::new(x, screen.y + screen.height - thickness, w, thickness)
             }
             DockPosition::Top => {
-                let w = count * icon + pad * 2.0;
-                let x = screen.x + (screen.width - w) / 2.0;
-                Rect::new(x, screen.y, w, icon + pad)
+                let (x, w) = self.main_axis_origin(screen.x, screen.width, main_len);
+                Rect::new(x, screen.y, w, thickness)
             }
             DockPosition::Left => {
-                let h = count * icon + pad * 2.0;
-                let y = screen.y + (screen.height - h) / 2.0;
-                Rect::new(screen.x, y, icon + pad, h)
+                let (y, h) = self.main_axis_origin(screen.y, screen.height, main_len);
+                Rect::new(screen.x, y, thickness, h)
             }
             DockPosition::Right => {
-                let h = count * icon + pad * 2.0;
-                let y = screen.y + (screen.height - h) / 2.0;
-                Rect::new(screen.x + screen.width - icon - pad, y, icon + pad, h)
+                let (y, h) = self.main_axis_origin(screen.y, screen.height, main_len);
+                Rect::new(screen.x + screen.width - thickness, y, thickness, h)
             }
         }
     }
 
-    /// Compute per-item bounding rectangles.
+    /// Compute per-item bounding rectangles, position- and alignment-aware.
+    ///
+    /// Items are laid out vertically for [`DockPosition::Left`]/`Right` and
+    /// horizontally for `Top`/`Bottom`. With [`DockAlignment::Centered`] items
+    /// are packed at the start of the content area (padding + spacing); with
+    /// [`DockAlignment::Justified`] they are spread evenly across the dock's
+    /// full main-axis extent.
     #[must_use]
     pub fn compute_item_rects(&self, screen: Rect) -> Vec<(usize, Rect)> {
         let icon = self.config.icon_size as f32;
-        let pad = 8.0_f32;
+        let pad = self.config.padding;
+        let spacing = self.config.spacing;
         let bounds = self.compute_bounds(screen);
-        let mut rects = Vec::new();
-        for (i, _item) in self.items.iter().enumerate() {
-            let rect = match self.config.position {
-                DockPosition::Bottom | DockPosition::Top => Rect::new(
-                    bounds.x + pad + i as f32 * icon,
-                    bounds.y + (bounds.height - icon) / 2.0,
-                    icon,
-                    icon,
-                ),
-                DockPosition::Left | DockPosition::Right => Rect::new(
-                    bounds.x + (bounds.width - icon) / 2.0,
-                    bounds.y + pad + i as f32 * icon,
-                    icon,
-                    icon,
-                ),
+        let vertical = self.config.is_vertical();
+        let count = self.items.len();
+
+        // Cross-axis position (centered within the dock thickness).
+        let cross = |bounds_cross_origin: f32, bounds_cross_size: f32| {
+            bounds_cross_origin + (bounds_cross_size - icon) / 2.0
+        };
+
+        // Determine per-item step along the main axis and the starting offset.
+        let (step, start) = if matches!(self.config.alignment, DockAlignment::Justified)
+            && count > 0
+        {
+            // Spread items across the available content length (bounds minus
+            // end padding on both sides), distributing leftover space evenly.
+            let main_extent = if vertical { bounds.height } else { bounds.width };
+            let content = (main_extent - pad * 2.0).max(icon * count as f32);
+            let step = if count > 1 {
+                (content - icon) / (count as f32 - 1.0)
+            } else {
+                0.0
+            };
+            (step, pad)
+        } else {
+            // Packed at the start with fixed spacing.
+            (icon + spacing, pad)
+        };
+
+        let mut rects = Vec::with_capacity(count);
+        for i in 0..count {
+            let main = start + i as f32 * step;
+            let rect = if vertical {
+                Rect::new(cross(bounds.x, bounds.width), bounds.y + main, icon, icon)
+            } else {
+                Rect::new(bounds.x + main, cross(bounds.y, bounds.height), icon, icon)
             };
             rects.push((i, rect));
         }
         rects
+    }
+
+    /// Main-axis length the dock content occupies (used for `Centered`).
+    fn main_axis_length(&self) -> f32 {
+        let icon = self.config.icon_size as f32;
+        let pad = self.config.padding;
+        let spacing = self.config.spacing;
+        let count = self.items.len().max(1) as f32;
+        // n icons + (n-1) gaps + padding at both ends.
+        count * icon + (count - 1.0).max(0.0) * spacing + pad * 2.0
+    }
+
+    /// Compute the dock's main-axis origin and length on its edge.
+    ///
+    /// Returns `(origin, length)` along the main axis, honoring alignment:
+    /// justified docks fill `screen_size`; centered docks use `content_len`
+    /// centered within the screen.
+    fn main_axis_origin(
+        &self,
+        screen_origin: f32,
+        screen_size: f32,
+        content_len: f32,
+    ) -> (f32, f32) {
+        match self.config.alignment {
+            DockAlignment::Justified => (screen_origin, screen_size),
+            DockAlignment::Centered => {
+                let len = content_len.min(screen_size);
+                (screen_origin + (screen_size - len) / 2.0, len)
+            }
+        }
     }
 
     /// Compute the magnified icon size for a given item based on hover distance.
@@ -505,6 +835,106 @@ impl Dock {
     pub fn set_auto_hide_state(&mut self, state: AutoHideState) {
         self.auto_hide_state = state;
         self.visible = matches!(state, AutoHideState::Visible | AutoHideState::Showing);
+    }
+
+    // ── Reveal state machine ─────────────────────────────────────────
+
+    /// Report whether a window currently overlaps the dock's rectangle.
+    ///
+    /// Drives [`AutoHideMode::OnOverlap`]: when something occludes the dock it
+    /// hides (unless the cursor is revealing it); when nothing overlaps it
+    /// shows again. No-op for other modes.
+    pub fn set_occluded(&mut self, occluded: bool) {
+        if self.occluded != occluded {
+            self.occluded = occluded;
+            self.update_auto_hide();
+        }
+    }
+
+    /// Whether a window is currently considered to overlap the dock.
+    #[must_use]
+    pub fn is_occluded(&self) -> bool {
+        self.occluded
+    }
+
+    /// Report that the cursor entered (`true`) or left (`false`) the dock's
+    /// reveal hot-zone (or the revealed dock itself).
+    ///
+    /// While revealing, the dock is shown regardless of mode/occlusion; once
+    /// the cursor leaves, the dock returns to the state dictated by its mode.
+    pub fn set_cursor_revealing(&mut self, revealing: bool) {
+        if self.cursor_revealing != revealing {
+            self.cursor_revealing = revealing;
+            self.update_auto_hide();
+        }
+    }
+
+    /// Whether the cursor is currently revealing the dock.
+    #[must_use]
+    pub fn is_cursor_revealing(&self) -> bool {
+        self.cursor_revealing
+    }
+
+    /// Determine whether a cursor position falls within the dock's reveal
+    /// hot-zone for the current screen, given the active auto-hide mode.
+    ///
+    /// The hot-zone is a `reveal_zone`-thick strip along the dock's anchored
+    /// edge **plus** the dock's own rectangle when it is currently visible (so
+    /// moving onto the revealed dock keeps it open). Returns `false` when
+    /// auto-hide is off.
+    #[must_use]
+    pub fn cursor_in_reveal_zone(&self, screen: Rect, cursor: (f32, f32)) -> bool {
+        if self.config.effective_auto_hide_mode() == AutoHideMode::Off {
+            return false;
+        }
+        let (cx, cy) = cursor;
+        let zone = self.config.reveal_zone.max(1.0);
+        let edge_hit = match self.config.position {
+            DockPosition::Bottom => cy >= screen.y + screen.height - zone,
+            DockPosition::Top => cy <= screen.y + zone,
+            DockPosition::Left => cx <= screen.x + zone,
+            DockPosition::Right => cx >= screen.x + screen.width - zone,
+        };
+        if edge_hit {
+            return true;
+        }
+        // Keep open while the cursor is over the (visible) dock body.
+        if self.visible {
+            let b = self.compute_bounds(screen);
+            return cx >= b.x && cx <= b.x + b.width && cy >= b.y && cy <= b.y + b.height;
+        }
+        false
+    }
+
+    /// Process a cursor-position sample and update the reveal state.
+    ///
+    /// Convenience wrapper combining [`Dock::cursor_in_reveal_zone`] with
+    /// [`Dock::set_cursor_revealing`]; returns the resulting visibility so the
+    /// caller can decide whether to redraw.
+    pub fn on_cursor_moved(&mut self, screen: Rect, cursor: (f32, f32)) -> bool {
+        let revealing = self.cursor_in_reveal_zone(screen, cursor);
+        self.set_cursor_revealing(revealing);
+        self.visible
+    }
+
+    /// Recompute the auto-hide state from the current mode, occlusion and
+    /// reveal inputs, transitioning the [`AutoHideState`] accordingly.
+    ///
+    /// Returns `true` if the visibility changed.
+    pub fn update_auto_hide(&mut self) -> bool {
+        let was_visible = self.visible;
+        let desired_visible = match self.config.effective_auto_hide_mode() {
+            AutoHideMode::Off => true,
+            AutoHideMode::AlwaysHidden => self.cursor_revealing,
+            AutoHideMode::OnOverlap => self.cursor_revealing || !self.occluded,
+        };
+        let state = if desired_visible {
+            AutoHideState::Visible
+        } else {
+            AutoHideState::Hidden
+        };
+        self.set_auto_hide_state(state);
+        self.visible != was_visible
     }
 
     /// Handle a hover event on a specific item index.
@@ -541,6 +971,27 @@ impl Dock {
     #[must_use]
     pub fn config(&self) -> &DockConfig {
         &self.config
+    }
+
+    /// Replace the active configuration at runtime.
+    ///
+    /// This re-evaluates auto-hide: switching to [`AutoHideMode::Off`] forces
+    /// the dock visible, while switching to [`AutoHideMode::AlwaysHidden`]
+    /// hides it (unless the cursor is currently revealing it). The pinned-app
+    /// list in the new config is **not** re-materialized — existing items are
+    /// preserved so live running state and ordering survive a settings change.
+    /// Use [`Dock::apply_pinned_apps`] explicitly to rebuild the pinned set.
+    pub fn set_config(&mut self, config: DockConfig) {
+        self.config = config;
+        // Re-evaluate visibility against the new mode.
+        match self.config.effective_auto_hide_mode() {
+            AutoHideMode::Off => {
+                self.set_auto_hide_state(AutoHideState::Visible);
+            }
+            AutoHideMode::OnOverlap | AutoHideMode::AlwaysHidden => {
+                self.update_auto_hide();
+            }
+        }
     }
 
     /// `app_id` of the currently focused application, if any.
@@ -1133,5 +1584,370 @@ mod tests {
         assert!(dock.item_at_index(0).is_some());
         assert_eq!(dock.item_at_index(0).unwrap().app_id, "x");
         assert!(dock.item_at_index(1).is_none());
+    }
+
+    // ── Position-aware item layout (each edge) ──────────────────────
+
+    const SCREEN: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1920.0,
+        height: 1080.0,
+    };
+
+    fn dock_with(position: DockPosition, n: usize) -> Dock {
+        let mut dock = Dock::new(DockConfig {
+            position,
+            icon_size: 48,
+            ..Default::default()
+        });
+        for i in 0..n {
+            dock.add_running(&format!("app{i}"));
+        }
+        dock
+    }
+
+    #[test]
+    fn test_item_rects_bottom_are_horizontal_row() {
+        let dock = dock_with(DockPosition::Bottom, 3);
+        let rects = dock.compute_item_rects(SCREEN);
+        assert_eq!(rects.len(), 3);
+        // x increases left→right, y constant near the bottom.
+        assert!(rects[0].1.x < rects[1].1.x);
+        assert!(rects[1].1.x < rects[2].1.x);
+        assert!((rects[0].1.y - rects[2].1.y).abs() < f32::EPSILON);
+        assert!(rects[0].1.y > 1000.0);
+        // Each item is icon_size square.
+        assert_eq!(rects[0].1.width, 48.0);
+        assert_eq!(rects[0].1.height, 48.0);
+    }
+
+    #[test]
+    fn test_item_rects_top_are_horizontal_row_at_top() {
+        let dock = dock_with(DockPosition::Top, 2);
+        let rects = dock.compute_item_rects(SCREEN);
+        assert!(rects[0].1.x < rects[1].1.x);
+        // Near the top of the screen.
+        assert!(rects[0].1.y < 50.0);
+    }
+
+    #[test]
+    fn test_item_rects_left_are_vertical_column() {
+        let dock = dock_with(DockPosition::Left, 3);
+        let rects = dock.compute_item_rects(SCREEN);
+        // y increases top→bottom, x constant near the left edge.
+        assert!(rects[0].1.y < rects[1].1.y);
+        assert!(rects[1].1.y < rects[2].1.y);
+        assert!((rects[0].1.x - rects[2].1.x).abs() < f32::EPSILON);
+        assert!(rects[0].1.x < 50.0);
+    }
+
+    #[test]
+    fn test_item_rects_right_are_vertical_column_at_right() {
+        let dock = dock_with(DockPosition::Right, 2);
+        let rects = dock.compute_item_rects(SCREEN);
+        assert!(rects[0].1.y < rects[1].1.y);
+        // Near the right edge.
+        assert!(rects[0].1.x > 1800.0);
+    }
+
+    // ── Size affects rects ──────────────────────────────────────────
+
+    #[test]
+    fn test_icon_size_affects_item_rects() {
+        let small = dock_with(DockPosition::Bottom, 2);
+        let mut big = Dock::new(DockConfig {
+            position: DockPosition::Bottom,
+            icon_size: 96,
+            ..Default::default()
+        });
+        big.add_running("app0");
+        big.add_running("app1");
+
+        let sr = small.compute_item_rects(SCREEN);
+        let br = big.compute_item_rects(SCREEN);
+        assert_eq!(sr[0].1.width, 48.0);
+        assert_eq!(br[0].1.width, 96.0);
+        // Larger icons => larger inter-item step.
+        let small_step = sr[1].1.x - sr[0].1.x;
+        let big_step = br[1].1.x - br[0].1.x;
+        assert!(big_step > small_step);
+    }
+
+    #[test]
+    fn test_thickness_affects_bounds() {
+        let mut dock = Dock::new(DockConfig {
+            position: DockPosition::Bottom,
+            thickness: Some(120),
+            ..Default::default()
+        });
+        dock.add_running("a");
+        let b = dock.compute_bounds(SCREEN);
+        assert_eq!(b.height, 120.0);
+        // Anchored to the bottom edge.
+        assert!((b.y + b.height - 1080.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_spacing_widens_layout() {
+        let mut tight = Dock::new(DockConfig {
+            position: DockPosition::Bottom,
+            spacing: 0.0,
+            ..Default::default()
+        });
+        let mut loose = Dock::new(DockConfig {
+            position: DockPosition::Bottom,
+            spacing: 20.0,
+            ..Default::default()
+        });
+        for d in [&mut tight, &mut loose] {
+            d.add_running("a");
+            d.add_running("b");
+        }
+        let ts = tight.compute_item_rects(SCREEN);
+        let ls = loose.compute_item_rects(SCREEN);
+        assert!((ls[1].1.x - ls[0].1.x) > (ts[1].1.x - ts[0].1.x));
+    }
+
+    // ── Alignment ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_justified_spans_full_edge() {
+        let mut dock = Dock::new(DockConfig {
+            position: DockPosition::Bottom,
+            alignment: DockAlignment::Justified,
+            ..Default::default()
+        });
+        dock.add_running("a");
+        dock.add_running("b");
+        let b = dock.compute_bounds(SCREEN);
+        assert_eq!(b.x, 0.0);
+        assert_eq!(b.width, 1920.0);
+        let rects = dock.compute_item_rects(SCREEN);
+        // First item near the left, last item near the right.
+        assert!(rects[0].1.x < 100.0);
+        assert!(rects[1].1.x > 1700.0);
+    }
+
+    #[test]
+    fn test_centered_is_narrower_than_screen() {
+        let mut dock = Dock::new(DockConfig {
+            position: DockPosition::Bottom,
+            alignment: DockAlignment::Centered,
+            ..Default::default()
+        });
+        dock.add_running("a");
+        let b = dock.compute_bounds(SCREEN);
+        assert!(b.width < 1920.0);
+        assert!(b.x > 0.0);
+    }
+
+    // ── Auto-hide modes & reveal state machine ──────────────────────
+
+    #[test]
+    fn test_effective_mode_from_bool() {
+        let off = DockConfig::default();
+        assert_eq!(off.effective_auto_hide_mode(), AutoHideMode::Off);
+        let legacy = DockConfig {
+            auto_hide: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            legacy.effective_auto_hide_mode(),
+            AutoHideMode::AlwaysHidden
+        );
+        let explicit = DockConfig {
+            auto_hide_mode: AutoHideMode::OnOverlap,
+            ..Default::default()
+        };
+        assert_eq!(explicit.effective_auto_hide_mode(), AutoHideMode::OnOverlap);
+    }
+
+    #[test]
+    fn test_always_hidden_reveal_toggles() {
+        let mut dock = Dock::new(DockConfig {
+            auto_hide_mode: AutoHideMode::AlwaysHidden,
+            ..Default::default()
+        });
+        assert!(!dock.is_visible());
+        // Cursor reaches the bottom edge → reveal.
+        let changed = dock.on_cursor_moved(SCREEN, (960.0, 1079.5));
+        assert!(changed);
+        assert!(dock.is_visible());
+        // Cursor moves away → hide again.
+        dock.on_cursor_moved(SCREEN, (960.0, 200.0));
+        assert!(!dock.is_visible());
+    }
+
+    #[test]
+    fn test_on_overlap_hides_only_when_occluded() {
+        let mut dock = Dock::new(DockConfig {
+            auto_hide_mode: AutoHideMode::OnOverlap,
+            ..Default::default()
+        });
+        dock.add_running("a");
+        assert!(dock.is_visible()); // nothing overlapping yet
+        dock.set_occluded(true);
+        assert!(!dock.is_visible());
+        // Cursor reveals even while occluded.
+        dock.set_cursor_revealing(true);
+        assert!(dock.is_visible());
+        dock.set_cursor_revealing(false);
+        assert!(!dock.is_visible());
+        // Window moves away → visible again.
+        dock.set_occluded(false);
+        assert!(dock.is_visible());
+    }
+
+    #[test]
+    fn test_reveal_zone_edge_detection_per_position() {
+        let bottom = Dock::new(DockConfig {
+            position: DockPosition::Bottom,
+            auto_hide_mode: AutoHideMode::AlwaysHidden,
+            ..Default::default()
+        });
+        assert!(bottom.cursor_in_reveal_zone(SCREEN, (5.0, 1079.0)));
+        assert!(!bottom.cursor_in_reveal_zone(SCREEN, (5.0, 5.0)));
+
+        let left = Dock::new(DockConfig {
+            position: DockPosition::Left,
+            auto_hide_mode: AutoHideMode::AlwaysHidden,
+            ..Default::default()
+        });
+        assert!(left.cursor_in_reveal_zone(SCREEN, (0.5, 500.0)));
+        assert!(!left.cursor_in_reveal_zone(SCREEN, (500.0, 500.0)));
+    }
+
+    #[test]
+    fn test_reveal_zone_off_when_mode_off() {
+        let dock = Dock::new(DockConfig::default());
+        assert!(!dock.cursor_in_reveal_zone(SCREEN, (960.0, 1079.5)));
+    }
+
+    #[test]
+    fn test_set_config_to_off_forces_visible() {
+        let mut dock = Dock::new(DockConfig {
+            auto_hide_mode: AutoHideMode::AlwaysHidden,
+            ..Default::default()
+        });
+        assert!(!dock.is_visible());
+        dock.set_config(DockConfig::default()); // mode Off
+        assert!(dock.is_visible());
+    }
+
+    // ── Pinning: add / remove / reorder ─────────────────────────────
+
+    #[test]
+    fn test_move_pinned_reorders_underlying_vec() {
+        let mut dock = default_dock();
+        dock.add_pinned("a", "A", "i");
+        dock.add_pinned("b", "B", "i");
+        dock.add_pinned("c", "C", "i");
+        // Move "a" (pos 0) to pos 2 → order becomes b, c, a.
+        assert!(dock.move_pinned(0, 2));
+        let order: Vec<&str> = dock.items().iter().map(|i| i.app_id.as_str()).collect();
+        assert_eq!(order, vec!["b", "c", "a"]);
+        // pinned_position re-indexed to match display order.
+        assert_eq!(dock.items()[0].pinned_position, Some(0));
+        assert_eq!(dock.items()[2].pinned_position, Some(2));
+    }
+
+    #[test]
+    fn test_move_pinned_noop_out_of_range() {
+        let mut dock = default_dock();
+        dock.add_pinned("a", "A", "i");
+        assert!(!dock.move_pinned(0, 5));
+        assert!(!dock.move_pinned(0, 0));
+    }
+
+    #[test]
+    fn test_pinned_apps_snapshot_roundtrip() {
+        let mut dock = default_dock();
+        dock.add_pinned("a", "A", "ia");
+        dock.add_pinned("b", "B", "ib");
+        dock.add_running("running-only");
+        let snap = dock.pinned_apps();
+        assert_eq!(snap.len(), 2); // running excluded
+        assert_eq!(snap[0].app_id, "a");
+        assert_eq!(snap[1].icon, "ib");
+
+        // Apply into a fresh dock reproduces the pinned set.
+        let mut other = default_dock();
+        other.apply_pinned_apps(&snap);
+        assert_eq!(other.pinned_items().len(), 2);
+        assert_eq!(other.pinned_items()[0].app_id, "a");
+    }
+
+    #[test]
+    fn test_config_pinned_apps_materialized_on_new() {
+        let config = DockConfig {
+            pinned_apps: vec![
+                PinnedApp::new("files", "Files", "folder"),
+                PinnedApp::new("term", "Terminal", "terminal"),
+            ],
+            ..Default::default()
+        };
+        let dock = Dock::new(config);
+        assert_eq!(dock.pinned_items().len(), 2);
+        assert_eq!(dock.items()[0].app_id, "files");
+    }
+
+    #[test]
+    fn test_apply_pinned_apps_replaces_existing() {
+        let mut dock = default_dock();
+        dock.add_pinned("old", "Old", "i");
+        dock.apply_pinned_apps(&[PinnedApp::new("new", "New", "i")]);
+        assert_eq!(dock.pinned_items().len(), 1);
+        assert_eq!(dock.pinned_items()[0].app_id, "new");
+    }
+
+    // ── Serde roundtrip of the extended config ──────────────────────
+
+    #[test]
+    fn test_config_serde_roundtrip_with_new_fields() {
+        let config = DockConfig {
+            position: DockPosition::Left,
+            thickness: Some(72),
+            padding: 12.0,
+            spacing: 6.0,
+            auto_hide_mode: AutoHideMode::OnOverlap,
+            show_labels: true,
+            alignment: DockAlignment::Justified,
+            pinned_apps: vec![PinnedApp::new("a", "A", "i")],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&config).expect("serialize");
+        let back: DockConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.position, DockPosition::Left);
+        assert_eq!(back.thickness, Some(72));
+        assert_eq!(back.alignment, DockAlignment::Justified);
+        assert_eq!(back.auto_hide_mode, AutoHideMode::OnOverlap);
+        assert!(back.show_labels);
+        assert_eq!(back.pinned_apps.len(), 1);
+    }
+
+    #[test]
+    fn test_config_deserialize_legacy_without_new_fields() {
+        // A config saved before the new fields existed must still load,
+        // falling back to defaults for the missing keys.
+        let legacy = r#"{
+            "position": "Bottom",
+            "icon_size": 48,
+            "magnification_factor": 1.5,
+            "magnification_enabled": true,
+            "auto_hide": false,
+            "auto_hide_delay_ms": 500,
+            "show_running_indicators": true,
+            "monitor_mode": "PrimaryOnly",
+            "max_recent_items": 10,
+            "click_running_behavior": "SmartToggle"
+        }"#;
+        let config: DockConfig = serde_json::from_str(legacy).expect("legacy deserialize");
+        assert_eq!(config.padding, 8.0);
+        assert_eq!(config.spacing, 0.0);
+        assert_eq!(config.alignment, DockAlignment::Centered);
+        assert_eq!(config.auto_hide_mode, AutoHideMode::Off);
+        assert!(config.pinned_apps.is_empty());
+        assert!(!config.show_labels);
     }
 }

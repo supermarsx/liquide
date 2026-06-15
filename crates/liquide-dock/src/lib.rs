@@ -10,8 +10,8 @@ pub mod dom;
 pub mod win32_dock;
 
 pub use dock::{
-    AutoHideState, Dock, DockClickBehavior, DockConfig, DockItem, DockItemKind, DockMonitorMode,
-    DockPosition, DockRenderConfig, DockThemeColors,
+    AutoHideMode, AutoHideState, Dock, DockAlignment, DockClickBehavior, DockConfig, DockItem,
+    DockItemKind, DockMonitorMode, DockPosition, DockRenderConfig, DockThemeColors, PinnedApp,
 };
 
 #[cfg(windows)]

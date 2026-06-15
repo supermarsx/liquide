@@ -16,3 +16,6 @@ tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 liquide-platform-win32 = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
