@@ -194,4 +194,20 @@ pub trait AppView: AppTextInput + AppContentProvider + Send {
     /// A stable reverse-DNS identifier of the backing app (for diagnostics /
     /// the shell's per-`app_id` styling fallbacks).
     fn app_id(&self) -> &str;
+
+    /// Advance the app's asynchronous state by one frame.
+    ///
+    /// The shell calls this once per frame for every live app window so apps
+    /// backed by an asynchronous source can drain pending output and surface it
+    /// in the next [`AppContentProvider::content_view`]. The canonical consumer
+    /// is the terminal: a real PTY echoes typed bytes asynchronously, so the
+    /// grid only reflects typed input after the terminal runtime drains the PTY
+    /// here (completing the t70-s6 terminal echo route).
+    ///
+    /// Returns `true` if the model changed and the window should be redrawn.
+    /// The default implementation is a no-op (`false`) so purely synchronous
+    /// apps (editor, files, settings, …) need not implement it.
+    fn tick(&mut self) -> bool {
+        false
+    }
 }

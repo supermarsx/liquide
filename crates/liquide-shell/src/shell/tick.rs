@@ -58,7 +58,17 @@ impl Shell {
         }
 
         // Status bar auto-hide based on cursor position and maximized windows
-        let auto_hide_dirty = self.update_status_bar_visibility();
+        let mut auto_hide_dirty = self.update_status_bar_visibility();
+
+        // Dock auto-hide (OnOverlap): hide when a window overlaps the dock rect.
+        if self.update_dock_occlusion() {
+            auto_hide_dirty = true;
+        }
+
+        // Drive each live app view's async state (t70-s6 terminal echo route):
+        // the terminal's PTY echoes typed bytes asynchronously, so per-frame
+        // `AppView::tick` drains the PTY and the grid repaints next frame.
+        let app_views_dirty = self.tick_app_views();
 
         // Tooltip: the canonical `liquide-tooltip` TooltipManager (t51-e9) is
         // driven from the shell's hover state. t51-e15 moved the single
@@ -76,10 +86,11 @@ impl Shell {
                 || !expired.is_empty()
                 || repatriation_dirty
                 || auto_hide_dirty
+                || app_views_dirty
                 || tooltip_visible,
             status_bar_dirty: bar_dirty,
             notifications_dirty: !expired.is_empty(),
-            windows_dirty: repatriation_dirty,
+            windows_dirty: repatriation_dirty || app_views_dirty,
             auto_hide_dirty,
         }
     }

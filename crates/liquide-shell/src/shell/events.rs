@@ -836,6 +836,19 @@ impl Shell {
             self.tooltip_text = None;
         }
 
+        // Auto-hide reveal: feed the cursor sample to the dock's reveal state
+        // machine. When the cursor reaches the dock's edge hot-zone (or stays
+        // over a revealed dock) the dock shows; leaving hides it again (subject
+        // to mode). A visibility flip needs a redraw + scene reflow so the
+        // `data-hidden` attr / placement updates (t72-dock follow-up §4). No-op
+        // when auto-hide is Off.
+        let dock_was_visible = self.dock.is_visible();
+        self.dock.on_cursor_moved(self.screen_rect, (x, y));
+        if self.dock.is_visible() != dock_was_visible {
+            need_redraw = true;
+            self.mark_window_scene_dirty();
+        }
+
         // Context menu hover
         if self.context_menu_visible {
             let menu_padding = self.menu_padding();

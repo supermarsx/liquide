@@ -25,6 +25,11 @@ use liquide_platform::window_host::NativeWindowHandle;
 struct FakeAppState {
     buffer: String,
     keys: Vec<String>,
+    /// Number of times the shell called `AppView::tick` on this view.
+    tick_count: u32,
+    /// Bytes the next `tick` should "echo" into the buffer (models an async PTY
+    /// that only surfaces output when the runtime is ticked).
+    pending_echo: String,
 }
 
 struct FakeApp {
@@ -61,6 +66,18 @@ impl AppContentProvider for FakeApp {
 impl AppView for FakeApp {
     fn app_id(&self) -> &str {
         "com.liquide.fake"
+    }
+
+    fn tick(&mut self) -> bool {
+        let mut s = self.state.lock().unwrap();
+        s.tick_count += 1;
+        if s.pending_echo.is_empty() {
+            return false;
+        }
+        // Drain the "async PTY" echo into the visible buffer.
+        let echo = std::mem::take(&mut s.pending_echo);
+        s.buffer.push_str(&echo);
+        true
     }
 }
 
@@ -178,6 +195,50 @@ fn factory_constructs_and_registers_on_open() {
     // An unbacked app gets no view (falls back to placeholder painting).
     let other = shell.open_app_window("com.liquide.browser");
     assert!(!shell.has_app_view(other));
+}
+
+#[test]
+fn tick_is_called_per_app_window_and_drains_async_echo() {
+    // t70-s6 completion: `Shell::tick_detailed` must call `AppView::tick` for
+    // every live app window so an async PTY echo drains and repaints.
+    let mut shell = Shell::new(1280.0, 720.0);
+
+    // Two distinct windows (distinct app_ids) so `tick` must run per-window.
+    let id_a = shell.open_app_window("com.liquide.terminal");
+    let state_a = Arc::new(Mutex::new(FakeAppState::default()));
+    shell.register_app_view(id_a, Box::new(FakeApp::new(state_a.clone())));
+
+    let id_b = shell.open_app_window("com.liquide.files");
+    let state_b = Arc::new(Mutex::new(FakeAppState::default()));
+    shell.register_app_view(id_b, Box::new(FakeApp::new(state_b.clone())));
+    assert_ne!(id_a, id_b, "distinct apps open distinct windows");
+
+    // No pending echo on either view ⇒ tick reports no change, but is still
+    // called once per window.
+    let _ = shell.tick_detailed(1_000);
+    assert_eq!(state_a.lock().unwrap().tick_count, 1, "view A ticked once");
+    assert_eq!(state_b.lock().unwrap().tick_count, 1, "view B ticked once");
+
+    // Queue an async echo on A only (models a PTY that received bytes).
+    state_a.lock().unwrap().pending_echo = "ls\n".to_string();
+    let result = shell.tick_detailed(2_000);
+    // A drained its echo (visible next frame); B did not change.
+    assert_eq!(state_a.lock().unwrap().buffer, "ls\n");
+    assert!(state_a.lock().unwrap().pending_echo.is_empty());
+    assert_eq!(state_b.lock().unwrap().buffer, "");
+    // Each view ticked a second time.
+    assert_eq!(state_a.lock().unwrap().tick_count, 2);
+    assert_eq!(state_b.lock().unwrap().tick_count, 2);
+    // The drained echo dirtied the windows so the new content repaints.
+    assert!(result.dirty, "draining async echo should request a redraw");
+    assert!(result.windows_dirty);
+
+    // The drained text is painted from the app's content view.
+    let texts = scene_texts(&mut shell);
+    assert!(
+        texts.iter().any(|t| t == "typed:ls\n"),
+        "drained echo should repaint: {texts:?}"
+    );
 }
 
 #[test]

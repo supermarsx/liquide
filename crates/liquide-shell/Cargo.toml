@@ -42,6 +42,11 @@ liquide-shell-services.workspace = true
 liquide-xdg.workspace = true
 # WidgetId for the canonical tooltip manager hover slot (t51-e9 tooltip adapter).
 liquide-ui-core.workspace = true
+# Cursor CSS seam: the shell resolves `cursor { color }` from CSS and exposes a
+# `CursorTheme` for the host to feed `SoftwareRenderer::set_cursor_theme`
+# (t64-p0 Primitive 4 / t73-shell). No dependency cycle: renderer-cpu does not
+# depend on liquide-shell.
+liquide-renderer-cpu.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -49,7 +54,6 @@ tracing.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 serde_json = "1"
-liquide-renderer-cpu.workspace = true
 liquide-font-rasterizer.workspace = true
 
 [[bench]]

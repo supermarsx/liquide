@@ -39,21 +39,65 @@ impl Shell {
     /// without overlapping the statusbar or dock.
     #[must_use]
     pub fn work_area(&self) -> Rect {
+        use liquide_dock::DockPosition;
+
         let bar_h = self.status_bar.config().height;
+        // Start from the screen minus the status bar (always along the top).
+        let mut x = self.screen_rect.x;
+        let mut y = self.screen_rect.y + bar_h;
+        let mut width = self.screen_rect.width;
+        let mut height = (self.screen_rect.height - bar_h).max(0.0);
+
+        // Reserve dock space on the edge it occupies. For Left/Right docks the
+        // dock's bounds vary along the *horizontal* extent (width), so we must
+        // subtract its width — not its height — from the usable area (t72-dock
+        // shell follow-up: extend work_area to branch on position).
         let dock_bounds = self.dock.compute_bounds(self.screen_rect);
-        let dock_h = dock_bounds.height;
-        Rect::new(
-            self.screen_rect.x,
-            self.screen_rect.y + bar_h,
-            self.screen_rect.width,
-            (self.screen_rect.height - bar_h - dock_h).max(0.0),
-        )
+        match self.dock.config().position {
+            DockPosition::Bottom => {
+                height = (height - dock_bounds.height).max(0.0);
+            }
+            DockPosition::Top => {
+                // Dock sits below the status bar at the top edge.
+                y += dock_bounds.height;
+                height = (height - dock_bounds.height).max(0.0);
+            }
+            DockPosition::Left => {
+                x += dock_bounds.width;
+                width = (width - dock_bounds.width).max(0.0);
+            }
+            DockPosition::Right => {
+                width = (width - dock_bounds.width).max(0.0);
+            }
+        }
+
+        Rect::new(x, y, width, height)
     }
 
     /// Get the current cursor shape.
     #[must_use]
     pub fn cursor_shape(&self) -> CursorShape {
         self.cursor_shape
+    }
+
+    /// The CSS-resolved cursor appearance to feed the software renderer's
+    /// cursor seam (`SoftwareRenderer::set_cursor_theme`, t64-p0 Primitive 4).
+    ///
+    /// The fill is taken from the theme's `cursor { color }` rule (resolved by
+    /// the theme loader into [`ShellTheme::cursor_color`]); the outline is a
+    /// contrasting black so the cursor stays legible over the themed fill. The
+    /// shape is **not** overridden here — the live cursor shape is carried on
+    /// the scene `Cursor` node ([`Shell::cursor_shape`]), driven by hover/drag
+    /// state — so the renderer honors the per-frame shape while still painting
+    /// it in the CSS-driven color (instead of the renderer's hardcoded
+    /// black-outline / white-fill default).
+    #[must_use]
+    pub fn cursor_theme(&self) -> liquide_renderer_cpu::CursorTheme {
+        liquide_renderer_cpu::CursorTheme {
+            outline: liquide_compositor::pixel::Color::new(0, 0, 0, 255),
+            fill: self.theme.cursor_color,
+            shape_override: None,
+        }
     }
 
     /// Read-only view of the typed-text buffer for a given window — the shell
@@ -196,6 +240,62 @@ impl Shell {
     /// Get the dock mutably.
     pub fn dock_mut(&mut self) -> &mut Dock {
         &mut self.dock
+    }
+
+    /// Settings-UI hook: replace the dock configuration at runtime (t72-dock
+    /// shell follow-up §5).
+    ///
+    /// Applies `cfg` to the live dock via [`Dock::set_config`] (which
+    /// re-evaluates auto-hide visibility), mirrors it into the canonical
+    /// [`ShellConfig::dock`] so it persists when the host saves the config, and
+    /// marks the window scene dirty so the dock re-lays-out (DOM data-attrs are
+    /// refreshed on the next `sync_dom`). Pinned apps are not re-materialized
+    /// (running state/order is preserved); use the `*_dock_pin` helpers to edit
+    /// the pinned set.
+    pub fn set_dock_config(&mut self, cfg: liquide_dock::DockConfig) {
+        // Keep the persistable pinned set in the new config in sync with the
+        // live dock's current pins so a settings round-trip does not drop them.
+        let mut cfg = cfg;
+        cfg.pinned_apps = self.dock.pinned_apps();
+        self.config.dock = cfg.clone();
+        self.dock.set_config(cfg);
+        self.mark_window_scene_dirty();
+    }
+
+    /// Pin an application to the dock and persist it into [`ShellConfig::dock`]
+    /// (t72-dock shell follow-up §5). Returns the new pinned item's id.
+    pub fn pin_dock_app(
+        &mut self,
+        app_id: impl Into<String>,
+        label: impl Into<String>,
+        icon: impl Into<String>,
+    ) -> u32 {
+        let id = self.dock.add_pinned(app_id, label, icon);
+        self.config.dock.pinned_apps = self.dock.pinned_apps();
+        self.mark_window_scene_dirty();
+        id
+    }
+
+    /// Remove a pinned dock app by id and persist the change. Returns whether a
+    /// pin was removed.
+    pub fn unpin_dock_app(&mut self, id: u32) -> bool {
+        let removed = self.dock.remove_pinned(id);
+        if removed {
+            self.config.dock.pinned_apps = self.dock.pinned_apps();
+            self.mark_window_scene_dirty();
+        }
+        removed
+    }
+
+    /// Reorder a pinned dock app (true list reorder) and persist the new order.
+    /// Returns whether the move was applied.
+    pub fn move_dock_pin(&mut self, from: usize, to: usize) -> bool {
+        let moved = self.dock.move_pinned(from, to);
+        if moved {
+            self.config.dock.pinned_apps = self.dock.pinned_apps();
+            self.mark_window_scene_dirty();
+        }
+        moved
     }
 
     /// Poll Win32 windows and update the dock with running desktop apps.

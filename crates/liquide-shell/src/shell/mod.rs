@@ -549,11 +549,7 @@ impl Shell {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
-        let mut dock = Dock::new(config.dock.clone());
-        dock.add_pinned("com.liquide.files", "Files", "folder");
-        dock.add_pinned("com.liquide.terminal", "Terminal", "terminal");
-        dock.add_pinned("com.liquide.browser", "Browser", "web-browser");
-        dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
+        let dock = Self::build_dock(config.dock.clone());
 
         let mut launcher = Launcher::new(config.launcher.clone());
         Self::register_default_apps(&mut launcher);
@@ -692,11 +688,7 @@ impl Shell {
             .unwrap_or_default()
             .as_micros() as u64;
         let config = ShellConfig::default();
-        let mut dock = Dock::new(config.dock.clone());
-        dock.add_pinned("com.liquide.files", "Files", "folder");
-        dock.add_pinned("com.liquide.terminal", "Terminal", "terminal");
-        dock.add_pinned("com.liquide.browser", "Browser", "web-browser");
-        dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
+        let dock = Self::build_dock(config.dock.clone());
         let mut launcher = Launcher::new(config.launcher.clone());
         Self::register_default_apps(&mut launcher);
         let (theme, style_resolver) = Self::build_default_theme();
@@ -883,6 +875,24 @@ impl Shell {
     }
 
     /// Register built-in applications with the launcher.
+    /// Construct the dock from a [`DockConfig`], materializing its pinned set.
+    ///
+    /// `Dock::new` already materializes `config.pinned_apps`; when that list is
+    /// empty (the default) we fall back to the historical hard-coded pins
+    /// (Files / Terminal / Browser / Settings) so default behavior is unchanged
+    /// and a config-driven `pinned_apps` is honored when supplied.
+    pub(crate) fn build_dock(config: liquide_dock::DockConfig) -> Dock {
+        let has_pins = !config.pinned_apps.is_empty();
+        let mut dock = Dock::new(config);
+        if !has_pins {
+            dock.add_pinned("com.liquide.files", "Files", "folder");
+            dock.add_pinned("com.liquide.terminal", "Terminal", "terminal");
+            dock.add_pinned("com.liquide.browser", "Browser", "web-browser");
+            dock.add_pinned("com.liquide.settings", "Settings", "preferences-system");
+        }
+        dock
+    }
+
     pub(crate) fn register_default_apps(launcher: &mut Launcher) {
         let defaults = [
             ("com.liquide.files", "Files", "folder", "File manager"),
@@ -988,6 +998,66 @@ impl Shell {
     pub(crate) fn bump_app_content_rev(&mut self, wid: WindowId) {
         let rev = self.app_content_revs.entry(wid).or_insert(0);
         *rev = rev.wrapping_add(1);
+    }
+
+    /// Drive one frame of every live app view's asynchronous state
+    /// ([`liquide_interop::AppView::tick`]) and fold any change into the
+    /// window-scene cache so the new content repaints (t70-s6 terminal echo
+    /// route completion).
+    ///
+    /// A real PTY echoes typed bytes asynchronously, so the terminal grid only
+    /// reflects input after the terminal runtime drains the PTY in `tick`. We
+    /// call `tick` for each registered window; for any view that reports a
+    /// change we bump its content revision (invalidating the window-scene
+    /// cache). Returns `true` if any view changed and a redraw is needed.
+    pub(crate) fn tick_app_views(&mut self) -> bool {
+        // Collect the dirtied windows first to avoid borrowing `app_views`
+        // mutably while also touching `app_content_revs` inside the loop.
+        let mut dirty: Vec<WindowId> = Vec::new();
+        for (&wid, view) in &mut self.app_views {
+            if view.tick() {
+                dirty.push(wid);
+            }
+        }
+        if dirty.is_empty() {
+            return false;
+        }
+        for wid in dirty {
+            self.bump_app_content_rev(wid);
+        }
+        self.mark_window_scene_dirty();
+        true
+    }
+
+    /// Recompute and apply the dock's window-occlusion state for
+    /// [`liquide_dock::AutoHideMode::OnOverlap`] (t72-dock follow-up §4).
+    ///
+    /// The dock hides under `OnOverlap` only while a window overlaps its rect;
+    /// here we test the live visible-window rects against the dock bounds and
+    /// push the result into [`liquide_dock::Dock::set_occluded`]. Returns
+    /// `true` if the dock's visibility flipped (so the caller can redraw). Cheap
+    /// no-op for other auto-hide modes.
+    pub(crate) fn update_dock_occlusion(&mut self) -> bool {
+        if self.dock.config().effective_auto_hide_mode()
+            != liquide_dock::AutoHideMode::OnOverlap
+        {
+            return false;
+        }
+        let dock_bounds = self.dock.compute_bounds(self.screen_rect);
+        let overlapped = self.visible_windows().iter().any(|w| {
+            let b = w.bounds;
+            b.x < dock_bounds.x + dock_bounds.width
+                && b.x + b.width > dock_bounds.x
+                && b.y < dock_bounds.y + dock_bounds.height
+                && b.y + b.height > dock_bounds.y
+        });
+        let was_visible = self.dock.is_visible();
+        self.dock.set_occluded(overlapped);
+        let flipped = self.dock.is_visible() != was_visible;
+        if flipped {
+            self.mark_window_scene_dirty();
+        }
+        flipped
     }
 
     /// Construct + register the real app view for a freshly opened window via

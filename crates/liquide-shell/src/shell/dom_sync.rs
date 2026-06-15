@@ -413,12 +413,66 @@ impl Shell {
         ctx.set("dock_items", dock_items);
 
         self.apply_template("dock", "shell-dock", &ctx);
+        // Apply position/size/alignment/auto-hide as data-attrs + CSS custom
+        // properties on `#shell-dock` so the theme CSS can react (row vs column
+        // flex, which edge to anchor, justify-content, slide-out on hide) and
+        // so the scene/geometry authority (compute_bounds/compute_item_rects)
+        // and the DOM stay in agreement (t72-dock shell follow-up §2/§4).
+        self.sync_dock_attributes();
         // Set the `:hover` pseudo-state on the hovered dock item so the themed
         // `dock-item:hover` rule paints (the template only injects a `.hovered`
         // class, which the theme does not style). Applied after the template so
         // it targets the freshly-rendered item children (t65-s3).
         self.desktop_dom.set_dock_hover(hover_idx);
         self.mark_wired(crate::shell::WiringBit::Dock);
+    }
+
+    /// Push the resolved [`DockConfig`] onto the `#shell-dock` element as
+    /// data-attributes + CSS custom properties, and reflect auto-hide
+    /// visibility as `data-hidden`. The theme CSS keys off these to pick the
+    /// dock's flex direction, anchored edge, item distribution, label
+    /// visibility, sizing, and slide-out transform (t72-dock follow-up §2/§4).
+    fn sync_dock_attributes(&mut self) {
+        use liquide_dock::{DockAlignment, DockPosition};
+
+        let cfg = self.dock.config();
+        let position = match cfg.position {
+            DockPosition::Bottom => "bottom",
+            DockPosition::Top => "top",
+            DockPosition::Left => "left",
+            DockPosition::Right => "right",
+        };
+        let alignment = match cfg.alignment {
+            DockAlignment::Centered => "centered",
+            DockAlignment::Justified => "justified",
+        };
+        let show_labels = if cfg.show_labels { "true" } else { "false" };
+        let icon_size = cfg.icon_size;
+        let thickness = cfg.effective_thickness();
+        let padding = cfg.padding;
+        let spacing = cfg.spacing;
+        // `data-hidden` reflects the live auto-hide visibility so CSS can
+        // animate the dock off-screen; always-visible (mode Off) ⇒ shown.
+        let hidden = !self.dock.is_visible();
+
+        let id = crate::desktop_dom::element_ids::DOCK;
+        if let Some(dock) = self.desktop_dom.doc.get_element_by_id(id) {
+            let doc = &mut self.desktop_dom.doc;
+            doc.set_attribute(dock, "data-position", position);
+            doc.set_attribute(dock, "data-alignment", alignment);
+            doc.set_attribute(dock, "data-show-labels", show_labels);
+            doc.set_attribute(dock, "data-hidden", if hidden { "true" } else { "false" });
+            // CSS custom properties for sizing — the theme reads these via
+            // `var(--dock-*)`; the scene path remains the geometry authority.
+            doc.set_attribute(
+                dock,
+                "style",
+                &format!(
+                    "--dock-icon-size:{icon_size}px;--dock-thickness:{thickness}px;\
+                     --dock-padding:{padding}px;--dock-gap:{spacing}px;"
+                ),
+            );
+        }
     }
 
     // ══════════════════════════════════════════════════════════
