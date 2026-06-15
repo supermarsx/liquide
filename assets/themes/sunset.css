@@ -63,6 +63,76 @@ status-indicator.disconnected { color: rgb(142, 142, 147); }
 notification-indicator.active { color: rgb(255, 107, 107); }
 notification-indicator { color: rgba(255, 179, 64, 0.60); }
 
+/* Logo / brand area (t66 parity: matches embedded sunset.rs; statusbar.html
+   emits <statusbar-logo>). */
+statusbar-logo {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 6;
+    padding-right: 10;
+    height: 24;
+    border-radius: 7;
+    font-weight: 700;
+    font-size: 13;
+    color: rgba(255, 159, 10, 1.0);
+}
+
+statusbar-logo:hover {
+    background: rgba(255, 159, 10, 0.15);
+    color: rgba(255, 179, 64, 1.0);
+}
+
+/* Status-indicator base box + hover (the colour-only variants above relied on
+   the base layout; t66 parity with embedded sunset.rs). */
+status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4;
+    padding-left: 8;
+    padding-right: 8;
+    height: 22;
+    border-radius: 6;
+    font-size: 12;
+    color: rgba(255, 245, 230, 0.55);
+}
+
+status-indicator:hover {
+    background: rgba(255, 200, 120, 0.10);
+    color: rgba(255, 245, 230, 0.85);
+}
+
+notification-indicator:hover {
+    background: rgba(255, 200, 120, 0.10);
+}
+
+notification-indicator.dnd {
+    background: rgba(255, 179, 64, 0.12);
+    color: rgb(255, 179, 64);
+}
+
+/* Session / user button (t66 parity: matches embedded sunset.rs; statusbar.html
+   emits <session-button>). */
+session-button {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 8;
+    padding-right: 10;
+    height: 24;
+    border-radius: 12;
+    background: rgba(255, 200, 120, 0.08);
+    border-color: rgba(255, 180, 80, 0.10);
+    border-width: 1;
+    font-size: 12;
+    font-weight: 500;
+    color: rgba(255, 245, 230, 0.90);
+}
+
+session-button:hover {
+    background: rgba(255, 200, 120, 0.15);
+}
+
 status-tray {
     background: rgba(255, 200, 120, 0.08);
     border-radius: 4;
@@ -193,6 +263,28 @@ dock-item {
 dock-item.active { color: rgba(255, 159, 10, 1.0); }
 dock-item:hover { background: rgba(255, 200, 120, 0.10); }
 
+/* Dock icon/label/indicator (t66 parity: matches embedded sunset.rs; dock.html
+   emits these children — without dock-item-label{display:none} the labels
+   stack/overlap, and the icon needs flex-grow to fill the item). */
+dock-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 1;
+}
+
+dock-item-label {
+    display: none;
+}
+
+dock-indicator {
+    display: flex;
+    width: 4;
+    height: 4;
+    border-radius: 2;
+    background: rgba(255, 159, 10, 0.80);
+}
+
 /* ── Workspace container ── */
 
 workspace-container {
@@ -236,6 +328,38 @@ notification-title {
 notification-body {
     font-size: 12;
     color: rgba(255, 245, 230, 0.70);
+}
+
+/* Notification leading icon + text/actions layout (t66 parity: matches
+   embedded sunset.rs; notification.html emits these child elements). */
+notification-icon {
+    display: flex;
+    width: 32;
+    height: 32;
+    margin-right: 10;
+    color: rgba(255, 200, 120, 0.4);
+}
+
+notification-content {
+    flex-grow: 1;
+}
+
+notification-actions {
+    display: flex;
+    gap: 6;
+    margin-top: 8;
+}
+
+notification-action {
+    display: flex;
+    padding-left: 8;
+    padding-right: 8;
+    height: 24;
+    border-radius: 6;
+    font-size: 12;
+    align-items: center;
+    background: rgba(255, 200, 120, 0.08);
+    color: rgba(255, 245, 230, 0.8);
 }
 
 /* ── Launcher ── */
@@ -296,6 +420,19 @@ launcher-item {
 
 launcher-item:hover { background: rgba(255, 200, 120, 0.08); }
 launcher-item.selected { background: rgba(255, 159, 10, 0.25); }
+
+/* Launcher result icon gutter + label column (t66 parity: matches embedded
+   sunset.rs; launcher.html emits <launcher-item-icon>/<launcher-item-label>). */
+launcher-item-icon {
+    display: flex;
+    width: 24;
+    height: 24;
+    margin-right: 10;
+}
+
+launcher-item-label {
+    flex-grow: 1;
+}
 
 /* ── Menus ── */
 
@@ -363,6 +500,27 @@ menu-item {
 
 menu-item:hover { background: rgba(255, 159, 10, 0.25); }
 menu-item.disabled { color: rgba(255, 245, 230, 0.35); }
+
+/* Menu icon gutter / label column / shortcut (t66 parity: matches embedded
+   sunset.rs; the menu-item partial emits <menu-item-icon>/<menu-item-label>.
+   Without an explicit icon width the gutter collapses to 0 and the icon never
+   paints over the label). */
+menu-item-icon {
+    display: flex;
+    width: 16;
+    height: 16;
+    margin-right: 8;
+}
+
+menu-item-label {
+    flex-grow: 1;
+}
+
+menu-item-shortcut {
+    color: rgba(255, 245, 230, 0.40);
+    font-size: 11;
+    margin-left: 12;
+}
 
 menu-separator {
     height: 1;
