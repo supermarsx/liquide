@@ -13,6 +13,16 @@ Severity legend:
 - High: advertised or expected feature is materially incomplete, unreliable, or split across incompatible paths.
 - Medium: important completeness or coverage gap that can produce visible drift, but is not the first blocker.
 
+## Verification Update — 2026-06-15 (re-checked against current code post t56–t64)
+
+Reports: `.orchestration/reports/tv-remote-verify.md`, `tv-css-verify.md`, `tv-complete-verify.md`.
+
+- **Remote-first (TODO 1–7): all STILL-OPEN.** This session was rendering/shell only; the gateway/client/protocol/transport/supervisor path is unchanged. (Nuance: a library-level `set_tls_config` setter now exists for TODO 1, but the binary never calls it.)
+- **CSS engine (TODO 8–16): 8 STILL-OPEN, TODO 10 PARTIAL** — t62-logical fixed the padding/margin clobber on the restyle path; the compute_style↔restyle parity gap (container/var-scope/assembly) and the parity tests using compute_style remain.
+- **CSS completeness (TODO 17–21): 17/18/20/21 STILL-OPEN; TODO 19 PARTIAL** (::before/::after/::first-line/::first-letter now computed; the `pseudo_elements_use_local_custom_properties` regression is still `#[ignore]`d).
+- **Related (not in this file) — FIXED since the audits:** plaintext ws:// (loud opt-in), notification rate-limit (token-bucket), AuthChain terminal-state ordering, LDAP empty-password; the cluster-convention "Critical" was a false alarm. **font-style: italic FIXED** (t64); word-break/text-emphasis now supported in compositor+painter, dropped only at scene_bridge (one-hop, = the S1 shell wave); background-size/caret-color primitives now exist (t64-p0).
+- **Related — STILL-OPEN security:** SHM size-overflow/UB (`client-renderer/surface.rs`, `encoder/tile.rs`); authorization + audit/event-log planes have zero production consumers.
+
 ## Critical
 
 ### TODO 1: Configure TLS in the gateway binary
@@ -219,7 +229,7 @@ Remediation:
 
 ### TODO 10: Fix CSS engine API parity between `compute_style` and `restyle_all`
 
-Status: Open
+Status: Partial (t62-logical fixed the padding/margin clobber on the restyle path; compute_style still skips @container/var-scope/assembly and parity tests still use it)
 
 Finding:
 `StyleEngine::compute_style` is not equivalent to the full tree restyle path. It skips `@container` rules, applies `var()` with an empty scope, and returns before some assembly that `restyle_all` performs.
@@ -416,7 +426,7 @@ Remediation:
 
 ### TODO 19: Implement or explicitly scope pseudo-element support
 
-Status: Open
+Status: Partial (::before/::after/::first-line/::first-letter now computed in cascade.rs; the `pseudo_elements_use_local_custom_properties` regression test remains #[ignore]d)
 
 Finding:
 Pseudo-element routing is not fully covered. A regression test for pseudo-element custom property routing remains ignored.
