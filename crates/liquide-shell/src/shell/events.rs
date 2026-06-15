@@ -597,6 +597,20 @@ impl Shell {
                             }
                         }
                     }
+                    // Non-printable navigation/edit keys (Enter/Backspace/arrows/…)
+                    // reach the focused window's live app view (t70-s6) so the
+                    // app's model — terminal CR, editor newline, list navigation —
+                    // sees them. Only forwarded when an app view is registered;
+                    // otherwise the key falls through to the shortcut table below.
+                    if let Some(app_key) = Self::keycode_to_app_key(ke.key) {
+                        if let Some(wid) = self.focus.focused() {
+                            if self.app_views.contains_key(&wid)
+                                && self.route_key_to_focused_app(wid, &app_key)
+                            {
+                                return Some(ShellAction::Redraw);
+                            }
+                        }
+                    }
                 }
                 self.shortcuts.handle_key_event(ke).cloned()
             }
@@ -962,13 +976,64 @@ impl Shell {
         }
     }
 
-    /// Append a typed character to the focused window's text buffer (the shell
-    /// side of the shell↔app text-input seam, t57-fG feature 2) and mark the
-    /// window scene dirty so the typed glyphs repaint.
+    /// Route a typed character into the focused window. When a live app view is
+    /// registered (t70-s6), the character is forwarded into the app's model via
+    /// `handle_text` so keyboard text reaches the real app; otherwise it falls
+    /// back to the local typed-text buffer (the shell side of the t57-fG
+    /// text-input seam). Either way the window scene is invalidated so the
+    /// change repaints.
     fn route_char_to_focused_app(&mut self, wid: WindowId, ch: char) {
+        if let Some(view) = self.app_views.get_mut(&wid) {
+            let mut buf = [0u8; 4];
+            let _changed = view.handle_text(ch.encode_utf8(&mut buf));
+            // Always repaint: even a "no change" key may move the caret, and the
+            // app content revision must advance so the cache re-renders.
+            self.mark_app_content_dirty(wid);
+            return;
+        }
         let buf = self.focused_app_text.entry(wid).or_default();
         buf.push(ch);
         self.mark_window_scene_dirty();
+    }
+
+    /// Route a non-printable logical key into the focused window's live app view
+    /// (t70-s6). Returns `true` if a view was registered and consumed the key
+    /// (so the caller should stop and request a redraw); `false` lets the key
+    /// fall through to the shell's local buffer / shortcut handling.
+    fn route_key_to_focused_app(&mut self, wid: WindowId, key: &liquide_interop::AppKey) -> bool {
+        if let Some(view) = self.app_views.get_mut(&wid) {
+            let _changed = view.handle_key(key);
+            self.mark_app_content_dirty(wid);
+            return true;
+        }
+        false
+    }
+
+    /// Map a platform [`KeyCode`](liquide_input::keyboard::KeyCode) to a logical
+    /// [`AppKey`](liquide_interop::AppKey) for forwarding into an app view. Only
+    /// keys an app model cares about are mapped; everything else returns `None`
+    /// so it stays available for the shell's own handling.
+    fn keycode_to_app_key(
+        key: liquide_input::keyboard::KeyCode,
+    ) -> Option<liquide_interop::AppKey> {
+        use liquide_input::keyboard::KeyCode;
+        use liquide_interop::AppKey;
+        Some(match key {
+            KeyCode::Enter => AppKey::Enter,
+            KeyCode::Backspace => AppKey::Backspace,
+            KeyCode::Tab => AppKey::Tab,
+            KeyCode::Escape => AppKey::Escape,
+            KeyCode::Delete => AppKey::Delete,
+            KeyCode::ArrowLeft => AppKey::Left,
+            KeyCode::ArrowRight => AppKey::Right,
+            KeyCode::ArrowUp => AppKey::Up,
+            KeyCode::ArrowDown => AppKey::Down,
+            KeyCode::Home => AppKey::Home,
+            KeyCode::End => AppKey::End,
+            KeyCode::PageUp => AppKey::PageUp,
+            KeyCode::PageDown => AppKey::PageDown,
+            _ => return None,
+        })
     }
 
     /// Whether a title-bar press on `wid` at `pt` is the second click of a

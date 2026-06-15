@@ -321,6 +321,15 @@ pub enum ScreenshotRequest {
     Record,
 }
 
+/// Host-installed constructor for per-window application views (t70-s6).
+///
+/// Given an app's `app_id`, it returns a fresh `Box<dyn AppView>` for that app,
+/// or `None` if the host does not back that id with a real app. The closure is
+/// owned by the shell and invoked from `open_app_window`; it is the ONLY way an
+/// app crate's runtime enters the (app-agnostic) shell — the closure body lives
+/// in the host (session/standalone), which links the app crates.
+pub type AppViewFactory = Box<dyn Fn(&str) -> Option<Box<dyn liquide_interop::AppView>> + Send>;
+
 /// The top-level shell managing all windows and workspaces.
 pub struct Shell {
     pub(crate) windows: HashMap<WindowId, Window>,
@@ -451,6 +460,26 @@ pub struct Shell {
     /// the text-editor's own `handle_char` consumes it) is a cross-crate seam
     /// that is ESCALATED — see `.orchestration/logs/t57-fG.md`.
     pub(crate) focused_app_text: HashMap<WindowId, String>,
+    /// Per-window live application views (t70-s6). When the host installs an
+    /// [`Shell::set_app_view_factory`] factory, opening an app window constructs
+    /// the matching `Box<dyn AppView>` and stores it here, keyed by the same
+    /// [`WindowId`] the shell records on the `Window`. The scene builder paints
+    /// the window body from `view.content_view(..)` (real app content, not the
+    /// hard-coded placeholder), and keyboard text/keys for the focused window
+    /// are forwarded into `view.handle_text`/`view.handle_key`. The view lives
+    /// as long as the window (persistent app state across frames); it is removed
+    /// in `close_window`. The shell stays app-agnostic: it only knows the
+    /// `dyn AppView` trait from `liquide-interop` — app crates are linked by the
+    /// HOST (session/standalone) and reach the shell solely through the factory.
+    pub(crate) app_views: HashMap<WindowId, Box<dyn liquide_interop::AppView>>,
+    /// Host-installed factory mapping an `app_id` to a fresh `Box<dyn AppView>`.
+    /// `open_app_window` consults this to construct + register a real app view.
+    /// `None` (the default) keeps the legacy placeholder painting path.
+    pub(crate) app_view_factory: Option<AppViewFactory>,
+    /// Per-window content revision, bumped whenever a window's app view changes
+    /// (typed text / keys / explicit `mark_app_content_dirty`). Folded into the
+    /// window-scene cache signature so app-content changes invalidate the cache.
+    pub(crate) app_content_revs: HashMap<WindowId, u64>,
     // ── Canonical chrome-crate managers (t51 mandate 2, Wave C0) ────────
     // Dormant injection points wired to nothing yet; later C1/C2/C3
     // executors construct/drive these and retire the shell duplicates.
@@ -617,6 +646,9 @@ impl Shell {
             frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
             last_titlebar_click: None,
             focused_app_text: HashMap::new(),
+            app_views: HashMap::new(),
+            app_view_factory: None,
+            app_content_revs: HashMap::new(),
             // Canonical chrome managers: dormant (None) until wired in C1+.
             // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
             chrome_tiling: None,
@@ -755,6 +787,9 @@ impl Shell {
             frame_delta_ms: crate::DEFAULT_FRAME_DELTA_MS,
             last_titlebar_click: None,
             focused_app_text: HashMap::new(),
+            app_views: HashMap::new(),
+            app_view_factory: None,
+            app_content_revs: HashMap::new(),
             // Canonical chrome managers: dormant (None) until wired in C1+.
             // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
             chrome_tiling: None,
@@ -890,6 +925,84 @@ impl Shell {
                 launch_count: 0,
                 last_launched_us: 0,
             });
+        }
+    }
+
+    /// Install the host factory that constructs per-window application views
+    /// (t70-s6). After this is set, `open_app_window` builds and registers the
+    /// matching `Box<dyn AppView>` so the window renders the real app and
+    /// receives keyboard input. The shell stays app-agnostic — only the host's
+    /// closure body knows the concrete app crates.
+    pub fn set_app_view_factory(&mut self, factory: AppViewFactory) {
+        self.app_view_factory = Some(factory);
+    }
+
+    /// Register a live application view against a window (t70-s6). The view is
+    /// retained for the window's lifetime and removed in `close_window`.
+    pub fn register_app_view(&mut self, wid: WindowId, view: Box<dyn liquide_interop::AppView>) {
+        self.app_views.insert(wid, view);
+        self.bump_app_content_rev(wid);
+        self.mark_window_scene_dirty();
+    }
+
+    /// Whether a live application view is registered for `wid`.
+    #[must_use]
+    pub fn has_app_view(&self, wid: WindowId) -> bool {
+        self.app_views.contains_key(&wid)
+    }
+
+    /// Read-only access to a window's live application view (t70-s6), e.g. for
+    /// hosts / tests that want to inspect the app's current `content_view`.
+    #[must_use]
+    pub fn app_view(&self, wid: WindowId) -> Option<&dyn liquide_interop::AppView> {
+        self.app_views.get(&wid).map(std::convert::AsRef::as_ref)
+    }
+
+    /// The focused window's live application view, if any (t70-s6).
+    #[must_use]
+    pub fn focused_app_view(&self) -> Option<&dyn liquide_interop::AppView> {
+        self.focus.focused().and_then(|wid| self.app_view(wid))
+    }
+
+    /// Mutable access to a window's live application view (t70-s6), for hosts
+    /// that need to drive per-frame work (e.g. ticking the terminal PTY).
+    /// Callers that mutate the view should follow up with
+    /// [`Shell::mark_app_content_dirty`] so the window scene repaints.
+    pub fn app_view_mut(
+        &mut self,
+        wid: WindowId,
+    ) -> Option<&mut Box<dyn liquide_interop::AppView>> {
+        self.app_views.get_mut(&wid)
+    }
+
+    /// Bump a window's app-content revision and invalidate the window scene so
+    /// changed app content (e.g. drained terminal output) repaints. Hosts call
+    /// this after mutating a view through [`Shell::app_view_mut`].
+    pub fn mark_app_content_dirty(&mut self, wid: WindowId) {
+        self.bump_app_content_rev(wid);
+        self.mark_window_scene_dirty();
+    }
+
+    /// Increment the per-window content revision folded into the window-scene
+    /// cache signature.
+    pub(crate) fn bump_app_content_rev(&mut self, wid: WindowId) {
+        let rev = self.app_content_revs.entry(wid).or_insert(0);
+        *rev = rev.wrapping_add(1);
+    }
+
+    /// Construct + register the real app view for a freshly opened window via
+    /// the host factory, if one is installed and backs `app_id` (t70-s6).
+    pub(crate) fn install_app_view(&mut self, wid: WindowId, app_id: &str) {
+        if self.app_views.contains_key(&wid) {
+            return;
+        }
+        let Some(factory) = self.app_view_factory.take() else {
+            return;
+        };
+        let view = factory(app_id);
+        self.app_view_factory = Some(factory);
+        if let Some(view) = view {
+            self.register_app_view(wid, view);
         }
     }
 

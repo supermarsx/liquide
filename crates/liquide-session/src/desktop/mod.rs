@@ -13,6 +13,7 @@
 //! method, which translates them into `ShellAction`s that modify shell
 //! state (focus, window management, launcher toggle, etc.).
 
+mod app_views;
 mod cursor_state;
 mod debug;
 mod devtools;
@@ -157,6 +158,12 @@ impl DesktopCompositor {
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
         let mut shell = Shell::new(width as f32, height as f32);
+
+        // t70-s6: install the host app-view factory so dock-click / launcher
+        // window opens construct the real built-in app's `AppView` and register
+        // it against the new window. The shell then renders the app's real
+        // content and forwards keyboard input into the app's model.
+        shell.set_app_view_factory(Box::new(app_views::build_app_view));
 
         // Try loading external CSS themes from disk.
         Self::load_external_css(&mut shell);

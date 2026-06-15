@@ -329,6 +329,10 @@ impl Shell {
         // Drop the window's typed-text buffer + any pending double-click state
         // so closed windows leave no stale input state (t57-fG).
         self.focused_app_text.remove(&id);
+        // Drop the window's live app view + content revision (t70-s6) so the
+        // app's runtime is freed and no stale view/state outlives the window.
+        self.app_views.remove(&id);
+        self.app_content_revs.remove(&id);
         if matches!(self.last_titlebar_click, Some((wid, _, _)) if wid == id) {
             self.last_titlebar_click = None;
         }
@@ -885,6 +889,12 @@ impl Shell {
             win.min_size = min;
             self.mark_window_scene_dirty();
         }
+        // t70-s6: make the window run the real app. If the host installed an
+        // app-view factory, construct + register the matching `dyn AppView` so
+        // the body paints real app content and keyboard input reaches the app's
+        // model. No factory (or an id the host does not back) → the legacy
+        // placeholder painting path still runs (so tests/legacy hosts work).
+        self.install_app_view(id, app_id);
         self.dock.add_running(app_id);
         let _ = self.set_focus(id);
         let _ = self.raise_window(id);

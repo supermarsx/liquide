@@ -104,6 +104,12 @@ struct WindowSceneSignature {
     /// Focused window's typed-text buffer (t57-fG feature 2): typing changes
     /// the painted field, so it must invalidate the window scene cache.
     focused_text: Option<String>,
+    /// Per-window app-content revisions (t70-s6). Each registered app view's
+    /// window contributes `(window_id, revision)`; the revision is bumped on
+    /// every input route / explicit content-dirty, so changing app content
+    /// (typed text, drained terminal output, …) invalidates the window scene
+    /// cache even though the `Window` struct itself is unchanged.
+    app_content: Vec<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -774,6 +780,15 @@ impl Shell {
                 .map(WindowRenderSignature::from_window)
                 .collect(),
             focused_text: self.focused_app_text().map(str::to_string),
+            app_content: {
+                let mut revs: Vec<(u64, u64)> = self
+                    .app_views
+                    .keys()
+                    .map(|wid| (wid.0, self.app_content_revs.get(wid).copied().unwrap_or(0)))
+                    .collect();
+                revs.sort_unstable();
+                revs
+            },
         }
     }
 
@@ -955,6 +970,16 @@ impl Shell {
         let cx = content.x;
         let cy = content.y;
         let cw = content.width;
+
+        // t70-s6: when the host has registered a live app view for this window,
+        // paint the window body from the app's real render model (replacing the
+        // hard-coded per-`app_id` placeholder branches below). The placeholder
+        // `match` is kept solely as a fallback for windows with no registered
+        // view (un-launched / legacy hosts / tests without a factory).
+        if self.app_views.contains_key(&window.id) {
+            self.build_app_view_content(parent, window, content, win_base, z, theme);
+            return;
+        }
 
         match window.app_id.as_str() {
             "com.liquide.settings" => {
@@ -1154,6 +1179,172 @@ impl Shell {
                         ),
                         z + 5,
                         1,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Paint a window's body from its registered [`AppView`]'s render model
+    /// (t70-s6). This is the generic replacement for the old hard-coded
+    /// per-`app_id` branches: the app exposes rows of styled text + an optional
+    /// cursor via `content_view`, and the shell maps that onto scene text/rect
+    /// nodes. Cell metrics + background are chosen by [`ContentKind`] so the
+    /// monospace terminal and the proportional list/document apps each read
+    /// correctly.
+    fn build_app_view_content(
+        &self,
+        parent: &mut SceneNode,
+        window: &Window,
+        content: Rect,
+        win_base: u64,
+        z: u32,
+        theme: &ShellTheme,
+    ) {
+        use liquide_interop::ContentKind;
+
+        let Some(view) = self.app_views.get(&window.id) else {
+            return;
+        };
+
+        // Cell metrics: monospace terminals/documents pack tightly; lists use a
+        // taller row. `cols`/`rows` are the character-cell hints the app sizes to.
+        let (cell_w, cell_h): (f32, f32) = (8.0, 18.0);
+        let pad_x = 12.0;
+        let pad_y = 10.0;
+        let avail_w = (content.width - pad_x * 2.0).max(0.0);
+        let avail_h = (content.height - pad_y * 2.0).max(0.0);
+        let cols = (avail_w / cell_w).floor().max(1.0) as u32;
+        let rows = (avail_h / cell_h).floor().max(1.0) as u32;
+
+        let model = view.content_view(cols, rows);
+        let text_color = theme.status_bar_text;
+
+        // Background: terminals get the dark terminal surface; others keep the
+        // window content background (already painted by the caller), so we only
+        // overlay an explicit surface for the terminal.
+        let mut row_base_y = content.y + pad_y;
+        if matches!(model.kind, ContentKind::Terminal) {
+            parent.add_child(solid_rect(
+                win_base + 3,
+                theme.app_terminal_background,
+                content,
+                z + 1,
+            ));
+        }
+
+        let row_fg = if matches!(model.kind, ContentKind::Terminal) {
+            theme.app_terminal_text
+        } else {
+            text_color
+        };
+
+        let mut node_id = win_base + 100;
+        let mut next_id = || {
+            node_id += 1;
+            node_id
+        };
+
+        // Optional title/header line above the rows.
+        if let Some(title) = &model.title {
+            parent.add_child(text_node(
+                next_id(),
+                title.clone(),
+                row_fg,
+                Rect::new(content.x + pad_x, row_base_y, avail_w, cell_h),
+                z + 2,
+                1,
+            ));
+            row_base_y += cell_h + 4.0;
+        }
+
+        // Body rows. Each row is rendered as a base text node; styled spans are
+        // overlaid as colored text nodes positioned by character column. An
+        // active row gets a subtle highlight rect behind it.
+        let max_visible = ((content.y + content.height - row_base_y) / cell_h)
+            .floor()
+            .max(0.0) as usize;
+        for (i, row) in model.rows.iter().take(max_visible).enumerate() {
+            let ry = row_base_y + i as f32 * cell_h;
+            let mut text_x = content.x + pad_x;
+
+            if row.active {
+                parent.add_child(solid_rect(
+                    next_id(),
+                    theme.app_settings_sidebar_item,
+                    Rect::new(content.x + 4.0, ry, content.width - 8.0, cell_h),
+                    z + 2,
+                ));
+            }
+
+            // Optional gutter (line numbers / icons) ahead of the text.
+            if let Some(gutter) = &row.gutter {
+                let gw = (gutter.chars().count() as f32 + 1.0) * cell_w;
+                parent.add_child(text_node(
+                    next_id(),
+                    gutter.clone(),
+                    themed_alpha(row_fg, 150),
+                    Rect::new(text_x, ry, gw, cell_h),
+                    z + 3,
+                    1,
+                ));
+                text_x += gw;
+            }
+
+            // Base row text.
+            parent.add_child(text_node(
+                next_id(),
+                row.text.clone(),
+                row_fg,
+                Rect::new(text_x, ry, (content.x + content.width - text_x - 4.0).max(0.0), cell_h),
+                z + 3,
+                1,
+            ));
+
+            // Styled spans overlay colored sub-runs on top of the base text.
+            for span in &row.spans {
+                let Some(color) = span.color else { continue };
+                if span.end_col <= span.start_col {
+                    continue;
+                }
+                let sub: String = row
+                    .text
+                    .chars()
+                    .skip(span.start_col as usize)
+                    .take((span.end_col - span.start_col) as usize)
+                    .collect();
+                if sub.is_empty() {
+                    continue;
+                }
+                let sx = text_x + span.start_col as f32 * cell_w;
+                parent.add_child(text_node(
+                    next_id(),
+                    sub,
+                    Color::from_rgba_u32(color),
+                    Rect::new(sx, ry, (span.end_col - span.start_col) as f32 * cell_w, cell_h),
+                    z + 4,
+                    1,
+                ));
+            }
+        }
+
+        // Caret: a solid block (terminal) / thin bar (document/list) at the
+        // app-reported cursor cell.
+        if let Some((crow, ccol)) = model.cursor {
+            if (crow as usize) < max_visible && (self.cursor_blink_on || crow == 0) {
+                let caret_x = content.x + pad_x + ccol as f32 * cell_w;
+                let caret_y = row_base_y + crow as f32 * cell_h;
+                let caret_w = if matches!(model.kind, ContentKind::Terminal) {
+                    cell_w
+                } else {
+                    2.0
+                };
+                if self.cursor_blink_on {
+                    parent.add_child(solid_rect(
+                        next_id(),
+                        row_fg,
+                        Rect::new(caret_x, caret_y, caret_w, cell_h - 2.0),
+                        z + 5,
                     ));
                 }
             }

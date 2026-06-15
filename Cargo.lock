@@ -2871,6 +2871,7 @@ dependencies = [
  "liquide-platform-win32",
  "liquide-style-engine",
  "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -3467,6 +3468,12 @@ dependencies = [
  "anyhow",
  "clap",
  "liquide-a11y",
+ "liquide-apps-files",
+ "liquide-apps-settings",
+ "liquide-apps-software-center",
+ "liquide-apps-task-manager",
+ "liquide-apps-terminal",
+ "liquide-apps-text-editor",
  "liquide-audio",
  "liquide-authz-runtime",
  "liquide-client-renderer",

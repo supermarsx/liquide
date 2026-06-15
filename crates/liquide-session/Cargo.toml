@@ -39,6 +39,17 @@ liquide-platform.workspace = true
 liquide-clipboard.workspace = true
 liquide-audio.workspace = true
 liquide-interop.workspace = true
+# t70-s6: the SESSION host links the six built-in app crates so it can construct
+# their `dyn AppView` and register it against each opened window (the shell stays
+# app-agnostic — it only knows the `AppView` trait via liquide-interop). These
+# are path deps (not `[workspace.dependencies]`) to keep the change inside the
+# host's lock and off the root manifest, mirroring the `liquide-power` path dep.
+liquide-apps-terminal = { path = "../liquide-apps-terminal" }
+liquide-apps-text-editor = { path = "../liquide-apps-text-editor" }
+liquide-apps-files = { path = "../liquide-apps-files" }
+liquide-apps-settings = { path = "../liquide-apps-settings" }
+liquide-apps-task-manager = { path = "../liquide-apps-task-manager" }
+liquide-apps-software-center = { path = "../liquide-apps-software-center" }
 liquide-a11y.workspace = true
 liquide-devtools.workspace = true
 liquide-message-queue.workspace = true
