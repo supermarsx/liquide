@@ -553,6 +553,61 @@ fn linear_gradient_angle_maps_to_ydown_space() {
     assert!(approx(ex, 0.5) && approx(ey, 0.0), "end {ex},{ey}");
 }
 
+/// t64-p0 Primitive 3: the `repeating` flag must be carried from the CSS
+/// `repeating-*-gradient()` variants onto the compositor `GradientSpec`.
+#[test]
+fn repeating_gradient_flag_propagates_to_gradient_spec() {
+    use liquide_compositor::scene::{BackgroundImage, GradientSpec};
+
+    fn repeating_flag(css: &str) -> bool {
+        let mut engine = StyleEngine::default();
+        engine.add_stylesheet(&format!("div {{ background: {css}; }}"));
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+        let styles = engine.restyle_all(&doc);
+        let style = styles.get(div).unwrap();
+        match style.background[0].image.as_ref().unwrap() {
+            BackgroundImage::Gradient(g) => g.repeating(),
+            other => panic!("expected gradient, got {other:?}"),
+        }
+    }
+
+    assert!(
+        !repeating_flag("linear-gradient(red, blue)"),
+        "plain linear-gradient must not be repeating"
+    );
+    assert!(
+        repeating_flag("repeating-linear-gradient(red, blue 20px)"),
+        "repeating-linear-gradient must set the repeating flag"
+    );
+    assert!(
+        repeating_flag("repeating-radial-gradient(red, blue 20px)"),
+        "repeating-radial-gradient must set the repeating flag"
+    );
+    // Verify the variant carries through (not collapsed to Linear).
+    assert!(matches!(
+        {
+            let mut engine = StyleEngine::default();
+            engine.add_stylesheet(
+                "div { background: repeating-radial-gradient(red, blue 20px); }",
+            );
+            let mut doc = Document::new();
+            let root = doc.root();
+            let div = doc.create_element("div");
+            doc.append_child(root, div);
+            let styles = engine.restyle_all(&doc);
+            let style = styles.get(div).unwrap();
+            match style.background[0].image.as_ref().unwrap() {
+                BackgroundImage::Gradient(g) => matches!(g, GradientSpec::Radial { .. }),
+                _ => false,
+            }
+        },
+        true
+    ));
+}
+
 #[test]
 fn transition_duration_defaults_transition_definitions_to_all() {
     let mut engine = StyleEngine::default();

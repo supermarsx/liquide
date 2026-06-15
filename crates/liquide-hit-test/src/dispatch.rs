@@ -5,7 +5,7 @@ use liquide_dom::{Document, NodeId};
 use liquide_layout::geometry::Point;
 
 use crate::engine::{HitTestEngine, HitTestResult};
-use crate::event::{DomEvent, DomEventKind, MouseButton, Propagation};
+use crate::event::{DomEvent, DomEventKind, EventPhase, MouseButton, Propagation};
 
 /// Callback type for event handlers.
 pub type EventHandler = Box<dyn Fn(&DomEvent) -> Propagation + Send>;
@@ -20,10 +20,15 @@ pub struct EventDispatcher {
     last_mouse: Point,
     /// Last click target + timestamp for double-click detection.
     last_click: Option<(NodeId, std::time::Instant)>,
-    /// Registered event handlers: (node, discriminant filter, handler).
+    /// Registered event handlers: (node, discriminant filter, capture, handler).
+    ///
+    /// `capture == true` => the listener fires during the W3C capture phase
+    /// (root → target); `capture == false` => it fires during the bubble phase
+    /// (target → root). Both fire at the target node in registration order.
     handlers: Vec<(
         NodeId,
         Option<std::mem::Discriminant<DomEventKind>>,
+        bool,
         EventHandler,
     )>,
 }
@@ -50,15 +55,39 @@ impl EventDispatcher {
         &self.hover_chain
     }
 
-    /// Register an event handler for a node.
+    /// Register a **bubble-phase** event handler for a node.
+    ///
+    /// Convenience wrapper around [`add_event_listener`](Self::add_event_listener)
+    /// with `capture = false`. Retained for the hover-chain dispatch path used by
+    /// the `dispatch_mouse_*` / `dispatch_key_*` helpers.
     pub fn add_handler(
         &mut self,
         node: NodeId,
         kind_filter: Option<DomEventKind>,
         handler: EventHandler,
     ) {
+        self.add_event_listener(node, kind_filter, false, handler);
+    }
+
+    /// Register an event listener for a node (W3C `addEventListener` semantics).
+    ///
+    /// `capture` selects the phase the listener fires in:
+    /// - `true`  → capture phase (root → target),
+    /// - `false` → bubble phase (target → root).
+    ///
+    /// At the target node, both capture and bubble listeners fire in registration
+    /// order. Listeners registered here are driven by
+    /// [`dispatch_events`](Self::dispatch_events), which performs full three-phase
+    /// propagation using each event's `event_path`.
+    pub fn add_event_listener(
+        &mut self,
+        node: NodeId,
+        kind_filter: Option<DomEventKind>,
+        capture: bool,
+        handler: EventHandler,
+    ) {
         let disc = kind_filter.as_ref().map(std::mem::discriminant);
-        self.handlers.push((node, disc, handler));
+        self.handlers.push((node, disc, capture, handler));
     }
 
     /// Dispatch a mouse move event. Updates hover chain and generates
@@ -347,8 +376,13 @@ impl EventDispatcher {
 
             // Fire handlers on the target node.
             let mut stopped = false;
-            for (node, filter, handler) in &self.handlers {
+            for (node, filter, capture, handler) in &self.handlers {
                 if *node != event.target {
+                    continue;
+                }
+                if *capture {
+                    // Capture-phase listeners are driven by `dispatch_events`,
+                    // not the hover-chain bubble path.
                     continue;
                 }
                 if let Some(f) = filter {
@@ -378,8 +412,11 @@ impl EventDispatcher {
                         continue; // already handled above
                     }
                     let mut ancestor_stopped = false;
-                    for (node, filter, handler) in &self.handlers {
+                    for (node, filter, capture, handler) in &self.handlers {
                         if *node != ancestor {
+                            continue;
+                        }
+                        if *capture {
                             continue;
                         }
                         if let Some(f) = filter {
@@ -404,6 +441,127 @@ impl EventDispatcher {
                 }
             }
         }
+    }
+
+    /// Dispatch a batch of pre-built [`DomEvent`]s using full W3C three-phase
+    /// propagation (capture → target → bubble).
+    ///
+    /// Each event must carry its ancestor `event_path` (root-first, excluding the
+    /// target). Phase order, per the W3C UI Events spec:
+    ///
+    /// 1. **Capture** — walk `event_path` front-to-back (root → parent); fire only
+    ///    `capture == true` listeners; `phase = Capturing`.
+    /// 2. **At target** — fire ALL listeners on the target (capture *and* bubble)
+    ///    in registration order; `phase = AtTarget`.
+    /// 3. **Bubble** — walk `event_path` back-to-front (parent → root); fire only
+    ///    `capture == false` listeners; `phase = Bubbling`. Skipped entirely when
+    ///    the event does not bubble (`event.bubbles == false`).
+    ///
+    /// Propagation control:
+    /// - [`Propagation::StopPropagation`] — finishes the listeners on the current
+    ///   node, then stops every later node and phase.
+    /// - [`Propagation::StopImmediate`] — stops immediately, including any
+    ///   remaining listeners on the current node.
+    ///
+    /// This is the capability the shell uses for modal / overlay event capture
+    /// (a capturing root listener can swallow a descendant click) and for
+    /// `preventDefault`. It is independent of the hover-chain
+    /// [`fire_handlers`](Self::fire_handlers) path used by `dispatch_mouse_*`.
+    pub fn dispatch_events(&self, events: &[DomEvent]) {
+        for event in events {
+            let event_disc = std::mem::discriminant(&event.kind);
+
+            // ── 1. Capture phase: root → parent ──────────────────────────────
+            let mut stopped = false;
+            for &ancestor in &event.event_path {
+                if self.fire_phase(event, event_disc, ancestor, true, EventPhase::Capturing) {
+                    stopped = true;
+                    break;
+                }
+            }
+            if stopped {
+                continue;
+            }
+
+            // ── 2. At-target phase: both capture & bubble listeners ──────────
+            if self.fire_phase(event, event_disc, event.target, false, EventPhase::AtTarget) {
+                continue;
+            }
+
+            // ── 3. Bubble phase: parent → root (bubbling events only) ────────
+            if event.bubbles {
+                for &ancestor in event.event_path.iter().rev() {
+                    if self.fire_phase(event, event_disc, ancestor, false, EventPhase::Bubbling) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fire the listeners registered on `node` that match the current phase.
+    ///
+    /// `at_target == true` selects the at-target phase, where BOTH capture and
+    /// bubble listeners on the node fire (in registration order); otherwise only
+    /// listeners whose `capture` flag is `want_capture` fire.
+    ///
+    /// Returns `true` if propagation should stop for all subsequent nodes/phases
+    /// (i.e. a handler returned `StopPropagation` or `StopImmediate`).
+    fn fire_phase(
+        &self,
+        event: &DomEvent,
+        event_disc: std::mem::Discriminant<DomEventKind>,
+        node: NodeId,
+        want_capture: bool,
+        phase: EventPhase,
+    ) -> bool {
+        let at_target = matches!(phase, EventPhase::AtTarget);
+        let mut stop_all = false;
+
+        for (handler_node, filter, capture, handler) in &self.handlers {
+            if *handler_node != node {
+                continue;
+            }
+            // At the target node, both capture and bubble listeners fire.
+            // Elsewhere, only listeners whose phase matches.
+            if !at_target && *capture != want_capture {
+                continue;
+            }
+            if let Some(f) = filter {
+                if *f != event_disc {
+                    continue;
+                }
+            }
+
+            // Per-handler view of the event with the correct phase/current_target.
+            let mut scoped = event.clone();
+            scoped.current_target = node;
+            scoped.phase = phase;
+
+            // A panicking handler must not freeze the whole event pipeline:
+            // isolate it, treat the panic as "Continue", and keep dispatching.
+            let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handler(&scoped)
+            })) {
+                Ok(r) => r,
+                Err(_) => Propagation::Continue,
+            };
+
+            match result {
+                Propagation::StopImmediate => {
+                    // Stop this node AND all subsequent nodes/phases.
+                    return true;
+                }
+                Propagation::StopPropagation => {
+                    // Finish remaining listeners on THIS node, then stop later
+                    // nodes/phases.
+                    stop_all = true;
+                }
+                Propagation::Continue | Propagation::PreventDefault => {}
+            }
+        }
+
+        stop_all
     }
 }
 

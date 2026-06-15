@@ -9,7 +9,51 @@ use crate::rasterizer;
 
 use super::SoftwareRenderer;
 
+/// Resolved cursor appearance — the CSS-driven seam for cursor rendering.
+///
+/// The renderer draws the cursor *shape* (carried on the scene node) using
+/// these resolved colors and an optional shape override. The shell can resolve
+/// CSS (`cursor`, `caret-color`, theme colors) and feed it here; the defaults
+/// reproduce the historic hardcoded appearance (black outline, white fill).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CursorTheme {
+    /// Outline/stroke color drawn behind the fill (was hardcoded black).
+    pub outline: Color,
+    /// Primary fill color of the cursor body (was hardcoded white).
+    pub fill: Color,
+    /// Optional shape override. When `Some`, this shape is rendered instead of
+    /// the shape carried on the scene node (lets the shell force a CSS-resolved
+    /// `cursor` value). When `None`, the node's own shape is used.
+    pub shape_override: Option<CursorShape>,
+}
+
+impl Default for CursorTheme {
+    fn default() -> Self {
+        Self {
+            // Historic defaults — black outline, white fill.
+            outline: Color::new(0, 0, 0, 255),
+            fill: Color::WHITE,
+            shape_override: None,
+        }
+    }
+}
+
 impl SoftwareRenderer {
+    /// Set the resolved cursor appearance (color + optional shape override).
+    ///
+    /// This is the CSS seam: the shell resolves the theme/`cursor` CSS and pushes
+    /// the result here. Until called, the renderer uses [`CursorTheme::default`]
+    /// (black outline, white fill, node-driven shape).
+    pub fn set_cursor_theme(&mut self, theme: CursorTheme) {
+        self.cursor_theme = theme;
+    }
+
+    /// Returns the current resolved cursor appearance.
+    #[must_use]
+    pub fn cursor_theme(&self) -> CursorTheme {
+        self.cursor_theme
+    }
+
     /// Render a cursor node.
     pub(crate) fn render_cursor_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
@@ -18,8 +62,11 @@ impl SoftwareRenderer {
             let cy = bounds.y;
             let s = (bounds.width / 16.0).max(1.0);
 
-            let outline = Color::new(0, 0, 0, 255);
-            let fill = Color::WHITE;
+            // CSS seam: resolved colors (defaults reproduce the old hardcoded
+            // black/white) and an optional shape override.
+            let outline = self.cursor_theme.outline;
+            let fill = self.cursor_theme.fill;
+            let shape = self.cursor_theme.shape_override.as_ref().unwrap_or(shape);
 
             match shape {
                 CursorShape::Arrow => {
@@ -1051,6 +1098,115 @@ impl SoftwareRenderer {
             Rect::new(cx - 1.0 * s, cy - 1.0 * s, 2.0 * s, 1.0 * s),
             outline,
             BlendMode::SrcOver,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_compositor::Renderer;
+    use liquide_compositor::damage::{DamageClass, DamageSet, DamageTile};
+    use liquide_compositor::geometry::Affine2D;
+    use liquide_compositor::pixel::PixelFormat;
+    use liquide_compositor::scene::SceneNodeKind;
+
+    fn cursor_node(shape: CursorShape) -> FlatNode {
+        FlatNode {
+            id: 1,
+            kind: SceneNodeKind::Cursor { shape }.into(),
+            absolute_bounds: Rect::new(8.0, 8.0, 16.0, 16.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    fn render(renderer: &mut SoftwareRenderer, node: &FlatNode) -> FrameBuffer {
+        let mut fb = FrameBuffer::new(48, 48, PixelFormat::Bgra8);
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
+        renderer
+            .render(std::slice::from_ref(node), &mut fb, &damage)
+            .unwrap();
+        fb
+    }
+
+    fn find_fill_pixel(fb: &FrameBuffer, want: Color) -> bool {
+        for y in 0..fb.height {
+            for x in 0..fb.width {
+                let p = fb.get_pixel(x, y);
+                if p.r == want.r && p.g == want.g && p.b == want.b && p.a > 0 {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn cursor_theme_defaults_to_black_outline_white_fill() {
+        let theme = CursorTheme::default();
+        assert_eq!(theme.outline, Color::new(0, 0, 0, 255));
+        assert_eq!(theme.fill, Color::WHITE);
+        assert!(theme.shape_override.is_none());
+
+        // Default render has white fill pixels somewhere.
+        let mut r = SoftwareRenderer::new();
+        let fb = render(&mut r, &cursor_node(CursorShape::Arrow));
+        assert!(
+            find_fill_pixel(&fb, Color::WHITE),
+            "default cursor should render white fill pixels"
+        );
+    }
+
+    #[test]
+    fn cursor_theme_seam_overrides_fill_color() {
+        let mut r = SoftwareRenderer::new();
+        let red = Color::new(255, 0, 0, 255);
+        r.set_cursor_theme(CursorTheme {
+            outline: Color::new(0, 0, 0, 255),
+            fill: red,
+            shape_override: None,
+        });
+        let fb = render(&mut r, &cursor_node(CursorShape::Arrow));
+        assert!(
+            find_fill_pixel(&fb, red),
+            "themed cursor should render the resolved red fill"
+        );
+        assert!(
+            !find_fill_pixel(&fb, Color::WHITE),
+            "no white fill should remain after overriding the fill color"
+        );
+        assert_eq!(r.cursor_theme().fill, red);
+    }
+
+    #[test]
+    fn cursor_theme_shape_override_replaces_node_shape() {
+        // Render Arrow normally vs. with a shape override forcing Crosshair.
+        // Crosshair draws only thin lines (outline color, no white fill),
+        // so the override is observable: the overridden render has no white fill.
+        let mut normal = SoftwareRenderer::new();
+        let fb_arrow = render(&mut normal, &cursor_node(CursorShape::Arrow));
+        assert!(find_fill_pixel(&fb_arrow, Color::WHITE));
+
+        let mut overridden = SoftwareRenderer::new();
+        overridden.set_cursor_theme(CursorTheme {
+            shape_override: Some(CursorShape::Crosshair),
+            ..CursorTheme::default()
+        });
+        // Node still says Arrow, but the override forces Crosshair.
+        let fb_cross = render(&mut overridden, &cursor_node(CursorShape::Arrow));
+        assert!(
+            !find_fill_pixel(&fb_cross, Color::WHITE),
+            "shape override to Crosshair should not draw the arrow's white fill"
         );
     }
 }

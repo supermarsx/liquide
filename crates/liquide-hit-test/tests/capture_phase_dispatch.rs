@@ -1,20 +1,16 @@
 //! Integration tests for W3C capture → target → bubble event dispatch.
 //!
-//! TODO(t42): The current `EventDispatcher` (see `crates/liquide-hit-test/src/dispatch.rs`)
-//! does not yet implement the W3C capture phase: there is no `capture` parameter on the
-//! handler-registration API and no `event_path` field on `DomEvent`. The original
-//! capture-phase test suite is preserved verbatim below behind `#[cfg(any())]` so it can
-//! be re-enabled wholesale once the production dispatcher gains capture-phase support.
-//! Until then the gated module is excluded from compilation, and the smoke marker below
-//! keeps this integration-test binary alive so the workspace `cargo check --all-targets`
-//! lane stays green under `-D warnings`.
+//! Exercises [`EventDispatcher::dispatch_events`] (see
+//! `crates/liquide-hit-test/src/dispatch.rs`), which performs full three-phase
+//! propagation driven by each event's `event_path`:
+//!   capture (root → target) → at-target → bubble (target → root),
+//! with W3C `stopPropagation` / `stopImmediatePropagation` semantics and correct
+//! `Event.eventPhase` / `Event.currentTarget` values.
+//!
+//! Previously gated behind `#[cfg(any())]` because the dispatcher lacked the
+//! `capture` listener flag, the `event_path` field, and `dispatch_events`. Those
+//! now exist, so the suite is live.
 
-#[test]
-fn capture_phase_tests_are_disabled() {
-    // Smoke marker — real coverage lives in the gated `dormant` module below.
-}
-
-#[cfg(any())]
 mod dormant {
 
     use std::sync::{Arc, Mutex};
@@ -585,7 +581,7 @@ mod dormant {
         let log = Arc::new(Mutex::new(Vec::<String>::new()));
 
         // Create 20 ancestor nodes (1..=20) and target node (21)
-        let ancestors: Vec<NodeId> = (1..=20).map(NodeId::from).collect();
+        let ancestors: Vec<NodeId> = (1u64..=20).collect();
         let target: NodeId = 21;
 
         // Add capture listener on every ancestor
@@ -639,7 +635,7 @@ mod dormant {
         let mut dispatcher = EventDispatcher::new();
         let log = Arc::new(Mutex::new(Vec::<String>::new()));
 
-        let ancestors: Vec<NodeId> = (1..=20).map(NodeId::from).collect();
+        let ancestors: Vec<NodeId> = (1u64..=20).collect();
         let target: NodeId = 21;
 
         for (i, &node) in ancestors.iter().enumerate() {

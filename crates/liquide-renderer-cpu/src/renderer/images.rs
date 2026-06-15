@@ -71,6 +71,15 @@ impl SoftwareRenderer {
                             ),
                         )
                     }
+                    liquide_compositor::scene::ImageFit::Sized { width, height } => {
+                        // CSS background-size: <w> <h> — scale the whole source
+                        // image to the explicit logical size, anchored at the
+                        // node's top-left.
+                        (
+                            Rect::new(0.0, 0.0, src_w, src_h),
+                            Rect::new(bounds.x, bounds.y, *width, *height),
+                        )
+                    }
                 };
 
                 self.draw_scaled_texture(fb, &texture, src_rect, dst_rect, opacity);
@@ -799,6 +808,57 @@ mod tests {
 
         renderer.register_image_rgba(10, vec![32u8; 16], 2, 2);
         assert_eq!(renderer.texture_cache.pattern_len(), 1);
+    }
+
+    #[test]
+    fn image_fit_sized_scales_to_explicit_size_not_bounds() {
+        use liquide_compositor::geometry::Affine2D;
+        use liquide_compositor::scene::ImageFit;
+
+        let mut renderer = SoftwareRenderer::new();
+        // 2x2 fully-opaque white texture.
+        renderer.register_image_rgba(55, vec![255u8; 16], 2, 2);
+
+        // Image node bounds are 20x20, but Sized forces an 8x8 draw rect at the
+        // node's top-left. So pixels inside 8x8 are painted, pixels beyond are not.
+        let node = FlatNode {
+            id: 55,
+            kind: SceneNodeKind::Image {
+                image_id: 55,
+                width: 2,
+                height: 2,
+                fit: ImageFit::Sized {
+                    width: 8.0,
+                    height: 8.0,
+                },
+            }
+            .into(),
+            absolute_bounds: Rect::new(0.0, 0.0, 20.0, 20.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+
+        let mut fb = FrameBuffer::new(24, 24, PixelFormat::Bgra8);
+        let damage = full_damage();
+        renderer
+            .render(std::slice::from_ref(&node), &mut fb, &damage)
+            .unwrap();
+
+        // Inside the 8x8 explicit size: painted.
+        assert!(
+            fb.get_pixel(2, 2).a > 0,
+            "pixel inside explicit 8x8 size should be painted"
+        );
+        // Beyond 8px but within the 20px bounds: NOT painted (Sized != Fill).
+        assert_eq!(
+            fb.get_pixel(15, 15).a,
+            0,
+            "pixel beyond the explicit size must not be painted"
+        );
     }
 
     #[test]

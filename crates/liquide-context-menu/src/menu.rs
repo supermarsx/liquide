@@ -728,9 +728,11 @@ impl ContextMenu {
                     text_transform: 0,
                     text_overflow: 0,
                     white_space: 0,
+                    word_break: liquide_compositor::scene::WordBreak::Normal,
                     text_indent: 0.0,
                     text_decoration: None,
                     text_shadows: vec![],
+                    text_emphasis: None,
                 },
                 NodeProperties::new(Rect::new(
                     text_x,
@@ -761,9 +763,11 @@ impl ContextMenu {
                         text_transform: 0,
                         text_overflow: 0,
                         white_space: 0,
+                        word_break: liquide_compositor::scene::WordBreak::Normal,
                         text_indent: 0.0,
                         text_decoration: None,
                         text_shadows: vec![],
+                        text_emphasis: None,
                     },
                     NodeProperties::new(Rect::new(bounds.width - 80.0, iy + 6.0, 72.0, 20.0))
                         .with_z_order(z_base + 2),

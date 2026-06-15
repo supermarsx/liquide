@@ -19,3 +19,11 @@ libc = "0.2"
 
 [dev-dependencies]
 serde_json.workspace = true
+
+# Live present-path verification diagnostic (t64-rdp). Windows-only at runtime;
+# the source compiles on all platforms (it stubs to a message off-Windows). Run
+# over RDP to verify the GDI off-screen-DIB + atomic-BitBlt flicker fix:
+#   cargo run -p liquide-platform --bin present-verify --offline
+[[bin]]
+name = "present-verify"
+path = "src/bin/present_verify.rs"

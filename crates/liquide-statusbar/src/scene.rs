@@ -144,9 +144,11 @@ fn text_node(
             text_transform: 0,
             text_overflow: 0,
             white_space: 0,
+            word_break: liquide_compositor::scene::WordBreak::Normal,
             text_indent: 0.0,
             text_decoration: None,
             text_shadows: vec![],
+            text_emphasis: None,
         },
         NodeProperties::new(bounds).with_z_order(z),
     )

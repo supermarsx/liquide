@@ -24,6 +24,13 @@ pub struct DomEvent {
     pub target: NodeId,
     /// The current target during propagation (changes as event bubbles/captures).
     pub current_target: NodeId,
+    /// The ancestor propagation path, **root-first** (i.e. `[root, …, parent]`),
+    /// NOT including the target itself.
+    ///
+    /// Used by [`EventDispatcher::dispatch_events`] to drive W3C three-phase
+    /// (capture → target → bubble) dispatch. The capture phase walks this path
+    /// front-to-back; the bubble phase walks it back-to-front.
+    pub event_path: Vec<NodeId>,
     /// The event kind.
     pub kind: DomEventKind,
     /// Propagation state.
@@ -46,6 +53,7 @@ impl DomEvent {
         Self {
             target,
             current_target: target,
+            event_path: Vec::new(),
             kind,
             propagation: Propagation::default(),
             phase: EventPhase::None,
@@ -232,11 +240,14 @@ impl DomEventKind {
     /// Whether this event type bubbles through the DOM tree.
     pub fn bubbles(&self) -> bool {
         match self {
-            // These events do NOT bubble
+            // These events do NOT bubble.
+            // Note: the `scroll` event does not bubble per the W3C UI Events spec
+            // (unlike `wheel`, which does).
             DomEventKind::MouseEnter
             | DomEventKind::MouseLeave
             | DomEventKind::Focus
             | DomEventKind::Blur
+            | DomEventKind::Scroll { .. }
             | DomEventKind::PointerEnter { .. }
             | DomEventKind::PointerLeave { .. }
             | DomEventKind::GotPointerCapture { .. }

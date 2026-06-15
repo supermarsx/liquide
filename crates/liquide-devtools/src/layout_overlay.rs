@@ -206,9 +206,11 @@ impl LayoutOverlay {
                     text_transform: 0,
                     text_overflow: 0,
                     white_space: 1,
+                    word_break: liquide_compositor::scene::WordBreak::Normal,
                     text_indent: 0.0,
                     text_decoration: None,
                     text_shadows: vec![],
+                    text_emphasis: None,
                 },
                 NodeProperties::new(Rect::new(
                     label_x + 6.0,

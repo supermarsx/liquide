@@ -34,6 +34,11 @@ use liquide_font_rasterizer::rasterize::{GlyphRasterizer, RasterConfig};
 use crate::bitmap_font::BitmapFont;
 use crate::glyph::{GlyphKey, GlyphMetrics};
 
+/// Shear angle (degrees) used when synthesizing oblique text from an upright
+/// face because no true italic face is available. Matches the typographic
+/// convention used by `SynthesisConfig::italic` (12°).
+const SYNTHETIC_OBLIQUE_DEGREES: f32 = 12.0;
+
 // ---------------------------------------------------------------------------
 // Types exchanged between renderer and worker
 // ---------------------------------------------------------------------------
@@ -51,6 +56,8 @@ struct GlyphRequest {
     font_family: String,
     /// Font weight (100–900).
     font_weight: u16,
+    /// Whether italic/oblique styling is requested for this glyph.
+    italic: bool,
 }
 
 /// A completed rasterized glyph returned from the worker.
@@ -135,10 +142,15 @@ impl FontWorker {
     /// If the glyph is already pending, the request is silently skipped.
     #[allow(dead_code)]
     pub fn request_glyph(&mut self, key: GlyphKey, codepoint: char, target_height: u32) {
-        self.request_glyph_with_font(key, codepoint, target_height, String::new(), 400);
+        self.request_glyph_with_font(key, codepoint, target_height, String::new(), 400, false);
     }
 
-    /// Submit a glyph rasterization request with font family/weight info.
+    /// Submit a glyph rasterization request with font family/weight/style info.
+    ///
+    /// When `italic` is set, the worker selects a real italic face if one is
+    /// available for the family/weight; otherwise it synthesizes an oblique
+    /// slant (shear transform) from the upright face.
+    #[allow(clippy::too_many_arguments)]
     pub fn request_glyph_with_font(
         &mut self,
         key: GlyphKey,
@@ -146,6 +158,7 @@ impl FontWorker {
         target_height: u32,
         font_family: String,
         font_weight: u16,
+        italic: bool,
     ) {
         if self.pending.contains(&key) {
             return;
@@ -157,6 +170,7 @@ impl FontWorker {
             target_height,
             font_family,
             font_weight,
+            italic,
         };
         if self.request_tx.send(WorkerMsg::Rasterize(req)).is_ok() {
             self.pending.insert(key);
@@ -348,11 +362,24 @@ impl FontWorker {
     ) -> RasterizedGlyph {
         // Try to resolve a real font face if a family was specified.
         if !req.font_family.is_empty() {
-            if let Some(face_id) = db.resolve(&req.font_family, req.font_weight, false) {
+            // Ask the database for an italic face when requested. The resolver
+            // prefers an exact italic match, then falls back to the upright
+            // face for the same family/weight (database::resolve_exact).
+            if let Some(face_id) = db.resolve(&req.font_family, req.font_weight, req.italic) {
                 let size_px = req.target_height as f32;
-                if let Ok(glyph_bitmap) =
+                if let Ok(mut glyph_bitmap) =
                     rasterizer.rasterize(face_id, req.codepoint, size_px, config)
                 {
+                    // If italic was requested but the resolved face is NOT a
+                    // true italic face, synthesize the slant via a shear
+                    // transform so the run still renders distinctly italic.
+                    let face_is_italic = db.get(face_id).map(|f| f.italic).unwrap_or(false);
+                    if req.italic && !face_is_italic {
+                        glyph_bitmap = liquide_font_rasterizer::synthesis::apply_synthetic_oblique(
+                            &glyph_bitmap,
+                            SYNTHETIC_OBLIQUE_DEGREES,
+                        );
+                    }
                     return RasterizedGlyph {
                         key: req.key,
                         generation: req.generation,
@@ -555,5 +582,105 @@ mod tests {
 
         let reloaded = worker.reload_faces([mem_id]);
         assert!(reloaded.is_empty(), "memory face has no source to reload");
+    }
+
+    /// Drain the worker (busy-polling with a bounded deadline) until glyphs for
+    /// every key in `keys` have been produced. Returns them keyed by GlyphKey.
+    /// Because `poll_results` consumes results, we must collect all wanted keys
+    /// in a single drain loop rather than one key at a time.
+    fn collect_glyphs(
+        worker: &mut FontWorker,
+        keys: &[GlyphKey],
+    ) -> HashMap<GlyphKey, RasterizedGlyph> {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut found: HashMap<GlyphKey, RasterizedGlyph> = HashMap::new();
+        while found.len() < keys.len() {
+            for glyph in worker.poll_results() {
+                if keys.contains(&glyph.key) {
+                    found.insert(glyph.key, glyph);
+                }
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        found
+    }
+
+    /// font-style: italic must render differently from regular. When only an
+    /// upright face is loaded for a family, requesting an italic glyph must
+    /// produce a *different* bitmap than the upright glyph (synthetic oblique
+    /// slant applied). This is the end-to-end proof that `italic` is honoured
+    /// through `request_glyph_with_font` → `db.resolve` → synthetic oblique.
+    #[test]
+    fn italic_run_renders_differently_from_regular() {
+        let Some(data) = fixture_font_bytes() else {
+            return; // No system font available in this environment.
+        };
+        // Load ONLY an upright face for the family, so italic must be synthesized.
+        let mut db = FontDatabase::new();
+        db.load_bytes(data, "ItalicProbe", 400, false).unwrap();
+        let mut worker = FontWorker::with_font_db(db);
+
+        let target_height = 32_u32;
+        // font_id layout (see renderer::text): bit 24 = italic, bits 16..24 =
+        // weight, bits 0..16 = family hash. Use weight 400 (0x190) + hash 1.
+        let upright_key = GlyphKey {
+            font_id: ((400_u32 & 0xFF) << 16) | 1, // matches renderer::text encoding
+            glyph_id: 'a' as u32,
+            size_px: target_height as u16,
+            subpixel: false,
+        };
+        // Distinct key (italic bit set) so the results don't collide.
+        let italic_key = GlyphKey {
+            font_id: upright_key.font_id | (1 << 24),
+            ..upright_key
+        };
+        assert_ne!(upright_key.font_id, italic_key.font_id);
+
+        worker.request_glyph_with_font(
+            upright_key,
+            'a',
+            target_height,
+            "ItalicProbe".to_string(),
+            400,
+            false,
+        );
+        worker.request_glyph_with_font(
+            italic_key,
+            'a',
+            target_height,
+            "ItalicProbe".to_string(),
+            400,
+            true,
+        );
+
+        let mut glyphs = collect_glyphs(&mut worker, &[upright_key, italic_key]);
+        let upright = glyphs.remove(&upright_key).expect("upright glyph rasterized");
+        let italic = glyphs.remove(&italic_key).expect("italic glyph rasterized");
+
+        // The synthetic-oblique shear widens the bitmap and shifts coverage, so
+        // the two bitmaps must differ. (A real italic face would also differ.)
+        let differs = upright.metrics.width != italic.metrics.width
+            || upright.bitmap != italic.bitmap;
+        assert!(
+            differs,
+            "italic glyph bitmap must differ from upright (synthetic oblique not applied): \
+             upright {}x{} ({} bytes) vs italic {}x{} ({} bytes)",
+            upright.metrics.width,
+            upright.metrics.height,
+            upright.bitmap.len(),
+            italic.metrics.width,
+            italic.metrics.height,
+            italic.bitmap.len(),
+        );
+
+        // Synthetic oblique specifically widens the glyph (shear adds columns).
+        assert!(
+            italic.metrics.width >= upright.metrics.width,
+            "synthetic oblique should not narrow the glyph"
+        );
     }
 }

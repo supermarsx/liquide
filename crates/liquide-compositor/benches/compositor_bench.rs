@@ -103,9 +103,11 @@ fn build_desktop_scene(window_count: usize) -> SceneNode {
                 text_transform: 0,
                 text_overflow: 0,
                 white_space: 0,
+                word_break: liquide_compositor::scene::WordBreak::Normal,
                 text_indent: 0.0,
                 text_decoration: None,
                 text_shadows: Vec::new(),
+                text_emphasis: None,
             },
             NodeProperties::new(Rect::new(x + 18.0, y + 60.0, 332.0, 24.0)).with_z_order(z_order + 3),
         ));

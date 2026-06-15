@@ -525,6 +525,12 @@ fn compute_image_uv_rect(
             let v_off = (1.0 - v_range) * 0.5;
             [u_off, v_off, u_off + u_range, v_off + v_range]
         }
+        ImageFit::Sized { .. } => {
+            // Explicit size scales the whole image into the target rect; the
+            // destination geometry (handled by the quad) carries the size, so
+            // the UV range is the full image.
+            [0.0, 0.0, 1.0, 1.0]
+        }
     }
 }
 
@@ -1695,6 +1701,7 @@ impl WgpuRenderer {
                 end_x,
                 end_y,
                 stops,
+                ..
             } => {
                 let dx = end_x - start_x;
                 let dy = end_y - start_y;
@@ -1727,6 +1734,7 @@ impl WgpuRenderer {
                 center_y,
                 start_angle,
                 stops,
+                ..
             } => (
                 2u32,
                 *start_angle,
@@ -2506,6 +2514,11 @@ impl WgpuRenderer {
                 let y = bounds.y + (bounds.height - h) * 0.5;
                 (x, y, w, h)
             }
+            ImageFit::Sized { width, height } => {
+                // Explicit size (CSS background-size: <w> <h>) anchored at the
+                // node's top-left.
+                (bounds.x, bounds.y, *width, *height)
+            }
             _ => (bounds.x, bounds.y, bounds.width, bounds.height),
         };
 
@@ -3023,6 +3036,7 @@ mod tests {
             end_x: 1.0,
             end_y: 1.0,
             stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
+            repeating: false,
         }
     }
 
@@ -3529,6 +3543,7 @@ mod tests {
             end_x: 1.0,
             end_y: 0.0,
             stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
+            repeating: false,
         };
         if let GradientSpec::Linear {
             start_x,
@@ -3554,6 +3569,7 @@ mod tests {
             radius: 1.0,
             radius_y: 1.0,
             stops: vec![(0.0, Color::WHITE), (1.0, Color::BLACK)],
+            repeating: false,
         };
         if let GradientSpec::Radial {
             center_x,

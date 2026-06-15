@@ -44,6 +44,7 @@ impl SoftwareRenderer {
                 end_x,
                 end_y,
                 stops,
+                repeating,
             } => {
                 if stops.is_empty() {
                     return;
@@ -80,8 +81,12 @@ impl SoftwareRenderer {
                         };
                         // Project pixel onto gradient line
                         let t = ((fx - sx) * dx + (fy - sy) * dy) * inv_len2;
-                        let t_clamped = t.clamp(0.0, 1.0);
-                        let mut color = sample_gradient_stops(stops, t_clamped, opacity);
+                        let t_mapped = if *repeating {
+                            wrap_repeating(t, stops)
+                        } else {
+                            t.clamp(0.0, 1.0)
+                        };
+                        let mut color = sample_gradient_stops(stops, t_mapped, opacity);
                         if coverage < 1.0 {
                             color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
@@ -100,6 +105,7 @@ impl SoftwareRenderer {
                 radius,
                 radius_y,
                 stops,
+                repeating,
             } => {
                 if stops.is_empty() || *radius <= 0.0 || *radius_y <= 0.0 {
                     return;
@@ -130,7 +136,11 @@ impl SoftwareRenderer {
                         let dx = fx - cx;
                         let dy = fy - cy;
                         let dist = (dx * dx * inv_rx_sq + dy * dy * inv_ry_sq).sqrt();
-                        let t = dist.clamp(0.0, 1.0);
+                        let t = if *repeating {
+                            wrap_repeating(dist, stops)
+                        } else {
+                            dist.clamp(0.0, 1.0)
+                        };
                         let mut color = sample_gradient_stops(stops, t, opacity);
                         if coverage < 1.0 {
                             color.a = (color.a as f32 * coverage + 0.5) as u8;
@@ -149,6 +159,7 @@ impl SoftwareRenderer {
                 center_y,
                 start_angle,
                 stops,
+                repeating,
             } => {
                 if stops.is_empty() {
                     return;
@@ -177,8 +188,13 @@ impl SoftwareRenderer {
                         if angle < 0.0 {
                             angle += std::f32::consts::TAU;
                         }
-                        let t = angle / std::f32::consts::TAU;
-                        let mut color = sample_gradient_stops(stops, t.clamp(0.0, 1.0), opacity);
+                        let t_raw = angle / std::f32::consts::TAU;
+                        let t = if *repeating {
+                            wrap_repeating(t_raw, stops)
+                        } else {
+                            t_raw.clamp(0.0, 1.0)
+                        };
+                        let mut color = sample_gradient_stops(stops, t, opacity);
                         if coverage < 1.0 {
                             color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
@@ -198,6 +214,27 @@ impl SoftwareRenderer {
             }
         }
     }
+}
+
+/// Map a raw gradient parameter into the repeating stop range.
+///
+/// For CSS `repeating-*-gradient()`, the color-stop pattern tiles with a period
+/// equal to the span between the first and last stop offsets. This wraps `t`
+/// into `[first, last]` so `sample_gradient_stops` reproduces the pattern
+/// periodically instead of clamping the end stops.
+pub(crate) fn wrap_repeating(t: f32, stops: &[(f32, Color)]) -> f32 {
+    if stops.len() < 2 {
+        return t.clamp(0.0, 1.0);
+    }
+    let first = stops[0].0;
+    let last = stops[stops.len() - 1].0;
+    let period = last - first;
+    if period <= 1e-6 || !t.is_finite() {
+        return t.clamp(0.0, 1.0);
+    }
+    // Wrap into [first, last) using a positive modulo.
+    let offset = (t - first).rem_euclid(period);
+    first + offset
 }
 
 // ── Gradient stop sampling ──────────────────────────────────────────
@@ -264,4 +301,73 @@ pub(crate) fn sample_gradient_stops(stops: &[(f32, Color)], t: f32, opacity: f32
         c.a = (c.a as f32 * opacity + 0.5) as u8;
     }
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_compositor::pixel::PixelFormat;
+    use liquide_compositor::scene::GradientSpec;
+
+    fn linear_black_white(repeating: bool, start_frac: f32, end_frac: f32) -> GradientSpec {
+        // A gradient line covering only the left fraction of the box, so a
+        // repeating gradient tiles the stops across the rest while a
+        // non-repeating one clamps to white past `end_frac`.
+        GradientSpec::Linear {
+            start_x: start_frac,
+            start_y: 0.0,
+            end_x: end_frac,
+            end_y: 0.0,
+            stops: vec![(0.0, Color::BLACK), (1.0, Color::WHITE)],
+            repeating,
+        }
+    }
+
+    fn render(spec: &GradientSpec) -> FrameBuffer {
+        let mut r = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(64, 4, PixelFormat::Bgra8);
+        let bounds = Rect::new(0.0, 0.0, 64.0, 4.0);
+        r.render_gradient(&mut fb, bounds, spec, 1.0, (0.0, 0.0, 0.0, 0.0));
+        fb
+    }
+
+    #[test]
+    fn repeating_linear_differs_from_non_repeating() {
+        // Gradient line spans only the left quarter (0.0..0.25). Past x=16px:
+        //  - non-repeating: clamps to the end stop (white).
+        //  - repeating: tiles black→white repeatedly.
+        let non_rep = render(&linear_black_white(false, 0.0, 0.25));
+        let rep = render(&linear_black_white(true, 0.0, 0.25));
+
+        // Sample well past the gradient line (x=48, ~middle of 4th tile).
+        let p_non = non_rep.get_pixel(48, 1);
+        let p_rep = rep.get_pixel(48, 1);
+
+        assert_ne!(
+            (p_non.r, p_non.g, p_non.b),
+            (p_rep.r, p_rep.g, p_rep.b),
+            "repeating gradient must tile the stops instead of clamping \
+             (non-repeating={:?}, repeating={:?})",
+            (p_non.r, p_non.g, p_non.b),
+            (p_rep.r, p_rep.g, p_rep.b),
+        );
+
+        // The non-repeating one should be (near) white at the clamp.
+        assert!(
+            p_non.r > 200 && p_non.g > 200 && p_non.b > 200,
+            "non-repeating should clamp to the white end stop, got {:?}",
+            (p_non.r, p_non.g, p_non.b)
+        );
+    }
+
+    #[test]
+    fn wrap_repeating_tiles_within_stop_span() {
+        let stops = [(0.0f32, Color::BLACK), (1.0f32, Color::WHITE)];
+        // Span is 1.0; t=2.3 wraps to 0.3, t=-0.2 wraps to 0.8.
+        assert!((wrap_repeating(2.3, &stops) - 0.3).abs() < 1e-4);
+        assert!((wrap_repeating(-0.2, &stops) - 0.8).abs() < 1e-4);
+        // Degenerate span clamps.
+        let flat = [(0.5f32, Color::BLACK), (0.5f32, Color::WHITE)];
+        assert_eq!(wrap_repeating(3.0, &flat), 1.0);
+    }
 }

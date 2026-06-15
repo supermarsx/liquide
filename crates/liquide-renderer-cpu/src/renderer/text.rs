@@ -24,7 +24,7 @@ impl SoftwareRenderer {
             font_family,
             font_size,
             font_weight,
-            font_style_italic: _,
+            font_style_italic,
             letter_spacing,
             word_spacing,
             line_height,
@@ -32,9 +32,11 @@ impl SoftwareRenderer {
             text_transform,
             text_overflow,
             white_space: _,
+            word_break,
             text_indent,
             text_decoration,
             text_shadows,
+            text_emphasis,
         } = node.kind_ref()
         {
             let mut c = *color;
@@ -83,7 +85,10 @@ impl SoftwareRenderer {
                 }
                 h & 0xFFFF
             };
-            let font_id = (((*font_weight as u32) & 0xFF) << 16) | family_hash;
+            // Encode italic into the font_id so italic and upright glyphs for
+            // the same family/weight/size do not collide in the glyph atlas.
+            let italic_bit = if *font_style_italic { 1_u32 << 24 } else { 0 };
+            let font_id = italic_bit | (((*font_weight as u32) & 0xFF) << 16) | family_hash;
 
             let size_px = glyph_height as u16;
             #[allow(unused_assignments)]
@@ -96,9 +101,13 @@ impl SoftwareRenderer {
             };
 
             // Pre-warm common glyphs when enabled for this renderer.
+            // Prewarm only upright runs: the prewarm path requests glyphs with
+            // italic=false, so an italic-flagged font_id must not be prewarmed
+            // (it would seed upright glyphs under an italic key).
             let prewarm_key = (font_id, size_px);
             if self.common_glyph_prewarm_enabled()
                 && !font_family.is_empty()
+                && !*font_style_italic
                 && !self.prewarmed_fonts.contains(&prewarm_key)
             {
                 self.prewarmed_fonts.insert(prewarm_key);
@@ -125,7 +134,35 @@ impl SoftwareRenderer {
                         glyph_height,
                         font_family.clone(),
                         *font_weight,
+                        *font_style_italic,
                     );
+                }
+            }
+
+            // text-emphasis: marks are rendered as glyphs at ~50% of the text
+            // size. Request the mark glyph up-front so it is in the atlas by the
+            // time we draw it. The mark height is rounded to at least 1px.
+            let emphasis_height: u32 = ((glyph_height as f32 * 0.5).round() as u32).max(1);
+            let emphasis_size_px = emphasis_height as u16;
+            if let Some(emph) = text_emphasis {
+                if let Some(mark_ch) = emph.mark.chars().next() {
+                    let key = GlyphKey {
+                        font_id,
+                        glyph_id: mark_ch as u32,
+                        size_px: emphasis_size_px,
+                        subpixel: false,
+                    };
+                    if self.glyph_atlas.get(&key).is_none() {
+                        self.has_pending_glyphs = true;
+                        self.font_worker.request_glyph_with_font(
+                            key,
+                            mark_ch,
+                            emphasis_height,
+                            font_family.clone(),
+                            *font_weight,
+                            false,
+                        );
+                    }
                 }
             }
 
@@ -140,6 +177,17 @@ impl SoftwareRenderer {
                 let white_space_val = node.kind_ref().text_white_space().unwrap_or(0);
                 let allows_wrap = matches!(white_space_val, 0 | 3 | 4 | 5);
                 let max_line_width = bounds.width;
+
+                // word-break: break-all / break-word allow breaking *inside* a
+                // word (between any two characters) when a word would otherwise
+                // overflow the line. keep-all / normal break only at word
+                // boundaries (the default behaviour).
+                use liquide_compositor::scene::WordBreak;
+                let allow_intra_word_break =
+                    matches!(word_break, WordBreak::BreakAll | WordBreak::BreakWord);
+                // break-all may break even a word that *would* fit a fresh line;
+                // break-word only breaks words too long to ever fit.
+                let break_eagerly = matches!(word_break, WordBreak::BreakAll);
 
                 // Helper closure: measure a char advance using atlas or estimate
                 let char_advance = |ch: char| -> f32 {
@@ -174,6 +222,44 @@ impl SoftwareRenderer {
 
                         for word in WordSplitter::new(hard_line) {
                             let word_width: f32 = word.chars().map(&char_advance).sum();
+
+                            // Decide whether this word must be broken character
+                            // by character. With break-all every word is a
+                            // candidate; with break-word only words too wide to
+                            // fit a line on their own are split. A pure space run
+                            // is never intra-broken.
+                            let is_space_run = word.starts_with(' ');
+                            let must_split = allow_intra_word_break
+                                && !is_space_run
+                                && word_width > max_line_width
+                                && (break_eagerly || word_width > max_line_width);
+
+                            if must_split {
+                                // Flush whatever is on the current line first.
+                                if !current_line.is_empty() {
+                                    let trimmed = current_line.trim_end();
+                                    wrapped_lines.push(trimmed.to_string());
+                                    current_line.clear();
+                                    current_line.reserve(hard_line.len());
+                                    current_width = 0.0;
+                                }
+                                // Emit characters, wrapping whenever the next
+                                // character would overflow the line.
+                                for ch in word.chars() {
+                                    let cw = char_advance(ch);
+                                    if !current_line.is_empty()
+                                        && current_width + cw > max_line_width
+                                    {
+                                        wrapped_lines.push(current_line.clone());
+                                        current_line.clear();
+                                        current_line.reserve(hard_line.len());
+                                        current_width = 0.0;
+                                    }
+                                    current_line.push(ch);
+                                    current_width += cw;
+                                }
+                                continue;
+                            }
 
                             if !current_line.is_empty()
                                 && current_width + word_width > max_line_width
@@ -354,6 +440,58 @@ impl SoftwareRenderer {
                             );
                             let advance = cached.advance;
                             self.glyph_atlas.blit_glyph(fb, cached, pos, c);
+
+                            // text-emphasis: draw the mark centered over (or
+                            // under) this character. Skip whitespace — emphasis
+                            // marks are not drawn on separators (CSS Text Deco 3).
+                            if let Some(emph) = text_emphasis {
+                                if !ch.is_whitespace() {
+                                    if let Some(mark_ch) = emph.mark.chars().next() {
+                                        let mark_key = GlyphKey {
+                                            font_id,
+                                            glyph_id: mark_ch as u32,
+                                            size_px: emphasis_size_px,
+                                            subpixel: false,
+                                        };
+                                        if let Some(mark_glyph) =
+                                            self.glyph_atlas.get(&mark_key)
+                                        {
+                                            let mut mc = emph.color.unwrap_or(c);
+                                            if opacity < 1.0 {
+                                                mc.a = (mc.a as f32 * opacity + 0.5) as u8;
+                                            }
+                                            // Center the mark over the character cell.
+                                            let mark_x = pen_x
+                                                + (advance - mark_glyph.advance) * 0.5;
+                                            use liquide_compositor::scene::TextEmphasisPosition;
+                                            let mark_y = match emph.position {
+                                                TextEmphasisPosition::Over => {
+                                                    // Marks sit above the text top.
+                                                    // The glyph cell occupies
+                                                    // [pen_y, pen_y + glyph_height];
+                                                    // place the mark baseline at the
+                                                    // line top so it renders just above.
+                                                    pen_y
+                                                }
+                                                TextEmphasisPosition::Under => {
+                                                    // Below the descender: baseline
+                                                    // one mark-height under the cell.
+                                                    pen_y
+                                                        + glyph_height as f32
+                                                        + emphasis_height as f32
+                                                }
+                                            };
+                                            let mark_pos =
+                                                liquide_compositor::geometry::Point::new(
+                                                    mark_x, mark_y,
+                                                );
+                                            self.glyph_atlas
+                                                .blit_glyph(fb, mark_glyph, mark_pos, mc);
+                                        }
+                                    }
+                                }
+                            }
+
                             let extra = if ch == ' ' { *word_spacing } else { 0.0 };
                             pen_x += advance + *letter_spacing + extra;
                         } else {

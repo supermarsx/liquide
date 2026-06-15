@@ -7,8 +7,13 @@
 pub mod dxgi;
 pub mod ffi;
 pub mod input;
+pub mod present_verify;
 
 pub use dxgi::{DxgiPresentCapabilities, DxgiPresentMode};
+pub use present_verify::{
+    compare_frames, encode_png_bgra, fill_dib_from_source, make_test_pattern, FrameComparison,
+    PresentPath, PresentVerifyMetrics,
+};
 
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, VecDeque};

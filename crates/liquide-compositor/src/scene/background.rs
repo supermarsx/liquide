@@ -4,6 +4,11 @@ use crate::pixel::Color;
 use serde::{Deserialize, Serialize};
 
 /// Gradient specification for `SceneNodeKind::GradientFill`.
+///
+/// Each variant carries a `repeating` flag corresponding to CSS
+/// `repeating-linear-gradient()` / `repeating-radial-gradient()` /
+/// `repeating-conic-gradient()`. When `true`, the renderer tiles the color
+/// stops beyond the [0,1] gradient line instead of clamping the end stops.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GradientSpec {
     /// Linear gradient from start to end point (normalized 0..1).
@@ -13,6 +18,9 @@ pub enum GradientSpec {
         end_x: f32,
         end_y: f32,
         stops: Vec<(f32, Color)>,
+        /// CSS `repeating-linear-gradient()` when `true`.
+        #[serde(default)]
+        repeating: bool,
     },
     /// Radial gradient from center outward.
     Radial {
@@ -21,6 +29,9 @@ pub enum GradientSpec {
         radius: f32,
         radius_y: f32,
         stops: Vec<(f32, Color)>,
+        /// CSS `repeating-radial-gradient()` when `true`.
+        #[serde(default)]
+        repeating: bool,
     },
     /// Conic (sweep) gradient around a center point.
     Conic {
@@ -28,6 +39,9 @@ pub enum GradientSpec {
         center_y: f32,
         start_angle: f32,
         stops: Vec<(f32, Color)>,
+        /// CSS `repeating-conic-gradient()` when `true`.
+        #[serde(default)]
+        repeating: bool,
     },
     /// Mesh gradient using a grid of color patches.
     Mesh {
@@ -35,6 +49,21 @@ pub enum GradientSpec {
         cols: u32,
         colors: Vec<Color>,
     },
+}
+
+impl GradientSpec {
+    /// Returns `true` if this gradient is a CSS `repeating-*-gradient()`.
+    ///
+    /// `Mesh` gradients are never repeating.
+    #[must_use]
+    pub fn repeating(&self) -> bool {
+        match self {
+            GradientSpec::Linear { repeating, .. }
+            | GradientSpec::Radial { repeating, .. }
+            | GradientSpec::Conic { repeating, .. } => *repeating,
+            GradientSpec::Mesh { .. } => false,
+        }
+    }
 }
 
 /// CSS background specification (for background-image + related properties).

@@ -82,6 +82,7 @@ pub(crate) fn emit_gradient(
             end_x,
             end_y,
             stops,
+            ..
         } => {
             // Convert normalized start/end to angle in degrees
             let dx = end_x - start_x;
@@ -101,6 +102,7 @@ pub(crate) fn emit_gradient(
             radius: grad_radius,
             radius_y: grad_radius_y,
             stops,
+            ..
         } => {
             let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::RadialGradient {
@@ -117,6 +119,7 @@ pub(crate) fn emit_gradient(
             center_y,
             start_angle,
             stops,
+            ..
         } => {
             let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::ConicGradient {

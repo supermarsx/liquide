@@ -850,6 +850,11 @@ unsafe extern "system" {
         y1: i32,
         rop: DWORD,
     ) -> BOOL;
+
+    /// Flush the calling thread's batched GDI drawing operations to the device.
+    /// Used by the present-verify facilities before reading DIB-section memory
+    /// that GDI may have drawn into, so the read-back reflects all prior ops.
+    pub fn GdiFlush() -> BOOL;
 }
 
 // ---------------------------------------------------------------------------

@@ -118,7 +118,10 @@ impl NodeProperties {
 }
 
 /// Image fit mode for `SceneNodeKind::Image`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Eq`/`Hash` are intentionally not derived because the `Sized` variant
+/// carries `f32` dimensions. Use `PartialEq` (`==`) for comparisons.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ImageFit {
     /// Scale to fill bounds, preserving aspect ratio (may crop).
     Cover,
@@ -128,6 +131,13 @@ pub enum ImageFit {
     Fill,
     /// No scaling — display at natural size.
     None,
+    /// Explicit size in logical pixels (CSS `background-size: <w> <h>`).
+    ///
+    /// The image is scaled to exactly `width` x `height` and positioned at the
+    /// node's top-left (callers position via the node bounds). Unlike `Fill`,
+    /// the size is decoupled from the node bounds, so it can tile or be smaller
+    /// than the box.
+    Sized { width: f32, height: f32 },
 }
 
 /// A reference to pixel data from a Wayland client surface.
@@ -225,12 +235,16 @@ pub enum SceneNodeKind {
         text_overflow: u8,
         /// White-space handling: 0=normal, 1=nowrap, 2=pre, 3=pre-wrap, 4=pre-line, 5=break-spaces.
         white_space: u8,
+        /// CSS `word-break`: where soft line breaks may occur inside the run.
+        word_break: WordBreak,
         /// Text indent in pixels (first line).
         text_indent: f32,
         /// Optional text decoration (underline/strikethrough etc.).
         text_decoration: Option<TextDecoration>,
         /// Optional text shadows.
         text_shadows: Vec<TextShadow>,
+        /// Optional CSS `text-emphasis` marks drawn over/under each character.
+        text_emphasis: Option<TextEmphasis>,
     },
     /// Built-in vector icon rendered at the node bounds.
     Icon { icon_id: u32, color: Color },

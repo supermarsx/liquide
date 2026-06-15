@@ -223,6 +223,8 @@ fn non_bubbling_events_list() {
     assert!(!DomEventKind::MouseLeave.bubbles());
     assert!(!DomEventKind::Focus.bubbles());
     assert!(!DomEventKind::Blur.bubbles());
+    // `scroll` does NOT bubble per the W3C UI Events spec (unlike `wheel`).
+    assert!(!DomEventKind::Scroll { dx: 0.0, dy: 1.0 }.bubbles());
 }
 
 #[test]
@@ -252,7 +254,6 @@ fn bubbling_events_list() {
         }
         .bubbles()
     );
-    assert!(DomEventKind::Scroll { dx: 0.0, dy: 1.0 }.bubbles());
     assert!(
         DomEventKind::KeyDown {
             key: 0,

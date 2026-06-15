@@ -491,9 +491,15 @@ impl DesktopPipeline {
                             WhiteSpace::PreLine => 4,
                             WhiteSpace::BreakSpaces => 5,
                         },
+                        // t64-p0: new compositor Text fields. Defaulted here to
+                        // keep the workspace compiling; the S1 shell wave
+                        // (t64-f10/f11) wires these from the DisplayItem::Text
+                        // `word_break` / `text_emphasis` fields (now available).
+                        word_break: liquide_compositor::scene::WordBreak::Normal,
                         text_indent: *text_indent,
                         text_decoration: text_decoration.clone(),
                         text_shadows: text_shadows.clone(),
+                        text_emphasis: None,
                     },
                     NodeProperties::new(bounds).with_z_order(z),
                 );
@@ -583,6 +589,10 @@ impl DesktopPipeline {
                     end_x,
                     end_y,
                     stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
+                    // The painter already tiles stops for repeating gradients
+                    // (emit_gradient → tile_stops); these display-list stops are
+                    // pre-resolved, so the GradientFill node is non-repeating.
+                    repeating: false,
                 };
                 let node = SceneNode::new(
                     id,
@@ -610,6 +620,7 @@ impl DesktopPipeline {
                     radius: *radius_x,
                     radius_y: *radius_y,
                     stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
+                    repeating: false,
                 };
                 let node = SceneNode::new(
                     id,
@@ -632,6 +643,7 @@ impl DesktopPipeline {
                     center_y: *center_y,
                     start_angle: *angle_deg,
                     stops: stops.iter().map(|s| (s.offset, s.color)).collect(),
+                    repeating: false,
                 };
                 let node = SceneNode::new(
                     id,
@@ -762,9 +774,11 @@ impl DesktopPipeline {
                         text_transform: 0,
                         text_overflow: 0,
                         white_space: 0,
+                        word_break: liquide_compositor::scene::WordBreak::Normal,
                         text_indent: 0.0,
                         text_decoration: None,
                         text_shadows: Vec::new(),
+                        text_emphasis: None,
                     },
                     NodeProperties::new(bounds).with_z_order(z),
                 ))

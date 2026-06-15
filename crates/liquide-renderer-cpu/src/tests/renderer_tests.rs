@@ -30,9 +30,11 @@ fn text_node(text: &str, font_family: &str) -> FlatNode {
             text_transform: 0,
             text_overflow: 0,
             white_space: 0,
+            word_break: liquide_compositor::scene::WordBreak::Normal,
             text_indent: 0.0,
             text_decoration: None,
             text_shadows: Vec::new(),
+            text_emphasis: None,
         }
         .into(),
         absolute_bounds: Rect::new(0.0, 0.0, 128.0, 32.0),
@@ -565,4 +567,228 @@ fn render_text_damage_overrides_bitmap_damage_on_same_tile() {
         .unwrap();
     assert_eq!(classified.len(), 1);
     assert_eq!(classified[0].class, DamageClass::TextGlyph);
+}
+
+// ── word-break / text-emphasis primitive tests ─────────────────────────
+//
+// These use a renderer with synthetically-inserted glyphs (no system font
+// dependency) so wrapping/emphasis behaviour is deterministic. An empty
+// font_family yields font_id = (400 & 0xFF) << 16 and glyph_height = 16,
+// and suppresses the common-glyph prewarm path.
+
+const TEST_FONT_ID: u32 = (400u32 & 0xFF) << 16;
+const TEST_SIZE_PX: u16 = 16;
+
+/// Insert a solid square glyph of the given logical width/height with a known
+/// advance into the atlas, so text layout is fully deterministic.
+fn insert_block_glyph(renderer: &mut SoftwareRenderer, ch: char, advance: f32) {
+    let w = 10u32;
+    let h = 12u32;
+    let bitmap = vec![255u8; (w * h) as usize];
+    renderer
+        .glyph_atlas_mut()
+        .insert(
+            GlyphKey {
+                font_id: TEST_FONT_ID,
+                glyph_id: ch as u32,
+                size_px: TEST_SIZE_PX,
+                subpixel: false,
+            },
+            &bitmap,
+            &GlyphMetrics {
+                width: w,
+                height: h,
+                bearing_x: 0,
+                bearing_y: h as i32,
+                advance,
+            },
+        )
+        .unwrap();
+}
+
+/// Insert a small mark glyph at the emphasis size (round(16 * 0.5) = 8).
+fn insert_mark_glyph(renderer: &mut SoftwareRenderer, ch: char) {
+    let w = 4u32;
+    let h = 4u32;
+    let bitmap = vec![255u8; (w * h) as usize];
+    renderer
+        .glyph_atlas_mut()
+        .insert(
+            GlyphKey {
+                font_id: TEST_FONT_ID,
+                glyph_id: ch as u32,
+                size_px: 8,
+                subpixel: false,
+            },
+            &bitmap,
+            &GlyphMetrics {
+                width: w,
+                height: h,
+                bearing_x: 0,
+                bearing_y: h as i32,
+                advance: 4.0,
+            },
+        )
+        .unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn word_break_text_node(
+    text: &str,
+    bounds: Rect,
+    word_break: liquide_compositor::scene::WordBreak,
+    white_space: u8,
+    text_emphasis: Option<liquide_compositor::scene::TextEmphasis>,
+) -> FlatNode {
+    FlatNode {
+        id: 42,
+        kind: SceneNodeKind::Text {
+            text: text.to_string(),
+            color: Color::WHITE,
+            scale: 1,
+            font_family: String::new(),
+            font_size: 0.0,
+            font_weight: 400,
+            font_style_italic: false,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            line_height: 14.0,
+            text_align: 0,
+            text_transform: 0,
+            text_overflow: 0,
+            white_space,
+            word_break,
+            text_indent: 0.0,
+            text_decoration: None,
+            text_shadows: Vec::new(),
+            text_emphasis,
+        }
+        .into(),
+        absolute_bounds: bounds,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+fn render_node_to_fb(renderer: &mut SoftwareRenderer, node: FlatNode, w: u32, h: u32) -> FrameBuffer {
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    let mut damage = DamageSet::new(64);
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+    renderer.render(&[node], &mut fb, &damage).unwrap();
+    fb
+}
+
+/// Count rows (scanlines) that contain at least one non-transparent pixel.
+fn nonempty_rows(fb: &FrameBuffer) -> u32 {
+    let mut rows = 0;
+    for y in 0..fb.height {
+        let mut any = false;
+        for x in 0..fb.width {
+            if fb.get_pixel(x, y).a > 0 {
+                any = true;
+                break;
+            }
+        }
+        if any {
+            rows += 1;
+        }
+    }
+    rows
+}
+
+fn nonempty_pixels(fb: &FrameBuffer) -> u32 {
+    let mut n = 0;
+    for y in 0..fb.height {
+        for x in 0..fb.width {
+            if fb.get_pixel(x, y).a > 0 {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+#[test]
+fn word_break_break_all_wraps_long_word_normal_does_not() {
+    use liquide_compositor::scene::WordBreak;
+    // A single long unbreakable word, in a box only ~3 glyphs wide.
+    // advance 10 → box width 35 fits ~3 chars; the 8-char word overflows.
+    let word = "AAAAAAAA";
+    let bounds = Rect::new(0.0, 0.0, 35.0, 120.0);
+
+    let mut normal = SoftwareRenderer::new();
+    insert_block_glyph(&mut normal, 'A', 10.0);
+    let fb_normal = render_node_to_fb(
+        &mut normal,
+        word_break_text_node(word, bounds, WordBreak::Normal, 0, None),
+        64,
+        128,
+    );
+
+    let mut break_all = SoftwareRenderer::new();
+    insert_block_glyph(&mut break_all, 'A', 10.0);
+    let fb_break = render_node_to_fb(
+        &mut break_all,
+        word_break_text_node(word, bounds, WordBreak::BreakAll, 0, None),
+        64,
+        128,
+    );
+
+    let rows_normal = nonempty_rows(&fb_normal);
+    let rows_break = nonempty_rows(&fb_break);
+
+    // Normal: one overflowing line (single glyph row of height ~12).
+    // break-all: the word is split across multiple lines → taller footprint.
+    assert!(
+        rows_break > rows_normal,
+        "break-all should wrap the long word onto more lines \
+         (break-all rows={rows_break}, normal rows={rows_normal})"
+    );
+}
+
+#[test]
+fn text_emphasis_renders_extra_marks() {
+    use liquide_compositor::scene::{TextEmphasis, TextEmphasisPosition, WordBreak};
+    let text = "AAA";
+    let bounds = Rect::new(0.0, 20.0, 200.0, 40.0);
+
+    let mut plain = SoftwareRenderer::new();
+    insert_block_glyph(&mut plain, 'A', 12.0);
+    let fb_plain = render_node_to_fb(
+        &mut plain,
+        word_break_text_node(text, bounds, WordBreak::Normal, 1, None),
+        256,
+        80,
+    );
+
+    let mut emphasized = SoftwareRenderer::new();
+    insert_block_glyph(&mut emphasized, 'A', 12.0);
+    insert_mark_glyph(&mut emphasized, '•');
+    let emph = TextEmphasis {
+        mark: "•".to_string(),
+        color: None,
+        position: TextEmphasisPosition::Over,
+    };
+    let fb_emph = render_node_to_fb(
+        &mut emphasized,
+        word_break_text_node(text, bounds, WordBreak::Normal, 1, Some(emph)),
+        256,
+        80,
+    );
+
+    let plain_px = nonempty_pixels(&fb_plain);
+    let emph_px = nonempty_pixels(&fb_emph);
+    assert!(
+        emph_px > plain_px,
+        "text-emphasis should draw additional mark pixels \
+         (emphasized={emph_px}, plain={plain_px})"
+    );
 }

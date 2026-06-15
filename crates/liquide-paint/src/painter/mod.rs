@@ -527,8 +527,16 @@ impl Painter {
                     };
                     match bg_image {
                         BackgroundImage::Gradient(gradient) => {
-                            // TODO(t9 Phase 2): propagate repeating flag from BackgroundImage
-                            emit_gradient(list, &bg_tile, &style.border_radius, gradient, false);
+                            // Propagate the repeating flag carried on GradientSpec
+                            // (populated by the style engine from the CSS
+                            // repeating-*-gradient() variants).
+                            emit_gradient(
+                                list,
+                                &bg_tile,
+                                &style.border_radius,
+                                gradient,
+                                gradient.repeating(),
+                            );
                         }
                         BackgroundImage::Url(url) => {
                             emit_background_image_tiled(
@@ -1416,6 +1424,7 @@ mod tests {
                                 },
                             ),
                         ],
+                        repeating: false,
                     })),
                     size: BackgroundSize::Auto,
                     position: (0.0, 0.0),

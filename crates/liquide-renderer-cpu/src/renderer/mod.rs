@@ -2,6 +2,7 @@
 
 mod borders;
 mod cursors;
+pub use cursors::CursorTheme;
 mod decoration;
 mod effects;
 mod gradients;
@@ -126,6 +127,9 @@ pub struct SoftwareRenderer {
     /// Active blend mode set by the most recent `RenderLayer` node.
     /// Subsequent content nodes use this instead of the default `SrcOver`.
     active_blend_mode: BlendMode,
+    /// Resolved cursor appearance (CSS seam). Defaults to the historic
+    /// black-outline / white-fill, node-driven shape.
+    cursor_theme: cursors::CursorTheme,
 }
 
 impl SoftwareRenderer {
@@ -183,6 +187,7 @@ impl SoftwareRenderer {
             has_pending_glyphs: false,
             prewarmed_fonts: std::collections::HashSet::new(),
             active_blend_mode: BlendMode::SrcOver,
+            cursor_theme: cursors::CursorTheme::default(),
         }
     }
 
@@ -297,6 +302,7 @@ impl SoftwareRenderer {
                     target_height,
                     font_family.to_string(),
                     font_weight,
+                    false,
                 );
             }
         }

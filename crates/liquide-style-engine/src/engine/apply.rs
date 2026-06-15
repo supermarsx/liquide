@@ -44,6 +44,15 @@ fn background_spec_for_gradient(gradient: &CssGradient, color: Option<Color>) ->
 }
 
 fn gradient_to_spec(gradient: &CssGradient) -> GradientSpec {
+    // CSS `repeating-*-gradient()` carries a distinct upstream variant; propagate
+    // the repeating flag onto the compositor GradientSpec so the painter/renderer
+    // can tile the stops instead of clamping them.
+    let repeating = matches!(
+        gradient,
+        CssGradient::RepeatingLinear { .. }
+            | CssGradient::RepeatingRadial { .. }
+            | CssGradient::RepeatingConic { .. }
+    );
     match gradient {
         CssGradient::Linear { angle, stops } | CssGradient::RepeatingLinear { angle, stops } => {
             // CSS gradient angles are measured clockwise from "to top" (0deg = up,
@@ -61,6 +70,7 @@ fn gradient_to_spec(gradient: &CssGradient) -> GradientSpec {
                 end_x: 0.5 + dx,
                 end_y: 0.5 + dy,
                 stops: convert_gradient_stops(stops),
+                repeating,
             }
         }
         CssGradient::Radial { stops, .. } | CssGradient::RepeatingRadial { stops, .. } => {
@@ -70,6 +80,7 @@ fn gradient_to_spec(gradient: &CssGradient) -> GradientSpec {
                 radius: 0.5,
                 radius_y: 0.5,
                 stops: convert_gradient_stops(stops),
+                repeating,
             }
         }
         CssGradient::Conic {
@@ -82,6 +93,7 @@ fn gradient_to_spec(gradient: &CssGradient) -> GradientSpec {
             center_y: 0.5,
             start_angle: *from_angle,
             stops: convert_gradient_stops(stops),
+            repeating,
         },
     }
 }
