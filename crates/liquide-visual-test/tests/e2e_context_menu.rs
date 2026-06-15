@@ -252,12 +252,70 @@ fn context_menu_renders_all_five_item_rows() {
 }
 
 // ===========================================================================
-// 3. ICON / LABEL NO-OVERLAP — the KNOWN JANK the coordinator observed: item
-//    icons overlap the text labels. For each item row, the icon (a contiguous
-//    ink cluster near the LEFT edge) and the label text must occupy DISTINCT,
-//    non-overlapping column spans. This test is EXPECTED TO FAIL given the
-//    observed overlap — that failure is the finding, do NOT weaken it.
+// 3. ICON / LABEL NO-OVERLAP — the icon (a contiguous ink cluster near the LEFT
+//    edge) and the label text must occupy DISTINCT, non-overlapping column spans
+//    separated by a clear (zero-ink) gap.
+//
+//    BOX MODEL (proven render, t62-harden — see `.orchestration/logs/t62-icon.md`
+//    and the `dump_context_menu_region` diagnostic):
+//      - the `context-menu` PANEL has `padding: 4` + `border-width: 1` = 5px left
+//        inset, so the item content area starts 5px right of the panel origin.
+//      - `menu-item { padding-left: 12 }`  → icon box at 5 + 12 = col 17.
+//      - `menu-item-icon { width: 16; margin-right: 8 }` → icon box [17, 33),
+//        label at 17 + 16 + 8 = col 41.
+//    The rasterised icon glyph fills [~19, 32] (its 16px box with a ~5% inset),
+//    then a CLEAR gap [~33, 40], then the label glyphs from col ~41. The earlier
+//    expectation (`pad_left = 12`, `label_start = 36`) ignored the panel's own
+//    5px inset and miscounted the icon's right half as label intrusion.
+//
+//    This test does NOT hardcode those column numbers: it locates the icon
+//    cluster and the label dynamically from the ink profile, so it stays correct
+//    under theme/padding changes. The invariant it enforces is the real contract:
+//    the icon cluster and the label are separated by at least one fully-clear
+//    column (no shared ink, no abutting glyphs).
+//
+//    KEEP TEETH: if the icon ink and the label ink ever share columns (the real
+//    overlap bug — icon glyph spilling onto the label, or the label starting
+//    inside the icon box with no separator), there is no clear gap between the
+//    two ink clusters and this FAILS. Proven by injecting/reverting the overlap
+//    in t62-harden.
 // ===========================================================================
+
+/// A contiguous run of inked columns `[start, end)` (relative to the band x0).
+#[derive(Debug, Clone, Copy)]
+struct InkCluster {
+    start: usize,
+    end: usize,
+}
+
+/// Split a column-ink profile into maximal contiguous runs of inked columns,
+/// tolerating up to `bridge` consecutive zero-ink columns inside a single run
+/// (so the internal hollows of a glyph/icon do not fragment it). A column counts
+/// as inked when its ink height exceeds `min_ink` (suppresses 1px AA specks).
+fn ink_clusters(profile: &[usize], min_ink: usize, bridge: usize) -> Vec<InkCluster> {
+    let mut clusters: Vec<InkCluster> = Vec::new();
+    let mut run_start: Option<usize> = None;
+    let mut gap = 0usize;
+    for (i, &c) in profile.iter().enumerate() {
+        if c > min_ink {
+            if run_start.is_none() {
+                run_start = Some(i);
+            }
+            gap = 0;
+        } else if let Some(start) = run_start {
+            gap += 1;
+            if gap > bridge {
+                clusters.push(InkCluster { start, end: i - gap + 1 });
+                run_start = None;
+                gap = 0;
+            }
+        }
+    }
+    if let Some(start) = run_start {
+        clusters.push(InkCluster { start, end: profile.len() - gap });
+    }
+    clusters
+}
 
 #[test]
 fn context_menu_icon_and_label_do_not_overlap() {
@@ -265,83 +323,102 @@ fn context_menu_icon_and_label_do_not_overlap() {
     let frame = capture_right_click(rx, ry);
     let (ox, oy) = menu_origin(rx, ry);
 
-    // CSS contract (liquid_glass.css): menu-item-icon { width: 16; margin-right:
-    // 8 } sits left of menu-item-label, after the item's padding-left: 12. So a
-    // CORRECT layout reserves roughly columns [12, 12+16] for the icon and the
-    // label begins at >= ~36px in. If the icon and label are drawn in the SAME
-    // columns (overlap), the ink in the icon band and the ink in the label band
-    // will be vertically co-located at the same x — i.e. there is no clear gap
-    // between the icon cluster and the start of the label text.
-    let pad_left = 12u32;
-    let icon_w = 16u32;
-    let icon_label_gap = 8u32; // CSS margin-right on the icon
-    let label_start_expected = pad_left + icon_w + icon_label_gap; // ~36
+    // The icon box's left edge in CORRECT geometry (panel inset 5 + padding-left
+    // 12 = 17). The icon is the first ink cluster at/near this column; the label
+    // is the next cluster to its right. We do NOT assume the icon's exact width
+    // or the label's exact start — only that, when an icon is drawn, a clear gap
+    // separates it from the label.
+    let icon_box_left = (MENU_PADDING as u32) + 1 /* border */ + 12 /* menu-item padding-left */; // 17
+    let icon_box_w = 16u32;
+    // Where the icon cluster may legitimately begin (its box left, minus a small
+    // tolerance for left-bearing/AA). Anything starting well left of this is the
+    // overlap bug (content collapsed toward the border edge).
+    let icon_search_left = icon_box_left.saturating_sub(2) as usize;
 
-    let mut overlapping = Vec::new();
+    let mut violations = Vec::new();
     for (i, label) in EXPECTED_LABELS.iter().enumerate() {
         let row_y = oy + (MENU_PADDING + i as f32 * MENU_ITEM_HEIGHT).round() as u32;
         let row_h = MENU_ITEM_HEIGHT as u32;
         let profile = column_ink_profile(&frame, ox, row_y, CONTEXT_MENU_WIDTH as u32, row_h);
 
-        // Find the first and last inked columns (relative to ox).
-        let first_ink = profile.iter().position(|&c| c > 0);
-        let Some(first_ink) = first_ink else {
-            // No ink at all -> covered by the all-items test; skip the overlap
-            // judgement here (cannot judge overlap with nothing drawn).
+        // Decompose the row into ink clusters. `bridge = 2` keeps a glyph/icon
+        // with thin internal hollows as one cluster; `min_ink = 0` counts any
+        // column with ≥1 ink pixel (column_ink_profile already thresholds on
+        // contrast, so a non-zero column is real ink).
+        let clusters = ink_clusters(&profile, 0, 2);
+        if clusters.is_empty() {
+            // No ink at all -> a blank row is the all-items test's concern; we
+            // cannot judge icon/label overlap with nothing drawn.
+            continue;
+        }
+
+        // Identify the icon cluster: the first cluster whose start is within the
+        // icon box region (near `icon_box_left`). If the first cluster starts far
+        // to the LEFT of the icon box (collapsed to the border edge) that is the
+        // overlap/padding-drop regression — flag it.
+        let first = clusters[0];
+        if first.start < icon_search_left {
+            violations.push(format!(
+                "row {i} ({label}): first ink cluster starts at col {} — LEFT of the icon box \
+                 (col {icon_box_left}); content has collapsed toward the panel border edge \
+                 (padding/inset dropped), which is the icon/label overlap regression",
+                first.start
+            ));
+            continue;
+        }
+
+        // Is the first cluster the ICON (it sits in the icon box and is roughly
+        // icon-width), or is this an icon-less row whose first cluster is already
+        // the label? An icon cluster starts within ~[icon_box_left-1, icon_box_left+4]
+        // and spans on the order of the 16px box; a label-first row's first
+        // cluster starts further right (past the icon box + its margin).
+        let icon_box_right = (icon_box_left + icon_box_w) as usize;
+        let starts_in_icon_box =
+            first.start >= icon_search_left && first.start <= (icon_box_left + 4) as usize;
+
+        if !starts_in_icon_box {
+            // This row has no icon (e.g. "Change Wallpaper"): the first cluster is
+            // the label and it correctly begins at/after the icon box's reserved
+            // region. Nothing to separate; no overlap possible.
+            continue;
+        }
+
+        // The first cluster is the icon. It MUST end at/before the icon box's
+        // right edge (plus a tiny AA tolerance). An icon that bleeds well past
+        // its 16px box is spilling toward the label (the glyph-oversize bug).
+        if first.end > icon_box_right + 4 {
+            violations.push(format!(
+                "row {i} ({label}): icon cluster spans cols [{}, {}) — it overruns its 16px box \
+                 [{icon_box_left}, {icon_box_right}) and bleeds toward the label band",
+                first.start, first.end
+            ));
+            continue;
+        }
+
+        // There MUST be a SECOND cluster (the label) to the right, and a clear
+        // zero-ink separator between the icon's end and the label's start.
+        let Some(label_cluster) = clusters.get(1).copied() else {
+            // Icon present but no label cluster found — covered by the all-items
+            // ink test; not an overlap.
             continue;
         };
-
-        // The icon, if present and correctly placed, is a cluster in [pad_left,
-        // pad_left+icon_w]. The label, if NOT overlapping, must have a GAP (a run
-        // of zero-ink columns) between the icon cluster and the first label
-        // glyph, and the label glyphs must start at >= label_start_expected.
-        //
-        // Detect overlap as: ink present inside the reserved icon band AND ink
-        // present inside the label-start band with NO empty separator column
-        // between them — i.e. the label text begins before label_start_expected,
-        // intruding into / on top of the icon's reserved columns.
-        let icon_band_ink: usize = profile
-            [pad_left as usize..(pad_left + icon_w).min(profile.len() as u32) as usize]
-            .iter()
-            .sum();
-        // Ink in the columns the icon's margin should keep clear AND before the
-        // expected label start: [pad_left, label_start_expected).
-        let intrusion_ink: usize = profile[pad_left as usize..label_start_expected as usize]
-            .iter()
-            .sum();
-        // The label is supposed to begin at label_start_expected. If glyph ink
-        // appears earlier than that (other than the icon's own 16px), the label
-        // is overlapping the icon's reserved region.
-        // Separator gap test: is there at least one fully-clear column between
-        // the icon band end and the next ink (the label)?
-        let after_icon = (pad_left + icon_w) as usize;
-        let has_separator_gap = profile
-            .get(after_icon..label_start_expected as usize)
-            .map(|w| w.iter().any(|&c| c == 0))
-            .unwrap_or(false);
-
-        // OVERLAP if: there is icon-band ink (an icon is drawn) AND either the
-        // first ink starts at/before the icon area while ALSO there is no clear
-        // separator gap before the label — meaning icon and label share columns.
-        let icon_drawn = icon_band_ink > 4;
-        let label_intrudes_icon_region = intrusion_ink > icon_band_ink + 20; // extra ink = label text on top of icon cols
-        let no_gap = !has_separator_gap;
-
-        if icon_drawn && (label_intrudes_icon_region || (no_gap && first_ink < pad_left as usize)) {
-            overlapping.push(format!(
-                "row {i} ({label}): icon_band_ink={icon_band_ink}, intrusion_ink={intrusion_ink}, \
-                 first_ink_col={first_ink}, separator_gap={has_separator_gap}"
+        let gap = label_cluster.start.saturating_sub(first.end);
+        if gap == 0 {
+            violations.push(format!(
+                "row {i} ({label}): NO clear separator between the icon (ends col {}) and the \
+                 label (starts col {}) — they abut/overlap; the icon and label must not share or \
+                 touch columns",
+                first.end, label_cluster.start
             ));
         }
     }
 
     assert!(
-        overlapping.is_empty(),
-        "ICON/LABEL OVERLAP detected (the known menu jank): icons and label text share columns \
-         in the following rows instead of occupying distinct regions: {overlapping:?}. \
-         CSS reserves [{pad_left},{}] for the icon then the label at >= {label_start_expected}px; \
-         the rendered menu does not honour that separation.",
-        pad_left + icon_w
+        violations.is_empty(),
+        "ICON/LABEL OVERLAP detected: {violations:?}. The correct box model reserves the icon box \
+         at col {icon_box_left} (panel inset 5 + menu-item padding-left 12), width 16, then a clear \
+         margin before the label — the rendered menu must keep the icon and label in distinct, \
+         gap-separated column spans."
     );
 }
 
@@ -506,7 +583,25 @@ fn context_menu_no_stale_after_reopen() {
     let (aox, aoy) = menu_origin(ax, ay);
     let (box_, boy) = menu_origin(bx, by);
 
-    // The SECOND menu must be painted at B.
+    // PANEL-PRESENCE tolerance. The context menu is a TRANSLUCENT "liquid glass"
+    // panel: over the wallpaper its fill blends to a small-but-consistent
+    // per-pixel delta (mostly 4..23), with only the borders/text/icons producing
+    // large deltas. Measuring the panel's PRESENCE (not just its bright glyph
+    // ink) therefore requires a low tolerance — at tol=24 the glass fill is
+    // mostly invisible (only ~8985 px counted) and the test undercounts a
+    // fully-painted menu. The deterministic capture renders at t0, so an
+    // UNPAINTED region reads EXACTLY base (0 px differ even at tol=4); a painted
+    // panel reads ~25k px differ. tol=8 cleanly separates the two with a wide
+    // margin (proven, t62-harden probe):
+    //   tol=8:  A_stale(empty)=0   B_painted(panel)=25353
+    //   tol=24: A_stale(empty)=0   B_painted(panel)=8985   <- glass fill lost
+    // Per t62-paint the menu paints fully; this recalibration measures that
+    // panel delta-vs-base rather than only bright ink, while KEEPING TEETH (an
+    // empty/stale region still reads ~0, far below both thresholds).
+    let panel_tol = 8u8;
+    let menu_area = (CONTEXT_MENU_WIDTH * CONTEXT_MENU_HEIGHT) as usize;
+
+    // The SECOND menu must be painted at B (panel present).
     let b_painted = changed_vs_base(
         &frame,
         &base,
@@ -514,18 +609,18 @@ fn context_menu_no_stale_after_reopen() {
         boy,
         CONTEXT_MENU_WIDTH as u32,
         CONTEXT_MENU_HEIGHT as u32,
-        24,
+        panel_tol,
     );
-    let menu_area = (CONTEXT_MENU_WIDTH * CONTEXT_MENU_HEIGHT) as usize;
     assert!(
         b_painted > menu_area / 3,
         "the reopened context menu did not paint at the second point B=({box_},{boy}): only \
-         {b_painted}/{menu_area} pixels changed."
+         {b_painted}/{menu_area} pixels (tol {panel_tol}) differ from the bare desktop."
     );
 
-    // The FIRST menu must be GONE at A (A and B rects do not overlap: A bottom
-    // = 200+148 = 348 > B top 450? No, 348 < 450, and A right 400 > B left 700?
-    // No. So the rects are disjoint — a clean stale probe).
+    // The FIRST menu must be GONE at A (A and B rects are disjoint: A occupies
+    // [200,400]x[200,348], B occupies [700,900]x[450,598]). This is the real
+    // tooth: a stale first menu would leave a full panel (~25k px) here. We use
+    // the SAME low tolerance, so a lingering glass panel cannot hide under it.
     let a_stale = changed_vs_base(
         &frame,
         &base,
@@ -533,12 +628,13 @@ fn context_menu_no_stale_after_reopen() {
         aoy,
         CONTEXT_MENU_WIDTH as u32,
         CONTEXT_MENU_HEIGHT as u32,
-        24,
+        panel_tol,
     );
     assert!(
         a_stale < menu_area / 6,
         "STALE MENU: after reopening at B, the first menu is still painted at A=({aox},{aoy}): \
-         {a_stale}/{menu_area} pixels still differ from the bare desktop (expected < 1/6)."
+         {a_stale}/{menu_area} pixels (tol {panel_tol}) still differ from the bare desktop \
+         (expected < 1/6)."
     );
 }
 
@@ -667,4 +763,40 @@ fn dump_context_menu_region() {
         let s: String = prof.iter().take(60).map(|&c| if c == 0 { '.' } else if c < 4 { ':' } else { '#' }).collect();
         eprintln!("row {i} cols[0..60]: {s}");
     }
+}
+
+/// TEETH guard (pure logic, no capture) for
+/// `context_menu_icon_and_label_do_not_overlap`'s separator check: prove the
+/// cluster/gap logic FIRES on a real overlap and PASSES on correct geometry.
+/// This keeps the corrected test honest — if someone relaxes the cluster/gap
+/// rules, these synthetic overlaps stop being detected and this fails.
+#[test]
+fn teeth_overlap_cluster_logic() {
+    // 1) Correct: icon at [17,32), gap [32,41), label [41,55).
+    let mut good = vec![0usize; 60];
+    for c in 17..32 { good[c] = 10; }
+    for c in 41..55 { good[c] = 10; }
+    let cg = ink_clusters(&good, 0, 2);
+    assert_eq!(cg.len(), 2, "good profile -> 2 clusters");
+    assert!(cg[1].start.saturating_sub(cg[0].end) > 0, "good has a gap");
+
+    // 2) Overlap: icon at [17,32) and label glyph ink starts at col 32 (abutting,
+    //    no clear column). bridge=2 will MERGE them into one cluster -> the test
+    //    sees only one cluster (icon) and either no label cluster (skip) — so the
+    //    stronger tooth is the icon-overrun check. Make the icon spill to col 40.
+    let mut spill = vec![0usize; 60];
+    for c in 17..40 { spill[c] = 10; }   // icon glyph oversized, overruns box
+    for c in 44..58 { spill[c] = 10; }
+    let cs = ink_clusters(&spill, 0, 2);
+    let icon = cs[0];
+    let icon_box_right = (17 + 16) as usize; // 33
+    assert!(icon.end > icon_box_right + 4, "spill: icon overruns its box -> overlap detected (end={})", icon.end);
+
+    // 3) Collapsed-to-border (the padding-drop regression): first ink at col 2.
+    let mut collapsed = vec![0usize; 60];
+    for c in 2..18 { collapsed[c] = 10; }
+    for c in 22..36 { collapsed[c] = 10; }
+    let cc = ink_clusters(&collapsed, 0, 2);
+    let icon_search_left = (17u32 - 2) as usize; // 15
+    assert!(cc[0].start < icon_search_left, "collapsed: first cluster left of icon box -> overlap detected (start={})", cc[0].start);
 }

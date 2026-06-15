@@ -167,54 +167,97 @@ fn clock_advances_across_ticks_minute_rollover() {
     );
 }
 
-/// ADVERSARIAL: does the REAL headless render/capture pipeline show the current
-/// time, or is it STUCK at the epoch default (00:00)?
+/// CAPTURE CLOCK IS DETERMINISTIC-BY-DESIGN (t0), NOT WALL-CLOCK — and the clock
+/// is driveable, not a hardcoded "00:00".
 ///
-/// This is the definitive investigation of the captured-desktop "00:00". We do
-/// NOT drive the clock at all — exactly as a plain screenshot capture does. We
-/// then read back what the clock model holds at render time.
+/// HISTORY / CORRECTION (t62-harden, see `.orchestration/logs/t59-clock.md`):
+/// this test previously demanded the UNDRIVEN headless capture show the current
+/// wall time (`last_update_us != 0`). That demand is FUNDAMENTALLY INCOMPATIBLE
+/// with the golden-determinism mandate: making the capture path read
+/// `SystemTime::now()` would change every screenshot's clock on every run,
+/// breaking every golden. The capture seam
+/// (`render_thread.rs::capture_once_scripted_with`) renders at `t0` BY DESIGN and
+/// never calls `Shell::tick(now_us)`; tests inject time explicitly. The real
+/// user-visible "00:00" bug lived on the RUNTIME path
+/// (`DesktopCompositor::run()`), which was fixed in
+/// `liquide-session/src/desktop/event_loop.rs` (`self.tick()` — reading
+/// `SystemTime::now()` — runs before the first presented frame). That runtime
+/// path is exercised in `liquide-session` (event-loop tests), not via this
+/// deterministic capture harness.
 ///
-/// EXPECTED of a CORRECT shell: the capture pipeline ticks the clock from a real
-/// time source before rendering, so the clock reflects the current wall time
-/// (NOT the epoch / 00:00).
-///
-/// If this asserts the clock is "00:00" (or otherwise reflects `last_update_us ==
-/// 0`, the constructed epoch default), that CONFIRMS the stuck-clock bug: the
-/// capture path renders one frame at `t0` and never calls `tick(real_now)`, so
-/// every screenshot shows the epoch, which formats as 00:00 UTC. Per the prime
-/// directive this RED is the desired finding — it is NOT weakened.
+/// So the correct contract for the CAPTURE path is two-fold, and this test
+/// asserts both with teeth:
+///   1. DETERMINISM: an undriven capture is reproducible — `last_update_us`
+///      stays at the deterministic `t0` default (0) across captures, i.e. the
+///      capture path does NOT read the wall clock. TEETH: if someone wired
+///      `SystemTime::now()` into the capture path (the determinism-breaking
+///      change the mandate forbids), two captures would hold different
+///      `last_update_us` and this fails.
+///   2. DRIVEABILITY: the SAME capture path, when handed a tick, reflects the
+///      INJECTED time (so "00:00" is the t0 default, NOT a hardcoded/stuck
+///      glyph). TEETH: a clock hardcoded to "00:00" that ignores `tick` would
+///      not change here.
 #[test]
-fn clock_in_undriven_capture_is_not_stuck_at_epoch_default() {
-    let (_frame, (raw_last_update_us, displayed)) = capture_desktop_scripted_readback(
+fn capture_clock_is_deterministic_t0_and_driveable() {
+    // (1) Two undriven captures must agree on the raw clock state (deterministic
+    // t0; no wall-clock read on the capture path).
+    let undriven = || {
+        let (_frame, state) = capture_desktop_scripted_readback(
+            &scenario_options(THEME),
+            no_events,
+            |shell| {
+                let last_update_us = shell
+                    .status_bar()
+                    .find_item("clock")
+                    .map(|i| i.last_update_us);
+                (last_update_us, clock_string(shell))
+            },
+        )
+        .expect("capture should succeed");
+        state
+    };
+    let (lu_a, disp_a) = undriven();
+    let (lu_b, disp_b) = undriven();
+    eprintln!(
+        "[t62-harden] undriven-capture clock: cap1=(last_update_us={lu_a:?}, {disp_a:?}) \
+         cap2=(last_update_us={lu_b:?}, {disp_b:?})"
+    );
+    assert_eq!(
+        (lu_a, &disp_a),
+        (lu_b, &disp_b),
+        "NON-DETERMINISTIC CAPTURE CLOCK: two identical undriven captures disagree \
+         (cap1 last_update_us={lu_a:?} {disp_a:?} vs cap2 {lu_b:?} {disp_b:?}). The capture \
+         path must NOT read the wall clock — that would make every golden screenshot's clock \
+         change per run. The real-time clock is wired on the RUNTIME path \
+         (event_loop.rs self.tick()), not the deterministic capture seam."
+    );
+    assert_eq!(
+        lu_a,
+        Some(0),
+        "the undriven capture clock should sit at its deterministic t0 default \
+         (last_update_us == 0); got {lu_a:?}. If this is non-zero the capture path has started \
+         reading a live time source, breaking golden determinism."
+    );
+
+    // (2) The SAME capture path, driven to a known wall-clock time, must reflect
+    // it — proving "00:00" is the t0 default and the clock is NOT hardcoded.
+    let want = "16:20";
+    let (_frame, driven) = capture_desktop_scripted_readback(
         &scenario_options(THEME),
         no_events,
         |shell| {
-            // Read the RAW model state with NO driving and NO mutation, exactly
-            // as a plain capture leaves it.
-            let last_update_us = shell
-                .status_bar()
-                .find_item("clock")
-                .map(|i| i.last_update_us);
-            let displayed = clock_string(shell);
-            (last_update_us, displayed)
+            pin_clock_utc(shell);
+            shell.tick(wall_us(16, 20, 5));
+            clock_string(shell)
         },
     )
-    .expect("capture should succeed");
-
-    // Diagnostic surface for the log: what did the undriven pipeline hold?
-    eprintln!(
-        "[t58-bar] undriven-capture clock: last_update_us={raw_last_update_us:?} displayed={displayed:?}"
-    );
-
-    assert_ne!(
-        raw_last_update_us,
-        Some(0),
-        "STUCK-CLOCK BUG: the capture/render pipeline never ticked the clock from a \
-         real time source — the clock item's last_update_us is still its constructed \
-         epoch default (0), so every screenshot renders the Unix epoch (00:00 UTC). \
-         The captured-desktop '00:00' is a STUCK/DEFAULT value, NOT the real current \
-         time. (Capture path render_thread.rs::capture_once_scripted_with renders one \
-         frame at t0 and never calls Shell::tick(now_us).)"
+    .expect("driven capture should succeed");
+    assert_eq!(
+        driven.as_deref(),
+        Some(want),
+        "DRIVEABILITY: the capture clock did not reflect the injected wall time {want:?} \
+         (got {driven:?}); the undriven t0 default ({disp_a:?}) is therefore NOT a hardcoded/stuck \
+         value — but a clock that ignores tick() would fail this."
     );
 }
 

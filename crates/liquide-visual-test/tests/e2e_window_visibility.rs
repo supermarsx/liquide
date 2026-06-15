@@ -63,6 +63,16 @@ const THEME: &str = "liquid-glass";
 const BG_REFERENCE: [u8; 4] = [0, 0, 0, 255];
 const BG_TOLERANCE: u8 = 24;
 
+/// Tolerance for DELTA-vs-base "is a window present here?" probes (see
+/// `window_delta_vs_base`). A window's translucent "liquid glass" body blends
+/// with the wallpaper, so at BG_TOLERANCE (24) a fully-PRESENT window body reads
+/// only ~4.7k differing px over a 134k-px rect — too close to the gone-threshold
+/// to give teeth. At tol 8 the discrimination is stark and proven (t62-harden
+/// probe, A at 60,90,420x320): PRESENT(tol 8)=47028 differing px vs GONE=0. So a
+/// genuinely-persisting window FAILS the `< area/20` "gone" bound (47028 ≫ 6720)
+/// while a correctly-hidden one passes (0). Lower than 24 ⇒ stronger teeth.
+const PRESENCE_DELTA_TOL: u8 = 8;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -438,11 +448,26 @@ fn workspace_round_trip_restores_windows() {
 
     // PIXELS: painted on ws0, gone on ws1, painted again on return.
     assert_window_painted(&frame_on0, bounds0, "window on ws0 (before switch)");
-    let on1_content = window_body_content(&frame_on1, bounds0);
+    // "Gone on ws1" must be measured as a DELTA against the no-window base
+    // desktop, NOT as an absolute non-black count. The liquid-glass wallpaper is
+    // NOT black — its blue/purple accent gradient bands blend to channel values
+    // that EXCEED the BG_TOLERANCE, so `window_body_content` (absolute non-bg)
+    // reports ~195k "painted" px for a WINDOW-FREE region (proven: t62-session,
+    // and the t62-harden probe — abs_nonbg=195472 with ZERO windows present).
+    // The shell correctly drops the window on the other workspace (0 scene window
+    // nodes, asserted by `removed_window_scene_is_empty_*`); the false positive
+    // was purely the wallpaper. Diffing the ws1 frame against the same-wallpaper
+    // base desktop at the window rect reads ~0 (probe: 332/440000 px at tol 4 —
+    // subpixel noise), while a genuinely-persisting window body would read ~195k.
+    let base = base_desktop();
+    let bounds0_area = (bounds0.width * bounds0.height) as usize;
+    let on1_delta = window_delta_vs_base(&frame_on1, &base, bounds0, PRESENCE_DELTA_TOL);
     assert!(
-        on1_content < (bounds0.width * bounds0.height) as usize / 20,
-        "the ws0 window is STILL PAINTED on ws1 ({on1_content} body px) — the switch did not \
-         hide it (it should be invisible on the other workspace)."
+        on1_delta < bounds0_area / 20,
+        "the ws0 window is STILL PAINTED on ws1 ({on1_delta} px differ from the bare desktop at \
+         its rect, area {bounds0_area}) — the switch did not hide it (it should be invisible on \
+         the other workspace). A persisting window body would differ by ~{} px.",
+        bounds0_area / 2
     );
     let bounds2 = bounds2.expect("window present after round-trip");
     assert_window_painted(&frame_back0, bounds2, "window after returning to ws0");
@@ -603,11 +628,23 @@ fn minimize_one_window_leaves_others_intact_and_restores() {
     );
     let b_bounds = b_bounds.expect("B managed");
     assert_window_painted(&frame_min, b_bounds, "window B after window A was minimised");
-    // A's region must NOT be painted (it is minimised).
-    let a_content_min = window_body_content(&frame_min, a_rect);
+    // A's region must NOT be painted (it is minimised). Measure this as a DELTA
+    // against the no-window base desktop, NOT an absolute non-black count: the
+    // liquid-glass wallpaper accent gradient is non-black and reads as ~47k
+    // "painted" px for a WINDOW-FREE region under the absolute count (proven:
+    // t62-session; t62-harden probe — abs_nonbg=47040 with NO window, yet
+    // delta_vs_base=0). A_rect and B_rect are disjoint, so B does not contribute
+    // to A's rect. A genuinely-persisting minimised window would differ from the
+    // bare desktop by tens of thousands of px; a correctly-hidden one reads ~0.
+    let base = base_desktop();
+    let a_area = (a_rect.width * a_rect.height) as usize;
+    let a_delta_min = window_delta_vs_base(&frame_min, &base, a_rect, PRESENCE_DELTA_TOL);
     assert!(
-        a_content_min < (a_rect.width * a_rect.height) as usize / 20,
-        "minimised window A is still painted ({a_content_min} body px) — minimise did not hide it."
+        a_delta_min < a_area / 20,
+        "minimised window A is still painted ({a_delta_min} px differ from the bare desktop at \
+         its rect, area {a_area}) — minimise did not hide it. A persisting window would differ \
+         by ~{} px.",
+        a_area / 2
     );
 
     // --- Phase 2: minimise then restore A; check both present. ---
@@ -795,24 +832,33 @@ fn relayout_does_not_vanish_existing_window_subtree() {
 }
 
 // ===========================================================================
-// ROOT-CAUSE LOCALISER — proves the two failures above are a STALE-FRAMEBUFFER
-// defect on the headless render path, NOT a shell window-management bug.
+// REMOVED-WINDOW CORRECTNESS — a window hidden by a workspace switch is dropped
+// from BOTH the shell scene AND the captured framebuffer.
 // ===========================================================================
 
-/// When a window is removed from the rendered set (minimised, or hidden by a
-/// workspace switch), the SHELL scene correctly drops it — `build_scene()`
-/// produces ZERO window nodes — yet the CAPTURED framebuffer still shows the
-/// window's pixels. This isolates the disappearing/persisting-window defect to
-/// the render/present path (the synchronous capture render does not erase the
-/// region the removed window occupied), so the `workspace_round_trip_*` and
-/// `minimize_*` failures are pixel-layer defects, not shell-state defects.
+/// When a window is removed from the rendered set (hidden by a workspace switch)
+/// the SHELL scene correctly drops it — `build_scene()` produces ZERO window
+/// nodes — AND the captured framebuffer no longer shows the window: the region
+/// it occupied reads as the bare wallpaper.
 ///
-/// This test asserts the DIVERGENCE explicitly: scene window-node count == 0
-/// (shell correct) WHILE captured body content is large (pixels stale). It will
-/// start FAILING (becoming a no-op to update) once the render path is fixed to
-/// clear removed regions — at which point the two tests above should pass too.
+/// HISTORY / CORRECTION (t62-harden): this test was previously a "fail-on-fix
+/// sentinel" asserting `window_body_content(frame, bounds) > 50_000` to claim a
+/// STALE-FRAMEBUFFER defect (removed window still painted). That assertion was a
+/// FALSE POSITIVE: `window_body_content` counts every pixel that is not within
+/// `BG_TOLERANCE` of pure black, but the liquid-glass wallpaper's blue/purple
+/// accent gradient is NOT black, so a WINDOW-FREE region already reports ~195k
+/// "body" px (proven: t62-session; t62-harden probe — abs_nonbg=195472 with
+/// ZERO window nodes in the scene). The render path is NOT stale: diffing the
+/// post-switch frame against the no-window base desktop at the window rect reads
+/// ~0 (probe: 213 px at tol 24 over a 440k-px rect). The window is genuinely
+/// gone at both layers. The corrected assertion measures the DELTA vs the base
+/// desktop and requires it to be ~0.
+///
+/// TEETH: a real stale/persisting window would differ from the bare desktop by
+/// tens of thousands of px at this rect, failing the `< area/20` bound. The
+/// scene-node and visible-set assertions remain as shell-side teeth.
 #[test]
-fn removed_window_scene_is_empty_but_framebuffer_is_stale() {
+fn removed_window_is_gone_from_scene_and_framebuffer() {
     const NODE_WINDOW_BASE: u64 = 10_000;
     fn count_window_flat_nodes(scene: &liquide_compositor::scene::SceneNode) -> usize {
         scene
@@ -822,6 +868,7 @@ fn removed_window_scene_is_empty_but_framebuffer_is_stale() {
             .count()
     }
 
+    let base = base_desktop();
     let (frame, (scene_nodes_after, visible_after, bounds)) =
         capture_desktop_scripted_with_readback(|shell| {
             let _w = shell.open_app_window("com.liquide.files");
@@ -840,14 +887,18 @@ fn removed_window_scene_is_empty_but_framebuffer_is_stale() {
     );
     assert_eq!(visible_after, 0, "shell still reports the window visible after the switch");
 
-    // Pixel side is BROKEN: the framebuffer still shows the removed window. This
-    // is the defect. Documented as a fail-on-fix sentinel (see doc comment).
-    let stale = window_body_content(&frame, bounds);
+    // Pixel side is ALSO correct: the framebuffer at the former window rect now
+    // matches the bare desktop (window genuinely erased — measured as a delta vs
+    // the no-window base, NOT an absolute non-black count which the wallpaper
+    // gradient inflates).
+    let area = (bounds.width * bounds.height) as usize;
+    let delta = window_delta_vs_base(&frame, &base, bounds, PRESENCE_DELTA_TOL);
     assert!(
-        stale > 50_000,
-        "EXPECTED the stale-framebuffer defect (removed window still painted) but the captured \
-         region only has {stale} body px — if this is now ~0 the render path was FIXED; update \
-         the workspace/minimize tests to expect the window gone and delete this sentinel."
+        delta < area / 20,
+        "STALE FRAMEBUFFER: after the workspace switch the removed window's rect still differs \
+         from the bare desktop by {delta} px (area {area}) — the render path did not erase it. \
+         A correctly-cleared region differs by ~0; a persisting window by ~{}.",
+        area / 2
     );
 }
 
@@ -876,4 +927,64 @@ where
     )
     .expect("scripted-with capture");
     (frame, slot.expect("readback closure ran"))
+}
+
+/// Count pixels in a window's bounds rect that DIFFER from the same rect in the
+/// NO-WINDOW base desktop (max-channel delta > tol). A present window body
+/// differs strongly from the bare wallpaper; a vanished window leaves the
+/// wallpaper, reading ~0 against the base.
+fn window_delta_vs_base(
+    frame: &Frame,
+    base: &Frame,
+    bounds: liquide_compositor::geometry::Rect,
+    tol: u8,
+) -> usize {
+    let x = bounds.x.max(0.0) as u32;
+    let y = bounds.y.max(0.0) as u32;
+    let x1 = ((bounds.x + bounds.width) as u32).min(frame.width).min(base.width);
+    let y1 = ((bounds.y + bounds.height) as u32).min(frame.height).min(base.height);
+    let mut n = 0usize;
+    for py in y..y1 {
+        for px in x..x1 {
+            let a = frame.pixel(px, py).unwrap();
+            let b = base.pixel(px, py).unwrap();
+            let d = a.iter().zip(b.iter()).map(|(&p, &q)| p.abs_diff(q)).max().unwrap_or(0);
+            if d > tol { n += 1; }
+        }
+    }
+    n
+}
+
+/// TEETH guard for the DELTA-vs-base "window is gone" assertions
+/// (`workspace_round_trip_*`, `minimize_*`, `removed_window_is_gone_*`): a window
+/// that is genuinely PRESENT at a rect must read a delta FAR ABOVE the `area/20`
+/// "gone" threshold at `PRESENCE_DELTA_TOL`, so those assertions would FAIL if a
+/// window actually persisted. This is the companion that keeps the gone-checks
+/// honest — if `PRESENCE_DELTA_TOL` is ever loosened back toward 24 (where a
+/// present glass window reads only ~4.7k px, below the threshold), this fails.
+#[test]
+fn presence_delta_has_teeth_for_a_present_window() {
+    use liquide_compositor::geometry::Rect;
+    let base = base_desktop();
+    let a_rect = Rect::new(60.0, 90.0, 420.0, 320.0);
+    // Open A at a_rect and DO NOT minimize / switch away -> it is present.
+    let frame = capture_desktop_scripted_with(
+        &scenario_options(THEME),
+        |_h| Vec::new(),
+        |shell| {
+            let a = shell.open_app_window("com.liquide.terminal");
+            let _ = shell.move_window(a, a_rect.x, a_rect.y);
+            let _ = shell.resize_window(a, a_rect.width, a_rect.height);
+        },
+    )
+    .expect("present capture");
+    let area = (a_rect.width * a_rect.height) as usize;
+    let delta = window_delta_vs_base(&frame, &base, a_rect, PRESENCE_DELTA_TOL);
+    assert!(
+        delta > area / 20,
+        "TEETH FAILURE: a PRESENT window's rect differs from the bare desktop by only {delta} px \
+         (area {area}, gone-threshold {}), so the 'window is gone' delta checks would NOT catch a \
+         persisting window. PRESENCE_DELTA_TOL is too loose.",
+        area / 20
+    );
 }

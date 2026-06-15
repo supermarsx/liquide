@@ -730,14 +730,25 @@ impl Default for ComputedStyle {
             min_block_size: Dimension::Auto,
             max_inline_size: Dimension::None,
             max_block_size: Dimension::None,
-            margin_inline_start: Dimension::Zero,
-            margin_inline_end: Dimension::Zero,
-            margin_block_start: Dimension::Zero,
-            margin_block_end: Dimension::Zero,
-            padding_inline_start: Dimension::Zero,
-            padding_inline_end: Dimension::Zero,
-            padding_block_start: Dimension::Zero,
-            padding_block_end: Dimension::Zero,
+            // NOTE: the logical margin/padding longhands default to `Auto`
+            // (NOT `Zero`) deliberately. `resolve_logical_properties` only
+            // overrides the physical longhand when the logical one is not
+            // `Auto`; an `Auto` default therefore means "unset" and is skipped,
+            // so an unset logical longhand never clobbers a freshly-cascaded
+            // physical `padding-left`/`margin-*` back to zero on the
+            // restyle_node path. This mirrors `inset_inline_*`/`inline_size`,
+            // which already default to `Auto` (and is why width survived while
+            // padding/margin were being zeroed). When a logical longhand IS
+            // explicitly set in the cascade it carries its real value and maps
+            // to the physical side as normal.
+            margin_inline_start: Dimension::Auto,
+            margin_inline_end: Dimension::Auto,
+            margin_block_start: Dimension::Auto,
+            margin_block_end: Dimension::Auto,
+            padding_inline_start: Dimension::Auto,
+            padding_inline_end: Dimension::Auto,
+            padding_block_start: Dimension::Auto,
+            padding_block_end: Dimension::Auto,
             inset_inline_start: Dimension::Auto,
             inset_inline_end: Dimension::Auto,
             inset_block_start: Dimension::Auto,

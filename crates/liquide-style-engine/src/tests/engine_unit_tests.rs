@@ -569,3 +569,131 @@ fn transition_duration_defaults_transition_definitions_to_all() {
     assert_eq!(style.transition[0].property, "all");
     assert!((style.transition[0].duration_ms - 120.0).abs() < 0.01);
 }
+
+// ── Regression: cascaded physical padding/margin must survive the
+// restyle_node / restyle_all path (the path the real layout pipeline uses).
+//
+// Previously `resolve_logical_properties` clobbered freshly-cascaded physical
+// padding/margin back to zero, because the logical longhands defaulted to
+// `Dimension::Zero` (treated as "set") instead of `Auto` ("unset"). This fired
+// only on restyle_*, NOT on compute_style — which is why earlier
+// compute_style-only parity tests masked the bug. These tests drive the
+// restyle path explicitly. See `.orchestration/logs/t62-logical.md`.
+
+#[test]
+fn restyle_path_preserves_physical_padding_left() {
+    use crate::Dimension;
+
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet("menu-item { padding-left: 12px; }");
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let item = doc.create_element("menu-item");
+    doc.append_child(root, item);
+
+    let map = engine.restyle_all(&doc);
+    let style = map.get(item).unwrap();
+    assert_eq!(
+        style.padding.left,
+        Dimension::Px(12.0),
+        "padding-left:12px must reach computed padding.left on the restyle path"
+    );
+}
+
+#[test]
+fn restyle_path_preserves_physical_margin_right() {
+    use crate::Dimension;
+
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet("menu-item { margin-right: 8px; }");
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let item = doc.create_element("menu-item");
+    doc.append_child(root, item);
+
+    let map = engine.restyle_all(&doc);
+    let style = map.get(item).unwrap();
+    assert_eq!(
+        style.margin.right,
+        Dimension::Px(8.0),
+        "margin-right:8px must reach computed margin.right on the restyle path"
+    );
+}
+
+#[test]
+fn restyle_path_preserves_padding_and_margin_shorthands() {
+    use crate::Dimension;
+
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        "menu-item { padding: 5px 10px 15px 20px; margin: 3px 6px; }",
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let item = doc.create_element("menu-item");
+    doc.append_child(root, item);
+
+    let map = engine.restyle_all(&doc);
+    let style = map.get(item).unwrap();
+
+    // padding: top right bottom left
+    assert_eq!(style.padding.top, Dimension::Px(5.0), "padding.top");
+    assert_eq!(style.padding.right, Dimension::Px(10.0), "padding.right");
+    assert_eq!(style.padding.bottom, Dimension::Px(15.0), "padding.bottom");
+    assert_eq!(style.padding.left, Dimension::Px(20.0), "padding.left");
+
+    // margin: TB=3 LR=6
+    assert_eq!(style.margin.top, Dimension::Px(3.0), "margin.top");
+    assert_eq!(style.margin.bottom, Dimension::Px(3.0), "margin.bottom");
+    assert_eq!(style.margin.left, Dimension::Px(6.0), "margin.left");
+    assert_eq!(style.margin.right, Dimension::Px(6.0), "margin.right");
+}
+
+#[test]
+fn restyle_path_unset_logical_does_not_clobber_physical() {
+    use crate::Dimension;
+
+    // Element sets ONLY physical longhands; the logical longhands stay at their
+    // (now `Auto`) default. They must NOT overwrite the physical values.
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        "menu-item { padding-left: 12px; padding-top: 7px; margin-left: 4px; }",
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let item = doc.create_element("menu-item");
+    doc.append_child(root, item);
+
+    let map = engine.restyle_all(&doc);
+    let style = map.get(item).unwrap();
+    assert_eq!(style.padding.left, Dimension::Px(12.0), "padding.left survives");
+    assert_eq!(style.padding.top, Dimension::Px(7.0), "padding.top survives");
+    assert_eq!(style.margin.left, Dimension::Px(4.0), "margin.left survives");
+}
+
+#[test]
+fn restyle_path_real_logical_property_still_maps() {
+    use crate::Dimension;
+
+    // A genuinely-set logical property must still map to the physical side on
+    // the restyle path (horizontal-tb LTR: inline-start -> left).
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet("menu-item { padding-inline-start: 9px; }");
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let item = doc.create_element("menu-item");
+    doc.append_child(root, item);
+
+    let map = engine.restyle_all(&doc);
+    let style = map.get(item).unwrap();
+    assert_eq!(
+        style.padding.left,
+        Dimension::Px(9.0),
+        "padding-inline-start must map to physical padding.left (LTR)"
+    );
+}
