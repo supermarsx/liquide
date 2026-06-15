@@ -37,7 +37,7 @@ statusbar {
     font-size: 13;
     font-weight: 500;
     blur-radius: 12;
-    box-shadow-color: rgba(15, 40, 120, 0.35);
+    box-shadow: 0px 2px 16px rgba(15, 40, 120, 0.35);
     glass-tint: rgba(14, 18, 42, 0.80);
 }
 
@@ -98,7 +98,7 @@ statusbar-item#clock {
     border-color: rgba(60, 120, 220, 0.15);
     border-width: 1;
     border-radius: 10;
-    box-shadow-color: rgba(30, 80, 200, 0.20);
+    box-shadow: 0px 2px 10px rgba(30, 80, 200, 0.20);
 }
 
 /* ── Logo / brand area ────────────────────────────── */
@@ -175,7 +175,7 @@ notification-indicator:hover {
 notification-indicator.active {
     background: rgba(255, 50, 50, 0.18);
     color: rgb(255, 100, 90);
-    box-shadow-color: rgba(255, 50, 50, 0.15);
+    box-shadow: 0px 0px 8px rgba(255, 50, 50, 0.15);
 }
 
 notification-indicator.dnd {
@@ -222,7 +222,7 @@ session-button {
 
 session-button:hover {
     background: rgba(40, 80, 170, 0.25);
-    box-shadow-color: rgba(30, 80, 200, 0.15);
+    box-shadow: 0px 1px 6px rgba(30, 80, 200, 0.15);
 }
 
 /* ── Windows ───────────────────────────────────────── */
@@ -235,7 +235,7 @@ window {
     border-color: rgba(60, 120, 220, 0.14);
     border-width: 1;
     border-radius: 14;
-    box-shadow-color: rgba(10, 30, 100, 0.50);
+    box-shadow: 0px 8px 32px rgba(10, 30, 100, 0.50);
     glass-tint: rgba(16, 20, 42, 0.68);
     blur-radius: 10;
     overflow: hidden;
@@ -243,7 +243,7 @@ window {
 
 window.focused {
     border-color: rgba(70, 140, 255, 0.25);
-    box-shadow-color: rgba(30, 80, 220, 0.35);
+    box-shadow: 0px 12px 40px rgba(30, 80, 220, 0.35);
 }
 
 window-titlebar {
@@ -288,7 +288,7 @@ close-button {
 
 close-button:hover {
     background: rgba(255, 60, 48, 1.0);
-    box-shadow-color: rgba(255, 60, 48, 0.30);
+    box-shadow: 0px 0px 8px rgba(255, 60, 48, 0.30);
 }
 
 maximize-button {
@@ -347,7 +347,7 @@ dock {
     border-top-width: 1;
     blur-radius: 12;
     glass-tint: rgba(14, 18, 42, 0.75);
-    box-shadow-color: rgba(15, 40, 120, 0.30);
+    box-shadow: 0px -2px 16px rgba(15, 40, 120, 0.30);
 }
 
 dock-item {
@@ -362,13 +362,13 @@ dock-item {
 
 dock-item.active {
     color: rgba(120, 190, 255, 1.0);
-    box-shadow-color: rgba(40, 100, 220, 0.25);
+    box-shadow: 0px 2px 12px rgba(40, 100, 220, 0.25);
 }
 
 dock-item:hover {
     background: rgba(60, 120, 220, 0.18);
     color: rgba(200, 225, 255, 1.0);
-    box-shadow-color: rgba(40, 100, 220, 0.20);
+    box-shadow: 0px 2px 10px rgba(40, 100, 220, 0.20);
 }
 
 dock-item-icon {
@@ -428,7 +428,7 @@ notification {
     border-width: 1;
     blur-radius: 12;
     glass-tint: rgba(16, 22, 46, 0.82);
-    box-shadow-color: rgba(15, 40, 120, 0.30);
+    box-shadow: 0px 6px 24px rgba(15, 40, 120, 0.30);
 }
 
 notification-title {
@@ -502,7 +502,7 @@ launcher {
     border-width: 1;
     blur-radius: 16;
     glass-tint: rgba(14, 18, 42, 0.80);
-    box-shadow-color: rgba(20, 50, 140, 0.40);
+    box-shadow: 0px 16px 48px rgba(20, 50, 140, 0.40);
 }
 
 launcher-search {
@@ -543,7 +543,7 @@ launcher-item:hover {
 
 launcher-item.selected {
     background: rgba(40, 100, 220, 0.30);
-    box-shadow-color: rgba(40, 100, 220, 0.15);
+    box-shadow: 0px 1px 8px rgba(40, 100, 220, 0.15);
 }
 
 /* Launcher result icon gutter + label column (t66 parity: matches embedded
@@ -574,7 +574,7 @@ context-menu {
     border-style: solid;
     blur-radius: 10;
     glass-tint: rgba(14, 20, 44, 0.86);
-    box-shadow-color: rgba(10, 30, 100, 0.40);
+    box-shadow: 0px 6px 24px rgba(10, 30, 100, 0.40);
     min-width: 160;
     max-width: 240;
     max-height: 480;
@@ -594,7 +594,7 @@ session-menu {
     border-style: solid;
     blur-radius: 10;
     glass-tint: rgba(14, 20, 44, 0.86);
-    box-shadow-color: rgba(10, 30, 100, 0.40);
+    box-shadow: 0px 6px 24px rgba(10, 30, 100, 0.40);
     min-width: 180;
     max-width: 240;
     max-height: 480;
@@ -614,7 +614,7 @@ app-menu {
     border-style: solid;
     blur-radius: 10;
     glass-tint: rgba(14, 20, 44, 0.86);
-    box-shadow-color: rgba(10, 30, 100, 0.40);
+    box-shadow: 0px 6px 24px rgba(10, 30, 100, 0.40);
     min-width: 160;
     max-width: 240;
     max-height: 480;
@@ -706,7 +706,7 @@ dialog {
     border-style: solid;
     blur-radius: 14;
     glass-tint: rgba(16, 22, 46, 0.90);
-    box-shadow-color: rgba(10, 30, 100, 0.45);
+    box-shadow: 0px 12px 40px rgba(10, 30, 100, 0.45);
     overflow: hidden;
 }
 
@@ -802,7 +802,7 @@ loading-panel {
     background: rgba(18, 24, 50, 0.92);
     border-color: rgba(60, 120, 220, 0.14);
     border-width: 1;
-    box-shadow-color: rgba(20, 60, 180, 0.30);
+    box-shadow: 0px 8px 32px rgba(20, 60, 180, 0.30);
     color: rgba(220, 235, 255, 1.0);
 }
 

@@ -149,7 +149,7 @@ window {
     border-color: rgba(255, 180, 80, 0.12);
     border-width: 1;
     border-radius: 16;
-    box-shadow-color: rgba(20, 10, 0, 0.40);
+    box-shadow: 0px 8px 32px rgba(20, 10, 0, 0.40);
     glass-tint: rgba(32, 22, 10, 0.72);
     overflow: hidden;
 }
@@ -248,6 +248,7 @@ dock {
     border-top-color: rgba(255, 180, 80, 0.06);
     border-top-width: 1;
     blur-radius: 20;
+    box-shadow: 0px -2px 16px rgba(20, 10, 0, 0.35);
 }
 
 dock-item {
@@ -316,6 +317,7 @@ notification {
     border-radius: 12;
     background: rgba(36, 26, 12, 0.94);
     blur-radius: 20;
+    box-shadow: 0px 6px 24px rgba(20, 10, 0, 0.38);
 }
 
 notification-title {
@@ -386,6 +388,7 @@ launcher {
     border-radius: 16;
     background: rgba(16, 10, 2, 0.96);
     blur-radius: 40;
+    box-shadow: 0px 16px 48px rgba(20, 10, 0, 0.45);
 }
 
 launcher-search {
@@ -447,6 +450,7 @@ context-menu {
     border-color: rgba(255, 180, 80, 0.10);
     border-width: 1;
     blur-radius: 20;
+    box-shadow: 0px 6px 24px rgba(20, 10, 0, 0.42);
     min-width: 180;
     max-height: 480;
     overflow: hidden;
@@ -463,6 +467,7 @@ session-menu {
     border-color: rgba(255, 180, 80, 0.10);
     border-width: 1;
     blur-radius: 20;
+    box-shadow: 0px 6px 24px rgba(20, 10, 0, 0.42);
     min-width: 200;
     max-height: 480;
     overflow: hidden;
@@ -479,6 +484,7 @@ app-menu {
     border-color: rgba(255, 180, 80, 0.10);
     border-width: 1;
     blur-radius: 20;
+    box-shadow: 0px 6px 24px rgba(20, 10, 0, 0.42);
     min-width: 180;
     max-height: 480;
     overflow: hidden;

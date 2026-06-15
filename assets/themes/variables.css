@@ -107,9 +107,9 @@
 
   /* ── Shadows ── */
   --shadow-color:  rgba(0, 0, 0, 0.50);
-  --shadow-small:  0 2 8 rgba(0, 0, 0, 0.30);
-  --shadow-medium: 0 4 16 rgba(0, 0, 0, 0.40);
-  --shadow-large:  0 8 32 rgba(0, 0, 0, 0.50);
+  --shadow-small:  0px 2px 8px rgba(0, 0, 0, 0.30);
+  --shadow-medium: 0px 4px 16px rgba(0, 0, 0, 0.40);
+  --shadow-large:  0px 8px 32px rgba(0, 0, 0, 0.50);
 
 
   /* ═══════════════════════════════════════════════════
@@ -139,7 +139,7 @@
   --window-bg:            rgba(15, 15, 17, 0.95);
   --window-border:        rgba(255, 255, 255, 0.10);
   --window-radius:        12;
-  --window-shadow:        0 8 32 rgba(0, 0, 0, 0.50);
+  --window-shadow:        0px 8px 32px rgba(0, 0, 0, 0.50);
 
   /* ── Titlebar ── */
   --titlebar-bg:          rgba(24, 24, 27, 0.98);
@@ -290,7 +290,7 @@
   --glass-tint:   rgba(15, 15, 17, 0.80);
   --glass-blur:   20;
   --glass-border: rgba(255, 255, 255, 0.12);
-  --glass-shadow: 0 4 24 rgba(0, 0, 0, 0.40);
+  --glass-shadow: 0px 4px 24px rgba(0, 0, 0, 0.40);
 
   --blur-subtle: 5;
   --blur-medium: 10;
