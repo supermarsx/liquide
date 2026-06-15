@@ -16,6 +16,7 @@
 //! - [`document`] — Document (file buffer + metadata).
 //! - [`runtime`] — Editor runtime coordinator.
 
+pub mod app_view;
 pub mod buffer;
 pub mod config;
 pub mod cursor;
@@ -31,7 +32,8 @@ pub mod undo;
 mod tests;
 
 use liquide_app_harness::{AppBootstrap, Size};
-use liquide_ui_widgets::Label;
+use liquide_interop::{AppContentProvider, AppContentView};
+use liquide_ui_widgets::TextArea;
 use thiserror::Error;
 use tracing::info;
 
@@ -121,27 +123,72 @@ pub fn default_launch_state(config: EditorConfig) -> EditorLaunchState {
     }
 }
 
-/// Build the default placeholder root widget.
+/// Build the editor's content render model from a live runtime.
+///
+/// This is the shell's S6 consumption contract: the shell calls
+/// [`EditorRuntime`]'s [`AppContentProvider::content_view`] (via the registered
+/// `dyn AppView`) and turns the returned [`AppContentView`] into scene/DOM
+/// nodes. This free function is the standalone-binary equivalent.
 #[must_use]
-pub fn build_default_root(config: EditorConfig) -> Label {
-    let state = default_launch_state(config);
-    build_root_from_state(&state)
+pub fn content_view(runtime: &EditorRuntime) -> AppContentView {
+    runtime.content_view(0, 0)
 }
 
-/// Build the placeholder root widget from a previously computed launch state.
+/// Build the real root widget for a fresh editor: a multi-line text surface
+/// backed by an actual document (no longer a single-line `Label` placeholder).
 #[must_use]
-pub fn build_root_from_state(state: &EditorLaunchState) -> Label {
-    Label::new(state.summary.clone())
+pub fn build_default_root(config: EditorConfig) -> TextArea {
+    let mut runtime = EditorRuntime::new(config);
+    let _ = runtime.new_document();
+    build_root_from_runtime(&runtime)
+}
+
+/// Build a real root widget from a previously computed launch state.
+///
+/// Retained as the launch-state entry point (used by the workspace e2e
+/// scenarios). The `EditorLaunchState` only carries a summary, so this spins up
+/// a fresh document-backed runtime and renders it into a multi-line
+/// [`TextArea`] — no longer the single-line `Label` placeholder.
+#[must_use]
+pub fn build_root_from_state(_state: &EditorLaunchState) -> TextArea {
+    let mut runtime = EditorRuntime::new(EditorConfig::default());
+    let _ = runtime.new_document();
+    build_root_from_runtime(&runtime)
+}
+
+/// Build the real root widget from a live runtime, rendering its active
+/// document into a multi-line [`TextArea`].
+#[must_use]
+pub fn build_root_from_runtime(runtime: &EditorRuntime) -> TextArea {
+    let view = runtime.content_view(0, 0);
+    let title = view.title.clone().unwrap_or_else(|| "untitled".to_string());
+    let body = view
+        .rows
+        .iter()
+        .map(|r| r.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    TextArea::new()
+        .with_placeholder(title)
+        .with_text(&body)
 }
 
 /// Run the default text editor GUI path.
 pub fn run_default_app() -> anyhow::Result<()> {
     let config = EditorConfig::default();
     let state = default_launch_state(config.clone());
+    info!(
+        font = %config.font_family,
+        size = config.font_size,
+        documents = state.document_count,
+        "Starting liquid-text-editor"
+    );
 
-    info!(font = %config.font_family, size = config.font_size, "Starting liquid-text-editor");
-
-    default_bootstrap().run(move |_cx| Box::new(build_root_from_state(&state)))
+    default_bootstrap().run(move |_cx| {
+        let mut runtime = EditorRuntime::new(EditorConfig::default());
+        let _ = runtime.new_document();
+        Box::new(build_root_from_runtime(&runtime))
+    })
 }
 
 #[cfg(test)]

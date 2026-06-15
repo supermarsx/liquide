@@ -28,6 +28,7 @@ liquide-ui-core = { path = "../liquide-ui-core" }
 liquide-ui-widgets = { path = "../liquide-ui-widgets" }
 liquide-ime = { path = "../liquide-ime" }
 liquide-clipboard = { path = "../liquide-clipboard" }
+liquide-interop = { path = "../liquide-interop" }
 
 ropey = "1.6"
 unicode-segmentation = "1"

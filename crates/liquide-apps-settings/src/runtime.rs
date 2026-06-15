@@ -94,6 +94,8 @@ pub struct SettingsRuntime {
     entries: HashMap<String, SettingEntry>,
     active_category: Category,
     search: SettingsSearch,
+    /// Live search query buffer driven by typed text / key input.
+    search_query: String,
     changes: ChangeTracker,
     policy: PolicyEngine,
     notifications: NotificationQueue,
@@ -118,6 +120,7 @@ impl SettingsRuntime {
             entries,
             active_category: default_cat,
             search: SettingsSearch::new(history_limit),
+            search_query: String::new(),
             changes: ChangeTracker::new(),
             policy: PolicyEngine::new(),
             notifications: NotificationQueue::new(),
@@ -298,8 +301,41 @@ impl SettingsRuntime {
         self.search.results()
     }
 
-    /// Clear the search.
+    /// The current live search query buffer.
+    #[must_use]
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    /// Append typed text to the live search buffer and re-run the search so
+    /// results stay current. Returns `true` if any input was consumed.
+    pub fn push_search_text(&mut self, text: &str) -> bool {
+        if text.is_empty() {
+            return false;
+        }
+        self.search_query.push_str(text);
+        self.search(&self.search_query.clone());
+        true
+    }
+
+    /// Remove the last character from the live search buffer and re-run the
+    /// search (clearing results when the buffer becomes empty). Returns `true`
+    /// if a character was removed.
+    pub fn pop_search_char(&mut self) -> bool {
+        if self.search_query.pop().is_none() {
+            return false;
+        }
+        if self.search_query.is_empty() {
+            self.clear_search();
+        } else {
+            self.search(&self.search_query.clone());
+        }
+        true
+    }
+
+    /// Clear the search and the live query buffer.
     pub fn clear_search(&mut self) {
+        self.search_query.clear();
         self.search.clear();
     }
 

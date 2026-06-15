@@ -1,3 +1,4 @@
+mod app_view_tests;
 mod desktop_entry_tests;
 mod edge_case_tests;
 mod icon_tests;

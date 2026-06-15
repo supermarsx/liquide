@@ -19,6 +19,8 @@ pub struct FilesRuntime {
     navigation_history: Vec<String>,
     history_index: usize,
     selection: Vec<usize>,
+    /// Live typed-text buffer for the search bar (the text-input target).
+    search_query: String,
 }
 
 impl FilesRuntime {
@@ -41,7 +43,20 @@ impl FilesRuntime {
             navigation_history: Vec::new(),
             history_index: 0,
             selection: Vec::new(),
+            search_query: String::new(),
         }
+    }
+
+    /// The live typed search-bar buffer.
+    #[must_use]
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    /// Replace the live search-bar buffer. This only updates the text-input
+    /// target; it does not re-run the heavy filesystem search.
+    pub fn set_search_query(&mut self, q: String) {
+        self.search_query = q;
     }
 
     /// Get config.

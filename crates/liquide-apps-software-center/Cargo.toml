@@ -26,3 +26,4 @@ reqwest = { workspace = true, features = ["blocking"] }
 
 liquide-app-harness = { path = "../liquide-app-harness" }
 liquide-ui-widgets = { path = "../liquide-ui-widgets" }
+liquide-interop = { path = "../liquide-interop" }

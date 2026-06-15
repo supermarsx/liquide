@@ -26,6 +26,7 @@ serde_json.workspace = true
 liquide-app-harness = { path = "../liquide-app-harness" }
 liquide-ui-core = { path = "../liquide-ui-core" }
 liquide-gateway = { path = "../liquide-gateway" }
+liquide-interop = { path = "../liquide-interop" }
 
 [dev-dependencies]
 liquide-theme-engine = { path = "../liquide-theme-engine" }

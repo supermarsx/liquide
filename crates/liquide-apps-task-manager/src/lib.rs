@@ -6,6 +6,7 @@
 
 pub mod action;
 pub mod aggregator;
+pub mod app_view;
 pub mod app_history;
 pub mod audio;
 pub mod collector;
@@ -33,7 +34,8 @@ pub mod unlock;
 pub mod users;
 
 use liquide_app_harness::{AppBootstrap, Size};
-use liquide_ui_widgets::Label;
+use liquide_interop::{AppContentProvider, AppContentView};
+use liquide_ui_widgets::TextArea;
 use thiserror::Error;
 use tracing::info;
 
@@ -188,10 +190,33 @@ pub async fn graphical_launch_state(
     }
 }
 
-/// Build the placeholder root widget from a previously computed launch state.
+/// Build the content render model from a live task-manager runtime.
+///
+/// Mirrors the shell's consumption contract: the returned [`AppContentView`]
+/// is what the desktop turns into scene/DOM nodes.
 #[must_use]
-pub fn build_graphical_root(state: &TaskManagerLaunchState) -> Label {
-    Label::new(state.summary.clone())
+pub fn content_view(runtime: &TaskManagerRuntime) -> AppContentView {
+    runtime.content_view(0, 0)
+}
+
+/// Build the real root widget: a multi-line text surface populated from the
+/// runtime's process content view (no longer a single-line `Label`).
+#[must_use]
+pub fn build_graphical_root(state: &TaskManagerLaunchState) -> TextArea {
+    let runtime = TaskManagerRuntime::new(TaskManagerConfig::default());
+    let view = content_view(&runtime);
+    let text = view
+        .rows
+        .iter()
+        .map(|r| r.text.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = if text.trim().is_empty() {
+        state.summary.clone()
+    } else {
+        text
+    };
+    TextArea::new().with_text(&body)
 }
 
 async fn run_graphical_app(

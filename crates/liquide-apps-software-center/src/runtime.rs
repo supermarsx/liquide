@@ -16,6 +16,7 @@ pub struct SoftwareCenterRuntime {
     repos: RepoManager,
     queue: InstallQueue,
     updates: UpdateManager,
+    search_query: String,
 }
 
 impl SoftwareCenterRuntime {
@@ -29,7 +30,19 @@ impl SoftwareCenterRuntime {
             repos: RepoManager::new(),
             queue: InstallQueue::new(),
             updates: UpdateManager::new(auto_check),
+            search_query: String::new(),
         }
+    }
+
+    /// Current free-text package search query.
+    #[must_use]
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    /// Mutable access to the search query (used by the app-view seam).
+    pub(crate) fn search_query_mut(&mut self) -> &mut String {
+        &mut self.search_query
     }
 
     // ---- Catalog ----

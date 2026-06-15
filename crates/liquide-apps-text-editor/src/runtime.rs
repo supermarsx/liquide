@@ -122,6 +122,19 @@ impl EditorRuntime {
         self.documents.iter_mut().find(|d| d.id == id)
     }
 
+    /// Primary cursor position `(line, col)` of the active document, both
+    /// 0-based. Returns `(0, 0)` if there is no active document.
+    #[must_use]
+    pub fn cursor_position(&self) -> (usize, usize) {
+        match self.active_document() {
+            Some(doc) => {
+                let p = doc.cursors.primary().position;
+                (p.line, p.col)
+            }
+            None => (0, 0),
+        }
+    }
+
     /// Set the active document.
     pub fn set_active(&mut self, id: usize) -> crate::Result<()> {
         if !self.documents.iter().any(|d| d.id == id) {

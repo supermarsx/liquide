@@ -27,5 +27,6 @@ liquide-app-harness = { path = "../liquide-app-harness" }
 liquide-ui-core = { path = "../liquide-ui-core" }
 liquide-ui-widgets = { path = "../liquide-ui-widgets" }
 liquide-ime = { path = "../liquide-ime" }
+liquide-interop = { path = "../liquide-interop" }
 
 unicode-width = "0.2"

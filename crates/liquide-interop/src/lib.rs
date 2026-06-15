@@ -1,6 +1,7 @@
 //! OS integration layer — desktop entry parsing, XDG directory resolution,
 //! MIME type handling, icon themes, notifications, and system tray abstractions.
 
+pub mod app_view;
 pub mod desktop_entry;
 pub mod icon;
 pub mod mime;
@@ -11,6 +12,10 @@ pub mod xdg;
 #[cfg(test)]
 mod tests;
 
+pub use app_view::{
+    AppContentProvider, AppContentView, AppKey, AppTextInput, AppView, ContentKind, ContentRow,
+    ContentSpan,
+};
 pub use desktop_entry::{DesktopAction, DesktopEntry, DesktopEntryType};
 pub use icon::{IconContext, IconDirectory, IconLookup, IconMatch, IconTheme, IconType};
 pub use mime::{MimeAssociation, MimeDatabase, MimeSource, MimeType};

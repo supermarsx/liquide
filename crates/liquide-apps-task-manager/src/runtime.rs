@@ -43,6 +43,8 @@ pub struct TaskManagerRuntime {
     system_metrics: SystemMetrics,
     /// Monotonic timestamp of the last refresh (ms).
     last_refresh_ms: u64,
+    /// Free-text filter applied to the process list (synchronous UI state).
+    filter_query: String,
 }
 
 impl TaskManagerRuntime {
@@ -62,7 +64,18 @@ impl TaskManagerRuntime {
             processes: Vec::new(),
             system_metrics: SystemMetrics::default(),
             last_refresh_ms: 0,
+            filter_query: String::new(),
         }
+    }
+
+    /// Current free-text process filter query.
+    pub fn filter_query(&self) -> &str {
+        &self.filter_query
+    }
+
+    /// Mutable access to the process filter query (used by the app-view seam).
+    pub(crate) fn filter_query_mut(&mut self) -> &mut String {
+        &mut self.filter_query
     }
 
     /// Subscribe to the internal event stream.

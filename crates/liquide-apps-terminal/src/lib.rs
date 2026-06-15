@@ -3,6 +3,7 @@
 //! Provides VT sequence parsing, character grid management, scrollback
 //! buffers, PTY abstraction, shell integration, and tab/pane management.
 
+pub mod app_view;
 pub mod config;
 pub mod grid;
 pub mod pty;
@@ -19,8 +20,9 @@ mod tests;
 
 use anyhow::Result as AnyhowResult;
 use liquide_app_harness::{AppBootstrap, Size};
+use liquide_interop::{AppContentProvider, AppContentView};
 use liquide_ui_core::widget::Widget;
-use liquide_ui_widgets::Label;
+use liquide_ui_widgets::TextArea;
 use thiserror::Error;
 use tracing::info;
 
@@ -137,12 +139,43 @@ pub fn prepare_launch(
     }
 }
 
+/// Build the terminal's content render model from a live runtime.
+///
+/// This is the shell's S6 consumption contract: the shell calls
+/// [`TerminalRuntime`]'s [`AppContentProvider::content_view`] (via the
+/// registered `dyn AppView`) and turns the returned [`AppContentView`] into
+/// scene/DOM nodes. This free function is the standalone-binary equivalent.
+#[must_use]
+pub fn content_view(runtime: &TerminalRuntime) -> AppContentView {
+    runtime.content_view(runtime.active_grid().cols(), runtime.active_grid().rows())
+}
+
+/// Build the real root widget: a multi-line text surface populated with the
+/// terminal grid (no longer a single-line `Label` placeholder).
 #[must_use]
 pub fn build_root(contract: &TerminalLaunchContract) -> Box<dyn Widget> {
-    Box::new(Label::new(format!(
-        "liquid-terminal — {}x{}",
-        contract.rows, contract.cols
-    )))
+    // Spin up a real (stub-backed) runtime so the root reflects genuine grid
+    // content rather than a static summary string.
+    let mut runtime = TerminalRuntime::new(TerminalConfig {
+        rows: contract.rows,
+        cols: contract.cols,
+        ..TerminalConfig::default()
+    });
+    // Best-effort: a tab makes the grid (and thus the rendered rows) real.
+    let _ = runtime.new_tab(None);
+    let view = runtime.content_view(contract.cols, contract.rows);
+    let text = view
+        .rows
+        .iter()
+        .map(|r| r.text.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = if text.trim().is_empty() {
+        format!("liquid-terminal — {}x{}", contract.rows, contract.cols)
+    } else {
+        text
+    };
+    Box::new(TextArea::new().with_text(&body))
 }
 
 pub fn launch(config: TerminalConfig) -> AnyhowResult<()> {

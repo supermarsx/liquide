@@ -4,6 +4,7 @@
 //! extract), bookmarks, file previews, search, trash management, file
 //! properties, filtering, and column view configuration.
 
+pub mod app_view;
 pub mod clipboard;
 pub mod column_view;
 pub mod config;
@@ -29,8 +30,9 @@ mod tests;
 
 use anyhow::Result as AnyhowResult;
 use liquide_app_harness::{AppBootstrap, Size};
+use liquide_interop::{AppContentProvider, AppContentView};
 use liquide_ui_core::widget::Widget;
-use liquide_ui_widgets::Label;
+use liquide_ui_widgets::TextArea;
 use thiserror::Error;
 use tracing::info;
 
@@ -104,12 +106,38 @@ pub fn prepare_launch(config: FilesConfig) -> FilesLaunchContract {
     }
 }
 
+/// Build the file manager's content render model from a live runtime.
+///
+/// This is the shell's S6 consumption contract: the shell calls
+/// [`FilesRuntime`]'s [`AppContentProvider::content_view`] (via the registered
+/// `dyn AppView`) and turns the returned [`AppContentView`] into scene/DOM
+/// nodes. This free function is the standalone-binary equivalent.
+#[must_use]
+pub fn content_view(runtime: &FilesRuntime) -> AppContentView {
+    runtime.content_view(0, 0)
+}
+
+/// Build the real root widget: a multi-line text surface populated with the
+/// current listing (no longer a single-line `Label` placeholder).
 #[must_use]
 pub fn build_root(contract: &FilesLaunchContract) -> Box<dyn Widget> {
-    Box::new(Label::new(format!(
-        "liquid-files — {}",
-        contract.listing_path
-    )))
+    // Spin up a real runtime so the root reflects genuine listing content.
+    let runtime = FilesRuntime::new(FilesConfig::default());
+    let view = runtime.content_view(0, 0);
+    let text = view
+        .rows
+        .iter()
+        .map(|r| r.text.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The default listing may be empty; fall back to a labelled line so the
+    // widget still measures non-zero.
+    let body = if text.trim().is_empty() {
+        format!("liquid-files — {}", contract.listing_path)
+    } else {
+        text
+    };
+    Box::new(TextArea::new().with_text(&body))
 }
 
 pub fn launch(config: FilesConfig) -> AnyhowResult<()> {

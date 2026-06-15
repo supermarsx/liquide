@@ -16,6 +16,7 @@
 //! - [`notify`] — Change notifications for other system components.
 //! - [`runtime`] — Top-level settings coordinator.
 
+pub mod app_view;
 pub mod apply;
 pub mod bridge;
 pub mod category;
@@ -117,6 +118,18 @@ pub fn prepare_launch(config: SettingsConfig) -> SettingsLaunchContract {
 #[must_use]
 pub fn build_root(_contract: &SettingsLaunchContract) -> Box<dyn Widget> {
     Box::new(SettingsRoot::new())
+}
+
+/// Standalone (S6) equivalent of the [`AppContentProvider`] view: render the
+/// settings runtime into a portable [`AppContentView`] without going through
+/// the `dyn AppView` seam.
+///
+/// [`AppContentProvider`]: liquide_interop::AppContentProvider
+/// [`AppContentView`]: liquide_interop::AppContentView
+#[must_use]
+pub fn content_view(runtime: &SettingsRuntime) -> liquide_interop::AppContentView {
+    use liquide_interop::AppContentProvider;
+    runtime.content_view(0, 0)
 }
 
 pub fn launch(config: SettingsConfig) -> AnyhowResult<()> {

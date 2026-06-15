@@ -15,6 +15,7 @@
 //! - [`screenshot`] — Screenshot gallery handling.
 //! - [`runtime`] — Software center coordinator.
 
+pub mod app_view;
 pub mod catalog;
 pub mod config;
 pub mod install;
@@ -29,7 +30,8 @@ pub mod update;
 mod tests;
 
 use liquide_app_harness::{AppBootstrap, Size};
-use liquide_ui_widgets::Label;
+use liquide_interop::{AppContentProvider, AppContentView};
+use liquide_ui_widgets::TextArea;
 use thiserror::Error;
 use tracing::info;
 
@@ -119,17 +121,41 @@ pub fn default_launch_state(config: SoftwareCenterConfig) -> SoftwareCenterLaunc
     }
 }
 
-/// Build the default placeholder root widget.
+/// Build the content render model from a live software-center runtime.
+///
+/// Mirrors the shell's consumption contract: the returned [`AppContentView`]
+/// is what the desktop turns into scene/DOM nodes.
 #[must_use]
-pub fn build_default_root(config: SoftwareCenterConfig) -> Label {
+pub fn content_view(runtime: &SoftwareCenterRuntime) -> AppContentView {
+    runtime.content_view(0, 0)
+}
+
+/// Build the default real root widget.
+#[must_use]
+pub fn build_default_root(config: SoftwareCenterConfig) -> TextArea {
     let state = default_launch_state(config);
     build_root_from_state(&state)
 }
 
-/// Build the placeholder root widget from a previously computed launch state.
+/// Build the real root widget from a previously computed launch state: a
+/// multi-line text surface populated from the runtime's catalog content view
+/// (no longer a single-line `Label`).
 #[must_use]
-pub fn build_root_from_state(state: &SoftwareCenterLaunchState) -> Label {
-    Label::new(state.summary.clone())
+pub fn build_root_from_state(state: &SoftwareCenterLaunchState) -> TextArea {
+    let runtime = SoftwareCenterRuntime::new(SoftwareCenterConfig::default());
+    let view = content_view(&runtime);
+    let text = view
+        .rows
+        .iter()
+        .map(|r| r.text.trim_end().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = if text.trim().is_empty() {
+        state.summary.clone()
+    } else {
+        text
+    };
+    TextArea::new().with_text(&body)
 }
 
 /// Run the default software center GUI path.
