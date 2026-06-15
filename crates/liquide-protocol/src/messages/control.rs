@@ -46,6 +46,36 @@ pub struct ClientHello {
     pub resume_token: Option<Vec<u8>>,
 }
 
+/// Wire encoding of a [`ClientHello::resume_token`]: the public `session_id`
+/// bytes, a single NUL separator, then the secret raw session-token bytes.
+///
+/// This is the single canonical encoding shared by the client (which builds it)
+/// and the gateway (which parses and validates it). The `session_id` is public;
+/// all security comes from the secret raw token, which the gateway verifies
+/// against its stored hash in constant time.
+#[must_use]
+pub fn build_resume_token(session_id: &str, raw_token: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(session_id.len() + 1 + raw_token.len());
+    out.extend_from_slice(session_id.as_bytes());
+    out.push(0);
+    out.extend_from_slice(raw_token);
+    out
+}
+
+/// Parse a resume token produced by [`build_resume_token`] into its
+/// `(session_id, raw_token)` parts. Returns `None` if the framing is invalid
+/// (no separator, non-UTF-8 id, or an empty id/token).
+#[must_use]
+pub fn parse_resume_token(token: &[u8]) -> Option<(String, Vec<u8>)> {
+    let sep = token.iter().position(|&b| b == 0)?;
+    let session_id = std::str::from_utf8(&token[..sep]).ok()?.to_string();
+    let raw_token = token[sep + 1..].to_vec();
+    if session_id.is_empty() || raw_token.is_empty() {
+        return None;
+    }
+    Some((session_id, raw_token))
+}
+
 /// Handshake response from server (type code 0x0002).
 ///
 /// The server sends this after validating `ClientHello`.  It communicates
@@ -407,4 +437,29 @@ pub struct SecureAttentionAckMsg {
     /// Command-specific response data.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<BTreeMap<String, String>>,
+}
+
+#[cfg(test)]
+mod resume_token_tests {
+    use super::{build_resume_token, parse_resume_token};
+
+    #[test]
+    fn resume_token_round_trips() {
+        let sid = "gw-7-1700000000";
+        let raw = vec![1u8, 2, 3, 0xAB, 0xCD, 0xEF, 250, 99];
+        let token = build_resume_token(sid, &raw);
+        let (parsed_sid, parsed_raw) = parse_resume_token(&token).expect("must parse");
+        assert_eq!(parsed_sid, sid);
+        assert_eq!(parsed_raw, raw);
+    }
+
+    #[test]
+    fn parse_rejects_malformed_tokens() {
+        // No separator.
+        assert!(parse_resume_token(b"no-nul-here").is_none());
+        // Empty session id.
+        assert!(parse_resume_token(&[0u8, 1, 2, 3]).is_none());
+        // Empty raw token.
+        assert!(parse_resume_token(b"sid\0").is_none());
+    }
 }

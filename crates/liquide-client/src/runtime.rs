@@ -78,18 +78,32 @@ impl ClientRuntime {
 
     // -- Connection lifecycle ------------------------------------------------
 
-    /// Connect to a remote server.
+    /// Connect to a remote server with empty credentials.
     pub async fn connect(&mut self, server: &str) -> Result<()> {
+        self.connect_with_credential(server, "", "").await
+    }
+
+    /// Connect to a remote server with explicit credentials.
+    ///
+    /// Credentials are passed straight to the connection manager and are never
+    /// written to the audit log or any tracing output.
+    pub async fn connect_with_credential(
+        &mut self,
+        server: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<()> {
         self.audit_events.push(ClientAuditEvent::ConnectionAttempt {
             server: server.to_string(),
         });
 
-        self.connection_manager.connect(server).await.map_err(|e| {
-            ClientError::ConnectionFailed {
+        self.connection_manager
+            .connect_with_credential(server, username, password)
+            .await
+            .map_err(|e| ClientError::ConnectionFailed {
                 server: server.to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
 
         self.audit_events.push(ClientAuditEvent::Connected {
             server: server.to_string(),

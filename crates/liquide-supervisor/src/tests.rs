@@ -17,7 +17,7 @@ use crate::session::{ResourceBudget, SessionRecord, SessionRegistry, SessionStat
 // ---------------------------------------------------------------------------
 
 fn make_runtime() -> SupervisorRuntime {
-    SupervisorRuntime::new(
+    let mut rt = SupervisorRuntime::new(
         SupervisorConfig::default(),
         ResourceDefaults::default(),
         AdmissionConfig::default(),
@@ -25,7 +25,41 @@ fn make_runtime() -> SupervisorRuntime {
         RestartPolicy::default(),
         16.0,  // 16-core host
         32768, // 32 GB
-    )
+    );
+    // Use a harmless, long-lived stand-in process so spawn_session launches a
+    // real OS child (proving the spawn path) without depending on the
+    // liquid-session binary being installed in the test environment.
+    rt.set_spawn_command(sleeper_command());
+    rt
+}
+
+/// A cross-platform command that starts a process which stays alive for a
+/// while and accepts no per-session arguments.
+fn sleeper_command() -> crate::spawn::SpawnCommand {
+    #[cfg(windows)]
+    {
+        // `ping` with a count keeps the process alive for several seconds and
+        // does not exit immediately.
+        crate::spawn::SpawnCommand {
+            program: "cmd".to_string(),
+            base_args: vec![
+                "/c".to_string(),
+                "ping".to_string(),
+                "-n".to_string(),
+                "30".to_string(),
+                "127.0.0.1".to_string(),
+            ],
+            append_session_args: false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        crate::spawn::SpawnCommand {
+            program: "sleep".to_string(),
+            base_args: vec!["30".to_string()],
+            append_session_args: false,
+        }
+    }
 }
 
 fn make_budget() -> ResourceBudget {
@@ -1270,10 +1304,10 @@ fn test_session_state_display() {
 // ===========================================================================
 
 #[test]
-fn test_spawner_increments_pid() {
+fn test_spawner_launches_real_process_with_os_pid() {
     use crate::spawn::{SessionSpawner, SpawnRequest};
 
-    let mut spawner = SessionSpawner::new();
+    let mut spawner = SessionSpawner::with_command(sleeper_command());
     let req1 = SpawnRequest {
         user: "alice".into(),
         session_id: "s1".into(),
@@ -1290,25 +1324,88 @@ fn test_spawner_increments_pid() {
     let r1 = spawner.spawn_session(&req1).unwrap();
     let r2 = spawner.spawn_session(&req2).unwrap();
 
-    assert_eq!(r1.pid, 1000);
-    assert_eq!(r2.pid, 1001);
+    // Real OS PIDs are assigned by the kernel, not a synthetic counter, so they
+    // must be nonzero and distinct.
+    assert_ne!(r1.pid, 0);
+    assert_ne!(r2.pid, 0);
+    assert_ne!(r1.pid, r2.pid);
     assert_eq!(r1.session_id, "s1");
     assert_eq!(r2.session_id, "s2");
+
+    // Both children are tracked and reported alive.
+    assert_eq!(spawner.tracked_count(), 2);
+    assert!(spawner.is_alive(r1.pid));
+    assert!(spawner.is_alive(r2.pid));
+
+    // Killing one removes it from tracking and reports it no longer alive.
+    spawner.kill_session(r1.pid).unwrap();
+    assert!(!spawner.is_alive(r1.pid));
+    spawner.kill_session(r2.pid).unwrap();
 }
 
 #[test]
-fn test_spawner_default() {
-    use crate::spawn::{SessionSpawner, SpawnRequest};
-    let mut spawner = SessionSpawner::default();
-    // Default should behave the same as new() — first PID is 1000.
+fn test_spawn_fails_when_binary_missing() {
+    use crate::spawn::{SessionSpawner, SpawnCommand, SpawnRequest};
+
+    // Point at a program that does not exist; spawn must fail loudly rather
+    // than report a phantom running session.
+    let mut spawner = SessionSpawner::with_command(SpawnCommand {
+        program: "liquide-no-such-binary-xyzzy".to_string(),
+        base_args: Vec::new(),
+        append_session_args: false,
+    });
     let req = SpawnRequest {
-        user: "test".into(),
+        user: "alice".into(),
         session_id: "s1".into(),
         resource_budget: make_budget(),
         safe_mode: false,
     };
-    let result = spawner.spawn_session(&req).unwrap();
-    assert_eq!(result.pid, 1000);
+    let err = spawner.spawn_session(&req).unwrap_err();
+    assert!(matches!(err, crate::SupervisorError::SpawnFailed { .. }));
+    assert_eq!(spawner.tracked_count(), 0);
+}
+
+#[test]
+fn test_runtime_session_process_is_actually_alive() {
+    // The runtime must back a Running session with a live OS process.
+    let mut rt = make_runtime();
+    let sid = rt.spawn_session("alice").unwrap();
+    assert_eq!(
+        rt.session_registry().get_session(&sid).unwrap().state,
+        SessionState::Running
+    );
+    assert!(
+        rt.is_session_process_alive(&sid),
+        "a Running session must have a live child process"
+    );
+
+    rt.terminate_session(&sid).unwrap();
+    assert!(
+        !rt.is_session_process_alive(&sid),
+        "after termination the child process must be gone"
+    );
+}
+
+#[test]
+fn test_runtime_spawn_fails_with_missing_binary() {
+    use crate::spawn::SpawnCommand;
+    let mut rt = SupervisorRuntime::new(
+        SupervisorConfig::default(),
+        ResourceDefaults::default(),
+        AdmissionConfig::default(),
+        DowngradeThresholds::default(),
+        RestartPolicy::default(),
+        16.0,
+        32768,
+    );
+    rt.set_spawn_command(SpawnCommand {
+        program: "liquide-no-such-binary-xyzzy".to_string(),
+        base_args: Vec::new(),
+        append_session_args: false,
+    });
+    // Session creation must fail; nothing should be registered as Running.
+    assert!(rt.spawn_session("alice").is_err());
+    assert_eq!(rt.session_registry().active_count(), 0);
 }
 
 // ===========================================================================

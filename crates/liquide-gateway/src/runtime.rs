@@ -25,8 +25,8 @@ use crate::server::{ServerCapabilities, ServerHealth, ServerRegistry};
 use crate::{GatewayError, Result};
 
 use liquide_protocol::messages::control::{
-    CapabilitiesMsg, ClientHello, LoginFailure, LoginPrompt, LoginResponse, LoginSuccess,
-    ServerHello,
+    parse_resume_token, CapabilitiesMsg, ClientHello, LoginFailure, LoginPrompt, LoginResponse,
+    LoginSuccess, ServerHello,
 };
 use liquide_protocol::version;
 
@@ -551,7 +551,35 @@ impl GatewayRuntime {
             return;
         }
 
-        let session_id = format!("gw-{}-{}", conn_id, now);
+        // Resume handling: if the client presented a resume token for a known
+        // session, validate it (constant-time) before issuing a session. A
+        // valid token lets the client keep its prior `session_id`; an
+        // absent/invalid token yields a fresh session. We never trust the
+        // public `session_id` alone — the secret token must verify.
+        let (session_id, resume_accepted) = match client_hello
+            .resume_token
+            .as_deref()
+            .and_then(parse_resume_token)
+        {
+            Some((prior_session_id, raw_token)) => {
+                if self.verify_session_token(&prior_session_id, &raw_token) {
+                    tracing::info!(
+                        peer = %peer_addr,
+                        session_id = %prior_session_id,
+                        "resume token accepted"
+                    );
+                    (prior_session_id, Some(true))
+                } else {
+                    tracing::info!(
+                        peer = %peer_addr,
+                        "resume token rejected — issuing a new session"
+                    );
+                    (format!("gw-{}-{}", conn_id, now), Some(false))
+                }
+            }
+            None => (format!("gw-{}-{}", conn_id, now), None),
+        };
+
         let server_hello = ServerHello {
             protocol_version: version::PROTOCOL_VERSION.to_string(),
             server_name: self.config.hostname.clone(),
@@ -561,7 +589,7 @@ impl GatewayRuntime {
             selected_audio_codec: negotiate_first(&client_hello.supported_audio_codecs, "opus"),
             channels: BTreeMap::new(),
             session_id: session_id.clone(),
-            resume_accepted: None,
+            resume_accepted,
             features: BTreeMap::new(),
         };
 
@@ -609,6 +637,7 @@ impl GatewayRuntime {
         let auth_method = match login_response.method.as_str() {
             "password" => GatewayAuthMethod::UsernamePassword,
             "token" => GatewayAuthMethod::Token,
+            "apikey" => GatewayAuthMethod::ApiKey,
             _ => GatewayAuthMethod::UsernamePassword,
         };
 
@@ -738,14 +767,84 @@ impl GatewayRuntime {
                     );
                 }
 
-                self.cluster_state
-                    .register_session_route(conn_id.clone(), decision.target_server_id);
+                // Resolve the backend address for the chosen server.
+                let backend_addr = self
+                    .server_registry
+                    .get(&decision.target_server_id)
+                    .map(|s| s.address().to_string());
 
-                tracing::info!(
-                    peer = %peer_addr,
-                    conn_id = %conn_id,
-                    "TCP+TLS connection fully established and routed"
+                self.cluster_state.register_session_route(
+                    conn_id.clone(),
+                    decision.target_server_id.clone(),
                 );
+
+                // 8. Establish the post-login data path: connect to the backend
+                //    and splice the authenticated client stream to it so desktop
+                //    frames and input events survive the handshake. The stream
+                //    is MOVED into a detached relay task instead of being
+                //    dropped when this handler returns.
+                match backend_addr {
+                    Some(addr) => match tokio::net::TcpStream::connect(&addr).await {
+                        Ok(backend) => {
+                            let _ = backend.set_nodelay(true);
+                            match self.relay_manager.create_relay_with_counters(
+                                conn_id.clone(),
+                                decision.target_server_id.clone(),
+                                now,
+                            ) {
+                                Ok((relay_id, counters)) => {
+                                    tracing::info!(
+                                        peer = %peer_addr,
+                                        conn_id = %conn_id,
+                                        relay_id = %relay_id,
+                                        backend = %addr,
+                                        "TCP+TLS connection fully established, routed, and relaying"
+                                    );
+                                    // Detach the forwarding task; it owns both
+                                    // streams for the lifetime of the session.
+                                    tokio::spawn(async move {
+                                        if let Err(e) = crate::relay::forward_bidirectional(
+                                            tls_stream, backend, counters,
+                                        )
+                                        .await
+                                        {
+                                            tracing::debug!(
+                                                relay_id = %relay_id,
+                                                err = %e,
+                                                "relay forwarding ended"
+                                            );
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        peer = %peer_addr,
+                                        err = %e,
+                                        "failed to create relay session"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                peer = %peer_addr,
+                                backend = %addr,
+                                err = %e,
+                                "failed to connect to backend session server"
+                            );
+                            if let Some(conn) = self.connection_tracker.get_mut(&conn_id) {
+                                conn.transition_to(ConnectionState::Terminated, None, None);
+                            }
+                        }
+                    },
+                    None => {
+                        tracing::warn!(
+                            peer = %peer_addr,
+                            server = %decision.target_server_id,
+                            "routed server has no address; cannot relay"
+                        );
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!(peer = %peer_addr, err = %e, "routing failed");

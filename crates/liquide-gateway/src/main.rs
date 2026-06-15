@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use tracing::info;
 
@@ -26,6 +26,20 @@ struct Cli {
     /// Address and port to listen on for management API.
     #[arg(long, default_value = "127.0.0.1:3901")]
     management_addr: String,
+
+    /// Path to the PEM TLS certificate chain for client connections.
+    #[arg(long, default_value = "/etc/liquide/certs/gateway.crt")]
+    tls_cert: String,
+
+    /// Path to the PEM TLS private key for client connections.
+    #[arg(long, default_value = "/etc/liquide/certs/gateway.key")]
+    tls_key: String,
+
+    /// Backend session server address to register at startup
+    /// (`host:port`). May be repeated. Without at least one routable backend
+    /// the gateway has no session target.
+    #[arg(long = "backend")]
+    backends: Vec<String>,
 }
 
 #[tokio::main]
@@ -70,6 +84,52 @@ async fn run(cli: Cli) -> Result<()> {
         management_config,
         cluster_config,
     );
+
+    // Configure TLS so the gateway can actually terminate client connections.
+    // Without a valid cert/key the binary refuses to start rather than silently
+    // dropping every client at the TLS step.
+    let tls_config = liquide_gateway::load_server_tls_config(&cli.tls_cert, &cli.tls_key)
+        .map_err(|e| anyhow::anyhow!("failed to load TLS config: {e}"))
+        .with_context(|| {
+            format!(
+                "cert={}, key={} — provide --tls-cert/--tls-key",
+                cli.tls_cert, cli.tls_key
+            )
+        })?;
+    runtime.set_tls_config(tls_config);
+    info!(cert = %cli.tls_cert, "TLS configured");
+
+    // Register backend session servers so routing has a real target. A gateway
+    // with no routable backend rejects every connection at the routing step.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    for backend in &cli.backends {
+        match runtime.handle_server_registration(
+            backend.clone(),
+            liquide_gateway::ServerCapabilities::default(),
+            now,
+        ) {
+            Ok(server_id) => {
+                // Mark the freshly registered backend healthy so routing can
+                // select it immediately; subsequent health-check ticks maintain
+                // this based on heartbeats.
+                runtime
+                    .server_registry_mut()
+                    .update_health(&server_id, liquide_gateway::ServerHealth::Healthy);
+                info!(server_id = %server_id, addr = %backend, "registered backend session server");
+            }
+            Err(e) => {
+                tracing::warn!(addr = %backend, err = %e, "failed to register backend");
+            }
+        }
+    }
+    if cli.backends.is_empty() {
+        tracing::warn!(
+            "no backend session servers registered (--backend); routing will reject clients"
+        );
+    }
 
     // Set up and bind the TCP listener (kept outside runtime to avoid
     // borrow conflicts between accept() and handle_tcp_connection()).

@@ -18,6 +18,7 @@ pub mod reverse;
 pub mod routing;
 pub mod runtime;
 pub mod server;
+pub mod tls;
 
 #[cfg(test)]
 mod tests;
@@ -110,3 +111,4 @@ pub use reverse::{ReverseConnection, ReverseConnectionManager, ReverseConnection
 pub use routing::{RouteDecision, Router, RoutingStrategy};
 pub use runtime::{GatewayRuntime, GatewayStatus};
 pub use server::{RegisteredServer, ServerCapabilities, ServerHealth, ServerLoad, ServerRegistry};
+pub use tls::{build_server_config, load_server_tls_config};

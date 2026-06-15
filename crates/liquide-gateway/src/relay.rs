@@ -1,9 +1,56 @@
 //! Full-relay session management for proxying traffic through the gateway.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::Mutex;
 
 use crate::config::RelayConfig;
 use crate::{GatewayError, Result};
+
+/// Byte counters shared with a running relay forwarding task.
+///
+/// The forwarding task updates these atomically as it copies bytes; the
+/// [`RelaySession`] reads them to report live traffic without owning the socket.
+#[derive(Debug, Default)]
+pub struct RelayCounters {
+    /// Bytes copied from client to server.
+    pub client_to_server: std::sync::atomic::AtomicU64,
+    /// Bytes copied from server to client.
+    pub server_to_client: std::sync::atomic::AtomicU64,
+}
+
+/// Forward bytes bidirectionally between an authenticated client stream and a
+/// backend session stream until either side closes.
+///
+/// This is the post-login data path: the gateway no longer drops the TLS
+/// stream after routing — it splices it to the backend so desktop frames and
+/// input events survive the handshake. Byte totals are recorded into
+/// `counters` as they flow.
+pub async fn forward_bidirectional<C, S>(
+    mut client: C,
+    mut server: S,
+    counters: Arc<RelayCounters>,
+) -> std::io::Result<()>
+where
+    C: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    use std::sync::atomic::Ordering;
+
+    let (c2s, s2c) = tokio::io::copy_bidirectional(&mut client, &mut server).await?;
+    counters.client_to_server.fetch_add(c2s, Ordering::Relaxed);
+    counters.server_to_client.fetch_add(s2c, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Handle to a live relay's shared traffic counters, kept by the manager so
+/// status reporting reflects bytes forwarded by the background task.
+type SharedCounters = Arc<RelayCounters>;
+
+/// A lock-protected registry of live relay counters, keyed by relay id.
+pub type LiveRelayTable = Arc<Mutex<HashMap<String, SharedCounters>>>;
 
 /// A relay session forwarding traffic between a client and a server.
 pub struct RelaySession {
@@ -101,6 +148,9 @@ pub struct RelayManager {
     sessions: HashMap<String, RelaySession>,
     config: RelayConfig,
     next_id: u64,
+    /// Live byte counters for relays whose forwarding runs in a background
+    /// task. Keyed by relay id; updated by the task, read for status.
+    live_counters: HashMap<String, SharedCounters>,
 }
 
 impl RelayManager {
@@ -111,7 +161,38 @@ impl RelayManager {
             sessions: HashMap::new(),
             config,
             next_id: 1,
+            live_counters: HashMap::new(),
         }
+    }
+
+    /// Create a relay session and return its id together with a shared counter
+    /// handle to give to the forwarding task.
+    ///
+    /// The same capacity/enabled checks as [`create_relay`](Self::create_relay)
+    /// apply.
+    pub fn create_relay_with_counters(
+        &mut self,
+        client_connection_id: String,
+        server_connection_id: String,
+        timestamp: u64,
+    ) -> Result<(String, SharedCounters)> {
+        let relay_id =
+            self.create_relay(client_connection_id, server_connection_id, timestamp)?;
+        let counters: SharedCounters = Arc::new(RelayCounters::default());
+        self.live_counters.insert(relay_id.clone(), counters.clone());
+        Ok((relay_id, counters))
+    }
+
+    /// Snapshot the live byte totals for a relay, if it has a counter handle.
+    #[must_use]
+    pub fn live_traffic(&self, relay_id: &str) -> Option<(u64, u64)> {
+        use std::sync::atomic::Ordering;
+        self.live_counters.get(relay_id).map(|c| {
+            (
+                c.client_to_server.load(Ordering::Relaxed),
+                c.server_to_client.load(Ordering::Relaxed),
+            )
+        })
     }
 
     /// Create a new relay session between a client and server connection.

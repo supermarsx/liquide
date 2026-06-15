@@ -22,6 +22,21 @@ struct Cli {
     #[arg(long)]
     username: Option<String>,
 
+    /// Password for authentication.
+    ///
+    /// Prefer the `LIQUIDE_PASSWORD` environment variable or an interactive
+    /// prompt; passing a secret on the command line can leak it to the process
+    /// list. When omitted, the password is read from `LIQUIDE_PASSWORD` or, if
+    /// stdin is a terminal, prompted for.
+    #[arg(long)]
+    password: Option<String>,
+
+    /// Authentication token (alternative to username/password).
+    ///
+    /// Prefer the `LIQUIDE_TOKEN` environment variable over the command line.
+    #[arg(long)]
+    token: Option<String>,
+
     /// Launch in fullscreen mode.
     #[arg(long)]
     fullscreen: bool,
@@ -60,6 +75,7 @@ async fn run(cli: Cli) -> Result<()> {
     // Load configuration.
     let config_path = cli
         .config
+        .clone()
         .map(std::path::PathBuf::from)
         .or_else(config::default_config_path);
     if let Some(ref path) = config_path {
@@ -79,10 +95,19 @@ async fn run(cli: Cli) -> Result<()> {
         info!(profile = %profile_name, "Loading connection profile");
     }
 
-    // Connect to the server.
-    info!(server = %cli.server, "Connecting to server...");
+    // Resolve credentials from flags, then env, then an interactive prompt.
+    // Secrets are never logged.
+    let (username, password) = resolve_credentials(&cli)?;
+
+    // Connect to the server. Credentials are passed straight to the connection
+    // manager and never emitted to the audit log or tracing output.
+    info!(
+        server = %cli.server,
+        username = %username,
+        "Connecting to server..."
+    );
     runtime
-        .connect(&cli.server)
+        .connect_with_credential(&cli.server, &username, &password)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("Failed to connect to server")?;
@@ -129,4 +154,53 @@ async fn run(cli: Cli) -> Result<()> {
 
     info!("Disconnected from server");
     Ok(())
+}
+
+/// Resolve `(username, password)` for authentication without ever logging the
+/// secret.
+///
+/// Resolution order:
+/// 1. `--token` / `LIQUIDE_TOKEN` — sent as the credential with an empty user.
+/// 2. `--username` / `LIQUIDE_USERNAME` and `--password` / `LIQUIDE_PASSWORD`.
+/// 3. If the password is still unset and stdin is a terminal, prompt for it.
+fn resolve_credentials(cli: &Cli) -> Result<(String, String)> {
+    // Token path takes precedence and carries the secret in the password slot.
+    if let Some(token) = cli
+        .token
+        .clone()
+        .or_else(|| std::env::var("LIQUIDE_TOKEN").ok())
+    {
+        if !token.is_empty() {
+            return Ok((String::new(), token));
+        }
+    }
+
+    let username = cli
+        .username
+        .clone()
+        .or_else(|| std::env::var("LIQUIDE_USERNAME").ok())
+        .unwrap_or_default();
+
+    let mut password = cli
+        .password
+        .clone()
+        .or_else(|| std::env::var("LIQUIDE_PASSWORD").ok())
+        .unwrap_or_default();
+
+    if password.is_empty() && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        // Interactive fallback. Note: this echoes input; a production build
+        // would use a hidden-input crate. We avoid adding that dependency here.
+        use std::io::Write;
+        print!(
+            "Password for {}: ",
+            if username.is_empty() { "session" } else { &username }
+        );
+        std::io::stdout().flush().ok();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_ok() {
+            password = line.trim_end_matches(['\r', '\n']).to_string();
+        }
+    }
+
+    Ok((username, password))
 }

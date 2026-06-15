@@ -31,6 +31,10 @@ struct Cli {
     /// Override the memory in megabytes available (for testing).
     #[arg(long, default_value = "32768")]
     host_memory_mb: u64,
+
+    /// Path to the session binary the supervisor launches per session.
+    #[arg(long, default_value = "liquid-session")]
+    session_binary: String,
 }
 
 #[tokio::main]
@@ -75,8 +79,17 @@ async fn run(cli: Cli) -> Result<()> {
         cli.host_memory_mb,
     );
 
+    // Point the spawner at the configured session binary so each session is a
+    // real OS child process.
+    runtime.set_spawn_command(liquide_supervisor::SpawnCommand {
+        program: cli.session_binary.clone(),
+        base_args: Vec::new(),
+        append_session_args: true,
+    });
+
     info!(
         socket = %runtime.control_channel().socket_path(),
+        session_binary = %cli.session_binary,
         "Opening control socket..."
     );
     info!(

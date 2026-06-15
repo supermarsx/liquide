@@ -25,10 +25,67 @@ fn decode_header_too_short() {
 }
 
 #[test]
-fn decode_header_invalid_channel() {
+fn decode_header_bad_magic() {
+    // A full-size 22-byte header whose leading magic bytes are wrong must be
+    // rejected by the canonical decoder.
     let mut buf = BytesMut::with_capacity(codec::FRAME_HEADER_SIZE);
-    buf.extend_from_slice(&[255, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    buf.extend_from_slice(&[0xFFu8; codec::FRAME_HEADER_SIZE]);
     assert!(codec::decode_header(&mut buf).is_none());
+}
+
+#[test]
+fn header_preserves_timestamp_and_message_type() {
+    // The canonical (protocol) wire header carries timestamp and message type;
+    // the removed simplified transport header zeroed these. Prove they survive
+    // a transport-codec round-trip.
+    let header = FrameHeader::new(ChannelId::VIDEO, 7, 123_456_789, 0x0042, 0, 3);
+    let mut buf = BytesMut::new();
+    codec::encode_header(&header, &mut buf);
+    assert_eq!(buf.len(), codec::FRAME_HEADER_SIZE);
+    let dec = codec::decode_header(&mut buf).expect("decode should succeed");
+    assert_eq!(dec.timestamp_us, 123_456_789);
+    assert_eq!(dec.message_type, 0x0042);
+}
+
+/// Cross-crate interoperability: a frame encoded with the transport codec must
+/// decode identically with the `liquide-protocol` codec and vice-versa, since
+/// both now share the single canonical 22-byte wire header.
+#[test]
+fn transport_protocol_frame_interop() {
+    use liquide_protocol::codec::FrameCodec;
+
+    let header = FrameHeader::new(ChannelId::CONTROL, 99, 555, 0x0001, FrameFlags::RELIABLE, 5);
+    let payload = b"hello";
+
+    // transport encode -> protocol decode
+    let mut buf = BytesMut::new();
+    codec::encode_frame(&header, payload, &mut buf);
+    let mut decode_buf = buf.clone();
+    let mut proto = FrameCodec::new();
+    let frame = proto
+        .decode_frame(&mut decode_buf)
+        .expect("protocol decode ok")
+        .expect("complete frame");
+    assert_eq!(frame.header.channel, ChannelId::CONTROL);
+    assert_eq!(frame.header.sequence, 99);
+    assert_eq!(frame.header.timestamp_us, 555);
+    assert_eq!(frame.header.message_type, 0x0001);
+    assert_eq!(&frame.payload[..], payload);
+
+    // protocol encode -> transport decode (byte-for-byte identical wire bytes)
+    let mut proto_buf = BytesMut::new();
+    FrameCodec::encode_frame(&header, payload, &mut proto_buf).expect("protocol encode ok");
+    assert_eq!(
+        &proto_buf[..],
+        &buf[..],
+        "transport and protocol must produce identical wire bytes"
+    );
+    let (t_hdr, t_payload) =
+        codec::decode_frame(&proto_buf).expect("transport decode of protocol-encoded frame");
+    assert_eq!(t_hdr.channel, ChannelId::CONTROL);
+    assert_eq!(t_hdr.timestamp_us, 555);
+    assert_eq!(t_hdr.message_type, 0x0001);
+    assert_eq!(&t_payload[..], payload);
 }
 
 #[test]

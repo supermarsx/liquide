@@ -15,7 +15,7 @@ use crate::ipc::{
 use crate::resource::ResourceMonitor;
 use crate::restart::{RestartDecision, RestartPolicy};
 use crate::session::{ResourceBudget, SessionRecord, SessionRegistry, SessionState};
-use crate::spawn::{SessionSpawner, SpawnRequest};
+use crate::spawn::{SessionSpawner, SpawnCommand, SpawnRequest};
 use crate::{Result, SupervisorError};
 
 /// Central coordinator for the supervisor daemon runtime.
@@ -71,6 +71,28 @@ impl SupervisorRuntime {
             audit_events: Vec::new(),
             started_at: Instant::now(),
             next_session_id: 1,
+        }
+    }
+
+    /// Override the command used to launch session child processes.
+    ///
+    /// Deployments call this to point at the real `liquid-session` binary path;
+    /// tests use it to launch a harmless stand-in process. Must be called
+    /// before any session is spawned.
+    pub fn set_spawn_command(&mut self, command: SpawnCommand) {
+        self.spawner = SessionSpawner::with_command(command);
+    }
+
+    /// Returns `true` if the underlying OS process for the session is alive.
+    ///
+    /// Polls the spawner's tracked child without blocking.
+    pub fn is_session_process_alive(&mut self, session_id: &str) -> bool {
+        match self.session_registry.get_session(session_id) {
+            Some(record) => {
+                let pid = record.pid;
+                self.spawner.is_alive(pid)
+            }
+            None => false,
         }
     }
 

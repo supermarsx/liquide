@@ -13,8 +13,8 @@ use tokio_rustls::client::TlsStream;
 
 use liquide_protocol::messages::common::DisplayInfo;
 use liquide_protocol::messages::control::{
-    CapabilitiesMsg, ClientHello, LoginFailure, LoginPrompt, LoginResponse, LoginSuccess,
-    ServerHello,
+    build_resume_token, CapabilitiesMsg, ClientHello, LoginFailure, LoginPrompt, LoginResponse,
+    LoginSuccess, ServerHello,
 };
 use liquide_protocol::version;
 
@@ -173,6 +173,16 @@ pub struct ConnectionManager {
     trusted_server_certificates: Vec<CertificateDer<'static>>,
     /// Session ID from the server after successful handshake.
     session_id: Option<String>,
+    /// Opaque CSPRNG session token from `LoginSuccess`, retained for fast
+    /// reconnect/resume. Never logged.
+    session_token: Option<Vec<u8>>,
+    /// Last credentials used, retained so an automatic reconnect can
+    /// re-authenticate. Never logged.
+    last_username: String,
+    last_password: String,
+    /// Whether the most recent handshake's resume token was accepted by the
+    /// server (`Some(true)`/`Some(false)`), or no resume was attempted (`None`).
+    resume_accepted: Option<bool>,
 }
 
 impl ConnectionManager {
@@ -192,6 +202,10 @@ impl ConnectionManager {
             stream: None,
             trusted_server_certificates: Vec::new(),
             session_id: None,
+            session_token: None,
+            last_username: String::new(),
+            last_password: String::new(),
+            resume_accepted: None,
         }
     }
 
@@ -217,8 +231,12 @@ impl ConnectionManager {
         password: &str,
     ) -> Result<()> {
         if self.state == ConnectionState::Connected {
-            self.disconnect().await;
+            self.disconnect_keep_resume().await;
         }
+
+        // Retain credentials for automatic reconnect. These are never logged.
+        self.last_username = username.to_string();
+        self.last_password = password.to_string();
 
         self.server_addr = server.to_string();
         self.reconnect_attempts = 0;
@@ -289,11 +307,18 @@ impl ConnectionManager {
                 scale_factor: 1.0,
                 refresh_rate: 60,
             },
-            resume_token: None,
+            // If we hold a session id + token from a prior successful login,
+            // present a resume token so the gateway can re-attach us to that
+            // session instead of minting a fresh one.
+            resume_token: match (&self.session_id, &self.session_token) {
+                (Some(sid), Some(tok)) => Some(build_resume_token(sid, tok)),
+                _ => None,
+            },
         };
 
         self.send_cbor(&client_hello).await?;
         let server_hello: ServerHello = self.recv_cbor().await?;
+        self.resume_accepted = server_hello.resume_accepted;
 
         if !version::is_compatible(&server_hello.protocol_version) {
             return Err(ClientError::ProtocolError {
@@ -325,7 +350,14 @@ impl ConnectionManager {
         let result_bytes = self.recv_message().await?;
         if let Ok(success) = cbor_decode::<LoginSuccess>(&result_bytes) {
             self.session_id = Some(success.session_id.clone());
-            tracing::info!(session_id = %success.session_id, "authentication succeeded");
+            // Retain the opaque session token for fast reconnect/resume. The
+            // token itself is never logged.
+            self.session_token = Some(success.session_token.clone());
+            tracing::info!(
+                session_id = %success.session_id,
+                resume_accepted = ?self.resume_accepted,
+                "authentication succeeded"
+            );
         } else if let Ok(failure) = cbor_decode::<LoginFailure>(&result_bytes) {
             return Err(ClientError::AuthenticationFailed {
                 reason: failure.reason,
@@ -357,7 +389,20 @@ impl ConnectionManager {
     }
 
     /// Disconnect from the current server.
+    ///
+    /// Clears the resume state (session id/token); a subsequent connect starts
+    /// a fresh session. Use [`disconnect_keep_resume`](Self::disconnect_keep_resume)
+    /// when an automatic reconnect should attempt to resume the same session.
     pub async fn disconnect(&mut self) {
+        self.disconnect_keep_resume().await;
+        self.session_id = None;
+        self.session_token = None;
+        self.resume_accepted = None;
+    }
+
+    /// Tear down the transport but retain the resume state (session id/token)
+    /// so the next connect can present a resume token.
+    pub async fn disconnect_keep_resume(&mut self) {
         if let Some(mut stream) = self.stream.take() {
             let _ = stream.shutdown().await;
         }
@@ -366,7 +411,6 @@ impl ConnectionManager {
         self.packet_loss_percent = 0.0;
         self.bandwidth_mbps = 0.0;
         self.reconnect_attempts = 0;
-        self.session_id = None;
     }
 
     /// Attempt to reconnect to the last server.
@@ -383,18 +427,27 @@ impl ConnectionManager {
             });
         }
 
-        self.reconnect_attempts += 1;
+        let attempt = self.reconnect_attempts + 1;
         self.state = ConnectionState::Reconnecting;
 
         // Exponential back-off delay.
         let delay = self.next_reconnect_delay_ms();
         tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
 
-        // Attempt reconnection.
+        // Attempt reconnection using the retained credentials. The stored
+        // session id/token are preserved so the handshake presents a resume
+        // token. `connect_with_credential` resets `reconnect_attempts` to 0 on
+        // entry, so re-apply the incremented count on failure.
         let addr = self.server_addr.clone();
-        match self.connect(&addr).await {
+        let username = self.last_username.clone();
+        let password = self.last_password.clone();
+        match self
+            .connect_with_credential(&addr, &username, &password)
+            .await
+        {
             Ok(()) => Ok(()),
             Err(e) => {
+                self.reconnect_attempts = attempt;
                 self.state = ConnectionState::Failed;
                 Err(e)
             }
@@ -482,6 +535,20 @@ impl ConnectionManager {
     #[must_use]
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
+    }
+
+    /// Whether a stored session token is held for resume. The token bytes are
+    /// intentionally not exposed to avoid accidental logging.
+    #[must_use]
+    pub fn has_session_token(&self) -> bool {
+        self.session_token.is_some()
+    }
+
+    /// Whether the most recent handshake's resume token was accepted by the
+    /// server. `None` means no resume was attempted.
+    #[must_use]
+    pub fn resume_accepted(&self) -> Option<bool> {
+        self.resume_accepted
     }
 
     /// Send a CBOR-encoded message using the length-prefixed wire format.

@@ -1,16 +1,25 @@
 //! Frame codec for encoding and decoding length-prefixed messages on byte
 //! streams, and LiquiDE protocol frame headers on the wire.
+//!
+//! The on-wire frame header is the single canonical format defined by
+//! [`liquide_protocol::FrameHeader`] (22 bytes, big-endian, with magic /
+//! version / timestamp / message-type). The transport layer reuses the
+//! protocol encode/decode directly so that a peer speaking the protocol codec
+//! and a peer speaking the transport codec interoperate byte-for-byte. The
+//! previous 10-byte little-endian transport header (which reconstructed
+//! timestamp and message type as zero) has been removed.
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use liquide_protocol::{ChannelId, FrameHeader};
+use liquide_protocol::FrameHeader;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Size of the length prefix used by stream transports (TCP, QUIC).
 pub const LENGTH_PREFIX_SIZE: usize = 4;
 
-/// Wire size of a frame header in the transport codec's simplified format.
-/// Layout: channel(1) + sequence(4) + flags(1) + payload_len(4) = 10 bytes.
-pub const FRAME_HEADER_SIZE: usize = 10;
+/// Wire size of a frame header. This is the canonical protocol frame header
+/// size ([`FrameHeader::WIRE_SIZE`] = 22 bytes), shared with `liquide-protocol`
+/// so transport and protocol peers interoperate.
+pub const FRAME_HEADER_SIZE: usize = FrameHeader::WIRE_SIZE;
 
 // ---------------------------------------------------------------------------
 // Length-prefixed message framing (used by TCP / QUIC stream transports)
@@ -54,54 +63,32 @@ pub async fn read_msg<R: AsyncReadExt + Unpin>(
 // Protocol frame header encoding / decoding
 // ---------------------------------------------------------------------------
 
-/// Encode a [`FrameHeader`] into bytes (little-endian).
+/// Encode a [`FrameHeader`] into bytes using the canonical protocol wire
+/// format (22 bytes, big-endian; see [`liquide_protocol::FrameHeader::encode`]).
 ///
-/// Wire layout:
-/// ```text
-/// [0]      channel   (u8, low byte of channel ID)
-/// [1..5]   sequence  (u32 LE)
-/// [5]      flags     (u8)
-/// [6..10]  payload_len (u32 LE)
-/// ```
+/// All header fields — including `timestamp_us` and `message_type` — are
+/// preserved on the wire, unlike the removed simplified transport header.
 pub fn encode_header(header: &FrameHeader, buf: &mut BytesMut) {
-    buf.put_u8(header.channel.as_u16() as u8);
-    buf.put_u32_le(header.sequence);
-    buf.put_u8(header.flags);
-    buf.put_u32_le(header.payload_len as u32);
+    header.encode(buf);
 }
 
-/// Decode a [`FrameHeader`] from the front of `buf`.
+/// Decode a [`FrameHeader`] from the front of `buf` using the canonical
+/// protocol wire format.
 ///
-/// Returns `None` if there are fewer than [`FRAME_HEADER_SIZE`] bytes or
-/// the channel byte is reserved (0xFF).
+/// Returns `None` if there are fewer than [`FRAME_HEADER_SIZE`] bytes, the
+/// magic is wrong, or the frame version is unsupported. On success the header
+/// bytes are consumed from `buf`.
 pub fn decode_header(buf: &mut BytesMut) -> Option<FrameHeader> {
-    if buf.remaining() < FRAME_HEADER_SIZE {
+    if buf.len() < FRAME_HEADER_SIZE {
         return None;
     }
-    let channel_raw = buf.get_u8();
-    let channel = ChannelId::from_u16(channel_raw as u16);
-    if channel == ChannelId::RESERVED {
-        return None;
+    match FrameHeader::decode(buf) {
+        Ok(header) => Some(header),
+        Err(e) => {
+            tracing::warn!(err = %e, "invalid protocol frame header, rejecting frame");
+            None
+        }
     }
-    let sequence = buf.get_u32_le();
-    let flags = buf.get_u8();
-    let raw_payload_len = buf.get_u32_le();
-    if raw_payload_len > u16::MAX as u32 {
-        tracing::warn!(
-            raw_len = raw_payload_len,
-            "payload length exceeds u16 max, rejecting frame"
-        );
-        return None;
-    }
-    let payload_len = raw_payload_len as u16;
-    Some(FrameHeader::new(
-        channel,
-        sequence,
-        0,
-        0,
-        flags,
-        payload_len,
-    ))
 }
 
 /// Encode a full frame (header + payload) into `buf`.

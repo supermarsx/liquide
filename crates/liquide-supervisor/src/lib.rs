@@ -109,4 +109,4 @@ pub use resource::{
 pub use restart::{RestartDecision, RestartPolicy};
 pub use runtime::SupervisorRuntime;
 pub use session::{CrashRecord, ResourceBudget, SessionRecord, SessionRegistry, SessionState};
-pub use spawn::{SessionSpawner, SpawnRequest, SpawnResult};
+pub use spawn::{SessionSpawner, SpawnCommand, SpawnRequest, SpawnResult};
