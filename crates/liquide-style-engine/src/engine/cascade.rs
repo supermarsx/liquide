@@ -62,6 +62,24 @@ impl Drop for StyleDepthGuard {
 }
 
 impl StyleEngine {
+    /// Compute the style of a single node in isolation.
+    ///
+    /// This is a **limited helper**, not the full pipeline contract. It runs the
+    /// same cascade, property application, post-cascade assembly
+    /// (`assemble_text_decoration`/`assemble_background`/`assemble_mask`),
+    /// logical→physical resolution, and transition/animation parsing as the tree
+    /// path (`restyle_all`/`restyle_node`). It deliberately differs in two ways
+    /// that require whole-tree/layout context the caller does not provide here:
+    ///
+    /// * **`@container` rules are skipped** — container condition evaluation
+    ///   needs post-layout container sizes recorded on the `StyleMap`, which only
+    ///   exists on the tree path.
+    /// * **`var()` resolves against an empty scope** — scoped custom properties
+    ///   are collected per-subtree during `restyle_node`; this helper has no
+    ///   ancestor scope to draw from.
+    ///
+    /// Tests that depend on `@container` matching or scoped variables MUST use
+    /// `restyle_all` and read the node's entry from the returned `StyleMap`.
     pub fn compute_style(&self, doc: &Document, node_id: NodeId) -> ComputedStyle {
         let _guard = match StyleDepthGuard::try_enter() {
             Some(g) => g,
@@ -147,6 +165,15 @@ impl StyleEngine {
         for (prop, val) in &resolved {
             self.apply_cascaded_property(prop, val, &mut style, &inherited_style, &empty_scope);
         }
+
+        // ── Post-cascade assembly — identical to the tree path so this helper
+        //    matches `restyle_node` semantics for everything except @container /
+        //    scoped var() (documented above). ──
+        Self::assemble_text_decoration(&mut style);
+        Self::assemble_background(&mut style);
+        Self::assemble_mask(&mut style);
+        Self::resolve_logical_properties(&mut style);
+        consume_remaining_properties(&style);
 
         // ── Populate structured transition/animation defs from longhands ──
         style.transition = parse_transition_defs(&style);
@@ -766,7 +793,15 @@ impl StyleEngine {
 
             let mut resolved = cascade.resolve();
 
-            // Filter to spec-allowed properties for each pseudo-element.
+            // Build the local variable scope from the FULL resolved set BEFORE
+            // filtering, so custom properties declared on the pseudo-element
+            // (e.g. `--accent`) are available to `var()` in allowed properties.
+            // (TODO 19)
+            let owned_vars = self.build_local_variable_scope(&resolved, scope_vars);
+            let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
+
+            // Filter to spec-allowed properties for each pseudo-element. Custom
+            // properties are kept in the scope above but not applied directly.
             resolved.retain(|(prop, _)| is_allowed_pseudo_property(pseudo_name, prop));
 
             if resolved.is_empty() {
@@ -775,8 +810,6 @@ impl StyleEngine {
 
             let mut pseudo_style = ComputedStyle::default();
             pseudo_style.inherit_from(host_style);
-            let owned_vars = self.build_local_variable_scope(&resolved, scope_vars);
-            let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
             let inherited_style = pseudo_style.clone();
 
             for (prop, val) in &resolved {

@@ -831,6 +831,11 @@ fn parse_single_track(token: &str) -> Option<TrackSize> {
         Some(TrackSize::MinContent)
     } else if token == "max-content" {
         Some(TrackSize::MaxContent)
+    } else if token == "subgrid" {
+        // CSS Subgrid — the track list inherits from the parent grid. Represent
+        // it explicitly so `@supports (grid-template-columns: subgrid)` reflects
+        // real parse capability. (TODO 12)
+        Some(TrackSize::Subgrid)
     } else {
         token.parse::<f32>().ok().map(TrackSize::Px)
     }

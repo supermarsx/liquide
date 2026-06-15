@@ -42,7 +42,7 @@ pub mod style;
 pub mod transform;
 
 pub use glass::GlassStyle;
-pub use resolver::StyleResolver;
+pub use resolver::{ResolveContext, StyleResolver};
 pub use shadow::ShadowStyle;
 pub use style::{
     AlignItems, AlignSelf, AnimationDirection, AnimationFillMode, AnimationIterationCount,

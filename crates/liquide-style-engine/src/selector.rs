@@ -1009,6 +1009,14 @@ fn parse_compound(input: &str) -> Option<CompoundSelector> {
 
                 if is_pseudo_element {
                     sel.pseudo_element = Some(parse_pseudo_element(&name)?);
+                } else if is_legacy_pseudo_element(&name) {
+                    // CSS2 legacy single-colon syntax: `:before`, `:after`,
+                    // `:first-line`, `:first-letter` are pseudo-ELEMENTS, not
+                    // pseudo-classes. lightningcss serializes `::before` back to
+                    // `:before`, so we must accept the single-colon form here or
+                    // pseudo-element rules get silently mis-routed/dropped.
+                    // (TODO 19)
+                    sel.pseudo_element = Some(parse_pseudo_element(&name)?);
                 } else {
                     sel.pseudo_classes.push(parse_pseudo_class(&name)?);
                 }
@@ -1026,6 +1034,12 @@ fn parse_compound(input: &str) -> Option<CompoundSelector> {
     }
 
     Some(sel)
+}
+
+/// The four CSS2 pseudo-elements that also accept the legacy single-colon
+/// syntax (`:before` == `::before`).
+fn is_legacy_pseudo_element(name: &str) -> bool {
+    matches!(name, "before" | "after" | "first-line" | "first-letter")
 }
 
 fn parse_pseudo_element(name: &str) -> Option<PseudoElement> {

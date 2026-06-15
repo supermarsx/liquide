@@ -17,19 +17,18 @@ impl StyleEngine {
         scope_vars: &std::collections::HashMap<String, liquide_theme_css::value::PropertyValue>,
     ) {
         fn css_wide_keyword(val: &liquide_theme_css::value::PropertyValue) -> Option<&'static str> {
+            // CSS-wide keywords are only valid as the ENTIRE value of `all`.
+            // Use whole-value (case-insensitive) matching — substring matching
+            // wrongly fired on values like "inherit-from-parent" or any value
+            // merely containing "initial"/"unset". (TODO 21)
             let text = val.as_string()?.trim().to_ascii_lowercase();
-            if text.contains("revert-layer") {
-                Some("revert-layer")
-            } else if text.contains("revert") {
-                Some("revert")
-            } else if text.contains("unset") {
-                Some("unset")
-            } else if text.contains("inherit") {
-                Some("inherit")
-            } else if text.contains("initial") {
-                Some("initial")
-            } else {
-                None
+            match text.as_str() {
+                "revert-layer" => Some("revert-layer"),
+                "revert" => Some("revert"),
+                "unset" => Some("unset"),
+                "inherit" => Some("inherit"),
+                "initial" => Some("initial"),
+                _ => None,
             }
         }
 
@@ -1815,7 +1814,23 @@ impl StyleEngine {
             }
 
             // ── list-style-image ──
-            "list-style-image" => { /* no-op */ }
+            // Store the marker image source so it is computed (and inherited)
+            // rather than discarded. `none` clears it. (TODO 21)
+            "list-style-image" => match val {
+                liquide_theme_css::value::PropertyValue::Url(url) => {
+                    style.list_style_image = Some(format!("url({url})"));
+                }
+                other => {
+                    if let Some(text) = other.as_string() {
+                        let trimmed = text.trim();
+                        if trimmed.eq_ignore_ascii_case("none") || trimmed.is_empty() {
+                            style.list_style_image = None;
+                        } else {
+                            style.list_style_image = Some(trimmed.to_string());
+                        }
+                    }
+                }
+            },
 
             // ── mask shorthand ──
             "mask" => {

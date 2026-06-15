@@ -156,6 +156,9 @@ pub struct ComputedStyle {
     // ── List styling ──
     pub list_style_type: ListStyleType,
     pub list_style_position: ListStylePosition,
+    /// `list-style-image` — the marker image source (e.g. `url(...)`), or
+    /// `None` for the default (no image, use `list-style-type`). Inherited.
+    pub list_style_image: Option<String>,
 
     // ── Table ──
     pub table_layout: TableLayout,
@@ -620,6 +623,7 @@ impl Default for ComputedStyle {
             // List styling
             list_style_type: ListStyleType::default(),
             list_style_position: ListStylePosition::default(),
+            list_style_image: None,
 
             // Table
             table_layout: TableLayout::default(),
@@ -1049,6 +1053,7 @@ impl ComputedStyle {
         // List styling (inherited)
         self.list_style_type = parent.list_style_type;
         self.list_style_position = parent.list_style_position;
+        self.list_style_image = parent.list_style_image.clone();
         // Table (inherited)
         self.border_collapse = parent.border_collapse;
         self.border_spacing = parent.border_spacing;

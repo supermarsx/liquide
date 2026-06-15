@@ -55,11 +55,25 @@ impl PropertySet {
         self.important_keys.contains(name)
     }
 
-    /// Merge another property set (other takes precedence)
+    /// Merge another property set (other takes precedence for equal importance).
+    ///
+    /// Importance is honored per the CSS cascade: an existing `!important`
+    /// declaration is NOT overwritten by a later non-important declaration from
+    /// `other`. A later `!important` declaration always wins. This makes
+    /// repeated merges in cascade order produce correct precedence. (TODO 13)
     pub fn merge(&mut self, other: &PropertySet) {
         for (key, value) in &other.properties {
+            let other_important = other.is_important(key);
+            let self_important = self.important_keys.contains(key);
+
+            // A non-important incoming value cannot override an existing
+            // important one.
+            if self_important && !other_important {
+                continue;
+            }
+
             self.properties.insert(key.clone(), value.clone());
-            if other.is_important(key) {
+            if other_important {
                 self.important_keys.insert(key.clone());
             } else {
                 self.important_keys.remove(key);
@@ -133,7 +147,9 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_clears_stale_important_flags() {
+    fn test_merge_important_not_overridden_by_non_important() {
+        // CSS cascade (TODO 13): a non-important later declaration cannot
+        // override an existing !important one — value AND flag are preserved.
         let mut set1 = PropertySet::new();
         set1.insert(
             "color".to_string(),
@@ -149,7 +165,34 @@ mod tests {
 
         set1.merge(&set2);
 
-        assert!(!set1.is_important("color"));
+        assert!(set1.is_important("color"));
+        let color = set1.get("color").unwrap().as_color().unwrap();
+        assert_eq!(color.r, 255);
+        assert_eq!(color.g, 0);
+    }
+
+    #[test]
+    fn test_merge_important_overrides_important() {
+        // A later !important declaration overrides an earlier !important one.
+        let mut set1 = PropertySet::new();
+        set1.insert(
+            "color".to_string(),
+            PropertyValue::Color(Color::rgb(255, 0, 0)),
+        );
+        set1.mark_important("color");
+
+        let mut set2 = PropertySet::new();
+        set2.insert(
+            "color".to_string(),
+            PropertyValue::Color(Color::rgb(0, 255, 0)),
+        );
+        set2.mark_important("color");
+
+        set1.merge(&set2);
+
+        assert!(set1.is_important("color"));
+        let color = set1.get("color").unwrap().as_color().unwrap();
+        assert_eq!(color.g, 255);
     }
 
     #[test]

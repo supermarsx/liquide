@@ -22,6 +22,9 @@ fn style_for(css: &str, tag: &str) -> ComputedStyle {
     engine.compute_style(&doc, el)
 }
 
+// TODO 10: tests that depend on TREE semantics (inheritance from a parent,
+// text-node inheritance) go through `restyle_all` so they validate the SAME
+// assembly the live shell runs, not the single-node `compute_style` helper.
 fn style_for_child(css: &str, parent_tag: &str, child_tag: &str) -> ComputedStyle {
     let mut engine = StyleEngine::default();
     engine.add_stylesheet(css);
@@ -31,7 +34,11 @@ fn style_for_child(css: &str, parent_tag: &str, child_tag: &str) -> ComputedStyl
     let child = doc.create_element(child_tag);
     doc.append_child(root, parent);
     doc.append_child(parent, child);
-    engine.compute_style(&doc, child)
+    let map = engine.restyle_all(&doc);
+    (**map
+        .get(child)
+        .expect("child must have a computed style in the StyleMap"))
+    .clone()
 }
 
 fn style_for_text(css: &str, parent_tag: &str, text: &str) -> ComputedStyle {
@@ -43,7 +50,11 @@ fn style_for_text(css: &str, parent_tag: &str, text: &str) -> ComputedStyle {
     let txt = doc.create_text(text);
     doc.append_child(root, parent);
     doc.append_child(parent, txt);
-    engine.compute_style(&doc, txt)
+    let map = engine.restyle_all(&doc);
+    (**map
+        .get(txt)
+        .expect("text node must have a computed style in the StyleMap"))
+    .clone()
 }
 
 macro_rules! assert_dim_px {
@@ -352,6 +363,26 @@ fn border_style_individual() {
 }
 
 #[test]
+fn border_width_color_without_style_renders_solid() {
+    // TODO 17: themes set border width + color without an explicit border-style.
+    // The default `none` would make the border vanish; the engine promotes a
+    // positive-width side with no explicit style to `solid` so it paints.
+    let s = style_for("x { border-width: 2px; border-color: #ff0000; }", "x");
+    assert_eq!(s.border_width.top, 2.0);
+    assert_eq!(s.border_style.top, BorderLineStyle::Solid);
+    assert_eq!(s.border_style.right, BorderLineStyle::Solid);
+    assert_eq!(s.border_style.bottom, BorderLineStyle::Solid);
+    assert_eq!(s.border_style.left, BorderLineStyle::Solid);
+}
+
+#[test]
+fn zero_width_border_stays_none() {
+    // No width means no border even with a color — must remain `none`.
+    let s = style_for("x { border-color: #ff0000; }", "x");
+    assert_eq!(s.border_style.top, BorderLineStyle::None);
+}
+
+#[test]
 #[ignore = "lightningcss merges individual border-color longhands into shorthand; HashMap ordering issue"]
 fn border_color_individual() {
     let s = style_for(
@@ -555,6 +586,19 @@ fn grid_template_columns_px() {
     assert_eq!(s.grid_template_columns.len(), 2);
     assert!(matches!(s.grid_template_columns[0], TrackSize::Px(v) if (v - 100.0).abs() < 0.1));
     assert!(matches!(s.grid_template_columns[1], TrackSize::Px(v) if (v - 200.0).abs() < 0.1));
+}
+
+#[test]
+fn grid_template_columns_subgrid() {
+    // TODO 12: `subgrid` is advertised in @supports, so it MUST parse into a
+    // real computed track rather than being silently coerced to Px.
+    let s = style_for("x { display: grid; grid-template-columns: subgrid; }", "x");
+    assert_eq!(s.grid_template_columns.len(), 1);
+    assert!(
+        matches!(s.grid_template_columns[0], TrackSize::Subgrid),
+        "expected TrackSize::Subgrid, got {:?}",
+        s.grid_template_columns[0]
+    );
 }
 
 #[test]
@@ -1282,17 +1326,25 @@ fn restyle_all_maps_all_nodes() {
 
 #[test]
 fn transition_definition_stored() {
+    // TODO 20: assert the parsed transition definition rather than just printing.
     let s = style_for("x { transition: opacity 0.3s ease-in-out; }", "x");
-    // Transitions are parsed via lightningcss but the apply_ path may or may
-    // not map them. We just verify no panic and the type is correct.
-    // If transitions are wired, they'll be in s.transition
-    println!("Transitions: {:?}", s.transition);
+    assert_eq!(s.transition.len(), 1, "one transition def expected");
+    let t = &s.transition[0];
+    assert_eq!(t.property, "opacity");
+    assert!((t.duration_ms - 300.0).abs() < 0.1, "300ms duration");
+    assert_eq!(t.timing_function, TimingFunction::EaseInOut);
+    assert!((t.delay_ms - 0.0).abs() < 0.1);
 }
 
 #[test]
 fn animation_definition_stored() {
+    // TODO 20: assert the parsed animation definition rather than just printing.
     let s = style_for("x { animation: fade-in 1s ease; }", "x");
-    println!("Animations: {:?}", s.animation);
+    assert_eq!(s.animation.len(), 1, "one animation def expected");
+    let a = &s.animation[0];
+    assert_eq!(a.name, "fade-in");
+    assert!((a.duration_ms - 1000.0).abs() < 0.1, "1s duration");
+    assert_eq!(a.timing_function, TimingFunction::Ease);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1351,4 +1403,69 @@ fn default_style_values() {
     assert!(s.transform.is_empty());
     assert!(s.transition.is_empty());
     assert!(s.animation.is_empty());
+    assert!(s.list_style_image.is_none());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MISC COMPLETENESS (TODO 21)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn all_keyword_initial_resets() {
+    // `all: initial` resets every longhand. Put `all` in a later, higher-priority
+    // rule so it deterministically wins over the earlier color declaration.
+    let s = style_for("x { color: red; } x { all: initial; }", "x");
+    assert_eq!(s.color.r, 0, "all: initial should reset color to default");
+    assert_eq!(s.color.g, 0);
+    assert_eq!(s.color.b, 0);
+}
+
+#[test]
+fn all_keyword_exact_match_only() {
+    // TODO 21: the `all` CSS-wide-keyword matcher uses WHOLE-VALUE matching, so
+    // the exact keyword `initial` resets the style. (The previous substring
+    // matcher would also fire on any value merely containing "initial"; the
+    // matcher is now exact — see `css_wide_keyword` in engine/apply_ext.rs.)
+    let reset = style_for("x { color: red; } x { all: initial; }", "x");
+    assert_eq!(reset.color.r, 0, "exact `initial` resets the cascade");
+    assert_eq!(reset.color.g, 0);
+    assert_eq!(reset.color.b, 0);
+}
+
+#[test]
+fn list_style_image_is_computed_and_stored() {
+    // TODO 21: list-style-image used to be a no-op; it must now be stored.
+    let s = style_for("x { list-style-image: url(bullet.png); }", "x");
+    let stored = s
+        .list_style_image
+        .as_deref()
+        .expect("list-style-image should be computed and stored");
+    assert!(
+        stored.contains("bullet.png"),
+        "expected stored url to reference bullet.png, got {stored:?}"
+    );
+}
+
+#[test]
+fn list_style_image_none_clears() {
+    let s = style_for("x { list-style-image: none; }", "x");
+    assert!(s.list_style_image.is_none());
+}
+
+#[test]
+fn list_style_image_inherits() {
+    // Inherited property: a child with no list-style-image gets the parent's.
+    let s = style_for_child(
+        "parent { list-style-image: url(dot.svg); }",
+        "parent",
+        "child",
+    );
+    let stored = s
+        .list_style_image
+        .as_deref()
+        .expect("child should inherit list-style-image");
+    assert!(
+        stored.contains("dot.svg"),
+        "expected inherited url to reference dot.svg, got {stored:?}"
+    );
 }

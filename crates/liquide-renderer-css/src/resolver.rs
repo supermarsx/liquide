@@ -13,12 +13,74 @@ use crate::{
     transform::TransformStyle,
 };
 
+/// Context used to resolve relative/responsive CSS length units. (TODO 14)
+///
+/// Without this context the resolver cannot turn `%`, `vw`/`vh`, dynamic
+/// viewport units (`dvh`, …) or container units (`cq*`) into pixels, so it
+/// would previously return their raw numeric magnitudes (e.g. `70vh` → `70.0`).
+#[derive(Debug, Clone, Copy)]
+pub struct ResolveContext {
+    /// Viewport width in CSS pixels.
+    pub viewport_width: f32,
+    /// Viewport height in CSS pixels.
+    pub viewport_height: f32,
+    /// Query container width in CSS pixels (defaults to the viewport width).
+    pub container_width: f32,
+    /// Query container height in CSS pixels (defaults to the viewport height).
+    pub container_height: f32,
+    /// Base font size in CSS pixels (the `em`/`rem` reference).
+    pub font_size: f32,
+    /// Root font size in CSS pixels (the `rem`/`rlh` reference).
+    pub root_font_size: f32,
+}
+
+impl Default for ResolveContext {
+    fn default() -> Self {
+        Self {
+            viewport_width: 1920.0,
+            viewport_height: 1080.0,
+            container_width: 1920.0,
+            container_height: 1080.0,
+            font_size: 16.0,
+            root_font_size: 16.0,
+        }
+    }
+}
+
+impl ResolveContext {
+    /// Build a context from a viewport size, defaulting container to viewport
+    /// and font sizes to 16px.
+    pub fn from_viewport(width: f32, height: f32) -> Self {
+        Self {
+            viewport_width: width,
+            viewport_height: height,
+            container_width: width,
+            container_height: height,
+            ..Self::default()
+        }
+    }
+
+    fn vmin(&self) -> f32 {
+        self.viewport_width.min(self.viewport_height)
+    }
+    fn vmax(&self) -> f32 {
+        self.viewport_width.max(self.viewport_height)
+    }
+    fn cqmin(&self) -> f32 {
+        self.container_width.min(self.container_height)
+    }
+    fn cqmax(&self) -> f32 {
+        self.container_width.max(self.container_height)
+    }
+}
+
 /// CSS-to-RenderStyle resolver.
 ///
 /// Queries a CSS theme engine and builds complete `RenderStyle` objects
 /// for UI elements. Caches resolved styles for performance.
 pub struct StyleResolver {
     engine: Arc<ThemeEngine>,
+    context: ResolveContext,
 }
 
 impl StyleResolver {
@@ -26,12 +88,33 @@ impl StyleResolver {
     pub fn new(engine: ThemeEngine) -> Self {
         Self {
             engine: Arc::new(engine),
+            context: ResolveContext::default(),
         }
     }
 
     /// Create from shared engine.
     pub fn from_arc(engine: Arc<ThemeEngine>) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            context: ResolveContext::default(),
+        }
+    }
+
+    /// Set the viewport/container/font context used to resolve responsive units.
+    pub fn set_context(&mut self, context: ResolveContext) {
+        self.context = context;
+    }
+
+    /// Builder-style variant of [`set_context`](Self::set_context).
+    #[must_use]
+    pub fn with_context(mut self, context: ResolveContext) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// The active responsive-unit resolution context.
+    pub fn context(&self) -> ResolveContext {
+        self.context
     }
 
     /// Resolve styles for an element.
@@ -77,12 +160,12 @@ impl StyleResolver {
             style.border_color = Some(color);
         }
 
-        // Dimensions
-        if let Some(width) = self.get_length(&props, "width") {
+        // Dimensions — percentages resolve against the matching viewport axis.
+        if let Some(width) = self.get_length_pct(&props, "width", self.context.viewport_width) {
             style.width = Some(width);
         }
 
-        if let Some(height) = self.get_length(&props, "height") {
+        if let Some(height) = self.get_length_pct(&props, "height", self.context.viewport_height) {
             style.height = Some(height);
         }
 
@@ -313,41 +396,64 @@ impl StyleResolver {
         })
     }
 
-    /// Extract length in pixels from property value.
+    /// Extract length in pixels from property value, resolving responsive units
+    /// against the resolver's [`ResolveContext`]. Percentages resolve against
+    /// the viewport width by default. (TODO 14)
     fn get_length(
         &self,
         props: &liquide_theme_css::property::PropertySet,
         name: &str,
     ) -> Option<f32> {
-        props.get(name).and_then(|v| match v.as_length() {
-            Some(LengthUnit::Px(px)) => Some(px),
-            Some(LengthUnit::Pt(pt)) => Some(pt * 1.333), // 1pt = 1.333px
-            Some(LengthUnit::Em(em)) => Some(em * 16.0),  // Assume 16px base
-            Some(LengthUnit::Rem(rem)) => Some(rem * 16.0), // Assume 16px base
-            Some(LengthUnit::Percent(pct)) => Some(pct),  // Return as-is, caller handles
-            Some(LengthUnit::Vw(vw)) => Some(vw),
-            Some(LengthUnit::Vh(vh)) => Some(vh),
-            Some(LengthUnit::Vmin(vmin)) => Some(vmin),
-            Some(LengthUnit::Vmax(vmax)) => Some(vmax),
-            Some(LengthUnit::Ch(ch)) => Some(ch * 8.0), // Approximate: 1ch ≈ 8px
-            Some(LengthUnit::Ex(ex)) => Some(ex * 8.0), // Approximate: 1ex ≈ 8px
-            // Dynamic viewport units → same as regular viewport
-            Some(LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v)) => Some(v),
-            Some(LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v)) => Some(v),
-            // Container query units → approximate as percentage
-            Some(
-                LengthUnit::Cqw(v)
-                | LengthUnit::Cqh(v)
-                | LengthUnit::Cqi(v)
-                | LengthUnit::Cqb(v)
-                | LengthUnit::Cqmin(v)
-                | LengthUnit::Cqmax(v),
-            ) => Some(v),
-            // Line-height units → approximate as em/rem × 1.2
-            Some(LengthUnit::Lh(v)) => Some(v * 16.0 * 1.2),
-            Some(LengthUnit::Rlh(v)) => Some(v * 16.0 * 1.2),
-            None => None,
-        })
+        self.get_length_pct(props, name, self.context.viewport_width)
+    }
+
+    /// Extract length in pixels, resolving `%` against `pct_base` and all other
+    /// responsive units against the resolver context.
+    fn get_length_pct(
+        &self,
+        props: &liquide_theme_css::property::PropertySet,
+        name: &str,
+        pct_base: f32,
+    ) -> Option<f32> {
+        let ctx = &self.context;
+        props
+            .get(name)
+            .and_then(|v| v.as_length())
+            .map(|unit| Self::resolve_length_unit(unit, ctx, pct_base))
+    }
+
+    /// Resolve a single [`LengthUnit`] to CSS pixels using the given context.
+    fn resolve_length_unit(unit: LengthUnit, ctx: &ResolveContext, pct_base: f32) -> f32 {
+        match unit {
+            LengthUnit::Px(px) => px,
+            LengthUnit::Pt(pt) => pt * 1.333, // 1pt = 1.333px
+            LengthUnit::Em(em) => em * ctx.font_size,
+            LengthUnit::Rem(rem) => rem * ctx.root_font_size,
+            LengthUnit::Percent(pct) => pct / 100.0 * pct_base,
+            LengthUnit::Vw(vw) => vw / 100.0 * ctx.viewport_width,
+            LengthUnit::Vh(vh) => vh / 100.0 * ctx.viewport_height,
+            LengthUnit::Vmin(vmin) => vmin / 100.0 * ctx.vmin(),
+            LengthUnit::Vmax(vmax) => vmax / 100.0 * ctx.vmax(),
+            // 1ch ≈ 0.5em, 1ex ≈ 0.5em as font-metric approximations.
+            LengthUnit::Ch(ch) => ch * ctx.font_size * 0.5,
+            LengthUnit::Ex(ex) => ex * ctx.font_size * 0.5,
+            // Dynamic / small / large viewport units → resolve against the
+            // current viewport (we do not model UA chrome separately).
+            LengthUnit::Dvw(v) | LengthUnit::Svw(v) | LengthUnit::Lvw(v) => {
+                v / 100.0 * ctx.viewport_width
+            }
+            LengthUnit::Dvh(v) | LengthUnit::Svh(v) | LengthUnit::Lvh(v) => {
+                v / 100.0 * ctx.viewport_height
+            }
+            // Container query units → resolve against the container size.
+            LengthUnit::Cqw(v) | LengthUnit::Cqi(v) => v / 100.0 * ctx.container_width,
+            LengthUnit::Cqh(v) | LengthUnit::Cqb(v) => v / 100.0 * ctx.container_height,
+            LengthUnit::Cqmin(v) => v / 100.0 * ctx.cqmin(),
+            LengthUnit::Cqmax(v) => v / 100.0 * ctx.cqmax(),
+            // Line-height units → approximate line box as 1.2 × font size.
+            LengthUnit::Lh(v) => v * ctx.font_size * 1.2,
+            LengthUnit::Rlh(v) => v * ctx.root_font_size * 1.2,
+        }
     }
 
     /// Extract number from property value.
@@ -425,5 +531,65 @@ mod tests {
         assert!(style.glass.is_some());
         let glass = style.glass.unwrap();
         assert_eq!(glass.blur_radius, 25);
+    }
+
+    #[test]
+    fn test_resolve_viewport_units() {
+        // TODO 14: vw/vh must resolve to pixels against the context viewport.
+        let css = "launcher { width: 50vw; height: 70vh; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let resolver =
+            StyleResolver::new(engine).with_context(ResolveContext::from_viewport(1000.0, 800.0));
+        let style = resolver.resolve("launcher", &[], &[], None).unwrap();
+        assert_eq!(style.width, Some(500.0), "50vw of 1000px");
+        assert_eq!(style.height, Some(560.0), "70vh of 800px");
+    }
+
+    #[test]
+    fn test_resolve_percent_against_axis() {
+        // TODO 14: width% resolves against viewport width, height% against height.
+        let css = "panel { width: 25%; height: 50%; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let resolver =
+            StyleResolver::new(engine).with_context(ResolveContext::from_viewport(1200.0, 600.0));
+        let style = resolver.resolve("panel", &[], &[], None).unwrap();
+        assert_eq!(style.width, Some(300.0), "25% of 1200px width");
+        assert_eq!(style.height, Some(300.0), "50% of 600px height");
+    }
+
+    #[test]
+    fn test_resolve_dynamic_viewport_units() {
+        // TODO 14: dvh resolves like vh against the viewport height.
+        let css = "notif { height: 100dvh; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let resolver =
+            StyleResolver::new(engine).with_context(ResolveContext::from_viewport(900.0, 720.0));
+        let style = resolver.resolve("notif", &[], &[], None).unwrap();
+        assert_eq!(style.height, Some(720.0), "100dvh of 720px");
+    }
+
+    #[test]
+    fn test_resolve_em_against_font_context() {
+        // TODO 14: em resolves against the context font size, not a hardcoded 16.
+        let css = "label { font-size: 12px; letter-spacing: 2em; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let mut ctx = ResolveContext::default();
+        ctx.font_size = 20.0;
+        let resolver = StyleResolver::new(engine).with_context(ctx);
+        let style = resolver.resolve("label", &[], &[], None).unwrap();
+        assert_eq!(style.letter_spacing, Some(40.0), "2em of 20px font");
+    }
+
+    #[test]
+    fn test_resolve_container_units() {
+        // TODO 14: cqw resolves against the container width.
+        let css = "card { width: 50cqw; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let mut ctx = ResolveContext::from_viewport(1920.0, 1080.0);
+        ctx.container_width = 400.0;
+        ctx.container_height = 300.0;
+        let resolver = StyleResolver::new(engine).with_context(ctx);
+        let style = resolver.resolve("card", &[], &[], None).unwrap();
+        assert_eq!(style.width, Some(200.0), "50cqw of 400px container");
     }
 }

@@ -41,14 +41,17 @@ impl StyleEngine {
                 style.min_width = style.min_block_size.clone();
             }
         }
-        if !matches!(style.max_inline_size, Dimension::Auto) {
+        // max-* default to `None` (no limit), not `Auto`; only override the
+        // physical longhand when a logical max value was actually authored,
+        // otherwise the unset `None` clobbers a directly-set max-width/height.
+        if !matches!(style.max_inline_size, Dimension::Auto | Dimension::None) {
             if is_horizontal {
                 style.max_width = style.max_inline_size.clone();
             } else {
                 style.max_height = style.max_inline_size.clone();
             }
         }
-        if !matches!(style.max_block_size, Dimension::Auto) {
+        if !matches!(style.max_block_size, Dimension::Auto | Dimension::None) {
             if is_horizontal {
                 style.max_height = style.max_block_size.clone();
             } else {
@@ -335,5 +338,26 @@ impl StyleEngine {
                 style.transform.push(Transform::Scale(sx, sy));
             }
         }
+
+        // ── Border-style heuristic (TODO 17) ──
+        // Themes commonly set border width/color without an explicit
+        // `border-style`; CSS default `none` would make them invisible. Promote
+        // any side with a positive width but still-default `none` to `solid` so
+        // authored borders paint.
+        Self::default_border_style_for_width(style);
+    }
+
+    /// Promote `border-style: none` to `solid` on any side with a positive
+    /// border width, so width-only theme borders remain visible. (TODO 17)
+    fn default_border_style_for_width(style: &mut ComputedStyle) {
+        let promote = |w: f32, s: &mut BorderLineStyle| {
+            if w > 0.0 && *s == BorderLineStyle::None {
+                *s = BorderLineStyle::Solid;
+            }
+        };
+        promote(style.border_width.top, &mut style.border_style.top);
+        promote(style.border_width.right, &mut style.border_style.right);
+        promote(style.border_width.bottom, &mut style.border_style.bottom);
+        promote(style.border_width.left, &mut style.border_style.left);
     }
 }

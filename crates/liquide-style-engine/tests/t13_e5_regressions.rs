@@ -131,7 +131,6 @@ fn shadow_root_custom_property_scope_stays_isolated() {
     );
 }
 
-#[ignore = "public pseudo-rule ingestion still depends on selector/stylesheet routing outside this validation target"]
 #[test]
 fn pseudo_elements_use_local_custom_properties() {
     let mut engine = StyleEngine::default();

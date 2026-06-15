@@ -192,3 +192,68 @@ fn test_load_path_with_imports_applies_import_qualifiers() {
     );
     assert!(false_styles.get("background-color").is_none());
 }
+
+#[test]
+fn test_important_beats_higher_specificity_normal() {
+    // TODO 13: a low-specificity element rule with !important beats a
+    // higher-specificity (class) normal rule.
+    let css = r#"
+            button { color: #ff0000 !important; }
+            button.primary { color: #00ff00; }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "button",
+        &["primary".to_string()],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles.get("color").unwrap().as_color().unwrap();
+    assert_eq!(color.r, 255, "!important element rule should win");
+    assert_eq!(color.g, 0);
+    assert!(styles.is_important("color"));
+}
+
+#[test]
+fn test_important_same_specificity_later_wins() {
+    // TODO 13: two same-specificity !important rules — later source order wins.
+    let css = r#"
+            button { color: #ff0000 !important; }
+            button { color: #00ff00 !important; }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "button",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles.get("color").unwrap().as_color().unwrap();
+    assert_eq!(color.g, 255, "later !important should win on equal specificity");
+}
+
+#[test]
+fn test_important_not_clobbered_by_later_normal() {
+    // TODO 13: a later higher-specificity NORMAL declaration must not clear or
+    // override an earlier !important one.
+    let css = r#"
+            #id-rule { color: #00ff00; }
+            button { color: #ff0000 !important; }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "button",
+        &[],
+        Some("id-rule"),
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles.get("color").unwrap().as_color().unwrap();
+    assert_eq!(color.r, 255, "!important must survive a higher-specificity normal rule");
+    assert!(styles.is_important("color"));
+}

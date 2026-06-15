@@ -437,6 +437,13 @@ impl StyleSheet {
                 .then(a_idx.cmp(b_idx))
         });
 
+        // Merge in cascade order. `PropertySet::merge` is importance-aware
+        // (TODO 13): a later non-important declaration cannot override an earlier
+        // `!important` one, and a later `!important` declaration overrides
+        // anything before it. Combined with the specificity/source ordering
+        // above, this yields correct `!important` precedence even when the
+        // important rule has the same or lower specificity than a competing
+        // normal rule.
         for (_, rule) in matching {
             final_properties.merge(&rule.properties);
         }
