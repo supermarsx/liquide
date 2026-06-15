@@ -504,12 +504,32 @@ impl Painter {
             use liquide_compositor::scene::{BackgroundImage, BackgroundRepeat, BackgroundSize};
             for bg_spec in style.background.iter().rev() {
                 if let Some(ref bg_image) = bg_spec.image {
-                    // Resolve tile size from the layer's BackgroundSize
+                    // Resolve tile size AND the aspect-fit MODE from the layer's
+                    // BackgroundSize. The painter emits the image into a rect (the
+                    // node bounds the renderer scales against); the `fit` carried on
+                    // the emitted item tells the renderer HOW to map the source into
+                    // that rect (t65 ESC-1):
+                    //   - Cover/Contain: the rect is the background-origin box and the
+                    //     renderer preserves the source aspect ratio (Cover crops to
+                    //     fill, Contain letterboxes to fit), so the MODE must reach the
+                    //     renderer rather than collapsing to a stretch.
+                    //   - Explicit { w, h }: the rect IS that explicit box and the
+                    //     source is stretched to fill it (Fill).
+                    //   - Auto: no intrinsic image size is available at paint time, so
+                    //     the source is stretched to the origin box (Fill) — the prior
+                    //     behaviour, preserved.
                     let (tile_w, tile_h) = match bg_spec.size {
                         BackgroundSize::Cover => (bg_origin_rect.width, bg_origin_rect.height),
                         BackgroundSize::Contain => (bg_origin_rect.width, bg_origin_rect.height),
                         BackgroundSize::Auto => (bg_origin_rect.width, bg_origin_rect.height),
                         BackgroundSize::Explicit { width, height } => (width, height),
+                    };
+                    let bg_fit = match bg_spec.size {
+                        BackgroundSize::Cover => crate::display_list::ImageFit::Cover,
+                        BackgroundSize::Contain => crate::display_list::ImageFit::Contain,
+                        BackgroundSize::Auto | BackgroundSize::Explicit { .. } => {
+                            crate::display_list::ImageFit::Fill
+                        }
                     };
                     let bg_tile = liquide_layout::Rect {
                         x: bg_origin_rect.x + bg_spec.position.0,
@@ -546,6 +566,8 @@ impl Painter {
                                 &bg_tile,
                                 repeat_str,
                                 &style.border_radius,
+                                bg_fit,
+                                style.image_rendering,
                                 image_cache,
                             );
                         }
@@ -1200,6 +1222,7 @@ fn resolve_bg_position(
 /// via `data_id`). When the entry is `Pending` or absent the image items are
 /// still emitted so the compositor can trigger a load; when `Failed` a
 /// transparent placeholder `FillRect` is emitted instead.
+#[allow(clippy::too_many_arguments)]
 fn emit_background_image_tiled(
     list: &mut DisplayList,
     url: &str,
@@ -1209,6 +1232,8 @@ fn emit_background_image_tiled(
     radius: &liquide_style_engine::dimension::Corners<
         liquide_style_engine::dimension::EllipticalRadius,
     >,
+    fit: crate::display_list::ImageFit,
+    image_rendering: liquide_style_engine::computed::ImageRendering,
     image_cache: Option<&ImageCache>,
 ) {
     use crate::image_cache::ImageCacheEntry;
@@ -1230,11 +1255,19 @@ fn emit_background_image_tiled(
     }
 
     if !repeat_x && !repeat_y {
-        // no-repeat: single tile
-        list.push(DisplayItem::Image {
+        // no-repeat: single tile. Emit as `ImageRect` so the resolved
+        // background-size `fit` (Cover/Contain/Fill) reaches the renderer; this
+        // is what makes aspect-preserving Cover/Contain work end-to-end (t65
+        // ESC-1). For Fill the source is stretched to the tile, matching the
+        // prior `Image` behaviour.
+        list.push(DisplayItem::ImageRect {
             rect: *tile,
             src: src_string,
+            src_rect: None,
             radius: radius.clone(),
+            fit,
+            image_rendering,
+            image_orientation: liquide_style_engine::computed::ImageOrientation::default(),
         });
         return;
     }
@@ -1286,7 +1319,11 @@ fn emit_background_image_tiled(
             if tile_count >= MAX_TILES {
                 break;
             }
-            list.push(DisplayItem::Image {
+            // Each repeated tile is sized to the resolved tile rect; the source
+            // is stretched into it (Fill). The outer PushClip bounds the tiling
+            // to the painting area, so per-tile aspect cropping is not applied
+            // here (the resolved tile dimensions already encode background-size).
+            list.push(DisplayItem::ImageRect {
                 rect: liquide_layout::Rect {
                     x,
                     y,
@@ -1294,9 +1331,13 @@ fn emit_background_image_tiled(
                     height: tile.height,
                 },
                 src: src_string.clone(),
+                src_rect: None,
                 radius: liquide_style_engine::dimension::Corners::all(
                     liquide_style_engine::dimension::EllipticalRadius::default(),
                 ),
+                fit: crate::display_list::ImageFit::Fill,
+                image_rendering,
+                image_orientation: liquide_style_engine::computed::ImageOrientation::default(),
             });
             tile_count += 1;
             x += tile.width;
@@ -1343,6 +1384,7 @@ fn emit_background_image_id_tiled(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::display_list::ImageFit;
     use liquide_dom::Document;
     use liquide_layout::{DefaultImageMeasurer, DefaultTextMeasurer, LayoutEngine, Size};
     use liquide_style_engine::engine::StyleEngine;
@@ -1459,7 +1501,7 @@ mod tests {
         let mut gradient_pos = 0usize;
         for (i, item) in display_list.items.iter().enumerate() {
             match item {
-                DisplayItem::Image { src, .. } if src == "bg-pattern.png" => {
+                DisplayItem::ImageRect { src, .. } if src == "bg-pattern.png" => {
                     found_image = true;
                     image_pos = i;
                 }
@@ -1543,7 +1585,7 @@ mod tests {
         // Collect positions of the three image items in paint order
         let mut positions: Vec<(String, usize)> = Vec::new();
         for (i, item) in display_list.items.iter().enumerate() {
-            if let DisplayItem::Image { src, .. } = item {
+            if let DisplayItem::ImageRect { src, .. } = item {
                 match src.as_str() {
                     "img_a.png" | "img_b.png" | "img_c.png" => {
                         positions.push((src.clone(), i));
@@ -1578,6 +1620,81 @@ mod tests {
             pos_b < pos_a,
             "Middle layer (img_b) must paint before top (img_a)"
         );
+    }
+
+    /// t65 ESC-1: the painter must thread the computed `background-size` MODE
+    /// (Cover / Contain / explicit Sized) onto the emitted image item so the
+    /// renderer reproduces aspect-preserving Cover/Contain cropping instead of
+    /// collapsing every mode to a stretch. Cover, Contain, and an explicit size
+    /// must each yield a DISTINCT `ImageFit` on the emitted `ImageRect`.
+    fn background_size_fit_for(size: liquide_compositor::scene::BackgroundSize) -> ImageFit {
+        use liquide_compositor::scene::{BackgroundImage, BackgroundRepeat, BackgroundSpec};
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet("div { width: 200px; height: 100px; }");
+        let mut style_map = se.restyle_all(&doc);
+
+        if let Some(arc_style) = style_map.get(div) {
+            let mut style = (**arc_style).clone();
+            style.background = vec![BackgroundSpec {
+                color: None,
+                image: Some(BackgroundImage::Url("bg.png".to_string())),
+                size,
+                position: (0.0, 0.0),
+                repeat: BackgroundRepeat::NoRepeat,
+            }];
+            style_map.insert(div, style);
+        }
+
+        let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint(&doc, &layout_tree, &style_map);
+
+        display_list
+            .items
+            .iter()
+            .find_map(|item| match item {
+                DisplayItem::ImageRect { src, fit, .. } if src == "bg.png" => Some(*fit),
+                _ => None,
+            })
+            .expect("background image should emit an ImageRect carrying its fit")
+    }
+
+    #[test]
+    fn background_size_mode_threads_distinct_fit() {
+        use liquide_compositor::scene::BackgroundSize;
+
+        let cover = background_size_fit_for(BackgroundSize::Cover);
+        let contain = background_size_fit_for(BackgroundSize::Contain);
+        let sized = background_size_fit_for(BackgroundSize::Explicit {
+            width: 50.0,
+            height: 50.0,
+        });
+
+        // The CSS keyword maps to the matching aspect-fit mode...
+        assert_eq!(cover, ImageFit::Cover, "background-size: cover -> Cover fit");
+        assert_eq!(
+            contain,
+            ImageFit::Contain,
+            "background-size: contain -> Contain fit"
+        );
+        assert_eq!(
+            sized,
+            ImageFit::Fill,
+            "explicit background-size -> Fill (stretch to box)"
+        );
+
+        // ...and the three modes are mutually distinct (no collapse to one box).
+        assert_ne!(cover, contain, "Cover and Contain must differ");
+        assert_ne!(cover, sized, "Cover and explicit Sized must differ");
+        assert_ne!(contain, sized, "Contain and explicit Sized must differ");
     }
 
     #[test]
@@ -1626,7 +1743,7 @@ mod tests {
         let has_image = display_list
             .items
             .iter()
-            .any(|item| matches!(item, DisplayItem::Image { src, .. } if src == "loaded.png"));
+            .any(|item| matches!(item, DisplayItem::ImageRect { src, .. } if src == "loaded.png"));
         assert!(has_image, "Loaded cache entry should emit an Image item");
     }
 
@@ -1676,7 +1793,7 @@ mod tests {
         let has_broken = display_list
             .items
             .iter()
-            .any(|item| matches!(item, DisplayItem::Image { src, .. } if src == "broken.png"));
+            .any(|item| matches!(item, DisplayItem::ImageRect { src, .. } if src == "broken.png"));
         assert!(
             !has_broken,
             "Failed cache entry should NOT emit an Image item"
@@ -1830,7 +1947,7 @@ mod tests {
         let has_pending = display_list
             .items
             .iter()
-            .any(|item| matches!(item, DisplayItem::Image { src, .. } if src == "pending.png"));
+            .any(|item| matches!(item, DisplayItem::ImageRect { src, .. } if src == "pending.png"));
         assert!(
             has_pending,
             "Pending cache entry should still emit an Image item as placeholder"
