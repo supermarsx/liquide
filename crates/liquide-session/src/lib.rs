@@ -5,6 +5,7 @@
 //! and audit trail.
 
 pub mod audit;
+pub mod authz;
 pub mod config;
 pub mod crash;
 pub mod desktop;
@@ -79,6 +80,7 @@ pub type Result<T> = std::result::Result<T, SessionError>;
 
 // Re-exports
 pub use audit::{AuditLevel, SessionAuditEvent};
+pub use authz::SessionAuthz;
 pub use config::{
     JailConfig, JailNetwork, MultiClientConfig, MultiClientMode, ResourceLimits, ResumeConfig,
     SessionConfig, SupervisorConfig,

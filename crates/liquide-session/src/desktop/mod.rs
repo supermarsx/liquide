@@ -472,6 +472,72 @@ impl DesktopCompositor {
         }
     }
 
+    /// Load the split `themes/components/*.css` component fragments in
+    /// deterministic (lexicographic) order (t67-authz-wire, TODO 16).
+    ///
+    /// ## Why these are loaded (TODO 16 resolution)
+    ///
+    /// The split fragments and the monolithic `components.css` cover *mostly
+    /// disjoint* component sets: the monolithic file carries dialogs, popovers,
+    /// search-bar, sidebar, tabs, tooltip, and window/titlebar decoration, while
+    /// the split files carry devtools, dock, launcher, menus, notifications, and
+    /// the status bar. The active packaged theme (`{theme}.css`) re-styles the
+    /// *appearance* of dock/launcher/menus/notifications/statusbar, so most split
+    /// rules are redundant with the theme — BUT not all. At least one rule is
+    /// **unique** to a split file and runtime-needed: the status-indicator glyph
+    /// pseudo-elements in `statusbar.css`
+    /// (`status-indicator.connected::before { content: "●" }`, plus
+    /// `degraded`/`disconnected`). The shell emits an empty
+    /// `<status-indicator class="connected">` (see `dom_sync.rs`) and relies on
+    /// that `::before` rule to inject the glyph; it is absent from both the
+    /// monolithic file and every theme, so without loading the split set the
+    /// connection-quality indicator renders glyph-less.
+    ///
+    /// Rather than treat the split files as dev-watcher-only (which would drop
+    /// that glyph), they are loaded here in sorted order — making the
+    /// devtools-watched files actually affect rendered output. They load AFTER
+    /// the monolithic `components.css` and BEFORE the active theme, so the theme
+    /// still wins on equal-specificity selectors. Missing directory/files are a
+    /// benign no-op (the monolithic + theme set remains functional).
+    fn load_split_component_css(shell: &mut Shell, themes_dir: &std::path::Path) {
+        let components_dir = themes_dir.join("components");
+        let entries = match std::fs::read_dir(&components_dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                tracing::debug!(
+                    ?components_dir,
+                    error = %err,
+                    "split component CSS directory not present; using monolithic + theme set only"
+                );
+                return;
+            }
+        };
+
+        // Collect and sort so the load order is deterministic across platforms
+        // (read_dir order is unspecified).
+        let mut files: Vec<std::path::PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("css"))
+            .collect();
+        files.sort();
+
+        for path in files {
+            match std::fs::read_to_string(&path) {
+                Ok(css) => {
+                    info!("loaded split component CSS from {:?}", path);
+                    shell.add_stylesheet(&css);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        ?path,
+                        error = %err,
+                        "split component CSS fragment not loaded"
+                    );
+                }
+            }
+        }
+    }
+
     /// Try loading external CSS theme files and user overrides.
     ///
     /// Load order (later stylesheets cascade over earlier ones at equal
@@ -479,9 +545,13 @@ impl DesktopCompositor {
     /// 1. `<asset-root>/themes/variables.css` — design-token `:root` defaults
     /// 2. `<asset-root>/themes/components.css` — shared component defaults
     ///    (tooltip/popover/etc.), which consume the tokens above
-    /// 3. `<asset-root>/themes/{theme_name}.css` — the active packaged theme
+    /// 3. `<asset-root>/themes/components/*.css` — split component fragments
+    ///    (devtools/dock/launcher/menus/notifications/statusbar), loaded in
+    ///    deterministic order; carry the status-indicator glyph `::before` rules
+    ///    that are unique to the split set (TODO 16)
+    /// 4. `<asset-root>/themes/{theme_name}.css` — the active packaged theme
     ///    (overrides the base layers)
-    /// 4. `~/.config/liquide/custom.css` — user overrides (highest priority)
+    /// 5. `~/.config/liquide/custom.css` — user overrides (highest priority)
     ///
     /// Any CSS found is appended to the shell's stylesheet pipeline.
     fn load_external_css(shell: &mut Shell) {
@@ -510,6 +580,15 @@ impl DesktopCompositor {
         // is not loaded those components fall into normal flow at (0,0) (t57-f6b).
         Self::load_base_layer_css(shell, &themes_dir, "variables.css");
         Self::load_base_layer_css(shell, &themes_dir, "components.css");
+
+        // Split component fragments (TODO 16): loaded after the monolithic
+        // components.css and before the theme. The monolithic file and the split
+        // set cover mostly-disjoint components; the split set additionally
+        // carries the status-indicator glyph `::before` rules (statusbar.css)
+        // that exist nowhere else, which the shell relies on for the
+        // connection-quality indicator. Loading them here also makes the
+        // devtools-watched files affect rendered output.
+        Self::load_split_component_css(shell, &themes_dir);
 
         match Self::resolve_theme_file(&themes_dir, &theme_name) {
             Some(candidate) => match std::fs::read_to_string(&candidate) {
@@ -559,5 +638,88 @@ impl DesktopCompositor {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_shell::Shell;
+
+    /// TODO 16: the split `themes/components/*.css` fragments must actually be
+    /// loaded into the shell's style set (previously they were dev-watcher-only
+    /// and had zero runtime effect). This proves the load chain ingests them —
+    /// specifically the status-indicator glyph `::before` rule that is unique to
+    /// `statusbar.css` and exists in no other loaded file.
+    #[test]
+    fn split_component_css_is_loaded_into_shell() {
+        let dir = std::env::temp_dir().join(format!(
+            "liquide-t67-split-css-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let components = dir.join("components");
+        std::fs::create_dir_all(&components).unwrap();
+
+        // The unique runtime-needed rule (the status-indicator glyph) plus a
+        // second fragment to prove deterministic multi-file ingestion.
+        std::fs::write(
+            components.join("statusbar.css"),
+            "status-indicator.connected::before { content: \"\u{25CF}\"; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            components.join("dock.css"),
+            "dock-item.active { opacity: 1; }\n",
+        )
+        .unwrap();
+
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let sheets_before = shell.stylesheet_count();
+        let rules_before = shell.css_rule_count();
+
+        DesktopCompositor::load_split_component_css(&mut shell, &dir);
+
+        assert_eq!(
+            shell.stylesheet_count(),
+            sheets_before + 2,
+            "both split component fragments should be loaded as stylesheets"
+        );
+        assert!(
+            shell.css_rule_count() > rules_before,
+            "split component rules (incl. the status-indicator ::before glyph) \
+             must reach the loaded style set"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A missing `components/` directory is a benign no-op: the monolithic +
+    /// theme set remains the loaded source of truth.
+    #[test]
+    fn missing_split_component_dir_is_noop() {
+        let dir = std::env::temp_dir().join(format!(
+            "liquide-t67-no-split-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        // Note: `dir` intentionally does not exist / has no `components/` child.
+
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let sheets_before = shell.stylesheet_count();
+
+        DesktopCompositor::load_split_component_css(&mut shell, &dir);
+
+        assert_eq!(
+            shell.stylesheet_count(),
+            sheets_before,
+            "missing split component directory must not change the style set"
+        );
     }
 }

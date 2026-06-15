@@ -17,6 +17,12 @@ path = "src/main.rs"
 thiserror.workspace = true
 serde.workspace = true
 liquide-common.workspace = true
+liquide-authz-runtime.workspace = true
+# t67-authz-wire: the session authz plane wraps the power backend in
+# `GatedPowerManager` (spec §3.2). `liquide-power` has no workspace.dependencies
+# entry yet and the root manifest is out of this executor's lock, so it is
+# pulled in via a direct path dependency (mirrors this crate's path dev-deps).
+liquide-power = { path = "../liquide-power" }
 liquide-protocol.workspace = true
 liquide-transport.workspace = true
 liquide-compositor.workspace = true

@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use crate::audit::SessionAuditEvent;
+use crate::authz::SessionAuthz;
 use crate::config::{JailConfig, ResourceLimits, ResumeConfig, SessionConfig, SupervisorConfig};
 use crate::crash::{RestartAction, RestartTracker, SafeMode};
 use crate::heartbeat::{HeartbeatConfig, HeartbeatMonitor, HeartbeatStatus};
@@ -27,13 +28,59 @@ pub struct SessionRuntime {
     safe_mode: SafeMode,
     audit_events: Vec<SessionAuditEvent>,
     owners: HashSet<String>,
+    /// The authenticated session principal (drives both the `SessionCreated`
+    /// audit event and the authorization plane's [`Subject`]). Empty until a
+    /// principal is threaded in (`new` defaults it to empty for back-compat;
+    /// `with_principal` / `with_authz` set it).
+    principal: String,
+    /// The session authorization + audit plane (t67-authz-wire). `Some` once
+    /// [`Self::with_authz`] / [`Self::attach_authz`] has built it. Holding it
+    /// here makes `SessionRuntime` `!Send` (the facade owns a non-`Send`
+    /// credential verifier) — intentional; the session loop drives the runtime
+    /// directly and never `tokio::spawn`s it.
+    authz: Option<SessionAuthz>,
 }
 
 impl SessionRuntime {
     /// Create a new session runtime.
+    ///
+    /// The session principal defaults to empty (back-compat). Use
+    /// [`Self::with_principal`] to thread an authenticated username into the
+    /// `SessionCreated` audit event, and [`Self::with_authz`] (or
+    /// [`Self::attach_authz`]) to construct the authorization + audit plane.
     #[must_use]
     pub fn new(
         session_id: String,
+        config: SessionConfig,
+        supervisor_config: SupervisorConfig,
+        resource_limits: ResourceLimits,
+        resume_config: ResumeConfig,
+        jail_config: JailConfig,
+        safe_mode_enabled: bool,
+    ) -> Self {
+        Self::with_principal(
+            session_id,
+            String::new(),
+            config,
+            supervisor_config,
+            resource_limits,
+            resume_config,
+            jail_config,
+            safe_mode_enabled,
+        )
+    }
+
+    /// Create a new session runtime bound to an authenticated `principal`.
+    ///
+    /// The principal is recorded in the `SessionCreated` audit event (closing
+    /// the spec §3.1 gap where `String::new()` was pushed as the user) and is
+    /// reused as the authorization plane's principal when [`Self::with_authz`]
+    /// builds it.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_principal(
+        session_id: String,
+        principal: String,
         config: SessionConfig,
         supervisor_config: SupervisorConfig,
         resource_limits: ResourceLimits,
@@ -56,7 +103,7 @@ impl SessionRuntime {
         let mut audit_events = Vec::new();
         audit_events.push(SessionAuditEvent::SessionCreated {
             session_id: session_id.clone(),
-            user: String::new(),
+            user: principal.clone(),
         });
 
         Self {
@@ -72,7 +119,64 @@ impl SessionRuntime {
             safe_mode: SafeMode::new(safe_mode_enabled),
             audit_events,
             owners: HashSet::new(),
+            principal,
+            authz: None,
         }
+    }
+
+    /// Attach a [`SessionAuthz`] plane to this runtime (builder form).
+    ///
+    /// Constructs one [`AuthorizationRuntime`](liquide_authz_runtime::AuthorizationRuntime)
+    /// for the session principal, writing to the platform-default audit file,
+    /// and binds the principal's [`Subject`](liquide_authz_runtime::Subject)
+    /// from `uid`/`pid` + this session's id. This is the production wiring point
+    /// (spec §3.1): after this, the authorization + audit planes have a live
+    /// consumer.
+    #[must_use]
+    pub fn with_authz(mut self, uid: u32, pid: u32) -> Self {
+        self.attach_authz(uid, pid);
+        self
+    }
+
+    /// Attach a [`SessionAuthz`] plane in place (non-consuming form).
+    ///
+    /// Same as [`Self::with_authz`] but mutates `self`; returns a reference to
+    /// the freshly built plane.
+    pub fn attach_authz(&mut self, uid: u32, pid: u32) -> &mut SessionAuthz {
+        let session_id = self.state_machine.session_id().to_string();
+        let authz = SessionAuthz::with_platform_audit(
+            self.principal.clone(),
+            uid,
+            pid,
+            session_id,
+        );
+        self.authz.insert(authz)
+    }
+
+    /// Attach an already-constructed [`SessionAuthz`] plane (e.g. one wired to a
+    /// caller-chosen audit path under test). Returns a mutable reference to it.
+    pub fn set_authz(&mut self, authz: SessionAuthz) -> &mut SessionAuthz {
+        self.authz.insert(authz)
+    }
+
+    /// Immutable access to the session authorization + audit plane, if attached.
+    #[must_use]
+    pub fn authz(&self) -> Option<&SessionAuthz> {
+        self.authz.as_ref()
+    }
+
+    /// Mutable access to the session authorization + audit plane, if attached.
+    ///
+    /// Callers use this to drive direct `authorize` decisions or to wrap a
+    /// platform backend in its gated manager (`gated_power`, ...).
+    pub fn authz_mut(&mut self) -> Option<&mut SessionAuthz> {
+        self.authz.as_mut()
+    }
+
+    /// The authenticated session principal (empty if none was threaded in).
+    #[must_use]
+    pub fn principal(&self) -> &str {
+        &self.principal
     }
 
     /// Initialize the session: authenticate, start workers, enter Running state.
@@ -394,6 +498,29 @@ impl SessionRuntime {
             recorded += 1;
         }
         Ok(recorded)
+    }
+
+    /// Drain accumulated session-lifecycle audit events into the attached
+    /// [`SessionAuthz`] plane's shared append-only audit file (spec §3.6).
+    ///
+    /// This is the **live-path** consumer of [`Self::drain_audit_events_to`]:
+    /// the session main loop calls it each tick / at shutdown so session
+    /// lifecycle events land in the same audit trail as authorization
+    /// decisions. Returns:
+    ///   * `Ok(Some(n))` — `n` events recorded to the shared file;
+    ///   * `Ok(None)` — no authz plane is attached (nothing drained);
+    ///   * `Err(_)` — the sink failed; the unrecorded tail is preserved in the
+    ///     buffer (no audit event is dropped).
+    ///
+    /// A fresh `AppendOnlyEventLog` over the shared path is opened per call;
+    /// `OpenOptions::append` makes this concurrent-append-safe per write.
+    pub fn drain_session_audit_to_sink(&mut self) -> liquide_common::Result<Option<usize>> {
+        let Some(authz) = self.authz.as_ref() else {
+            return Ok(None);
+        };
+        let mut sink = authz.open_audit_sink();
+        let recorded = self.drain_audit_events_to(sink.as_mut())?;
+        Ok(Some(recorded))
     }
 
     /// Attach a runtime owner/reference to the session.

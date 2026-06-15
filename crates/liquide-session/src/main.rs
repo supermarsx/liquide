@@ -89,15 +89,32 @@ async fn run(cli: Cli) -> Result<()> {
     let resume_config = ResumeConfig::default();
     let jail_config = JailConfig::default();
 
-    // Create the session runtime.
-    let mut runtime = SessionRuntime::new(
+    // Resolve the authenticated session principal. In a fully wired login flow
+    // this comes from the supervisor/login handshake; until that lands, fall
+    // back to the OS user so the audit trail and authorization subject are
+    // attributed to a real principal rather than an empty string.
+    let principal = session_principal();
+
+    // Create the session runtime bound to the principal, then construct the
+    // authorization + audit plane (t67-authz-wire): one `AuthorizationRuntime`
+    // writing to the platform-default audit file, with the session principal's
+    // Subject. This is the production consumer that turns the authz/audit planes
+    // from tested-only into driven-in-production.
+    let mut runtime = SessionRuntime::with_principal(
         session_id.clone(),
+        principal,
         session_config,
         supervisor_config,
         resource_limits,
         resume_config,
         jail_config,
         cli.safe_mode,
+    )
+    .with_authz(current_uid(), std::process::id());
+
+    info!(
+        audit_path = ?runtime.authz().map(|a| a.audit_path().to_path_buf()),
+        "Authorization + audit plane wired to shared audit file"
     );
 
     // Initialize: authenticate, set up sandbox, start workers.
@@ -112,9 +129,23 @@ async fn run(cli: Cli) -> Result<()> {
         "Session initialized"
     );
 
-    // Drain and log any initialization audit events.
-    for event in runtime.drain_audit_events() {
-        info!(event = event.event_name(), "audit: {:?}", event);
+    // Persist initialization session-lifecycle audit events to the shared
+    // append-only audit file (spec §3.6) — the live consumer of
+    // `drain_audit_events_to`. Falls back to log-only drain if no plane is
+    // attached or the sink write fails (the unrecorded tail is preserved).
+    match runtime.drain_session_audit_to_sink() {
+        Ok(Some(n)) => info!(recorded = n, "drained init audit events to shared audit file"),
+        Ok(None) => {
+            for event in runtime.drain_audit_events() {
+                info!(event = event.event_name(), "audit: {:?}", event);
+            }
+        }
+        Err(err) => {
+            warn!(error = %err, "failed to write init audit events to shared sink");
+            for event in runtime.drain_audit_events() {
+                info!(event = event.event_name(), "audit: {:?}", event);
+            }
+        }
     }
 
     if cli.headless {
@@ -192,18 +223,15 @@ async fn run_headless(runtime: &mut SessionRuntime) -> Result<()> {
                 if runtime.state() == SessionState::Running {
                     runtime.tick();
 
-                    // Drain tick audit events.
-                    for event in runtime.drain_audit_events() {
-                        match event.level() {
-                            liquide_session::audit::AuditLevel::Error => {
-                                error!(event = event.event_name(), "{:?}", event);
-                            }
-                            liquide_session::audit::AuditLevel::Warn => {
-                                warn!(event = event.event_name(), "{:?}", event);
-                            }
-                            _ => {
-                                info!(event = event.event_name(), "{:?}", event);
-                            }
+                    // Persist tick audit events to the shared audit file
+                    // (spec §3.6). If no plane is attached / the sink fails,
+                    // fall back to log-only drain.
+                    match runtime.drain_session_audit_to_sink() {
+                        Ok(Some(_)) => {}
+                        Ok(None) => drain_audit_to_log(runtime),
+                        Err(err) => {
+                            warn!(error = %err, "failed to write tick audit events to shared sink");
+                            drain_audit_to_log(runtime);
                         }
                     }
                 }
@@ -218,4 +246,63 @@ async fn run_headless(runtime: &mut SessionRuntime) -> Result<()> {
 /// Generate a placeholder session ID when none is provided.
 fn uuid_stub() -> String {
     format!("session-{:08x}", std::process::id())
+}
+
+/// Resolve the authenticated session principal for the audit subject.
+///
+/// A complete login flow would thread this from the supervisor handshake; until
+/// then, fall back to the OS user (`USERNAME` on Windows, `USER`/`LOGNAME` on
+/// unix) so the audit trail and authorization subject are attributed to a real
+/// principal rather than an empty string.
+fn session_principal() -> String {
+    let var = if cfg!(windows) { "USERNAME" } else { "USER" };
+    std::env::var(var)
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Resolve the current numeric uid for the authorization subject.
+///
+/// On unix this is the real uid; on Windows (no numeric uid) we use the process
+/// id as a stable, non-zero session-scoped identifier (the principal string
+/// carries the real account identity for credential verification).
+fn current_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        // SAFETY: `getuid` is always safe; it has no preconditions and cannot fail.
+        unsafe { libc_getuid() }
+    }
+    #[cfg(not(unix))]
+    {
+        std::process::id()
+    }
+}
+
+/// Minimal `getuid` shim so the session binary does not pull in the full `libc`
+/// crate just for one call. `geteuid`/`getuid` take no arguments and return the
+/// uid; this matches the C ABI on every supported unix.
+#[cfg(unix)]
+unsafe fn libc_getuid() -> u32 {
+    unsafe extern "C" {
+        fn getuid() -> u32;
+    }
+    unsafe { getuid() }
+}
+
+/// Fallback: drain session audit events to the tracing log (used when no authz
+/// plane is attached or the shared sink write failed).
+fn drain_audit_to_log(runtime: &mut SessionRuntime) {
+    for event in runtime.drain_audit_events() {
+        match event.level() {
+            liquide_session::audit::AuditLevel::Error => {
+                error!(event = event.event_name(), "{:?}", event);
+            }
+            liquide_session::audit::AuditLevel::Warn => {
+                warn!(event = event.event_name(), "{:?}", event);
+            }
+            _ => {
+                info!(event = event.event_name(), "{:?}", event);
+            }
+        }
+    }
 }
