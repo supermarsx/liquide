@@ -40,6 +40,17 @@ pub(super) struct RenderJob {
     pub(super) dragged_window: Option<u64>,
     /// When true, the OS renders the cursor — skip the software cursor node.
     pub(super) hardware_cursor: bool,
+    /// Newly-decoded images (`image_id`, RGBA8 pixels, width, height) to upload
+    /// to the worker's renderer before this frame is rasterised (t74-realimg).
+    ///
+    /// The main thread decodes each `background-image: url(...)` exactly once
+    /// (tracked by `loaded_image_ids`), so this is empty on the vast majority of
+    /// frames and only carries pixels the first frame a wallpaper appears (or
+    /// after a theme switch introduces a new one).
+    pub(super) images: Vec<(u64, Vec<u8>, u32, u32)>,
+    /// CSS-resolved cursor appearance to push to the renderer's cursor seam
+    /// before rendering, so the themed cursor color paints (t74-realimg item 3).
+    pub(super) cursor_theme: liquide_renderer_cpu::CursorTheme,
 }
 
 /// A completed rendered frame sent back from the render thread.
@@ -126,6 +137,46 @@ fn clamp_measured_frame_dt_ms(elapsed_ms: f32) -> Option<f32> {
         Some(elapsed_ms.min(MAX_MEASURED_FRAME_DT_MS))
     } else {
         None
+    }
+}
+
+/// Strip a CSS `background-image` value down to the bare resource path.
+///
+/// The style/paint chain hands the host the value verbatim — e.g.
+/// `url("../wallpapers/aurora.png")`, `url(foo.png)`, or a comma-separated
+/// multi-layer list. This unwraps the (optional) `url(...)` function, removes
+/// surrounding quotes, and returns the first non-`none` layer. Returns `None`
+/// for `none`, empty, or non-`url` values (gradients never reach here — the
+/// style engine routes those to a `Gradient` value, not a pending image).
+fn strip_css_url(raw: &str) -> Option<String> {
+    // Take the first layer of a comma-separated list (a single wallpaper).
+    let first = raw.split(',').next().unwrap_or(raw).trim();
+    if first.is_empty() || first.eq_ignore_ascii_case("none") {
+        return None;
+    }
+
+    // Unwrap `url( ... )` if present (case-insensitive function name).
+    let inner = if first.len() >= 5 && first[..4].eq_ignore_ascii_case("url(") && first.ends_with(')')
+    {
+        first[4..first.len() - 1].trim()
+    } else {
+        first
+    };
+
+    // Remove matching surrounding quotes.
+    let unquoted = if (inner.starts_with('"') && inner.ends_with('"') && inner.len() >= 2)
+        || (inner.starts_with('\'') && inner.ends_with('\'') && inner.len() >= 2)
+    {
+        &inner[1..inner.len() - 1]
+    } else {
+        inner
+    };
+
+    let path = unquoted.trim();
+    if path.is_empty() || path.eq_ignore_ascii_case("none") {
+        None
+    } else {
+        Some(path.to_string())
     }
 }
 
@@ -386,6 +437,23 @@ impl DesktopCompositor {
             ));
         }
 
+        // 2b. Load any newly-referenced `background-image: url(...)` wallpapers
+        // and push the CSS cursor theme onto the renderer (t74-realimg). This is
+        // the deterministic capture path too (capture_once → render_frame_sync),
+        // so a wallpaper renders identically headless. Skipped during loading
+        // (the loading scene has no themed chrome).
+        if !self.loading {
+            let images = self.drain_new_images();
+            let cursor_theme = self.shell.cursor_theme();
+            if let Some(renderer) = self.renderer.as_mut() {
+                Self::apply_images_and_cursor_to_renderer(
+                    renderer.as_mut(),
+                    images,
+                    cursor_theme,
+                );
+            }
+        }
+
         // 3. Submit to compositor and swap buffers (during loading only).
         if let Some(ref mut compositor) = self.compositor {
             let _ = compositor.submit_scene(scene);
@@ -469,6 +537,138 @@ impl DesktopCompositor {
         let frame_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
         if let Some(ref mut compositor) = self.compositor {
             compositor.report_frame_time(frame_ms);
+        }
+    }
+
+    /// Drain newly-referenced `background-image: url(...)` wallpapers, read +
+    /// decode each from disk (once), and return them as `(image_id, RGBA8, w, h)`
+    /// tuples ready to upload to a renderer (t74-realimg).
+    ///
+    /// The CSS pipeline hashes every image URL referenced by the **last**
+    /// `shell.build_scene()` into a stable `image_id`
+    /// ([`Shell::pending_images`]). For each id not already loaded
+    /// (`loaded_image_ids`), the `url(...)` wrapper is stripped, the path is
+    /// resolved against the asset root (the same root `resolve_asset_root` uses
+    /// for fonts/themes), the file bytes are read and decoded to RGBA8, and the
+    /// id is recorded so subsequent frames skip the disk read. A missing or
+    /// undecodable file is recorded too, so we never retry it every frame.
+    ///
+    /// This MUST be called AFTER `shell.build_scene()` (which repopulates the
+    /// pending list) and BEFORE the renderer rasterises the frame.
+    fn drain_new_images(&mut self) -> Vec<(u64, Vec<u8>, u32, u32)> {
+        let pending = self.shell.pending_images();
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        // Collect ids+urls not yet handled (clone to release the &self borrow).
+        let to_load: Vec<(u64, String)> = pending
+            .iter()
+            .filter(|(id, _)| !self.loaded_image_ids.contains(id))
+            .cloned()
+            .collect();
+        if to_load.is_empty() {
+            return Vec::new();
+        }
+
+        let asset_root = Self::resolve_asset_root();
+        let mut decoded = Vec::new();
+        for (image_id, url) in to_load {
+            // Record the id up front (success OR failure) so a missing/corrupt
+            // file is not re-read on every frame.
+            self.loaded_image_ids.insert(image_id);
+
+            let Some(rel) = strip_css_url(&url) else {
+                debug!(%url, "skipping non-file image url (data:/remote/unsupported)");
+                continue;
+            };
+
+            let mut loaded = false;
+            for path in Self::image_path_candidates(&asset_root, &rel) {
+                match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        match liquide_renderer_cpu::image_decode::decode_image(&bytes) {
+                            Ok(img) => {
+                                info!(
+                                    %url, ?path, w = img.width, h = img.height,
+                                    "loaded background-image wallpaper"
+                                );
+                                decoded.push((image_id, img.pixels, img.width, img.height));
+                                loaded = true;
+                                break;
+                            }
+                            Err(err) => {
+                                warn!(%url, ?path, %err, "failed to decode background image")
+                            }
+                        }
+                    }
+                    // A missing candidate is expected (we try several roots);
+                    // only the final failure below is worth a warning.
+                    Err(_) => continue,
+                }
+            }
+            if !loaded {
+                warn!(%url, "could not locate/read background image under any asset root");
+            }
+        }
+        decoded
+    }
+
+    /// Candidate filesystem paths to try for a CSS image URL, in priority order.
+    ///
+    /// Absolute / scheme URLs resolve verbatim. Relative URLs (the wallpaper
+    /// case) are resolved against the live asset root first, then against the
+    /// workspace-root `assets/` tree as a fallback — so a host whose asset root
+    /// is a partial mirror (e.g. the visual-test merged root, which copies
+    /// `themes/` but not `wallpapers/`) still finds the committed wallpaper. A
+    /// leading `../` (theme-relative, since theme CSS lives under
+    /// `<assets>/themes/`) is stripped so it resolves under the asset root.
+    fn image_path_candidates(asset_root: &std::path::Path, rel: &str) -> Vec<std::path::PathBuf> {
+        if rel.starts_with('/') || rel.contains("://") {
+            return vec![std::path::PathBuf::from(rel)];
+        }
+
+        let theme_relative = rel.strip_prefix("../").unwrap_or(rel);
+        let mut roots: Vec<std::path::PathBuf> = vec![asset_root.to_path_buf()];
+
+        // Workspace-root assets fallback (crates/liquide-session -> ../../assets),
+        // where the committed wallpapers always live.
+        let workspace_assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("assets");
+        if !roots.iter().any(|r| r == &workspace_assets) {
+            roots.push(workspace_assets);
+        }
+
+        let mut candidates = Vec::new();
+        for root in roots {
+            candidates.push(root.join(theme_relative));
+            if theme_relative != rel {
+                candidates.push(root.join(rel));
+            }
+        }
+        candidates
+    }
+
+    /// Upload decoded images to a renderer and push the CSS cursor theme onto it.
+    ///
+    /// Downcasts the `dyn Renderer` to the concrete CPU [`SoftwareRenderer`] via
+    /// [`Renderer::as_any_mut`]; a backend that does not expose the seam is a
+    /// silent no-op (the wallpaper simply falls back to the gradient and the
+    /// cursor uses the renderer's default colors).
+    fn apply_images_and_cursor_to_renderer(
+        renderer: &mut dyn Renderer,
+        images: Vec<(u64, Vec<u8>, u32, u32)>,
+        cursor_theme: liquide_renderer_cpu::CursorTheme,
+    ) {
+        if let Some(sw) = renderer
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+        {
+            for (image_id, pixels, w, h) in images {
+                sw.register_image_rgba(image_id, pixels, w, h);
+            }
+            sw.set_cursor_theme(cursor_theme);
         }
     }
 
@@ -756,6 +956,13 @@ impl DesktopCompositor {
             self.height,
         );
 
+        // Drain newly-referenced wallpapers (decoded once on the main thread)
+        // and resolve the CSS cursor theme; both ride the job to the worker,
+        // which owns the renderer (t74-realimg). `build_scene()` above already
+        // repopulated the pending-image list, so this picks up any new url.
+        let images = self.drain_new_images();
+        let cursor_theme = self.shell.cursor_theme();
+
         // Get current state for telemetry.
         let dragged_window = self.shell.dragged_window();
 
@@ -777,6 +984,8 @@ impl DesktopCompositor {
             damage: self.dirty_damage.take(),
             dragged_window: dragged_window.map(|wid| wid.0),
             hardware_cursor: self.cursor.use_hardware,
+            images,
+            cursor_theme,
         };
 
         if let Some(ref tx) = self.render_tx {
@@ -1432,7 +1641,7 @@ impl DesktopCompositor {
 
     /// Render a full scene job (used by both Job and upgraded CursorOnly paths).
     fn render_full_job(
-        latest_job: RenderJob,
+        mut latest_job: RenderJob,
         renderer: &mut dyn Renderer,
         compositor: &mut Compositor,
         fb: &mut Option<FrameBuffer>,
@@ -1442,6 +1651,16 @@ impl DesktopCompositor {
         tx: &mpsc::Sender<RenderedFrame>,
     ) {
         let t_total = Instant::now();
+
+        // 0. Upload any newly-decoded wallpapers and push the CSS cursor theme
+        // onto the worker's renderer before rasterising (t74-realimg). Empty on
+        // the vast majority of frames (images are decoded once on the main
+        // thread); the cursor theme is idempotent.
+        Self::apply_images_and_cursor_to_renderer(
+            renderer,
+            std::mem::take(&mut latest_job.images),
+            latest_job.cursor_theme,
+        );
 
         // 1. Add software cursor to scene (skip if hardware cursor is active).
         let scene = latest_job.scene;
@@ -1606,6 +1825,115 @@ impl DesktopCompositor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_css_url_unwraps_url_function_and_quotes() {
+        assert_eq!(
+            strip_css_url("url(\"../wallpapers/aurora.png\")").as_deref(),
+            Some("../wallpapers/aurora.png")
+        );
+        assert_eq!(
+            strip_css_url("url('foo.png')").as_deref(),
+            Some("foo.png")
+        );
+        assert_eq!(strip_css_url("url(bare.png)").as_deref(), Some("bare.png"));
+        // A bare quoted string (the `background-image: "..."` longhand path).
+        assert_eq!(
+            strip_css_url("../wallpapers/aurora.png").as_deref(),
+            Some("../wallpapers/aurora.png")
+        );
+        // First layer of a comma list wins.
+        assert_eq!(
+            strip_css_url("url(a.png), url(b.png)").as_deref(),
+            Some("a.png")
+        );
+        // Case-insensitive function name.
+        assert_eq!(strip_css_url("URL(x.png)").as_deref(), Some("x.png"));
+    }
+
+    #[test]
+    fn strip_css_url_rejects_none_and_empty() {
+        assert_eq!(strip_css_url("none"), None);
+        assert_eq!(strip_css_url(""), None);
+        assert_eq!(strip_css_url("   "), None);
+        assert_eq!(strip_css_url("url(\"\")"), None);
+    }
+
+    #[test]
+    fn drain_new_images_decodes_and_caches_referenced_wallpaper() {
+        // Drive a real desktop + the bundled liquid-glass theme (which references
+        // `../wallpapers/aurora.png`), build a scene so the CSS pipeline queues
+        // the wallpaper url, then confirm the loader reads + decodes it once and
+        // does not re-decode on the next call (cache hit).
+        let mut desktop = DesktopCompositor::new(320, 240);
+        desktop.set_dev_mode(true);
+        desktop.loading = false;
+        // Build a scene so `shell.pending_images()` is populated.
+        let _ = desktop.shell.build_scene();
+
+        let pending = desktop.shell.pending_images().to_vec();
+        // The default theme must reference the wallpaper; if assets are missing
+        // (no aurora.png on disk) the test environment is broken — assert it is
+        // present so a regression in the theme/asset is caught.
+        assert!(
+            pending.iter().any(|(_, url)| url.contains("aurora")),
+            "liquid-glass desktop-background must reference the aurora wallpaper; got {pending:?}"
+        );
+
+        let decoded = desktop.drain_new_images();
+        assert!(
+            decoded.iter().any(|(_, px, w, h)| *w > 0 && *h > 0 && !px.is_empty()),
+            "the referenced wallpaper must decode to non-empty RGBA pixels"
+        );
+        // Second drain: ids are cached, so nothing is re-decoded.
+        let again = desktop.drain_new_images();
+        assert!(
+            again.is_empty(),
+            "already-loaded images must not be re-read/decoded; got {} entries",
+            again.len()
+        );
+    }
+
+    #[test]
+    fn loader_registers_wallpaper_texture_on_the_renderer() {
+        // End-to-end of the upload seam: build the scene (queues the wallpaper),
+        // drain+decode it, push it onto the renderer, and confirm the renderer
+        // now holds the texture keyed by the SAME image_id the scene node carries
+        // — i.e. `render_image_node` will find it and rasterise real pixels
+        // instead of the unloaded placeholder.
+        let mut desktop = DesktopCompositor::new(320, 240);
+        desktop.set_dev_mode(true);
+        desktop.loading = false;
+        let _ = desktop.shell.build_scene();
+
+        let pending = desktop.shell.pending_images().to_vec();
+        let (image_id, _) = pending
+            .iter()
+            .find(|(_, url)| url.contains("aurora"))
+            .cloned()
+            .expect("desktop-background must reference the aurora wallpaper");
+
+        let images = desktop.drain_new_images();
+        let cursor_theme = desktop.shell.cursor_theme();
+        let expected_cursor_fill = desktop.shell.theme().cursor_color;
+        let renderer = desktop.renderer.as_mut().expect("renderer present");
+        DesktopCompositor::apply_images_and_cursor_to_renderer(
+            renderer.as_mut(),
+            images,
+            cursor_theme,
+        );
+
+        let sw = renderer
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+            .expect("dev-mode renderer downcasts to SoftwareRenderer");
+        assert!(
+            sw.has_image(image_id),
+            "the wallpaper texture must be registered under the scene node's image_id"
+        );
+        // The CSS cursor theme must have been pushed onto the renderer.
+        assert_eq!(sw.cursor_theme().fill, expected_cursor_fill);
+    }
 
     struct NoopRenderer;
 
@@ -1796,6 +2124,8 @@ mod tests {
             damage: None,
             dragged_window: dragged.then_some(window_id),
             hardware_cursor: true,
+            images: Vec::new(),
+            cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
         }
     }
 
@@ -1819,6 +2149,8 @@ mod tests {
             damage: None,
             dragged_window: None,
             hardware_cursor: true,
+            images: Vec::new(),
+            cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
         }
     }
 

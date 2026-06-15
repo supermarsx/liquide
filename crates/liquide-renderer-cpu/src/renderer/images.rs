@@ -862,6 +862,104 @@ mod tests {
     }
 
     #[test]
+    fn registered_image_rasterizes_with_cover_fit() {
+        use liquide_compositor::geometry::Affine2D;
+        use liquide_compositor::scene::ImageFit;
+
+        // 2x2 source: distinct opaque colors per quadrant so we can confirm real
+        // texels (not the unloaded gray placeholder) land on screen.
+        // RGBA: red, green, blue, white.
+        let src = vec![
+            255, 0, 0, 255, // (0,0) red
+            0, 255, 0, 255, // (1,0) green
+            0, 0, 255, 255, // (0,1) blue
+            255, 255, 255, 255, // (1,1) white
+        ];
+        let mut renderer = SoftwareRenderer::new();
+        renderer.register_image_rgba(77, src, 2, 2);
+
+        // Wide bounds (40x20) with a square source forces Cover to crop
+        // horizontally and fill the whole rect — every pixel must be a real
+        // texel (fully opaque), never the gray placeholder.
+        let node = FlatNode {
+            id: 77,
+            kind: SceneNodeKind::Image {
+                image_id: 77,
+                width: 2,
+                height: 2,
+                fit: ImageFit::Cover,
+            }
+            .into(),
+            absolute_bounds: Rect::new(0.0, 0.0, 40.0, 20.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+
+        let mut fb = FrameBuffer::new(40, 20, PixelFormat::Bgra8);
+        let damage = full_damage();
+        renderer
+            .render(std::slice::from_ref(&node), &mut fb, &damage)
+            .unwrap();
+
+        // Cover fills the entire rect with opaque texels.
+        for (x, y) in [(0, 0), (39, 0), (0, 19), (39, 19), (20, 10)] {
+            let p = fb.get_pixel(x, y);
+            assert_eq!(p.a, 255, "Cover must fill pixel ({x},{y}) with an opaque texel");
+        }
+        // The gray placeholder (rgb 128, a 64) must NOT appear — confirm at least
+        // one painted pixel is a real source color, not the 128/128/128 dot.
+        let center = fb.get_pixel(20, 10);
+        assert!(
+            !(center.r == 128 && center.g == 128 && center.b == 128),
+            "registered image must rasterize real texels, not the unloaded placeholder"
+        );
+    }
+
+    #[test]
+    fn unregistered_image_paints_placeholder_not_texels() {
+        use liquide_compositor::geometry::Affine2D;
+        use liquide_compositor::scene::ImageFit;
+
+        // No register_image: the id is unknown, so the renderer must draw the
+        // gray placeholder rather than nothing/garbage.
+        let mut renderer = SoftwareRenderer::new();
+        let node = FlatNode {
+            id: 4242,
+            kind: SceneNodeKind::Image {
+                image_id: 4242,
+                width: 2,
+                height: 2,
+                fit: ImageFit::Cover,
+            }
+            .into(),
+            absolute_bounds: Rect::new(0.0, 0.0, 8.0, 8.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+        let mut fb = FrameBuffer::new(8, 8, PixelFormat::Bgra8);
+        let damage = full_damage();
+        renderer
+            .render(std::slice::from_ref(&node), &mut fb, &damage)
+            .unwrap();
+        // Placeholder is a faint, semi-transparent gray fill (a=64) blended over
+        // the black framebuffer — painted but neutral-gray and NOT opaque, which
+        // distinguishes "image not loaded" from a real (opaque) wallpaper texel.
+        let p = fb.get_pixel(1, 1);
+        assert!(p.r > 0, "placeholder must be painted (non-zero)");
+        assert!(p.a < 255, "placeholder must be semi-transparent, not an opaque texel");
+        assert_eq!(p.r, p.g, "placeholder must be neutral gray");
+        assert_eq!(p.g, p.b, "placeholder must be neutral gray");
+    }
+
+    #[test]
     fn repeated_background_cached_output_matches_legacy_scaling() {
         let image_id = 99;
         let node = background_node(

@@ -450,7 +450,16 @@ impl Shell {
             let node_area = nb.width * nb.height;
             let is_fullscreen_fill = matches!(
                 node.kind,
-                SceneNodeKind::Background { .. } | SceneNodeKind::GradientFill { .. }
+                SceneNodeKind::Background { .. }
+                    | SceneNodeKind::GradientFill { .. }
+                    // t74-realimg: a `background-image: url(...)` desktop wallpaper
+                    // becomes a full-screen Image node. It is the backdrop exactly
+                    // like a gradient fill, so it must join the background layer
+                    // (below windows), not the chrome overlay (above them). Without
+                    // this, an opaque full-screen wallpaper paints OVER every
+                    // window. The 0.9 screen-area guard keeps small images (icons,
+                    // thumbnails) out of the background layer.
+                    | SceneNodeKind::Image { .. }
             ) && node_area >= screen_area * 0.9;
 
             let is_bg = is_fullscreen_fill && !found_desktop_bg;

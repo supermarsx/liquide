@@ -824,6 +824,14 @@ impl Renderer for SoftwareRenderer {
         };
         self.lod_manager.set_performance_mode(lod_mode);
     }
+
+    /// Expose the concrete renderer so the host can drive backend-specific
+    /// operations (image upload via [`register_image_rgba`](Self::register_image_rgba)
+    /// and the CSS cursor seam via [`set_cursor_theme`](Self::set_cursor_theme))
+    /// through a `Box<dyn Renderer>`.
+    fn as_any_mut(&mut self) -> Option<&mut dyn core::any::Any> {
+        Some(self)
+    }
 }
 
 impl SoftwareRenderer {

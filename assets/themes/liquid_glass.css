@@ -8,14 +8,19 @@
 /* ── Base structure ────────────────────────────────── */
 
 desktop-background {
-    /* Designed wallpaper: a deep blue-to-violet diagonal wash with a darker
-       lower-right anchor, so the dock/menus keep contrast while the desktop
-       reads as a real liquid-glass backdrop rather than a flat slab. */
-    /* Blue-to-violet wash with the bloom kept in the upper band and a falloff to a
-       deep, even dark across the lower two-thirds — so the desktop body stays
-       clearly darker than the translucent status bar (which samples the brighter
-       top strip) while still reading as a designed liquid-glass backdrop with a
-       violet glow beneath the bar, rather than a flat slab. */
+    /* Real image wallpaper (t74-realimg): a tasteful deep-space aurora PNG,
+       scaled to fill the screen (cover). The host loads + decodes the file and
+       uploads the pixels to the renderer; the renderer rasterises it here.
+
+       The linear-gradient below is the FALLBACK: it is what the desktop paints
+       when the image is absent/unsupported (the engine prefers `background-image`
+       when set, otherwise it falls back to the `background` gradient). It is the
+       same blue-to-violet wash (bloom kept in the upper band, deep-even dark
+       body) tuned so the translucent status bar keeps contrast against the
+       desktop body rather than reading as a flat slab. */
+    /* Fallback gradient FIRST: this is what paints if the image declaration
+       below is absent/unsupported (later `background` wins the cascade when the
+       wallpaper is present). Same blue-to-violet wash from t69. */
     background: linear-gradient(
         180deg,
         rgb(14, 16, 44) 0%,
@@ -25,6 +30,9 @@ desktop-background {
         rgb(7, 8, 20) 70%,
         rgb(6, 7, 16) 100%
     );
+    /* Real wallpaper image, scaled to fill (cover) and centered. The host reads,
+       decodes, and uploads the pixels; the renderer rasterises it here. */
+    background: url("../wallpapers/aurora.png") center / cover no-repeat;
     position: fixed;
     top: 0;
     left: 0;

@@ -389,6 +389,23 @@ impl Shell {
         self.style_resolver.as_ref()
     }
 
+    /// Image URLs referenced during the **last** [`Shell::build_scene`], each
+    /// paired with the hashed `image_id` the scene's `Image`/`BackgroundFill`
+    /// nodes carry (`(image_id, url)`).
+    ///
+    /// This is the host-side seam for the image loader (t74-realimg): after
+    /// `build_scene()`, the host drains this list, loads + decodes each `url`
+    /// (resolved against the asset root, with the `url(...)` wrapper stripped),
+    /// and registers the decoded pixels with the renderer under `image_id`
+    /// (`SoftwareRenderer::register_image_rgba`). The renderer then rasterises
+    /// the `background-image: url(...)` wallpaper. The list is recomputed every
+    /// build (cleared at the start of each scene-bridge pass), so it always
+    /// reflects the most recently built frame.
+    #[must_use]
+    pub fn pending_images(&self) -> &[(u64, String)] {
+        self.css_pipeline.pending_images()
+    }
+
     /// Resolve a CSS custom property (e.g. `--menu-item-height`) to a pixel
     /// value from the loaded stylesheets, returning `None` when the variable is
     /// undefined or not length/number-valued.

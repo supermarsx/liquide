@@ -175,6 +175,14 @@ pub struct DesktopCompositor {
     /// Recorded for tests/telemetry so consumption is observable without
     /// performing a real power action (t73-session item 2).
     last_session_action: Option<DispatchedSessionAction>,
+    /// `image_id`s already decoded and uploaded to the renderer (t74-realimg).
+    ///
+    /// The CSS pipeline hashes each `background-image: url(...)` to a stable
+    /// `image_id`; once we have read+decoded the file and registered the pixels
+    /// with the renderer, the id is recorded here so subsequent frames skip the
+    /// (expensive) disk read + decode. A failed load is also recorded so we do
+    /// not retry a missing/corrupt file every frame.
+    loaded_image_ids: std::collections::HashSet<u64>,
 }
 
 /// A retained copy of a presented frame's pixels for host-side screenshot
@@ -266,6 +274,7 @@ impl DesktopCompositor {
             pending_glyph_defers: 0,
             real_runtime: false,
             last_session_action: None,
+            loaded_image_ids: std::collections::HashSet::new(),
         }
     }
 

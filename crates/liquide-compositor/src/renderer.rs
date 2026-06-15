@@ -546,6 +546,22 @@ pub trait Renderer: Send {
 
     /// Set the quality / performance mode.
     fn set_quality_mode(&mut self, _mode: RenderQuality) {}
+
+    /// Downcast hook for backend-specific operations not on the trait surface.
+    ///
+    /// The host holds the renderer as `Box<dyn Renderer>`, but a few operations
+    /// are concrete-backend-specific and would otherwise pollute the trait with
+    /// types it must not depend on (e.g. the CPU renderer's `register_image_rgba`
+    /// image upload and `set_cursor_theme` CSS seam, where `CursorTheme` lives in
+    /// the renderer crate — a reverse dependency the compositor cannot name).
+    ///
+    /// Backends that support such operations override this to return
+    /// `Some(self)`; the default is `None`, so generic renderers are unaffected.
+    /// The host downcasts to the concrete type (`SoftwareRenderer`) when present
+    /// and otherwise skips the operation.
+    fn as_any_mut(&mut self) -> Option<&mut dyn core::any::Any> {
+        None
+    }
 }
 
 /// Renderer wrapper that tries a primary backend and falls back when needed.
