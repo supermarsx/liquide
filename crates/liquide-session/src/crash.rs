@@ -1,6 +1,67 @@
 //! Crash handling, restart tracking, and safe mode.
 
+use std::sync::Once;
+
 use crate::state::SessionState;
+
+/// Guard so the panic hook is installed at most once even if startup is
+/// re-entered (tests, multiple runtimes in one process).
+static PANIC_HOOK_INSTALLED: Once = Once::new();
+
+/// Install a process-wide panic hook that logs the panic message + source
+/// location (file:line:col) and the panicking thread name before the default
+/// behaviour runs.
+///
+/// This is the **observability** half of the H1 mitigation: with
+/// `panic = "abort"` (root `Cargo.toml`) a panic that escapes a thread aborts
+/// the whole DE, so we want a clear, structured record of *what* and *where*
+/// before the process dies. The **survival** half is the per-thread
+/// `catch_unwind` boundary at the render-worker entry — but see the caveat
+/// below.
+///
+/// IMPORTANT CAVEAT (`panic = "abort"`): under the abort strategy the runtime
+/// aborts at the panic site *after* this hook runs and BEFORE any
+/// `catch_unwind` further up the stack can intercept it — `catch_unwind` only
+/// actually catches when the crate is built with `panic = "unwind"`. The
+/// `catch_unwind` boundaries in this codebase are therefore defensive
+/// scaffolding that becomes load-bearing only once the desktop binary is built
+/// with `panic = "unwind"` (a root-manifest decision). This hook, by contrast,
+/// fires under BOTH strategies, so panic diagnostics are always captured.
+///
+/// Idempotent: safe to call more than once; only the first call installs.
+pub fn install_panic_hook() {
+    PANIC_HOOK_INSTALLED.call_once(|| {
+        // Chain the default hook so backtraces (RUST_BACKTRACE) still print.
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+                .unwrap_or_else(|| "<unknown location>".to_string());
+
+            let message = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<non-string panic payload>".to_string()
+            };
+
+            let thread = std::thread::current();
+            let thread_name = thread.name().unwrap_or("<unnamed>").to_string();
+
+            tracing::error!(
+                panic.location = %location,
+                panic.thread = %thread_name,
+                panic.message = %message,
+                "thread panicked"
+            );
+
+            default_hook(info);
+        }));
+        tracing::debug!("session panic hook installed");
+    });
+}
 
 /// Snapshot of resource usage at the time of a crash.
 #[derive(Debug, Clone)]

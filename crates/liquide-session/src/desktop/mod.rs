@@ -156,8 +156,66 @@ impl DesktopCompositor {
     /// profile.  The shell is initialized with matching screen dimensions.
     #[must_use]
     pub fn new(width: u32, height: u32) -> Self {
-        // Load TrueType fonts before creating the renderer so that
-        // all text is rendered with the proper typefaces.
+        let mut shell = Shell::new(width as f32, height as f32);
+
+        // Try loading external CSS themes from disk.
+        Self::load_external_css(&mut shell);
+
+        // Load TrueType + @font-face fonts and build the renderer's font DB.
+        let font_db = Self::build_font_database(&shell);
+
+        let tile_size = 64;
+        Self {
+            shell,
+            compositor: Some(Compositor::new(
+                width,
+                height,
+                tile_size,
+                QualityProfile::Balanced,
+            )),
+            renderer: Some(Box::new(SoftwareRenderer::with_font_db(font_db))),
+            input_state: InputState::new(),
+            width,
+            height,
+            window_handle: None,
+            frame_count: 0,
+            running: true,
+            quit_requested: false,
+            dirty: true,
+            dirty_damage: None,
+            last_render: Instant::now(),
+            last_live_frame_at: None,
+            loading: true,
+            frame_interval: Duration::from_micros(1_000_000 / DEFAULT_TARGET_FPS as u64),
+            debug_perf: false,
+            render_tx: None,
+            frame_rx: None,
+            render_thread: None,
+            render_in_flight: false,
+            render_inflight_since: None,
+            present_pacing: PresentPacingState::default(),
+            present_gate_counter: 0,
+            telemetry: create_telemetry(DEFAULT_TARGET_FPS),
+            cursor: CursorState::new(width as f32 / 2.0, height as f32 / 2.0),
+            dt: DevToolsState::new(),
+            tiles: TileEncoderState::new(width, height, tile_size),
+            paint: PaintState::new(),
+            render_metrics: Arc::new(MetricsCollector::new()),
+            window_render: WindowRenderManager::new(),
+            viewer_metrics: MetricsRegistry::with_builtins(),
+        }
+    }
+
+    /// Build the renderer's font database: load the packaged TrueType faces and
+    /// any `@font-face` fonts referenced by the loaded CSS themes.
+    ///
+    /// Extracted from [`Self::new`] so the render-worker respawn path
+    /// (`respawn_render_worker`) can rebuild a fresh, fully-populated
+    /// [`SoftwareRenderer`] after a worker death moved the original renderer onto
+    /// the (now-dead) worker thread. Reloading from disk is correct: the font DB
+    /// is derived purely from the assets tree + the shell's CSS, both of which
+    /// are still available on the main thread.
+    fn build_font_database(shell: &Shell) -> liquide_font_rasterizer::FontDatabase {
         let mut font_db = liquide_font_rasterizer::FontDatabase::new();
         let asset_root = Self::resolve_asset_root();
         let font_count = font_db.load_default_fonts(&asset_root);
@@ -171,11 +229,6 @@ impl DesktopCompositor {
         } else {
             info!(fonts_loaded = font_count, "loaded TrueType font faces");
         }
-
-        let mut shell = Shell::new(width as f32, height as f32);
-
-        // Try loading external CSS themes from disk.
-        Self::load_external_css(&mut shell);
 
         // Load @font-face rules from CSS stylesheets into the font database.
         let mut css_font_count = 0usize;
@@ -224,46 +277,29 @@ impl DesktopCompositor {
             );
         }
 
-        let tile_size = 64;
-        Self {
-            shell,
-            compositor: Some(Compositor::new(
-                width,
-                height,
-                tile_size,
-                QualityProfile::Balanced,
-            )),
-            renderer: Some(Box::new(SoftwareRenderer::with_font_db(font_db))),
-            input_state: InputState::new(),
-            width,
-            height,
-            window_handle: None,
-            frame_count: 0,
-            running: true,
-            quit_requested: false,
-            dirty: true,
-            dirty_damage: None,
-            last_render: Instant::now(),
-            last_live_frame_at: None,
-            loading: true,
-            frame_interval: Duration::from_micros(1_000_000 / DEFAULT_TARGET_FPS as u64),
-            debug_perf: false,
-            render_tx: None,
-            frame_rx: None,
-            render_thread: None,
-            render_in_flight: false,
-            render_inflight_since: None,
-            present_pacing: PresentPacingState::default(),
-            present_gate_counter: 0,
-            telemetry: create_telemetry(DEFAULT_TARGET_FPS),
-            cursor: CursorState::new(width as f32 / 2.0, height as f32 / 2.0),
-            dt: DevToolsState::new(),
-            tiles: TileEncoderState::new(width, height, tile_size),
-            paint: PaintState::new(),
-            render_metrics: Arc::new(MetricsCollector::new()),
-            window_render: WindowRenderManager::new(),
-            viewer_metrics: MetricsRegistry::with_builtins(),
-        }
+        font_db
+    }
+
+    /// Build a fresh renderer + compositor pair at the current resolution.
+    ///
+    /// Used by the render-worker respawn path: once a worker dies, the renderer
+    /// and compositor it owned are gone (moved onto the dead thread), so a
+    /// respawn must construct new ones. The compositor target-fps mirrors the
+    /// current `frame_interval`.
+    fn build_render_engine(&self) -> (Box<dyn Renderer>, Compositor) {
+        let tile_size = self.tiles.tile_size;
+        let mut compositor =
+            Compositor::new(self.width, self.height, tile_size, QualityProfile::Balanced);
+        let fps = if self.frame_interval.is_zero() {
+            0
+        } else {
+            (1_000_000 / self.frame_interval.as_micros().max(1)) as u32
+        };
+        compositor.set_target_fps(fps);
+
+        let font_db = Self::build_font_database(&self.shell);
+        let renderer: Box<dyn Renderer> = Box::new(SoftwareRenderer::with_font_db(font_db));
+        (renderer, compositor)
     }
 
     /// Attach a remote transport sink for encoded tile batches.

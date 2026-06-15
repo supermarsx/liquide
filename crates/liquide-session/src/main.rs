@@ -65,6 +65,13 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    // Install the panic hook AFTER the subscriber so panic diagnostics
+    // (message + file:line:col + thread) are emitted through tracing (H1).
+    // This fires under both panic=abort and panic=unwind; the per-thread
+    // catch_unwind boundaries (e.g. the render worker) are the survival half
+    // and only become load-bearing under panic=unwind (see install_panic_hook).
+    liquide_session::install_panic_hook();
+
     run(cli).await
 }
 

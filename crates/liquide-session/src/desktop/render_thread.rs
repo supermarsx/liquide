@@ -17,6 +17,7 @@ use liquide_compositor::{Compositor, CompositorContract};
 use tracing::{debug, info, warn};
 
 use super::DesktopCompositor;
+use super::PresentPacingState;
 use super::cursor_state::CURSOR_SIZE;
 use super::scene_split::{SplitScene, split_flat_nodes};
 
@@ -789,9 +790,17 @@ impl DesktopCompositor {
                     self.cursor.sync_prev();
                 }
                 Err(err) => {
+                    // The worker's receiver is gone — it has died. Restore the
+                    // damage so the recovery frame repaints it, and leave the
+                    // worker marked dirty/not-in-flight. The disconnected
+                    // `frame_rx` is detected by `try_present`, which respawns the
+                    // worker (C1). Previously this error was swallowed silently
+                    // (the main thread then failed every send forever).
                     if let RenderMsg::Job(job) = err.0 {
                         self.dirty_damage = job.damage;
                     }
+                    warn!("render worker send failed (worker dead); recovery pending via try_present");
+                    self.dirty = true;
                 }
             }
         }
@@ -974,37 +983,84 @@ impl DesktopCompositor {
             }
             Err(mpsc::TryRecvError::Empty) => false,
             Err(mpsc::TryRecvError::Disconnected) => {
-                if self.handle_render_thread_disconnected() {
-                    warn!("render thread disconnected");
-                }
-                false
+                // The render worker has died (panic under unwind, or it exited):
+                // the frame receiver is disconnected, so no future frames can
+                // arrive. C1: instead of marking the loop dead, respawn the
+                // worker and render a synchronous fallback for this frame so the
+                // DE keeps running.
+                warn!("render worker disconnected — respawning");
+                self.respawn_render_worker(Some(platform))
             }
         }
     }
 
-    /// Mark the render thread as gone and tear down stale channel state.
+    /// Recover from render-worker death by rebuilding the render engine and
+    /// respawning the background worker (C1).
     ///
-    /// A disconnected frame receiver means the render worker has exited and no
-    /// future frames can arrive. Leaving the receiver installed makes the main
-    /// loop log the same terminal condition on every tick.
-    fn handle_render_thread_disconnected(&mut self) -> bool {
-        let had_frame_rx = self.frame_rx.take().is_some();
-        let had_render_tx = self.render_tx.take().is_some();
-        let had_render_thread = self.render_thread.is_some();
-        let had_in_flight = self.render_in_flight;
-        let had_render_state = had_frame_rx || had_render_tx || had_render_thread || had_in_flight;
-
+    /// A worker dies when its body panics (under `panic=unwind`), when its
+    /// channels disconnect, or when a send to it fails. Previously this was
+    /// either swallowed silently (`submit_render`) or treated as terminal (the
+    /// old disconnect handler set `running = false`), which under `panic=abort`
+    /// took the whole DE down and in debug froze the desktop with a
+    /// live-but-blind event loop.
+    ///
+    /// This tears down the stale channels/handle, rebuilds a fresh
+    /// renderer+compositor (the originals were moved onto the dead thread),
+    /// renders ONE synchronous fallback frame so the desktop stays visually live
+    /// during recovery, spawns a new worker, and marks the frame fully dirty so
+    /// the next loop iteration repaints on the fresh worker. Returns `true` if a
+    /// worker is running afterwards.
+    ///
+    /// `platform` is optional: tests drive respawn without a real backend (the
+    /// fallback frame is then skipped). The live event loop always passes one.
+    pub(super) fn respawn_render_worker(
+        &mut self,
+        platform: Option<&mut dyn liquide_platform::PlatformBackend>,
+    ) -> bool {
+        // Drop stale channel state and join the dead handle (non-blocking in
+        // practice: a panicked/exited worker has already terminated).
+        self.frame_rx = None;
+        self.render_tx = None;
         if let Some(handle) = self.render_thread.take() {
             let _ = handle.join();
         }
-
         self.render_in_flight = false;
         self.render_inflight_since = None;
-        self.dirty = false;
-        self.dirty_damage = None;
-        self.running = false;
+        self.present_pacing = PresentPacingState::default();
 
-        had_render_state
+        // The renderer/compositor were moved onto the dead worker, so the
+        // synchronous slots are empty — rebuild a fresh engine into them.
+        if self.renderer.is_none() {
+            let (renderer, _) = self.build_render_engine();
+            self.renderer = Some(renderer);
+        }
+        if self.compositor.is_none() {
+            let (_, compositor) = self.build_render_engine();
+            self.compositor = Some(compositor);
+        }
+
+        warn!("respawning render worker after worker death");
+
+        // Synchronous fallback frame for the CURRENT frame, BEFORE the engine is
+        // moved onto the new worker by `spawn_render_thread`. Keeps the DE
+        // running visually during recovery rather than showing a stale frame.
+        if let Some(platform) = platform {
+            self.render_frame_sync(platform);
+        }
+
+        self.spawn_render_thread();
+
+        // Force a full repaint on the fresh worker so the desktop recovers
+        // visually rather than waiting for the next incidental damage event.
+        self.mark_full_dirty();
+
+        let alive = self.render_tx.is_some() && self.render_thread.is_some();
+        if alive {
+            info!("render worker respawned");
+        } else {
+            warn!("render worker respawn did not establish a live worker");
+        }
+        alive
     }
 
     /// Spawn the background render thread.
@@ -1027,12 +1083,53 @@ impl DesktopCompositor {
         let (frame_tx, frame_rx) = mpsc::channel::<RenderedFrame>();
         let debug_perf = self.debug_perf;
 
-        let handle = thread::Builder::new()
+        let handle = match thread::Builder::new()
             .name("render-worker".into())
             .spawn(move || {
-                Self::render_thread_fn(renderer, compositor, job_rx, frame_tx, debug_perf);
-            })
-            .expect("failed to spawn render thread");
+                // H1 panic boundary: wrap the entire worker body in
+                // `catch_unwind` so a panic inside scene flatten / render /
+                // compositor degrades gracefully (the worker thread exits, its
+                // `tx`/`rx` drop, the channels disconnect) instead of unwinding
+                // out of the thread root. The main loop observes the
+                // disconnection (try_present / submit_*) and RESPAWNS the worker
+                // (C1), so the DE keeps running.
+                //
+                // CAVEAT: `catch_unwind` only actually catches when this crate is
+                // built with `panic = "unwind"`. Under the root manifest's
+                // `panic = "abort"` (Cargo.toml:543) the process aborts at the
+                // panic site before this boundary can intercept, so the boundary
+                // is defensive scaffolding that becomes load-bearing only once
+                // the desktop binary is built with `panic = "unwind"` (a
+                // root-manifest decision, deliberately left to escalation). Even
+                // under abort, the panic hook (install_panic_hook) still logs the
+                // panic + location first.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    Self::render_thread_fn(renderer, compositor, job_rx, frame_tx, debug_perf);
+                }));
+                if result.is_err() {
+                    // The panic message/location was already logged by the
+                    // process panic hook; record the worker-exit cause here so
+                    // the respawn is correlated in the logs.
+                    warn!(
+                        "render worker thread caught a panic and is exiting; \
+                         main loop will respawn it (requires panic=unwind to reach here)"
+                    );
+                }
+            }) {
+            Ok(handle) => handle,
+            Err(err) => {
+                // Spawn failed (e.g. resource exhaustion). Do NOT abort the DE
+                // (the original `.expect()` here would have): the renderer +
+                // compositor were moved into the (never-started) closure and are
+                // gone, so rebuild a fresh engine into the synchronous slots so
+                // the loading path and a later respawn attempt can still render.
+                warn!(%err, "failed to spawn render worker thread; rebuilding synchronous engine");
+                let (renderer, compositor) = self.build_render_engine();
+                self.renderer = Some(renderer);
+                self.compositor = Some(compositor);
+                return;
+            }
+        };
 
         self.render_tx = Some(job_tx);
         self.frame_rx = Some(frame_rx);
@@ -2019,29 +2116,6 @@ mod tests {
     }
 
     #[test]
-    fn render_thread_disconnect_clears_channels_and_stops_loop() {
-        let mut desktop = DesktopCompositor::new(64, 64);
-        let (render_tx, _render_rx) = mpsc::channel::<RenderMsg>();
-        let (_frame_tx, frame_rx) = mpsc::channel::<RenderedFrame>();
-
-        desktop.render_tx = Some(render_tx);
-        desktop.frame_rx = Some(frame_rx);
-        desktop.render_in_flight = true;
-        desktop.running = true;
-        desktop.dirty = true;
-        desktop.dirty_damage = Some(DamageSet::new(64));
-
-        assert!(desktop.handle_render_thread_disconnected());
-        assert!(desktop.render_tx.is_none());
-        assert!(desktop.frame_rx.is_none());
-        assert!(desktop.render_thread.is_none());
-        assert!(!desktop.render_in_flight);
-        assert!(!desktop.running);
-        assert!(!desktop.dirty);
-        assert!(desktop.dirty_damage.is_none());
-    }
-
-    #[test]
     fn t62_render_full_job_caches_unfiltered_scene_when_not_dragging() {
         let mut renderer = NoopRenderer;
         let mut compositor =
@@ -2159,16 +2233,94 @@ mod tests {
         assert_eq!(platform.presents.len(), 1, "a damaged frame must present");
     }
 
+    /// C1: a render-worker death (its frame sender dropped → receiver
+    /// disconnected) must be RECOVERED by respawning the worker, not treated as
+    /// terminal. After `try_present` observes the disconnection the DE must keep
+    /// running, a live worker channel must exist again, and the recovery frame
+    /// must have been presented synchronously.
     #[test]
-    fn render_thread_disconnect_is_one_shot_after_cleanup() {
+    fn worker_death_is_recovered_by_respawn_not_fatal() {
         let mut desktop = DesktopCompositor::new(64, 64);
-        let (_frame_tx, frame_rx) = mpsc::channel::<RenderedFrame>();
-
-        desktop.frame_rx = Some(frame_rx);
-        desktop.render_in_flight = true;
+        desktop.loading = false;
         desktop.running = true;
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
 
-        assert!(desktop.handle_render_thread_disconnected());
-        assert!(!desktop.handle_render_thread_disconnected());
+        // Simulate a dead worker: a frame receiver whose sender has been
+        // dropped reports `Disconnected`, exactly as a panicked/exited worker's
+        // dropped `frame_tx` would. The render engine is moved out (as it would
+        // be after `spawn_render_thread`) so the respawn must rebuild it.
+        let (frame_tx, frame_rx) = mpsc::channel::<RenderedFrame>();
+        drop(frame_tx);
+        desktop.frame_rx = Some(frame_rx);
+        let (render_tx, _render_rx) = mpsc::channel::<RenderMsg>();
+        desktop.render_tx = Some(render_tx);
+        desktop.renderer = None;
+        desktop.compositor = None;
+        desktop.render_in_flight = true;
+
+        let mut platform = RecordingPresentPlatform::default();
+
+        // try_present observes the disconnect and drives recovery.
+        let recovered = desktop.try_present(&mut platform);
+
+        assert!(recovered, "worker death must trigger a recovery present");
+        assert!(
+            desktop.running,
+            "the DE must keep running after a worker death (not terminal)"
+        );
+        assert!(
+            desktop.render_tx.is_some() && desktop.render_thread.is_some(),
+            "a fresh worker must be live after respawn"
+        );
+        assert!(
+            desktop.frame_rx.is_some(),
+            "a fresh frame receiver must be installed after respawn"
+        );
+        assert!(
+            !desktop.render_in_flight,
+            "the stale in-flight flag must be cleared on respawn"
+        );
+        assert!(
+            !platform.presents.is_empty(),
+            "the synchronous fallback frame must be presented during recovery"
+        );
+
+        // Clean shutdown so the spawned worker thread is joined.
+        if let Some(ref tx) = desktop.render_tx {
+            let _ = tx.send(RenderMsg::Shutdown);
+        }
+        if let Some(handle) = desktop.render_thread.take() {
+            let _ = handle.join();
+        }
+    }
+
+    /// C1: respawn rebuilds the render engine when it was moved onto the dead
+    /// worker, and leaves a live worker behind even without a platform (the
+    /// fallback frame is skipped when no backend is supplied).
+    #[test]
+    fn respawn_rebuilds_engine_and_marks_dirty() {
+        let mut desktop = DesktopCompositor::new(64, 64);
+        desktop.renderer = None;
+        desktop.compositor = None;
+        desktop.render_in_flight = true;
+        desktop.dirty = false;
+
+        let alive = desktop.respawn_render_worker(None);
+
+        assert!(alive, "respawn must establish a live worker");
+        assert!(desktop.render_tx.is_some());
+        assert!(desktop.render_thread.is_some());
+        assert!(!desktop.render_in_flight);
+        assert!(
+            desktop.dirty,
+            "respawn must mark the frame dirty so it repaints on the fresh worker"
+        );
+
+        if let Some(ref tx) = desktop.render_tx {
+            let _ = tx.send(RenderMsg::Shutdown);
+        }
+        if let Some(handle) = desktop.render_thread.take() {
+            let _ = handle.join();
+        }
     }
 }

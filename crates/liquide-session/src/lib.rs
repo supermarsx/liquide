@@ -87,7 +87,7 @@ pub use config::{
 };
 pub use crash::{
     CrashInfo, CrashMetadata, DisabledFeature, ResourceSnapshot, RestartAction, RestartTracker,
-    SafeMode,
+    SafeMode, install_panic_hook,
 };
 pub use heartbeat::{HeartbeatConfig, HeartbeatMonitor, HeartbeatState, HeartbeatStatus};
 pub use ipc::{IpcChannel, SessionEvent, SupervisorCommand, SupervisorHandle};
