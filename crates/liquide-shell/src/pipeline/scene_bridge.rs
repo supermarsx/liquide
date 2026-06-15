@@ -332,8 +332,56 @@ impl DesktopPipeline {
                             node.properties.transform =
                                 node.properties.transform.then(&current.transform);
                         }
+                        let text_bounds = node.properties.bounds;
                         nodes.push(node);
                         z += 1;
+
+                        // t64-f12 (caret-color): a Text item carrying a computed
+                        // caret-color belongs to an editable; emit a TextCaret
+                        // node at the text box's leading edge so the caret colour
+                        // reaches pixels. The caret rides the same accumulated
+                        // clip/opacity/transform state as its text.
+                        if let DisplayItem::Text {
+                            caret_color: Some(caret),
+                            font_size,
+                            ..
+                        } = other
+                        {
+                            let caret_id = self.alloc_id();
+                            // Caret width: 1px hairline (CSS default insertion caret).
+                            let caret_w = 1.0_f32;
+                            let caret_bounds = CRect::new(
+                                text_bounds.x,
+                                text_bounds.y,
+                                caret_w,
+                                // Height tracks the line box (fall back to font size).
+                                if text_bounds.height > 0.5 {
+                                    text_bounds.height
+                                } else {
+                                    *font_size
+                                },
+                            );
+                            let mut caret_node = SceneNode::new(
+                                caret_id,
+                                SceneNodeKind::TextCaret {
+                                    color: *caret,
+                                    width: caret_w,
+                                },
+                                NodeProperties::new(caret_bounds).with_z_order(z),
+                            );
+                            if current.opacity < 1.0 {
+                                caret_node.properties.opacity *= current.opacity;
+                            }
+                            if let Some(ref clip) = current.clip {
+                                caret_node.properties.clip = Some(*clip);
+                            }
+                            if !current.transform.is_identity() {
+                                caret_node.properties.transform =
+                                    caret_node.properties.transform.then(&current.transform);
+                            }
+                            nodes.push(caret_node);
+                            z += 1;
+                        }
                     }
                 }
             }
@@ -439,10 +487,12 @@ impl DesktopPipeline {
                 text_transform,
                 text_overflow,
                 white_space,
+                word_break,
                 text_indent,
                 text_decoration,
                 text_shadows,
-                ..
+                text_emphasis,
+                caret_color,
             } => {
                 use liquide_style_engine::computed::*;
                 let lh_px = match line_height {
@@ -451,6 +501,10 @@ impl DesktopPipeline {
                     LineHeight::Normal => font_size * 1.2,
                 };
                 let bounds = to_compositor_rect(rect);
+                // t64-f12 (caret-color): the caret is bound here and emitted as a
+                // separate TextCaret node by `display_list_to_scene` (which owns
+                // the node buffer). See `caret_node_for_text`.
+                let _ = caret_color;
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Text {
@@ -491,18 +545,24 @@ impl DesktopPipeline {
                             WhiteSpace::PreLine => 4,
                             WhiteSpace::BreakSpaces => 5,
                         },
-                        // t64-p0: new compositor Text fields. Defaulted here to
-                        // keep the workspace compiling; the S1 shell wave
-                        // (t64-f10/f11) wires these from the DisplayItem::Text
-                        // `word_break` / `text_emphasis` fields (now available).
-                        word_break: liquide_compositor::scene::WordBreak::Normal,
+                        // t64-f10 (word-break): map the computed CSS word-break
+                        // carried on the display item into the compositor Text
+                        // node. 1:1 enum map (style-engine → compositor).
+                        word_break: map_word_break(word_break),
                         text_indent: *text_indent,
                         text_decoration: text_decoration.clone(),
                         text_shadows: text_shadows.clone(),
-                        text_emphasis: None,
+                        // t64-f11 (text-emphasis): convert the paint-layer
+                        // TextEmphasis (fill + shape keyword) into the compositor
+                        // TextEmphasis (resolved mark glyph + color + position).
+                        text_emphasis: text_emphasis.as_ref().map(map_text_emphasis),
                     },
                     NodeProperties::new(bounds).with_z_order(z),
                 );
+                // t64-f12 (caret-color): the caret is a separate TextCaret node;
+                // it is emitted by `display_list_to_scene` (which owns the node
+                // buffer) via `caret_node_for_text`. Nothing to do in this
+                // single-return mapper beyond binding the field above.
                 Some(node)
             }
 
@@ -511,13 +571,32 @@ impl DesktopPipeline {
                 let r = radius.as_f32_tuple();
                 let img_id = hash_string(src);
                 self.pending_images.push((img_id, src.clone()));
+                // t64-f13 (background-size): the painter resolves background-size
+                // into the tile rect's dimensions (painter/mod.rs:508-519): for
+                // `Explicit { w, h }` the rect IS that explicit size, and for
+                // Cover/Contain/Auto the rect is the background-origin box. The
+                // image must therefore be scaled to the painter-computed box, not
+                // cropped to fill it. `ImageFit::Sized { w, h }` scales the whole
+                // source to those exact logical dimensions (images.rs:74), which
+                // honours `background-size` — replacing the lossy hardcoded
+                // `Cover` that previously discarded the computed size.
+                //
+                // ESCALATION (peer crate, out of S1 lock): the paint
+                // `DisplayItem::Image` does NOT carry the `BackgroundSize` *mode*
+                // (Cover/Contain are collapsed into the origin-box rect by the
+                // painter), so aspect-preserving Cover/Contain cropping cannot be
+                // reproduced here. Faithful mode mapping needs the painter to
+                // thread `BackgroundSize` onto the Image item (liquide-paint).
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Image {
                         image_id: img_id,
                         width: bounds.width as u32,
                         height: bounds.height as u32,
-                        fit: liquide_compositor::scene::ImageFit::Cover,
+                        fit: liquide_compositor::scene::ImageFit::Sized {
+                            width: bounds.width,
+                            height: bounds.height,
+                        },
                     },
                     NodeProperties::new(bounds)
                         .with_z_order(z)
@@ -885,6 +964,101 @@ impl DesktopPipeline {
                 Some(node)
             }
         }
+    }
+}
+
+/// t64-f10: map the style-engine `WordBreak` (carried on `DisplayItem::Text`)
+/// to the compositor scene `WordBreak`. 1:1 enum correspondence.
+fn map_word_break(
+    wb: &liquide_style_engine::computed::WordBreak,
+) -> liquide_compositor::scene::WordBreak {
+    use liquide_compositor::scene::WordBreak as CWordBreak;
+    use liquide_style_engine::computed::WordBreak as SWordBreak;
+    match wb {
+        SWordBreak::Normal => CWordBreak::Normal,
+        SWordBreak::BreakAll => CWordBreak::BreakAll,
+        SWordBreak::KeepAll => CWordBreak::KeepAll,
+        SWordBreak::BreakWord => CWordBreak::BreakWord,
+    }
+}
+
+/// t64-f11: convert the paint-layer `TextEmphasis` (a parsed fill + shape
+/// keyword) into the compositor `TextEmphasis` (a resolved literal mark glyph
+/// plus colour and position). The mark glyph is chosen from the CSS
+/// text-emphasis-style fill/shape per the CSS Text Decoration spec; a custom
+/// string passes through verbatim.
+fn map_text_emphasis(
+    em: &liquide_paint::display_list::TextEmphasis,
+) -> liquide_compositor::scene::TextEmphasis {
+    use liquide_compositor::scene::TextEmphasisPosition as CPos;
+    use liquide_paint::display_list::{EmphasisFill, EmphasisPosition, EmphasisShape};
+
+    let filled = matches!(em.fill, EmphasisFill::Filled);
+    // Resolve the mark glyph from fill + shape (filled vs open variants).
+    let mark = match &em.shape {
+        EmphasisShape::Dot => {
+            if filled {
+                "\u{2022}" // • BULLET
+            } else {
+                "\u{25E6}" // ◦ WHITE BULLET
+            }
+        }
+        EmphasisShape::Circle => {
+            if filled {
+                "\u{25CF}" // ● BLACK CIRCLE
+            } else {
+                "\u{25CB}" // ○ WHITE CIRCLE
+            }
+        }
+        EmphasisShape::DoubleCircle => {
+            if filled {
+                "\u{25C9}" // ◉ FISHEYE
+            } else {
+                "\u{25CE}" // ◎ BULLSEYE
+            }
+        }
+        EmphasisShape::Triangle => {
+            if filled {
+                "\u{25B2}" // ▲ BLACK UP-POINTING TRIANGLE
+            } else {
+                "\u{25B3}" // △ WHITE UP-POINTING TRIANGLE
+            }
+        }
+        EmphasisShape::Sesame => {
+            if filled {
+                "\u{FE45}" // ﹅ SESAME DOT
+            } else {
+                "\u{FE46}" // ﹆ WHITE SESAME DOT
+            }
+        }
+        EmphasisShape::Custom(s) => return custom_emphasis(s, em),
+    }
+    .to_string();
+
+    liquide_compositor::scene::TextEmphasis {
+        mark,
+        color: Some(em.color),
+        position: match em.position {
+            EmphasisPosition::Under | EmphasisPosition::UnderLeft => CPos::Under,
+            EmphasisPosition::Over | EmphasisPosition::OverRight => CPos::Over,
+        },
+    }
+}
+
+/// Build a compositor `TextEmphasis` from a custom mark string.
+fn custom_emphasis(
+    mark: &str,
+    em: &liquide_paint::display_list::TextEmphasis,
+) -> liquide_compositor::scene::TextEmphasis {
+    use liquide_compositor::scene::TextEmphasisPosition as CPos;
+    use liquide_paint::display_list::EmphasisPosition;
+    liquide_compositor::scene::TextEmphasis {
+        mark: mark.to_string(),
+        color: Some(em.color),
+        position: match em.position {
+            EmphasisPosition::Under | EmphasisPosition::UnderLeft => CPos::Under,
+            EmphasisPosition::Over | EmphasisPosition::OverRight => CPos::Over,
+        },
     }
 }
 
