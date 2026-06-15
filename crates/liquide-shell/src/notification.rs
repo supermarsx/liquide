@@ -1166,10 +1166,17 @@ impl Shell {
         // Retain a renderable projection so the scene builder paints the dialog
         // surface (t57-f9). Without this the dialog was state-only and never
         // appeared on screen.
+        let buttons: Vec<String> = if dialog.buttons.is_empty() {
+            vec!["OK".to_string()]
+        } else {
+            dialog.buttons.iter().map(|b| b.label.clone()).collect()
+        };
         self.chrome_dialog_content = Some(crate::shell::DialogContent {
             title: dialog.title.clone(),
             message: dialog.message.clone(),
-            button_count: dialog.buttons.len().max(1),
+            button_count: buttons.len().max(1),
+            buttons,
+            default_button: dialog.default_button,
         });
         self.chrome_active_dialog = Some(id);
         id
@@ -1188,6 +1195,8 @@ impl Shell {
             title: title.to_string(),
             message: label.to_string(),
             button_count: 2, // OK / Cancel
+            buttons: vec!["Cancel".to_string(), "OK".to_string()],
+            default_button: 1, // OK is the default action
         });
         self.chrome_active_dialog = Some(id);
         id

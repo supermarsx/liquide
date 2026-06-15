@@ -472,14 +472,13 @@ impl Shell {
         root.add_child(ws_node);
 
         // ── Active dialog (message box / input) ───────────────────
-        // When a canonical dialog is open (`request_message_dialog` /
-        // `request_input_dialog` set `chrome_dialog_content`), paint a modal
-        // dialog surface centred on screen, above windows and chrome (t57-f9).
-        // Previously the dialog state was set but nothing painted.
-        if let Some(content) = self.chrome_dialog_content.clone() {
-            const DIALOG_Z_BASE: u32 = 40_000;
-            self.add_dialog_overlay(&mut root, screen, DIALOG_Z_BASE, &content);
-        }
+        // The modal dialog now renders through the DOM/CSS pipeline
+        // (`dom_sync::sync_dialog_template` → `dialog`/`dialog-button`
+        // templates + the `dialog*` CSS rules), so its title, message, and
+        // button labels paint as real text. The prior imperative filled-rect
+        // overlay here (blank white header, empty body, unlabelled button) is
+        // removed (t65-s3). The DOM overlay carries `z-index: 3000` in CSS so
+        // it composites above windows and the chrome band.
 
         // ── Overview overlay (task / workspace overview) ──────────
         // Emitted ABOVE both windows and chrome when the overview is toggled
@@ -503,91 +502,6 @@ impl Shell {
         }
 
         root
-    }
-
-    /// Emit a modal dialog surface: a dimming scrim plus a centred panel with a
-    /// title band, body, and a button bar with one rect per button (t57-f9).
-    ///
-    /// Filled rects rather than live text so the surface unambiguously paints
-    /// content the visual regression can assert on; full text/glyph rendering of
-    /// the title/message flows through the CSS pipeline elsewhere and is a
-    /// follow-up. The point of this slice is that the dialog APPEARS when
-    /// `request_message_dialog` is called instead of being state-only.
-    fn add_dialog_overlay(
-        &self,
-        root: &mut SceneNode,
-        screen: Rect,
-        base_z: u32,
-        content: &crate::shell::DialogContent,
-    ) {
-        // Modal scrim.
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 40,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.launcher_overlay, 120),
-            },
-            NodeProperties::new(screen).with_z_order(base_z),
-        ));
-
-        // Centred dialog panel.
-        let panel_w = (screen.width * 0.34).clamp(320.0, 520.0);
-        let panel_h = (screen.height * 0.28).clamp(160.0, 280.0);
-        let px = (screen.width - panel_w) / 2.0;
-        let py = (screen.height - panel_h) / 2.0;
-        let panel = Rect::new(px, py, panel_w, panel_h);
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 41,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.notification_glass_tint, 245),
-            },
-            NodeProperties::new(panel).with_z_order(base_z + 1),
-        ));
-
-        // Title band (top strip), tinted by whether there is a title.
-        let title_h = 40.0;
-        let title_alpha = if content.title.is_empty() { 180 } else { 255 };
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 42,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.window_title_bar_focused, title_alpha),
-            },
-            NodeProperties::new(Rect::new(px, py, panel_w, title_h)).with_z_order(base_z + 2),
-        ));
-
-        // Body band (message area) — present when there is a message.
-        if !content.message.is_empty() {
-            let body = Rect::new(
-                px + 16.0,
-                py + title_h + 14.0,
-                panel_w - 32.0,
-                panel_h - title_h - 70.0,
-            );
-            root.add_child(SceneNode::new(
-                NODE_ROOT + 43,
-                SceneNodeKind::Background {
-                    color: themed_alpha(self.theme.window_content_background, 220),
-                },
-                NodeProperties::new(body).with_z_order(base_z + 3),
-            ));
-        }
-
-        // Button bar — one rect per button along the bottom-right.
-        let count = content.button_count.max(1);
-        let btn_w = 96.0;
-        let btn_h = 32.0;
-        let gap = 12.0;
-        let by = py + panel_h - btn_h - 14.0;
-        for i in 0..count {
-            let bx = px + panel_w - 14.0 - (i as f32 + 1.0) * btn_w - i as f32 * gap;
-            root.add_child(SceneNode::new(
-                NODE_ROOT + 44 + i as u64,
-                SceneNodeKind::Background {
-                    color: themed_alpha(self.theme.window_border_focused, 235),
-                },
-                NodeProperties::new(Rect::new(bx, by, btn_w, btn_h))
-                    .with_z_order(base_z + 4 + i as u32),
-            ));
-        }
     }
 
     /// Emit the lock-screen surface: a full-screen dimming scrim plus a centred

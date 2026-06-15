@@ -459,6 +459,77 @@ mod tests {
         assert_eq!(theme.desktop_background.b, 28);
     }
 
+    /// t65-s3 regression: the dock item label must be `display: none` so the
+    /// four labels do not stack/overlap along the dock baseline (the label is a
+    /// hover tooltip, not always-on text). Without this rule the labels render
+    /// crammed under the icons (the captured "Files Terminal Browser Settings"
+    /// overlap regression).
+    #[test]
+    fn liquid_glass_hides_dock_item_label() {
+        let parser = ThemeParser::new();
+        let stylesheet = parser.parse_str(default_liquid_glass_css()).unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+
+        let label = engine
+            .query("dock-item-label", &[], &[])
+            .expect("dock-item-label rule must resolve");
+        assert_eq!(
+            label.get("display").and_then(|v| v.as_string()),
+            Some("none"),
+            "dock-item-label must be display:none so dock labels do not overlap"
+        );
+    }
+
+    /// t65-s3 regression: the menu item icon must reserve a fixed-width gutter so
+    /// the icon paints in its own column instead of collapsing to 0 width (the
+    /// captured empty-icon-gutter regression).
+    #[test]
+    fn liquid_glass_menu_item_icon_has_fixed_gutter() {
+        let parser = ThemeParser::new();
+        let stylesheet = parser.parse_str(default_liquid_glass_css()).unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+
+        let icon = engine
+            .query("menu-item-icon", &[], &[])
+            .expect("menu-item-icon rule must resolve");
+        let width = icon
+            .get("width")
+            .expect("menu-item-icon must set a width")
+            .resolve_px(16.0, 1280.0, 720.0)
+            .expect("menu-item-icon width must be a length");
+        assert!(
+            (width - 16.0).abs() < 0.5,
+            "menu-item-icon width should reserve a 16px gutter, got {width}"
+        );
+    }
+
+    /// t65-s3: the dialog now renders through the DOM/CSS pipeline, so the theme
+    /// must carry the `dialog*` styling rules (header/title/message/button). A
+    /// missing `dialog-title`/`dialog-button` rule was the prior unstyled
+    /// (solid-white header, unlabelled button) fallback.
+    #[test]
+    fn liquid_glass_has_dialog_rules() {
+        let parser = ThemeParser::new();
+        let stylesheet = parser.parse_str(default_liquid_glass_css()).unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+
+        for selector in ["dialog", "dialog-title", "dialog-message", "dialog-button"] {
+            let rule = engine
+                .query(selector, &[], &[])
+                .unwrap_or_else(|_| panic!("missing `{selector}` rule"));
+            assert!(
+                rule.iter().next().is_some(),
+                "liquid-glass theme must define a non-empty `{selector}` rule for the DOM dialog"
+            );
+        }
+        // The title carries real text color (not an unstyled white fallback).
+        let title = engine.query("dialog-title", &[], &[]).unwrap();
+        assert!(
+            title.get("color").and_then(|v| v.as_color()).is_some(),
+            "dialog-title must set a themed text color"
+        );
+    }
+
     #[test]
     fn test_gradient_background_contributes_shell_theme_tint() {
         let parser = ThemeParser::new();

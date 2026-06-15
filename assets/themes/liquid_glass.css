@@ -371,6 +371,19 @@ dock-item:hover {
     box-shadow-color: rgba(40, 100, 220, 0.20);
 }
 
+dock-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 1;
+}
+
+/* The label is a hover-tooltip only; hidden by default so the four dock
+   item labels do not stack/overlap along the dock baseline. */
+dock-item-label {
+    display: none;
+}
+
 /* ── Workspace container ───────────────────────────── */
 
 workspace-container {
@@ -576,6 +589,24 @@ menu-item.disabled {
     color: rgba(140, 160, 200, 0.35);
 }
 
+/* Fixed-width icon gutter so the icon and the label sit in separate columns
+   (the label is flex-grow:1 and fills the remainder). Without an explicit
+   width the gutter collapses to 0 and the icon never paints. */
+menu-item-icon {
+    display: flex;
+    width: 16;
+    height: 16;
+    margin-right: 8;
+    flex-shrink: 0;
+}
+
+menu-item-label {
+    flex-grow: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 menu-separator {
     height: 1;
     margin-top: 4;
@@ -583,6 +614,105 @@ menu-separator {
     margin-left: 12;
     margin-right: 12;
     background: rgba(60, 120, 220, 0.12);
+}
+
+/* ── Dialog (modal message / confirm box) ──────────── */
+
+dialog-overlay {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    background: rgba(6, 8, 20, 0.55);
+}
+
+dialog {
+    display: flex;
+    flex-direction: column;
+    min-width: 360;
+    max-width: 520;
+    border-radius: 14;
+    background: rgba(18, 24, 50, 0.96);
+    border-color: rgba(60, 120, 220, 0.18);
+    border-width: 1;
+    border-style: solid;
+    blur-radius: 14;
+    glass-tint: rgba(16, 22, 46, 0.90);
+    box-shadow-color: rgba(10, 30, 100, 0.45);
+    overflow: hidden;
+}
+
+dialog-header {
+    display: flex;
+    align-items: center;
+    padding-left: 20;
+    padding-right: 20;
+    padding-top: 18;
+}
+
+dialog-title {
+    flex-grow: 1;
+    font-size: 16;
+    font-weight: 600;
+    color: rgba(225, 238, 255, 1.0);
+}
+
+dialog-body {
+    display: flex;
+    flex-direction: column;
+    padding-left: 20;
+    padding-right: 20;
+    padding-top: 10;
+    padding-bottom: 16;
+}
+
+dialog-message {
+    font-size: 13;
+    color: rgba(180, 205, 255, 0.85);
+    line-height: 1.4;
+}
+
+dialog-actions {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    gap: 8;
+    padding-left: 16;
+    padding-right: 16;
+    padding-bottom: 16;
+}
+
+dialog-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 32;
+    padding-left: 18;
+    padding-right: 18;
+    border-radius: 8;
+    font-size: 13;
+    font-weight: 500;
+    color: rgba(210, 225, 255, 1.0);
+    background: rgba(40, 60, 110, 0.40);
+}
+
+dialog-button:hover {
+    background: rgba(60, 100, 180, 0.45);
+    color: rgba(235, 245, 255, 1.0);
+}
+
+dialog-button.primary {
+    background: rgba(60, 120, 235, 0.90);
+    color: rgba(245, 250, 255, 1.0);
+}
+
+dialog-button.primary:hover {
+    background: rgba(80, 140, 245, 1.0);
 }
 
 /* ── Loading ───────────────────────────────────────── */

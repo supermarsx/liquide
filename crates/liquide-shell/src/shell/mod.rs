@@ -126,6 +126,35 @@ const SHELL_LAUNCHER_TEMPLATE: &str = r#"<launcher-overlay id="launcher-overlay"
   </launcher>
 </launcher-overlay>"#;
 
+/// Embedded modal message/confirm dialog template (t65-s3).
+///
+/// Replaces the prior imperative filled-rect dialog (a blank white header band,
+/// an empty body, and an unlabelled button). This routes the dialog through the
+/// DOM/CSS pipeline: a fixed full-screen `dialog-overlay` scrim containing a
+/// centred `dialog` panel whose title, message, and per-button LABELS are real
+/// text-bearing elements, so the CSS pipeline lays them out and paints their
+/// glyphs. Uses only single-level `{{#each}}` (the flat template engine
+/// contract), mirroring the context-menu form.
+const SHELL_DIALOG_TEMPLATE: &str = r#"<dialog-overlay id="{{id}}">
+  <dialog id="dialog-panel">
+    <dialog-header>
+      <dialog-title>{{title}}</dialog-title>
+    </dialog-header>
+    <dialog-body>
+      <dialog-message>{{message}}</dialog-message>
+    </dialog-body>
+    <dialog-actions>
+      {{#each buttons}}{{> dialog-button}}{{/each}}
+    </dialog-actions>
+  </dialog>
+</dialog-overlay>"#;
+
+/// A single dialog button (partial). `is_primary` flags the default/primary
+/// action so the CSS can style it (`dialog-button.primary`). `label` is
+/// HTML-escaped on output.
+const SHELL_DIALOG_BUTTON_TEMPLATE: &str =
+    r#"<dialog-button data-index="{{index}}" {{#if is_primary}}class="primary"{{/if}}>{{label}}</dialog-button>"#;
+
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
 pub struct SessionMenuItem {
@@ -244,6 +273,12 @@ pub struct DialogContent {
     pub message: String,
     /// Number of buttons in the button bar (drives the painted button count).
     pub button_count: usize,
+    /// Button labels in display order (left→right). An empty vec falls back to a
+    /// single "OK" button.
+    pub buttons: Vec<String>,
+    /// Index of the default/primary button within `buttons` (gets the `primary`
+    /// CSS accent). Clamped to the button range at render time.
+    pub default_button: usize,
 }
 
 /// A session-lifecycle request recorded by the shell (t57-f9).
@@ -756,6 +791,11 @@ impl Shell {
         // one that renders the `{{#each results}}` app grid (t59-shell — fixes the
         // empty-launcher defect; the default omitted the results loop).
         registry.register("launcher", SHELL_LAUNCHER_TEMPLATE);
+        // Register the modal dialog template + button partial (t65-s3): the
+        // dialog now renders through the DOM/CSS pipeline (title/message/button
+        // labels as real text) instead of the imperative blank-rect path.
+        registry.register("dialog", SHELL_DIALOG_TEMPLATE);
+        registry.register("dialog-button", SHELL_DIALOG_BUTTON_TEMPLATE);
         // Try loading from assets/templates on disk (overrides embedded defaults).
         //
         // NOTE (t57-f1): the search path is intentionally the CWD-relative

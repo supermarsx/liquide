@@ -259,6 +259,142 @@ fn dialog_request_routes_through_liquide_dialogs() {
     assert!(!shell.has_active_dialog());
 }
 
+/// t65-s3: the modal dialog renders through the DOM/CSS pipeline. After a
+/// message-dialog request + `sync_dom`, the DOM must carry the title, message,
+/// and a labelled button as REAL text-bearing elements (the prior imperative
+/// path painted a blank white header, an empty body, and an unlabelled button).
+#[test]
+fn dialog_dom_carries_title_message_and_button_label() {
+    let mut shell = Shell::new(1280.0, 720.0);
+    shell.request_message_dialog(
+        ShellDialogKind::Info,
+        "Confirm action",
+        "Are you sure you want to proceed?",
+    );
+    shell.sync_dom();
+
+    // The overlay element exists in the DOM.
+    let overlay = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("dialog-overlay")
+        .expect("dialog overlay must be added to the DOM when a dialog is open");
+
+    // Walk the overlay subtree. Text lives on child Text nodes, so for each
+    // text node read its parent element's tag to classify it.
+    let mut title_text = None;
+    let mut message_text = None;
+    let mut button_labels: Vec<String> = Vec::new();
+    let mut stack = vec![overlay];
+    while let Some(node_id) = stack.pop() {
+        if let Some(node) = shell.desktop_dom.doc.get(node_id) {
+            if let Some(text) = node.text_content() {
+                let parent_tag = shell
+                    .desktop_dom
+                    .doc
+                    .parent(node_id)
+                    .and_then(|p| shell.desktop_dom.doc.get(p))
+                    .map(|p| p.tag_name())
+                    .unwrap_or_default();
+                match parent_tag.as_str() {
+                    "dialog-title" => title_text = Some(text.to_string()),
+                    "dialog-message" => message_text = Some(text.to_string()),
+                    "dialog-button" => button_labels.push(text.to_string()),
+                    _ => {}
+                }
+            }
+        }
+        for &child in shell.desktop_dom.doc.children(node_id) {
+            stack.push(child);
+        }
+    }
+
+    assert_eq!(
+        title_text.as_deref(),
+        Some("Confirm action"),
+        "dialog-title must carry the title text"
+    );
+    assert_eq!(
+        message_text.as_deref(),
+        Some("Are you sure you want to proceed?"),
+        "dialog-message must carry the body text"
+    );
+    assert_eq!(
+        button_labels,
+        vec!["OK".to_string()],
+        "an Info dialog must render exactly one labelled OK button"
+    );
+
+    // Dismissing removes the overlay from the DOM.
+    shell.dismiss_active_dialog();
+    shell.sync_dom();
+    assert!(
+        shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("dialog-overlay")
+            .is_none(),
+        "dismissing the dialog must remove the overlay from the DOM"
+    );
+}
+
+/// t65-s3: a confirm dialog renders both buttons with their labels, and the
+/// rightmost (default) button is flagged primary so the CSS can accent it.
+#[test]
+fn dialog_dom_confirm_renders_both_button_labels() {
+    let mut shell = Shell::new(1280.0, 720.0);
+    shell.request_message_dialog(ShellDialogKind::Confirm, "Quit?", "Discard changes?");
+    shell.sync_dom();
+
+    let overlay = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("dialog-overlay")
+        .expect("confirm dialog overlay");
+
+    let mut labels: Vec<String> = Vec::new();
+    let mut primary_label = None;
+    let mut stack = vec![overlay];
+    while let Some(node_id) = stack.pop() {
+        if let Some(node) = shell.desktop_dom.doc.get(node_id) {
+            if let Some(text) = node.text_content() {
+                if let Some(parent) = shell
+                    .desktop_dom
+                    .doc
+                    .parent(node_id)
+                    .and_then(|p| shell.desktop_dom.doc.get(p))
+                {
+                    if parent.tag_name() == "dialog-button" {
+                        labels.push(text.to_string());
+                        if parent.has_class("primary") {
+                            primary_label = Some(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        for &child in shell.desktop_dom.doc.children(node_id) {
+            stack.push(child);
+        }
+    }
+
+    assert!(
+        labels.len() >= 2,
+        "a confirm dialog must render at least two labelled buttons, got {labels:?}"
+    );
+    assert!(
+        labels.iter().all(|l| !l.is_empty()),
+        "every dialog button must carry a non-empty label, got {labels:?}"
+    );
+    // Confirm dialogs default to "Yes" (default_button = 0), which must be the
+    // one flagged primary for the CSS accent.
+    assert_eq!(
+        primary_label.as_deref(),
+        Some("Yes"),
+        "the default (Yes) button must be flagged primary"
+    );
+}
+
 /// Rendered notification content is HTML-escaped (preserves the t50-e5 escaping
 /// discipline through the new center builder; no injection via summary/body).
 #[test]

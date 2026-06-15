@@ -96,6 +96,7 @@ impl Shell {
         self.sync_session_menu_template();
         self.sync_context_menu_template();
         self.sync_app_menu_template();
+        self.sync_dialog_template();
         self.sync_tooltip_template();
 
         // Keep the DOM viewport in sync with the screen rect.
@@ -412,6 +413,11 @@ impl Shell {
         ctx.set("dock_items", dock_items);
 
         self.apply_template("dock", "shell-dock", &ctx);
+        // Set the `:hover` pseudo-state on the hovered dock item so the themed
+        // `dock-item:hover` rule paints (the template only injects a `.hovered`
+        // class, which the theme does not style). Applied after the template so
+        // it targets the freshly-rendered item children (t65-s3).
+        self.desktop_dom.set_dock_hover(hover_idx);
         self.mark_wired(crate::shell::WiringBit::Dock);
     }
 
@@ -774,6 +780,11 @@ impl Shell {
             ctx.set("pos_top", &format!("{}px", menu_bounds.y.round() as i32));
 
             self.apply_overlay_template("session-menu", "session-menu", &ctx);
+            // Set the `:hover` pseudo-state on the highlighted item so the themed
+            // `menu-item:hover` rule paints the keyboard-nav highlight (the
+            // template carries no `.selected` rule the theme styles) (t65-s3).
+            self.desktop_dom
+                .set_menu_hover("session-menu", self.session_menu_hover_index);
         } else {
             self.remove_overlay("session-menu");
             self.template_cache.remove("session-menu");
@@ -823,6 +834,53 @@ impl Shell {
         } else {
             self.remove_overlay("context-menu");
             self.template_cache.remove("context-menu");
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // Modal dialog (message box / input)
+    // ══════════════════════════════════════════════════════════
+
+    /// Sync the modal dialog overlay (t65-s3). When a canonical dialog is open
+    /// (`chrome_dialog_content` set by `request_message_dialog` /
+    /// `request_input_dialog`), render the `dialog` template so the title,
+    /// message, and button LABELS paint as real text through the CSS pipeline.
+    /// Replaces the prior imperative blank-rect dialog in `scene.rs`.
+    fn sync_dialog_template(&mut self) {
+        if let Some(content) = self.chrome_dialog_content.clone() {
+            // Fall back to a single "OK" button when no labels were supplied.
+            let labels: Vec<String> = if content.buttons.is_empty() {
+                vec!["OK".to_string()]
+            } else {
+                content.buttons.clone()
+            };
+            // The default/primary button gets the `primary` accent. Clamp the
+            // canonical default index into range (falls back to the last button).
+            let primary_idx = content
+                .default_button
+                .min(labels.len().saturating_sub(1));
+            let buttons: Vec<TemplateContext> = labels
+                .iter()
+                .enumerate()
+                .map(|(i, label)| {
+                    let mut bc = TemplateContext::new();
+                    bc.set("index", &i.to_string());
+                    bc.set("label", label);
+                    bc.set("is_primary", i == primary_idx);
+                    bc
+                })
+                .collect();
+
+            let mut ctx = TemplateContext::new();
+            ctx.set("id", "dialog-overlay");
+            ctx.set("title", &content.title);
+            ctx.set("message", &content.message);
+            ctx.set("buttons", buttons);
+
+            self.apply_overlay_template("dialog", "dialog-overlay", &ctx);
+        } else {
+            self.remove_overlay("dialog-overlay");
+            self.template_cache.remove("dialog");
         }
     }
 

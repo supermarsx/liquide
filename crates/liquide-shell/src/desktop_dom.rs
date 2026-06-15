@@ -593,6 +593,24 @@ impl DesktopDocument {
         }
     }
 
+    /// Set the `:hover` pseudo-state on a dock item by index (t65-s3).
+    ///
+    /// The dock template injects a `.hovered` CLASS, but the theme styles the
+    /// `dock-item:hover` PSEUDO-class, so the class alone never triggers the
+    /// hover background/colour swap on the render path. This mirrors
+    /// [`set_launcher_hover`] / [`set_menu_hover`]: it sets `PseudoStateFlags::HOVER`
+    /// on the hovered dock item (and clears it on the others) so the themed
+    /// `:hover` rule actually paints.
+    pub fn set_dock_hover(&mut self, index: Option<usize>) {
+        if let Some(dock) = self.doc.get_element_by_id(element_ids::DOCK) {
+            let items: Vec<NodeId> = self.doc.children(dock).to_vec();
+            for (i, &item) in items.iter().enumerate() {
+                self.doc
+                    .set_pseudo_state(item, PseudoStateFlags::HOVER, index == Some(i));
+            }
+        }
+    }
+
     /// Set hover state on a launcher item by index.
     pub fn set_launcher_hover(&mut self, index: Option<usize>) {
         if let Some(launcher) = self.doc.get_element_by_id(element_ids::LAUNCHER) {
