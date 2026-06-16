@@ -87,7 +87,20 @@ impl Shell {
     /// Push current shell state into the desktop DOM tree.
     ///
     /// Called once per frame just before the CSS pipeline runs.
-    pub(crate) fn sync_dom(&mut self) {
+    ///
+    /// Returns `true` if any template actually mutated the DOM this frame
+    /// (i.e. chrome content changed). Each `sync_*_template` early-returns when
+    /// its per-template HTML cache matches the rendered output, so an unchanged
+    /// chrome touches nothing. We detect a change by watching the DOM's dirty
+    /// set grow: every DOM mutation marks the affected node(s) style/layout/
+    /// paint-dirty. The shell's full-scene cache (t76-scenecache) uses this to
+    /// distinguish a genuinely-idle frame (reuse the cached root) from a
+    /// chrome-changed frame (rebuild). The `doc.dirty` set is otherwise
+    /// monotonic in the shell flow, so we compare its size before/after rather
+    /// than its emptiness.
+    pub(crate) fn sync_dom(&mut self) -> bool {
+        let dirty_before = self.dom_dirty_len();
+
         self.sync_statusbar_template();
         self.sync_dock_template();
         self.sync_notifications_template();
@@ -106,7 +119,17 @@ impl Shell {
         // ── Thread coordinator fallback (remote rendering) ───
         self.sync_thread_coordinator();
 
+        let changed = self.dom_dirty_len() != dirty_before || self.dom_dirty;
         self.dom_dirty = false;
+        changed
+    }
+
+    /// Total number of DOM nodes currently flagged dirty (style+layout+paint).
+    /// Used by [`Shell::sync_dom`] to detect whether a template mutation
+    /// occurred this frame (the set only grows in the shell flow until cleared).
+    fn dom_dirty_len(&self) -> usize {
+        let d = &self.desktop_dom.doc.dirty;
+        d.style.len() + d.layout.len() + d.paint.len()
     }
 
     fn status_bar_item_text(&self, item: &StatusBarItem) -> String {

@@ -16,6 +16,11 @@ impl Shell {
         self.theme = theme;
         self.style_resolver = None;
         self.sync_pipeline_color_scheme();
+        // The window subtree paints from `self.theme` directly, so a theme swap
+        // must invalidate both the window-scene cache (signature) and the
+        // full-scene cache (t76-scenecache) — otherwise a steady-state hit could
+        // reuse a root painted with the old theme colors.
+        self.mark_window_scene_dirty();
     }
 
     /// Build the default Night CSS theme and its style resolver.
@@ -61,6 +66,7 @@ impl Shell {
                 // (t65-s2 item 5 / TODO 14 shell wiring).
                 self.update_style_resolver_context();
                 self.sync_pipeline_color_scheme();
+                self.mark_window_scene_dirty();
             }
             Err(e) => tracing::warn!("Failed to load CSS theme: {}", e),
         }
@@ -75,6 +81,7 @@ impl Shell {
             .set_theme(theme_loader::default_theme_css());
         self.update_style_resolver_context();
         self.sync_pipeline_color_scheme();
+        self.mark_window_scene_dirty();
     }
 
     pub(crate) fn preferred_color_scheme_for_theme(theme: &ShellTheme) -> &'static str {

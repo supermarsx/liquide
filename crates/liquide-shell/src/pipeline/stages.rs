@@ -115,6 +115,32 @@ impl DesktopPipeline {
         self.last_display_list = None;
     }
 
+    /// Whether the pipeline's cached chrome output is stable and reusable this
+    /// frame: every cache (styles / layout / display-list) is populated AND no
+    /// animation or transition is running.
+    ///
+    /// This is the *chrome* half of the shell-level full-scene cache predicate
+    /// (`Shell::build_scene`). Combined by the caller with "sync_dom mutated
+    /// nothing this frame" (the shell's chrome-changed signal), a `true` here
+    /// means the CSS chrome subtree would be byte-identical to the previous
+    /// frame, so the shell may reuse its cached assembled root instead of
+    /// re-running the pipeline + scene bridge + hit-test rebuild + root
+    /// reassembly. We do NOT check `doc.dirty` here: in the shell flow that set
+    /// is monotonic (never cleared per-frame), so emptiness is not a reliable
+    /// idle signal — the shell tracks chrome changes via `sync_dom`'s return
+    /// instead. A theme / viewport / color-scheme change calls
+    /// `invalidate_cached_output`, which clears the caches and makes this return
+    /// `false`, so those paths correctly force a rebuild.
+    #[must_use]
+    pub fn chrome_output_stable(&self) -> bool {
+        let caches_populated = self.last_styles.is_some()
+            && self.last_layout.is_some()
+            && self.last_display_list.is_some();
+        let animating =
+            self.transition_engine.active_count() > 0 || self.animation_scheduler.active_count() > 0;
+        caches_populated && !animating
+    }
+
     /// Set the font database for real text measurement.
     ///
     /// When set, the pipeline will use real glyph metrics from loaded

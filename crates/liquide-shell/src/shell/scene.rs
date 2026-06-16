@@ -30,6 +30,88 @@ fn themed_alpha(mut color: Color, alpha: u8) -> Color {
     color
 }
 
+/// Lightweight counters for the full-scene (whole `build_scene` root) cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FullSceneCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub dirty: bool,
+    pub cached: bool,
+}
+
+/// Retains the complete assembled `build_scene` root across idle frames
+/// (t76-scenecache).
+///
+/// On a steady-state frame where nothing that affects the scene has changed,
+/// `build_scene` returns a clone of [`Self::node`] instead of re-running the
+/// whole assembly (sync_dom bridge + CSS pipeline + HitTest rebuild + manual
+/// root reassembly). The `dirty` flag is the conservative invalidation channel:
+/// it starts `true` (no cache yet) and is set by [`Shell::mark_full_scene_dirty`]
+/// — which the existing [`Shell::mark_window_scene_dirty`] also calls, so every
+/// window-affecting state path already invalidates this cache too. Chrome /
+/// animation / cursor-blink changes are caught by the additional predicate in
+/// `build_scene` (pipeline fast-path + blink check), never by a stale clone.
+#[derive(Debug)]
+pub(crate) struct FullSceneCache {
+    node: Option<SceneNode>,
+    hits: u64,
+    misses: u64,
+    dirty: bool,
+}
+
+impl FullSceneCache {
+    pub(crate) fn new() -> Self {
+        Self {
+            node: None,
+            hits: 0,
+            misses: 0,
+            dirty: true,
+        }
+    }
+
+    /// Mark the cache stale so the next `build_scene` rebuilds.
+    pub(crate) fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    fn dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Clone the cached root, if one is retained.
+    fn node_clone(&self) -> Option<SceneNode> {
+        self.node.clone()
+    }
+
+    fn record_hit(&mut self) {
+        self.hits = self.hits.saturating_add(1);
+    }
+
+    fn record_miss(&mut self) {
+        self.misses = self.misses.saturating_add(1);
+    }
+
+    fn store(&mut self, node: SceneNode) {
+        self.node = Some(node);
+        self.dirty = false;
+    }
+
+    pub(crate) fn stats(&self) -> FullSceneCacheStats {
+        FullSceneCacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            dirty: self.dirty,
+            cached: self.node.is_some(),
+        }
+    }
+}
+
+impl Default for FullSceneCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Retains the manually assembled active-workspace/window subtree.
 #[derive(Debug)]
 pub(crate) struct WindowSceneCache {
@@ -340,14 +422,33 @@ fn f32_signature(value: f32) -> u32 {
 
 impl Shell {
     /// Explicitly invalidate the retained manual window subtree.
+    ///
+    /// This also invalidates the full-scene cache (t76-scenecache): every
+    /// state path that changes the window subtree already routes through here,
+    /// so funnelling the full-scene invalidation through the same method means
+    /// no window-affecting mutation can leave a stale cached root behind.
     pub fn mark_window_scene_dirty(&mut self) {
         self.window_scene_cache.mark_dirty();
+        self.full_scene_cache.mark_dirty();
+    }
+
+    /// Explicitly invalidate the cached full `build_scene` root (t76-scenecache)
+    /// without touching the window subtree cache. Used by paths that affect the
+    /// assembled root (chrome/overlay composition) but not the window subtree.
+    pub fn mark_full_scene_dirty(&mut self) {
+        self.full_scene_cache.mark_dirty();
     }
 
     /// Return counters for the retained manual window subtree cache.
     #[must_use]
     pub fn window_scene_cache_stats(&self) -> WindowSceneCacheStats {
         self.window_scene_cache.stats()
+    }
+
+    /// Return counters for the full-scene (whole `build_scene` root) cache.
+    #[must_use]
+    pub fn full_scene_cache_stats(&self) -> FullSceneCacheStats {
+        self.full_scene_cache.stats()
     }
 
     /// Build the complete shell scene graph.
@@ -358,7 +459,10 @@ impl Shell {
     /// they require complex interactive state (decoration buttons, hover
     /// indices, z-ordered content surfaces) that the pipeline does not model.
     pub fn build_scene(&mut self) -> SceneNode {
-        // Toggle cursor blink every 500ms
+        // Toggle cursor blink every 500ms. A toggle changes the painted scene
+        // (terminal/app caret + the window-scene signature), so when it flips we
+        // must NOT reuse the cached root this frame — invalidate the full-scene
+        // cache up front.
         let now_us = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -366,12 +470,53 @@ impl Shell {
         if now_us.saturating_sub(self.cursor_blink_time_us) >= 500_000 {
             self.cursor_blink_on = !self.cursor_blink_on;
             self.cursor_blink_time_us = now_us;
+            self.full_scene_cache.mark_dirty();
         }
 
         let screen = self.screen_rect;
 
         // ── Synchronise DOM with current shell state ────────
-        self.sync_dom();
+        // Always run sync_dom: it owns the per-template HTML cache and only
+        // mutates the DOM when chrome content actually changed. Its return value
+        // is the per-frame "chrome changed?" signal the reuse predicate needs
+        // (the DOM `dirty` set is monotonic in the shell flow, so we cannot use
+        // its emptiness — sync_dom watches it GROW instead).
+        let chrome_changed = self.sync_dom();
+
+        // ── Idle full-scene cache fast path (t76-scenecache) ──────────────
+        // Steady-state frames rebuilt the entire scene (~27ms: pipeline +
+        // scene bridge + HitTest rebuild + manual root reassembly) even when
+        // nothing changed. Reuse the cached root when EVERY scene input is
+        // clean:
+        //   (a) the full-scene cache is not dirty — no window/state/theme/
+        //       overlay mutation since the last build (mark_window_scene_dirty /
+        //       mark_full_scene_dirty trip this on every such path), and the
+        //       cursor blink did not toggle this frame;
+        //   (b) sync_dom mutated nothing this frame (chrome content unchanged)
+        //       AND the pipeline's cached chrome output is stable (caches
+        //       populated, no animation/transition) — so the chrome subtree is
+        //       byte-identical to last frame;
+        //   (c) the timer-driven dock-hover tooltip overlay is neither visible
+        //       now nor was visible last frame (it can flip from elapsed time
+        //       alone, with no DOM/state mutation), so a cached root can never
+        //       drop its appearance/disappearance.
+        // The hit-test engine, pending images, and pipeline caches all stay
+        // valid across a hit because they reflect the same unchanged frame.
+        let tooltip_visible_now = self.tooltip_manager_visible();
+        let chrome_stable = !chrome_changed && self.css_pipeline.chrome_output_stable();
+        if !self.full_scene_cache.dirty()
+            && chrome_stable
+            && !tooltip_visible_now
+            && !self.last_full_scene_tooltip_visible
+        {
+            if let Some(cached) = self.full_scene_cache.node_clone() {
+                self.full_scene_cache.record_hit();
+                self.last_full_scene_tooltip_visible = false;
+                return cached;
+            }
+        }
+        self.full_scene_cache.record_miss();
+        self.last_full_scene_tooltip_visible = tooltip_visible_now;
 
         // ── Run the CSS pipeline (all shell chrome) ─────────
         let (pipeline_nodes, pipeline_output, _animations_active) =
@@ -532,6 +677,13 @@ impl Shell {
             self.add_lockscreen_overlay(&mut root, screen, LOCK_Z_BASE);
         }
 
+        // ── Retain the assembled root for idle-frame reuse (t76-scenecache) ──
+        // Store a clone so the next steady-state frame can return this exact
+        // root without rebuilding. `store` clears the dirty flag; any subsequent
+        // state mutation re-trips it via mark_window_scene_dirty /
+        // mark_full_scene_dirty, and chrome/animation/blink/tooltip changes are
+        // re-checked by the reuse predicate at the top of the next build.
+        self.full_scene_cache.store(root.clone());
         root
     }
 

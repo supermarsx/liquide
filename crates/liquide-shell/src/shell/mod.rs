@@ -402,6 +402,23 @@ pub struct Shell {
     pub(crate) desktop_dom: DesktopDocument,
     pub(crate) css_pipeline: DesktopPipeline,
     pub(crate) window_scene_cache: scene::WindowSceneCache,
+    /// Retains the fully assembled `build_scene` root across idle frames
+    /// (t76-scenecache). When the DOM/state/layout are clean (the CSS pipeline
+    /// fast-path applies, no animation, no window-scene mutation, no cursor
+    /// blink toggle this frame), `build_scene` clones this cached root instead
+    /// of re-running sync_dom's bridge + the pipeline + the HitTest rebuild +
+    /// the manual root reassembly. Invalidated conservatively by
+    /// [`Shell::mark_full_scene_dirty`] (which `mark_window_scene_dirty` also
+    /// trips) and by any observed pipeline/DOM work or blink toggle.
+    pub(crate) full_scene_cache: scene::FullSceneCache,
+    /// Whether the dock-hover tooltip overlay was emitted on the *previous*
+    /// `build_scene` (t76-scenecache). The tooltip is a timer-driven manual
+    /// overlay whose visibility can flip purely from elapsed time (no DOM
+    /// dirtying, no `mark_window_scene_dirty`), so the full-scene cache must not
+    /// reuse a cached root across a frame where the tooltip just appeared or
+    /// disappeared. Tracking last-frame visibility lets the predicate force a
+    /// rebuild on the transition frame in addition to whenever it is visible.
+    pub(crate) last_full_scene_tooltip_visible: bool,
     pub(crate) dom_dirty: bool,
     pub(crate) event_dispatcher: EventDispatcher,
     /// Shared "default prevented" flag for the DOM dispatch path (t65-s2).
@@ -648,6 +665,8 @@ impl Shell {
             desktop_dom,
             css_pipeline,
             window_scene_cache: scene::WindowSceneCache::new(),
+            full_scene_cache: scene::FullSceneCache::new(),
+            last_full_scene_tooltip_visible: false,
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
             dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -789,6 +808,8 @@ impl Shell {
             desktop_dom,
             css_pipeline,
             window_scene_cache: scene::WindowSceneCache::new(),
+            full_scene_cache: scene::FullSceneCache::new(),
+            last_full_scene_tooltip_visible: false,
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
             dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
