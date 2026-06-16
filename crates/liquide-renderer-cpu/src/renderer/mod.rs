@@ -447,6 +447,22 @@ impl SoftwareRenderer {
         self.blur_budget_ms = budget;
     }
 
+    /// Number of cached blur results (test-only diagnostic).
+    #[cfg(test)]
+    #[must_use]
+    pub fn blur_cache_len(&self) -> usize {
+        self.blur_worker.cache_len()
+    }
+
+    /// Drain completed async blur results into the cache (test-only).
+    ///
+    /// Production code drains at the top of [`render`]; tests use this to
+    /// observe the cache without driving a full frame.
+    #[cfg(test)]
+    pub fn poll_blur_results(&mut self) {
+        self.blur_worker.poll_results();
+    }
+
     /// Report the most recent frame's render time so the renderer can
     /// adaptively toggle blur.
     pub fn report_render_time(&mut self, render_ms: f64) {

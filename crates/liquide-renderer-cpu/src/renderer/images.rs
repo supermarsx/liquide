@@ -48,14 +48,27 @@ impl SoftwareRenderer {
                         )
                     }
                     liquide_compositor::scene::ImageFit::Cover => {
-                        let scale = (dst_w / src_w).max(dst_h / src_h);
+                        // A Cover image MUST leave no uncovered edge of its
+                        // destination. When the image is a desktop-background-
+                        // scale surface (it spans almost the whole framebuffer
+                        // and its bounds hug the framebuffer edges), snap the
+                        // destination out to the framebuffer so a layout-origin
+                        // quirk (e.g. a desktop-background box that starts a few
+                        // px in from x=0) cannot leave a black strip along an
+                        // edge. Cover then re-crops against the full-screen dst,
+                        // still fully covering with no bars. Small / inset
+                        // images (icons, thumbnails) keep their exact bounds.
+                        let cover_dst = Self::cover_destination_rect(bounds, fb);
+                        let cdw = cover_dst.width;
+                        let cdh = cover_dst.height;
+                        let scale = (cdw / src_w).max(cdh / src_h);
                         let scaled_w = src_w * scale;
                         let scaled_h = src_h * scale;
-                        let crop_x = ((scaled_w - dst_w) / 2.0) / scale;
-                        let crop_y = ((scaled_h - dst_h) / 2.0) / scale;
+                        let crop_x = ((scaled_w - cdw) / 2.0) / scale;
+                        let crop_y = ((scaled_h - cdh) / 2.0) / scale;
                         (
                             Rect::new(crop_x, crop_y, src_w - crop_x * 2.0, src_h - crop_y * 2.0),
-                            bounds,
+                            cover_dst,
                         )
                     }
                     liquide_compositor::scene::ImageFit::None => {
@@ -121,6 +134,54 @@ impl SoftwareRenderer {
             }
             let _ = (width, height);
         }
+    }
+
+    /// Destination rect for a Cover-fit image, snapped out to the framebuffer
+    /// when the image is a near-full-screen desktop background.
+    ///
+    /// A Cover image is meant to fully cover its box with no uncovered edge. If
+    /// the box itself starts a few pixels in from the framebuffer origin (a
+    /// layout-origin quirk for the desktop-background element), Cover dutifully
+    /// fills only the box and leaves a black strip along the framebuffer edge.
+    /// For a background-scale image we extend the destination to whichever
+    /// framebuffer edges the box already hugs, eliminating the strip while
+    /// keeping genuinely small / inset images at their exact bounds.
+    fn cover_destination_rect(bounds: Rect, fb: &FrameBuffer) -> Rect {
+        let fb_w = fb.width as f32;
+        let fb_h = fb.height as f32;
+        if fb_w <= 0.0 || fb_h <= 0.0 {
+            return bounds;
+        }
+
+        // Only background-scale images qualify: the box must span most of the
+        // framebuffer in both axes. Smaller images keep their exact bounds.
+        let covers_most =
+            bounds.width >= fb_w * 0.85 && bounds.height >= fb_h * 0.85;
+        if !covers_most {
+            return bounds;
+        }
+
+        // Snap an edge out to the framebuffer only when the box already hugs it
+        // within a small slack (the observed layout strip is ~50px). This keeps
+        // a deliberately offset large image from being yanked to the corner.
+        let slack = (fb_w.max(fb_h) * 0.1).max(64.0);
+        let mut left = bounds.x;
+        let mut top = bounds.y;
+        let mut right = bounds.right();
+        let mut bottom = bounds.bottom();
+        if left > 0.0 && left <= slack {
+            left = 0.0;
+        }
+        if top > 0.0 && top <= slack {
+            top = 0.0;
+        }
+        if right < fb_w && right >= fb_w - slack {
+            right = fb_w;
+        }
+        if bottom < fb_h && bottom >= fb_h - slack {
+            bottom = fb_h;
+        }
+        Rect::new(left, top, right - left, bottom - top)
     }
 
     /// Render a BackgroundFill scene node.
@@ -916,6 +977,100 @@ mod tests {
         assert!(
             !(center.r == 128 && center.g == 128 && center.b == 128),
             "registered image must rasterize real texels, not the unloaded placeholder"
+        );
+    }
+
+    #[test]
+    fn cover_background_with_left_inset_bounds_covers_x0_no_strip() {
+        use liquide_compositor::geometry::Affine2D;
+        use liquide_compositor::scene::ImageFit;
+
+        // Fully-opaque 4x4 red texture.
+        let mut renderer = SoftwareRenderer::new();
+        renderer.register_image_rgba(88, vec![255u8; 4 * 4 * 4], 4, 4);
+
+        // Wallpaper-scale Cover node, but its layout box starts at x=50 (the
+        // observed desktop-background origin quirk) on a 200x120 framebuffer.
+        // Cover must still cover the framebuffer edge-to-edge — no black strip.
+        let node = FlatNode {
+            id: 88,
+            kind: SceneNodeKind::Image {
+                image_id: 88,
+                width: 4,
+                height: 4,
+                fit: ImageFit::Cover,
+            }
+            .into(),
+            absolute_bounds: Rect::new(50.0, 0.0, 200.0, 120.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+
+        let mut fb = FrameBuffer::new(200, 120, PixelFormat::Bgra8);
+        let damage = full_damage();
+        renderer
+            .render(std::slice::from_ref(&node), &mut fb, &damage)
+            .unwrap();
+
+        // Every framebuffer pixel, including the left edge column the box did
+        // NOT originally span, must be an opaque texel (the wallpaper), never
+        // an uncovered (transparent/black) strip.
+        for y in [0u32, 60, 119] {
+            for x in [0u32, 1, 25, 49, 100, 199] {
+                let p = fb.get_pixel(x, y);
+                assert_eq!(
+                    p.a, 255,
+                    "Cover wallpaper must cover pixel ({x},{y}) — no uncovered left strip"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cover_small_inset_image_keeps_its_bounds() {
+        use liquide_compositor::geometry::Affine2D;
+        use liquide_compositor::scene::ImageFit;
+
+        // A small Cover image well inside the framebuffer must NOT be snapped to
+        // the edges (only background-scale images are).
+        let mut renderer = SoftwareRenderer::new();
+        renderer.register_image_rgba(89, vec![255u8; 4 * 4 * 4], 4, 4);
+
+        let node = FlatNode {
+            id: 89,
+            kind: SceneNodeKind::Image {
+                image_id: 89,
+                width: 4,
+                height: 4,
+                fit: ImageFit::Cover,
+            }
+            .into(),
+            absolute_bounds: Rect::new(40.0, 40.0, 20.0, 20.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+
+        let mut fb = FrameBuffer::new(200, 120, PixelFormat::Bgra8);
+        let damage = full_damage();
+        renderer
+            .render(std::slice::from_ref(&node), &mut fb, &damage)
+            .unwrap();
+
+        // Inside the box: painted.
+        assert_eq!(fb.get_pixel(50, 50).a, 255, "small image paints its own box");
+        // Far corner: untouched (the small image was not snapped to the edges).
+        assert_eq!(
+            fb.get_pixel(0, 0).a,
+            0,
+            "a small inset Cover image must not be expanded to the framebuffer"
         );
     }
 

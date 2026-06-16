@@ -26,8 +26,13 @@ const MAX_BLUR_CACHE: usize = 128;
 // ---------------------------------------------------------------------------
 
 /// A blur job sent to the worker thread.
+///
+/// `key` is a STABLE cache key derived render-side from the blur region's
+/// pixel-snapped geometry, radius and a hash of the underlying backdrop
+/// content — NOT the per-frame-churning scene-node id. This is what lets a
+/// steady glass surface hit the cache (see `render_backdrop_blur`).
 struct BlurRequest {
-    node_id: NodeId,
+    key: NodeId,
     /// BGRA backdrop pixels extracted from the framebuffer.
     pixels: Vec<u8>,
     width: u32,
@@ -65,9 +70,9 @@ pub(crate) struct BlurWorker {
     result_rx: mpsc::Receiver<(NodeId, CachedBlur)>,
     /// Worker thread handle — joined on drop.
     handle: Option<JoinHandle<()>>,
-    /// Most recent blur result per node, used for compositing.
+    /// Most recent blur result per stable blur key, used for compositing.
     cache: HashMap<NodeId, CachedBlur>,
-    /// Node IDs with pending blur requests (submitted since last poll).
+    /// Stable blur keys with pending blur requests (submitted since last poll).
     pending: HashSet<NodeId>,
     /// Monotonically increasing frame counter for staleness tracking.
     frame: u64,
@@ -117,21 +122,21 @@ impl BlurWorker {
                 WorkerMsg::Shutdown => break,
                 WorkerMsg::Blur(req) => {
                     // Drain all additional pending messages and keep only
-                    // the latest request per node ID.
+                    // the latest request per stable blur key.
                     let mut pending: HashMap<NodeId, BlurRequest> = HashMap::new();
-                    pending.insert(req.node_id, req);
+                    pending.insert(req.key, req);
 
                     while let Ok(msg) = rx.try_recv() {
                         match msg {
                             WorkerMsg::Shutdown => return,
                             WorkerMsg::Blur(r) => {
-                                pending.insert(r.node_id, r);
+                                pending.insert(r.key, r);
                             }
                         }
                     }
 
-                    // Process each unique node's latest request.
-                    for (node_id, req) in pending {
+                    // Process each unique key's latest request.
+                    for (key, req) in pending {
                         let blurred =
                             Self::compute_blur(req.pixels, req.width, req.height, req.radius);
 
@@ -141,7 +146,7 @@ impl BlurWorker {
                             height: req.height,
                         };
 
-                        if tx.send((node_id, result)).is_err() {
+                        if tx.send((key, result)).is_err() {
                             return; // receiver dropped
                         }
                     }
@@ -184,9 +189,9 @@ impl BlurWorker {
     /// Call this at the start of each frame before rendering.
     pub fn poll_results(&mut self) {
         self.frame += 1;
-        while let Ok((node_id, result)) = self.result_rx.try_recv() {
-            self.pending.remove(&node_id);
-            self.cache.insert(node_id, result);
+        while let Ok((key, result)) = self.result_rx.try_recv() {
+            self.pending.remove(&key);
+            self.cache.insert(key, result);
         }
         // Evict oldest half when cache exceeds capacity.
         if self.cache.len() > MAX_BLUR_CACHE {
@@ -202,21 +207,21 @@ impl BlurWorker {
         }
     }
 
-    /// Check whether a blur request is already pending for this node.
+    /// Check whether a blur request is already pending for this key.
     ///
     /// Used to avoid redundant snapshot allocations when the worker
     /// already has a request in-flight.
-    pub fn has_pending(&self, node_id: NodeId) -> bool {
-        self.pending.contains(&node_id)
+    pub fn has_pending(&self, key: NodeId) -> bool {
+        self.pending.contains(&key)
     }
 
-    /// Look up a cached blur result for a node.
+    /// Look up a cached blur result for a stable blur key.
     ///
     /// Returns `None` if no result is cached or the cached dimensions
     /// don't match (e.g. after a resize).
-    pub fn get_cached(&self, node_id: NodeId, width: u32, height: u32) -> Option<&CachedBlur> {
+    pub fn get_cached(&self, key: NodeId, width: u32, height: u32) -> Option<&CachedBlur> {
         self.cache
-            .get(&node_id)
+            .get(&key)
             .filter(|c| c.width == width && c.height == height)
     }
 
@@ -224,17 +229,17 @@ impl BlurWorker {
     /// frame via [`get_cached`].
     pub fn request_blur(
         &mut self,
-        node_id: NodeId,
+        key: NodeId,
         pixels: Vec<u8>,
         width: u32,
         height: u32,
         radius: u32,
     ) {
-        self.pending.insert(node_id);
+        self.pending.insert(key);
         if self
             .request_tx
             .send(WorkerMsg::Blur(BlurRequest {
-                node_id,
+                key,
                 pixels,
                 width,
                 height,
@@ -242,17 +247,22 @@ impl BlurWorker {
             }))
             .is_err()
         {
-            self.pending.remove(&node_id);
+            self.pending.remove(&key);
             tracing::warn!(
-                "blur worker channel closed; dropping blur request for node {}",
-                node_id
+                "blur worker channel closed; dropping blur request for key {}",
+                key
             );
         }
     }
 
-    /// Remove cached entries for nodes no longer in the scene.
-    pub fn retain_nodes(&mut self, active_ids: &[NodeId]) {
-        self.cache.retain(|id, _| active_ids.contains(id));
+    /// Remove cached entries whose key is not in `active_keys`.
+    ///
+    /// The blur cache is keyed on stable content/geometry keys (see
+    /// `render_backdrop_blur`), so this is a generic key-retain helper; it is
+    /// not driven by per-frame scene-node ids. Stale entries are bounded by the
+    /// LRU eviction in [`poll_results`] regardless.
+    pub fn retain_nodes(&mut self, active_keys: &[NodeId]) {
+        self.cache.retain(|id, _| active_keys.contains(id));
     }
 
     /// Clear the entire blur cache.

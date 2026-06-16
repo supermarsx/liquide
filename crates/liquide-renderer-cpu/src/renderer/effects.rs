@@ -387,9 +387,19 @@ impl SoftwareRenderer {
     ///
     /// Blits any cached result and submits a new blur request if needed.
     /// Used by Glass, BlurBackdrop, BlurCache, and LockScreen nodes.
+    ///
+    /// The blur cache is keyed on STABLE attributes — pixel-snapped geometry,
+    /// blur radius, and a hash of the underlying backdrop content — rather than
+    /// the scene-node id. Scene-node ids are rebuilt every frame in the shell,
+    /// so a node-id key never hit and the blur was recomputed (or dropped to a
+    /// tint-only fill) on every frame, causing glass blur to flicker / not
+    /// render. With a content+geometry key, a steady glass surface over steady
+    /// content hits the cache and shows a stable blur; when the geometry, radius
+    /// or underlying content actually changes the key changes and the blur is
+    /// recomputed — exactly the correct invalidation behaviour.
     pub(crate) fn render_backdrop_blur(
         &mut self,
-        node_id: NodeId,
+        _node_id: NodeId,
         bounds: Rect,
         radius: u32,
         fb: &mut FrameBuffer,
@@ -405,8 +415,22 @@ impl SoftwareRenderer {
             return;
         }
 
+        // Snapshot the backdrop first so its content can participate in the
+        // stable cache key (a steady backdrop yields a steady key → cache hit).
+        let mut snapshot = vec![0u8; (w * h * 4) as usize];
+        for row in 0..h {
+            let src_off = fb.pixel_offset(x0, y0 + row);
+            let dst_off = (row * w * 4) as usize;
+            let bytes = (w * 4) as usize;
+            snapshot[dst_off..dst_off + bytes].copy_from_slice(
+                &fb.pixels_mut().expect("CPU framebuffer required")[src_off..src_off + bytes],
+            );
+        }
+
+        let key = Self::stable_blur_key(x0, y0, w, h, radius, &snapshot);
+
         // Blit cached blur result if available.
-        let has_cache = if let Some(cached) = self.blur_worker.get_cached(node_id, w, h) {
+        let has_cache = if let Some(cached) = self.blur_worker.get_cached(key, w, h) {
             for row in 0..h {
                 let src_off = (row * w * 4) as usize;
                 let dst_off = fb.pixel_offset(x0, y0 + row);
@@ -424,19 +448,41 @@ impl SoftwareRenderer {
         };
 
         // Submit new blur request if worker doesn't have one pending.
-        if !has_cache || !self.blur_worker.has_pending(node_id) {
-            let mut snapshot = vec![0u8; (w * h * 4) as usize];
-            for row in 0..h {
-                let src_off = fb.pixel_offset(x0, y0 + row);
-                let dst_off = (row * w * 4) as usize;
-                let bytes = (w * 4) as usize;
-                snapshot[dst_off..dst_off + bytes].copy_from_slice(
-                    &fb.pixels_mut().expect("CPU framebuffer required")[src_off..src_off + bytes],
-                );
-            }
-            self.blur_worker
-                .request_blur(node_id, snapshot, w, h, radius);
+        if !has_cache || !self.blur_worker.has_pending(key) {
+            self.blur_worker.request_blur(key, snapshot, w, h, radius);
         }
+    }
+
+    /// Derive a stable blur-cache key from the region geometry, blur radius and
+    /// a hash of the underlying backdrop pixels.
+    ///
+    /// Independent of the (per-frame-churning) scene-node id: two frames whose
+    /// glass surface sits at the same pixel-snapped rect, with the same radius,
+    /// over the same backdrop content produce the same key and therefore reuse
+    /// the cached blur instead of recomputing it.
+    ///
+    /// The content is hashed in a sub-sampled stride to keep the per-frame cost
+    /// negligible for full-screen regions while still changing the key whenever
+    /// the backdrop visibly changes.
+    fn stable_blur_key(x0: u32, y0: u32, w: u32, h: u32, radius: u32, snapshot: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        x0.hash(&mut hasher);
+        y0.hash(&mut hasher);
+        w.hash(&mut hasher);
+        h.hash(&mut hasher);
+        radius.hash(&mut hasher);
+        snapshot.len().hash(&mut hasher);
+        // Sub-sample: hash at most ~4096 evenly spaced bytes so the cost is
+        // bounded regardless of region size. A single u8 step ensures small
+        // regions are hashed in full.
+        let step = (snapshot.len() / 4096).max(1);
+        let mut i = 0;
+        while i < snapshot.len() {
+            snapshot[i].hash(&mut hasher);
+            i += step;
+        }
+        hasher.finish()
     }
 }
 
@@ -469,4 +515,138 @@ fn partial_invert_matrix(amount: f32) -> [f32; 20] {
         0.0, 0.0, 0.0, 1.0, 0.0,
     ];
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_compositor::geometry::Affine2D;
+    use liquide_compositor::pixel::PixelFormat;
+    use liquide_compositor::scene::GlassParams;
+    use std::thread;
+    use std::time::Duration;
+
+    /// Paint a deterministic non-flat backdrop so the blur snapshot is non-trivial.
+    fn paint_backdrop(fb: &mut FrameBuffer) {
+        for y in 0..fb.height {
+            for x in 0..fb.width {
+                let c = Color::new((x * 7) as u8, (y * 5) as u8, ((x + y) * 3) as u8, 255);
+                fb.set_pixel(x, y, c);
+            }
+        }
+    }
+
+    fn glass_node(id: NodeId, bounds: Rect, radius: u32) -> FlatNode {
+        FlatNode {
+            id,
+            kind: SceneNodeKind::Glass(GlassParams {
+                blur_radius: radius,
+                tint_color: Color::new(255, 255, 255, 0), // no tint, isolate the blur
+                inner_glow: false,
+                parallax: false,
+            })
+            .into(),
+            absolute_bounds: bounds,
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    /// Spin until the worker has delivered enough blurs to reach `target`
+    /// cached entries (bounded).
+    fn await_blur_count(renderer: &mut SoftwareRenderer, target: usize) {
+        for _ in 0..200 {
+            renderer.poll_blur_results();
+            if renderer.blur_cache_len() >= target {
+                return;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A steady glass surface over steady content must HIT the blur cache even
+    /// though the scene-node id changes every frame. The stable key is derived
+    /// from geometry + radius + backdrop content, not the node id.
+    #[test]
+    fn steady_glass_surface_hits_blur_cache_despite_node_id_churn() {
+        let mut renderer = SoftwareRenderer::new();
+        let bounds = Rect::new(8.0, 8.0, 48.0, 32.0);
+
+        // Frame 1: node id 1 — submits a blur request (no cache yet).
+        let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        renderer.render_glass_node(&glass_node(1, bounds, 12), &mut fb, LodLevel::High, 1.0);
+
+        // Worker computes the blur off-thread; wait for it.
+        await_blur_count(&mut renderer, 1);
+        assert_eq!(
+            renderer.blur_cache_len(),
+            1,
+            "expected exactly one cached blur after the first frame"
+        );
+
+        // Frame 2: DIFFERENT node id (churn), same geometry/radius/backdrop.
+        let mut fb2 = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb2);
+        renderer.render_glass_node(&glass_node(99999, bounds, 12), &mut fb2, LodLevel::High, 1.0);
+
+        // The stable key matched → cache stayed at one entry (no new key added).
+        renderer.poll_blur_results();
+        assert_eq!(
+            renderer.blur_cache_len(),
+            1,
+            "node-id churn must not add a second cache entry for a steady surface"
+        );
+
+        // And the cached blur was actually blitted: the glass region is no longer
+        // a verbatim copy of the sharp backdrop (blur softened it).
+        let sharp = {
+            let mut s = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+            paint_backdrop(&mut s);
+            s
+        };
+        let mut differs = false;
+        for y in 9..39 {
+            for x in 9..55 {
+                if fb2.get_pixel(x, y) != sharp.get_pixel(x, y) {
+                    differs = true;
+                }
+            }
+        }
+        assert!(differs, "cached blur should have been composited into the glass region");
+    }
+
+    /// When the underlying backdrop content changes, the stable key changes, so
+    /// the blur is recomputed (a second cache entry appears) — correct
+    /// invalidation, not a stale blur.
+    #[test]
+    fn changed_backdrop_content_produces_a_new_blur_key() {
+        let mut renderer = SoftwareRenderer::new();
+        let bounds = Rect::new(8.0, 8.0, 48.0, 32.0);
+
+        let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        renderer.render_glass_node(&glass_node(1, bounds, 12), &mut fb, LodLevel::High, 1.0);
+        await_blur_count(&mut renderer, 1);
+        assert_eq!(renderer.blur_cache_len(), 1);
+
+        // Same node id, same geometry/radius, but a DIFFERENT backdrop.
+        let mut fb2 = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+        for y in 0..fb2.height {
+            for x in 0..fb2.width {
+                fb2.set_pixel(x, y, Color::new(200, 30, 90, 255));
+            }
+        }
+        renderer.render_glass_node(&glass_node(1, bounds, 12), &mut fb2, LodLevel::High, 1.0);
+        await_blur_count(&mut renderer, 2);
+        assert_eq!(
+            renderer.blur_cache_len(),
+            2,
+            "a changed backdrop must produce a new key → a fresh blur entry"
+        );
+    }
 }
