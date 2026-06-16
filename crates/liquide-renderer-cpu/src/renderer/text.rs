@@ -377,7 +377,14 @@ impl SoftwareRenderer {
                                         s_pen_y + glyph_height as f32,
                                     );
                                     let advance = cached.advance;
-                                    self.glyph_atlas.blit_glyph(fb, cached, pos, shadow_c, clip);
+                                    self.glyph_atlas.blit_glyph(
+                                        fb,
+                                        cached,
+                                        pos,
+                                        shadow_c,
+                                        clip,
+                                        &self.srgb_lut,
+                                    );
                                     let extra = if ch == ' ' { *word_spacing } else { 0.0 };
                                     s_pen_x += advance + *letter_spacing + extra;
                                 } else {
@@ -451,7 +458,14 @@ impl SoftwareRenderer {
                                     pen_x,
                                     pen_y + glyph_height as f32,
                                 );
-                                self.glyph_atlas.blit_glyph(fb, cached, pos, c, clip);
+                                self.glyph_atlas.blit_glyph(
+                                    fb,
+                                    cached,
+                                    pos,
+                                    c,
+                                    clip,
+                                    &self.srgb_lut,
+                                );
                             }
                             break;
                         }
@@ -468,7 +482,8 @@ impl SoftwareRenderer {
                                 pen_y + glyph_height as f32,
                             );
                             let advance = cached.advance;
-                            self.glyph_atlas.blit_glyph(fb, cached, pos, c, clip);
+                            self.glyph_atlas
+                                .blit_glyph(fb, cached, pos, c, clip, &self.srgb_lut);
 
                             // text-emphasis: draw the mark centered over (or
                             // under) this character. Skip whitespace — emphasis
@@ -482,16 +497,14 @@ impl SoftwareRenderer {
                                             size_px: emphasis_size_px,
                                             subpixel: false,
                                         };
-                                        if let Some(mark_glyph) =
-                                            self.glyph_atlas.get(&mark_key)
-                                        {
+                                        if let Some(mark_glyph) = self.glyph_atlas.get(&mark_key) {
                                             let mut mc = emph.color.unwrap_or(c);
                                             if opacity < 1.0 {
                                                 mc.a = (mc.a as f32 * opacity + 0.5) as u8;
                                             }
                                             // Center the mark over the character cell.
-                                            let mark_x = pen_x
-                                                + (advance - mark_glyph.advance) * 0.5;
+                                            let mark_x =
+                                                pen_x + (advance - mark_glyph.advance) * 0.5;
                                             use liquide_compositor::scene::TextEmphasisPosition;
                                             let mark_y = match emph.position {
                                                 TextEmphasisPosition::Over => {
@@ -510,12 +523,17 @@ impl SoftwareRenderer {
                                                         + emphasis_height as f32
                                                 }
                                             };
-                                            let mark_pos =
-                                                liquide_compositor::geometry::Point::new(
-                                                    mark_x, mark_y,
-                                                );
-                                            self.glyph_atlas
-                                                .blit_glyph(fb, mark_glyph, mark_pos, mc, clip);
+                                            let mark_pos = liquide_compositor::geometry::Point::new(
+                                                mark_x, mark_y,
+                                            );
+                                            self.glyph_atlas.blit_glyph(
+                                                fb,
+                                                mark_glyph,
+                                                mark_pos,
+                                                mc,
+                                                clip,
+                                                &self.srgb_lut,
+                                            );
                                         }
                                     }
                                 }

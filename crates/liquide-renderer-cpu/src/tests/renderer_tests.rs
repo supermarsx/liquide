@@ -173,14 +173,28 @@ fn full_damage_rasters_whole_surface() {
     let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
     let damage = DamageSet::full(tile, w / tile, h / tile, DamageClass::UiPrimitive);
 
-    let node = bg_node(1, Rect::new(0.0, 0.0, w as f32, h as f32), Color::new(0, 255, 0, 255));
+    let node = bg_node(
+        1,
+        Rect::new(0.0, 0.0, w as f32, h as f32),
+        Color::new(0, 255, 0, 255),
+    );
     renderer
         .render_live(&[node], &mut fb, &damage, RenderMode::LiveCursor)
         .unwrap();
 
     // Corners and center all painted.
-    for (x, y) in [(2, 2), (w - 2, 2), (2, h - 2), (w - 2, h - 2), (w / 2, h / 2)] {
-        assert_eq!(fb.get_pixel(x, y).g, 255, "full damage must paint ({x},{y})");
+    for (x, y) in [
+        (2, 2),
+        (w - 2, 2),
+        (2, h - 2),
+        (w - 2, h - 2),
+        (w / 2, h / 2),
+    ] {
+        assert_eq!(
+            fb.get_pixel(x, y).g,
+            255,
+            "full damage must paint ({x},{y})"
+        );
     }
 }
 
@@ -303,8 +317,7 @@ fn partial_clip_full_bleed_nodes_never_write_outside_damage() {
     let mut first: Option<(u32, u32)> = None;
     for y in 0..h {
         for x in 0..w {
-            let inside_clip =
-                x >= clip_x0 && x < clip_x1 && y >= clip_y0 && y < clip_y1;
+            let inside_clip = x >= clip_x0 && x < clip_x1 && y >= clip_y0 && y < clip_y1;
             if inside_clip {
                 continue;
             }
@@ -412,20 +425,37 @@ fn no_escape_matrix_every_node_kind_confined_to_damage() {
     // (name, node, opacity). Each MUST, on a partial frame, write ONLY inside the
     // damage clip. The three kinds proven to escape pre-t84 are flagged.
     let cases: Vec<(&str, SceneNodeKind, f32)> = vec![
-        ("background", SceneNodeKind::Background { color: Color::new(200, 30, 30, 255) }, 1.0),
+        (
+            "background",
+            SceneNodeKind::Background {
+                color: Color::new(200, 30, 30, 255),
+            },
+            1.0,
+        ),
         (
             "surface",
-            SceneNodeKind::Surface { surface_id: 1, buffer: None },
+            SceneNodeKind::Surface {
+                surface_id: 1,
+                buffer: None,
+            },
             1.0,
         ),
         (
             "child_surface",
-            SceneNodeKind::ChildSurface { surface_id: 2, buffer: None },
+            SceneNodeKind::ChildSurface {
+                surface_id: 2,
+                buffer: None,
+            },
             1.0,
         ),
         (
             "image",
-            SceneNodeKind::Image { image_id: 0xDEAD_BEEF, width: w, height: h, fit: ImageFit::Fill },
+            SceneNodeKind::Image {
+                image_id: 0xDEAD_BEEF,
+                width: w,
+                height: h,
+                fit: ImageFit::Fill,
+            },
             1.0,
         ),
         (
@@ -442,7 +472,13 @@ fn no_escape_matrix_every_node_kind_confined_to_damage() {
             1.0,
         ),
         ("glass", SceneNodeKind::Glass(GlassParams::default()), 1.0),
-        ("tint", SceneNodeKind::Tint { color: Color::new(0, 0, 0, 120) }, 1.0),
+        (
+            "tint",
+            SceneNodeKind::Tint {
+                color: Color::new(0, 0, 0, 120),
+            },
+            1.0,
+        ),
         (
             "text",
             SceneNodeKind::Text {
@@ -483,8 +519,21 @@ fn no_escape_matrix_every_node_kind_confined_to_damage() {
             },
             1.0,
         ),
-        ("icon", SceneNodeKind::Icon { icon_id: 1, color: Color::WHITE }, 1.0),
-        ("gradient", SceneNodeKind::GradientFill { gradient: linear_gradient() }, 1.0),
+        (
+            "icon",
+            SceneNodeKind::Icon {
+                icon_id: 1,
+                color: Color::WHITE,
+            },
+            1.0,
+        ),
+        (
+            "gradient",
+            SceneNodeKind::GradientFill {
+                gradient: linear_gradient(),
+            },
+            1.0,
+        ),
         (
             "svg_path",
             SceneNodeKind::SvgPath {
@@ -497,12 +546,19 @@ fn no_escape_matrix_every_node_kind_confined_to_damage() {
         ),
         (
             "shadow",
-            SceneNodeKind::Shadow { spread: 0.0, blur_radius: 8.0, color: Color::new(0, 0, 0, 200), corner_radius: 0.0 },
+            SceneNodeKind::Shadow {
+                spread: 0.0,
+                blur_radius: 8.0,
+                color: Color::new(0, 0, 0, 200),
+                corner_radius: 0.0,
+            },
             1.0,
         ),
         (
             "backdrop_filter",
-            SceneNodeKind::BackdropFilter { filters: vec![BackdropFilterSpec::Brightness(1.5)] },
+            SceneNodeKind::BackdropFilter {
+                filters: vec![BackdropFilterSpec::Brightness(1.5)],
+            },
             1.0,
         ),
         // --- the three kinds PROVEN to escape the scissor before t84 ---
@@ -511,20 +567,33 @@ fn no_escape_matrix_every_node_kind_confined_to_damage() {
         ("shell_layer_opacity", SceneNodeKind::ShellLayer, 0.5),
         (
             "clip_path_rounded_rect",
-            SceneNodeKind::ClipPath { clip_kind: ClipPathKind::RoundedRect { corner_radius: 24.0 } },
+            SceneNodeKind::ClipPath {
+                clip_kind: ClipPathKind::RoundedRect {
+                    corner_radius: 24.0,
+                },
+            },
             1.0,
         ),
         (
             "clip_path_circle",
             SceneNodeKind::ClipPath {
-                clip_kind: ClipPathKind::Circle { center_x: 0.5, center_y: 0.5, radius: 0.4 },
+                clip_kind: ClipPathKind::Circle {
+                    center_x: 0.5,
+                    center_y: 0.5,
+                    radius: 0.4,
+                },
             },
             1.0,
         ),
         (
             "clip_path_ellipse",
             SceneNodeKind::ClipPath {
-                clip_kind: ClipPathKind::Ellipse { center_x: 0.5, center_y: 0.5, rx: 0.4, ry: 0.3 },
+                clip_kind: ClipPathKind::Ellipse {
+                    center_x: 0.5,
+                    center_y: 0.5,
+                    rx: 0.4,
+                    ry: 0.3,
+                },
             },
             1.0,
         ),
@@ -540,13 +609,21 @@ fn no_escape_matrix_every_node_kind_confined_to_damage() {
         (
             "mask_gradient",
             SceneNodeKind::Mask {
-                mask: MaskSpec::Gradient { gradient: linear_gradient(), mode: MaskMode::Alpha },
+                mask: MaskSpec::Gradient {
+                    gradient: linear_gradient(),
+                    mode: MaskMode::Alpha,
+                },
             },
             0.7,
         ),
         (
             "mask_image",
-            SceneNodeKind::Mask { mask: MaskSpec::Image { image_id: 0xFEED, mode: MaskMode::Alpha } },
+            SceneNodeKind::Mask {
+                mask: MaskSpec::Image {
+                    image_id: 0xFEED,
+                    mode: MaskMode::Alpha,
+                },
+            },
             0.7,
         ),
     ];
@@ -564,7 +641,12 @@ fn no_escape_matrix_every_node_kind_confined_to_damage() {
 
         let mut renderer = SoftwareRenderer::new();
         renderer
-            .render_live(&[mk(kind, opacity)], &mut fb, &damage, RenderMode::LiveCursor)
+            .render_live(
+                &[mk(kind, opacity)],
+                &mut fb,
+                &damage,
+                RenderMode::LiveCursor,
+            )
             .unwrap_or_else(|e| panic!("render failed for kind {name}: {e:?}"));
 
         let pixels = fb.pixels();
@@ -618,8 +700,13 @@ fn clip_none_full_frame_is_byte_identical() {
     let damage = DamageSet::full(64, w / 64, h / 64, DamageClass::UiPrimitive);
     let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
     let mut r = SoftwareRenderer::new();
-    r.render_live(&[base.clone(), overlay.clone()], &mut fb, &damage, RenderMode::LiveFull)
-        .unwrap();
+    r.render_live(
+        &[base.clone(), overlay.clone()],
+        &mut fb,
+        &damage,
+        RenderMode::LiveFull,
+    )
+    .unwrap();
 
     // The overlay must have actually multiplied the base across the WHOLE frame
     // (every pixel darkened from 200/100/50), not just a sub-region.
@@ -737,9 +824,15 @@ fn identical_text_scene_renders_byte_identically_across_renderers() {
         "identical text scene rendered to two byte-different framebuffers — \
          glyph render path is nondeterministic"
     );
-    assert_eq!(a, c, "third render diverged — glyph render path is nondeterministic");
+    assert_eq!(
+        a, c,
+        "third render diverged — glyph render path is nondeterministic"
+    );
     // Sanity: the text actually painted something (not a vacuously-equal blank).
-    assert!(a.iter().any(|&p| p != 0), "scene produced an all-zero framebuffer");
+    assert!(
+        a.iter().any(|&p| p != 0),
+        "scene produced an all-zero framebuffer"
+    );
 }
 
 /// The live render entry must return PROMPTLY (no multi-second block-drain) and
@@ -774,7 +867,12 @@ fn live_render_returns_promptly_with_pending_glyphs_then_quiesces() {
     // another frame.
     let t0 = Instant::now();
     renderer
-        .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveFull)
+        .render_live(
+            &[text_node(text, family)],
+            &mut fb,
+            &damage,
+            RenderMode::LiveFull,
+        )
         .unwrap();
     let elapsed = t0.elapsed();
     assert!(
@@ -793,7 +891,12 @@ fn live_render_returns_promptly_with_pending_glyphs_then_quiesces() {
     for _ in 0..200 {
         let t = Instant::now();
         renderer
-            .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveFull)
+            .render_live(
+                &[text_node(text, family)],
+                &mut fb,
+                &damage,
+                RenderMode::LiveFull,
+            )
             .unwrap();
         assert!(
             t.elapsed() < Duration::from_millis(250),
@@ -814,7 +917,12 @@ fn live_render_returns_promptly_with_pending_glyphs_then_quiesces() {
     // and never wait on text.
     let t = Instant::now();
     renderer
-        .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveCursor)
+        .render_live(
+            &[text_node(text, family)],
+            &mut fb,
+            &damage,
+            RenderMode::LiveCursor,
+        )
         .unwrap();
     assert!(
         t.elapsed() < Duration::from_millis(100),
@@ -837,7 +945,7 @@ fn live_render_returns_promptly_with_pending_glyphs_then_quiesces() {
 ///   * Capture must still block far out for goldens; LiveCursor must be `None`.
 #[test]
 fn live_full_glyph_drain_budget_is_one_ms_not_four() {
-    use crate::renderer::{drain_deadline, GLYPH_DRAIN_BUDGET_MS, LIVE_GLYPH_DRAIN_BUDGET_MS};
+    use crate::renderer::{GLYPH_DRAIN_BUDGET_MS, LIVE_GLYPH_DRAIN_BUDGET_MS, drain_deadline};
     use std::time::{Duration, Instant};
 
     // Tooth 1: the conservative 1 ms ceiling. Reverting to 4 fails here.
@@ -861,8 +969,8 @@ fn live_full_glyph_drain_budget_is_one_ms_not_four() {
     );
 
     // Capture (golden) determinism budget must be left far out, untouched.
-    let cap_deadline = drain_deadline(RenderMode::Capture)
-        .expect("Capture must block-drain for determinism");
+    let cap_deadline =
+        drain_deadline(RenderMode::Capture).expect("Capture must block-drain for determinism");
     assert!(
         cap_deadline.saturating_duration_since(Instant::now())
             >= Duration::from_millis(GLYPH_DRAIN_BUDGET_MS / 2),
@@ -976,7 +1084,12 @@ fn capture_render_is_byte_deterministic_and_matches_quiesced_live() {
         });
         for _ in 0..400 {
             renderer
-                .render_live(&[text_node(text, family)], &mut fb, &damage, RenderMode::LiveFull)
+                .render_live(
+                    &[text_node(text, family)],
+                    &mut fb,
+                    &damage,
+                    RenderMode::LiveFull,
+                )
                 .unwrap();
             if !renderer.has_pending_glyphs() {
                 break;
@@ -990,7 +1103,12 @@ fn capture_render_is_byte_deterministic_and_matches_quiesced_live() {
         // converged pixels, not leftovers from the fill-in frames.
         let mut clean = FrameBuffer::new(256, 64, PixelFormat::Bgra8);
         renderer
-            .render_live(&[text_node(text, family)], &mut clean, &damage, RenderMode::LiveFull)
+            .render_live(
+                &[text_node(text, family)],
+                &mut clean,
+                &damage,
+                RenderMode::LiveFull,
+            )
             .unwrap();
         clean.pixels().to_vec()
     }
@@ -1011,7 +1129,10 @@ fn capture_render_is_byte_deterministic_and_matches_quiesced_live() {
         cap_a, live,
         "quiesced live render must converge on the same pixels as the capture render"
     );
-    assert!(cap_a.iter().any(|&p| p != 0), "scene produced an all-zero framebuffer");
+    assert!(
+        cap_a.iter().any(|&p| p != 0),
+        "scene produced an all-zero framebuffer"
+    );
 }
 
 #[test]
@@ -1589,7 +1710,12 @@ fn word_break_text_node(
     }
 }
 
-fn render_node_to_fb(renderer: &mut SoftwareRenderer, node: FlatNode, w: u32, h: u32) -> FrameBuffer {
+fn render_node_to_fb(
+    renderer: &mut SoftwareRenderer,
+    node: FlatNode,
+    w: u32,
+    h: u32,
+) -> FrameBuffer {
     let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
     let mut damage = DamageSet::new(64);
     damage.add(DamageTile {
@@ -1705,5 +1831,55 @@ fn text_emphasis_renders_extra_marks() {
         emph_px > plain_px,
         "text-emphasis should draw additional mark pixels \
          (emphasized={emph_px}, plain={plain_px})"
+    );
+}
+
+// t87-crisp #3: glass tint must honour the node corner radius — the rounded
+// corners stay transparent (background shows through), not a square tint block.
+// Anti-fake-green: if the tint reverts to a hard `fill_rect`, the corner pixel
+// becomes fully tinted and this test fails.
+#[test]
+fn glass_tint_respects_corner_radius() {
+    use liquide_compositor::scene::GlassParams;
+
+    let mut renderer = SoftwareRenderer::new();
+    let bounds = Rect::new(0.0, 0.0, 64.0, 64.0);
+    let glass = FlatNode {
+        id: 5_000,
+        kind: SceneNodeKind::Glass(GlassParams {
+            blur_radius: 0, // tint-only: deterministic, no blur worker
+            tint_color: Color::new(255, 0, 0, 255),
+            inner_glow: false,
+            parallax: false,
+        })
+        .into(),
+        absolute_bounds: bounds,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (20.0, 20.0, 20.0, 20.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+
+    let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+    let damage = DamageSet::full(64, 1, 1, DamageClass::UiPrimitive);
+    renderer.render(&[glass], &mut fb, &damage).unwrap();
+
+    // Top-left corner pixel (1,1) is OUTSIDE the 20px radius arc → no tint.
+    let corner = fb.get_pixel(1, 1);
+    assert!(
+        corner.a < 32,
+        "glass corner (1,1) should be transparent (rounded), got alpha {} \
+         (square-tint regression?)",
+        corner.a
+    );
+
+    // The center is well inside → fully tinted red.
+    let center = fb.get_pixel(32, 32);
+    assert!(
+        center.a > 200 && center.r > 200,
+        "glass center should be opaque tint, got {:?}",
+        center
     );
 }

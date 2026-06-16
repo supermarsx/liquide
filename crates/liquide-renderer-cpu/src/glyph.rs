@@ -14,8 +14,6 @@ use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::pixel::Color;
 
-use crate::blend;
-
 /// Resolve an optional glyph clip rect to inclusive-exclusive integer pixel
 /// bounds `(cx0, cy0, cx1, cy1)`. When no clip is set the window is unbounded
 /// (`i32::MIN..i32::MAX`) so the per-pixel checks become no-ops. This confines a
@@ -206,7 +204,19 @@ impl GlyphAtlas {
 
     /// Blit a glyph from the atlas into a framebuffer at the given position.
     ///
-    /// The glyph alpha is used as a mask with the given foreground color.
+    /// The glyph alpha is used as coverage for the given foreground color, and
+    /// the coverage is composited in **linear light** (gamma-correct AA) via the
+    /// supplied sRGB LUT — naive sRGB-space coverage blending makes light-on-dark
+    /// text too thin and dark-on-light too heavy (t83-crisp #4c).
+    ///
+    /// Horizontal **subpixel positioning** is honoured: the fractional part of
+    /// the pen X is used to resample the glyph coverage across two adjacent
+    /// destination columns (a 2-tap box reconstruction). This means a glyph drawn
+    /// at pen X = 0.0 and pen X = 0.5 lands on genuinely different columns /
+    /// coverage instead of both flooring to the same integer column — removing
+    /// the per-glyph "wobble"/uneven tracking the floor-snapping caused
+    /// (t83-crisp #1). The vertical origin is round-to-nearest (not floored) to
+    /// drop the systematic half-pixel bias.
     pub fn blit_glyph(
         &self,
         fb: &mut FrameBuffer,
@@ -214,10 +224,28 @@ impl GlyphAtlas {
         pos: Point,
         color: Color,
         clip: Option<Rect>,
+        lut: &crate::color::SrgbLut,
     ) {
-        let dx = (pos.x + glyph.bearing_x as f32) as i32;
-        let dy = (pos.y - glyph.bearing_y as f32) as i32;
+        // Fractional pen position. The integer base column is the floor; the
+        // fractional remainder `fx_frac` is the subpixel phase used to split each
+        // source coverage sample between column `fx` (weight 1-frac) and the next
+        // column `fx + 1` (weight frac).
+        let pen_x = pos.x + glyph.bearing_x as f32;
+        let base_x = pen_x.floor();
+        let fx_frac = pen_x - base_x;
+        let dx = base_x as i32;
+        // Vertical: round to nearest to remove the half-pixel-down floor bias.
+        let dy = (pos.y - glyph.bearing_y as f32).round() as i32;
         let (cx0, cy0, cx1, cy1) = glyph_clip_window(clip);
+
+        // Pre-linearize the foreground color once (coverage is applied in linear
+        // light, then the result is converted back to sRGB).
+        let fg_lin = [
+            lut.linearize(color.r),
+            lut.linearize(color.g),
+            lut.linearize(color.b),
+        ];
+        let color_a = color.a as f32 / 255.0;
 
         for row in 0..glyph.height {
             let fy = dy + row as i32;
@@ -227,7 +255,29 @@ impl GlyphAtlas {
             if fy < cy0 || fy >= cy1 {
                 continue;
             }
-            for col in 0..glyph.width {
+            let atlas_row = ((glyph.atlas_y + row) * self.width) as usize;
+            // Walk one extra column so the rightmost source sample can spill its
+            // fractional weight into the trailing destination column.
+            for col in 0..=glyph.width {
+                // Reconstruct coverage at destination column (dx + col) as a
+                // blend of source samples `col-1` (weight fx_frac) and `col`
+                // (weight 1-fx_frac). `col == glyph.width` contributes only the
+                // trailing spill from the last real source column.
+                let left = if col == 0 {
+                    0.0
+                } else {
+                    self.pixels[atlas_row + (glyph.atlas_x + col - 1) as usize] as f32
+                };
+                let right = if col == glyph.width {
+                    0.0
+                } else {
+                    self.pixels[atlas_row + (glyph.atlas_x + col) as usize] as f32
+                };
+                let cov = (left * fx_frac + right * (1.0 - fx_frac)) / 255.0;
+                if cov <= 0.0 {
+                    continue;
+                }
+
                 let fx = dx + col as i32;
                 if fx < 0 || fx >= fb.width as i32 {
                     continue;
@@ -235,22 +285,25 @@ impl GlyphAtlas {
                 if fx < cx0 || fx >= cx1 {
                     continue;
                 }
-                let atlas_off = ((glyph.atlas_y + row) * self.width + glyph.atlas_x + col) as usize;
-                let alpha = self.pixels[atlas_off];
-                if alpha == 0 {
+
+                // Effective source coverage for this pixel.
+                let a = cov * color_a;
+                if a <= 0.0 {
                     continue;
                 }
 
-                // Use the glyph alpha to mask the foreground color
-                let src = Color::new(
-                    ((color.r as u16 * alpha as u16 + 127) / 255) as u8,
-                    ((color.g as u16 * alpha as u16 + 127) / 255) as u8,
-                    ((color.b as u16 * alpha as u16 + 127) / 255) as u8,
-                    alpha,
-                );
-
+                // Composite src-over in linear light: out = src*a + dst*(1-a).
                 let dst = fb.get_pixel(fx as u32, fy as u32);
-                let result = blend::blend_src_over(dst, src);
+                let dr = lut.linearize(dst.r);
+                let dg = lut.linearize(dst.g);
+                let db = lut.linearize(dst.b);
+                let inv = 1.0 - a;
+                let r = lut.delinearize(fg_lin[0] * a + dr * inv);
+                let g = lut.delinearize(fg_lin[1] * a + dg * inv);
+                let b = lut.delinearize(fg_lin[2] * a + db * inv);
+                // Alpha is linear in coverage (opacity), composite normally.
+                let out_a = (a + (dst.a as f32 / 255.0) * inv).clamp(0.0, 1.0);
+                let result = Color::new(r, g, b, (out_a * 255.0 + 0.5) as u8);
                 fb.set_pixel(fx as u32, fy as u32, result);
             }
         }

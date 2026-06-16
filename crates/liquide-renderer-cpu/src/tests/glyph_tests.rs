@@ -129,6 +129,7 @@ fn atlas_blit() {
         .unwrap()
         .clone();
 
+    let lut = crate::color::SrgbLut::new();
     let mut fb = FrameBuffer::new(32, 32, PixelFormat::Bgra8);
     atlas.blit_glyph(
         &mut fb,
@@ -136,6 +137,7 @@ fn atlas_blit() {
         Point::new(10.0, 10.0),
         Color::new(255, 0, 0, 255),
         None,
+        &lut,
     );
 
     // Glyph renders at (10 + 0, 10 - 4) = (10, 6) with 4x4 size
@@ -494,6 +496,7 @@ fn blit_glyph_clipping() {
         .unwrap()
         .clone();
 
+    let lut = crate::color::SrgbLut::new();
     let mut fb = FrameBuffer::new(16, 16, PixelFormat::Bgra8);
     // Blit at the edge: glyph at (14, 14-4)=(14, 10), spans x=14..22, y=10..18
     // Extends beyond 16x16 FB — should clip without panic
@@ -503,6 +506,7 @@ fn blit_glyph_clipping() {
         Point::new(14.0, 14.0),
         Color::new(255, 0, 0, 255),
         None,
+        &lut,
     );
 
     // Also test negative position — should clip without panic
@@ -512,6 +516,7 @@ fn blit_glyph_clipping() {
         Point::new(-5.0, -5.0),
         Color::new(0, 255, 0, 255),
         None,
+        &lut,
     );
     // If we reach here without panicking, the test passes
 }
@@ -546,4 +551,137 @@ fn atlas_clear_resets() {
     assert!(atlas.is_empty());
     // After clearing, pixels should be zeroed
     assert!(atlas.pixels().iter().all(|&b| b == 0));
+}
+
+// t87-crisp #1: subpixel positioning is real — a glyph drawn at a fractional pen
+// X must land differently than at an integer pen X. Anti-fake-green: if blit
+// floor-snaps (the old behavior), both phases produce IDENTICAL output and this
+// test fails.
+#[test]
+fn subpixel_phase_changes_glyph_placement() {
+    let lut = crate::color::SrgbLut::new();
+    let mut atlas = GlyphAtlas::new(256, 256);
+    let key = GlyphKey {
+        font_id: 0,
+        glyph_id: 65,
+        size_px: 16,
+        subpixel: false,
+    };
+    // A single-column-wide, fully opaque 1x1 glyph isolates horizontal phase.
+    let bitmap = vec![255u8; 1 * 4];
+    let glyph = atlas
+        .insert(
+            key,
+            &bitmap,
+            &GlyphMetrics {
+                width: 1,
+                height: 4,
+                bearing_x: 0,
+                bearing_y: 0,
+                advance: 1.0,
+            },
+        )
+        .unwrap()
+        .clone();
+
+    let white = Color::new(255, 255, 255, 255);
+
+    // Phase 0.0: full coverage lands entirely on column 10.
+    let mut fb0 = FrameBuffer::new(32, 8, PixelFormat::Bgra8);
+    atlas.blit_glyph(&mut fb0, &glyph, Point::new(10.0, 0.0), white, None, &lut);
+
+    // Phase 0.5: coverage splits between columns 10 and 11.
+    let mut fb_half = FrameBuffer::new(32, 8, PixelFormat::Bgra8);
+    atlas.blit_glyph(
+        &mut fb_half,
+        &glyph,
+        Point::new(10.5, 0.0),
+        white,
+        None,
+        &lut,
+    );
+
+    // The two phases must differ: at phase 0.5, column 11 receives coverage that
+    // it does not get at phase 0.0.
+    assert_eq!(
+        fb0.get_pixel(11, 0).r,
+        0,
+        "integer phase must not touch the next column"
+    );
+    assert!(
+        fb_half.get_pixel(11, 0).r > 0,
+        "fractional phase 0.5 must spill coverage into the next column \
+         (subpixel positioning is dead if this is 0)"
+    );
+    // And column 10 must be dimmer at phase 0.5 than at phase 0.0 (coverage was
+    // split off into column 11).
+    assert!(
+        fb_half.get_pixel(10, 0).r < fb0.get_pixel(10, 0).r,
+        "phase 0.5 should reduce column-10 coverage vs phase 0.0"
+    );
+}
+
+// t87-crisp #4c: grayscale glyph AA must composite in LINEAR light, not sRGB. A
+// 50%-coverage white-on-black pixel blended in linear space is brighter than the
+// naive sRGB midpoint (~188 vs 128). Anti-fake-green: if the blit reverts to
+// sRGB-space coverage blending the value drops back toward ~128 and this fails.
+#[test]
+fn glyph_aa_is_gamma_correct_linear() {
+    let lut = crate::color::SrgbLut::new();
+    let mut atlas = GlyphAtlas::new(256, 256);
+    let key = GlyphKey {
+        font_id: 0,
+        glyph_id: 66,
+        size_px: 16,
+        subpixel: false,
+    };
+    // Single pixel at exactly 50% coverage (alpha 128).
+    let bitmap = vec![128u8; 1];
+    let glyph = atlas
+        .insert(
+            key,
+            &bitmap,
+            &GlyphMetrics {
+                width: 1,
+                height: 1,
+                bearing_x: 0,
+                bearing_y: 0,
+                advance: 1.0,
+            },
+        )
+        .unwrap()
+        .clone();
+
+    // White text over a black framebuffer at integer phase.
+    let mut fb = FrameBuffer::new(8, 8, PixelFormat::Bgra8);
+    atlas.blit_glyph(
+        &mut fb,
+        &glyph,
+        Point::new(2.0, 0.0),
+        Color::new(255, 255, 255, 255),
+        None,
+        &lut,
+    );
+
+    let px = fb.get_pixel(2, 0);
+
+    // Reference: composite white over black at coverage = 128/255 in LINEAR
+    // light, then convert back to sRGB.
+    let a = 128.0 / 255.0;
+    let fg_lin = lut.linearize(255); // 1.0
+    let bg_lin = lut.linearize(0); // 0.0
+    let expected = lut.delinearize(fg_lin * a + bg_lin * (1.0 - a));
+
+    assert_eq!(
+        px.r, expected,
+        "glyph AA must match the linear-space reference ({} expected)",
+        expected
+    );
+    // Sanity: the gamma-correct result is meaningfully brighter than the naive
+    // sRGB midpoint — proves we are NOT blending in sRGB.
+    assert!(
+        px.r > 150,
+        "linear-light 50% coverage should be ~188, got {} (sRGB-space regression?)",
+        px.r
+    );
 }

@@ -155,8 +155,7 @@ impl SoftwareRenderer {
 
         // Only background-scale images qualify: the box must span most of the
         // framebuffer in both axes. Smaller images keep their exact bounds.
-        let covers_most =
-            bounds.width >= fb_w * 0.85 && bounds.height >= fb_h * 0.85;
+        let covers_most = bounds.width >= fb_w * 0.85 && bounds.height >= fb_h * 0.85;
         if !covers_most {
             return bounds;
         }
@@ -433,22 +432,64 @@ impl SoftwareRenderer {
         let dst_w = tile_width as f32;
         let dst_h = tile_height as f32;
 
+        // Match `draw_scaled_texture`'s sampler so the realized-tile cache path
+        // and the direct-scale (legacy/no-repeat) path stay byte-identical
+        // (t87-crisp #2): bilinear when scaled, nearest at 1:1.
+        let scaled = (src_w - dst_w).abs() > 0.5 || (src_h - dst_h).abs() > 0.5;
+
+        let clamp_x = |v: f32| -> u32 { (v as i32).clamp(src_x0 as i32, src_x1 as i32 - 1) as u32 };
+        let clamp_y = |v: f32| -> u32 { (v as i32).clamp(src_y0 as i32, src_y1 as i32 - 1) as u32 };
+        let texel = |x: u32, y: u32| -> [f32; 4] {
+            let i = ((y * texture.width + x) * 4) as usize;
+            if i + 3 >= texture.data.len() {
+                return [0.0; 4];
+            }
+            [
+                texture.data[i] as f32,
+                texture.data[i + 1] as f32,
+                texture.data[i + 2] as f32,
+                texture.data[i + 3] as f32,
+            ]
+        };
+
         for dst_y in 0..tile_height {
             let rel_y = dst_y as f32 / dst_h;
-            let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
             for dst_x in 0..tile_width {
                 let rel_x = dst_x as f32 / dst_w;
-                let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
-                let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
-                if src_idx + 3 >= texture.data.len() {
-                    continue;
-                }
-
                 let dst_idx = ((dst_y * tile_width + dst_x) * 4) as usize;
-                pixels[dst_idx] = texture.data[src_idx];
-                pixels[dst_idx + 1] = texture.data[src_idx + 1];
-                pixels[dst_idx + 2] = texture.data[src_idx + 2];
-                pixels[dst_idx + 3] = texture.data[src_idx + 3];
+
+                if scaled {
+                    let fx = src_x0 as f32 + rel_x * src_w - 0.5;
+                    let fy = src_y0 as f32 + rel_y * src_h - 0.5;
+                    let x0 = fx.floor();
+                    let y0 = fy.floor();
+                    let tx = fx - x0;
+                    let ty = fy - y0;
+                    let xa = clamp_x(x0);
+                    let xb = clamp_x(x0 + 1.0);
+                    let ya = clamp_y(y0);
+                    let yb = clamp_y(y0 + 1.0);
+                    let c00 = texel(xa, ya);
+                    let c10 = texel(xb, ya);
+                    let c01 = texel(xa, yb);
+                    let c11 = texel(xb, yb);
+                    for k in 0..4 {
+                        let top = c00[k] + (c10[k] - c00[k]) * tx;
+                        let bot = c01[k] + (c11[k] - c01[k]) * tx;
+                        pixels[dst_idx + k] = (top + (bot - top) * ty + 0.5) as u8;
+                    }
+                } else {
+                    let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
+                    let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
+                    let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
+                    if src_idx + 3 >= texture.data.len() {
+                        continue;
+                    }
+                    pixels[dst_idx] = texture.data[src_idx];
+                    pixels[dst_idx + 1] = texture.data[src_idx + 1];
+                    pixels[dst_idx + 2] = texture.data[src_idx + 2];
+                    pixels[dst_idx + 3] = texture.data[src_idx + 3];
+                }
             }
         }
 
@@ -708,25 +749,89 @@ impl SoftwareRenderer {
             dst_x1.ceil() as u32,
             dst_y1.ceil() as u32,
         );
-        // Nearest-neighbor scaling
+        // Choose sampler: nearest for 1:1 blits (crisp UI sprites/icons at native
+        // size), bilinear when the source is scaled to a different destination
+        // size (wallpaper, scaled photos/icons). Nearest-neighbor on a non-integer
+        // scale produces visibly jagged diagonals and duplicated/dropped rows —
+        // the single most visible "not crisp" artifact on the desktop wallpaper
+        // (t83-crisp #2). Compare the integer span ratios with a small epsilon so
+        // exact 1:1 (and integer-multiple-free fractional) cases are detected.
+        let scaled = (src_w - dst_w).abs() > 0.5 || (src_h - dst_h).abs() > 0.5;
+
         for dst_y in sc_y0..sc_y1 {
             for dst_x in sc_x0..sc_x1 {
                 let rel_x = (dst_x as f32 - dst_x0) / dst_w;
                 let rel_y = (dst_y as f32 - dst_y0) / dst_h;
-                let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
-                let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
 
-                let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
-                if src_idx + 3 >= texture.data.len() {
-                    continue;
-                }
+                let mut src_color = if scaled {
+                    // Bilinear: sample the 4 texels around the (continuous) source
+                    // coordinate and lerp in straight (un-premultiplied) alpha.
+                    // Pixel centers sit at +0.5, so the sample center is
+                    // src0 + rel*span - 0.5.
+                    let fx = src_x0 as f32 + rel_x * src_w - 0.5;
+                    let fy = src_y0 as f32 + rel_y * src_h - 0.5;
+                    let x0 = fx.floor();
+                    let y0 = fy.floor();
+                    let tx = fx - x0;
+                    let ty = fy - y0;
 
-                let mut src_color = Color::new(
-                    texture.data[src_idx],
-                    texture.data[src_idx + 1],
-                    texture.data[src_idx + 2],
-                    texture.data[src_idx + 3],
-                );
+                    // Clamp sample coords into the valid source rect.
+                    let clamp_x = |v: f32| -> u32 {
+                        (v as i32).clamp(src_x0 as i32, src_x1 as i32 - 1) as u32
+                    };
+                    let clamp_y = |v: f32| -> u32 {
+                        (v as i32).clamp(src_y0 as i32, src_y1 as i32 - 1) as u32
+                    };
+                    let xa = clamp_x(x0);
+                    let xb = clamp_x(x0 + 1.0);
+                    let ya = clamp_y(y0);
+                    let yb = clamp_y(y0 + 1.0);
+
+                    let texel = |x: u32, y: u32| -> [f32; 4] {
+                        let i = ((y * texture.width + x) * 4) as usize;
+                        if i + 3 >= texture.data.len() {
+                            return [0.0; 4];
+                        }
+                        [
+                            texture.data[i] as f32,
+                            texture.data[i + 1] as f32,
+                            texture.data[i + 2] as f32,
+                            texture.data[i + 3] as f32,
+                        ]
+                    };
+
+                    let c00 = texel(xa, ya);
+                    let c10 = texel(xb, ya);
+                    let c01 = texel(xa, yb);
+                    let c11 = texel(xb, yb);
+
+                    let mut out = [0.0f32; 4];
+                    for k in 0..4 {
+                        let top = c00[k] + (c10[k] - c00[k]) * tx;
+                        let bot = c01[k] + (c11[k] - c01[k]) * tx;
+                        out[k] = top + (bot - top) * ty;
+                    }
+                    Color::new(
+                        (out[0] + 0.5) as u8,
+                        (out[1] + 0.5) as u8,
+                        (out[2] + 0.5) as u8,
+                        (out[3] + 0.5) as u8,
+                    )
+                } else {
+                    // Nearest-neighbor for 1:1 blits.
+                    let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
+                    let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
+                    let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
+                    if src_idx + 3 >= texture.data.len() {
+                        continue;
+                    }
+                    Color::new(
+                        texture.data[src_idx],
+                        texture.data[src_idx + 1],
+                        texture.data[src_idx + 2],
+                        texture.data[src_idx + 3],
+                    )
+                };
 
                 if opacity < 1.0 {
                     src_color.a = (src_color.a as f32 * opacity + 0.5) as u8;
@@ -745,7 +850,7 @@ impl SoftwareRenderer {
 mod tests {
     use super::*;
     use liquide_compositor::Renderer;
-    use liquide_compositor::damage::{DamageClass, DamageSet, DamageTile};
+    use liquide_compositor::damage::{DamageClass, DamageSet};
     use liquide_compositor::geometry::Affine2D;
     use liquide_compositor::pixel::PixelFormat;
     use liquide_compositor::scene::{BackgroundImage, BackgroundSize, BackgroundSpec};
@@ -801,6 +906,80 @@ mod tests {
             .render(std::slice::from_ref(node), &mut fb, &damage)
             .unwrap();
         fb
+    }
+
+    // t87-crisp #2: scaling an image to a different size must use BILINEAR
+    // interpolation, not nearest-neighbor. Anti-fake-green: if the sampler
+    // reverts to nearest, the center pixels collapse back to pure source colors
+    // and these assertions fail.
+    #[test]
+    fn scaled_texture_is_bilinear_not_nearest() {
+        let mut renderer = SoftwareRenderer::new();
+        // 2x2 checker: TL red, TR green, BL blue, BR white.
+        renderer.register_image_rgba(91, checker_rgba(), 2, 2);
+        let texture = renderer
+            .texture_cache
+            .get_by_key(crate::texture_cache::image_texture_key(91))
+            .expect("texture registered");
+
+        // Draw the 2x2 source scaled up to an 8x8 destination.
+        let mut fb = FrameBuffer::new(8, 8, PixelFormat::Bgra8);
+        let src = Rect::new(0.0, 0.0, 2.0, 2.0);
+        let dst = Rect::new(0.0, 0.0, 8.0, 8.0);
+        renderer.draw_scaled_texture(&mut fb, &texture, src, dst, 1.0);
+
+        // A pixel straddling the boundary between two source texels must be a
+        // genuine blend of them — distinct from BOTH neighbours. Pixel (3,0) sits
+        // near the horizontal midpoint of the top row (red -> green), so its
+        // red and green channels must both be partial (interpolated), which
+        // nearest-neighbor can never produce.
+        let mid = fb.get_pixel(3, 0);
+        assert!(
+            mid.r > 0 && mid.r < 255,
+            "expected interpolated red, got {} (nearest-neighbor regressed?)",
+            mid.r
+        );
+        assert!(
+            mid.g > 0 && mid.g < 255,
+            "expected interpolated green, got {} (nearest-neighbor regressed?)",
+            mid.g
+        );
+
+        // The exact center (3,3)/(4,4) straddles all four texels; it must not
+        // equal any single source color exactly.
+        let center = fb.get_pixel(4, 4);
+        let pure = |c: &Color, r: u8, g: u8, b: u8| c.r == r && c.g == g && c.b == b;
+        assert!(
+            !pure(&center, 255, 0, 0)
+                && !pure(&center, 0, 255, 0)
+                && !pure(&center, 0, 0, 255)
+                && !pure(&center, 255, 255, 255),
+            "center pixel {:?} equals a pure source texel — not interpolated",
+            center
+        );
+    }
+
+    // t87-crisp #2 tooth: a 1:1 blit (no scaling) must stay NEAREST (exact,
+    // crisp) — never smeared by the bilinear branch.
+    #[test]
+    fn unscaled_texture_is_exact_nearest() {
+        let mut renderer = SoftwareRenderer::new();
+        renderer.register_image_rgba(92, checker_rgba(), 2, 2);
+        let texture = renderer
+            .texture_cache
+            .get_by_key(crate::texture_cache::image_texture_key(92))
+            .expect("texture registered");
+
+        let mut fb = FrameBuffer::new(2, 2, PixelFormat::Bgra8);
+        let src = Rect::new(0.0, 0.0, 2.0, 2.0);
+        let dst = Rect::new(0.0, 0.0, 2.0, 2.0);
+        renderer.draw_scaled_texture(&mut fb, &texture, src, dst, 1.0);
+
+        // Source colors must survive byte-exact at 1:1.
+        let tl = fb.get_pixel(0, 0);
+        assert_eq!((tl.r, tl.g, tl.b), (255, 0, 0));
+        let br = fb.get_pixel(1, 1);
+        assert_eq!((br.r, br.g, br.b), (255, 255, 255));
     }
 
     #[test]
@@ -980,7 +1159,10 @@ mod tests {
         // Cover fills the entire rect with opaque texels.
         for (x, y) in [(0, 0), (39, 0), (0, 19), (39, 19), (20, 10)] {
             let p = fb.get_pixel(x, y);
-            assert_eq!(p.a, 255, "Cover must fill pixel ({x},{y}) with an opaque texel");
+            assert_eq!(
+                p.a, 255,
+                "Cover must fill pixel ({x},{y}) with an opaque texel"
+            );
         }
         // The gray placeholder (rgb 128, a 64) must NOT appear — confirm at least
         // one painted pixel is a real source color, not the 128/128/128 dot.
@@ -1076,7 +1258,11 @@ mod tests {
             .unwrap();
 
         // Inside the box: painted.
-        assert_eq!(fb.get_pixel(50, 50).a, 255, "small image paints its own box");
+        assert_eq!(
+            fb.get_pixel(50, 50).a,
+            255,
+            "small image paints its own box"
+        );
         // Far corner: untouched (the small image was not snapped to the edges).
         assert_eq!(
             fb.get_pixel(0, 0).a,
@@ -1120,7 +1306,10 @@ mod tests {
         // distinguishes "image not loaded" from a real (opaque) wallpaper texel.
         let p = fb.get_pixel(1, 1);
         assert!(p.r > 0, "placeholder must be painted (non-zero)");
-        assert!(p.a < 255, "placeholder must be semi-transparent, not an opaque texel");
+        assert!(
+            p.a < 255,
+            "placeholder must be semi-transparent, not an opaque texel"
+        );
         assert_eq!(p.r, p.g, "placeholder must be neutral gray");
         assert_eq!(p.g, p.b, "placeholder must be neutral gray");
     }

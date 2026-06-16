@@ -778,7 +778,9 @@ pub fn blit_opaque_stride(
     dst_x: u32,
     dst_y: u32,
 ) {
-    blit_opaque_stride_clipped(fb, src, src_width, src_height, src_stride, dst_x, dst_y, None);
+    blit_opaque_stride_clipped(
+        fb, src, src_width, src_height, src_stride, dst_x, dst_y, None,
+    );
 }
 
 /// Clip rectangle resolved to inclusive-exclusive pixel bounds for a blit.
@@ -799,7 +801,12 @@ fn blit_clip_window(fb: &FrameBuffer, clip: Option<Rect>) -> (u32, u32, u32, u32
     };
     // Always intersect with the per-thread write-scissor (t80).
     (x0, y0, x1, y1) = scissor_clamp_window(x0, y0, x1, y1);
-    (x0.min(fb.width), y0.min(fb.height), x1.min(fb.width), y1.min(fb.height))
+    (
+        x0.min(fb.width),
+        y0.min(fb.height),
+        x1.min(fb.width),
+        y1.min(fb.height),
+    )
 }
 
 /// Blit an opaque BGRA image, confining writes to `clip` (damage-only raster).

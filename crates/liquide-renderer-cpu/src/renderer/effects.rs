@@ -28,14 +28,33 @@ impl SoftwareRenderer {
                 let radius = params.blur_radius.min(30);
                 let lod_radius = (radius as f32 * quality_factor) as u32;
                 if lod_radius > 0 {
-                    self.render_backdrop_blur(node.id, bounds, lod_radius, fb);
+                    self.render_backdrop_blur(node.id, bounds, lod_radius, node.corner_radius, fb);
                 }
             }
 
-            // Apply tint (confined to the active damage region, t76).
+            // Apply tint (confined to the active damage region, t76). Honour the
+            // node's corner radius: glass surfaces (launcher, menus, dock band,
+            // notification center) carry border-radius, and a hard rectangular
+            // tint paints square corners over the rounded chrome — the hallmark
+            // "cheap glass" look (t83-crisp #3). When any corner is rounded, fill
+            // a rounded rect (per-corner SDF AA) instead of a sharp rectangle.
             let mut tint = params.tint_color;
             tint.a = (tint.a as f32 * opacity + 0.5) as u8;
-            if let Some(tint_rect) = rasterizer::clip_rect(bounds, self.raster_clip) {
+            let (r_tl, r_tr, r_br, r_bl) = node.corner_radius;
+            let rounded = r_tl > 0.0 || r_tr > 0.0 || r_br > 0.0 || r_bl > 0.0;
+            if rounded {
+                self.fill_rounded_rect_per_corner_clipped(
+                    fb,
+                    bounds,
+                    tint,
+                    r_tl,
+                    r_tr,
+                    r_br,
+                    r_bl,
+                    BlendMode::SrcOver,
+                    self.raster_clip,
+                );
+            } else if let Some(tint_rect) = rasterizer::clip_rect(bounds, self.raster_clip) {
                 rasterizer::fill_rect(fb, tint_rect, tint, BlendMode::SrcOver);
             }
 
@@ -119,7 +138,8 @@ impl SoftwareRenderer {
                 if let Some(cached) = self.shadow_cache.get(&node.id) {
                     BoxShadow::composite_shadow_mask(fb, &cached.mask);
                 }
-            } else if let Some(mask) = BoxShadow::generate_shadow_mask(fb.width, fb.height, &params) {
+            } else if let Some(mask) = BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
+            {
                 BoxShadow::composite_shadow_mask(fb, &mask);
                 self.shadow_cache_insert(
                     node.id,
@@ -265,7 +285,13 @@ impl SoftwareRenderer {
                         if r > 0 && self.blur_enabled && lod_level != LodLevel::Low {
                             let lod_r = (r as f32 * quality_factor) as u32;
                             if lod_r > 0 {
-                                self.render_backdrop_blur(node.id, bounds, lod_r, fb);
+                                self.render_backdrop_blur(
+                                    node.id,
+                                    bounds,
+                                    lod_r,
+                                    node.corner_radius,
+                                    fb,
+                                );
                             }
                         }
                     }
@@ -417,6 +443,7 @@ impl SoftwareRenderer {
         _node_id: NodeId,
         bounds: Rect,
         radius: u32,
+        corner_radius: (f32, f32, f32, f32),
         fb: &mut FrameBuffer,
     ) {
         // Full pixel-snapped glass bounds, clamped to the framebuffer. This is
@@ -574,6 +601,15 @@ impl SoftwareRenderer {
         // the per-thread write-scissor (t80) so no pixel escapes the damage rect
         // (the t79 regression). Each row copies the sub-span out of the cached
         // window buffer at the correct (col, row) offset relative to `(x0, y0)`.
+        // Per-corner radius: when the glass surface is rounded, the blurred
+        // backdrop must NOT be written as a sharp rectangle over the rounded
+        // chrome (t83-crisp #3). Mask the corner pixels by the rounded-rect SDF
+        // coverage — fully inside the radius keeps the bulk fast-path copy, the
+        // anti-aliased corner band lerps each blurred pixel against the existing
+        // backdrop by coverage, and pixels outside the radius keep the background.
+        let (r_tl, r_tr, r_br, r_bl) = corner_radius;
+        let rounded = r_tl > 0.0 || r_tr > 0.0 || r_br > 0.0 || r_bl > 0.0;
+
         let has_cache = if let Some(cached) = self.blur_worker.get_cached(key, w, h) {
             for dy in blit_y0..blit_y1 {
                 // Clamp this row's [blit_x0, blit_x1) destination span to the
@@ -591,11 +627,54 @@ impl SoftwareRenderer {
                 let src_off = (row * w as usize + col0) * 4;
                 let dst_off = fb.pixel_offset(cx0, dy);
                 let bytes = span * 4;
-                if src_off + bytes <= cached.pixels.len()
-                    && dst_off + bytes <= fb.pixels_mut().expect("CPU framebuffer required").len()
+                if src_off + bytes > cached.pixels.len()
+                    || dst_off + bytes > fb.pixels_mut().expect("CPU framebuffer required").len()
                 {
+                    continue;
+                }
+                if !rounded {
                     fb.pixels_mut().expect("CPU framebuffer required")[dst_off..dst_off + bytes]
                         .copy_from_slice(&cached.pixels[src_off..src_off + bytes]);
+                    continue;
+                }
+                // Rounded: blend per-pixel by SDF corner coverage. Interior
+                // pixels (coverage == 1) overwrite; corner-band pixels lerp; pixels
+                // outside the radius (coverage == 0) are untouched (background
+                // shows through). Coverage is sampled against the full `bounds` so
+                // the rounded geometry matches the tint fill above exactly.
+                let fy = dy as f32 + 0.5;
+                for i in 0..span {
+                    let px = cx0 + i as u32;
+                    let fx = px as f32 + 0.5;
+                    let d = rasterizer::sdf_rounded_rect_per_corner(
+                        fx, fy, &bounds, r_tl, r_tr, r_br, r_bl,
+                    );
+                    let coverage = (-d + 0.5).clamp(0.0, 1.0);
+                    if coverage <= 0.0 {
+                        continue;
+                    }
+                    let s = src_off + i * 4;
+                    let blur_px = Color::new(
+                        cached.pixels[s],
+                        cached.pixels[s + 1],
+                        cached.pixels[s + 2],
+                        cached.pixels[s + 3],
+                    );
+                    let out = if coverage >= 1.0 {
+                        blur_px
+                    } else {
+                        let bg = fb.get_pixel(px, dy);
+                        let lerp = |a: u8, b: u8| -> u8 {
+                            (a as f32 + (b as f32 - a as f32) * coverage + 0.5) as u8
+                        };
+                        Color::new(
+                            lerp(bg.r, blur_px.r),
+                            lerp(bg.g, blur_px.g),
+                            lerp(bg.b, blur_px.b),
+                            lerp(bg.a, blur_px.a),
+                        )
+                    };
+                    fb.set_pixel(px, dy, out);
                 }
             }
             true
@@ -750,7 +829,12 @@ mod tests {
         // Frame 2: DIFFERENT node id (churn), same geometry/radius/backdrop.
         let mut fb2 = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
         paint_backdrop(&mut fb2);
-        renderer.render_glass_node(&glass_node(99999, bounds, 12), &mut fb2, LodLevel::High, 1.0);
+        renderer.render_glass_node(
+            &glass_node(99999, bounds, 12),
+            &mut fb2,
+            LodLevel::High,
+            1.0,
+        );
 
         // The stable key matched → cache stayed at one entry (no new key added).
         renderer.poll_blur_results();
@@ -775,7 +859,10 @@ mod tests {
                 }
             }
         }
-        assert!(differs, "cached blur should have been composited into the glass region");
+        assert!(
+            differs,
+            "cached blur should have been composited into the glass region"
+        );
     }
 
     /// When the underlying backdrop content changes, the stable key changes, so
@@ -814,7 +901,13 @@ mod tests {
     /// `clip` (matching the production write-scissor + raster_clip wiring), in the
     /// deterministic (synchronous) blur mode so the result is present immediately
     /// and byte-stable. Returns the framebuffer after the blur write-back.
-    fn run_blur(bounds: Rect, radius: u32, clip: Option<Rect>, fb_w: u32, fb_h: u32) -> FrameBuffer {
+    fn run_blur(
+        bounds: Rect,
+        radius: u32,
+        clip: Option<Rect>,
+        fb_w: u32,
+        fb_h: u32,
+    ) -> FrameBuffer {
         let mut renderer = SoftwareRenderer::new();
         renderer.deterministic_blur = true; // synchronous, byte-stable
         renderer.raster_clip = clip;
@@ -831,7 +924,7 @@ mod tests {
         paint_backdrop(&mut fb);
 
         let prev = crate::rasterizer::set_write_scissor(clip);
-        renderer.render_backdrop_blur(1, bounds, radius, &mut fb);
+        renderer.render_backdrop_blur(1, bounds, radius, (0.0, 0.0, 0.0, 0.0), &mut fb);
         crate::rasterizer::set_write_scissor(prev);
         fb
     }
@@ -846,16 +939,40 @@ mod tests {
         // plus a deliberately ODD-dim glass to exercise the safe-fallback path.
         let cases = [
             // (bounds, radius, damage rect)
-            (Rect::new(8.0, 8.0, 200.0, 160.0), 4, Rect::new(40.0, 40.0, 24.0, 24.0)),
-            (Rect::new(8.0, 8.0, 200.0, 160.0), 12, Rect::new(90.0, 70.0, 32.0, 32.0)),
-            (Rect::new(8.0, 8.0, 200.0, 160.0), 20, Rect::new(120.0, 100.0, 16.0, 16.0)),
+            (
+                Rect::new(8.0, 8.0, 200.0, 160.0),
+                4,
+                Rect::new(40.0, 40.0, 24.0, 24.0),
+            ),
+            (
+                Rect::new(8.0, 8.0, 200.0, 160.0),
+                12,
+                Rect::new(90.0, 70.0, 32.0, 32.0),
+            ),
+            (
+                Rect::new(8.0, 8.0, 200.0, 160.0),
+                20,
+                Rect::new(120.0, 100.0, 16.0, 16.0),
+            ),
             // Damage ON the top-left glass edge (margin must clamp to the edge).
-            (Rect::new(8.0, 8.0, 200.0, 160.0), 12, Rect::new(8.0, 8.0, 20.0, 20.0)),
+            (
+                Rect::new(8.0, 8.0, 200.0, 160.0),
+                12,
+                Rect::new(8.0, 8.0, 20.0, 20.0),
+            ),
             // Damage ON the bottom-right glass edge.
-            (Rect::new(8.0, 8.0, 200.0, 160.0), 16, Rect::new(180.0, 140.0, 28.0, 28.0)),
+            (
+                Rect::new(8.0, 8.0, 200.0, 160.0),
+                16,
+                Rect::new(180.0, 140.0, 28.0, 28.0),
+            ),
             // Odd-dim glass + large radius → safe fallback to full bounds; must
             // still be byte-identical inside the damage rect.
-            (Rect::new(8.0, 8.0, 201.0, 161.0), 12, Rect::new(90.0, 70.0, 30.0, 30.0)),
+            (
+                Rect::new(8.0, 8.0, 201.0, 161.0),
+                12,
+                Rect::new(90.0, 70.0, 30.0, 30.0),
+            ),
         ];
 
         for (bounds, radius, dmg) in cases {
@@ -926,14 +1043,14 @@ mod tests {
             let full = run_blur(bounds, radius, None, fb_w, fb_h);
             // Damage rects of varying size at varying offsets, including the four
             // glass corners (where the margin clamps to the true edge).
-            for &( dx, dy, dw, dh) in &[
-                (4.0, 4.0, 18.0, 18.0),       // top-left corner
-                (226.0, 4.0, 18.0, 18.0),     // top-right corner
-                (4.0, 186.0, 18.0, 18.0),     // bottom-left corner
-                (226.0, 186.0, 18.0, 18.0),   // bottom-right corner
-                (60.0, 50.0, 13.0, 27.0),     // odd-sized interior
-                (121.0, 99.0, 7.0, 7.0),      // odd-offset tiny interior
-                (10.0, 90.0, 200.0, 11.0),    // wide thin strip
+            for &(dx, dy, dw, dh) in &[
+                (4.0, 4.0, 18.0, 18.0),     // top-left corner
+                (226.0, 4.0, 18.0, 18.0),   // top-right corner
+                (4.0, 186.0, 18.0, 18.0),   // bottom-left corner
+                (226.0, 186.0, 18.0, 18.0), // bottom-right corner
+                (60.0, 50.0, 13.0, 27.0),   // odd-sized interior
+                (121.0, 99.0, 7.0, 7.0),    // odd-offset tiny interior
+                (10.0, 90.0, 200.0, 11.0),  // wide thin strip
             ] {
                 let dmg = Rect::new(dx, dy, dw, dh);
                 let clipped = run_blur(bounds, radius, Some(dmg), fb_w, fb_h);
@@ -969,9 +1086,13 @@ mod tests {
         full_r.raster_clip = None;
         let mut fb_full = FrameBuffer::new(400, 400, PixelFormat::Bgra8);
         paint_backdrop(&mut fb_full);
-        full_r.render_backdrop_blur(1, bounds, radius, &mut fb_full);
+        full_r.render_backdrop_blur(1, bounds, radius, (0.0, 0.0, 0.0, 0.0), &mut fb_full);
         let full_px = full_r.last_blur_source_px.get();
-        assert_eq!(full_px, 400 * 400, "full path should snapshot the whole glass");
+        assert_eq!(
+            full_px,
+            400 * 400,
+            "full path should snapshot the whole glass"
+        );
 
         // Clipped: the blur source must be a small window around the damage rect.
         let mut clip_r = SoftwareRenderer::new();
@@ -980,7 +1101,7 @@ mod tests {
         let prev = crate::rasterizer::set_write_scissor(Some(dmg));
         let mut fb_clip = FrameBuffer::new(400, 400, PixelFormat::Bgra8);
         paint_backdrop(&mut fb_clip);
-        clip_r.render_backdrop_blur(1, bounds, radius, &mut fb_clip);
+        clip_r.render_backdrop_blur(1, bounds, radius, (0.0, 0.0, 0.0, 0.0), &mut fb_clip);
         crate::rasterizer::set_write_scissor(prev);
         let clip_px = clip_r.last_blur_source_px.get();
 

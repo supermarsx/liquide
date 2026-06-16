@@ -1295,7 +1295,7 @@ impl SoftwareRenderer {
                 if self.blur_enabled && self.intersects_dirty(&bounds) {
                     let radius = self.effect_params.blur_radius;
                     if radius > 0 {
-                        self.render_backdrop_blur(node.id, bounds, radius, fb);
+                        self.render_backdrop_blur(node.id, bounds, radius, node.corner_radius, fb);
                     }
                 }
             }
@@ -1304,7 +1304,7 @@ impl SoftwareRenderer {
                 if self.blur_enabled && self.intersects_dirty(&bounds) {
                     let radius = self.effect_params.blur_radius;
                     if radius > 0 {
-                        self.render_backdrop_blur(node.id, bounds, radius, fb);
+                        self.render_backdrop_blur(node.id, bounds, radius, node.corner_radius, fb);
                     }
                 }
             }
@@ -1343,7 +1343,7 @@ impl SoftwareRenderer {
                 if self.blur_enabled {
                     let radius = self.effect_params.blur_radius;
                     if radius > 0 {
-                        self.render_backdrop_blur(node.id, bounds, radius, fb);
+                        self.render_backdrop_blur(node.id, bounds, radius, node.corner_radius, fb);
                     }
                 }
                 rasterizer::fill_rect(fb, bounds, Color::new(0, 0, 0, 180), BlendMode::SrcOver);
@@ -1572,7 +1572,7 @@ impl SoftwareRenderer {
                             let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
                             // Confine clip feathering to the damage write-scissor (t84).
                             let (bx0, by0, bx1, by1) =
-                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
+                                rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
                             let pts: Vec<(f32, f32)> = points
                                 .iter()
                                 .map(|p| {

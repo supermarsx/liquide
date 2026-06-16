@@ -210,10 +210,7 @@ impl FontWorker {
     /// left pending (the caller falls back to estimated advances exactly as
     /// before, preserving liveness). Stale results from a previous generation
     /// are discarded.
-    pub fn drain_pending_blocking(
-        &mut self,
-        deadline: std::time::Instant,
-    ) -> Vec<RasterizedGlyph> {
+    pub fn drain_pending_blocking(&mut self, deadline: std::time::Instant) -> Vec<RasterizedGlyph> {
         let mut results = self.poll_results();
         while !self.pending.is_empty() {
             let now = std::time::Instant::now();
@@ -700,13 +697,15 @@ mod tests {
         );
 
         let mut glyphs = collect_glyphs(&mut worker, &[upright_key, italic_key]);
-        let upright = glyphs.remove(&upright_key).expect("upright glyph rasterized");
+        let upright = glyphs
+            .remove(&upright_key)
+            .expect("upright glyph rasterized");
         let italic = glyphs.remove(&italic_key).expect("italic glyph rasterized");
 
         // The synthetic-oblique shear widens the bitmap and shifts coverage, so
         // the two bitmaps must differ. (A real italic face would also differ.)
-        let differs = upright.metrics.width != italic.metrics.width
-            || upright.bitmap != italic.bitmap;
+        let differs =
+            upright.metrics.width != italic.metrics.width || upright.bitmap != italic.bitmap;
         assert!(
             differs,
             "italic glyph bitmap must differ from upright (synthetic oblique not applied): \

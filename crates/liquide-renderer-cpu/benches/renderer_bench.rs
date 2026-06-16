@@ -183,6 +183,7 @@ fn bench_glyph_blit(c: &mut Criterion) {
     let mut fb = FrameBuffer::new(1920, 1080, PixelFormat::Bgra8);
     let mut atlas = GlyphAtlas::new(1024, 1024);
     let color = Color::new(255, 255, 255, 255);
+    let lut = liquide_renderer_cpu::color::SrgbLut::new();
 
     // Insert 100 fake glyphs (16x20 each, filled with varying alpha)
     let glyph_w = 16u32;
@@ -223,6 +224,8 @@ fn bench_glyph_blit(c: &mut Criterion) {
                     black_box(glyph),
                     black_box(pos),
                     black_box(color),
+                    black_box(None),
+                    black_box(&lut),
                 );
             }
         });
