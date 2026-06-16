@@ -15,7 +15,18 @@ path = "src/lib.rs"
 name = "snapshot"
 path = "src/bin/snapshot.rs"
 
+# Per-stage CPU render-path frame-time benchmark (t75-bench). Measures the real
+# boot->pixels path (build_scene -> flatten -> raster) at 1920x1080 by calling
+# the existing public APIs; prints a per-stage table + derived fps.
+[[bin]]
+name = "render_bench"
+path = "src/bin/render_bench.rs"
+
 [dependencies]
+# CPU rasterizer (SoftwareRenderer) for the raster stage of the render_bench bin.
+liquide-renderer-cpu.workspace = true
+# Font database wiring for the renderer (mirrors DesktopCompositor font load).
+liquide-font-rasterizer.workspace = true
 # Drives the REAL desktop compositor headlessly (capture_once seam).
 liquide-session.workspace = true
 # StandalonePlatform backend + PlatformEvent scripting + StandalonePresentedFrame.
