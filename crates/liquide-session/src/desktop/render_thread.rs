@@ -1,6 +1,6 @@
 //! Render thread types and background rendering logic.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -275,6 +275,236 @@ fn full_damage(tile_size: u32, width: u32, height: u32) -> DamageSet {
     let grid_w = width.div_ceil(tile_size);
     let grid_h = height.div_ceil(tile_size);
     DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive)
+}
+
+/// The synthetic cursor `FlatNode` id (see [`cursor_flat_node`]). The cursor is
+/// composited every frame on a separate cursor-only damage path, so it must be
+/// excluded from the scene-diff below (otherwise it would mark the whole frame
+/// changed on every cursor move).
+const CURSOR_FLAT_NODE_ID: liquide_compositor::scene::NodeId = 999_999;
+
+/// Two flattened nodes are considered VISUALLY IDENTICAL (no damage needed)
+/// when their painted content and geometry are unchanged.
+///
+/// Content identity is tested by `Arc::ptr_eq` on the node `kind`: the scene
+/// cache hands back the SAME `Arc<SceneNodeKind>` for a node whose paint payload
+/// was reused across frames (e.g. the cached window subtree + the wallpaper
+/// background — the dominant raster cost per t75-bench). A node that the shell
+/// reassembles every frame (chrome) gets a fresh `Arc`, so it always compares
+/// "changed" and is conservatively re-damaged — over-damage, never under-damage.
+/// Geometry (`absolute_bounds`, `opacity`, `clip`, `corner_radius`, `clip_radius`)
+/// is compared by value: a node moved/resized/faded with the same `kind` Arc
+/// still changes pixels at both its old and new positions.
+fn flat_node_visually_equal(a: &FlatNode, b: &FlatNode) -> bool {
+    std::sync::Arc::ptr_eq(&a.kind, &b.kind)
+        && a.absolute_bounds == b.absolute_bounds
+        && a.opacity == b.opacity
+        && a.clip == b.clip
+        && a.corner_radius == b.corner_radius
+        && a.clip_radius == b.clip_radius
+}
+
+/// Whether a node samples the pixels BEHIND it (glass / backdrop blur / filter).
+///
+/// Such a node's output depends on whatever is painted under its bounds, so if
+/// anything within its bounds changed, the node itself MUST be re-rastered too —
+/// otherwise a window moving behind a glass panel leaves the panel showing a
+/// stale blurred backdrop (the classic backdrop-blur damage-expansion bug). The
+/// scene diff expands damage to cover these nodes (see [`scene_diff_damage`]).
+fn flat_node_samples_backdrop(node: &FlatNode) -> bool {
+    matches!(
+        node.kind_ref(),
+        SceneNodeKind::Glass(_)
+            | SceneNodeKind::BlurBackdrop
+            | SceneNodeKind::BackdropFilter { .. }
+            | SceneNodeKind::Filter { .. }
+    )
+}
+
+/// Whether a node kind paints PIXELS OF ITS OWN (as opposed to a purely
+/// structural container whose footprint is painted only by its descendants).
+///
+/// Mirrors the renderer's `classify_node_kind`: structural kinds (Root,
+/// Workspace, Overlay, Content, ShellLayer, RenderLayer, ClipPath, Filter,
+/// BackdropFilter) contribute no self-paint, so a change to such a node by
+/// itself damages nothing — its painting children move/appear/disappear with it
+/// and are caught as their own diffs. This keeps a reparent / container-id churn
+/// from spuriously damaging the container's whole footprint.
+fn flat_node_paints(node: &FlatNode) -> bool {
+    !matches!(
+        node.kind_ref(),
+        SceneNodeKind::Root
+            | SceneNodeKind::Workspace { .. }
+            | SceneNodeKind::Overlay
+            | SceneNodeKind::Content
+            | SceneNodeKind::ShellLayer
+            | SceneNodeKind::RenderLayer { .. }
+            | SceneNodeKind::ClipPath { .. }
+            | SceneNodeKind::Filter { .. }
+            | SceneNodeKind::BackdropFilter { .. }
+    )
+}
+
+/// The painted footprint of a flat node in absolute pixel space: its bounds
+/// intersected with its own clip (if any). Returns `None` if the node does not
+/// self-paint or is fully clipped away (nothing painted → nothing to damage).
+fn flat_node_paint_rect(node: &FlatNode) -> Option<Rect> {
+    if !flat_node_paints(node) {
+        return None;
+    }
+    match node.clip {
+        Some(clip) => node.absolute_bounds.intersection(&clip),
+        None => Some(node.absolute_bounds),
+    }
+}
+
+/// Derive a TARGETED damage set from the difference between the previously
+/// rendered flat scene (`prev`) and the freshly flattened one (`curr`), in
+/// absolute pixel space, for a `width`×`height` frame at `tile_size`.
+///
+/// A node contributes its paint rect to the damage when it was ADDED, REMOVED,
+/// or VISUALLY CHANGED (see [`flat_node_visually_equal`]). Damage is then
+/// EXPANDED so that every backdrop-sampling node (glass / blur / filter, see
+/// [`flat_node_samples_backdrop`]) whose footprint overlaps the changed region
+/// is itself fully re-damaged — guaranteeing no stale blurred backdrop is left
+/// behind a change. The expansion is iterated to a fixpoint (bounded) so chained
+/// glass layers settle.
+///
+/// Returns `None` when a trustworthy diff cannot be produced (no previous scene,
+/// or the change touches so much of the frame that targeting is pointless); the
+/// caller then keeps the conservative full-frame damage. CORRECTNESS: this only
+/// ever computes damage to ADD to the union of changes — it never narrows past
+/// what actually changed, and an uncertain case falls back to full.
+fn scene_diff_damage(
+    prev: &[FlatNode],
+    curr: &[FlatNode],
+    tile_size: u32,
+    width: u32,
+    height: u32,
+) -> Option<DamageSet> {
+    if prev.is_empty() || tile_size == 0 || width == 0 || height == 0 {
+        return None;
+    }
+
+    // Index the previous frame by node id (excluding the synthetic cursor).
+    let mut prev_by_id: HashMap<liquide_compositor::scene::NodeId, &FlatNode> =
+        HashMap::with_capacity(prev.len());
+    for node in prev {
+        if node.id == CURSOR_FLAT_NODE_ID {
+            continue;
+        }
+        prev_by_id.insert(node.id, node);
+    }
+
+    // Collect changed paint rects: added / changed (old ∪ new), and removed.
+    let mut changed_rects: Vec<Rect> = Vec::new();
+    let mut seen: HashSet<liquide_compositor::scene::NodeId> =
+        HashSet::with_capacity(curr.len());
+    for node in curr {
+        if node.id == CURSOR_FLAT_NODE_ID {
+            continue;
+        }
+        seen.insert(node.id);
+        match prev_by_id.get(&node.id) {
+            Some(prev_node) if flat_node_visually_equal(prev_node, node) => {}
+            Some(prev_node) => {
+                // Changed: damage both old and new footprints.
+                if let Some(r) = flat_node_paint_rect(prev_node) {
+                    changed_rects.push(r);
+                }
+                if let Some(r) = flat_node_paint_rect(node) {
+                    changed_rects.push(r);
+                }
+            }
+            None => {
+                // Added: damage its new footprint.
+                if let Some(r) = flat_node_paint_rect(node) {
+                    changed_rects.push(r);
+                }
+            }
+        }
+    }
+    for node in prev {
+        if node.id == CURSOR_FLAT_NODE_ID || seen.contains(&node.id) {
+            continue;
+        }
+        // Removed: damage the footprint it used to occupy.
+        if let Some(r) = flat_node_paint_rect(node) {
+            changed_rects.push(r);
+        }
+    }
+
+    if changed_rects.is_empty() {
+        // Nothing structural changed. Return an EMPTY damage set so the caller
+        // can skip a full repaint; the post-raster hash trim is the final gate.
+        return Some(DamageSet::new(tile_size));
+    }
+
+    // Expand damage to cover backdrop-sampling nodes overlapping any change.
+    // Iterate to a fixpoint (bounded) so stacked glass layers all settle.
+    let mut backdrop_added = vec![false; curr.len()];
+    for _pass in 0..4 {
+        let mut grew = false;
+        for (i, node) in curr.iter().enumerate() {
+            if backdrop_added[i]
+                || node.id == CURSOR_FLAT_NODE_ID
+                || !flat_node_samples_backdrop(node)
+            {
+                continue;
+            }
+            // Use the node's CLIPPED bounds directly (not `flat_node_paint_rect`,
+            // which returns None for the structural Filter/BackdropFilter kinds):
+            // those nodes still bound a backdrop-sampling region that must be
+            // re-rastered when anything underneath them changed.
+            let node_rect = match node.clip {
+                Some(clip) => match node.absolute_bounds.intersection(&clip) {
+                    Some(r) => r,
+                    None => continue,
+                },
+                None => node.absolute_bounds,
+            };
+            if changed_rects
+                .iter()
+                .any(|r| r.intersection(&node_rect).is_some())
+            {
+                changed_rects.push(node_rect);
+                backdrop_added[i] = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    // Rasterise the changed rects into tile damage.
+    let grid_w = width.div_ceil(tile_size);
+    let grid_h = height.div_ceil(tile_size);
+    let mut damage = DamageSet::new(tile_size);
+    let fb_w = width as f32;
+    let fb_h = height as f32;
+    for r in &changed_rects {
+        let x0 = r.x.max(0.0).min(fb_w).floor();
+        let y0 = r.y.max(0.0).min(fb_h).floor();
+        let x1 = (r.x + r.width).max(0.0).min(fb_w).ceil();
+        let y1 = (r.y + r.height).max(0.0).min(fb_h).ceil();
+        let w = (x1 - x0).max(0.0) as u32;
+        let h = (y1 - y0).max(0.0) as u32;
+        if w == 0 || h == 0 {
+            continue;
+        }
+        damage.mark_rect(x0 as u32, y0 as u32, w, h, grid_w, grid_h);
+    }
+    damage.dedup();
+
+    // If the targeted damage already covers (nearly) the whole frame, there is
+    // no benefit to a partial path — let the caller keep full-frame damage so
+    // the simpler/clear-all path runs.
+    if damage_covers_frame(&damage, width, height) {
+        return None;
+    }
+
+    Some(damage)
 }
 
 fn damage_covers_frame(damage: &DamageSet, width: u32, height: u32) -> bool {
@@ -1686,6 +1916,31 @@ impl DesktopCompositor {
         // before the skeleton filter, guarantees the cached scene always carries
         // every window's full content (escalated from t62-compositor;
         // t59-winvis stale-cache class).
+        // 3a. SCENE-DERIVED TARGETED DAMAGE (t76-damage). Diff the freshly
+        // flattened scene against the PREVIOUS frame's flat scene (the value
+        // currently in `cached_flat_nodes`, before we overwrite it below). When
+        // the incoming job asked for a full repaint but only a small region
+        // actually changed (a clock tick, a hover, a menu open), this lets the
+        // renderer raster just the changed tiles instead of the whole frame
+        // (~8x cheaper per t75-bench). `None` => keep the conservative full
+        // damage. The diff is skipped during a drag (scene is mid-skeletonise,
+        // and the drag path already feeds the renderer its own scene). The cache
+        // holds the UNFILTERED current scene, so the diff uses pre-cursor,
+        // pre-skeleton geometry — exactly the painted scene.
+        let scene_damage = if latest_job.dragged_window.is_none() {
+            cached_flat_nodes.as_deref().and_then(|prev| {
+                scene_diff_damage(
+                    prev,
+                    flat_nodes_buf,
+                    latest_job.tile_size,
+                    latest_job.width,
+                    latest_job.height,
+                )
+            })
+        } else {
+            None
+        };
+
         if latest_job.dragged_window.is_none() {
             *cached_flat_nodes = Some(flat_nodes_buf.clone());
         } else {
@@ -1742,12 +1997,34 @@ impl DesktopCompositor {
         let framebuf = fb.as_mut().expect("framebuffer was just allocated above");
 
         // 5. Build damage set.
+        //
+        // Precedence, correctness-first (t76-damage):
+        //  * First frame / resize (`needs_new`): full repaint — the framebuffer
+        //    is fresh and there is no trustworthy previous scene to diff.
+        //  * Caller targeted (`Some(hint)`): render the hint UNIONed with the
+        //    scene diff. Union never narrows past what changed, so a status-bar
+        //    tick hint that misses a co-incident change is still covered.
+        //  * Caller asked for full (`None`): downgrade to the scene-derived
+        //    targeted damage ONLY when the diff detected a real, non-empty,
+        //    contained change. An EMPTY diff keeps the full repaint — a `None`
+        //    request can mean "something the flat scene cannot express changed"
+        //    (late wallpaper decode, theme reload, first paint), which must not
+        //    be under-damaged. The post-raster hash trim is the final gate.
         let mut damage = if needs_new {
             full_damage(latest_job.tile_size, latest_job.width, latest_job.height)
         } else {
-            latest_job.damage.unwrap_or_else(|| {
-                full_damage(latest_job.tile_size, latest_job.width, latest_job.height)
-            })
+            match latest_job.damage {
+                Some(mut hint) => {
+                    if let Some(diff) = scene_damage {
+                        hint.merge(&diff);
+                    }
+                    hint
+                }
+                None => match scene_damage {
+                    Some(diff) if !diff.is_empty() => diff,
+                    _ => full_damage(latest_job.tile_size, latest_job.width, latest_job.height),
+                },
+            }
         };
         damage.dedup();
 
@@ -2825,5 +3102,209 @@ mod tests {
         if let Some(handle) = desktop.render_thread.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod scene_diff_tests {
+    //! Tests for the scene-derived targeted damage (t76-damage). These exercise
+    //! [`scene_diff_damage`] directly on flat-node sets so the damage-derivation
+    //! contract is verified in isolation from the worker plumbing.
+
+    use super::*;
+    use liquide_compositor::pixel::Color;
+    use liquide_compositor::scene::NodeId;
+
+    const TILE: u32 = 64;
+    const W: u32 = 256;
+    const H: u32 = 256;
+
+    /// Build a UI-primitive painting node (a `Glass` panel) at the given rect
+    /// with a FRESH `kind` Arc (so two such nodes never compare ptr-equal).
+    fn glass_node(id: NodeId, x: f32, y: f32, w: f32, h: f32) -> FlatNode {
+        FlatNode {
+            id,
+            kind: SceneNodeKind::Tint {
+                color: Color::new(10, 10, 10, 200),
+            }
+            .into(),
+            absolute_bounds: Rect::new(x, y, w, h),
+            absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    /// A backdrop-sampling glass node.
+    fn backdrop_node(id: NodeId, x: f32, y: f32, w: f32, h: f32) -> FlatNode {
+        let mut n = glass_node(id, x, y, w, h);
+        n.kind = SceneNodeKind::BlurBackdrop.into();
+        n
+    }
+
+    /// A structural (non-painting) container node.
+    fn container_node(id: NodeId, x: f32, y: f32, w: f32, h: f32) -> FlatNode {
+        let mut n = glass_node(id, x, y, w, h);
+        n.kind = SceneNodeKind::Content.into();
+        n
+    }
+
+    /// Clone a flat node but with a FRESH `kind` Arc, simulating the shell
+    /// reassembling a node with the same geometry but a new paint payload.
+    fn with_new_kind(node: &FlatNode) -> FlatNode {
+        let mut n = node.clone();
+        n.kind = SceneNodeKind::Tint {
+            color: Color::new(99, 99, 99, 255),
+        }
+        .into();
+        n
+    }
+
+    /// Same node, SAME `kind` Arc (content reused across frames, as the scene
+    /// cache does for the wallpaper/window subtree).
+    fn reused(node: &FlatNode) -> FlatNode {
+        node.clone() // Clone preserves the Arc (ptr_eq stays true).
+    }
+
+    fn tiles_set(d: &DamageSet) -> HashSet<(u32, u32)> {
+        d.tiles.iter().map(|t| (t.x, t.y)).collect()
+    }
+
+    #[test]
+    fn no_previous_scene_returns_none() {
+        let curr = vec![glass_node(1, 0.0, 0.0, 64.0, 64.0)];
+        assert!(scene_diff_damage(&[], &curr, TILE, W, H).is_none());
+    }
+
+    #[test]
+    fn unchanged_scene_yields_empty_damage() {
+        // Two consecutive frames with the SAME cached nodes (Arc preserved) and
+        // identical geometry → nothing changed → empty (not full, not None).
+        let bg = reused(&glass_node(1, 0.0, 0.0, 256.0, 256.0));
+        let prev = vec![bg.clone()];
+        let curr = vec![reused(&bg)];
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H)
+            .expect("unchanged scene with a previous frame must yield a diff");
+        assert!(
+            damage.is_empty(),
+            "an unchanged scene must produce EMPTY damage, got {:?}",
+            damage.tiles
+        );
+    }
+
+    #[test]
+    fn contained_text_change_yields_targeted_not_full_damage() {
+        // A clock-tick-style change: one small node's content changes, the large
+        // background stays cached. Damage must be the small node's tile(s), NOT
+        // the whole frame.
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        let clock = glass_node(2, 10.0, 10.0, 40.0, 20.0); // within tile (0,0)
+        let prev = vec![reused(&bg), clock.clone()];
+        // bg reused (same Arc), clock repainted (new Arc).
+        let curr = vec![reused(&bg), with_new_kind(&clock)];
+
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H)
+            .expect("a contained change must yield a targeted (Some) diff");
+        assert!(!damage.is_empty(), "the changed clock must produce damage");
+        assert!(
+            !damage_covers_frame(&damage, W, H),
+            "a contained clock change must NOT damage the whole frame: {} tiles",
+            damage.tiles.len()
+        );
+        assert_eq!(
+            tiles_set(&damage),
+            HashSet::from([(0, 0)]),
+            "only the clock's tile (0,0) should be damaged"
+        );
+    }
+
+    #[test]
+    fn moved_node_damages_old_and_new_footprints() {
+        // A node that moves must damage BOTH where it was and where it is now
+        // (no stale pixels left at the old position).
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        let movable_old = glass_node(2, 10.0, 10.0, 20.0, 20.0); // tile (0,0)
+        let movable_new = glass_node(2, 200.0, 200.0, 20.0, 20.0); // tile (3,3)
+        let prev = vec![reused(&bg), movable_old];
+        let curr = vec![reused(&bg), movable_new];
+
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H).expect("move yields a diff");
+        let tiles = tiles_set(&damage);
+        assert!(tiles.contains(&(0, 0)), "old footprint must be damaged");
+        assert!(tiles.contains(&(3, 3)), "new footprint must be damaged");
+    }
+
+    #[test]
+    fn removed_node_damages_its_old_footprint() {
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        let toast = glass_node(2, 200.0, 0.0, 50.0, 50.0); // tile (3,0)
+        let prev = vec![reused(&bg), toast];
+        let curr = vec![reused(&bg)];
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H).expect("removal yields a diff");
+        assert!(
+            tiles_set(&damage).contains(&(3, 0)),
+            "a removed node must damage the footprint it vacated"
+        );
+    }
+
+    #[test]
+    fn backdrop_node_over_change_is_re_damaged() {
+        // A glass/backdrop panel sits over a region where an underlying node
+        // changes. The backdrop samples behind it, so its own footprint MUST be
+        // damaged too — otherwise it shows a stale blurred backdrop.
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        let under = glass_node(2, 10.0, 10.0, 20.0, 20.0); // tile (0,0) changes
+        let glass = backdrop_node(3, 64.0, 0.0, 64.0, 64.0); // tile (1,0), overlaps nothing changed
+        // Make the backdrop overlap the changed tile by spanning x 0..128.
+        let glass = {
+            let mut g = glass;
+            g.absolute_bounds = Rect::new(0.0, 0.0, 128.0, 64.0); // tiles (0,0),(1,0)
+            g
+        };
+        let prev = vec![reused(&bg), under.clone(), reused(&glass)];
+        let curr = vec![reused(&bg), with_new_kind(&under), reused(&glass)];
+
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H).expect("diff");
+        let tiles = tiles_set(&damage);
+        assert!(tiles.contains(&(0, 0)), "the changed under-node tile");
+        assert!(
+            tiles.contains(&(1, 0)),
+            "the backdrop panel extends into tile (1,0) and overlaps the change, \
+             so its whole footprint must be re-damaged (no stale backdrop)"
+        );
+    }
+
+    #[test]
+    fn structural_container_id_churn_alone_yields_empty() {
+        // A structural Content container whose id changes but whose painting
+        // children are unchanged must NOT damage the container footprint.
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        let child = glass_node(5, 10.0, 10.0, 20.0, 20.0);
+        let prev = vec![reused(&bg), container_node(2, 0.0, 0.0, 128.0, 128.0), child.clone()];
+        let curr = vec![reused(&bg), container_node(7, 0.0, 0.0, 128.0, 128.0), reused(&child)];
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H).expect("diff");
+        assert!(
+            damage.is_empty(),
+            "structural container id churn with unchanged painting children must \
+             produce no damage, got {:?}",
+            damage.tiles
+        );
+    }
+
+    #[test]
+    fn whole_frame_change_falls_back_to_full() {
+        // A theme-style change where the full-screen background is repainted (new
+        // Arc) covers the whole frame → returns None so the caller keeps the
+        // simpler full-frame path.
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        let prev = vec![bg.clone()];
+        let curr = vec![with_new_kind(&bg)];
+        assert!(
+            scene_diff_damage(&prev, &curr, TILE, W, H).is_none(),
+            "a full-frame repaint must fall back to None (full damage)"
+        );
     }
 }
