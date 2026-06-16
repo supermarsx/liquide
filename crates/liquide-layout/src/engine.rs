@@ -1315,6 +1315,52 @@ mod tests {
     use liquide_dom::Document;
     use liquide_style_engine::engine::{StyleEngine, ViewportSize};
 
+    /// Regression (t76-layoutorigin): a full-viewport `position: fixed` element
+    /// with `top/left/right/bottom: 0` (the desktop-background / wallpaper box)
+    /// must lay out with a border box of EXACTLY the viewport `(0, 0, vw, vh)`.
+    ///
+    /// This pins the layout half of the wallpaper-left-strip investigation: the
+    /// layout box origin is correct here; the x≈50 origin the strip came from
+    /// was introduced later, in the painter's background-position handling (see
+    /// `liquide-paint` `background_position_does_not_offset_full_bleed_cover`).
+    #[test]
+    fn fixed_full_viewport_box_is_exactly_the_viewport() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let bg = doc.create_element("desktop-background");
+        doc.append_child(root, bg);
+
+        let mut style_engine = StyleEngine::new(
+            ViewportSize {
+                width: 1280.0,
+                height: 720.0,
+            },
+            16.0,
+        );
+        // Mirror the real desktop-background: fixed, all-zero insets, no width.
+        style_engine.add_stylesheet(
+            "desktop-background { position: fixed; top: 0; left: 0; right: 0; bottom: 0; }",
+        );
+        let styles = style_engine.restyle_all(&doc);
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let id = tree.find_box_id_by_node(bg).expect("desktop-background box");
+        let r = tree.absolute_border_rect(id);
+        assert!(
+            r.x.abs() < 0.01 && r.y.abs() < 0.01,
+            "fixed inset:0 box must start at (0,0), got ({},{})",
+            r.x,
+            r.y
+        );
+        assert!(
+            (r.width - 1280.0).abs() < 0.01 && (r.height - 720.0).abs() < 0.01,
+            "fixed inset:0 box must span the full viewport (1280x720), got {}x{}",
+            r.width,
+            r.height
+        );
+    }
+
     #[test]
     fn basic_block_layout() {
         let mut doc = Document::new();

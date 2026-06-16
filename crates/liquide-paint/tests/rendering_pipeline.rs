@@ -32,6 +32,135 @@ fn layout_engine() -> LayoutEngine {
 //  PART 1 – Text nodes inside flex containers
 // ═════════════════════════════════════════════════════════════════
 
+/// Regression (t76-layoutorigin): the desktop-background wallpaper
+/// (`position: fixed; inset: 0; background: url(...) center / cover no-repeat`)
+/// must emit its image into the FULL viewport box `(0, 0, vw, vh)` — not offset
+/// to x≈50 by `background-position: center`.
+///
+/// Root cause: the style engine resolves `background-position` keywords against
+/// a 100-unit base, so `center` arrives at the painter as `position = (50, 50)`
+/// (a percentage numerator, not pixels). The painter previously ADDED that value
+/// to the background-origin as a raw pixel offset, so a full-bleed Cover tile
+/// (tile == box) was shoved 50px right of the box, leaving an uncovered left
+/// strip and a wallpaper box origin of x≈50. The painter now distributes the
+/// position over the actual free space `(area − tile)`, which is 0 for a tile
+/// that fills its box — so the wallpaper sits exactly at (0,0).
+#[test]
+fn background_position_does_not_offset_full_bleed_cover() {
+    let mut doc = Document::new();
+    let root = doc.root();
+    let bg = doc.create_element("desktop-background");
+    doc.append_child(root, bg);
+
+    let mut se = StyleEngine::new(
+        ViewportSize {
+            width: 1280.0,
+            height: 720.0,
+        },
+        16.0,
+    );
+    se.add_stylesheet(
+        r#"desktop-background {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: url("aurora.png") center / cover no-repeat;
+        }"#,
+    );
+    let styles = se.restyle_all(&doc);
+    let mut le = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+    let tree = le.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+    let list = Painter::new().paint(&doc, &tree, &styles);
+
+    let img = list
+        .items
+        .iter()
+        .find_map(|item| match item {
+            DisplayItem::ImageRect { rect, fit, .. } => Some((*rect, *fit)),
+            _ => None,
+        })
+        .expect("wallpaper ImageRect must be emitted");
+    let (rect, fit) = img;
+
+    assert_eq!(
+        fit,
+        liquide_paint::display_list::ImageFit::Cover,
+        "wallpaper must be a Cover-fit image"
+    );
+    assert!(
+        rect.x.abs() < 0.01 && rect.y.abs() < 0.01,
+        "Cover wallpaper destination must start at (0,0), got ({},{})",
+        rect.x,
+        rect.y
+    );
+    assert!(
+        (rect.width - 1280.0).abs() < 0.01 && (rect.height - 720.0).abs() < 0.01,
+        "Cover wallpaper destination must span the full viewport, got {}x{}",
+        rect.width,
+        rect.height
+    );
+}
+
+/// A genuinely smaller background tile (no-repeat, fixed size) must still be
+/// positioned by `background-position` within the box's free space: `center`
+/// places a 100×100 tile in a 300×300 box at (100, 100).
+#[test]
+fn background_position_centers_smaller_tile_in_free_space() {
+    use liquide_compositor::scene::{
+        BackgroundImage, BackgroundRepeat, BackgroundSize, BackgroundSpec,
+    };
+
+    let mut doc = Document::new();
+    let root = doc.root();
+    let div = doc.create_element("div");
+    doc.append_child(root, div);
+
+    let mut se = StyleEngine::new(
+        ViewportSize {
+            width: 800.0,
+            height: 600.0,
+        },
+        16.0,
+    );
+    se.add_stylesheet("div { position: fixed; top: 0; left: 0; width: 300px; height: 300px; }");
+    let mut styles = se.restyle_all(&doc);
+
+    // center position → 50 (percentage numerator), explicit 100x100 tile.
+    if let Some(arc_style) = styles.get(div) {
+        let mut s = (**arc_style).clone();
+        s.background = vec![BackgroundSpec {
+            color: None,
+            image: Some(BackgroundImage::Url("tile.png".to_string())),
+            size: BackgroundSize::Explicit {
+                width: 100.0,
+                height: 100.0,
+            },
+            position: (50.0, 50.0),
+            repeat: BackgroundRepeat::NoRepeat,
+        }];
+        styles.insert(div, s);
+    }
+
+    let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+    let tree = le.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+    let list = Painter::new().paint(&doc, &tree, &styles);
+
+    let rect = list
+        .items
+        .iter()
+        .find_map(|item| match item {
+            DisplayItem::ImageRect { rect, src, .. } if src == "tile.png" => Some(*rect),
+            _ => None,
+        })
+        .expect("tile ImageRect must be emitted");
+
+    // free space = 300 - 100 = 200; center (0.5) → offset 100.
+    assert!(
+        (rect.x - 100.0).abs() < 0.01 && (rect.y - 100.0).abs() < 0.01,
+        "centered 100x100 tile in 300x300 box must be at (100,100), got ({},{})",
+        rect.x,
+        rect.y
+    );
+}
+
 /// The PRIMARY bug: a text-node child of a flex container must have
 /// measured width > 0, not a 0×0 box.
 #[test]

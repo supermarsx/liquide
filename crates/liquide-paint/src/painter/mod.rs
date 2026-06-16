@@ -531,9 +531,33 @@ impl Painter {
                             crate::display_list::ImageFit::Fill
                         }
                     };
+                    // CSS background-position (CSS Backgrounds & Borders L3
+                    // §3.6): a position value aligns the corresponding point of
+                    // the image with that point of the positioning area —
+                    //   offset = (positioning_area_size − tile_size) × fraction
+                    // where `fraction` is the position as a 0..1 ratio. The
+                    // style engine resolves keyword/percentage positions against
+                    // a 100-unit base (assemble.rs), so `bg_spec.position` holds
+                    // the position as a 0..100 *percentage numerator* (e.g.
+                    // `center` → 50, `right`/`bottom` → 100, `left`/`top` → 0).
+                    //
+                    // The previous code added `position` to the origin as a raw
+                    // pixel offset. For `center` that pushed the tile 50px to the
+                    // right of the box origin even when the tile already fills the
+                    // box (Cover/Contain/Auto, tile == area) — there is no free
+                    // space to distribute, so the offset MUST be 0. That stray
+                    // +50 was the desktop-background wallpaper's x≈50 origin and
+                    // the uncovered left strip. Distributing the position over the
+                    // actual free space `(area − tile)` makes a full-bleed
+                    // wallpaper sit at (0,0) while still correctly centering a
+                    // genuinely smaller tile within its box.
+                    let pos_frac_x = bg_spec.position.0 / 100.0;
+                    let pos_frac_y = bg_spec.position.1 / 100.0;
+                    let free_x = (bg_origin_rect.width - tile_w).max(0.0);
+                    let free_y = (bg_origin_rect.height - tile_h).max(0.0);
                     let bg_tile = liquide_layout::Rect {
-                        x: bg_origin_rect.x + bg_spec.position.0,
-                        y: bg_origin_rect.y + bg_spec.position.1,
+                        x: bg_origin_rect.x + free_x * pos_frac_x,
+                        y: bg_origin_rect.y + free_y * pos_frac_y,
                         width: tile_w,
                         height: tile_h,
                     };
