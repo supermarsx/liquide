@@ -711,3 +711,345 @@ fn background_image_uses_sized_fit_from_background_size() {
         other => panic!("background image must use Sized fit, got {other:?}"),
     }
 }
+
+/// The on-disk production `liquid_glass.css` theme, used so the test exercises
+/// the REAL wallpaper CSS shipped in `assets/`, not an inline stand-in. If the
+/// theme's `desktop-background` rule regresses (e.g. the wallpaper declaration
+/// gets swallowed by a malformed comment, or the element stops covering the
+/// viewport at the origin), this test fails.
+const LIQUID_GLASS_CSS: &str = include_str!("../../../../assets/themes/liquid_glass.css");
+
+/// Find the bounds of the first full-viewport desktop-background scene node,
+/// accepting any of the background-bearing scene kinds the pipeline can emit for
+/// a `desktop-background` element: a solid `Background`, a `GradientFill`, a
+/// `BackgroundFill`, or a wallpaper `Image`. Only nodes that cover (almost) the
+/// whole viewport qualify — small images/icons are ignored.
+fn first_fullviewport_background_bounds(
+    nodes: &[liquide_compositor::scene::SceneNode],
+    viewport_w: f32,
+    viewport_h: f32,
+) -> Option<liquide_compositor::geometry::Rect> {
+    let min_area = viewport_w * viewport_h * 0.9;
+    nodes.iter().find_map(|node| {
+        let is_bg_kind = matches!(
+            node.kind,
+            SceneNodeKind::Background { .. }
+                | SceneNodeKind::GradientFill { .. }
+                | SceneNodeKind::BackgroundFill { .. }
+                | SceneNodeKind::Image { .. }
+        );
+        let b = node.properties.bounds;
+        if is_bg_kind && b.width * b.height >= min_area {
+            Some(b)
+        } else {
+            None
+        }
+    })
+}
+
+/// P1 (t86 full-CSS migration): the desktop backdrop must be a CSS-driven
+/// background that covers the FULL viewport anchored at the origin (0,0) — no
+/// imperative backdrop fill, and no left/top strip from a percentage-vs-pixel
+/// position offset (the recently-fixed wallpaper-position bug).
+///
+/// This drives the REAL shipped `assets/themes/liquid_glass.css` through the
+/// CSS pipeline over a bare `<desktop-background>` element and asserts the
+/// emitted background scene node spans the entire viewport starting at (0,0).
+/// No-fake-green: the assertions have teeth — a non-zero origin (offset strip),
+/// a sub-viewport box, or a missing background node all fail.
+#[test]
+fn desktop_background_is_css_driven_fullviewport_at_origin() {
+    const W: f32 = 320.0;
+    const H: f32 = 200.0;
+
+    let config = PipelineConfig {
+        width: W,
+        height: H,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    // Use the production theme asset verbatim — this is what ships.
+    pipeline.set_theme(LIQUID_GLASS_CSS);
+
+    let desktop = DesktopDocument::from_html(r#"<desktop-background id="desktop-bg" />"#);
+    let (nodes, _animations_active) = pipeline.render_to_scene(&desktop.doc, 0, 16.0);
+
+    let bounds = first_fullviewport_background_bounds(&nodes, W, H).expect(
+        "the desktop-background must emit a CSS-driven full-viewport background \
+         scene node (solid/gradient/wallpaper) — none found, so the desktop \
+         backdrop is not flowing through the CSS pipeline",
+    );
+
+    // Anchored at the origin: no left/top strip. The cover-wallpaper bug parked
+    // the backdrop a few pixels in from (0,0); guard against any regression.
+    assert!(
+        bounds.x.abs() < 0.5,
+        "desktop background must start at x=0 (no left strip); got x={}",
+        bounds.x
+    );
+    assert!(
+        bounds.y.abs() < 0.5,
+        "desktop background must start at y=0 (no top strip); got y={}",
+        bounds.y
+    );
+
+    // Covers the full viewport.
+    assert!(
+        (bounds.width - W).abs() < 0.5,
+        "desktop background must span the full viewport width {W}; got {}",
+        bounds.width
+    );
+    assert!(
+        (bounds.height - H).abs() < 0.5,
+        "desktop background must span the full viewport height {H}; got {}",
+        bounds.height
+    );
+}
+
+/// Companion to the above: the production `liquid_glass.css` must keep its
+/// fallback `linear-gradient` declaration intact on `desktop-background`. A
+/// regression that swallows it (e.g. a malformed `\*` comment consuming the
+/// declaration up to the next `;`) would leave only the `url()` wallpaper, with
+/// no backdrop at all when the image is missing/unsupported.
+#[test]
+fn liquid_glass_desktop_background_keeps_fallback_gradient() {
+    // The desktop-background rule must declare a gradient backdrop. We assert on
+    // the source so the fallback can't be silently dropped by a comment bug even
+    // when the wallpaper PNG happens to load on top of it.
+    let rule_start = LIQUID_GLASS_CSS
+        .find("desktop-background")
+        .expect("liquid_glass.css must define desktop-background");
+    let rule_end = LIQUID_GLASS_CSS[rule_start..]
+        .find('}')
+        .map(|i| rule_start + i)
+        .expect("desktop-background rule must be closed");
+    let rule = &LIQUID_GLASS_CSS[rule_start..rule_end];
+
+    assert!(
+        rule.contains("linear-gradient"),
+        "desktop-background must keep its fallback linear-gradient backdrop"
+    );
+    // The malformed-comment regression marker: a backslash-star sequence is not
+    // a valid CSS comment opener and silently eats the next declaration.
+    assert!(
+        !LIQUID_GLASS_CSS.contains("\\*"),
+        "liquid_glass.css contains a malformed `\\*` comment that swallows the \
+         following declaration — use `/* */`"
+    );
+}
+
+// ── t87-crisp: pixel-snapping of box/hairline geometry ─────────────────────
+//
+// Root cause (t83-crisp #5/#6): layout emits fractional box origins; the CPU
+// rasterizer's `fill_rect` floors the origin and ceils the extent, so a 1px
+// line at y=10.5,h=1.0 lights up rows 10 AND 11 (doubled/blurred). The bridge
+// must snap box geometry to the device-pixel grid so hairlines land on a single
+// row/col. These tests are written to FAIL if snapping is removed (they assert
+// integer edges and single-pixel hairlines at deliberately fractional origins).
+
+fn first_bounds_of<F>(nodes: &[liquide_compositor::scene::SceneNode], pred: F) -> CRect
+where
+    F: Fn(&liquide_compositor::scene::SceneNodeKind) -> bool,
+{
+    nodes
+        .iter()
+        .find(|n| pred(&n.kind))
+        .map(|n| n.properties.bounds)
+        .expect("expected a matching scene node")
+}
+
+use liquide_compositor::geometry::Rect as CRect;
+
+/// A 1px divider drawn as a `Line` at a FRACTIONAL origin must land on a single
+/// device row (height == 1, top == whole pixel) — not straddle two rows.
+#[test]
+fn hairline_divider_snaps_to_single_row() {
+    let config = PipelineConfig::default();
+    let mut pipeline = DesktopPipeline::new(&config);
+
+    let mut list = DisplayList::new();
+    // Horizontal 1px separator at y = 10.5 (the worst case: half-pixel phase).
+    list.push(DisplayItem::Line {
+        x1: 0.0,
+        y1: 10.5,
+        x2: 200.0,
+        y2: 10.5,
+        color: Color::new(80, 80, 80, 255),
+        width: 1.0,
+    });
+
+    let nodes = pipeline.display_list_to_scene(&list, 0);
+    let b = first_bounds_of(&nodes, |k| {
+        matches!(k, SceneNodeKind::Background { .. })
+    });
+
+    // Top edge must be a whole pixel.
+    assert_eq!(
+        b.y,
+        b.y.round(),
+        "hairline top must be integer-aligned, got y={}",
+        b.y
+    );
+    // The line must be exactly one device row tall so floor/ceil in the
+    // rasterizer covers a single row, not two.
+    assert!(
+        (b.height - 1.0).abs() < 1e-6,
+        "1px divider must stay 1px tall after snap, got h={}",
+        b.height
+    );
+    // Its bottom edge is therefore also integer (covers exactly row b.y).
+    assert_eq!(b.bottom(), b.bottom().round(), "hairline bottom must be integer");
+}
+
+/// A border box at a fractional origin must have integer edges so the renderer
+/// draws crisp 1px sides instead of doubling them.
+#[test]
+fn border_box_edges_snap_to_pixel_grid() {
+    let config = PipelineConfig::default();
+    let mut pipeline = DesktopPipeline::new(&config);
+
+    let edge = liquide_paint::display_list::BorderEdge {
+        width: 1.0,
+        style: liquide_style_engine::computed::BorderLineStyle::Solid,
+        color: Color::new(0, 0, 0, 255),
+    };
+    let mut list = DisplayList::new();
+    list.push(DisplayItem::Border {
+        rect: liquide_layout::Rect {
+            x: 12.4,
+            y: 8.6,
+            width: 100.3,
+            height: 40.7,
+        },
+        top: edge.clone(),
+        right: edge.clone(),
+        bottom: edge.clone(),
+        left: edge,
+        radius: liquide_style_engine::dimension::Corners::all(0.0_f32.into()),
+    });
+
+    let nodes = pipeline.display_list_to_scene(&list, 0);
+    let b = first_bounds_of(&nodes, |k| matches!(k, SceneNodeKind::Border { .. }));
+
+    assert_eq!(b.x, b.x.round(), "left edge must snap to grid, got {}", b.x);
+    assert_eq!(b.y, b.y.round(), "top edge must snap to grid, got {}", b.y);
+    assert_eq!(
+        b.right(),
+        b.right().round(),
+        "right edge must snap to grid, got {}",
+        b.right()
+    );
+    assert_eq!(
+        b.bottom(),
+        b.bottom().round(),
+        "bottom edge must snap to grid, got {}",
+        b.bottom()
+    );
+    // Snapping rounds each edge to nearest: x 12.4→12, right 112.7→113 (w=101).
+    assert!((b.x - 12.0).abs() < 1e-6);
+    assert!((b.y - 9.0).abs() < 1e-6);
+    assert!((b.width - 101.0).abs() < 1e-6);
+    assert!((b.height - 40.0).abs() < 1e-6);
+}
+
+/// Two abutting siblings (right edge of A == left edge of B at a fractional
+/// coordinate) must snap to the SAME integer so there is no seam/gap and no
+/// rounding drift between siblings.
+#[test]
+fn abutting_siblings_share_snapped_edge_no_drift() {
+    let config = PipelineConfig::default();
+    let mut pipeline = DesktopPipeline::new(&config);
+
+    let radius = liquide_style_engine::dimension::Corners::all(0.0_f32.into());
+    let mut list = DisplayList::new();
+    // A: x=0..50.5 ; B: x=50.5..100.5 — shared edge at the half pixel.
+    list.push(DisplayItem::SolidColor {
+        rect: liquide_layout::Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 50.5,
+            height: 20.0,
+        },
+        color: Color::new(255, 0, 0, 255),
+        radius: radius.clone(),
+    });
+    list.push(DisplayItem::SolidColor {
+        rect: liquide_layout::Rect {
+            x: 50.5,
+            y: 0.0,
+            width: 50.0,
+            height: 20.0,
+        },
+        color: Color::new(0, 255, 0, 255),
+        radius,
+    });
+
+    let nodes = pipeline.display_list_to_scene(&list, 0);
+    let backgrounds: Vec<CRect> = nodes
+        .iter()
+        .filter(|n| matches!(n.kind, SceneNodeKind::Background { .. }))
+        .map(|n| n.properties.bounds)
+        .collect();
+    assert_eq!(backgrounds.len(), 2);
+
+    // A's right edge and B's left edge must be the SAME integer — no gap, no
+    // overlap (that's what prevents seams between adjacent chrome boxes).
+    assert_eq!(
+        backgrounds[0].right(),
+        backgrounds[1].x,
+        "shared edge must coincide after snapping (no seam/drift)"
+    );
+    assert_eq!(backgrounds[1].x, backgrounds[1].x.round());
+}
+
+/// Text bounds must NOT be snapped — the glyph rasterizer owns text sub-pixel
+/// positioning / baseline placement. This guards the boundary with the peer
+/// (t87-crisp-render) so a future "snap everything" change can't silently
+/// pixel-snap text and regress baseline placement.
+#[test]
+fn text_bounds_remain_subpixel() {
+    let config = PipelineConfig::default();
+    let mut pipeline = DesktopPipeline::new(&config);
+
+    let mut list = DisplayList::new();
+    list.push(DisplayItem::Text {
+        rect: liquide_layout::Rect {
+            x: 10.4,
+            y: 10.6,
+            width: 80.3,
+            height: 20.2,
+        },
+        text: "Hello".into(),
+        color: Color::new(255, 255, 255, 255),
+        font_size: 14.0,
+        font_family: std::sync::Arc::new(vec!["Inter".into()]),
+        font_weight: 400,
+        font_style: liquide_style_engine::computed::FontStyle::Normal,
+        letter_spacing: 0.0,
+        word_spacing: 0.0,
+        line_height: liquide_style_engine::computed::LineHeight::Normal,
+        text_align: liquide_style_engine::computed::TextAlign::Start,
+        text_transform: liquide_style_engine::computed::TextTransform::None,
+        text_overflow: liquide_style_engine::computed::TextOverflow::Clip,
+        white_space: liquide_style_engine::computed::WhiteSpace::Normal,
+        word_break: liquide_style_engine::computed::WordBreak::Normal,
+        text_indent: 0.0,
+        text_decoration: None,
+        text_shadows: Vec::new(),
+        text_emphasis: None,
+        caret_color: None,
+    });
+
+    let nodes = pipeline.display_list_to_scene(&list, 0);
+    let b = first_bounds_of(&nodes, |k| matches!(k, SceneNodeKind::Text { .. }));
+    assert!(
+        (b.x - 10.4).abs() < 1e-6,
+        "text x must stay sub-pixel (not snapped), got {}",
+        b.x
+    );
+    assert!(
+        (b.y - 10.6).abs() < 1e-6,
+        "text y must stay sub-pixel (not snapped), got {}",
+        b.y
+    );
+}

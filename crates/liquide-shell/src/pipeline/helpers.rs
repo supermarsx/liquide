@@ -6,6 +6,47 @@ pub(crate) fn to_compositor_rect(r: &liquide_layout::Rect) -> CRect {
     CRect::new(r.x, r.y, r.width, r.height)
 }
 
+/// Pixel-snap a box-geometry rect to the device-pixel grid (t87-crisp).
+///
+/// Layout produces fractional box origins/extents (e.g. `y = 10.5`). The CPU
+/// rasterizer's `fill_rect` floors the origin and ceils the extent
+/// (`liquide-renderer-cpu/src/rasterizer.rs`), so a 1px line at `y = 10.5,
+/// h = 1.0` lights up rows 10 AND 11 — a doubled/blurred hairline. The root
+/// cause is the unsnapped sub-pixel origin flowing into that mis-snap.
+///
+/// We snap the **edges** (left/top/right/bottom each round-to-nearest) and then
+/// derive width/height from the snapped edges. Snapping edges rather than
+/// `(origin, size)` independently is what keeps borders crisp WITHOUT drift:
+/// two abutting siblings share an edge coordinate, so both round to the same
+/// integer (no seam, no gap), and an element stays within half a pixel of its
+/// laid-out position so centered/flex layouts are visually unchanged.
+///
+/// This is applied only to box-like chrome geometry (backgrounds, borders,
+/// shadows, fills, images, gradients, outlines, lines). Text bounds are left
+/// sub-pixel on purpose — the glyph rasterizer owns text sub-pixel positioning
+/// and baseline placement (peer crate `liquide-renderer-cpu`).
+///
+/// Note: the shell pipeline runs in logical pixels and DPI scaling is applied
+/// at the window layer, so on the dominant `scale = 1.0` path logical pixels
+/// ARE device pixels. Snapping to whole logical pixels therefore lands chrome
+/// on whole device rows/columns.
+pub(crate) fn snap_box_rect(r: CRect) -> CRect {
+    // Degenerate / empty rects: leave untouched (nothing to snap, and we must
+    // not synthesize a 1px sliver where there was none).
+    if !(r.width > 0.0) || !(r.height > 0.0) {
+        return r;
+    }
+    let left = r.x.round();
+    let top = r.y.round();
+    let right = (r.x + r.width).round();
+    let bottom = (r.y + r.height).round();
+    // Preserve a sub-pixel-but-nonzero box as at least 1px so it does not
+    // vanish when both edges round to the same integer (e.g. a 0.4px hairline).
+    let width = (right - left).max(1.0);
+    let height = (bottom - top).max(1.0);
+    CRect::new(left, top, width, height)
+}
+
 pub(crate) fn to_border_side(
     edge: &liquide_paint::display_list::BorderEdge,
 ) -> liquide_compositor::scene::BorderSide {

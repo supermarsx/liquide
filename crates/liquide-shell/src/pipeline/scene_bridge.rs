@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use super::DesktopPipeline;
 use super::helpers::{
-    filter_op_to_backdrop_spec, filter_op_to_spec, hash_string, intersect_rects, to_border_side,
-    to_compositor_rect,
+    filter_op_to_backdrop_spec, filter_op_to_spec, hash_string, intersect_rects, snap_box_rect,
+    to_border_side, to_compositor_rect,
 };
 
 impl DesktopPipeline {
@@ -350,7 +350,11 @@ impl DesktopPipeline {
                             let caret_id = self.alloc_id();
                             // Caret width: 1px hairline (CSS default insertion caret).
                             let caret_w = 1.0_f32;
-                            let caret_bounds = CRect::new(
+                            // Snap the caret to the pixel grid so the 1px insertion
+                            // bar lands on a single device column (crisp), even though
+                            // its parent text box is deliberately left sub-pixel for
+                            // glyph baseline placement.
+                            let caret_bounds = snap_box_rect(CRect::new(
                                 text_bounds.x,
                                 text_bounds.y,
                                 caret_w,
@@ -360,7 +364,7 @@ impl DesktopPipeline {
                                 } else {
                                     *font_size
                                 },
-                            );
+                            ));
                             let mut caret_node = SceneNode::new(
                                 caret_id,
                                 SceneNodeKind::TextCaret {
@@ -403,7 +407,7 @@ impl DesktopPipeline {
                 if color.a == 0 {
                     return None; // Skip fully transparent
                 }
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let r = radius.as_f32_tuple();
                 let node = SceneNode::new(
                     id,
@@ -423,8 +427,12 @@ impl DesktopPipeline {
                 left,
                 radius,
             } => {
-                // Convert to compositor BorderSides
-                let bounds = to_compositor_rect(rect);
+                // Convert to compositor BorderSides. Snap the border box to the
+                // pixel grid so 1px edges land on a single device row/col (crisp
+                // hairlines) instead of straddling two (doubled/blurred). The
+                // renderer derives each side from this box, so snapping it here
+                // snaps every edge consistently.
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let sides = liquide_compositor::scene::BorderSides {
                     top: to_border_side(top),
                     right: to_border_side(right),
@@ -450,7 +458,7 @@ impl DesktopPipeline {
                 inset,
                 radius,
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let r = radius.as_f32_tuple();
                 let shadow = liquide_compositor::scene::BoxShadowSpec {
                     offset_x: *offset_x,
@@ -567,7 +575,7 @@ impl DesktopPipeline {
             }
 
             DisplayItem::Image { rect, src, radius } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let r = radius.as_f32_tuple();
                 let img_id = hash_string(src);
                 self.pending_images.push((img_id, src.clone()));
@@ -612,7 +620,7 @@ impl DesktopPipeline {
                 radius,
                 ..
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let r = radius.as_f32_tuple();
                 let img_id = hash_string(src);
                 self.pending_images.push((img_id, src.clone()));
@@ -652,7 +660,7 @@ impl DesktopPipeline {
                 stops,
                 radius,
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let r = radius.as_f32_tuple();
                 // Convert angle to start/end points (normalized 0..1)
                 let angle_rad = angle_deg.to_radians();
@@ -692,7 +700,7 @@ impl DesktopPipeline {
                 stops,
                 ..
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let gradient = liquide_compositor::scene::GradientSpec::Radial {
                     center_x: *center_x,
                     center_y: *center_y,
@@ -716,7 +724,7 @@ impl DesktopPipeline {
                 angle_deg,
                 stops,
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let gradient = liquide_compositor::scene::GradientSpec::Conic {
                     center_x: *center_x,
                     center_y: *center_y,
@@ -739,7 +747,7 @@ impl DesktopPipeline {
                 color,
                 offset,
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Outline {
@@ -770,7 +778,7 @@ impl DesktopPipeline {
                 if color.a == 0 {
                     return None;
                 }
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 Some(SceneNode::new(
                     id,
                     SceneNodeKind::Background { color: *color },
@@ -784,7 +792,7 @@ impl DesktopPipeline {
                 color,
                 width,
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let r = radius.as_f32_tuple();
                 let side = liquide_compositor::scene::BorderSide {
                     width: *width,
@@ -818,7 +826,11 @@ impl DesktopPipeline {
                 let min_y = y1.min(*y2);
                 let w = (x1 - x2).abs().max(*width);
                 let h = (y1 - y2).abs().max(*width);
-                let bounds = CRect::new(min_x, min_y, w, h);
+                // Snap so a 1px divider/separator at a fractional origin lands on
+                // a single device row/col (crisp) rather than floor/ceil-ing into
+                // two rows in the rasterizer. snap_box_rect keeps the thin extent
+                // at a whole pixel and snaps the leading edge to the grid.
+                let bounds = snap_box_rect(CRect::new(min_x, min_y, w, h));
                 Some(SceneNode::new(
                     id,
                     SceneNodeKind::Background { color: *color },
@@ -873,7 +885,7 @@ impl DesktopPipeline {
                 repeat_y: _,
                 fill: _,
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let img_id = hash_string(source);
                 self.pending_images.push((img_id, source.clone()));
                 let repeat = match repeat_x {
@@ -939,7 +951,7 @@ impl DesktopPipeline {
                 icon_id,
                 color,
             } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Icon {
@@ -952,7 +964,7 @@ impl DesktopPipeline {
             }
 
             DisplayItem::Surface { rect, surface_id } => {
-                let bounds = to_compositor_rect(rect);
+                let bounds = snap_box_rect(to_compositor_rect(rect));
                 let node = SceneNode::new(
                     id,
                     SceneNodeKind::Surface {
