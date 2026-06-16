@@ -1573,6 +1573,47 @@ mod tests {
     }
 
     #[test]
+    fn each_loop_variable_scoping_uses_item_context_not_outer() {
+        // Scoping contract: inside `{{#each}}` the body is rendered against the
+        // ITEM's context, so a variable name reused at the outer and inner levels
+        // resolves to the inner item's value per-iteration — the outer value must
+        // not leak in, and one item's value must not bleed into the next.
+        //
+        // Teeth: if the engine rendered each-bodies against the OUTER context (or
+        // a shared/stale context) instead of the per-item context, every inner
+        // `{{label}}` would print the outer group's `label` ("G1"/"G2") rather
+        // than the member labels, and the assertion below would fail.
+        let mut reg = TemplateRegistry::new();
+        reg.register(
+            "test",
+            "{{#each groups}}<g>{{label}}{{#each members}}<m>{{label}}</m>{{/each}}</g>{{/each}}",
+        );
+
+        let mut ctx = TemplateContext::new();
+        let mut g1 = TemplateContext::new();
+        g1.set("label", "G1");
+        let mut g1m1 = TemplateContext::new();
+        g1m1.set("label", "m-a");
+        let mut g1m2 = TemplateContext::new();
+        g1m2.set("label", "m-b");
+        g1.set("members", TemplateValue::List(vec![g1m1, g1m2]));
+
+        let mut g2 = TemplateContext::new();
+        g2.set("label", "G2");
+        let mut g2m1 = TemplateContext::new();
+        g2m1.set("label", "m-c");
+        g2.set("members", TemplateValue::List(vec![g2m1]));
+
+        ctx.set("groups", TemplateValue::List(vec![g1, g2]));
+
+        let result = reg.render("test", &ctx).unwrap();
+        assert_eq!(
+            result,
+            "<g>G1<m>m-a</m><m>m-b</m></g><g>G2<m>m-c</m></g>"
+        );
+    }
+
+    #[test]
     fn nested_if_inside_each() {
         let mut reg = TemplateRegistry::new();
         reg.register(
