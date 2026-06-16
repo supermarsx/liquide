@@ -444,11 +444,224 @@ impl StyleSheet {
         // above, this yields correct `!important` precedence even when the
         // important rule has the same or lower specificity than a competing
         // normal rule.
-        for (_, rule) in matching {
+        for (_, rule) in &matching {
             final_properties.merge(&rule.properties);
         }
 
+        // Resolve `var()` references against the element's custom-property scope.
+        // Custom properties cascade and inherit; here the scope is the union of
+        // the element's own matched `--*` declarations plus the global root
+        // scope (`:root` / `html` / `*` custom properties + sheet `variables`),
+        // which is how theme authors expose tokens for arbitrary elements.
+        let custom_scope = self.build_custom_property_scope(&final_properties, env);
+        self.resolve_var_references(&mut final_properties, &custom_scope);
+
         final_properties
+    }
+
+    /// Build the custom-property (`--*`) scope visible to an element.
+    ///
+    /// The element's own matched custom properties (already merged into
+    /// `final_properties` in cascade order) take precedence; the global root
+    /// scope provides inherited theme tokens.
+    fn build_custom_property_scope(
+        &self,
+        final_properties: &PropertySet,
+        env: &QueryEnvironment,
+    ) -> HashMap<String, PropertyValue> {
+        let mut scope: HashMap<String, PropertyValue> = HashMap::new();
+
+        // Sheet-level variables registered via `set_variable` (lowest priority).
+        for (name, value) in &self.variables {
+            let key = if name.starts_with("--") {
+                name.clone()
+            } else {
+                format!("--{name}")
+            };
+            scope.insert(key, value.clone());
+        }
+
+        // Global root scope: custom properties declared on `:root`, `html`, or
+        // `*` rules cascade down to every element.
+        for rule in &self.rules {
+            if !Self::is_root_scope_selector(&rule.selector) {
+                continue;
+            }
+            if let Some(ref condition) = rule.media_condition {
+                if !self.evaluate_media_condition(condition, env) {
+                    continue;
+                }
+            }
+            if let Some(ref condition) = rule.supports_condition {
+                if !self.evaluate_supports_condition(condition, env) {
+                    continue;
+                }
+            }
+            for (name, value) in rule.properties.iter() {
+                if name.starts_with("--") {
+                    scope.insert(name.clone(), value.clone());
+                }
+            }
+        }
+
+        // The element's own matched custom properties win over root tokens.
+        for (name, value) in final_properties.iter() {
+            if name.starts_with("--") {
+                scope.insert(name.clone(), value.clone());
+            }
+        }
+
+        scope
+    }
+
+    /// Whether a selector targets the global custom-property root scope.
+    fn is_root_scope_selector(selector: &Selector) -> bool {
+        matches!(selector.element.as_str(), ":root" | "root" | "html" | "*")
+    }
+
+    /// Substitute `var(--name[, fallback])` references in every property value.
+    ///
+    /// Properties whose value cannot be resolved (undefined custom property and
+    /// no usable fallback) are removed, matching CSS "invalid at computed value
+    /// time" semantics — they must never leak the literal `var(...)` token.
+    fn resolve_var_references(
+        &self,
+        properties: &mut PropertySet,
+        scope: &HashMap<String, PropertyValue>,
+    ) {
+        let names: Vec<String> = properties.keys().into_iter().cloned().collect();
+        for name in names {
+            // Custom properties themselves are kept as-is (they form the scope).
+            if name.starts_with("--") {
+                continue;
+            }
+            let raw = match properties.get(&name) {
+                Some(value) => value.clone(),
+                None => continue,
+            };
+            let Some(text) = Self::var_keyword_text(&raw) else {
+                continue;
+            };
+            if !text.contains("var(") {
+                continue;
+            }
+            match Self::resolve_var_text(&text, scope, 0) {
+                Some(resolved) => {
+                    let parser = ThemeParser::new();
+                    let value = parser
+                        .parse_declaration(&name, &resolved)
+                        .and_then(|set| set.get(&name).cloned())
+                        .unwrap_or_else(|| PropertyValue::Keyword(resolved.clone()));
+                    let important = properties.is_important(&name);
+                    properties.insert(name.clone(), value);
+                    if important {
+                        properties.mark_important(&name);
+                    }
+                }
+                None => {
+                    // Invalid at computed-value time — drop the declaration.
+                    properties.remove(&name);
+                }
+            }
+        }
+    }
+
+    /// Extract the raw text of a value that may carry a `var()` reference.
+    fn var_keyword_text(value: &PropertyValue) -> Option<String> {
+        match value {
+            PropertyValue::Keyword(text) | PropertyValue::String(text) => Some(text.clone()),
+            _ => None,
+        }
+    }
+
+    /// Recursively resolve `var(--name, fallback)` substrings within `text`.
+    ///
+    /// Returns `None` if any referenced custom property is undefined and has no
+    /// usable fallback. `depth` guards against cyclic custom-property references.
+    fn resolve_var_text(
+        text: &str,
+        scope: &HashMap<String, PropertyValue>,
+        depth: usize,
+    ) -> Option<String> {
+        const MAX_VAR_DEPTH: usize = 32;
+        if depth > MAX_VAR_DEPTH {
+            return None;
+        }
+
+        let Some(start) = text.find("var(") else {
+            return Some(text.to_string());
+        };
+
+        // Find the matching close paren for this var(.
+        let open = start + 4;
+        let bytes = text.as_bytes();
+        let mut depth_paren = 1i32;
+        let mut idx = open;
+        while idx < bytes.len() {
+            match bytes[idx] {
+                b'(' => depth_paren += 1,
+                b')' => {
+                    depth_paren -= 1;
+                    if depth_paren == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+        if depth_paren != 0 {
+            return None;
+        }
+        let inner = &text[open..idx];
+
+        // Split name and optional fallback at the first top-level comma.
+        let (var_name, fallback) = Self::split_var_args(inner);
+        let var_name = var_name.trim();
+        if !var_name.starts_with("--") {
+            return None;
+        }
+
+        let substitution = match scope.get(var_name) {
+            Some(value) => Self::custom_property_text(value),
+            None => match fallback {
+                Some(fallback) => {
+                    // The fallback may itself contain var() references.
+                    Self::resolve_var_text(fallback.trim(), scope, depth + 1)?
+                }
+                None => return None,
+            },
+        };
+
+        // Replace this var(...) occurrence and continue resolving the rest.
+        let mut rebuilt = String::with_capacity(text.len());
+        rebuilt.push_str(&text[..start]);
+        rebuilt.push_str(&substitution);
+        rebuilt.push_str(&text[idx + 1..]);
+        Self::resolve_var_text(&rebuilt, scope, depth + 1)
+    }
+
+    /// Split `var()` inner args into (name, optional fallback) at the first
+    /// top-level comma.
+    fn split_var_args(inner: &str) -> (&str, Option<&str>) {
+        let mut depth = 0i32;
+        for (i, ch) in inner.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                ',' if depth == 0 => return (&inner[..i], Some(&inner[i + 1..])),
+                _ => {}
+            }
+        }
+        (inner, None)
+    }
+
+    /// Render a stored custom-property value back to CSS text for substitution.
+    fn custom_property_text(value: &PropertyValue) -> String {
+        match value {
+            PropertyValue::Keyword(text) | PropertyValue::String(text) => text.clone(),
+            other => other.to_css_string(),
+        }
     }
 
     /// Get all rules

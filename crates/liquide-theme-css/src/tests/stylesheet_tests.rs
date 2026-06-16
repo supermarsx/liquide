@@ -257,3 +257,178 @@ fn test_important_not_clobbered_by_later_normal() {
     assert_eq!(color.r, 255, "!important must survive a higher-specificity normal rule");
     assert!(styles.is_important("color"));
 }
+
+// ── var() custom property resolution ────────────────────────────────────────
+
+#[test]
+fn test_var_resolves_root_custom_property() {
+    // A custom property declared on :root must be substituted into a consuming
+    // declaration during the cascade. The computed `color` must be the
+    // substituted value (#ff0000), not the literal `var(--accent)` token.
+    let css = r#"
+            :root { --accent: #ff0000; }
+            foo { color: var(--accent); }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "foo",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles
+        .get("color")
+        .unwrap_or_else(|| panic!("color must be present and resolved"))
+        .as_color()
+        .unwrap_or_else(|| panic!("color must resolve to a Color, got {:?}", styles.get("color")));
+    assert_eq!(color.r, 255, "var(--accent) should resolve to #ff0000");
+    assert_eq!(color.g, 0);
+    assert_eq!(color.b, 0);
+}
+
+#[test]
+fn test_var_fallback_used_when_missing() {
+    // var(--missing, #00ff00) must resolve to the fallback when the custom
+    // property is undefined.
+    let css = r#"
+            foo { color: var(--missing, #00ff00); }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "foo",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles
+        .get("color")
+        .unwrap_or_else(|| panic!("color must be present"))
+        .as_color()
+        .unwrap_or_else(|| panic!("fallback must resolve to a Color, got {:?}", styles.get("color")));
+    assert_eq!(color.g, 255, "fallback #00ff00 should be used");
+    assert_eq!(color.r, 0);
+    assert_eq!(color.b, 0);
+}
+
+#[test]
+fn test_var_defined_value_wins_over_fallback() {
+    // When the custom property IS defined, the fallback must be ignored.
+    let css = r#"
+            :root { --accent: #ff0000; }
+            foo { color: var(--accent, #00ff00); }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "foo",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles.get("color").unwrap().as_color().unwrap();
+    assert_eq!(color.r, 255, "defined --accent should win over fallback");
+    assert_eq!(color.g, 0);
+}
+
+#[test]
+fn test_var_unresolved_no_fallback_leaves_property_unset() {
+    // var(--missing) with no fallback and no definition is an invalid value:
+    // the consuming declaration must NOT yield a usable color (it should be
+    // dropped / left unresolved rather than presented as a literal token).
+    let css = r#"
+            foo { color: var(--missing); }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "foo",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    // The property must not surface as a parseable color, and must never be the
+    // literal `var(--missing)` token.
+    if let Some(value) = styles.get("color") {
+        assert!(
+            value.as_color().is_none(),
+            "unresolved var with no fallback must not produce a color"
+        );
+        assert_ne!(
+            value.to_css_string(),
+            "var(--missing)",
+            "unresolved var token must not leak through as a literal value"
+        );
+    }
+}
+
+#[test]
+fn test_var_with_important_resolves_and_keeps_importance() {
+    // Theme-customization seam: an `!important` declaration whose value is a
+    // var() reference must (a) resolve the custom property AND (b) keep its
+    // `!important` flag through the cascade so it still beats normal rules.
+    let css = r#"
+            :root { --accent: #ff0000; }
+            foo { color: #00ff00; }
+            foo { color: var(--accent) !important; }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "foo",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles
+        .get("color")
+        .unwrap_or_else(|| panic!("color must be present"))
+        .as_color()
+        .unwrap_or_else(|| {
+            panic!(
+                "var(--accent) !important must resolve to a Color, got {:?}",
+                styles.get("color")
+            )
+        });
+    assert_eq!(color.r, 255, "var(--accent) !important should resolve to #ff0000");
+    assert_eq!(color.g, 0);
+    assert!(
+        styles.is_important("color"),
+        "importance must survive var() substitution"
+    );
+}
+
+#[test]
+fn test_var_resolves_to_custom_property_on_same_element() {
+    // A custom property declared on the SAME matched rule scope is usable by a
+    // sibling declaration via var().
+    let css = r#"
+            foo { --local: #0000ff; background-color: var(--local); }
+        "#;
+    let parser = ThemeParser::new();
+    let sheet = parser.parse_str(css).unwrap();
+    let styles = sheet.compute_styles_with_environment(
+        "foo",
+        &[],
+        None,
+        &[],
+        &QueryEnvironment::default(),
+    );
+    let color = styles
+        .get("background-color")
+        .unwrap_or_else(|| panic!("background-color must be present"))
+        .as_color()
+        .unwrap_or_else(|| {
+            panic!(
+                "var(--local) must resolve to a Color, got {:?}",
+                styles.get("background-color")
+            )
+        });
+    assert_eq!(color.b, 255, "var(--local) should resolve to #0000ff");
+}
