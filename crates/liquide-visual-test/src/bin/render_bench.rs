@@ -319,6 +319,163 @@ fn main() {
         }
     }
 
+    // ── PARTIAL-DAMAGE sweep (t78-bench) ─────────────────────────────────
+    // The COMMON interactive case: a single small region changes (cursor move,
+    // clock tick, one hovered menu item). The shipping path is:
+    //   scene-cache hit (Shell::build_scene) -> flatten -> render_live with a
+    //   NON-full DamageSet, which makes the renderer set `raster_clip` to the
+    //   damage bbox and confine every fill/blit/text to that region.
+    //
+    // We drive REAL DamageSets built with `mark_rect_with_class` over a range
+    // of pixel sizes (single cursor tile -> full frame) so the renderer's own
+    // raster_clip = damage-bbox logic runs exactly as in session render_thread.
+    // For each size we report:
+    //   * raster_clip cost (render_live with the damage clip set) — the lever,
+    //   * integrated partial frame (cache-hit build + flatten + clipped raster)
+    //     — what the user actually waits for per interactive frame.
+    //
+    // NOTE on honesty: the integrated number uses the steady cache-HIT build
+    // (idle scene unchanged). A real cursor move also mutates a little state;
+    // measured separately the build cache-hit is ~tens of us, dwarfed by raster,
+    // so this is representative of the live damage frame, not an optimistic
+    // synthetic clear. raster_clip is set by the SHIPPING render_live code, not
+    // by us — we only choose the DamageSet, same as the session does.
+    //
+    // Sizes chosen to map to real UI events (at 1920x1080, TILE=64):
+    //   - 16x16   : cursor hot-spot / caret blink (sub-tile -> 1 tile clipped)
+    //   - 64x64   : one status-bar clock cell / one dock icon (1 tile)
+    //   - 128x32  : clock+date text run (statusbar segment)
+    //   - 240x320 : one open menu / context popup
+    //   - 360x640 : one panel / launcher column
+    //   - 1920x64 : the existing "1 tile row" status bar band (whole-width strip)
+    //   - full    : resize/theme/wallpaper (raster_clip = None) for reference
+    // Placement matters: the renderer culls nodes outside the damage bbox, but
+    // effect paths that DO survive (backdrop-blur snapshot/hash, shadow mask,
+    // inner-glow) are NOT confined by raster_clip. A small rect over a large
+    // glass surface (open launcher at center) still pays that glass's full
+    // effect cost, while the same rect over a quiet area (top-left, only the
+    // status bar) does not. We measure BOTH to report the clip's real ceiling
+    // and floor on the live scene.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Place { Center, Quiet, Span }
+    struct DamageScenario {
+        label: &'static str,
+        w: u32,
+        h: u32,
+        class: DamageClass,
+        place: Place,
+        full: bool,
+    }
+    let scenarios = [
+        // Quiet placement (top-left, away from launcher/windows) — the realistic
+        // "cursor move / clock tick on the desktop or status bar" case.
+        DamageScenario { label: "cursor/caret 16x16 (quiet)", w: 16, h: 16, class: DamageClass::CursorOnly, place: Place::Quiet, full: false },
+        DamageScenario { label: "clock cell/icon 64x64 (quiet)", w: 64, h: 64, class: DamageClass::TextGlyph, place: Place::Quiet, full: false },
+        DamageScenario { label: "clock+date 128x32 (quiet)", w: 128, h: 32, class: DamageClass::TextGlyph, place: Place::Quiet, full: false },
+        // Center placement (over the open launcher glass) — the worst-case
+        // "hover a menu item on a glass surface" case.
+        DamageScenario { label: "cursor/caret 16x16 (on glass)", w: 16, h: 16, class: DamageClass::CursorOnly, place: Place::Center, full: false },
+        DamageScenario { label: "menu/popup 240x320 (on glass)", w: 240, h: 320, class: DamageClass::UiPrimitive, place: Place::Center, full: false },
+        DamageScenario { label: "panel/launcher 360x640 (on glass)", w: 360, h: 640, class: DamageClass::UiPrimitive, place: Place::Center, full: false },
+        // Whole-width status bar strip (top of screen).
+        DamageScenario { label: "statusbar strip 1920x64", w: 1920, h: 64, class: DamageClass::TextGlyph, place: Place::Span, full: false },
+        DamageScenario { label: "FULL frame (resize/theme)", w: WIDTH, h: HEIGHT, class: DamageClass::UiPrimitive, place: Place::Span, full: true },
+    ];
+
+    fn damage_origin(w: u32, h: u32, place: Place) -> (u32, u32) {
+        match place {
+            // Top-left, just inside the status bar / desktop, away from the
+            // centered launcher + windows.
+            Place::Quiet => (8, 8),
+            Place::Center => {
+                let cx = WIDTH / 2;
+                let cy = HEIGHT / 2;
+                (cx.saturating_sub(w / 2), cy.saturating_sub(h / 2))
+            }
+            // Span rects start at the left edge.
+            Place::Span => (0, 0),
+        }
+    }
+
+    struct DamageRow {
+        label: &'static str,
+        damage_px: u64,    // nominal damaged pixels (rect area)
+        clip_px: u64,      // pixels actually inside raster_clip bbox (incl. padding/tile-snap)
+        raster_ms: f64,    // render_live with the clip set (median)
+        frame_ms: f64,     // integrated: cache-hit build + flatten + clipped raster (median)
+    }
+    let mut damage_rows: Vec<DamageRow> = Vec::new();
+
+    // Reusable scene (idle) — the cache-hit build returns the same root.
+    {
+        let warm = shell.build_scene();
+        flat.clear();
+        warm.flatten_into(&mut flat);
+    }
+
+    for sc in &scenarios {
+        // Build the REAL DamageSet the session would produce for this region.
+        let dmg = if sc.full {
+            DamageSet::full(TILE, grid_w, grid_h, sc.class)
+        } else {
+            let (ox, oy) = damage_origin(sc.w, sc.h, sc.place);
+            let mut d = DamageSet::new(TILE);
+            d.mark_rect_with_class(ox, oy, sc.w, sc.h, grid_w, grid_h, sc.class);
+            d
+        };
+
+        // Compute the clip bbox area exactly as render_with_mode does (tile-snap
+        // + 32px effect padding), so the curve's x-axis reflects pixels the
+        // renderer ACTUALLY touches, not just the nominal rect.
+        let clip_px: u64 = if sc.full {
+            (WIDTH as u64) * (HEIGHT as u64)
+        } else {
+            let ts = TILE as f32;
+            let pad = 32.0_f32;
+            let min_tx = dmg.tiles.iter().map(|t| t.x).min().unwrap_or(0) as f32;
+            let min_ty = dmg.tiles.iter().map(|t| t.y).min().unwrap_or(0) as f32;
+            let max_tx = dmg.tiles.iter().map(|t| t.x).max().unwrap_or(0) as f32 + 1.0;
+            let max_ty = dmg.tiles.iter().map(|t| t.y).max().unwrap_or(0) as f32 + 1.0;
+            let x0 = (min_tx * ts - pad).max(0.0);
+            let y0 = (min_ty * ts - pad).max(0.0);
+            let x1 = (max_tx * ts + pad).min(WIDTH as f32);
+            let y1 = (max_ty * ts + pad).min(HEIGHT as f32);
+            (((x1 - x0).max(0.0)) * ((y1 - y0).max(0.0))) as u64
+        };
+        let damage_px = (sc.w as u64) * (sc.h as u64);
+
+        // Warm one frame for this clip so any per-region caches settle.
+        let _ = renderer.render_live(&flat, &mut fb, &dmg, RenderMode::LiveFull);
+
+        // raster-only: render_live with the clip set (the shipping raster lever).
+        let mut s_raster = StageStats::new("partial raster");
+        for _ in 0..iters {
+            let t = Instant::now();
+            let _ = renderer.render_live(&flat, &mut fb, &dmg, RenderMode::LiveFull);
+            s_raster.record(t.elapsed());
+        }
+
+        // integrated partial frame: cache-hit build + flatten + clipped raster.
+        // This is the per-interactive-frame latency the user perceives.
+        let mut s_frame = StageStats::new("partial frame");
+        for _ in 0..iters {
+            let t = Instant::now();
+            let scene = shell.build_scene();
+            flat.clear();
+            scene.flatten_into(&mut flat);
+            let _ = renderer.render_live(&flat, &mut fb, &dmg, RenderMode::LiveFull);
+            s_frame.record(t.elapsed());
+        }
+
+        damage_rows.push(DamageRow {
+            label: sc.label,
+            damage_px,
+            clip_px,
+            raster_ms: s_raster.median_us() / 1000.0,
+            frame_ms: s_frame.median_us() / 1000.0,
+        });
+    }
+
     // ── Blur attribution: full raster with blur DISABLED ─────────────────
     // The liquid-glass theme emits backdrop-blur (glass) nodes; on full-frame
     // damage the renderer re-blurs every glass region. Toggling blur off
@@ -416,6 +573,65 @@ fn main() {
                 100.0 * blur_us / raster,
                 raster_noblur / 1000.0,
             );
+        }
+    }
+
+    // ── PARTIAL-DAMAGE curve + fps crossover (t78-bench) ──────────────────
+    let parallel = std::env::var("LIQUIDE_PARALLEL_RASTER")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    println!();
+    println!(
+        "## PARTIAL-DAMAGE frames (scene-cache hit + targeted damage + raster_clip)  [parallel_raster={}]",
+        if parallel { "ON" } else { "OFF (default)" }
+    );
+    println!("Real shipping path: Shell::build_scene (cache hit) -> flatten -> render_live with a");
+    println!("NON-full DamageSet; the renderer sets raster_clip = damage bbox and confines all raster.");
+    println!();
+    println!(
+        "{:<30} {:>11} {:>11} {:>11} {:>9} {:>11} {:>9}",
+        "scenario", "rect_px", "clip_px", "raster_ms", "rast_fps", "frame_ms", "fps"
+    );
+    println!("{}", "-".repeat(96));
+    for r in &damage_rows {
+        let rast_fps = if r.raster_ms > 0.0 { 1000.0 / r.raster_ms } else { 0.0 };
+        let frame_fps = if r.frame_ms > 0.0 { 1000.0 / r.frame_ms } else { 0.0 };
+        println!(
+            "{:<30} {:>11} {:>11} {:>11.3} {:>9.0} {:>11.3} {:>9.0}",
+            r.label, r.damage_px, r.clip_px, r.raster_ms, rast_fps, r.frame_ms, frame_fps,
+        );
+    }
+    println!();
+
+    // 200fps budget verdict on the smallest single-tile partial damage in a
+    // QUIET region (the realistic cursor/clock case — first scenario).
+    if let Some(small) = damage_rows.first() {
+        let fps = if small.frame_ms > 0.0 { 1000.0 / small.frame_ms } else { 0.0 };
+        let verdict = if small.frame_ms < 5.0 { "MEETS" } else { "MISSES" };
+        println!(
+            "200fps (<5.000 ms) budget on smallest partial damage ({}): {} — {:.3} ms/frame => {:.0} fps",
+            small.label, verdict, small.frame_ms, fps,
+        );
+    }
+
+    // Crossover: the LARGEST clip area (px) that still meets each fps target,
+    // across all scenarios (rows are not monotonic — quiet vs on-glass differ).
+    let targets = [200.0_f64, 120.0, 60.0];
+    for tgt in targets {
+        let budget_ms = 1000.0 / tgt;
+        let best = damage_rows
+            .iter()
+            .filter(|r| r.frame_ms <= budget_ms)
+            .max_by_key(|r| r.clip_px);
+        match best {
+            Some(r) => println!(
+                "crossover >= {:.0} fps (<= {:.3} ms): largest meeting clip ~{} px ('{}', {:.3} ms)",
+                tgt, budget_ms, r.clip_px, r.label, r.frame_ms,
+            ),
+            None => println!(
+                "crossover >= {:.0} fps (<= {:.3} ms): NO scenario meets this (even single tile)",
+                tgt, budget_ms,
+            ),
         }
     }
 }

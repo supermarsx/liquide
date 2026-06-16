@@ -43,3 +43,9 @@ liquide-interop.workspace = true
 # PNG encode/decode for goldens, diffs, and snapshot output.
 image = { version = "0.25", features = ["png"] }
 tracing.workspace = true
+
+[dev-dependencies]
+# Canonical tooltip config, so the e2e responsiveness suite reads the live
+# `TooltipConfig::default()` dwell budget (show_delay_ms + fade_in_ms) instead of
+# hardcoding it — the budget then tracks the config automatically (t77-RESP).
+liquide-tooltip.workspace = true
