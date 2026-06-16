@@ -339,43 +339,22 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let mixed = has_mixed_inline_block_children(doc, node_id, styles);
 
     // Generate ::before pseudo-element box if present
-    if let Some(before_style) = styles.get_pseudo(node_id, PseudoKind::Before) {
-        if let Some(ref content) = before_style.content {
-            if !content.is_empty() {
-                // Resolve [attr:name] and [counter:name] placeholders
-                let resolved = resolve_attr_placeholders(content, doc, node_id);
-                let resolved = resolve_counter_placeholders(&resolved);
-                let text_props = crate::TextProperties::from_style(before_style);
-                let metrics = text_measurer.measure(
-                    &resolved,
-                    before_style.font_size,
-                    &before_style.font_family,
-                    before_style.font_weight,
-                    Some(content_width),
-                    &text_props,
-                );
-                let pe_box = tree.alloc(
-                    node_id,
-                    BoxType::PseudoElement {
-                        kind: PseudoElementKind::Before,
-                        content: resolved,
-                    },
-                );
-                if let Some(pb) = tree.get_mut(pe_box) {
-                    pb.content_rect = Rect::new(
-                        0.0,
-                        child_y,
-                        metrics.width.min(content_width),
-                        metrics.height,
-                    );
-                    pb.border_rect = pb.content_rect;
-                    pb.padding_rect = pb.content_rect;
-                    pb.margin_rect = pb.content_rect;
-                }
-                tree.add_child(box_id, pe_box);
-                child_y += metrics.height;
-            }
-        }
+    if let Some(advance) = generate_pseudo_box(
+        doc,
+        node_id,
+        styles,
+        tree,
+        text_measurer,
+        PseudoKind::Before,
+        PseudoElementKind::Before,
+        box_id,
+        content_width,
+        child_y,
+        base_font_size,
+        viewport_w,
+        viewport_h,
+    ) {
+        child_y += advance;
     }
 
     // When children mix inline and block display types (CSS 2.1 §9.2.1.1),
@@ -1222,43 +1201,22 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     }
 
     // Generate ::after pseudo-element box if present
-    if let Some(after_style) = styles.get_pseudo(node_id, PseudoKind::After) {
-        if let Some(ref content) = after_style.content {
-            if !content.is_empty() {
-                // Resolve [attr:name] and [counter:name] placeholders
-                let resolved = resolve_attr_placeholders(content, doc, node_id);
-                let resolved = resolve_counter_placeholders(&resolved);
-                let text_props = crate::TextProperties::from_style(after_style);
-                let metrics = text_measurer.measure(
-                    &resolved,
-                    after_style.font_size,
-                    &after_style.font_family,
-                    after_style.font_weight,
-                    Some(content_width),
-                    &text_props,
-                );
-                let pe_box = tree.alloc(
-                    node_id,
-                    BoxType::PseudoElement {
-                        kind: PseudoElementKind::After,
-                        content: resolved,
-                    },
-                );
-                if let Some(pb) = tree.get_mut(pe_box) {
-                    pb.content_rect = Rect::new(
-                        0.0,
-                        child_y,
-                        metrics.width.min(content_width),
-                        metrics.height,
-                    );
-                    pb.border_rect = pb.content_rect;
-                    pb.padding_rect = pb.content_rect;
-                    pb.margin_rect = pb.content_rect;
-                }
-                tree.add_child(box_id, pe_box);
-                child_y += metrics.height;
-            }
-        }
+    if let Some(advance) = generate_pseudo_box(
+        doc,
+        node_id,
+        styles,
+        tree,
+        text_measurer,
+        PseudoKind::After,
+        PseudoElementKind::After,
+        box_id,
+        content_width,
+        child_y,
+        base_font_size,
+        viewport_w,
+        viewport_h,
+    ) {
+        child_y += advance;
     }
 
     // Pop the counter scope we pushed at the start of this block
@@ -1607,6 +1565,191 @@ fn to_lower_roman(mut n: usize) -> String {
         }
     }
     result
+}
+
+/// Generate a `::before` / `::after` pseudo-element box for `node_id`, append it
+/// to `parent_box`, and return the block-axis advance it consumed (so the caller
+/// can move `child_y`). Returns `None` when no box is generated.
+///
+/// A box is generated whenever the host has a computed pseudo style with a
+/// `content` value that is not `none` (the style engine only inserts the pseudo
+/// style when `content` is present and not `none`/`normal`). Crucially this
+/// INCLUDES `content: ""` — an empty-string content still generates a box, which
+/// is the canonical pattern for CSS icons and focus rings (a sized, styled box
+/// with no text).
+///
+/// Sizing:
+///   - explicit `width`/`height` win; otherwise the text metrics of the
+///     resolved content provide the auto size,
+///   - `padding` and `border-width` expand the border box around the content,
+///   - `margin` (top/bottom) contributes to the block-axis advance only.
+///
+/// The box is allocated with `alloc_anonymous` so it does NOT steal the host's
+/// `node → box` index entry (it shares the host node id only as a back-reference
+/// for the painter to find the computed pseudo style). It is non-interactive:
+/// no hit-test rect is registered for generated content.
+#[allow(clippy::too_many_arguments)]
+fn generate_pseudo_box<TM: TextMeasurer + ?Sized>(
+    doc: &Document,
+    node_id: NodeId,
+    styles: &StyleMap,
+    tree: &mut LayoutTree,
+    text_measurer: &TM,
+    pseudo_kind: PseudoKind,
+    box_kind: PseudoElementKind,
+    parent_box: LayoutBoxId,
+    content_width: f32,
+    child_y: f32,
+    base_font_size: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> Option<f32> {
+    let pe_style = styles.get_pseudo(node_id, pseudo_kind)?;
+    // The style engine only stores a pseudo style when `content` resolved to a
+    // generating value. `content` is `Some(..)` (possibly the empty string).
+    let content = pe_style.content.as_ref()?;
+
+    // Resolve [attr:name] and [counter:name] placeholders in the content text.
+    let resolved = resolve_attr_placeholders(content, doc, node_id);
+    let resolved = resolve_counter_placeholders(&resolved);
+
+    let font_size = pe_style.font_size;
+
+    // Box-edge metrics from the pseudo style.
+    let pad_top = resolve_dim(
+        &pe_style.padding.top,
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_right = resolve_dim(
+        &pe_style.padding.right,
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_bottom = resolve_dim(
+        &pe_style.padding.bottom,
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let pad_left = resolve_dim(
+        &pe_style.padding.left,
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let bt = pe_style.border_width.top;
+    let br = pe_style.border_width.right;
+    let bb = pe_style.border_width.bottom;
+    let bl = pe_style.border_width.left;
+    let margin_top = resolve_dim(
+        &pe_style.margin.top,
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let margin_bottom = resolve_dim(
+        &pe_style.margin.bottom,
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let margin_left = resolve_dim(
+        &pe_style.margin.left,
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+
+    // Content-box size: explicit width/height take precedence over text metrics.
+    let explicit_w = pe_style.width.resolve_px(
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+    let explicit_h = pe_style.height.resolve_px(
+        content_width,
+        base_font_size,
+        font_size,
+        viewport_w,
+        viewport_h,
+    );
+
+    // Only measure text when we actually need an auto dimension or there is text
+    // to lay out (avoids measuring an empty string for a fully-sized icon box).
+    let (auto_w, auto_h) = if explicit_w.is_none() || explicit_h.is_none() || !resolved.is_empty() {
+        let text_props = crate::TextProperties::from_style(pe_style);
+        let metrics = text_measurer.measure(
+            &resolved,
+            font_size,
+            &pe_style.font_family,
+            pe_style.font_weight,
+            Some(content_width),
+            &text_props,
+        );
+        (metrics.width, metrics.height)
+    } else {
+        (0.0, 0.0)
+    };
+
+    let content_w = explicit_w.unwrap_or(auto_w).min(content_width).max(0.0);
+    let content_h = explicit_h.unwrap_or(auto_h).max(0.0);
+
+    let border_w = content_w + pad_left + pad_right + bl + br;
+    let border_h = content_h + pad_top + pad_bottom + bt + bb;
+
+    let pe_box = tree.alloc_anonymous(
+        node_id,
+        BoxType::PseudoElement {
+            kind: box_kind,
+            content: resolved,
+        },
+    );
+    if let Some(pb) = tree.get_mut(pe_box) {
+        // Parent-local coordinates. The margin box starts at the running child
+        // cursor (x=0); the border box is inset by the left/top margins. (The
+        // right margin does not affect block-axis flow and is omitted from the
+        // margin-box width, which only feeds inline extents here.)
+        let margin_w = border_w + margin_left;
+        let border_x = margin_left;
+        let border_y = child_y + margin_top;
+        pb.margin_rect = Rect::new(0.0, child_y, margin_w, margin_top + border_h + margin_bottom);
+        pb.border_rect = Rect::new(border_x, border_y, border_w, border_h);
+        pb.padding_rect = Rect::new(
+            border_x + bl,
+            border_y + bt,
+            border_w - bl - br,
+            border_h - bt - bb,
+        );
+        pb.content_rect = Rect::new(
+            border_x + bl + pad_left,
+            border_y + bt + pad_top,
+            content_w,
+            content_h,
+        );
+    }
+    tree.add_child(parent_box, pe_box);
+
+    // Block-axis advance: full margin box height.
+    Some(margin_top + border_h + margin_bottom)
 }
 
 /// Resolve `[attr:name]` placeholders in generated content using the element's DOM attributes.

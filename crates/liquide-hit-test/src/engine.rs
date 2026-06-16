@@ -431,6 +431,13 @@ impl HitTestEngine {
             return None;
         }
 
+        // Generated-content boxes (::before / ::after) are non-interactive per
+        // CSS: they must NOT register a hit on the host node at their own rect
+        // (t88-p0a). They carry the host node id only as a style back-reference.
+        if matches!(layout_box.box_type, liquide_layout::tree::BoxType::PseudoElement { .. }) {
+            return None;
+        }
+
         let abs_content = layout_box.content_rect.offset(ox, oy);
         let point_in_node =
             Point::new(local_point.x - abs_content.x, local_point.y - abs_content.y);
@@ -550,8 +557,16 @@ impl HitTestEngine {
         }
 
         // Add this box (only if the point is within its own bounds, and unless
-        // visibility:hidden or pointer-events:none).
-        if self_in_bounds && style.visibility != Visibility::Hidden && this_receives_events {
+        // visibility:hidden or pointer-events:none). Generated-content boxes
+        // (::before / ::after) are non-interactive and never register a hit on
+        // the host node (t88-p0a).
+        let is_generated =
+            matches!(layout_box.box_type, liquide_layout::tree::BoxType::PseudoElement { .. });
+        if self_in_bounds
+            && !is_generated
+            && style.visibility != Visibility::Hidden
+            && this_receives_events
+        {
             let abs_content = layout_box.content_rect.offset(ox, oy);
             let point_in_node =
                 Point::new(local_point.x - abs_content.x, local_point.y - abs_content.y);
@@ -850,6 +865,46 @@ mod tests {
     use liquide_dom::Document;
     use liquide_layout::{DefaultImageMeasurer, DefaultTextMeasurer, LayoutEngine, Size};
     use liquide_style_engine::engine::StyleEngine;
+
+    /// t88-p0a: a generated-content `::before` box must NOT register a hit on
+    /// the host node — generated content is non-interactive. The hit at the
+    /// pseudo box's location must resolve to the host's REAL block box (full
+    /// width), and `hit_test_all` must not contain a result whose bounds are the
+    /// small pseudo box. Pre-fix the pseudo box (sharing the host node id) hit at
+    /// its own small rect.
+    #[test]
+    fn pseudo_element_box_is_not_interactive() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let host = doc.create_element("host");
+        doc.append_child(root, host);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(
+            r#"host { display: block; width: 200px; height: 40px; }
+               host::before { content: ""; width: 20px; height: 20px; }"#,
+        );
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let engine = HitTestEngine::from_owned(layout_tree, style_map);
+
+        // Point inside the pseudo box (top-left 20x20 region).
+        let hit = engine.hit_test(Point::new(5.0, 5.0)).expect("host should be hit");
+        assert_eq!(hit.node, host, "hit must resolve to the host element");
+        assert!(
+            hit.bounds.width > 100.0,
+            "hit must be the host's full block box, not the small pseudo box (got width {})",
+            hit.bounds.width
+        );
+
+        // No result in hit_test_all should carry the small pseudo bounds.
+        let all = engine.hit_test_all(Point::new(5.0, 5.0));
+        assert!(
+            all.iter().all(|r| r.bounds.width > 100.0),
+            "no hit result may have the small (20px) pseudo-box bounds"
+        );
+    }
 
     #[test]
     fn shape_aware_hit_test_rounded_corner_cull() {

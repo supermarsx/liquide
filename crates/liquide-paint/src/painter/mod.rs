@@ -87,7 +87,30 @@ impl Painter {
             None => return,
         };
 
-        let style = styles.get(layout_box.node).cloned().unwrap_or_default();
+        // For a generated-content pseudo-element box, the canonical computed
+        // style is the *pseudo* style (`::before`/`::after`), NOT the host
+        // element's style. The pseudo box only carries the host node id as a
+        // back-reference, so `styles.get(node)` would wrongly return the host's
+        // background/border/box-shadow. Resolve the pseudo style here so the
+        // entire decoration machinery below (background, border, box-shadow,
+        // transform, opacity) paints the pseudo box correctly.
+        let style = match &layout_box.box_type {
+            BoxType::PseudoElement { kind, .. } => {
+                let pe_kind = match kind {
+                    liquide_layout::tree::PseudoElementKind::Before => {
+                        liquide_style_engine::style_map::PseudoKind::Before
+                    }
+                    liquide_layout::tree::PseudoElementKind::After => {
+                        liquide_style_engine::style_map::PseudoKind::After
+                    }
+                };
+                styles
+                    .get_pseudo(layout_box.node, pe_kind)
+                    .cloned()
+                    .unwrap_or_default()
+            }
+            _ => styles.get(layout_box.node).cloned().unwrap_or_default(),
+        };
 
         // Positioned-box offset boundary (CSS positioning containing-block).
         //
@@ -732,46 +755,40 @@ impl Painter {
 
         // Paint pseudo-element or list-marker generated content
         match &layout_box.box_type {
-            BoxType::PseudoElement { content, kind } => {
-                // Get the pseudo-element style from the style map
-                let pe_kind = match kind {
-                    liquide_layout::tree::PseudoElementKind::Before => {
-                        liquide_style_engine::style_map::PseudoKind::Before
-                    }
-                    liquide_layout::tree::PseudoElementKind::After => {
-                        liquide_style_engine::style_map::PseudoKind::After
-                    }
-                };
-                let pe_style = styles
-                    .get_pseudo(layout_box.node, pe_kind)
-                    .cloned()
-                    .unwrap_or_default();
-                list.push(DisplayItem::Text {
-                    rect: abs_content,
-                    text: content.clone(),
-                    color: pe_style.color,
-                    font_size: pe_style.font_size,
-                    font_family: Arc::clone(&pe_style.font_family),
-                    font_weight: pe_style.font_weight,
-                    font_style: pe_style.font_style.clone(),
-                    letter_spacing: pe_style.letter_spacing,
-                    word_spacing: pe_style.word_spacing,
-                    line_height: pe_style.line_height.clone(),
-                    text_align: pe_style.text_align,
-                    text_transform: pe_style.text_transform,
-                    text_overflow: pe_style.text_overflow,
-                    white_space: pe_style.white_space,
-                    word_break: pe_style.word_break,
-                    text_indent: pe_style.text_indent,
-                    text_decoration: pe_style.text_decoration.clone(),
-                    text_shadows: pe_style.text_shadow.clone(),
-                    text_emphasis: crate::display_list::TextEmphasis::parse(
-                        pe_style.text_emphasis_style.as_deref().unwrap_or(""),
-                        pe_style.text_emphasis_color,
-                        pe_style.text_emphasis_position.as_deref(),
-                    ),
-                    caret_color: pe_style.caret_color,
-                });
+            BoxType::PseudoElement { content, .. } => {
+                // `style` was already resolved to the pseudo-element's computed
+                // style at the top of `paint_box`, so the background/border/
+                // box-shadow above painted from it. Emit the generated text from
+                // the same style. Skip empty content (icon/focus-ring boxes have
+                // no glyphs — only their box decoration matters).
+                if !content.is_empty() {
+                    list.push(DisplayItem::Text {
+                        rect: abs_content,
+                        text: content.clone(),
+                        color: style.color,
+                        font_size: style.font_size,
+                        font_family: Arc::clone(&style.font_family),
+                        font_weight: style.font_weight,
+                        font_style: style.font_style.clone(),
+                        letter_spacing: style.letter_spacing,
+                        word_spacing: style.word_spacing,
+                        line_height: style.line_height.clone(),
+                        text_align: style.text_align,
+                        text_transform: style.text_transform,
+                        text_overflow: style.text_overflow,
+                        white_space: style.white_space,
+                        word_break: style.word_break,
+                        text_indent: style.text_indent,
+                        text_decoration: style.text_decoration.clone(),
+                        text_shadows: style.text_shadow.clone(),
+                        text_emphasis: crate::display_list::TextEmphasis::parse(
+                            style.text_emphasis_style.as_deref().unwrap_or(""),
+                            style.text_emphasis_color,
+                            style.text_emphasis_position.as_deref(),
+                        ),
+                        caret_color: style.caret_color,
+                    });
+                }
             }
             BoxType::ListMarker { text } => {
                 // Use the marker text generated at layout time with real ordinal.
@@ -1975,6 +1992,112 @@ mod tests {
         assert!(
             has_pending,
             "Pending cache entry should still emit an Image item as placeholder"
+        );
+    }
+
+    // ── ::before / ::after pseudo-element box paint (t88-p0a) ──
+
+    /// A `::before` with a background must paint that background using the
+    /// PSEUDO style, at the pseudo box's own rect — not the host's style.
+    /// Pre-fix the painter read `styles.get(node)` (host) for the pseudo box,
+    /// so the pseudo background was dropped.
+    #[test]
+    fn pseudo_before_paints_its_own_background() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let host = doc.create_element("host");
+        doc.append_child(root, host);
+
+        let mut se = StyleEngine::default();
+        // Host has NO background; only the ::before does. If the painter used the
+        // host style for the pseudo box, no red rect would be emitted.
+        se.add_stylesheet(
+            r#"host { display: block; }
+               host::before { content: ""; width: 12px; height: 12px;
+                              background-color: rgb(255, 0, 0); }"#,
+        );
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let dl = painter.paint(&doc, &layout_tree, &style_map);
+
+        let red = dl.items.iter().find_map(|item| match item {
+            DisplayItem::SolidColor { rect, color, .. }
+                if color.r == 255 && color.g == 0 && color.b == 0 && color.a > 0 =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        });
+        let rect = red.expect("::before background must be painted from the pseudo style");
+        assert!(
+            (rect.width - 12.0).abs() < 0.5 && (rect.height - 12.0).abs() < 0.5,
+            "pseudo background must paint at the pseudo box size, got {}x{}",
+            rect.width,
+            rect.height
+        );
+    }
+
+    /// `content: none` must emit no pseudo background (teeth for the absent case).
+    #[test]
+    fn pseudo_content_none_paints_nothing() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let host = doc.create_element("host");
+        doc.append_child(root, host);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(
+            r#"host { display: block; }
+               host::before { content: none; width: 12px; height: 12px;
+                              background-color: rgb(255, 0, 0); }"#,
+        );
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let dl = painter.paint(&doc, &layout_tree, &style_map);
+
+        let any_red = dl.items.iter().any(|item| {
+            matches!(item, DisplayItem::SolidColor { color, .. }
+                if color.r == 255 && color.g == 0 && color.b == 0 && color.a > 0)
+        });
+        assert!(!any_red, "content:none must not paint a pseudo box");
+    }
+
+    /// A `::before` with text content must emit a Text item carrying the pseudo
+    /// style's color, not the host's.
+    #[test]
+    fn pseudo_before_paints_text_with_pseudo_color() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let host = doc.create_element("host");
+        doc.append_child(root, host);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(
+            r#"host { display: block; color: rgb(0, 0, 0); }
+               host::before { content: "Z"; color: rgb(0, 128, 0); }"#,
+        );
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let dl = painter.paint(&doc, &layout_tree, &style_map);
+
+        let z = dl.items.iter().find_map(|item| match item {
+            DisplayItem::Text { text, color, .. } if text == "Z" => Some(*color),
+            _ => None,
+        });
+        let color = z.expect("::before text content must be painted");
+        assert_eq!(
+            (color.r, color.g, color.b),
+            (0, 128, 0),
+            "pseudo text must use the pseudo-element's own color"
         );
     }
 }

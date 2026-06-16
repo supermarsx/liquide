@@ -225,6 +225,22 @@ impl LayoutTree {
         id
     }
 
+    /// Allocate a box that does NOT take over the `node → box` mapping.
+    ///
+    /// Generated-content boxes (`::before` / `::after` pseudo-elements) carry a
+    /// back-reference to their *host* DOM node so the painter/hit-tester can find
+    /// the host's computed pseudo style — but they are NOT the canonical box for
+    /// that node. Registering them in `node_index` would steal the mapping from
+    /// the host's own box (the pseudo box has no children), so `find_by_node`
+    /// would return the wrong, empty box. Use this for any synthetic box whose
+    /// `node` is shared with a real element box.
+    pub fn alloc_anonymous(&mut self, node: NodeId, box_type: BoxType) -> LayoutBoxId {
+        let id = self.boxes.len();
+        self.boxes.push(LayoutBox::new(id, node, box_type));
+        // Intentionally do NOT touch `node_index`: the real element box keeps it.
+        id
+    }
+
     /// Add a child to a parent box.
     pub fn add_child(&mut self, parent: LayoutBoxId, child: LayoutBoxId) {
         if let Some(p) = self.boxes.get_mut(parent) {
