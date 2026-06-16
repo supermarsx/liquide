@@ -60,6 +60,7 @@ pub use wayland::WaylandPlatform;
 #[cfg(target_os = "macos")]
 pub use macos::MacOSPlatform;
 
+use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::PixelFormat;
 use thiserror::Error;
 
@@ -397,6 +398,40 @@ pub trait PlatformBackend: Send {
         _format: PixelFormat,
     ) -> PlatformResult<()> {
         Ok(())
+    }
+
+    /// Present a rendered frame, optionally restricting the on-screen update to
+    /// a set of damaged sub-rectangles.
+    ///
+    /// `damage` is expressed in surface-space pixels (same coordinate system as
+    /// the `pixels` buffer, top-left origin). Semantics:
+    ///
+    /// - `None` — present the WHOLE surface. This is byte-for-byte identical to
+    ///   calling [`present_frame`](Self::present_frame) and is the default that
+    ///   every backend inherits, so existing callers are unaffected.
+    /// - `Some(&[])` — nothing changed; the backend may present nothing (cheap
+    ///   no-op) since the on-screen surface is already up to date.
+    /// - `Some(rects)` — copy/blit ONLY the union of the given rectangles. The
+    ///   on-screen result for those regions must be identical to a full present;
+    ///   pixels outside the damage are assumed unchanged and are left intact.
+    ///
+    /// Backends override this when they can cheaply honour partial damage (the
+    /// Win32 GDI path blits only the damaged sub-rectangles, which is a large
+    /// bandwidth win over RDP). The default implementation conservatively
+    /// ignores the damage hint and presents the full surface — always correct,
+    /// just not bandwidth-optimal.
+    fn present_frame_damaged(
+        &mut self,
+        handle: NativeWindowHandle,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: PixelFormat,
+        _damage: Option<&[Rect]>,
+    ) -> PlatformResult<()> {
+        // Default: damage hint ignored → full, correct present (back-compat).
+        self.present_frame(handle, pixels, width, height, stride, format)
     }
 
     /// Present a rendered frame with compositor-side sequence metadata.

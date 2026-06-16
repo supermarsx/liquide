@@ -68,6 +68,131 @@ fn timestamp_ns() -> u64 {
 }
 
 // ---------------------------------------------------------------------------
+// Damage-rect normalization (partial present)
+// ---------------------------------------------------------------------------
+
+/// Convert a compositor-space damage rect (f32, top-left origin) into an
+/// integer pixel rect clamped to the surface, *expanding* to whole pixels so a
+/// fractional rect never under-covers a partially-touched pixel. Returns
+/// `None` if the rect is fully outside the surface or collapses to empty.
+fn damage_rect_to_pixels(r: &Rect, width: u32, height: u32) -> Option<PixelRect> {
+    // Reject non-finite coordinates outright (NaN/inf would poison the floor/
+    // ceil below and could produce a bogus rect).
+    if !(r.x.is_finite() && r.y.is_finite() && r.width.is_finite() && r.height.is_finite()) {
+        return None;
+    }
+    let x0 = r.x.floor().max(0.0);
+    let y0 = r.y.floor().max(0.0);
+    // Expand the far edge with ceil so any pixel the rect partially covers is
+    // included, then clamp to the surface extent.
+    let x1 = (r.x + r.width).ceil().min(width as f32);
+    let y1 = (r.y + r.height).ceil().min(height as f32);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let x = x0 as u32;
+    let y = y0 as u32;
+    Some(PixelRect {
+        x,
+        y,
+        w: (x1 as u32).saturating_sub(x),
+        h: (y1 as u32).saturating_sub(y),
+    }
+    .clamped(width, height))
+}
+
+/// Normalize a slice of compositor damage rects into a clamped, de-duplicated,
+/// coalesced set of integer pixel rects ready to blit.
+///
+/// - Out-of-bounds / empty / non-finite rects are dropped.
+/// - Exact duplicates are removed.
+/// - Rects that are fully contained in another rect are absorbed, and rects
+///   that touch/overlap are greedily merged into their bounding box. This keeps
+///   the BitBlt count small and guarantees every damaged pixel is covered
+///   exactly once (no torn / double-blitted regions).
+///
+/// An empty input slice yields an empty result (caller treats this as
+/// "present nothing changed").
+fn coalesce_damage_rects(rects: &[Rect], width: u32, height: u32) -> Vec<PixelRect> {
+    let mut out: Vec<PixelRect> = Vec::with_capacity(rects.len());
+    for r in rects {
+        let Some(pr) = damage_rect_to_pixels(r, width, height) else {
+            continue;
+        };
+        merge_pixel_rect(&mut out, pr);
+    }
+    out
+}
+
+/// Right edge (exclusive) of a pixel rect.
+fn pr_right(r: &PixelRect) -> u32 {
+    r.x.saturating_add(r.w)
+}
+
+/// Bottom edge (exclusive) of a pixel rect.
+fn pr_bottom(r: &PixelRect) -> u32 {
+    r.y.saturating_add(r.h)
+}
+
+/// True when `a` fully contains `b`.
+fn pr_contains(a: &PixelRect, b: &PixelRect) -> bool {
+    b.x >= a.x && b.y >= a.y && pr_right(b) <= pr_right(a) && pr_bottom(b) <= pr_bottom(a)
+}
+
+/// True when `a` and `b` overlap or share an edge (touching rects are merged so
+/// adjacent damage doesn't produce a hairline seam between two BitBlts).
+fn pr_touches(a: &PixelRect, b: &PixelRect) -> bool {
+    a.x <= pr_right(b) && b.x <= pr_right(a) && a.y <= pr_bottom(b) && b.y <= pr_bottom(a)
+}
+
+/// Bounding box of two pixel rects.
+fn pr_union(a: &PixelRect, b: &PixelRect) -> PixelRect {
+    let x = a.x.min(b.x);
+    let y = a.y.min(b.y);
+    let right = pr_right(a).max(pr_right(b));
+    let bottom = pr_bottom(a).max(pr_bottom(b));
+    PixelRect {
+        x,
+        y,
+        w: right.saturating_sub(x),
+        h: bottom.saturating_sub(y),
+    }
+}
+
+/// Insert `pr` into `set`, absorbing duplicates/contained rects and greedily
+/// merging anything it touches into its bounding box. Re-runs until no further
+/// merge is possible so the result has no overlapping/touching members.
+fn merge_pixel_rect(set: &mut Vec<PixelRect>, pr: PixelRect) {
+    if pr.w == 0 || pr.h == 0 {
+        return;
+    }
+    let mut acc = pr;
+    loop {
+        let mut merged_any = false;
+        let mut i = 0;
+        while i < set.len() {
+            let existing = set[i];
+            if pr_contains(&existing, &acc) {
+                // Already covered — nothing to add.
+                return;
+            }
+            if pr_touches(&acc, &existing) {
+                acc = pr_union(&acc, &existing);
+                set.swap_remove(i);
+                merged_any = true;
+                // Restart scan: the enlarged `acc` may now touch earlier rects.
+            } else {
+                i += 1;
+            }
+        }
+        if !merged_any {
+            break;
+        }
+    }
+    set.push(acc);
+}
+
+// ---------------------------------------------------------------------------
 // Per-window data stored via GWLP_USERDATA
 // ---------------------------------------------------------------------------
 
@@ -1780,6 +1905,136 @@ impl PlatformBackend for Win32Platform {
         stride: u32,
         format: PixelFormat,
     ) -> PlatformResult<()> {
+        // Full present (damage hint = None).
+        self.present_frame_impl(handle, pixels, width, height, stride, format, None)
+    }
+
+    fn present_frame_damaged(
+        &mut self,
+        handle: NativeWindowHandle,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: PixelFormat,
+        damage: Option<&[Rect]>,
+    ) -> PlatformResult<()> {
+        // Normalize the compositor damage rects into clamped/coalesced integer
+        // pixel rects up front. `None` stays `None` (full present); `Some(&[])`
+        // (nothing changed) stays an empty Vec (the impl refreshes the
+        // back-buffer for WM_PAINT but skips the on-screen blit).
+        let coalesced = damage.map(|rects| coalesce_damage_rects(rects, width, height));
+        self.present_frame_impl(
+            handle,
+            pixels,
+            width,
+            height,
+            stride,
+            format,
+            coalesced.as_deref(),
+        )
+    }
+
+    fn request_redraw(&mut self, handle: NativeWindowHandle) {
+        if let Some(info) = self.window_host.windows.get(&handle.0) {
+            // SAFETY: InvalidateRect with a null RECT invalidates the entire
+            // client area, causing a WM_PAINT message to be posted.
+            // The HWND is valid because it's in our window map.
+            unsafe {
+                ffi::InvalidateRect(info.hwnd, ptr::null(), ffi::FALSE);
+            }
+        }
+    }
+
+
+    fn set_cursor_shape(&mut self, handle: NativeWindowHandle, shape: &str) -> bool {
+        let cursor_id = match shape {
+            "default" | "arrow" => ffi::IDC_ARROW,
+            "pointer" | "hand" => ffi::IDC_HAND,
+            "text" | "ibeam" => ffi::IDC_IBEAM,
+            "crosshair" => ffi::IDC_CROSS,
+            "move" | "all-scroll" => ffi::IDC_SIZEALL,
+            "not-allowed" | "no-drop" => ffi::IDC_NO,
+            "wait" => ffi::IDC_WAIT,
+            "progress" => ffi::IDC_APPSTARTING,
+            "help" => ffi::IDC_HELP,
+            "ns-resize" | "row-resize" => ffi::IDC_SIZENS,
+            "ew-resize" | "col-resize" => ffi::IDC_SIZEWE,
+            "nwse-resize" => ffi::IDC_SIZENWSE,
+            "nesw-resize" => ffi::IDC_SIZENESW,
+            "none" | "hidden" => ptr::null(),
+            _ => ffi::IDC_ARROW,
+        };
+
+        if let Some(info) = self.window_host.windows.get(&handle.0) {
+            // SAFETY: LoadCursorW with null hInstance loads a system cursor.
+            let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), cursor_id) };
+            // Store the cursor handle in the WindowData so the wndproc
+            // uses it on WM_SETCURSOR.
+            info._data
+                .cursor
+                .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
+            // Also set it immediately (in case we're already in the client area).
+            // SAFETY: SetCursor is safe with any cursor handle.
+            unsafe {
+                ffi::SetCursor(hcursor);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn hide_cursor(&mut self, handle: NativeWindowHandle) {
+        if let Some(info) = self.window_host.windows.get(&handle.0) {
+            info._data
+                .cursor
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            // SAFETY: SetCursor(null) hides the cursor. Always safe to call.
+            unsafe {
+                ffi::SetCursor(ptr::null_mut());
+            }
+        }
+    }
+
+    fn show_cursor(&mut self, handle: NativeWindowHandle) {
+        if let Some(info) = self.window_host.windows.get(&handle.0) {
+            // SAFETY: LoadCursorW with null hInstance loads a system cursor.
+            let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) };
+            info._data
+                .cursor
+                .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
+            // SAFETY: SetCursor is safe with any cursor handle.
+            unsafe {
+                ffi::SetCursor(hcursor);
+            }
+        }
+    }
+}
+
+impl Win32Platform {
+    /// Core present path shared by the full and damage-aware entry points.
+    ///
+    /// `damage`:
+    /// - `None` — present the WHOLE surface (DXGI present or full-surface BitBlt).
+    /// - `Some(rects)` — the GDI path still refreshes the *entire* off-screen
+    ///   back-buffer (so a subsequent WM_PAINT replays the authoritative full
+    ///   frame) but only BitBlts the given sub-rectangles to the visible DC.
+    ///   An empty slice presents nothing to screen (frame unchanged). The DXGI
+    ///   path cannot do a sub-rect present with the current swap-chain present
+    ///   model, so it ignores the hint and presents the full surface (still
+    ///   correct, just not bandwidth-optimal — RDP never takes the DXGI path).
+    #[allow(clippy::too_many_arguments)]
+    fn present_frame_impl(
+        &mut self,
+        handle: NativeWindowHandle,
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        stride: u32,
+        format: PixelFormat,
+        damage: Option<&[PixelRect]>,
+    ) -> PlatformResult<()> {
         // We only support BGRA8, which maps directly to Win32's 32-bit
         // BI_RGB (which is actually BGRA in memory).
         if format != PixelFormat::Bgra8 {
@@ -1935,31 +2190,78 @@ impl PlatformBackend for Win32Platform {
                 std::sync::atomic::Ordering::Release,
             );
 
-            // Copy the frame into the off-screen DIB memory. Both source and
-            // destination are top-down packed BGRA8 of identical dimensions, so
-            // this is a single contiguous copy of `required` bytes.
+            // Always copy the WHOLE frame into the off-screen DIB memory, even
+            // for a partial present. The DIB is the authoritative back-buffer
+            // that WM_PAINT replays in full, so it must always hold the complete
+            // current frame. This memcpy is local memory only — it costs no RDP
+            // bandwidth; the RDP cost is the BitBlt to the visible DC below.
+            // Both source and destination are top-down packed BGRA8 of identical
+            // dimensions, so this is a single contiguous copy of `required`
+            // bytes.
             ptr::copy_nonoverlapping(
                 pixels.as_ptr(),
                 back_buffer.bits as *mut u8,
                 required,
             );
 
-            // Atomic flip: one BitBlt of the whole frame onto the window DC.
-            let ok = ffi::BitBlt(
-                window_hdc,
-                0,
-                0,
-                width as i32,
-                height as i32,
-                back_buffer.mem_dc,
-                0,
-                0,
-                ffi::SRCCOPY,
-            );
+            // Decide which sub-rectangles to blit to the visible window DC.
+            //
+            // - `None` → full present (one whole-surface BitBlt).
+            // - `Some(rects)` → blit only those sub-rects. The off-screen DIB
+            //   already holds the full frame, so each sub-rect BitBlt copies the
+            //   matching region 1:1 and the on-screen result is identical to a
+            //   full present for the changed regions, while untouched pixels are
+            //   left intact. An empty slice means nothing changed → no blit.
+            //
+            // A back-buffer realloc (first present / window resize) invalidates
+            // any prior on-screen content, so partial damage cannot be trusted;
+            // force a full blit in that case regardless of the hint.
+            let blit_full = damage.is_none() || needs_realloc;
+
+            let mut blit_ok = true;
+            if blit_full {
+                // Atomic flip: one BitBlt of the whole frame onto the window DC.
+                let ok = ffi::BitBlt(
+                    window_hdc,
+                    0,
+                    0,
+                    width as i32,
+                    height as i32,
+                    back_buffer.mem_dc,
+                    0,
+                    0,
+                    ffi::SRCCOPY,
+                );
+                blit_ok = ok != ffi::FALSE;
+            } else if let Some(rects) = damage {
+                // Partial present: one BitBlt per coalesced damage rect. Rects
+                // are already clamped to the surface, so the dst/src extents are
+                // in-bounds for both the window DC and the DIB.
+                for r in rects {
+                    if r.w == 0 || r.h == 0 {
+                        continue;
+                    }
+                    let ok = ffi::BitBlt(
+                        window_hdc,
+                        r.x as i32,
+                        r.y as i32,
+                        r.w as i32,
+                        r.h as i32,
+                        back_buffer.mem_dc,
+                        r.x as i32,
+                        r.y as i32,
+                        ffi::SRCCOPY,
+                    );
+                    if ok == ffi::FALSE {
+                        blit_ok = false;
+                        break;
+                    }
+                }
+            }
 
             ffi::ReleaseDC(hwnd, window_hdc);
 
-            if ok == ffi::FALSE {
+            if !blit_ok {
                 return Err(PlatformError::Presentation(
                     "BitBlt failed (GDI back-buffer present failed)".into(),
                 ));
@@ -1986,81 +2288,6 @@ impl PlatformBackend for Win32Platform {
         self.present_feedback
             .record_accepted_present(timestamp_ns());
         Ok(())
-    }
-
-    fn request_redraw(&mut self, handle: NativeWindowHandle) {
-        if let Some(info) = self.window_host.windows.get(&handle.0) {
-            // SAFETY: InvalidateRect with a null RECT invalidates the entire
-            // client area, causing a WM_PAINT message to be posted.
-            // The HWND is valid because it's in our window map.
-            unsafe {
-                ffi::InvalidateRect(info.hwnd, ptr::null(), ffi::FALSE);
-            }
-        }
-    }
-
-    fn set_cursor_shape(&mut self, handle: NativeWindowHandle, shape: &str) -> bool {
-        let cursor_id = match shape {
-            "default" | "arrow" => ffi::IDC_ARROW,
-            "pointer" | "hand" => ffi::IDC_HAND,
-            "text" | "ibeam" => ffi::IDC_IBEAM,
-            "crosshair" => ffi::IDC_CROSS,
-            "move" | "all-scroll" => ffi::IDC_SIZEALL,
-            "not-allowed" | "no-drop" => ffi::IDC_NO,
-            "wait" => ffi::IDC_WAIT,
-            "progress" => ffi::IDC_APPSTARTING,
-            "help" => ffi::IDC_HELP,
-            "ns-resize" | "row-resize" => ffi::IDC_SIZENS,
-            "ew-resize" | "col-resize" => ffi::IDC_SIZEWE,
-            "nwse-resize" => ffi::IDC_SIZENWSE,
-            "nesw-resize" => ffi::IDC_SIZENESW,
-            "none" | "hidden" => ptr::null(),
-            _ => ffi::IDC_ARROW,
-        };
-
-        if let Some(info) = self.window_host.windows.get(&handle.0) {
-            // SAFETY: LoadCursorW with null hInstance loads a system cursor.
-            let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), cursor_id) };
-            // Store the cursor handle in the WindowData so the wndproc
-            // uses it on WM_SETCURSOR.
-            info._data
-                .cursor
-                .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
-            // Also set it immediately (in case we're already in the client area).
-            // SAFETY: SetCursor is safe with any cursor handle.
-            unsafe {
-                ffi::SetCursor(hcursor);
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    fn hide_cursor(&mut self, handle: NativeWindowHandle) {
-        if let Some(info) = self.window_host.windows.get(&handle.0) {
-            info._data
-                .cursor
-                .store(0, std::sync::atomic::Ordering::Relaxed);
-            // SAFETY: SetCursor(null) hides the cursor. Always safe to call.
-            unsafe {
-                ffi::SetCursor(ptr::null_mut());
-            }
-        }
-    }
-
-    fn show_cursor(&mut self, handle: NativeWindowHandle) {
-        if let Some(info) = self.window_host.windows.get(&handle.0) {
-            // SAFETY: LoadCursorW with null hInstance loads a system cursor.
-            let hcursor = unsafe { ffi::LoadCursorW(ptr::null_mut(), ffi::IDC_ARROW) };
-            info._data
-                .cursor
-                .store(hcursor as isize, std::sync::atomic::Ordering::Relaxed);
-            // SAFETY: SetCursor is safe with any cursor handle.
-            unsafe {
-                ffi::SetCursor(hcursor);
-            }
-        }
     }
 }
 
@@ -2195,5 +2422,107 @@ mod tests {
         assert_eq!(second.sequence, Some(2));
         assert_eq!(second.timestamp_ns, Some(20));
         assert!(state.take_feedback().is_none());
+    }
+
+    // ── Damage-rect normalization (partial present) ──────────────────
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect::new(x, y, w, h)
+    }
+
+    #[test]
+    fn damage_rect_to_pixels_clamps_to_surface() {
+        // A rect that overhangs the right/bottom edge is clamped to the surface.
+        let pr = damage_rect_to_pixels(&rect(90.0, 90.0, 50.0, 50.0), 100, 100).unwrap();
+        assert_eq!((pr.x, pr.y, pr.w, pr.h), (90, 90, 10, 10));
+    }
+
+    #[test]
+    fn damage_rect_to_pixels_rejects_out_of_bounds_and_nonfinite() {
+        // Fully outside the surface → dropped.
+        assert!(damage_rect_to_pixels(&rect(200.0, 200.0, 10.0, 10.0), 100, 100).is_none());
+        // Zero area → dropped.
+        assert!(damage_rect_to_pixels(&rect(10.0, 10.0, 0.0, 10.0), 100, 100).is_none());
+        // Non-finite → dropped (never produces a bogus rect).
+        assert!(damage_rect_to_pixels(&rect(f32::NAN, 0.0, 10.0, 10.0), 100, 100).is_none());
+        assert!(
+            damage_rect_to_pixels(&rect(0.0, 0.0, f32::INFINITY, 10.0), 100, 100).is_none()
+        );
+    }
+
+    #[test]
+    fn damage_rect_to_pixels_expands_fractional_to_whole_pixels() {
+        // A fractional rect must cover every partially-touched pixel.
+        let pr = damage_rect_to_pixels(&rect(10.5, 10.5, 1.0, 1.0), 100, 100).unwrap();
+        assert_eq!((pr.x, pr.y), (10, 10));
+        // (10.5 .. 11.5) → floor 10 .. ceil 12 → width 2.
+        assert_eq!((pr.w, pr.h), (2, 2));
+    }
+
+    #[test]
+    fn coalesce_dedupes_identical_rects() {
+        let r = rect(10.0, 10.0, 20.0, 20.0);
+        let out = coalesce_damage_rects(&[r, r, r], 100, 100);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].x, out[0].y, out[0].w, out[0].h), (10, 10, 20, 20));
+    }
+
+    #[test]
+    fn coalesce_absorbs_contained_rect() {
+        let big = rect(0.0, 0.0, 50.0, 50.0);
+        let small = rect(10.0, 10.0, 5.0, 5.0);
+        let out = coalesce_damage_rects(&[big, small], 100, 100);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].x, out[0].y, out[0].w, out[0].h), (0, 0, 50, 50));
+        // Order-independent.
+        let out2 = coalesce_damage_rects(&[small, big], 100, 100);
+        assert_eq!(out2.len(), 1);
+        assert_eq!((out2[0].w, out2[0].h), (50, 50));
+    }
+
+    #[test]
+    fn coalesce_merges_overlapping_into_bounding_box() {
+        let a = rect(0.0, 0.0, 30.0, 30.0);
+        let b = rect(20.0, 20.0, 30.0, 30.0);
+        let out = coalesce_damage_rects(&[a, b], 100, 100);
+        assert_eq!(out.len(), 1);
+        // Union bounding box (0,0)-(50,50).
+        assert_eq!((out[0].x, out[0].y, out[0].w, out[0].h), (0, 0, 50, 50));
+    }
+
+    #[test]
+    fn coalesce_keeps_disjoint_rects_separate() {
+        let a = rect(0.0, 0.0, 10.0, 10.0);
+        let b = rect(80.0, 80.0, 10.0, 10.0);
+        let out = coalesce_damage_rects(&[a, b], 100, 100);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn coalesce_chains_transitive_merges() {
+        // a touches b, b touches c, but a does NOT touch c directly.
+        // The greedy restart must still merge all three into one box.
+        let a = rect(0.0, 0.0, 20.0, 10.0);
+        let b = rect(20.0, 0.0, 20.0, 10.0);
+        let c = rect(40.0, 0.0, 20.0, 10.0);
+        // Insert in an order where the bridging rect comes last.
+        let out = coalesce_damage_rects(&[a, c, b], 100, 100);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].x, out[0].w), (0, 60));
+    }
+
+    #[test]
+    fn coalesce_empty_input_is_empty() {
+        let out = coalesce_damage_rects(&[], 100, 100);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn coalesce_drops_out_of_bounds_but_keeps_valid() {
+        let inside = rect(10.0, 10.0, 5.0, 5.0);
+        let outside = rect(500.0, 500.0, 5.0, 5.0);
+        let out = coalesce_damage_rects(&[outside, inside], 100, 100);
+        assert_eq!(out.len(), 1);
+        assert_eq!((out[0].x, out[0].y), (10, 10));
     }
 }
