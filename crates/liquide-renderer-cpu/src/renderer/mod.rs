@@ -195,6 +195,13 @@ pub struct SoftwareRenderer {
     /// in time. Set per frame from the [`RenderMode`]; the live paths leave this
     /// `false` and keep the non-blocking async blur.
     deterministic_blur: bool,
+    /// Test-only accounting of the number of backdrop-blur SOURCE pixels actually
+    /// snapshotted + convolved on the most recent `render_backdrop_blur` call.
+    /// Used by the cost regression to prove a tiny damage rect over glass shrinks
+    /// the blur source area to ~O(damage + radius) rather than the full backdrop.
+    /// Gated to test builds so it has zero production cost.
+    #[cfg(test)]
+    last_blur_source_px: std::cell::Cell<usize>,
 }
 
 impl SoftwareRenderer {
@@ -255,6 +262,8 @@ impl SoftwareRenderer {
             cursor_theme: cursors::CursorTheme::default(),
             raster_clip: None,
             deterministic_blur: false,
+            #[cfg(test)]
+            last_blur_source_px: std::cell::Cell::new(0),
         }
     }
 

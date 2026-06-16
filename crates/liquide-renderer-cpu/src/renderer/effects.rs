@@ -79,6 +79,37 @@ impl SoftwareRenderer {
             let bw = bounds.width as u32;
             let bh = bounds.height as u32;
 
+            let shadow_color = Color::new(
+                color.r,
+                color.g,
+                color.b,
+                (color.a as f32 * opacity + 0.5) as u8,
+            );
+            let lod_blur_radius = (*blur_radius as f32 * quality_factor) as u32;
+            let params = ShadowParams {
+                surface_rect: bounds,
+                corner_radius: *corner_radius,
+                spread: *spread,
+                blur_radius: lod_blur_radius,
+                offset_x: 0.0,
+                offset_y: 0.0,
+                shadow_color,
+            };
+
+            // On a partial-damage frame (write-scissor active) `generate_shadow_mask`
+            // confines the mask to (shadow rect ∩ scissor+blur margin) — byte-
+            // identical to the full mask inside the damage rect (t82). Such a mask
+            // is CLIP-SPECIFIC, so it must NOT be cached (the cache is keyed on
+            // bounds only; a later frame with a different clip would wrongly reuse
+            // it). The full-frame path (no scissor) keeps the bounds-keyed cache so
+            // a steady shadow is generated once and reused.
+            if crate::rasterizer::write_scissor().is_some() {
+                if let Some(mask) = BoxShadow::generate_shadow_mask(fb.width, fb.height, &params) {
+                    BoxShadow::composite_shadow_mask(fb, &mask);
+                }
+                return;
+            }
+
             let cache_hit = self
                 .shadow_cache
                 .get(&node.id)
@@ -88,36 +119,18 @@ impl SoftwareRenderer {
                 if let Some(cached) = self.shadow_cache.get(&node.id) {
                     BoxShadow::composite_shadow_mask(fb, &cached.mask);
                 }
-            } else {
-                let shadow_color = Color::new(
-                    color.r,
-                    color.g,
-                    color.b,
-                    (color.a as f32 * opacity + 0.5) as u8,
+            } else if let Some(mask) = BoxShadow::generate_shadow_mask(fb.width, fb.height, &params) {
+                BoxShadow::composite_shadow_mask(fb, &mask);
+                self.shadow_cache_insert(
+                    node.id,
+                    CachedShadow {
+                        mask,
+                        bx,
+                        by,
+                        bw,
+                        bh,
+                    },
                 );
-                let lod_blur_radius = (*blur_radius as f32 * quality_factor) as u32;
-                let params = ShadowParams {
-                    surface_rect: bounds,
-                    corner_radius: *corner_radius,
-                    spread: *spread,
-                    blur_radius: lod_blur_radius,
-                    offset_x: 0.0,
-                    offset_y: 0.0,
-                    shadow_color,
-                };
-                if let Some(mask) = BoxShadow::generate_shadow_mask(fb.width, fb.height, &params) {
-                    BoxShadow::composite_shadow_mask(fb, &mask);
-                    self.shadow_cache_insert(
-                        node.id,
-                        CachedShadow {
-                            mask,
-                            bx,
-                            by,
-                            bw,
-                            bh,
-                        },
-                    );
-                }
             }
         }
     }
@@ -406,16 +419,128 @@ impl SoftwareRenderer {
         radius: u32,
         fb: &mut FrameBuffer,
     ) {
-        let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
-        let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
-        let x1 = (bounds.right().ceil() as u32).min(fb.width);
-        let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+        // Full pixel-snapped glass bounds, clamped to the framebuffer. This is
+        // the region the blur is logically defined over (its edge handling is
+        // clamp-to-edge at THESE bounds).
+        let gx0 = (bounds.x.max(0.0) as u32).min(fb.width);
+        let gy0 = (bounds.y.max(0.0) as u32).min(fb.height);
+        let gx1 = (bounds.right().ceil() as u32).min(fb.width);
+        let gy1 = (bounds.bottom().ceil() as u32).min(fb.height);
+        let gw = gx1.saturating_sub(gx0);
+        let gh = gy1.saturating_sub(gy0);
+
+        if gw == 0 || gh == 0 {
+            return;
+        }
+
+        // ── Damage-confined blur source window (t82) ──────────────────────────
+        //
+        // On a partial-damage frame the blur EFFECT (snapshot + convolution) was
+        // previously computed over the FULL glass bounds even when the damage is
+        // a tiny rect, so any hover over a big glass surface (launcher, menu, dock)
+        // paid nearly the full-frame cost regardless of clip size (t78 bench).
+        //
+        // When `raster_clip` is `Some`, we shrink the SOURCE region the blur is
+        // computed over to (glass ∩ damage) EXPANDED by the blur sample radius on
+        // all sides, then snapped so the result is BYTE-IDENTICAL to the full
+        // computation inside the damage rect:
+        //   * margin = `radius` on every side that is interior to the glass bounds.
+        //     The separable Gaussian (clamp-to-edge) at output pixel p depends on
+        //     source pixels within ±radius of p in each axis; with that margin the
+        //     intermediate H-pass values feeding the target rows are themselves
+        //     correct, and no clamp differs from the full computation.
+        //   * origin snapped DOWN to EVEN coords. The large-radius path
+        //     (`compute_blur`, radius ≥ 8) downsamples 2× on a grid anchored at the
+        //     buffer origin; an even crop origin makes the cropped downsample an
+        //     exact sub-rect of the full downsample, so downsample → half-res blur
+        //     → bilinear upsample reproduce the full result bit-for-bit at interior
+        //     (≥ radius from a non-true-edge) pixels — which the target span is.
+        //   * far edge extended to keep ≥ radius margin (also even-rounded up).
+        // Where the window coincides with the true glass edge, clamp-to-edge
+        // matches the full computation automatically.
+        //
+        // The write-back is then confined to (glass ∩ damage), further clamped by
+        // the hard write-scissor (t80).
+        //
+        // Whether a damage-confined blur can be made BYTE-IDENTICAL to the full
+        // computation for this node. The large-radius path downsamples 2×; its
+        // bilinear upsample uses scale = (dim/2)/dim, which is exactly 0.5 — the
+        // value that makes a cropped window reproduce the full result at interior
+        // pixels — only when the glass width AND height are even. For odd glass
+        // dims (radius ≥ 8) we cannot guarantee identical edges, so we fall back
+        // to the FULL bounds rather than ship a visual artifact. The full-res
+        // path (radius < 8) is always safe (clamp-to-edge separable Gaussian).
+        let downsample_path = radius >= 8;
+        let clip_safe = !downsample_path || (gw % 2 == 0 && gh % 2 == 0);
+
+        let (sx0, sy0, sx1, sy1, blit_x0, blit_y0, blit_x1, blit_y1) = match self.raster_clip {
+            Some(clip) if clip_safe => {
+                let cx0 = (clip.x.max(0.0) as u32).max(gx0).min(gx1);
+                let cy0 = (clip.y.max(0.0) as u32).max(gy0).min(gy1);
+                let cx1 = (clip.right().ceil().max(0.0) as u32).min(gx1).max(cx0);
+                let cy1 = (clip.bottom().ceil().max(0.0) as u32).min(gy1).max(cy0);
+                if cx1 <= cx0 || cy1 <= cy0 {
+                    // Damage does not touch this glass node — nothing to blur/blit.
+                    #[cfg(test)]
+                    self.last_blur_source_px.set(0);
+                    return;
+                }
+                // Expand the (glass ∩ damage) target by the sample margin, snap the
+                // origin DOWN to even, clamp to the glass bounds. The full-res
+                // separable Gaussian reaches ±radius. The large-radius path also
+                // downsamples 2× then bilinearly upsamples, so a full-space dst
+                // pixel additionally reads one extra HALF-RES neighbour each side
+                // (= 2 full px) beyond the half-res kernel's ±radius reach; we add
+                // a small slack so the convolved source feeding every target pixel
+                // is byte-identical to the full computation.
+                let r = if downsample_path { radius + 4 } else { radius };
+                let mut wx0 = cx0.saturating_sub(r);
+                let mut wy0 = cy0.saturating_sub(r);
+                let mut wx1 = (cx1 + r).min(gx1);
+                let mut wy1 = (cy1 + r).min(gy1);
+                wx0 = wx0.max(gx0);
+                wy0 = wy0.max(gy0);
+                // Snap origin down to an even offset RELATIVE to the glass origin
+                // so the downsample 2× grid phase matches the full computation.
+                if (wx0 - gx0) % 2 == 1 {
+                    wx0 -= 1;
+                }
+                if (wy0 - gy0) % 2 == 1 {
+                    wy0 -= 1;
+                }
+                wx0 = wx0.max(gx0);
+                wy0 = wy0.max(gy0);
+                // Keep the window width/height even (relative to its own origin) so
+                // the cropped downsample covers whole 2× blocks like the full one;
+                // extend the far edge, clamped to the glass bounds.
+                if (wx1 - wx0) % 2 == 1 && wx1 < gx1 {
+                    wx1 += 1;
+                }
+                if (wy1 - wy0) % 2 == 1 && wy1 < gy1 {
+                    wy1 += 1;
+                }
+                (wx0, wy0, wx1, wy1, cx0, cy0, cx1, cy1)
+            }
+            // clip None, OR clip Some but the node can't be safely confined:
+            // compute over the FULL glass bounds (byte-identical to the historic
+            // path). The blit covers the full bounds and the write-scissor (t80)
+            // still confines the actual writes to the damage rect.
+            _ => (gx0, gy0, gx1, gy1, gx0, gy0, gx1, gy1),
+        };
+
+        let x0 = sx0;
+        let y0 = sy0;
+        let x1 = sx1;
+        let y1 = sy1;
         let w = x1.saturating_sub(x0);
         let h = y1.saturating_sub(y0);
 
         if w == 0 || h == 0 {
             return;
         }
+
+        #[cfg(test)]
+        self.last_blur_source_px.set((w * h) as usize);
 
         // Snapshot the backdrop first so its content can participate in the
         // stable cache key (a steady backdrop yields a steady key → cache hit).
@@ -441,24 +566,29 @@ impl SoftwareRenderer {
                 .compute_blur_blocking(key, snapshot.clone(), w, h, radius);
         }
 
-        // Blit cached blur result if available. The blur is COMPUTED over the
-        // full glass bounds (so the result is correct), but the WRITE-BACK is
-        // confined to the per-thread write-scissor (t80): on a partial-damage
-        // frame the backdrop-blur node must not re-blit outside the damage rect
-        // (the t79 regression). Per damaged row we clamp the destination column
-        // span to the scissor and copy only that sub-span from the cached blur.
+        // Blit cached blur result if available. The blur is computed over the
+        // (possibly damage-confined) SOURCE window `[x0,x1)×[y0,y1)` (t82), whose
+        // interior — everything inside the (glass ∩ damage) target — is
+        // byte-identical to the full-bounds blur. The WRITE-BACK is confined to
+        // that target `[blit_x0,blit_x1)×[blit_y0,blit_y1)`, further clamped by
+        // the per-thread write-scissor (t80) so no pixel escapes the damage rect
+        // (the t79 regression). Each row copies the sub-span out of the cached
+        // window buffer at the correct (col, row) offset relative to `(x0, y0)`.
         let has_cache = if let Some(cached) = self.blur_worker.get_cached(key, w, h) {
-            for row in 0..h {
-                let dy = y0 + row;
-                // Clamp this row's [x0, x0+w) destination span to the scissor.
-                let (cx0, _, cx1, _) =
-                    crate::rasterizer::scissor_clamp_window(x0, dy, x0 + w, dy + 1);
-                if cx1 <= cx0 {
+            for dy in blit_y0..blit_y1 {
+                // Clamp this row's [blit_x0, blit_x1) destination span to the
+                // scissor, in BOTH axes — a row outside the scissor's y-range must
+                // be skipped entirely (the scissor confines writes to the damage
+                // rect, not just its column span).
+                let (cx0, cy0s, cx1, cy1s) =
+                    crate::rasterizer::scissor_clamp_window(blit_x0, dy, blit_x1, dy + 1);
+                if cx1 <= cx0 || cy1s <= cy0s {
                     continue;
                 }
+                let row = (dy - y0) as usize;
                 let col0 = (cx0 - x0) as usize;
                 let span = (cx1 - cx0) as usize;
-                let src_off = (row as usize * w as usize + col0) * 4;
+                let src_off = (row * w as usize + col0) * 4;
                 let dst_off = fb.pixel_offset(cx0, dy);
                 let bytes = span * 4;
                 if src_off + bytes <= cached.pixels.len()
@@ -675,6 +805,291 @@ mod tests {
             renderer.blur_cache_len(),
             2,
             "a changed backdrop must produce a new key → a fresh blur entry"
+        );
+    }
+
+    // ── t82: damage-confined backdrop blur ────────────────────────────────────
+
+    /// Run a backdrop blur over `bounds` with `radius`, optionally clipped to
+    /// `clip` (matching the production write-scissor + raster_clip wiring), in the
+    /// deterministic (synchronous) blur mode so the result is present immediately
+    /// and byte-stable. Returns the framebuffer after the blur write-back.
+    fn run_blur(bounds: Rect, radius: u32, clip: Option<Rect>, fb_w: u32, fb_h: u32) -> FrameBuffer {
+        let mut renderer = SoftwareRenderer::new();
+        renderer.deterministic_blur = true; // synchronous, byte-stable
+        renderer.raster_clip = clip;
+        let prev = crate::rasterizer::set_write_scissor(clip);
+
+        let mut fb = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        renderer.render_backdrop_blur(1, bounds, radius, &mut fb);
+
+        crate::rasterizer::set_write_scissor(prev);
+        fb
+    }
+
+    /// CORRECTNESS: the damage-clipped blur must be BYTE-IDENTICAL to the
+    /// full-backdrop blur inside the damage rect, across several radii and damage
+    /// positions — including a damage rect sitting ON the glass edge, where the
+    /// sample margin matters most.
+    #[test]
+    fn clipped_blur_is_byte_identical_to_full_blur_inside_damage() {
+        // Glass at an even origin & even dims (the common, safely-confinable case),
+        // plus a deliberately ODD-dim glass to exercise the safe-fallback path.
+        let cases = [
+            // (bounds, radius, damage rect)
+            (Rect::new(8.0, 8.0, 200.0, 160.0), 4, Rect::new(40.0, 40.0, 24.0, 24.0)),
+            (Rect::new(8.0, 8.0, 200.0, 160.0), 12, Rect::new(90.0, 70.0, 32.0, 32.0)),
+            (Rect::new(8.0, 8.0, 200.0, 160.0), 20, Rect::new(120.0, 100.0, 16.0, 16.0)),
+            // Damage ON the top-left glass edge (margin must clamp to the edge).
+            (Rect::new(8.0, 8.0, 200.0, 160.0), 12, Rect::new(8.0, 8.0, 20.0, 20.0)),
+            // Damage ON the bottom-right glass edge.
+            (Rect::new(8.0, 8.0, 200.0, 160.0), 16, Rect::new(180.0, 140.0, 28.0, 28.0)),
+            // Odd-dim glass + large radius → safe fallback to full bounds; must
+            // still be byte-identical inside the damage rect.
+            (Rect::new(8.0, 8.0, 201.0, 161.0), 12, Rect::new(90.0, 70.0, 30.0, 30.0)),
+        ];
+
+        for (bounds, radius, dmg) in cases {
+            let full = run_blur(bounds, radius, None, 256, 224);
+            let clipped = run_blur(bounds, radius, Some(dmg), 256, 224);
+
+            // Compare every pixel inside the damage rect (∩ framebuffer).
+            let dx0 = dmg.x as u32;
+            let dy0 = dmg.y as u32;
+            let dx1 = (dmg.right().ceil() as u32).min(256);
+            let dy1 = (dmg.bottom().ceil() as u32).min(224);
+            let mut compared = 0u32;
+            for y in dy0..dy1 {
+                for x in dx0..dx1 {
+                    assert_eq!(
+                        clipped.get_pixel(x, y),
+                        full.get_pixel(x, y),
+                        "clipped blur differs from full blur at ({x},{y}) \
+                         for bounds={bounds:?} radius={radius} damage={dmg:?}"
+                    );
+                    compared += 1;
+                }
+            }
+            assert!(compared > 0, "test compared no pixels for {dmg:?}");
+
+            // And the clipped blur must NOT have written ANYTHING outside the
+            // damage rect: every pixel outside the damage rect must still equal
+            // the sharp backdrop, while the FULL blur softened many of them
+            // (proving the region really is glass/blurry and the clip is what
+            // suppressed the writes — not an all-no-op).
+            let mut sharp = FrameBuffer::new(256, 224, PixelFormat::Bgra8);
+            paint_backdrop(&mut sharp);
+            let in_damage = |x: u32, y: u32| x >= dx0 && x < dx1 && y >= dy0 && y < dy1;
+            let mut full_softened_outside = 0u32;
+            for y in (bounds.y as u32)..(bounds.bottom() as u32).min(224) {
+                for x in (bounds.x as u32)..(bounds.right() as u32).min(256) {
+                    if in_damage(x, y) {
+                        continue;
+                    }
+                    assert_eq!(
+                        clipped.get_pixel(x, y),
+                        sharp.get_pixel(x, y),
+                        "clipped blur wrote OUTSIDE the damage rect at ({x},{y}) \
+                         for damage={dmg:?}"
+                    );
+                    if full.get_pixel(x, y) != sharp.get_pixel(x, y) {
+                        full_softened_outside += 1;
+                    }
+                }
+            }
+            assert!(
+                full_softened_outside > 100,
+                "full blur should have softened many pixels outside the damage rect \
+                 (only {full_softened_outside}) for {dmg:?}"
+            );
+        }
+    }
+
+    /// ADVERSARIAL SWEEP: every (radius × damage-position) combination over a
+    /// fixed glass surface must be byte-identical inside the damage rect — this
+    /// catches a too-small margin at any radius/offset, not just hand-picked ones.
+    #[test]
+    fn clipped_blur_byte_identical_across_radii_and_positions_sweep() {
+        let bounds = Rect::new(4.0, 4.0, 240.0, 200.0); // even dims
+        let fb_w = 260u32;
+        let fb_h = 220u32;
+        for &radius in &[1u32, 3, 7, 8, 9, 14, 20, 30] {
+            let full = run_blur(bounds, radius, None, fb_w, fb_h);
+            // Damage rects of varying size at varying offsets, including the four
+            // glass corners (where the margin clamps to the true edge).
+            for &( dx, dy, dw, dh) in &[
+                (4.0, 4.0, 18.0, 18.0),       // top-left corner
+                (226.0, 4.0, 18.0, 18.0),     // top-right corner
+                (4.0, 186.0, 18.0, 18.0),     // bottom-left corner
+                (226.0, 186.0, 18.0, 18.0),   // bottom-right corner
+                (60.0, 50.0, 13.0, 27.0),     // odd-sized interior
+                (121.0, 99.0, 7.0, 7.0),      // odd-offset tiny interior
+                (10.0, 90.0, 200.0, 11.0),    // wide thin strip
+            ] {
+                let dmg = Rect::new(dx, dy, dw, dh);
+                let clipped = run_blur(bounds, radius, Some(dmg), fb_w, fb_h);
+                let ix0 = dx as u32;
+                let iy0 = dy as u32;
+                let ix1 = (dmg.right().ceil() as u32).min(fb_w);
+                let iy1 = (dmg.bottom().ceil() as u32).min(fb_h);
+                for y in iy0..iy1 {
+                    for x in ix0..ix1 {
+                        assert_eq!(
+                            clipped.get_pixel(x, y),
+                            full.get_pixel(x, y),
+                            "sweep mismatch at ({x},{y}) radius={radius} damage={dmg:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// COST/BEHAVIOR: a small damage rect over a large glass surface must shrink
+    /// the blur SOURCE area to ~O(damage + radius border), NOT the full backdrop.
+    /// Fails (reverting to full-area) if the damage-confinement is removed.
+    #[test]
+    fn clipped_blur_source_area_is_proportional_to_damage_not_full_backdrop() {
+        let bounds = Rect::new(0.0, 0.0, 400.0, 400.0); // 160 000-px glass
+        let radius = 12u32;
+        let dmg = Rect::new(180.0, 180.0, 32.0, 32.0); // tiny central damage
+
+        // Full (clip None): the blur source is the whole glass.
+        let mut full_r = SoftwareRenderer::new();
+        full_r.deterministic_blur = true;
+        full_r.raster_clip = None;
+        let mut fb_full = FrameBuffer::new(400, 400, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb_full);
+        full_r.render_backdrop_blur(1, bounds, radius, &mut fb_full);
+        let full_px = full_r.last_blur_source_px.get();
+        assert_eq!(full_px, 400 * 400, "full path should snapshot the whole glass");
+
+        // Clipped: the blur source must be a small window around the damage rect.
+        let mut clip_r = SoftwareRenderer::new();
+        clip_r.deterministic_blur = true;
+        clip_r.raster_clip = Some(dmg);
+        let prev = crate::rasterizer::set_write_scissor(Some(dmg));
+        let mut fb_clip = FrameBuffer::new(400, 400, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb_clip);
+        clip_r.render_backdrop_blur(1, bounds, radius, &mut fb_clip);
+        crate::rasterizer::set_write_scissor(prev);
+        let clip_px = clip_r.last_blur_source_px.get();
+
+        // Expected upper bound: damage + 2*(margin) on each axis, even-rounded.
+        // The downsample path uses margin radius+4, so 32 + 2*(12+4) = 64 → at
+        // most ~66*66. The key assertion is that it is a SMALL FRACTION of the
+        // full backdrop (here ~3% of 160 000) and would jump to 160 000 on
+        // regression to full-area blur.
+        let margin = radius as usize + 4; // matches downsample-path margin
+        let bound = (32 + 2 * margin + 4).pow(2);
+        assert!(
+            clip_px <= bound,
+            "clipped blur source {clip_px} px exceeds expected ~O(damage+radius) bound {bound}"
+        );
+        assert!(
+            clip_px * 10 < full_px,
+            "clipped blur source {clip_px} px is not a small fraction of the full \
+             {full_px} px — damage confinement regressed to full-area blur"
+        );
+    }
+
+    /// CORRECTNESS: a damage-confined box-shadow mask must composite BYTE-
+    /// IDENTICALLY to the full-mask path inside the damage rect, and must not
+    /// write outside it. Catches a too-small mask margin (blur bleed) or an
+    /// over-confinement that drops shadow pixels inside the damage rect.
+    #[test]
+    fn confined_shadow_mask_is_byte_identical_inside_damage() {
+        use crate::effects::{BoxShadow, ShadowParams};
+        let surface = Rect::new(40.0, 40.0, 180.0, 140.0);
+        for blur_radius in [0u32, 4, 12, 20] {
+            let params = ShadowParams {
+                surface_rect: surface,
+                corner_radius: 16.0,
+                spread: 6.0,
+                blur_radius,
+                offset_x: 0.0,
+                offset_y: 0.0,
+                shadow_color: Color::new(0, 0, 0, 180),
+            };
+
+            // FULL: no scissor → mask over the whole shadow rect.
+            let mut full = FrameBuffer::new(280, 240, PixelFormat::Bgra8);
+            paint_backdrop(&mut full);
+            if let Some(mask) = BoxShadow::generate_shadow_mask(full.width, full.height, &params) {
+                BoxShadow::composite_shadow_mask(&mut full, &mask);
+            }
+
+            // Damage rects across the shadow (corner, edge, interior of the blur halo).
+            for &(dx, dy, dw, dh) in &[
+                (30.0, 30.0, 24.0, 24.0),   // top-left shadow halo corner
+                (120.0, 100.0, 20.0, 20.0), // interior
+                (205.0, 165.0, 30.0, 30.0), // bottom-right halo
+            ] {
+                let dmg = Rect::new(dx, dy, dw, dh);
+                let mut clipped = FrameBuffer::new(280, 240, PixelFormat::Bgra8);
+                paint_backdrop(&mut clipped);
+                let prev = crate::rasterizer::set_write_scissor(Some(dmg));
+                if let Some(mask) =
+                    BoxShadow::generate_shadow_mask(clipped.width, clipped.height, &params)
+                {
+                    BoxShadow::composite_shadow_mask(&mut clipped, &mask);
+                }
+                crate::rasterizer::set_write_scissor(prev);
+
+                let ix0 = dx as u32;
+                let iy0 = dy as u32;
+                let ix1 = (dmg.right().ceil() as u32).min(280);
+                let iy1 = (dmg.bottom().ceil() as u32).min(240);
+                for y in iy0..iy1 {
+                    for x in ix0..ix1 {
+                        assert_eq!(
+                            clipped.get_pixel(x, y),
+                            full.get_pixel(x, y),
+                            "shadow mismatch at ({x},{y}) blur_radius={blur_radius} damage={dmg:?}"
+                        );
+                    }
+                }
+                // Nothing written outside the damage rect.
+                let mut sharp = FrameBuffer::new(280, 240, PixelFormat::Bgra8);
+                paint_backdrop(&mut sharp);
+                for y in 0..240u32 {
+                    for x in 0..280u32 {
+                        let inside = x >= ix0 && x < ix1 && y >= iy0 && y < iy1;
+                        if !inside {
+                            assert_eq!(
+                                clipped.get_pixel(x, y),
+                                sharp.get_pixel(x, y),
+                                "shadow wrote OUTSIDE damage at ({x},{y}) damage={dmg:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A full-damage (clip None) blur must be IDENTICAL to the historic path:
+    /// the entire glass region is blurred (this guards the e2e_temporal / capture
+    /// golden no-op requirement at the unit level).
+    #[test]
+    fn clip_none_blurs_entire_glass_region() {
+        let bounds = Rect::new(8.0, 8.0, 120.0, 96.0);
+        let blurred = run_blur(bounds, 12, None, 160, 128);
+        let mut sharp = FrameBuffer::new(160, 128, PixelFormat::Bgra8);
+        paint_backdrop(&mut sharp);
+        // Many interior glass pixels must differ from the sharp backdrop.
+        let mut differing = 0u32;
+        for y in 20..100 {
+            for x in 20..120 {
+                if blurred.get_pixel(x, y) != sharp.get_pixel(x, y) {
+                    differing += 1;
+                }
+            }
+        }
+        assert!(
+            differing > 1000,
+            "clip-None must blur the whole glass region (only {differing} px changed)"
         );
     }
 }

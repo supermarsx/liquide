@@ -165,10 +165,35 @@ impl BoxShadow {
             surface_rect.height + expand * 2.0,
         );
 
-        let x0 = (shadow_rect.x.max(0.0) as u32).min(fb_width);
-        let y0 = (shadow_rect.y.max(0.0) as u32).min(fb_height);
-        let x1 = (shadow_rect.right().ceil() as u32).min(fb_width);
-        let y1 = (shadow_rect.bottom().ceil() as u32).min(fb_height);
+        let mut x0 = (shadow_rect.x.max(0.0) as u32).min(fb_width);
+        let mut y0 = (shadow_rect.y.max(0.0) as u32).min(fb_height);
+        let mut x1 = (shadow_rect.right().ceil() as u32).min(fb_width);
+        let mut y1 = (shadow_rect.bottom().ceil() as u32).min(fb_height);
+
+        // Damage-confine the shadow mask (t82). The mask is only EVER composited
+        // through the per-thread write-scissor (`composite_shadow_mask` consults
+        // `scissor_allows` per pixel), so on a partial-damage frame we need not
+        // compute the SDF + blur over the FULL shadow rect — only over the part
+        // that can actually be written. The composited result is BYTE-IDENTICAL:
+        //   * the SDF coverage is a pure per-pixel function (no neighbour reads),
+        //     so any pixel computed at all is exact;
+        //   * the subsequent `blur_buffer` over the mask samples ±blur_radius, so
+        //     we keep a margin of `blur_radius` around the scissor — every pixel
+        //     inside the scissor then sees the same neighbourhood (clamp-to-edge)
+        //     as the full mask would, since the SDF outside the surface is 0 and
+        //     the margin reaches past any non-zero coverage feeding a scissor pixel.
+        // When no scissor is set this is a no-op (full shadow rect, as before).
+        if let Some(s) = crate::rasterizer::write_scissor() {
+            let m = blur_radius;
+            let sx0 = (s.x.max(0.0) as u32).saturating_sub(m);
+            let sy0 = (s.y.max(0.0) as u32).saturating_sub(m);
+            let sx1 = (s.right().ceil().max(0.0) as u32).saturating_add(m);
+            let sy1 = (s.bottom().ceil().max(0.0) as u32).saturating_add(m);
+            x0 = x0.max(sx0);
+            y0 = y0.max(sy0);
+            x1 = x1.min(sx1);
+            y1 = y1.min(sy1);
+        }
 
         let w = x1.saturating_sub(x0);
         let h = y1.saturating_sub(y0);
