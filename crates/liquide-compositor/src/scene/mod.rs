@@ -339,6 +339,26 @@ impl SceneNodeKind {
 /// Guard against pathologically deep scene trees (stack overflow prevention).
 const MAX_SCENE_DEPTH: u32 = 512;
 
+/// Tracks whether the scene-depth-cap warning has already been emitted, so a
+/// pathological scene that re-truncates every frame logs ONCE instead of
+/// flooding (t84 / t83-R5: the cap is a graceful guard, but truncating it
+/// silently turns dropped content into an unexplained "hole"). Reset is not
+/// needed — a single signal that the cap was reached is enough to investigate.
+static SCENE_DEPTH_CAP_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Emit a one-shot warning that [`MAX_SCENE_DEPTH`] was hit and a subtree was
+/// dropped. Rate-limited to a single message for the process lifetime.
+#[cold]
+fn warn_scene_depth_cap_once() {
+    if !SCENE_DEPTH_CAP_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!(
+            max_depth = MAX_SCENE_DEPTH,
+            "scene tree exceeded MAX_SCENE_DEPTH during flatten; deepest subtree dropped (content may be missing). This warning is emitted once."
+        );
+    }
+}
+
 /// A node in the compositor's scene graph.
 #[derive(Debug)]
 pub struct SceneNode {
@@ -716,8 +736,11 @@ impl SceneNode {
         depth: u32,
         sorted_indices_scratch: &mut Vec<usize>,
     ) {
-        const MAX_SCENE_DEPTH: u32 = 512;
         if depth >= MAX_SCENE_DEPTH {
+            // The flatten path is the one that produces visible FlatNodes — a cap
+            // hit here SILENTLY drops a subtree from the rendered output. Signal
+            // it once (t84 / t83-R5) instead of failing silent.
+            warn_scene_depth_cap_once();
             return;
         }
 

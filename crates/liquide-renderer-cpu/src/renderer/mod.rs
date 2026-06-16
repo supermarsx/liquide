@@ -1311,11 +1311,17 @@ impl SoftwareRenderer {
 
             SceneNodeKind::Content | SceneNodeKind::Overlay | SceneNodeKind::ShellLayer => {
                 if opacity < 1.0 {
-                    // Multiply alpha of existing pixels in the region
+                    // Multiply alpha of existing pixels in the region.
                     let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
                     let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
                     let x1 = (bounds.right().ceil() as u32).min(fb.width);
                     let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                    // Confine to the damage write-scissor (t84): a full-bleed
+                    // dimming Overlay/fade on a partial-damage frame must not
+                    // touch preserved pixels outside the damage rect. `set_pixel`
+                    // also drops out-of-scissor writes as a backstop, but
+                    // clamping the loop keeps the hot path tight.
+                    let (x0, y0, x1, y1) = rasterizer::scissor_clamp_window(x0, y0, x1, y1);
                     for y in y0..y1 {
                         for x in x0..x1 {
                             let mut px = fb.get_pixel(x, y);
@@ -1435,6 +1441,9 @@ impl SoftwareRenderer {
                         let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
                         let bx1 = (bounds.right().ceil() as u32).min(fb.width);
                         let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        // Confine clip feathering to the damage write-scissor (t84).
+                        let (bx0, by0, bx1, by1) =
+                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
                         for y in by0..by1 {
                             let fy = y as f32 + 0.5;
                             for x in bx0..bx1 {
@@ -1478,6 +1487,9 @@ impl SoftwareRenderer {
                         let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
                         let bx1 = (bounds.right().ceil() as u32).min(fb.width);
                         let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        // Confine clip feathering to the damage write-scissor (t84).
+                        let (bx0, by0, bx1, by1) =
+                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
                         for y in by0..by1 {
                             let fy = y as f32 + 0.5;
                             for x in bx0..bx1 {
@@ -1519,6 +1531,9 @@ impl SoftwareRenderer {
                         let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
                         let bx1 = (bounds.right().ceil() as u32).min(fb.width);
                         let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                        // Confine clip feathering to the damage write-scissor (t84).
+                        let (bx0, by0, bx1, by1) =
+                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
                         for y in by0..by1 {
                             let fy = y as f32 + 0.5;
                             for x in bx0..bx1 {
@@ -1555,6 +1570,9 @@ impl SoftwareRenderer {
                             let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
                             let bx1 = (bounds.right().ceil() as u32).min(fb.width);
                             let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                            // Confine clip feathering to the damage write-scissor (t84).
+                            let (bx0, by0, bx1, by1) =
+                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
                             let pts: Vec<(f32, f32)> = points
                                 .iter()
                                 .map(|p| {
@@ -1641,6 +1659,10 @@ impl SoftwareRenderer {
                 let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
                 let x1 = (bounds.right().ceil() as u32).min(fb.width);
                 let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+                // Confine the mask multiply to the damage write-scissor (t84) so a
+                // full-bleed mask cannot dim preserved pixels outside the damage
+                // rect on a partial frame.
+                let (x0, y0, x1, y1) = rasterizer::scissor_clamp_window(x0, y0, x1, y1);
                 if x0 >= x1 || y0 >= y1 {
                     return;
                 }

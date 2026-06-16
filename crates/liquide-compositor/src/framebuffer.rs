@@ -239,9 +239,20 @@ impl FrameBuffer {
     }
 
     /// Set the BGRA pixel at `(x, y)`.
-    /// Does nothing if coordinates are out of bounds.
+    ///
+    /// Does nothing if the coordinates are out of bounds, or if an active
+    /// write-scissor is installed for this thread and `(x, y)` falls outside it
+    /// ([`crate::scissor`]). The scissor check is the INESCAPABLE damage-only
+    /// chokepoint: every pixel write in the engine ultimately lands here (raster
+    /// helpers, raw get-modify-set node loops, blur write-back, future kinds), so
+    /// no codepath can corrupt a pixel outside the active damage rect regardless
+    /// of whether it threaded a clip argument. When no scissor is set the check
+    /// is a single branch-predictable compare against `None` — a true no-op.
     pub fn set_pixel(&mut self, x: u32, y: u32, color: Color) {
         if x >= self.width || y >= self.height {
+            return;
+        }
+        if !crate::scissor::scissor_allows(x, y) {
             return;
         }
         let off = self.pixel_offset(x, y);

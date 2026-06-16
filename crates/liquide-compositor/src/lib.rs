@@ -17,6 +17,7 @@ pub mod pixel;
 pub mod property_tree;
 pub mod renderer;
 pub mod scene;
+pub mod scissor;
 
 pub use compositor::{Compositor, CompositorContract, FrameLifecycle};
 pub use cursor::{CursorBitmap, CursorUpdate};
@@ -44,6 +45,9 @@ pub use scene::{
     GradientSpec, ImageFit, MaskMode, MaskSpec, NodeId, NodeProperties, OutlineSpec, OutlineStyle,
     Overflow, SceneNode, SceneNodeKind, TextDecoration, TextDecorationLine, TextDecorationStyle,
     TextShadow,
+};
+pub use scissor::{
+    scissor_allows, scissor_clamp_window, set_write_scissor, write_scissor, write_scissor_window,
 };
 
 use thiserror::Error;

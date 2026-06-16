@@ -818,12 +818,20 @@ mod tests {
         let mut renderer = SoftwareRenderer::new();
         renderer.deterministic_blur = true; // synchronous, byte-stable
         renderer.raster_clip = clip;
-        let prev = crate::rasterizer::set_write_scissor(clip);
 
+        // Paint the backdrop input BEFORE installing the write-scissor. In
+        // production the backdrop outside the current damage rect is the
+        // PRESERVED content from prior frames (the framebuffer is not cleared on
+        // a partial frame), so the blur can still sample it; the scissor only
+        // confines the CURRENT pass's writes. Painting the backdrop under the
+        // scissor would (correctly, per t84) confine it to the damage rect and
+        // starve the blur's sample margin — an artifact of an empty test fb, not
+        // production. So we seed the full backdrop first, then scissor the blur.
         let mut fb = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
         paint_backdrop(&mut fb);
-        renderer.render_backdrop_blur(1, bounds, radius, &mut fb);
 
+        let prev = crate::rasterizer::set_write_scissor(clip);
+        renderer.render_backdrop_blur(1, bounds, radius, &mut fb);
         crate::rasterizer::set_write_scissor(prev);
         fb
     }

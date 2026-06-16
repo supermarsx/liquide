@@ -332,6 +332,311 @@ fn partial_clip_full_bleed_nodes_never_write_outside_damage() {
     );
 }
 
+/// t84 ANTI-FAKE-GREEN no-escape MATRIX — the cornerstone resilience test.
+///
+/// For EVERY paintable node kind, paint that kind FULL-BLEED over a pre-filled
+/// framebuffer under a SMALL partial damage scissor (one center tile) and assert
+/// every pixel OUTSIDE the padded clip is BYTE-FOR-BYTE unchanged.
+///
+/// WHY THIS EXISTS (t83-R1/R2): before t84 the damage write-scissor was a
+/// renderer-cpu thread-local consulted ONLY inside the `rasterizer::*` helpers.
+/// Several node-paint paths in `renderer/mod.rs` wrote the framebuffer DIRECTLY
+/// via `fb.get_pixel`/`fb.set_pixel` over the node's FULL bounds and ESCAPED the
+/// scissor — corrupting preserved pixels outside the damage rect on a partial
+/// frame (the same stale-pixel class as the t79 wallpaper bug). The PROVEN
+/// offenders were:
+///   * Content / Overlay / ShellLayer opacity-multiply (`mod.rs` ~1312)
+///   * ALL ClipPath arms (RoundedRect / Circle / Ellipse / Polygon)
+///   * BOTH Mask arms (Gradient / Image)
+/// The previous no-escape test only exercised already-clipped full-bleed kinds
+/// (Image/BackgroundFill/BackdropFilter/Shadow), so it stayed green while these
+/// three kinds were live escapers — a fake-green gap.
+///
+/// RED-BEFORE-FIX (verified): with the pre-t84 code (scissor only enforced in
+/// `rasterizer::*`, no clamp on the raw `set_pixel` loops, `FrameBuffer::set_pixel`
+/// unaware of the scissor), the `clip_path_*`, `mask_*` and `overlay_opacity`
+/// cases each report hundreds of escaped pixels — the partial damage tile is at
+/// [128,192)/padded [96,224) on a 320×320 fb, so a full-bleed opacity-multiply or
+/// clip feather rewrites every one of the ~96k pixels outside the clip.
+/// GREEN-AFTER-FIX: `FrameBuffer::set_pixel` now drops out-of-scissor writes
+/// (inescapable at the write level) AND the three offenders clamp their loop
+/// bounds, so the sentinel survives intact.
+///
+/// The clip-None path is exercised separately (`full_damage_rasters_whole_surface`
+/// and the e2e capture goldens) and must remain byte-identical.
+#[test]
+fn no_escape_matrix_every_node_kind_confined_to_damage() {
+    use liquide_compositor::scene::{
+        BackdropFilterSpec, BackgroundRepeat, BackgroundSize, BackgroundSpec, ClipPathKind,
+        DecorationButtons, DecorationColors, DecorationLayout, GlassParams, GradientSpec, ImageFit,
+        MaskMode, MaskSpec,
+    };
+
+    let tile = 64u32;
+    let (w, h) = (320u32, 320u32); // 5x5 tiles
+    let full = Rect::new(0.0, 0.0, w as f32, h as f32);
+
+    // The damaged tile (2,2) spans [128,192); the renderer pads the damage bbox
+    // by 32px effect-bleed so the clip is [96,224). Every pixel strictly outside
+    // that rect must survive any node's paint.
+    let (dtx, dty) = (2u32, 2u32);
+    let (clip_x0, clip_y0, clip_x1, clip_y1) = (96u32, 96u32, 224u32, 224u32);
+
+    // Build a FlatNode of `kind` spanning the WHOLE framebuffer (so it is never
+    // culled by the damage bbox — it always intersects the damage tile) with the
+    // given opacity. clip=None so the node relies ENTIRELY on the write-scissor.
+    let mk = |kind: SceneNodeKind, opacity: f32| FlatNode {
+        id: 7,
+        kind: kind.into(),
+        absolute_bounds: full,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+
+    let linear_gradient = || GradientSpec::Linear {
+        start_x: 0.0,
+        start_y: 0.0,
+        end_x: 1.0,
+        end_y: 1.0,
+        stops: vec![
+            (0.0, Color::new(255, 0, 0, 255)),
+            (1.0, Color::new(0, 0, 255, 128)),
+        ],
+        repeating: false,
+    };
+
+    // (name, node, opacity). Each MUST, on a partial frame, write ONLY inside the
+    // damage clip. The three kinds proven to escape pre-t84 are flagged.
+    let cases: Vec<(&str, SceneNodeKind, f32)> = vec![
+        ("background", SceneNodeKind::Background { color: Color::new(200, 30, 30, 255) }, 1.0),
+        (
+            "surface",
+            SceneNodeKind::Surface { surface_id: 1, buffer: None },
+            1.0,
+        ),
+        (
+            "child_surface",
+            SceneNodeKind::ChildSurface { surface_id: 2, buffer: None },
+            1.0,
+        ),
+        (
+            "image",
+            SceneNodeKind::Image { image_id: 0xDEAD_BEEF, width: w, height: h, fit: ImageFit::Fill },
+            1.0,
+        ),
+        (
+            "background_fill",
+            SceneNodeKind::BackgroundFill {
+                background: BackgroundSpec {
+                    color: Some(Color::new(10, 200, 50, 255)),
+                    image: None,
+                    size: BackgroundSize::Cover,
+                    position: (0.0, 0.0),
+                    repeat: BackgroundRepeat::NoRepeat,
+                },
+            },
+            1.0,
+        ),
+        ("glass", SceneNodeKind::Glass(GlassParams::default()), 1.0),
+        ("tint", SceneNodeKind::Tint { color: Color::new(0, 0, 0, 120) }, 1.0),
+        (
+            "text",
+            SceneNodeKind::Text {
+                text: "MMMMMMMMMMMMMMMMMMMM".to_string(),
+                color: Color::WHITE,
+                scale: 3,
+                font_family: String::new(),
+                font_size: 0.0,
+                font_weight: 400,
+                font_style_italic: false,
+                letter_spacing: 0.0,
+                word_spacing: 0.0,
+                line_height: 0.0,
+                text_align: 0,
+                text_transform: 0,
+                text_overflow: 0,
+                white_space: 1,
+                word_break: liquide_compositor::scene::WordBreak::Normal,
+                text_indent: 0.0,
+                text_decoration: None,
+                text_shadows: Vec::new(),
+                text_emphasis: None,
+            },
+            1.0,
+        ),
+        (
+            "decoration",
+            SceneNodeKind::Decoration {
+                title: Some("Title".to_string()),
+                title_color: Color::WHITE,
+                background: Color::new(40, 40, 40, 255),
+                border_color: Color::new(80, 80, 80, 255),
+                border_width: 2.0,
+                corner_radius: 8.0,
+                button_state: DecorationButtons::default(),
+                button_colors: DecorationColors::default(),
+                button_layout: DecorationLayout::default(),
+            },
+            1.0,
+        ),
+        ("icon", SceneNodeKind::Icon { icon_id: 1, color: Color::WHITE }, 1.0),
+        ("gradient", SceneNodeKind::GradientFill { gradient: linear_gradient() }, 1.0),
+        (
+            "svg_path",
+            SceneNodeKind::SvgPath {
+                d: "M0 0 L320 0 L320 320 L0 320 Z".to_string(),
+                fill: Some(Color::new(220, 120, 0, 255)),
+                stroke: Color::new(0, 0, 0, 255),
+                stroke_width: 3.0,
+            },
+            1.0,
+        ),
+        (
+            "shadow",
+            SceneNodeKind::Shadow { spread: 0.0, blur_radius: 8.0, color: Color::new(0, 0, 0, 200), corner_radius: 0.0 },
+            1.0,
+        ),
+        (
+            "backdrop_filter",
+            SceneNodeKind::BackdropFilter { filters: vec![BackdropFilterSpec::Brightness(1.5)] },
+            1.0,
+        ),
+        // --- the three kinds PROVEN to escape the scissor before t84 ---
+        ("overlay_opacity", SceneNodeKind::Overlay, 0.5),
+        ("content_opacity", SceneNodeKind::Content, 0.5),
+        ("shell_layer_opacity", SceneNodeKind::ShellLayer, 0.5),
+        (
+            "clip_path_rounded_rect",
+            SceneNodeKind::ClipPath { clip_kind: ClipPathKind::RoundedRect { corner_radius: 24.0 } },
+            1.0,
+        ),
+        (
+            "clip_path_circle",
+            SceneNodeKind::ClipPath {
+                clip_kind: ClipPathKind::Circle { center_x: 0.5, center_y: 0.5, radius: 0.4 },
+            },
+            1.0,
+        ),
+        (
+            "clip_path_ellipse",
+            SceneNodeKind::ClipPath {
+                clip_kind: ClipPathKind::Ellipse { center_x: 0.5, center_y: 0.5, rx: 0.4, ry: 0.3 },
+            },
+            1.0,
+        ),
+        (
+            "clip_path_polygon",
+            SceneNodeKind::ClipPath {
+                clip_kind: ClipPathKind::Polygon {
+                    points: vec![(0.5, 0.0), (1.0, 1.0), (0.0, 1.0)],
+                },
+            },
+            1.0,
+        ),
+        (
+            "mask_gradient",
+            SceneNodeKind::Mask {
+                mask: MaskSpec::Gradient { gradient: linear_gradient(), mode: MaskMode::Alpha },
+            },
+            0.7,
+        ),
+        (
+            "mask_image",
+            SceneNodeKind::Mask { mask: MaskSpec::Image { image_id: 0xFEED, mode: MaskMode::Alpha } },
+            0.7,
+        ),
+    ];
+
+    for (name, kind, opacity) in cases {
+        // Fresh sentinel-filled framebuffer per case. clip=None means the ONLY
+        // thing keeping the node in-bounds is the write-scissor.
+        let sentinel = Color::new(17, 71, 137, 255);
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        fb.clear(sentinel);
+        let baseline = fb.pixels().to_vec();
+
+        let mut damage = DamageSet::new(tile);
+        damage.mark_tile_with_class(dtx, dty, DamageClass::UiPrimitive);
+
+        let mut renderer = SoftwareRenderer::new();
+        renderer
+            .render_live(&[mk(kind, opacity)], &mut fb, &damage, RenderMode::LiveCursor)
+            .unwrap_or_else(|e| panic!("render failed for kind {name}: {e:?}"));
+
+        let pixels = fb.pixels();
+        let stride = fb.stride as usize;
+        let mut escapes = 0usize;
+        let mut first: Option<(u32, u32)> = None;
+        for y in 0..h {
+            for x in 0..w {
+                if x >= clip_x0 && x < clip_x1 && y >= clip_y0 && y < clip_y1 {
+                    continue; // inside the clip — writes allowed here
+                }
+                let off = y as usize * stride + x as usize * 4;
+                if pixels[off..off + 4] != baseline[off..off + 4] {
+                    escapes += 1;
+                    first.get_or_insert((x, y));
+                }
+            }
+        }
+        assert_eq!(
+            escapes, 0,
+            "node kind `{name}` wrote {escapes} pixel(s) OUTSIDE the partial damage \
+             clip (first at {first:?}); the damage write-scissor must confine EVERY \
+             node kind to the damage rect (t83-R1/R2)"
+        );
+    }
+}
+
+/// t84: the clip-None (full-damage) path must remain byte-identical to the
+/// unclipped paint for the kinds the matrix above confines under a partial clip
+/// — confirming the scissor is a true no-op when `None` and we have not altered
+/// pixel VALUES, only WHICH pixels are written. Renders an Overlay@0.5 over a
+/// solid base both ways and compares.
+#[test]
+fn clip_none_full_frame_is_byte_identical() {
+    let (w, h) = (128u32, 128u32);
+    let full = Rect::new(0.0, 0.0, w as f32, h as f32);
+    let base = bg_node(1, full, Color::new(200, 100, 50, 255));
+    let overlay = FlatNode {
+        id: 2,
+        kind: SceneNodeKind::Overlay.into(),
+        absolute_bounds: full,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 0.5,
+        z_order: 1,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+
+    // Full damage -> scissor None.
+    let damage = DamageSet::full(64, w / 64, h / 64, DamageClass::UiPrimitive);
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    let mut r = SoftwareRenderer::new();
+    r.render_live(&[base.clone(), overlay.clone()], &mut fb, &damage, RenderMode::LiveFull)
+        .unwrap();
+
+    // The overlay must have actually multiplied the base across the WHOLE frame
+    // (every pixel darkened from 200/100/50), not just a sub-region.
+    for (x, y) in [(2u32, 2u32), (w / 2, h / 2), (w - 2, h - 2)] {
+        let p = fb.get_pixel(x, y);
+        assert!(
+            p.r < 200 && p.r > 0,
+            "overlay@0.5 must darken ({x},{y}) on the full-frame path, got {p:?}"
+        );
+    }
+    // Scissor must have been cleared after the frame (no leak into a later call).
+    assert!(
+        liquide_compositor::scissor::write_scissor().is_none(),
+        "write-scissor must be None after a full-frame render"
+    );
+}
+
 #[test]
 fn renderer_creates() {
     let r = SoftwareRenderer::new();

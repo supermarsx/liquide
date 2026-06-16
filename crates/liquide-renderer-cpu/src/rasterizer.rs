@@ -30,81 +30,24 @@ thread_local! {
     /// (tests, other crates) gets the deterministic serial behavior unless it
     /// opts in.
     static PARALLEL_RASTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-
-    /// Per-thread hard framebuffer write-scissor (t80). When `Some`, NO pixel
-    /// outside this rect may be written by any rasterizer primitive or node-paint
-    /// loop for the remainder of the frame.
-    ///
-    /// This is the single inescapable chokepoint for damage-only rendering. The
-    /// renderer sets it once per partial-damage frame to the damage bounding box
-    /// and clears it (`None`) afterwards. Unlike the per-node `clip` arguments
-    /// (which several node kinds simply forgot to honour — the t79 regression),
-    /// the scissor is consulted by the *write helpers themselves*
-    /// (`scissor_clamp_window` / `scissor_allows`), so every fill, blit, gradient,
-    /// glyph, image, blur write-back, shadow, decoration, icon and SVG path is
-    /// physically confined to the damage rect regardless of whether that kind
-    /// threads a clip argument. On a full-damage frame the scissor is `None` and
-    /// behaviour is byte-identical to the unclipped path.
-    static WRITE_SCISSOR: std::cell::Cell<Option<Rect>> = const { std::cell::Cell::new(None) };
 }
+
+// The hard framebuffer write-scissor (t80, made inescapable in t84) now lives in
+// `liquide_compositor::scissor` — the SINGLE source of truth — so that
+// `FrameBuffer::set_pixel` itself (which lives in liquide-compositor and could
+// never see a renderer-cpu thread-local) drops any write outside the active
+// damage rect. The rasterizer re-exports the API below so every existing call
+// site in this crate keeps working against the one shared scissor. See the
+// module docs in liquide-compositor/src/scissor.rs.
+pub use liquide_compositor::scissor::{
+    scissor_allows, scissor_clamp_window, set_write_scissor, write_scissor,
+};
 
 /// Enable/disable data-parallel rasterization for the current thread. Returns
 /// the previous value so callers can restore it. Set by the renderer per frame
 /// from the active [`RenderMode`].
 pub fn set_parallel_raster(enabled: bool) -> bool {
     PARALLEL_RASTER.with(|c| c.replace(enabled))
-}
-
-/// Install the per-thread framebuffer write-scissor (t80). Returns the previous
-/// value so the renderer can restore it. While set, every write primitive in
-/// this crate confines its output to `scissor` via [`scissor_clamp_window`] /
-/// [`scissor_allows`]; passing `None` removes the scissor.
-pub fn set_write_scissor(scissor: Option<Rect>) -> Option<Rect> {
-    WRITE_SCISSOR.with(|c| c.replace(scissor))
-}
-
-/// The currently-installed write-scissor for this thread, if any.
-#[inline]
-pub fn write_scissor() -> Option<Rect> {
-    WRITE_SCISSOR.with(std::cell::Cell::get)
-}
-
-/// Clamp an integer pixel write-window `[x0,x1) × [y0,y1)` to the active
-/// write-scissor (t80). Returns the (possibly empty) intersected window. When no
-/// scissor is set the window is returned unchanged. Empty windows have
-/// `x1 <= x0` or `y1 <= y0`; callers must guard against drawing into them.
-#[inline]
-#[must_use]
-pub fn scissor_clamp_window(x0: u32, y0: u32, x1: u32, y1: u32) -> (u32, u32, u32, u32) {
-    match write_scissor() {
-        None => (x0, y0, x1, y1),
-        Some(s) => {
-            let sx0 = s.x.max(0.0) as u32;
-            let sy0 = s.y.max(0.0) as u32;
-            let sx1 = s.right().ceil().max(0.0) as u32;
-            let sy1 = s.bottom().ceil().max(0.0) as u32;
-            (x0.max(sx0), y0.max(sy0), x1.min(sx1), y1.min(sy1))
-        }
-    }
-}
-
-/// Whether a single pixel `(x, y)` is permitted by the active write-scissor
-/// (t80). Always `true` when no scissor is set. Per-pixel node-paint loops
-/// (gradients, glyphs, shadow mask, SVG path, nine-patch, filters) guard each
-/// `set_pixel` with this so they cannot escape the damage rect.
-#[inline]
-#[must_use]
-pub fn scissor_allows(x: u32, y: u32) -> bool {
-    match write_scissor() {
-        None => true,
-        Some(s) => {
-            let sx0 = s.x.max(0.0) as u32;
-            let sy0 = s.y.max(0.0) as u32;
-            let sx1 = s.right().ceil().max(0.0) as u32;
-            let sy1 = s.bottom().ceil().max(0.0) as u32;
-            x >= sx0 && x < sx1 && y >= sy0 && y < sy1
-        }
-    }
 }
 
 /// Whether a fill/blit covering `pixels` pixels should run in parallel: it must
