@@ -441,12 +441,26 @@ impl SoftwareRenderer {
                 .compute_blur_blocking(key, snapshot.clone(), w, h, radius);
         }
 
-        // Blit cached blur result if available.
+        // Blit cached blur result if available. The blur is COMPUTED over the
+        // full glass bounds (so the result is correct), but the WRITE-BACK is
+        // confined to the per-thread write-scissor (t80): on a partial-damage
+        // frame the backdrop-blur node must not re-blit outside the damage rect
+        // (the t79 regression). Per damaged row we clamp the destination column
+        // span to the scissor and copy only that sub-span from the cached blur.
         let has_cache = if let Some(cached) = self.blur_worker.get_cached(key, w, h) {
             for row in 0..h {
-                let src_off = (row * w * 4) as usize;
-                let dst_off = fb.pixel_offset(x0, y0 + row);
-                let bytes = (w * 4) as usize;
+                let dy = y0 + row;
+                // Clamp this row's [x0, x0+w) destination span to the scissor.
+                let (cx0, _, cx1, _) =
+                    crate::rasterizer::scissor_clamp_window(x0, dy, x0 + w, dy + 1);
+                if cx1 <= cx0 {
+                    continue;
+                }
+                let col0 = (cx0 - x0) as usize;
+                let span = (cx1 - cx0) as usize;
+                let src_off = (row as usize * w as usize + col0) * 4;
+                let dst_off = fb.pixel_offset(cx0, dy);
+                let bytes = span * 4;
                 if src_off + bytes <= cached.pixels.len()
                     && dst_off + bytes <= fb.pixels_mut().expect("CPU framebuffer required").len()
                 {

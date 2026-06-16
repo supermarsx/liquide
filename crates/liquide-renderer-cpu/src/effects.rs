@@ -234,6 +234,11 @@ impl BoxShadow {
                 }
                 let dx = mask.x0 + mx;
                 let dy = mask.y0 + my;
+                // Confine to the per-thread write-scissor (t80) so a shadow does
+                // not paint outside the damage rect on a partial frame.
+                if !crate::rasterizer::scissor_allows(dx, dy) {
+                    continue;
+                }
                 let dst = fb.get_pixel(dx, dy);
                 let result = blend::blend_src_over(dst, src);
                 fb.set_pixel(dx, dy, result);

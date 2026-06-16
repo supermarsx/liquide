@@ -432,6 +432,9 @@ pub fn fill_path(fb: &mut FrameBuffer, path: &Path, fill: &Fill, mode: BlendMode
     let y0 = (bounds.y.floor().max(0.0) as u32).min(fb.height);
     let x1 = (bounds.right().ceil() as u32).min(fb.width);
     let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+    // Confine to the per-thread write-scissor (t80). Coverage is computed from
+    // absolute pixel coords, so clamping the window only skips edge pixels.
+    let (x0, y0, x1, y1) = crate::rasterizer::scissor_clamp_window(x0, y0, x1, y1);
 
     for y in y0..y1 {
         // Accumulate coverage from AA_SAMPLES sub-scanlines
@@ -526,6 +529,8 @@ pub fn stroke_path(fb: &mut FrameBuffer, path: &Path, width: f32, color: Color, 
     let y0 = ((bounds.y - half - 1.0).floor().max(0.0) as u32).min(fb.height);
     let x1 = ((bounds.right() + half + 1.0).ceil() as u32).min(fb.width);
     let y1 = ((bounds.bottom() + half + 1.0).ceil() as u32).min(fb.height);
+    // Confine to the per-thread write-scissor (t80).
+    let (x0, y0, x1, y1) = crate::rasterizer::scissor_clamp_window(x0, y0, x1, y1);
 
     let pm = color.premultiply();
 

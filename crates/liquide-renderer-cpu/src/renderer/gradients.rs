@@ -29,6 +29,9 @@ impl SoftwareRenderer {
         let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
         let x1 = (bounds.right().ceil() as u32).min(fb.width);
         let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+        // Confine to the per-thread write-scissor (t80). Gradient sampling is
+        // anchored to `bounds`, so clamping the window only skips edge pixels.
+        let (x0, y0, x1, y1) = rasterizer::scissor_clamp_window(x0, y0, x1, y1);
 
         if x0 >= x1 || y0 >= y1 {
             return;

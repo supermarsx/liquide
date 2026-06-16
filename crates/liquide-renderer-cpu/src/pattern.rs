@@ -73,6 +73,9 @@ impl PatternFill {
         let y0 = (region.y.max(0.0) as u32).min(fb.height);
         let x1 = (region.right().ceil() as u32).min(fb.width);
         let y1 = (region.bottom().ceil() as u32).min(fb.height);
+        // Confine to the per-thread write-scissor (t80). Pattern sampling is
+        // anchored to `region`, so clamping the window only skips edge pixels.
+        let (x0, y0, x1, y1) = crate::rasterizer::scissor_clamp_window(x0, y0, x1, y1);
 
         if x0 >= x1 || y0 >= y1 || self.image.width == 0 || self.image.height == 0 {
             return;

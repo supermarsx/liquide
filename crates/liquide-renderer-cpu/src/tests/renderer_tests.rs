@@ -184,6 +184,154 @@ fn full_damage_rasters_whole_surface() {
     }
 }
 
+/// t80 ANTI-FAKE-GREEN no-escape test for the damage write-scissor.
+///
+/// REGRESSION (t79): the per-frame `raster_clip` was honoured by only SOME node
+/// kinds (Background / Surface / Glass-tint / Tint / Text). The full-bleed kinds
+/// — Image, BackgroundFill (wallpaper), the backdrop-filter write, and Shadow —
+/// IGNORED the clip and overpainted the whole screen on a partial-damage frame,
+/// wiping preserved framebuffer content that was never repainted → a permanent
+/// hole (hovering a context-menu item with `backdrop-filter: blur` triggered it).
+///
+/// The existing clip tests only cover the already-clipped kinds, so they pass
+/// while the bug is live — a fake-green gap. This test paints a SMALL partial
+/// `raster_clip` (one center tile) under a stack of FULL-BLEED nodes that each
+/// previously escaped the clip — BackgroundFill, Image, a BackdropFilter, AND a
+/// Shadow — over a pre-filled framebuffer, then asserts every pixel OUTSIDE the
+/// padded clip rect is BYTE-FOR-BYTE unchanged. Against the pre-fix code at
+/// least one of these nodes overwrites the sentinel outside the clip and the
+/// assertion fails; after the write-scissor fix every write is confined to the
+/// damage rect and the sentinel survives.
+#[test]
+fn partial_clip_full_bleed_nodes_never_write_outside_damage() {
+    use liquide_compositor::scene::{
+        BackdropFilterSpec, BackgroundRepeat, BackgroundSize, BackgroundSpec, ImageFit,
+    };
+
+    let tile = 64u32;
+    let (w, h) = (320u32, 320u32); // 5x5 tiles
+    let full = Rect::new(0.0, 0.0, w as f32, h as f32);
+
+    // Sentinel the whole framebuffer with a distinctive opaque colour. Any
+    // out-of-clip write by a full-bleed node will change one of these bytes.
+    let sentinel = Color::new(17, 71, 137, 255);
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    fb.clear(sentinel);
+    let baseline = fb.pixels().to_vec();
+
+    // Damage exactly the center tile (2,2): a small partial clip, NOT full.
+    let (dtx, dty) = (2u32, 2u32);
+    let mut damage = DamageSet::new(tile);
+    damage.mark_tile_with_class(dtx, dty, DamageClass::UiPrimitive);
+
+    let mk = |id: u64, kind: SceneNodeKind| FlatNode {
+        id,
+        kind: kind.into(),
+        absolute_bounds: full,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+
+    // Every node spans the FULL framebuffer, so none is culled by the damage
+    // bbox (they all intersect it) — exactly the t79 condition.
+    let nodes = vec![
+        // Full-screen wallpaper: solid BackgroundFill (the t79 overpainter).
+        mk(
+            1,
+            SceneNodeKind::BackgroundFill {
+                background: BackgroundSpec {
+                    color: Some(Color::new(200, 30, 30, 255)),
+                    image: None,
+                    size: BackgroundSize::Cover,
+                    position: (0.0, 0.0),
+                    repeat: BackgroundRepeat::NoRepeat,
+                },
+            },
+        ),
+        // Full-screen Image (no texture loaded -> placeholder fill, still a
+        // full-bleed write that previously ignored the clip).
+        mk(
+            2,
+            SceneNodeKind::Image {
+                image_id: 0xDEAD_BEEF,
+                width: w,
+                height: h,
+                fit: ImageFit::Fill,
+            },
+        ),
+        // Full-screen backdrop filter (the context-menu panel's class): an
+        // in-place brightness write over the whole bounds.
+        mk(
+            3,
+            SceneNodeKind::BackdropFilter {
+                filters: vec![BackdropFilterSpec::Brightness(1.5)],
+            },
+        ),
+        // Full-screen drop shadow: composited mask that previously ignored clip.
+        mk(
+            4,
+            SceneNodeKind::Shadow {
+                spread: 0.0,
+                blur_radius: 8.0,
+                color: Color::new(0, 0, 0, 200),
+                corner_radius: 0.0,
+            },
+        ),
+    ];
+
+    // LiveCursor avoids any glyph-drain wait; the damage is partial so the
+    // renderer installs the write-scissor (the path under test).
+    let mut renderer = SoftwareRenderer::new();
+    renderer
+        .render_live(&nodes, &mut fb, &damage, RenderMode::LiveCursor)
+        .unwrap();
+
+    // The damage bbox carries 32px effect-bleed padding. The damaged tile spans
+    // [128,192); the padded clip is [96,224). Every pixel strictly outside that
+    // padded rect must be byte-identical to the sentinel baseline.
+    let clip_x0 = 96u32;
+    let clip_y0 = 96u32;
+    let clip_x1 = 224u32;
+    let clip_y1 = 224u32;
+    let pixels = fb.pixels();
+    let stride = fb.stride as usize;
+    let mut escapes = 0usize;
+    let mut first: Option<(u32, u32)> = None;
+    for y in 0..h {
+        for x in 0..w {
+            let inside_clip =
+                x >= clip_x0 && x < clip_x1 && y >= clip_y0 && y < clip_y1;
+            if inside_clip {
+                continue;
+            }
+            let off = y as usize * stride + x as usize * 4;
+            if pixels[off..off + 4] != baseline[off..off + 4] {
+                escapes += 1;
+                first.get_or_insert((x, y));
+            }
+        }
+    }
+    assert_eq!(
+        escapes, 0,
+        "{escapes} pixel(s) outside the partial damage clip were overwritten by a \
+         full-bleed node (first at {first:?}); the write-scissor must confine \
+         Image/BackgroundFill/BackdropFilter/Shadow to the damage rect (t79/t80)"
+    );
+
+    // Sanity: the damaged tile itself WAS painted (the fix must not over-clip and
+    // leave the damage region blank).
+    let inside = fb.get_pixel(dtx * tile + 10, dty * tile + 10);
+    assert_ne!(
+        [inside.r, inside.g, inside.b, inside.a],
+        [sentinel.r, sentinel.g, sentinel.b, sentinel.a],
+        "the damaged tile must still be painted inside the clip"
+    );
+}
+
 #[test]
 fn renderer_creates() {
     let r = SoftwareRenderer::new();

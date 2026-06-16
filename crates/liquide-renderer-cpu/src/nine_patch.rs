@@ -256,6 +256,11 @@ fn blit_patch(
                 continue;
             }
 
+            // Confine to the per-thread write-scissor (t80).
+            if !crate::rasterizer::scissor_allows(out_x as u32, out_y as u32) {
+                continue;
+            }
+
             if let Some(src_color) = img.get_pixel(src_col as u32, src_row as u32) {
                 if src_color.a == 0 {
                     continue;

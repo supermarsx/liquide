@@ -697,9 +697,20 @@ impl SoftwareRenderer {
             return;
         }
 
+        // Confine the destination window to the per-thread write-scissor (t80).
+        // The source mapping below is anchored to `dst_x0/dst_y0`, so skipping
+        // edge pixels does not shift any survivor — a full-screen wallpaper image
+        // on a partial-damage frame now writes only inside the damage rect
+        // instead of re-blitting the whole screen (the t79 regression).
+        let (sc_x0, sc_y0, sc_x1, sc_y1) = rasterizer::scissor_clamp_window(
+            dst_x0 as u32,
+            dst_y0 as u32,
+            dst_x1.ceil() as u32,
+            dst_y1.ceil() as u32,
+        );
         // Nearest-neighbor scaling
-        for dst_y in (dst_y0 as u32)..(dst_y1.ceil() as u32) {
-            for dst_x in (dst_x0 as u32)..(dst_x1.ceil() as u32) {
+        for dst_y in sc_y0..sc_y1 {
+            for dst_x in sc_x0..sc_x1 {
                 let rel_x = (dst_x as f32 - dst_x0) / dst_w;
                 let rel_y = (dst_y as f32 - dst_y0) / dst_h;
                 let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
@@ -739,14 +750,14 @@ mod tests {
     use liquide_compositor::pixel::PixelFormat;
     use liquide_compositor::scene::{BackgroundImage, BackgroundSize, BackgroundSpec};
 
+    // A genuine FULL-frame damage set (clip = None), matching the real capture
+    // path these image tests model. (t80: previously this only marked tile
+    // (0,0); the per-frame write-scissor now confines partial frames, so a
+    // single-tile "full_damage" would clip a full-bleed wallpaper — which is the
+    // correct partial-frame behaviour but not what these full-coverage tests
+    // intend. The grid is sized generously to cover every test framebuffer.)
     fn full_damage() -> DamageSet {
-        let mut damage = DamageSet::new(64);
-        damage.add(DamageTile {
-            x: 0,
-            y: 0,
-            class: DamageClass::UiPrimitive,
-        });
-        damage
+        DamageSet::full(64, 32, 32, DamageClass::UiPrimitive)
     }
 
     fn background_node(

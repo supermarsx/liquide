@@ -97,7 +97,7 @@ pub use liquide_compositor::RenderMode;
 /// [`RenderMode::Capture`] block-drains up to [`GLYPH_DRAIN_BUDGET_MS`] for
 /// determinism; [`RenderMode::LiveFull`] waits only [`LIVE_GLYPH_DRAIN_BUDGET_MS`];
 /// [`RenderMode::LiveCursor`] never waits.
-fn drain_deadline(mode: RenderMode) -> Option<std::time::Instant> {
+pub(crate) fn drain_deadline(mode: RenderMode) -> Option<std::time::Instant> {
     let budget_ms = match mode {
         RenderMode::Capture => GLYPH_DRAIN_BUDGET_MS,
         RenderMode::LiveFull => LIVE_GLYPH_DRAIN_BUDGET_MS,
@@ -1018,9 +1018,22 @@ impl SoftwareRenderer {
             _ => None,
         };
 
+        // Install the SAME rect as a hard per-thread framebuffer write-scissor
+        // (t80). Unlike `self.raster_clip` — which several node kinds (Image,
+        // BackgroundFill, backdrop-blur write, Decoration, Icon, Gradient,
+        // SvgPath, Shadow) silently ignored, causing a full-screen wallpaper to
+        // overpaint a partial-damage frame and leave a permanent hole — the
+        // write-scissor is enforced by the write helpers themselves, so NO node
+        // kind can write outside the damage rect. On full damage the clip is
+        // `None` and the scissor is `None`, so the capture/full path is
+        // byte-identical to before.
+        let prev_scissor = rasterizer::set_write_scissor(self.raster_clip);
+
         self.render_nodes_in_order(nodes, fb, damage_bbox);
 
-        // Clear the clip so it never leaks into a subsequent capture/full frame.
+        // Clear the clip + scissor so neither leaks into a subsequent
+        // capture/full frame.
+        rasterizer::set_write_scissor(prev_scissor);
         self.raster_clip = None;
         // Restore the parallel-raster flag for this thread.
         rasterizer::set_parallel_raster(prev_parallel);

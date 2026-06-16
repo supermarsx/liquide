@@ -39,6 +39,13 @@ impl PixelFilter {
         let y0 = (region.y.max(0.0) as u32).min(fb.height);
         let x1 = (region.right().ceil() as u32).min(fb.width);
         let y1 = (region.bottom().ceil() as u32).min(fb.height);
+        // Confine to the per-thread write-scissor (t80). In-place filters read
+        // and write the same pixel, so clamping the window only skips edge
+        // pixels and never changes a survivor's value.
+        let (x0, y0, x1, y1) = crate::rasterizer::scissor_clamp_window(x0, y0, x1, y1);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
 
         match self {
             Self::ColorMatrix(m) => {
