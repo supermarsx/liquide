@@ -551,6 +551,54 @@ fn clear_damage_tiles(framebuf: &mut FrameBuffer, damage: &DamageSet) {
     }
 }
 
+/// Convert a frame's authoritative [`DamageSet`] into the per-rect damage hint
+/// the platform present path (`present_frame_damaged`) consumes (R3 / t79 Bug 2).
+///
+/// CONTRACT — must stay byte-identical to today's full-present behavior except
+/// when damage is a genuine small sub-rect set:
+/// - `None` damage           → `None` (full present; platform default).
+/// - full-frame / frame-covering damage → `None` (full present — never trim a
+///   frame the raster repainted whole; avoids leaving stale screen pixels).
+/// - empty damage            → `None` (the only frames that reach the present
+///   path with empty damage are periodic keepalives; re-assert the whole
+///   surface rather than blit nothing).
+/// - a small tile set        → `Some(Vec<Rect>)`, ONE rect per damaged tile,
+///   clamped to the surface using the SAME tile→pixel math as
+///   [`clear_damage_tiles`] / the raster's write-scissor, so the rects passed to
+///   the blit are exactly the region the raster authored this frame (no
+///   mismatch that could leave stale pixels on screen).
+fn damage_present_rects(damage: Option<&DamageSet>, width: u32, height: u32) -> Option<Vec<Rect>> {
+    let damage = damage?;
+    if damage.is_full() || damage.tiles.is_empty() || damage_covers_frame(damage, width, height) {
+        // Full present — identical to the legacy `present_frame_with_metadata`
+        // whole-surface path.
+        return None;
+    }
+    let tile_size = damage.tile_size;
+    let mut rects = Vec::with_capacity(damage.tiles.len());
+    for tile in &damage.tiles {
+        let x0 = tile.x.saturating_mul(tile_size).min(width);
+        let y0 = tile.y.saturating_mul(tile_size).min(height);
+        let x1 = x0.saturating_add(tile_size).min(width);
+        let y1 = y0.saturating_add(tile_size).min(height);
+        if x1 > x0 && y1 > y0 {
+            rects.push(Rect::new(
+                x0 as f32,
+                y0 as f32,
+                (x1 - x0) as f32,
+                (y1 - y0) as f32,
+            ));
+        }
+    }
+    if rects.is_empty() {
+        // Every tile clamped away (out of bounds) — fall back to a full present
+        // rather than blitting nothing.
+        None
+    } else {
+        Some(rects)
+    }
+}
+
 fn cursor_flat_node(cursor_x: f32, cursor_y: f32, cursor_shape: CursorShape) -> FlatNode {
     let bounds = Rect::new(cursor_x, cursor_y, CURSOR_SIZE, CURSOR_SIZE);
     FlatNode {
@@ -1402,14 +1450,21 @@ impl DesktopCompositor {
                         self.frame_count.saturating_add(1),
                         frame.content_hash,
                     );
-                    if let Err(error) = platform.present_frame_with_metadata(
+                    // Live damaged present (R3): pass the SAME authoritative
+                    // damage set the raster used for this frame into
+                    // `present_frame_damaged`. `None`/full-frame damage presents
+                    // the whole surface (identical to the legacy path); a small
+                    // tile set blits only those sub-rects (the RDP/GDI win).
+                    let present_damage =
+                        damage_present_rects(frame.damage.as_ref(), frame.width, frame.height);
+                    if let Err(error) = platform.present_frame_damaged(
                         handle,
                         &frame.pixels,
                         frame.width,
                         frame.height,
                         frame.stride,
                         frame.format,
-                        metadata,
+                        present_damage.as_deref(),
                     ) {
                         warn!(
                             %error,
@@ -2278,10 +2333,15 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq)]
     struct RecordedPresent {
-        metadata: liquide_platform::FramePresentationMetadata,
         first_pixel: [u8; 4],
+        /// The damage hint the live present path forwarded into
+        /// `present_frame_damaged`: `None` = full-surface present, `Some` = a
+        /// partial set of sub-rects (R3 wiring). Recorded so tests can prove the
+        /// live path threads `frame.damage` through (and does NOT silently fall
+        /// back to a whole-surface present for a partial frame).
+        damage: Option<Vec<Rect>>,
     }
 
     #[derive(Default)]
@@ -2337,6 +2397,34 @@ mod tests {
             "recording-present"
         }
 
+        // The live present path (R3) calls `present_frame_damaged`, NOT
+        // `present_frame_with_metadata`. Record the forwarded damage hint so
+        // tests can prove the wiring. If a future change reinstated the
+        // whole-surface `present_frame_with_metadata` path, this override would
+        // stop being hit and the damage-forwarding assertions below would fail.
+        fn present_frame_damaged(
+            &mut self,
+            _handle: liquide_platform::NativeWindowHandle,
+            pixels: &[u8],
+            _width: u32,
+            _height: u32,
+            _stride: u32,
+            _format: PixelFormat,
+            damage: Option<&[Rect]>,
+        ) -> liquide_platform::PlatformResult<()> {
+            let mut first_pixel = [0; 4];
+            first_pixel.copy_from_slice(&pixels[..4]);
+            self.presents.push(RecordedPresent {
+                first_pixel,
+                damage: damage.map(<[Rect]>::to_vec),
+            });
+            Ok(())
+        }
+
+        // The synchronous recovery / loading path (`render_frame_sync`) still
+        // uses the metadata present (a full-surface present — no damage there).
+        // Record it as a `None`-damage (full) present so recovery tests still
+        // observe it.
         fn present_frame_with_metadata(
             &mut self,
             _handle: liquide_platform::NativeWindowHandle,
@@ -2345,13 +2433,13 @@ mod tests {
             _height: u32,
             _stride: u32,
             _format: PixelFormat,
-            metadata: liquide_platform::FramePresentationMetadata,
+            _metadata: liquide_platform::FramePresentationMetadata,
         ) -> liquide_platform::PlatformResult<()> {
             let mut first_pixel = [0; 4];
             first_pixel.copy_from_slice(&pixels[..4]);
             self.presents.push(RecordedPresent {
-                metadata,
                 first_pixel,
+                damage: None,
             });
             Ok(())
         }
@@ -2693,7 +2781,11 @@ mod tests {
     }
 
     #[test]
-    fn t47_try_present_forwards_monotonic_sequence_metadata() {
+    fn t47_try_present_advances_frame_count_with_distinct_snapshots() {
+        // Each presented frame must advance the monotonic frame_count and ship
+        // its OWN pixel snapshot (no stale re-present). The live path forwards
+        // through `present_frame_damaged`; these `None`-damage (full) frames must
+        // present the whole surface, identical to the legacy whole-surface path.
         let mut desktop = DesktopCompositor::new(64, 64);
         let (tx, rx) = mpsc::channel();
         tx.send(test_rendered_frame(11, 0x1111)).unwrap();
@@ -2709,17 +2801,116 @@ mod tests {
 
         assert_eq!(desktop.frame_count(), 2);
         assert_eq!(platform.presents.len(), 2);
-        assert_eq!(platform.presents[0].metadata.frame_sequence, 1);
-        assert_eq!(platform.presents[1].metadata.frame_sequence, 2);
-        assert!(
-            platform.presents[1].metadata.frame_sequence
-                > platform.presents[0].metadata.frame_sequence
+        // None damage (these test frames carry `damage: None`) → full present,
+        // byte-identical to today's whole-surface path.
+        assert_eq!(
+            platform.presents[0].damage, None,
+            "a None-damage frame must present the whole surface"
         );
-        assert_eq!(platform.presents[0].metadata.content_hash, 0x1111);
-        assert_eq!(platform.presents[1].metadata.content_hash, 0x2222);
+        assert_eq!(platform.presents[1].damage, None);
         assert_ne!(
             platform.presents[0].first_pixel,
-            platform.presents[1].first_pixel
+            platform.presents[1].first_pixel,
+            "each present must carry its own (distinct) pixel snapshot"
+        );
+    }
+
+    #[test]
+    fn r3_live_present_forwards_partial_frame_damage_as_subrects() {
+        // ANTI-FAKE-GREEN (R3): the live present path must thread the frame's
+        // authoritative damage into `present_frame_damaged`. A frame with a small
+        // tile set must arrive as Some(sub-rects) — NOT a whole-surface present.
+        // If the live path were reverted to `present_frame_with_metadata` (the
+        // whole-surface path), the mock's `present_frame_damaged` override would
+        // never fire and `presents` would be empty → this test fails.
+        let mut desktop = DesktopCompositor::new(128, 128);
+        let (tx, rx) = mpsc::channel();
+
+        // One damaged tile at grid (1, 0) with tile_size 64 → pixel rect
+        // (64,0,64,64). This is a genuine SUB-rect of the 128x128 surface, so it
+        // must NOT collapse to a full present.
+        let mut frame = test_rendered_frame(11, 0x1111);
+        frame.width = 128;
+        frame.height = 128;
+        frame.stride = 128 * 4;
+        frame.pixels = Arc::new(vec![7u8; (128 * 128 * 4) as usize]);
+        frame.damage = Some(cursor_damage(64, &[(1, 0)]));
+        tx.send(frame).unwrap();
+
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.frame_rx = Some(rx);
+
+        let mut platform = RecordingPresentPlatform::default();
+        assert!(desktop.try_present(&mut platform));
+
+        assert_eq!(platform.presents.len(), 1, "the partial frame must present");
+        let damage = platform.presents[0]
+            .damage
+            .as_ref()
+            .expect("a partial frame must forward Some(sub-rects), not a full present");
+        assert_eq!(
+            damage,
+            &vec![Rect::new(64.0, 0.0, 64.0, 64.0)],
+            "the forwarded sub-rect must match the single damaged tile exactly \
+             (same authoritative set the raster used)"
+        );
+    }
+
+    #[test]
+    fn r3_live_present_full_frame_damage_presents_whole_surface() {
+        // A frame whose damage covers the whole surface must present the WHOLE
+        // surface (None), byte-identical to the legacy path — never trim a frame
+        // the raster repainted whole (avoids leaving stale screen pixels).
+        let mut desktop = DesktopCompositor::new(128, 128);
+        let (tx, rx) = mpsc::channel();
+
+        let mut frame = test_rendered_frame(11, 0x1111);
+        frame.width = 128;
+        frame.height = 128;
+        frame.stride = 128 * 4;
+        frame.pixels = Arc::new(vec![7u8; (128 * 128 * 4) as usize]);
+        frame.damage = Some(full_damage(64, 2, 2));
+        tx.send(frame).unwrap();
+
+        desktop.window_handle = Some(liquide_platform::NativeWindowHandle(7));
+        desktop.frame_rx = Some(rx);
+
+        let mut platform = RecordingPresentPlatform::default();
+        assert!(desktop.try_present(&mut platform));
+
+        assert_eq!(platform.presents.len(), 1);
+        assert_eq!(
+            platform.presents[0].damage, None,
+            "full-frame damage must present the whole surface (None)"
+        );
+    }
+
+    #[test]
+    fn damage_present_rects_maps_only_genuine_subrects() {
+        // None / full / empty / frame-covering damage → None (full present);
+        // a genuine small tile set → exact clamped sub-rects.
+        assert_eq!(damage_present_rects(None, 128, 128), None);
+        assert_eq!(
+            damage_present_rects(Some(&full_damage(64, 2, 2)), 128, 128),
+            None,
+            "full damage must present the whole surface"
+        );
+        assert_eq!(
+            damage_present_rects(Some(&DamageSet::new(64)), 128, 128),
+            None,
+            "empty damage must present the whole surface (keepalive re-assert)"
+        );
+        // Two tiles that together cover the whole 128x128 grid still collapse to
+        // a full present (damage_covers_frame).
+        assert_eq!(
+            damage_present_rects(Some(&cursor_damage(64, &[(0, 0), (1, 0), (0, 1), (1, 1)])), 128, 128),
+            None,
+            "frame-covering tile set must present the whole surface"
+        );
+        // A genuine partial set maps to clamped sub-rects.
+        assert_eq!(
+            damage_present_rects(Some(&cursor_damage(64, &[(0, 0)])), 128, 128),
+            Some(vec![Rect::new(0.0, 0.0, 64.0, 64.0)])
         );
     }
 

@@ -62,7 +62,21 @@ use window_render::WindowRenderManager;
 /// [`DesktopCompositor::capture_once`]. Re-exported for the visual-test harness.
 pub use render_thread::CapturedFrame;
 
-const DEFAULT_TARGET_FPS: u32 = 60;
+/// Default submit cadence. `0` = UNCAPPED: a ready frame presents immediately
+/// instead of waiting out a fixed frame interval (snappy lever #1 — 200fps is
+/// impossible while a 16.67ms/60fps interval gates every interactive frame).
+///
+/// This does NOT make the loop busy-spin: the loop stays event-driven (drain
+/// platform events, render when dirty, then sleep). With an uncapped interval
+/// the idle path still sleeps (see `DesktopCompositor::idle_sleep`, which floors
+/// a 0 interval to a 1ms wait when idle — a wait, not a spin) and frames are
+/// only submitted when `dirty`/`cursor.dirty` is set by a real event or a tick.
+const DEFAULT_TARGET_FPS: u32 = 0;
+
+/// Telemetry/reporting fps used only for the metrics target when the submit
+/// cadence is uncapped (`DEFAULT_TARGET_FPS == 0`). Reporting needs a non-zero
+/// reference fps; it does NOT cap submission.
+const TELEMETRY_REFERENCE_FPS: u32 = 60;
 
 #[derive(Debug, Clone, Copy, Default)]
 struct PresentPacingState {
@@ -253,7 +267,12 @@ impl DesktopCompositor {
             last_render: Instant::now(),
             last_live_frame_at: None,
             loading: true,
-            frame_interval: Duration::from_micros(1_000_000 / DEFAULT_TARGET_FPS as u64),
+            frame_interval: if DEFAULT_TARGET_FPS == 0 {
+                // Uncapped: present a ready frame immediately (no 16.67ms ceiling).
+                Duration::ZERO
+            } else {
+                Duration::from_micros(1_000_000 / DEFAULT_TARGET_FPS as u64)
+            },
             debug_perf: false,
             render_tx: None,
             frame_rx: None,
@@ -262,7 +281,11 @@ impl DesktopCompositor {
             render_inflight_since: None,
             present_pacing: PresentPacingState::default(),
             present_gate_counter: 0,
-            telemetry: create_telemetry(DEFAULT_TARGET_FPS),
+            telemetry: create_telemetry(if DEFAULT_TARGET_FPS == 0 {
+                TELEMETRY_REFERENCE_FPS
+            } else {
+                DEFAULT_TARGET_FPS
+            }),
             cursor: CursorState::new(width as f32 / 2.0, height as f32 / 2.0),
             dt: DevToolsState::new(),
             tiles: TileEncoderState::new(width, height, tile_size),

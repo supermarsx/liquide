@@ -644,6 +644,52 @@ mod watchdog_tests {
     }
 
     #[test]
+    fn default_submit_cadence_is_uncapped_no_60fps_ceiling() {
+        // ANTI-FAKE-GREEN (snappy lever #1): the desktop must boot UNCAPPED so a
+        // ready frame presents immediately instead of waiting out a 16.67ms
+        // (60fps) interval. This test fails if the artificial 60fps submit cap is
+        // reinstated (DEFAULT_TARGET_FPS back to 60 → a 16ms frame_interval).
+        let desktop = DesktopCompositor::new(64, 64);
+        assert!(
+            desktop.frame_interval.is_zero(),
+            "default frame_interval must be zero (uncapped) — got {:?}; a non-zero \
+             interval reinstates the artificial submit cap",
+            desktop.frame_interval
+        );
+    }
+
+    #[test]
+    fn ready_frame_submits_without_waiting_a_frame_interval() {
+        // ANTI-FAKE-GREEN: with the cap removed, a frame that became dirty THIS
+        // INSTANT (last_render just now, zero elapsed) must be allowed to submit
+        // immediately — i.e. the throttle gate from the run loop
+        // (frame_interval.is_zero() || last_render.elapsed() >= frame_interval)
+        // is satisfied with no wait. Mirrors the gate at event_loop.rs:509-511.
+        let desktop = DesktopCompositor::new(64, 64);
+        let elapsed_now = Duration::ZERO; // a frame ready the instant it was rendered
+        let can_render_immediately =
+            desktop.frame_interval.is_zero() || elapsed_now >= desktop.frame_interval;
+        assert!(
+            can_render_immediately,
+            "a ready frame must submit immediately under the uncapped cadence, \
+             not wait out a 16.67ms interval"
+        );
+
+        // And it must NOT busy-spin while idle: the idle path still yields a
+        // >=1ms wait even when fully idle and uncapped (a wait, not a spin).
+        let idle = DesktopCompositor::idle_sleep(
+            /*dirty*/ false,
+            /*had_event*/ false,
+            desktop.frame_interval,
+            Duration::ZERO,
+        );
+        assert!(
+            idle >= Duration::from_millis(1),
+            "idle loop must wait (not busy-spin) even when uncapped, got {idle:?}"
+        );
+    }
+
+    #[test]
     fn slow_frame_telemetry_counts_only_budget_overruns() {
         // REGRESSION (t77-A3): a frame slower than SLOW_FRAME_BUDGET must bump
         // the slow-frame counter; a fast frame must NOT. The test fails if the
