@@ -3,9 +3,62 @@
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::pixel::{BlendMode, Color};
+use rayon::prelude::*;
 
 use crate::blend;
 use crate::color::SrgbLut;
+
+/// Minimum number of pixels a large fill/blit must cover before its rows are
+/// rasterized in parallel across cores (t76 #2). Below this the rayon dispatch
+/// overhead is not worth it, so the work stays on the calling thread. The
+/// row-band split is over DISJOINT scanlines, so the parallel result is
+/// byte-identical to the serial loop regardless of thread count (determinism).
+const PARALLEL_FILL_PIXEL_THRESHOLD: usize = 64 * 1024;
+
+thread_local! {
+    /// Per-thread switch enabling data-parallel tile/row rasterization (t76 #2).
+    ///
+    /// The pixel work itself is byte-identical whether run serially or split
+    /// across disjoint scanlines. But parallel rasterization changes how much
+    /// wall-time the *async* glyph/blur worker threads get before a frame is
+    /// read back, and the deterministic CAPTURE/golden path (`RenderMode::Capture`,
+    /// e2e_temporal) only block-drains glyphs, not blur — so faster fills can
+    /// race the blur worker and shift a few glass pixels between otherwise
+    /// identical boots. The renderer therefore disables parallelism for the
+    /// capture path (it is not the perf-critical path) and enables it for the
+    /// live full-frame fallback. Default `false` so any direct rasterizer caller
+    /// (tests, other crates) gets the deterministic serial behavior unless it
+    /// opts in.
+    static PARALLEL_RASTER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Enable/disable data-parallel rasterization for the current thread. Returns
+/// the previous value so callers can restore it. Set by the renderer per frame
+/// from the active [`RenderMode`].
+pub fn set_parallel_raster(enabled: bool) -> bool {
+    PARALLEL_RASTER.with(|c| c.replace(enabled))
+}
+
+/// Whether a fill/blit covering `pixels` pixels should run in parallel: it must
+/// be both opted-in for this thread and large enough to amortize dispatch.
+#[inline]
+fn should_parallelize(pixels: usize) -> bool {
+    pixels >= PARALLEL_FILL_PIXEL_THRESHOLD && PARALLEL_RASTER.with(std::cell::Cell::get)
+}
+
+/// Chunk size (in BYTES, a multiple of `stride`) for `par_chunks_mut` so the
+/// row grid is split into a SMALL number of coarse row-bands (~a few per core)
+/// rather than one task per scanline. Per-scanline tasks drown the work in rayon
+/// scheduling overhead; coarse bands keep each task's payload large enough that
+/// the parallel fill actually beats the serial memcpy.
+#[inline]
+fn parallel_band_bytes(n_rows: usize, stride: usize) -> usize {
+    // Aim for ~4 bands per worker thread for load balancing without over-splitting.
+    let threads = rayon::current_num_threads().max(1);
+    let target_bands = (threads * 4).max(1);
+    let rows_per_band = n_rows.div_ceil(target_bands).max(1);
+    rows_per_band * stride
+}
 
 /// Gradient definition.
 #[derive(Debug, Clone)]
@@ -33,6 +86,18 @@ pub enum Fill {
     Gradient(Gradient),
 }
 
+/// Intersect a draw `rect` with an optional clip rect, returning `None` if the
+/// result is empty. Used by the damage-only raster path so a node's fill/blit is
+/// confined to the active damage region (t76).
+#[inline]
+#[must_use]
+pub fn clip_rect(rect: Rect, clip: Option<Rect>) -> Option<Rect> {
+    match clip {
+        None => Some(rect),
+        Some(c) => rect.intersection(&c).filter(|r| r.width > 0.0 && r.height > 0.0),
+    }
+}
+
 /// Fill a solid-color rectangle into the frame buffer.
 ///
 /// Uses bulk row-wise memory operations to avoid per-pixel overhead.
@@ -49,27 +114,32 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
         return;
     }
 
+    let row_pixels = w;
+    let n_rows = (y1 - y0) as usize;
+    let parallel = should_parallelize(row_pixels * n_rows);
+
     if mode == BlendMode::Src || pm.is_opaque() {
         // Fast path: stamp a 4-byte BGRA pattern across every scanline.
-        // First row is filled by writing the pattern in-place, then
-        // subsequent rows are memcpy'd from the first row (no heap alloc).
         let bgra = pm.to_bgra_bytes();
         let row_bytes = w * 4;
         let stride = fb.stride as usize;
+        let x_off = x0 as usize * 4;
         let pixels = fb.pixels_mut().expect("CPU framebuffer required");
+        let region = &mut pixels[y0 as usize * stride..y1 as usize * stride];
 
-        // Fill the first row in-place.
-        let first_start = y0 as usize * stride + x0 as usize * 4;
-        for chunk in pixels[first_start..first_start + row_bytes].chunks_exact_mut(4) {
-            chunk.copy_from_slice(&bgra);
-        }
-
-        // Copy the first row to all remaining rows.
-        for y in (y0 + 1)..y1 {
-            let row_start = y as usize * stride + x0 as usize * 4;
-            // Safety: source and destination don't overlap because they
-            // are on different scanlines (y0 != y).
-            pixels.copy_within(first_start..first_start + row_bytes, row_start);
+        let fill_band = |band: &mut [u8]| {
+            for scan in band.chunks_mut(stride) {
+                for chunk in scan[x_off..x_off + row_bytes].chunks_exact_mut(4) {
+                    chunk.copy_from_slice(&bgra);
+                }
+            }
+        };
+        if parallel {
+            // Disjoint coarse row-bands across cores. Byte-identical to serial.
+            let band = parallel_band_bytes(n_rows, stride);
+            region.par_chunks_mut(band).for_each(fill_band);
+        } else {
+            fill_band(region);
         }
     } else if mode == BlendMode::SrcOver {
         // Semi-transparent fill: use SIMD-accelerated constant-color SrcOver.
@@ -78,12 +148,24 @@ pub fn fill_rect(fb: &mut FrameBuffer, rect: Rect, color: Color, mode: BlendMode
         }
         let bgra = pm.to_bgra_bytes();
         let stride = fb.stride as usize;
+        let x_off = x0 as usize * 4;
+        let row_bytes = w * 4;
         let pixels = fb.pixels_mut().expect("CPU framebuffer required");
+        let region = &mut pixels[y0 as usize * stride..y1 as usize * stride];
 
-        for y in y0..y1 {
-            let row_start = y as usize * stride + x0 as usize * 4;
-            let row = &mut pixels[row_start..row_start + w * 4];
-            liquide_simd::convert::blend_constant_src_over(row, bgra);
+        let blend_band = |band: &mut [u8]| {
+            for scan in band.chunks_mut(stride) {
+                liquide_simd::convert::blend_constant_src_over(
+                    &mut scan[x_off..x_off + row_bytes],
+                    bgra,
+                );
+            }
+        };
+        if parallel {
+            let band = parallel_band_bytes(n_rows, stride);
+            region.par_chunks_mut(band).for_each(blend_band);
+        } else {
+            blend_band(region);
         }
     } else {
         // Other blend modes — fall back to per-pixel dispatch.
@@ -655,28 +737,105 @@ pub fn blit_opaque_stride(
     dst_x: u32,
     dst_y: u32,
 ) {
-    let bpp = 4usize;
+    blit_opaque_stride_clipped(fb, src, src_width, src_height, src_stride, dst_x, dst_y, None);
+}
 
-    for row in 0..src_height {
-        let dy = dst_y + row;
-        if dy >= fb.height {
-            break;
-        }
-        let copy_width = src_width.min(fb.width.saturating_sub(dst_x));
-        if copy_width == 0 {
-            continue;
-        }
-        let src_off = row as usize * src_stride;
-        let bytes = copy_width as usize * bpp;
+/// Clip rectangle resolved to inclusive-exclusive pixel bounds for a blit.
+///
+/// Returns the per-pixel clamp window `(cx0, cy0, cx1, cy1)` derived from an
+/// optional clip rect, already intersected with the framebuffer extent. When no
+/// clip is set the window is the full framebuffer.
+#[inline]
+fn blit_clip_window(fb: &FrameBuffer, clip: Option<Rect>) -> (u32, u32, u32, u32) {
+    match clip {
+        None => (0, 0, fb.width, fb.height),
+        Some(c) => (
+            (c.x.max(0.0) as u32).min(fb.width),
+            (c.y.max(0.0) as u32).min(fb.height),
+            (c.right().ceil().max(0.0) as u32).min(fb.width),
+            (c.bottom().ceil().max(0.0) as u32).min(fb.height),
+        ),
+    }
+}
+
+/// Blit an opaque BGRA image, confining writes to `clip` (damage-only raster).
+///
+/// Byte-identical to [`blit_opaque_stride`] within the clip window: every
+/// destination pixel that survives the clip is written from the same source
+/// pixel as the unclipped path, so clipping never changes output values, only
+/// which pixels are touched.
+#[allow(clippy::too_many_arguments)]
+pub fn blit_opaque_stride_clipped(
+    fb: &mut FrameBuffer,
+    src: &[u8],
+    src_width: u32,
+    src_height: u32,
+    src_stride: usize,
+    dst_x: u32,
+    dst_y: u32,
+    clip: Option<Rect>,
+) {
+    let bpp = 4usize;
+    let (cx0, cy0, cx1, cy1) = blit_clip_window(fb, clip);
+    let stride = fb.stride as usize;
+    let fb_height = fb.height;
+    let fb_width = fb.width;
+
+    // Destination row range actually touched: [dst_y, dst_y+src_height) ∩ clip ∩ fb.
+    let dy_start = dst_y.max(cy0);
+    let dy_end = (dst_y + src_height).min(fb_height).min(cy1);
+    if dy_end <= dy_start {
+        return;
+    }
+    // Horizontal span is row-independent (opaque copy), so compute once.
+    let row_x0 = dst_x.max(cx0);
+    let row_x1 = (dst_x + src_width).min(fb_width).min(cx1);
+    if row_x1 <= row_x0 {
+        return;
+    }
+    let col0 = (row_x0 - dst_x) as usize; // first source column
+    let copy_width = (row_x1 - row_x0) as usize;
+    let bytes = copy_width * bpp;
+    let dst_x_off = row_x0 as usize * bpp;
+
+    let n_rows = (dy_end - dy_start) as usize;
+    let parallel = should_parallelize(copy_width * n_rows);
+
+    // Per-scanline closure: copy one source row into one destination scanline.
+    // Each `dy` writes a disjoint slice, so the rows are independent and the
+    // parallel result is byte-identical to the serial loop.
+    let blit_row = |dy: u32, scan: &mut [u8]| {
+        let row = dy - dst_y;
+        let src_off = row as usize * src_stride + col0 * bpp;
         if src_off + bytes > src.len() {
-            break;
+            return;
         }
-        let dst_off = fb.pixel_offset(dst_x, dy);
-        if dst_off + bytes > fb.pixels_mut().expect("CPU framebuffer required").len() {
-            break;
+        if dst_x_off + bytes > scan.len() {
+            return;
         }
-        fb.pixels_mut().expect("CPU framebuffer required")[dst_off..dst_off + bytes]
-            .copy_from_slice(&src[src_off..src_off + bytes]);
+        scan[dst_x_off..dst_x_off + bytes].copy_from_slice(&src[src_off..src_off + bytes]);
+    };
+
+    let pixels = fb.pixels_mut().expect("CPU framebuffer required");
+    let region = &mut pixels[dy_start as usize * stride..dy_end as usize * stride];
+    if parallel {
+        // Coarse row-bands; `chunk_index * rows_per_band` gives the band's first
+        // destination row so each scanline maps to its source row deterministically.
+        let band = parallel_band_bytes(n_rows, stride);
+        let rows_per_band = (band / stride) as u32;
+        region
+            .par_chunks_mut(band)
+            .enumerate()
+            .for_each(|(bi, chunk)| {
+                let band_dy0 = dy_start + bi as u32 * rows_per_band;
+                for (i, scan) in chunk.chunks_mut(stride).enumerate() {
+                    blit_row(band_dy0 + i as u32, scan);
+                }
+            });
+    } else {
+        for (i, scan) in region.chunks_mut(stride).enumerate() {
+            blit_row(dy_start + i as u32, scan);
+        }
     }
 }
 
@@ -698,6 +857,7 @@ pub fn blit_alpha(
 }
 
 /// Blit a BGRA image with premultiplied alpha blending and explicit stride.
+#[allow(clippy::too_many_arguments)]
 pub fn blit_alpha_stride(
     fb: &mut FrameBuffer,
     src: &[u8],
@@ -708,15 +868,44 @@ pub fn blit_alpha_stride(
     dst_y: u32,
     opacity: f32,
 ) {
+    blit_alpha_stride_clipped(
+        fb, src, src_width, src_height, src_stride, dst_x, dst_y, opacity, None,
+    );
+}
+
+/// Blit a BGRA image with alpha blending, confining writes to `clip`.
+///
+/// Byte-identical to [`blit_alpha_stride`] within the clip window: clipped
+/// pixels are skipped entirely; surviving pixels are blended identically.
+#[allow(clippy::too_many_arguments)]
+pub fn blit_alpha_stride_clipped(
+    fb: &mut FrameBuffer,
+    src: &[u8],
+    src_width: u32,
+    src_height: u32,
+    src_stride: usize,
+    dst_x: u32,
+    dst_y: u32,
+    opacity: f32,
+    clip: Option<Rect>,
+) {
     let bpp = 4usize;
+    let (cx0, cy0, cx1, cy1) = blit_clip_window(fb, clip);
 
     for row in 0..src_height {
         let dy = dst_y + row;
         if dy >= fb.height {
             break;
         }
+        if dy < cy0 || dy >= cy1 {
+            continue;
+        }
         let max_x = src_width.min(fb.width.saturating_sub(dst_x));
         for col in 0..max_x {
+            let dx = dst_x + col;
+            if dx < cx0 || dx >= cx1 {
+                continue;
+            }
             let src_off = row as usize * src_stride + col as usize * bpp;
             if src_off + 3 >= src.len() {
                 break;
@@ -732,7 +921,6 @@ pub fn blit_alpha_stride(
             }
             // blend_src_over expects premultiplied input — always premultiply
             s = s.premultiply();
-            let dx = dst_x + col;
             let d = fb.get_pixel(dx, dy);
             let result = blend::blend_src_over(d, s);
             fb.set_pixel(dx, dy, result);

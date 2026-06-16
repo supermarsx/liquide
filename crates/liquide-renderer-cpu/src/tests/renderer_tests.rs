@@ -98,6 +98,92 @@ fn write_fixture_font(label: &str) -> Option<(PathBuf, PathBuf)> {
     Some((dir, path))
 }
 
+/// A solid opaque Background node covering `bounds`.
+fn bg_node(id: u64, bounds: Rect, color: Color) -> FlatNode {
+    FlatNode {
+        id,
+        kind: SceneNodeKind::Background { color }.into(),
+        absolute_bounds: bounds,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+/// t76: a sparse damage set must clip every node's fill to the damaged region —
+/// a full-surface Background painted under single-tile damage only touches that
+/// tile (plus the small effect-bleed padding); tiles well outside the damaged
+/// region stay untouched (transparent black). The damage bbox carries a 32px
+/// padding for blur/shadow bleed, so we assert on tiles ≥1 full tile beyond it.
+#[test]
+fn damage_clipped_raster_only_writes_damaged_tiles() {
+    let mut renderer = SoftwareRenderer::new();
+    let tile = 64u32;
+    let (w, h) = (320u32, 320u32); // 5x5 tiles
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+
+    // Damage exactly the center tile (2,2).
+    let (dtx, dty) = (2u32, 2u32);
+    let mut damage = DamageSet::new(tile);
+    damage.mark_tile_with_class(dtx, dty, DamageClass::UiPrimitive);
+
+    let node = bg_node(
+        1,
+        Rect::new(0.0, 0.0, w as f32, h as f32),
+        Color::new(255, 0, 0, 255),
+    );
+    renderer
+        .render_live(&[node], &mut fb, &damage, RenderMode::LiveCursor)
+        .unwrap();
+
+    // Inside the damaged tile -> red.
+    let inside = fb.get_pixel(dtx * tile + 10, dty * tile + 10);
+    assert_eq!(inside.r, 255, "damaged tile must be painted: {inside:?}");
+
+    // Tiles ≥1 full tile beyond the padded damage bbox must stay untouched.
+    // Damaged tile spans [128,192); padded clip is [96,224). Tiles (0,*),(4,*),
+    // (*,0),(*,4) sample at offset 10 -> coords ≤74 or ≥266, all outside [96,224).
+    for (tx, ty) in [
+        (0u32, 0u32),
+        (4, 0),
+        (0, 4),
+        (4, 4),
+        (0, 2),
+        (4, 2),
+        (2, 0),
+        (2, 4),
+    ] {
+        let p = fb.get_pixel(tx * tile + 10, ty * tile + 10);
+        assert_eq!(
+            p.r, 0,
+            "tile ({tx},{ty}) outside padded damage must be untouched, got {p:?}"
+        );
+    }
+}
+
+/// t76: full damage must fall back to a whole-surface raster (clip = None).
+#[test]
+fn full_damage_rasters_whole_surface() {
+    let mut renderer = SoftwareRenderer::new();
+    let tile = 64u32;
+    let (w, h) = (256u32, 256u32);
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    let damage = DamageSet::full(tile, w / tile, h / tile, DamageClass::UiPrimitive);
+
+    let node = bg_node(1, Rect::new(0.0, 0.0, w as f32, h as f32), Color::new(0, 255, 0, 255));
+    renderer
+        .render_live(&[node], &mut fb, &damage, RenderMode::LiveCursor)
+        .unwrap();
+
+    // Corners and center all painted.
+    for (x, y) in [(2, 2), (w - 2, 2), (2, h - 2), (w - 2, h - 2), (w / 2, h / 2)] {
+        assert_eq!(fb.get_pixel(x, y).g, 255, "full damage must paint ({x},{y})");
+    }
+}
+
 #[test]
 fn renderer_creates() {
     let r = SoftwareRenderer::new();
@@ -280,6 +366,123 @@ fn live_render_returns_promptly_with_pending_glyphs_then_quiesces() {
     assert!(
         t.elapsed() < Duration::from_millis(100),
         "cursor-only live render must never block"
+    );
+}
+
+/// t77: the LIVE full-render glyph-drain budget must stay tiny so it is not a
+/// per-frame present tax at the 200 fps target (~5 ms/frame). This pins the
+/// budget AND proves the budget→deadline translation is bounded by ~1 ms, NOT
+/// the old 4 ms.
+///
+/// TEETH (these fail if the budget is reverted to 4 ms, or if Capture's
+/// determinism budget is collateral-damaged, or if LiveCursor stops being a
+/// pure non-blocking poll):
+///   * the constant assertion fails the instant `LIVE_GLYPH_DRAIN_BUDGET_MS`
+///     goes above 1;
+///   * the `drain_deadline(LiveFull)` window assertion fails if the live
+///     deadline lands ~4 ms out (it caps the budget at 2 ms incl. slack);
+///   * Capture must still block far out for goldens; LiveCursor must be `None`.
+#[test]
+fn live_full_glyph_drain_budget_is_one_ms_not_four() {
+    use crate::renderer::{drain_deadline, GLYPH_DRAIN_BUDGET_MS, LIVE_GLYPH_DRAIN_BUDGET_MS};
+    use std::time::{Duration, Instant};
+
+    // Tooth 1: the conservative 1 ms ceiling. Reverting to 4 fails here.
+    assert!(
+        LIVE_GLYPH_DRAIN_BUDGET_MS <= 1,
+        "LIVE_GLYPH_DRAIN_BUDGET_MS={LIVE_GLYPH_DRAIN_BUDGET_MS} — the live full-render \
+         glyph-drain budget must stay <= 1 ms; at 200 fps a larger budget is a direct \
+         per-frame present stall (t77)"
+    );
+
+    // Tooth 2: the budget actually flows into the LiveFull drain deadline as a
+    // ~1 ms wait, not 4 ms. Allow 2 ms of headroom for the millisecond rounding;
+    // a 4 ms budget produces a deadline ~4 ms out and trips this.
+    let before = Instant::now();
+    let live_deadline = drain_deadline(RenderMode::LiveFull)
+        .expect("LiveFull must use a (tiny) bounded drain deadline, not a non-blocking poll");
+    let live_window = live_deadline.saturating_duration_since(before);
+    assert!(
+        live_window <= Duration::from_millis(2),
+        "LiveFull drain deadline is {live_window:?} out — must be a ~1 ms budget, not 4 ms"
+    );
+
+    // Capture (golden) determinism budget must be left far out, untouched.
+    let cap_deadline = drain_deadline(RenderMode::Capture)
+        .expect("Capture must block-drain for determinism");
+    assert!(
+        cap_deadline.saturating_duration_since(Instant::now())
+            >= Duration::from_millis(GLYPH_DRAIN_BUDGET_MS / 2),
+        "Capture drain budget must stay large for golden determinism"
+    );
+
+    // LiveCursor must remain a pure non-blocking poll (no deadline at all).
+    assert!(
+        drain_deadline(RenderMode::LiveCursor).is_none(),
+        "LiveCursor must never wait on glyphs"
+    );
+}
+
+/// t77: a LiveFull render that still has glyphs in flight must (a) return well
+/// under a few ms — bounded by the tiny ~1 ms drain, NOT a 4 ms stall — and
+/// (b) report `has_pending_glyphs()` afterward so the session knows to resubmit
+/// a follow-up frame. This is the resubmit contract the live present path relies
+/// on; it must hold independently of the (peer-owned) session loop.
+///
+/// TOOTH: with the budget at 4 ms a fresh-text LiveFull frame whose glyphs miss
+/// the budget would routinely take ~4 ms; we assert it returns under 3 ms so a
+/// revert to 4 ms surfaces here too. And if the renderer ever stopped flagging
+/// pending glyphs, `has_pending_glyphs()` would be false and the assertion
+/// fails — proving the caller would still be told to resubmit.
+#[test]
+fn live_full_render_with_pending_glyphs_returns_fast_and_flags_resubmit() {
+    use std::time::{Duration, Instant};
+
+    // Use a real font family if one is present so glyphs are genuinely requested
+    // and tracked as pending; an empty family still requests bitmap-fallback
+    // glyphs, so the pending/resubmit contract holds either way.
+    let family = if fixture_font_bytes().is_some() {
+        "Arial"
+    } else {
+        ""
+    };
+    let text = "Open Terminal File Manager Settings Software Center Task Manager";
+
+    let mut renderer = SoftwareRenderer::new();
+    let mut fb = FrameBuffer::new(512, 64, PixelFormat::Bgra8);
+    let mut damage = DamageSet::new(64);
+    damage.add(DamageTile {
+        x: 0,
+        y: 0,
+        class: DamageClass::TextGlyph,
+    });
+
+    // First LiveFull frame: glyphs are freshly requested and the async worker has
+    // not produced them yet, so the drain hits its tiny budget. The call must
+    // return in well under 3 ms (a 4 ms budget would routinely overrun this) AND
+    // must flag pending glyphs so the caller resubmits.
+    let t0 = Instant::now();
+    renderer
+        .render_live(
+            &[text_node(text, family)],
+            &mut fb,
+            &damage,
+            RenderMode::LiveFull,
+        )
+        .unwrap();
+    let elapsed = t0.elapsed();
+    assert!(
+        renderer.has_pending_glyphs(),
+        "a LiveFull frame for fresh text whose glyphs missed the drain budget MUST report \
+         has_pending_glyphs() so the session resubmits — the live present path depends on it"
+    );
+    // The drain is bounded by ~1 ms; the rest of render_live (paint) is cheap for
+    // this tiny surface. 3 ms gives generous slack for CI scheduler jitter while
+    // still catching a revert to the 4 ms budget.
+    assert!(
+        elapsed < Duration::from_millis(3),
+        "LiveFull render with pending glyphs took {elapsed:?} — the live glyph drain must be \
+         bounded by ~1 ms, not 4 ms (t77)"
     );
 }
 

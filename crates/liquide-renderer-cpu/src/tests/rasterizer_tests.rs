@@ -350,3 +350,174 @@ fn stroke_rounded_rect_width() {
     let center = fb.get_pixel(32, 32);
     assert_eq!(center.r, 0, "center should be untouched: got {:?}", center);
 }
+
+// ── t76: parallel raster == serial raster (byte-for-byte determinism) ──────
+//
+// The full-frame fallback rasterizes large fills/blits across cores by splitting
+// the row grid. Rows are disjoint, so the parallel output must be byte-identical
+// to a serial reference regardless of thread count. These tests use surfaces
+// well above `PARALLEL_FILL_PIXEL_THRESHOLD` (64K px) so the parallel path runs.
+
+/// Reference: stamp an opaque solid colour into `[x..x+w, y..y+h]` one row at a
+/// time, exactly as the original serial fill did.
+fn serial_opaque_fill_ref(w: u32, h: u32, color: Color) -> Vec<u8> {
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    let bgra = color.premultiply().to_bgra_bytes();
+    for chunk in buf.chunks_exact_mut(4) {
+        chunk.copy_from_slice(&bgra);
+    }
+    buf
+}
+
+#[test]
+fn parallel_opaque_fill_matches_serial() {
+    let _g = set_parallel_raster(true);
+    // 512x256 = 131072 px > threshold -> parallel path.
+    let (w, h) = (512u32, 256u32);
+    let color = Color::new(200, 100, 50, 255);
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    fill_rect(
+        &mut fb,
+        Rect::new(0.0, 0.0, w as f32, h as f32),
+        color,
+        BlendMode::SrcOver,
+    );
+    let expected = serial_opaque_fill_ref(w, h, color);
+    assert_eq!(
+        fb.pixels(),
+        expected.as_slice(),
+        "parallel opaque fill must be byte-identical to serial"
+    );
+}
+
+#[test]
+fn parallel_src_over_fill_matches_serial() {
+    let _g = set_parallel_raster(true);
+    // Semi-transparent fill over a known background, large enough to parallelize.
+    let (w, h) = (512u32, 256u32);
+    let fill = Color::new(0, 0, 255, 128);
+    let bg = Color::new(255, 255, 255, 255);
+
+    // Build a serial reference by filling the whole buffer row-by-row with the
+    // exact SIMD kernel the rasterizer uses.
+    let mut reference = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    fill_rect(
+        &mut reference,
+        Rect::new(0.0, 0.0, w as f32, h as f32),
+        bg,
+        BlendMode::Src,
+    );
+    {
+        let bgra = fill.premultiply().to_bgra_bytes();
+        let stride = reference.stride as usize;
+        let px = reference.pixels_mut().unwrap();
+        for scan in px.chunks_mut(stride) {
+            liquide_simd::convert::blend_constant_src_over(&mut scan[..(w as usize) * 4], bgra);
+        }
+    }
+
+    // Now the parallel path: same background, then the SrcOver fill via fill_rect.
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    fill_rect(
+        &mut fb,
+        Rect::new(0.0, 0.0, w as f32, h as f32),
+        bg,
+        BlendMode::Src,
+    );
+    fill_rect(
+        &mut fb,
+        Rect::new(0.0, 0.0, w as f32, h as f32),
+        fill,
+        BlendMode::SrcOver,
+    );
+
+    assert_eq!(
+        fb.pixels(),
+        reference.pixels(),
+        "parallel SrcOver fill must be byte-identical to serial"
+    );
+}
+
+#[test]
+fn parallel_opaque_blit_matches_clipped_and_serial() {
+    let _g = set_parallel_raster(true);
+    // A large opaque source blitted at an offset. Compare the (parallel) blit
+    // against a hand-rolled serial copy.
+    let (fw, fh) = (512u32, 300u32);
+    let (sw, sh) = (400u32, 250u32); // 100000 px > threshold
+    let (dx, dy) = (40u32, 25u32);
+
+    // Source: deterministic per-pixel pattern.
+    let mut src = vec![0u8; (sw * sh * 4) as usize];
+    for (i, chunk) in src.chunks_exact_mut(4).enumerate() {
+        chunk[0] = (i % 256) as u8;
+        chunk[1] = ((i / 256) % 256) as u8;
+        chunk[2] = ((i / 7) % 256) as u8;
+        chunk[3] = 255;
+    }
+    let src_stride = sw as usize * 4;
+
+    let mut fb = FrameBuffer::new(fw, fh, PixelFormat::Bgra8);
+    blit_opaque_stride(&mut fb, &src, sw, sh, src_stride, dx, dy);
+
+    // Serial reference.
+    let mut reference = FrameBuffer::new(fw, fh, PixelFormat::Bgra8);
+    {
+        let stride = reference.stride as usize;
+        let px = reference.pixels_mut().unwrap();
+        for row in 0..sh {
+            let yy = dy + row;
+            if yy >= fh {
+                break;
+            }
+            let copy_w = sw.min(fw - dx) as usize * 4;
+            let src_off = row as usize * src_stride;
+            let dst_off = yy as usize * stride + dx as usize * 4;
+            px[dst_off..dst_off + copy_w].copy_from_slice(&src[src_off..src_off + copy_w]);
+        }
+    }
+
+    assert_eq!(
+        fb.pixels(),
+        reference.pixels(),
+        "parallel opaque blit must be byte-identical to serial"
+    );
+}
+
+// ── t76: damage-clip only writes inside the clip rect ──────────────────────
+
+#[test]
+fn clipped_fill_only_writes_clip_region() {
+    let mut fb = FrameBuffer::new(64, 64, PixelFormat::Bgra8);
+    // Fill the whole surface but clip to a small inner rect.
+    let clip = Rect::new(20.0, 20.0, 10.0, 10.0);
+    let full = Rect::new(0.0, 0.0, 64.0, 64.0);
+    let drawn = clip_rect(full, Some(clip)).expect("non-empty");
+    fill_rect(&mut fb, drawn, Color::new(255, 0, 0, 255), BlendMode::Src);
+
+    // Inside the clip -> written.
+    assert_eq!(fb.get_pixel(25, 25).r, 255, "inside clip must be filled");
+    // Outside the clip -> untouched (still transparent black).
+    assert_eq!(fb.get_pixel(5, 5).r, 0, "outside clip must be untouched");
+    assert_eq!(fb.get_pixel(40, 40).r, 0, "outside clip must be untouched");
+    assert_eq!(fb.get_pixel(19, 25).r, 0, "left of clip must be untouched");
+    assert_eq!(fb.get_pixel(30, 25).r, 0, "right edge exclusive");
+}
+
+#[test]
+fn clipped_blit_only_writes_clip_region() {
+    let (fw, fh) = (64u32, 64u32);
+    let (sw, sh) = (40u32, 40u32);
+    let src = vec![255u8; (sw * sh * 4) as usize]; // opaque white
+    let clip = Some(Rect::new(10.0, 10.0, 8.0, 8.0));
+
+    let mut fb = FrameBuffer::new(fw, fh, PixelFormat::Bgra8);
+    blit_opaque_stride_clipped(&mut fb, &src, sw, sh, sw as usize * 4, 5, 5, clip);
+
+    // (12,12) is inside both src footprint (5..45) and clip (10..18) -> written.
+    assert_eq!(fb.get_pixel(12, 12).b, 255, "inside clip must be written");
+    // (6,6) is inside src footprint but outside clip -> untouched.
+    assert_eq!(fb.get_pixel(6, 6).b, 0, "outside clip must be untouched");
+    // (20,20) is inside src footprint but outside clip -> untouched.
+    assert_eq!(fb.get_pixel(20, 20).b, 0, "outside clip must be untouched");
+}

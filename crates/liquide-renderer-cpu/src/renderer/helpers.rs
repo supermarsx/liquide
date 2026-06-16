@@ -10,7 +10,14 @@ use super::SoftwareRenderer;
 
 impl SoftwareRenderer {
     /// Fill a rounded rectangle with per-corner radii using SDF anti-aliasing.
-    pub(crate) fn fill_rounded_rect_per_corner(
+    ///
+    /// The SDF is sampled against the FULL `rect`, so the rounded geometry and
+    /// anti-aliased coverage are independent of `clip`; `clip` only restricts the
+    /// write window to the active damage region (t76). Within that window the
+    /// output is byte-for-byte the same as an unclipped fill. Pass `clip = None`
+    /// for a full-frame fill.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn fill_rounded_rect_per_corner_clipped(
         &self,
         fb: &mut FrameBuffer,
         rect: Rect,
@@ -20,14 +27,23 @@ impl SoftwareRenderer {
         r_br: f32,
         r_bl: f32,
         mode: BlendMode,
+        clip: Option<Rect>,
     ) {
         if color.a == 0 {
             return;
         }
-        let x0 = (rect.x.max(0.0) as u32).min(fb.width);
-        let y0 = (rect.y.max(0.0) as u32).min(fb.height);
-        let x1 = (rect.right().ceil() as u32).min(fb.width);
-        let y1 = (rect.bottom().ceil() as u32).min(fb.height);
+        // Restrict the iteration window to `rect ∩ clip` (geometry unaffected).
+        let draw = match clip {
+            None => rect,
+            Some(c) => match rect.intersection(&c) {
+                Some(r) => r,
+                None => return,
+            },
+        };
+        let x0 = (draw.x.max(0.0) as u32).min(fb.width);
+        let y0 = (draw.y.max(0.0) as u32).min(fb.height);
+        let x1 = (draw.right().ceil() as u32).min(fb.width);
+        let y1 = (draw.bottom().ceil() as u32).min(fb.height);
         if x0 >= x1 || y0 >= y1 {
             return;
         }

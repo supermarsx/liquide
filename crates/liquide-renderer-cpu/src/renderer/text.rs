@@ -42,6 +42,8 @@ impl SoftwareRenderer {
     pub(crate) fn render_text_node(&mut self, node: &FlatNode, fb: &mut FrameBuffer) {
         let bounds = node.absolute_bounds;
         let opacity = node.opacity;
+        // Confine glyph blits to the active damage region (None = full frame).
+        let clip = self.raster_clip;
 
         if let liquide_compositor::scene::SceneNodeKind::Text {
             text,
@@ -375,7 +377,7 @@ impl SoftwareRenderer {
                                         s_pen_y + glyph_height as f32,
                                     );
                                     let advance = cached.advance;
-                                    self.glyph_atlas.blit_glyph(fb, cached, pos, shadow_c);
+                                    self.glyph_atlas.blit_glyph(fb, cached, pos, shadow_c, clip);
                                     let extra = if ch == ' ' { *word_spacing } else { 0.0 };
                                     s_pen_x += advance + *letter_spacing + extra;
                                 } else {
@@ -449,7 +451,7 @@ impl SoftwareRenderer {
                                     pen_x,
                                     pen_y + glyph_height as f32,
                                 );
-                                self.glyph_atlas.blit_glyph(fb, cached, pos, c);
+                                self.glyph_atlas.blit_glyph(fb, cached, pos, c, clip);
                             }
                             break;
                         }
@@ -466,7 +468,7 @@ impl SoftwareRenderer {
                                 pen_y + glyph_height as f32,
                             );
                             let advance = cached.advance;
-                            self.glyph_atlas.blit_glyph(fb, cached, pos, c);
+                            self.glyph_atlas.blit_glyph(fb, cached, pos, c, clip);
 
                             // text-emphasis: draw the mark centered over (or
                             // under) this character. Skip whitespace — emphasis
@@ -513,7 +515,7 @@ impl SoftwareRenderer {
                                                     mark_x, mark_y,
                                                 );
                                             self.glyph_atlas
-                                                .blit_glyph(fb, mark_glyph, mark_pos, mc);
+                                                .blit_glyph(fb, mark_glyph, mark_pos, mc, clip);
                                         }
                                     }
                                 }

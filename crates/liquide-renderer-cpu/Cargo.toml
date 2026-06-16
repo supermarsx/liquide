@@ -16,6 +16,7 @@ liquide-renderer-css.workspace = true
 liquide-text-engine.workspace = true
 liquide-theme-css.workspace = true
 miniz_oxide.workspace = true
+rayon.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

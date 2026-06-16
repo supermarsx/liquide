@@ -32,10 +32,12 @@ impl SoftwareRenderer {
                 }
             }
 
-            // Apply tint
+            // Apply tint (confined to the active damage region, t76).
             let mut tint = params.tint_color;
             tint.a = (tint.a as f32 * opacity + 0.5) as u8;
-            rasterizer::fill_rect(fb, bounds, tint, BlendMode::SrcOver);
+            if let Some(tint_rect) = rasterizer::clip_rect(bounds, self.raster_clip) {
+                rasterizer::fill_rect(fb, tint_rect, tint, BlendMode::SrcOver);
+            }
 
             // Inner glow (skip for low LOD)
             if params.inner_glow && lod_level != LodLevel::Low {
@@ -429,6 +431,16 @@ impl SoftwareRenderer {
 
         let key = Self::stable_blur_key(x0, y0, w, h, radius, &snapshot);
 
+        // Deterministic capture path: if the blur for this content/geometry/radius
+        // is not already cached, compute it SYNCHRONOUSLY so the glass region is
+        // always blurred and identical run-to-run (no dependence on async worker
+        // timing — the source of e2e_temporal blur flakiness). The result is
+        // byte-identical to the async worker's output (same `compute_blur`).
+        if self.deterministic_blur && self.blur_worker.get_cached(key, w, h).is_none() {
+            self.blur_worker
+                .compute_blur_blocking(key, snapshot.clone(), w, h, radius);
+        }
+
         // Blit cached blur result if available.
         let has_cache = if let Some(cached) = self.blur_worker.get_cached(key, w, h) {
             for row in 0..h {
@@ -447,8 +459,10 @@ impl SoftwareRenderer {
             false
         };
 
-        // Submit new blur request if worker doesn't have one pending.
-        if !has_cache || !self.blur_worker.has_pending(key) {
+        // Submit new blur request if worker doesn't have one pending. In the
+        // deterministic path the result is already cached above, so this is
+        // skipped (no redundant async work).
+        if !self.deterministic_blur && (!has_cache || !self.blur_worker.has_pending(key)) {
             self.blur_worker.request_blur(key, snapshot, w, h, radius);
         }
     }

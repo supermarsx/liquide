@@ -135,6 +135,7 @@ fn atlas_blit() {
         &glyph,
         Point::new(10.0, 10.0),
         Color::new(255, 0, 0, 255),
+        None,
     );
 
     // Glyph renders at (10 + 0, 10 - 4) = (10, 6) with 4x4 size
@@ -215,6 +216,7 @@ fn subpixel_blit_rgb_per_channel() {
         Point::new(10.0, 10.0),
         Color::WHITE,
         SubpixelMode::Rgb,
+        None,
     );
 
     // Pixel 0 at (10, 9): R channel alpha=255, G=0, B=0
@@ -231,6 +233,7 @@ fn subpixel_blit_rgb_per_channel() {
         Point::new(10.0, 10.0),
         Color::WHITE,
         SubpixelMode::Rgb,
+        None,
     );
 
     // Pixel 0 at (10, 9): R=255 alpha, G=0, B=0
@@ -286,6 +289,7 @@ fn subpixel_blit_bgr_swaps_channels() {
         Point::new(10.0, 10.0),
         Color::WHITE,
         SubpixelMode::Bgr,
+        None,
     );
 
     let p = fb.get_pixel(10, 9);
@@ -331,6 +335,7 @@ fn subpixel_mode_none_averages_channels() {
         Point::new(10.0, 10.0),
         Color::WHITE,
         SubpixelMode::None,
+        None,
     );
 
     let p = fb.get_pixel(10, 9);
@@ -404,6 +409,7 @@ fn subpixel_vrgb_mode() {
         Point::new(10.0, 10.0),
         Color::WHITE,
         SubpixelMode::Vrgb,
+        None,
     );
 
     // Check that some pixels were modified
@@ -450,6 +456,7 @@ fn subpixel_vbgr_mode() {
         Point::new(10.0, 10.0),
         Color::WHITE,
         SubpixelMode::Vbgr,
+        None,
     );
 
     // Check that some pixels were modified
@@ -495,6 +502,7 @@ fn blit_glyph_clipping() {
         &glyph,
         Point::new(14.0, 14.0),
         Color::new(255, 0, 0, 255),
+        None,
     );
 
     // Also test negative position — should clip without panic
@@ -503,6 +511,7 @@ fn blit_glyph_clipping() {
         &glyph,
         Point::new(-5.0, -5.0),
         Color::new(0, 255, 0, 255),
+        None,
     );
     // If we reach here without panicking, the test passes
 }

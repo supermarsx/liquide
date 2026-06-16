@@ -155,6 +155,35 @@ impl BlurWorker {
         }
     }
 
+    /// Compute a blur **synchronously**, byte-identical to the async worker path
+    /// ([`compute_blur`](Self::compute_blur)), and insert it into the cache under
+    /// `key`. Used by the deterministic capture path so a glass region's blur is
+    /// always present and identical run-to-run, instead of depending on whether
+    /// the worker thread happened to finish in time (the source of e2e_temporal
+    /// blur-pixel flakiness). Returns a borrow of the cached result.
+    pub fn compute_blur_blocking(
+        &mut self,
+        key: NodeId,
+        pixels: Vec<u8>,
+        width: u32,
+        height: u32,
+        radius: u32,
+    ) -> &CachedBlur {
+        let blurred = Self::compute_blur(pixels, width, height, radius);
+        self.pending.remove(&key);
+        self.cache.insert(
+            key,
+            CachedBlur {
+                pixels: blurred,
+                width,
+                height,
+            },
+        );
+        self.cache
+            .get(&key)
+            .expect("just inserted blur result for key")
+    }
+
     /// Perform the actual Gaussian blur on a pixel buffer.
     ///
     /// Uses the fast downsample path for large radii, same as the

@@ -11,10 +11,27 @@
 use std::collections::HashMap;
 
 use liquide_compositor::framebuffer::FrameBuffer;
-use liquide_compositor::geometry::Point;
+use liquide_compositor::geometry::{Point, Rect};
 use liquide_compositor::pixel::Color;
 
 use crate::blend;
+
+/// Resolve an optional glyph clip rect to inclusive-exclusive integer pixel
+/// bounds `(cx0, cy0, cx1, cy1)`. When no clip is set the window is unbounded
+/// (`i32::MIN..i32::MAX`) so the per-pixel checks become no-ops. This confines a
+/// glyph blit to the active damage region for the damage-only raster path (t76).
+#[inline]
+fn glyph_clip_window(clip: Option<Rect>) -> (i32, i32, i32, i32) {
+    match clip {
+        None => (i32::MIN, i32::MIN, i32::MAX, i32::MAX),
+        Some(c) => (
+            c.x.floor() as i32,
+            c.y.floor() as i32,
+            c.right().ceil() as i32,
+            c.bottom().ceil() as i32,
+        ),
+    }
+}
 
 /// Subpixel rendering mode for LCD text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -190,18 +207,32 @@ impl GlyphAtlas {
     /// Blit a glyph from the atlas into a framebuffer at the given position.
     ///
     /// The glyph alpha is used as a mask with the given foreground color.
-    pub fn blit_glyph(&self, fb: &mut FrameBuffer, glyph: &CachedGlyph, pos: Point, color: Color) {
+    pub fn blit_glyph(
+        &self,
+        fb: &mut FrameBuffer,
+        glyph: &CachedGlyph,
+        pos: Point,
+        color: Color,
+        clip: Option<Rect>,
+    ) {
         let dx = (pos.x + glyph.bearing_x as f32) as i32;
         let dy = (pos.y - glyph.bearing_y as f32) as i32;
+        let (cx0, cy0, cx1, cy1) = glyph_clip_window(clip);
 
         for row in 0..glyph.height {
             let fy = dy + row as i32;
             if fy < 0 || fy >= fb.height as i32 {
                 continue;
             }
+            if fy < cy0 || fy >= cy1 {
+                continue;
+            }
             for col in 0..glyph.width {
                 let fx = dx + col as i32;
                 if fx < 0 || fx >= fb.width as i32 {
+                    continue;
+                }
+                if fx < cx0 || fx >= cx1 {
                     continue;
                 }
                 let atlas_off = ((glyph.atlas_y + row) * self.width + glyph.atlas_x + col) as usize;
@@ -305,18 +336,26 @@ impl GlyphAtlas {
         pos: Point,
         color: Color,
         mode: SubpixelMode,
+        clip: Option<Rect>,
     ) {
         let dx = (pos.x + glyph.bearing_x as f32) as i32;
         let dy = (pos.y - glyph.bearing_y as f32) as i32;
+        let (cx0, cy0, cx1, cy1) = glyph_clip_window(clip);
 
         for row in 0..glyph.height {
             let fy = dy + row as i32;
             if fy < 0 || fy >= fb.height as i32 {
                 continue;
             }
+            if fy < cy0 || fy >= cy1 {
+                continue;
+            }
             for col in 0..glyph.width {
                 let fx = dx + col as i32;
                 if fx < 0 || fx >= fb.width as i32 {
+                    continue;
+                }
+                if fx < cx0 || fx >= cx1 {
                     continue;
                 }
 

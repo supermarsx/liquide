@@ -61,7 +61,7 @@ const MAX_SHADOW_CACHE: usize = 256;
 /// without risking an unbounded hang if the font-worker thread stalls; on
 /// timeout the renderer falls back to the estimated-advance path exactly as it
 /// did before this seam existed.
-const GLYPH_DRAIN_BUDGET_MS: u64 = 2_000;
+pub(crate) const GLYPH_DRAIN_BUDGET_MS: u64 = 2_000;
 
 /// Per-frame glyph-drain budget (milliseconds) for the **live** render path
 /// ([`SoftwareRenderer::render_live`] with [`RenderMode::LiveFull`]).
@@ -74,7 +74,15 @@ const GLYPH_DRAIN_BUDGET_MS: u64 = 2_000;
 /// follow-up frame — text fills in within a frame or two instead of freezing
 /// the desktop. Kept far below the 500 ms render watchdog so a single live
 /// frame can never trip it (t68 cause #1 / C2).
-const LIVE_GLYPH_DRAIN_BUDGET_MS: u64 = 4;
+///
+/// At a 200 fps target the whole frame budget is ~5 ms, so even a few ms of
+/// glyph-drain is a large tax. We keep a *tiny* 1 ms drain rather than going
+/// fully non-blocking (returning no deadline): a 1 ms wait still lets glyphs
+/// that finish almost immediately commit on the same frame, but guarantees text
+/// commits within a bounded number of frames even if the session's
+/// resubmit-on-`has_pending_glyphs` path ever regresses — whereas a pure
+/// non-blocking poll would never commit text if that resubmit path broke (t77).
+pub(crate) const LIVE_GLYPH_DRAIN_BUDGET_MS: u64 = 1;
 
 // `RenderMode` is the single shared glyph-drain / liveness selector. It is
 // defined in `liquide-compositor` (so the `Renderer` trait can name it without a
@@ -176,6 +184,17 @@ pub struct SoftwareRenderer {
     /// Resolved cursor appearance (CSS seam). Defaults to the historic
     /// black-outline / white-fill, node-driven shape.
     cursor_theme: cursors::CursorTheme,
+    /// Per-frame raster clip rectangle in pixel coordinates. When `Some`, every
+    /// node's draw region is intersected with this rect so a near-idle frame only
+    /// touches the damaged tiles instead of re-rastering the whole surface (t76).
+    /// `None` = full-frame raster (resize / wallpaper change / full damage).
+    raster_clip: Option<Rect>,
+    /// When `true` (the deterministic capture path), backdrop blur is computed
+    /// SYNCHRONOUSLY so a glass region's blur is always present and identical
+    /// run-to-run, instead of depending on whether the async blur worker finished
+    /// in time. Set per frame from the [`RenderMode`]; the live paths leave this
+    /// `false` and keep the non-blocking async blur.
+    deterministic_blur: bool,
 }
 
 impl SoftwareRenderer {
@@ -234,6 +253,8 @@ impl SoftwareRenderer {
             prewarmed_fonts: std::collections::HashSet::new(),
             active_blend_mode: BlendMode::SrcOver,
             cursor_theme: cursors::CursorTheme::default(),
+            raster_clip: None,
+            deterministic_blur: false,
         }
     }
 
@@ -901,6 +922,29 @@ impl SoftwareRenderer {
         // Reset the active blend mode to default for this frame.
         self.active_blend_mode = BlendMode::SrcOver;
 
+        // Data-parallel rasterization across cores (t76 #2) is available but
+        // DEFAULT-OFF, because the CPU fill/blit kernels are memory-BANDWIDTH
+        // bound, not compute bound: on this host (and typical desktops with a
+        // single memory controller) splitting a full-screen fill/blit across
+        // cores adds rayon scheduling + cache-line contention with no extra
+        // bandwidth, measuring ~35% SLOWER for the full frame and ~2x slower for
+        // damage-only (render_bench A/B). It is therefore opt-in via
+        // `LIQUIDE_PARALLEL_RASTER=1` for hosts with more memory channels where
+        // it may pay off. The capture/golden path is always serial (determinism:
+        // parallel fills race the async blur worker). When enabled, the row-band
+        // split is over disjoint scanlines, so output stays byte-identical.
+        let parallel_enabled = match mode {
+            RenderMode::Capture => false,
+            RenderMode::LiveFull | RenderMode::LiveCursor => {
+                std::env::var("LIQUIDE_PARALLEL_RASTER").is_ok()
+            }
+        };
+        let prev_parallel = rasterizer::set_parallel_raster(parallel_enabled);
+
+        // The capture path computes backdrop blur synchronously for determinism;
+        // the live paths keep the non-blocking async blur worker.
+        self.deterministic_blur = matches!(mode, RenderMode::Capture);
+
         // Drain any completed async blur results before rendering.
         self.blur_worker.poll_results();
 
@@ -959,7 +1003,41 @@ impl SoftwareRenderer {
             Some((min_x, min_y, max_x, max_y))
         };
 
-        // Render each node exactly once in z-order.
+        // Set the per-frame raster clip so every node's fill/blit/text raster is
+        // confined to the changed region (t76 #1). On a near-idle frame only a
+        // few tiles change, so this turns a ~280 ms full-frame raster into a
+        // ~tens-of-ms damage-only raster (~8x) — the dominant lever. On full
+        // damage (resize / wallpaper / theme reload) the clip is `None` and the
+        // whole frame is rastered exactly as before. The clip restricts only
+        // WHICH pixels are written, never their values, so output is identical to
+        // the unclipped path within the damaged region.
+        self.raster_clip = match damage_bbox {
+            Some((dx0, dy0, dx1, dy1)) if !damage.is_full() => {
+                Some(Rect::new(dx0, dy0, dx1 - dx0, dy1 - dy0))
+            }
+            _ => None,
+        };
+
+        self.render_nodes_in_order(nodes, fb, damage_bbox);
+
+        // Clear the clip so it never leaks into a subsequent capture/full frame.
+        self.raster_clip = None;
+        // Restore the parallel-raster flag for this thread.
+        rasterizer::set_parallel_raster(prev_parallel);
+
+        Ok(self.classify_damage_tiles(nodes, damage, fb))
+    }
+
+    /// Walk the flattened nodes in z-order and paint each one, culling nodes
+    /// fully outside `damage_bbox`. Factored out of [`Self::render_with_mode`] so
+    /// the serial damage-clipped path and the parallel full-frame path share one
+    /// node-iteration body.
+    fn render_nodes_in_order(
+        &mut self,
+        nodes: &[FlatNode],
+        fb: &mut FrameBuffer,
+        damage_bbox: Option<(f32, f32, f32, f32)>,
+    ) {
         for node in nodes {
             // Skip nodes completely outside the damage bounding box.
             if let Some((dx0, dy0, dx1, dy1)) = damage_bbox {
@@ -974,8 +1052,6 @@ impl SoftwareRenderer {
 
             self.render_node_with_lod(node, fb, lod_level);
         }
-
-        Ok(self.classify_damage_tiles(nodes, damage, fb))
     }
 
     fn classify_damage_tiles(
@@ -1115,12 +1191,31 @@ impl SoftwareRenderer {
                 let blend = self.active_blend_mode;
                 let (r_tl, r_tr, r_br, r_bl) = node.corner_radius;
                 let has_radius = r_tl > 0.5 || r_tr > 0.5 || r_br > 0.5 || r_bl > 0.5;
+                // Confine the solid fill to the active damage region (t76). The
+                // intersection only restricts which pixels are written; the fill
+                // colour is unchanged, so damage-clipping is byte-identical to a
+                // full fill within the clip window. Rounded fills keep their full
+                // geometry (the SDF samples `bounds`) but still clamp via the
+                // clip-aware corner fill.
+                let Some(fill_bounds) = rasterizer::clip_rect(bounds, self.raster_clip) else {
+                    return;
+                };
                 if has_radius {
-                    self.fill_rounded_rect_per_corner(fb, bounds, c, r_tl, r_tr, r_br, r_bl, blend);
+                    self.fill_rounded_rect_per_corner_clipped(
+                        fb,
+                        bounds,
+                        c,
+                        r_tl,
+                        r_tr,
+                        r_br,
+                        r_bl,
+                        blend,
+                        self.raster_clip,
+                    );
                 } else if c.a == 255 && blend == BlendMode::SrcOver {
-                    rasterizer::fill_rect(fb, bounds, c, BlendMode::Src);
+                    rasterizer::fill_rect(fb, fill_bounds, c, BlendMode::Src);
                 } else {
-                    rasterizer::fill_rect(fb, bounds, c, blend);
+                    rasterizer::fill_rect(fb, fill_bounds, c, blend);
                 }
             }
 
@@ -1128,7 +1223,7 @@ impl SoftwareRenderer {
                 if let Some(buf) = buffer {
                     if opacity >= 1.0 && buf.format == liquide_compositor::pixel::PixelFormat::Bgra8
                     {
-                        rasterizer::blit_opaque_stride(
+                        rasterizer::blit_opaque_stride_clipped(
                             fb,
                             &buf.pixels,
                             buf.width,
@@ -1136,9 +1231,10 @@ impl SoftwareRenderer {
                             buf.stride as usize,
                             bounds.x.max(0.0) as u32,
                             bounds.y.max(0.0) as u32,
+                            self.raster_clip,
                         );
                     } else {
-                        rasterizer::blit_alpha_stride(
+                        rasterizer::blit_alpha_stride_clipped(
                             fb,
                             &buf.pixels,
                             buf.width,
@@ -1147,6 +1243,7 @@ impl SoftwareRenderer {
                             bounds.x.max(0.0) as u32,
                             bounds.y.max(0.0) as u32,
                             opacity,
+                            self.raster_clip,
                         );
                     }
                 }
@@ -1159,7 +1256,9 @@ impl SoftwareRenderer {
             SceneNodeKind::Tint { color } => {
                 let mut c = *color;
                 c.a = (c.a as f32 * opacity + 0.5) as u8;
-                rasterizer::fill_rect(fb, bounds, c, BlendMode::Multiply);
+                if let Some(tint_rect) = rasterizer::clip_rect(bounds, self.raster_clip) {
+                    rasterizer::fill_rect(fb, tint_rect, c, BlendMode::Multiply);
+                }
             }
 
             SceneNodeKind::Shadow { .. } => {

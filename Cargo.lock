@@ -3403,6 +3403,7 @@ dependencies = [
  "liquide-text-engine",
  "liquide-theme-css",
  "miniz_oxide",
+ "rayon",
  "thiserror 2.0.18",
  "tracing",
 ]
