@@ -1942,7 +1942,16 @@ impl DesktopCompositor {
         };
 
         if latest_job.dragged_window.is_none() {
-            *cached_flat_nodes = Some(flat_nodes_buf.clone());
+            // Double-buffer the previous flat scene instead of allocating a fresh
+            // Vec every frame (t80-hint / t79 Bug 2 #1). The cache buffer's
+            // backing storage is retained across frames and refilled in place, so
+            // the per-frame clone's allocation + drop cost disappears while the
+            // cached copy remains byte-identical to `flat_nodes_buf.clone()` —
+            // the prev-vs-current diff and the cursor-only reuse path both see
+            // the exact same clean (pre-cursor, pre-skeleton) scene as before.
+            let prev = cached_flat_nodes.get_or_insert_with(Vec::new);
+            prev.clear();
+            prev.extend_from_slice(flat_nodes_buf);
         } else {
             // During an active drag the scene is mid-interaction and partially
             // skeletonised for the render; do NOT publish it as the reusable
@@ -2367,6 +2376,37 @@ mod tests {
     /// Window-node flatten id layout the skeleton filter keys off.
     const NODE_WINDOW_BASE: u64 = 10_000;
     const NODE_WINDOW_STRIDE: u64 = 10;
+
+    fn move_event(x: f32, y: f32) -> liquide_platform::PlatformEvent {
+        liquide_platform::PlatformEvent::MouseInput {
+            handle: liquide_platform::NativeWindowHandle(0),
+            event: liquide_input::mouse::MouseEvent::Move { x, y },
+        }
+    }
+
+    fn button_event(
+        x: f32,
+        y: f32,
+        button: liquide_input::mouse::MouseButton,
+    ) -> liquide_platform::PlatformEvent {
+        liquide_platform::PlatformEvent::MouseInput {
+            handle: liquide_platform::NativeWindowHandle(0),
+            event: liquide_input::mouse::MouseEvent::Button {
+                button,
+                state: liquide_input::mouse::ButtonState::Pressed,
+                x,
+                y,
+            },
+        }
+    }
+
+    fn right_click_event(x: f32, y: f32) -> liquide_platform::PlatformEvent {
+        button_event(x, y, liquide_input::mouse::MouseButton::Right)
+    }
+
+    fn left_click_event(x: f32, y: f32) -> liquide_platform::PlatformEvent {
+        button_event(x, y, liquide_input::mouse::MouseButton::Left)
+    }
 
     /// Build a render job whose scene contains one window (`window_id`) with a
     /// Content node carrying the flatten id the skeleton filter keys off
@@ -2921,6 +2961,163 @@ mod tests {
         assert!(
             cached.iter().any(|n| n.id == dragged_content_node_id(3)),
             "cache must contain the window's content node when not dragging"
+        );
+    }
+
+    #[test]
+    fn t80_double_buffer_cache_tracks_current_scene_without_reallocating() {
+        // t80-hint Part 2: the previous flat scene is double-buffered — the cache
+        // Vec's backing allocation is REUSED across frames (no per-frame
+        // `flat_nodes_buf.clone()` allocation) while still holding a
+        // byte-faithful copy of the CURRENT clean scene so the prev-vs-current
+        // diff and the cursor-only reuse path stay correct.
+        let mut renderer = NoopRenderer;
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, _rx) = mpsc::channel();
+
+        // Frame A: window 3.
+        DesktopCompositor::render_full_job(
+            windowed_render_job(3, false),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+        let cache_a = cached_flat_nodes.clone().expect("frame A publishes a cache");
+        assert!(
+            cache_a.iter().any(|n| n.id == dragged_content_node_id(3)),
+            "cache must hold frame A's content node"
+        );
+        let cap_after_a = cached_flat_nodes.as_ref().unwrap().capacity();
+        let ptr_after_a = cached_flat_nodes.as_ref().unwrap().as_ptr();
+
+        // Frame B: a DIFFERENT window id (5) → different content node id. The
+        // cache must now reflect frame B (current), proving it is refilled in
+        // place rather than left stale.
+        DesktopCompositor::render_full_job(
+            windowed_render_job(5, false),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+        let cache_b = cached_flat_nodes.as_ref().expect("frame B publishes a cache");
+        assert!(
+            cache_b.iter().any(|n| n.id == dragged_content_node_id(5)),
+            "cache must track the CURRENT (frame B) scene"
+        );
+        assert!(
+            !cache_b.iter().any(|n| n.id == dragged_content_node_id(3)),
+            "cache must NOT retain the stale frame A content node"
+        );
+
+        // Double-buffer proof: the cache's backing allocation was reused (same
+        // pointer + capacity), not re-allocated each frame. Frame B's scene has
+        // the same node count as A, so refilling in place keeps the same buffer.
+        assert_eq!(
+            cached_flat_nodes.as_ref().unwrap().capacity(),
+            cap_after_a,
+            "cache capacity must be retained across frames (no per-frame realloc)"
+        );
+        assert_eq!(
+            cached_flat_nodes.as_ref().unwrap().as_ptr(),
+            ptr_after_a,
+            "cache must reuse the same backing buffer (double-buffer, not clone)"
+        );
+    }
+
+    #[test]
+    fn t80_hover_over_open_menu_produces_small_targeted_damage_not_full() {
+        // t80-hint Part 1 (anti-fake-green): a hover MOVE while a context menu is
+        // open must plumb a SMALL targeted damage hint into `dirty_damage` — NOT
+        // fall to `None` (which forces the ~300ms full-frame path). This is the
+        // end-to-end session test for the `mark_dirty_for_event` plumbing.
+        let mut desktop = DesktopCompositor::new(1920, 1080);
+        desktop.loading = false;
+        desktop.shell.resize_screen(1920.0, 1080.0);
+
+        // Open a context menu via right-click (a Button event → full-dirty, fine
+        // for the first menu frame).
+        let open = right_click_event(400.0, 400.0);
+        assert!(desktop.handle_event(&open));
+        desktop.mark_dirty_for_event(&open, Vec::new());
+        assert!(desktop.shell.any_menu_open(), "menu must be open");
+
+        // Simulate the loop submitting the menu-open frame: `submit_render` takes
+        // `dirty_damage` and the loop clears `dirty`. Without this the pending
+        // full repaint from the open would (correctly) keep the next hint at full.
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        // Now a hover MOVE inside the menu. Snapshot the overlay footprint before
+        // (as the real loop does), handle the move, then mark dirty.
+        let overlay_before = desktop.shell.interactive_overlay_damage();
+        let mv = move_event(420.0, 460.0);
+        let redrew = desktop.handle_event(&mv);
+        assert!(redrew, "hovering a new menu item must request a redraw");
+        desktop.mark_dirty_for_event(&mv, overlay_before);
+
+        let damage = desktop
+            .dirty_damage
+            .as_ref()
+            .expect("hover over an open menu must carry a TARGETED damage hint, not None/full");
+        assert!(
+            !damage.is_full(),
+            "the hover hint must not be a full-frame repaint"
+        );
+        // The hint covers the small menu panel + dock band, never the whole grid.
+        let grid_w = 1920u32.div_ceil(damage.tile_size);
+        let grid_h = 1080u32.div_ceil(damage.tile_size);
+        let full_tiles = grid_w * grid_h;
+        assert!(
+            (damage.tiles.len() as u32) < full_tiles / 2,
+            "hover hint must be a SMALL tile set ({} of {} tiles)",
+            damage.tiles.len(),
+            full_tiles
+        );
+        assert!(!damage.tiles.is_empty(), "hint must actually mark tiles");
+    }
+
+    #[test]
+    fn t80_non_hover_event_still_marks_full_dirty() {
+        // (c) Genuine full-frame cases must still go full: a non-Move event
+        // (here a button press) keeps the conservative full-dirty path even when
+        // a menu is open. Dropping this guard would under-damage clicks that open
+        // windows / start drags / swap themes.
+        let mut desktop = DesktopCompositor::new(1920, 1080);
+        desktop.loading = false;
+        desktop.shell.resize_screen(1920.0, 1080.0);
+
+        let open = right_click_event(400.0, 400.0);
+        let _ = desktop.handle_event(&open);
+        desktop.mark_dirty_for_event(&open, Vec::new());
+        assert!(desktop.shell.any_menu_open());
+        // Seed a stale targeted hint to prove the full path CLEARS it.
+        let mut stale = DamageSet::new(desktop.tiles.tile_size);
+        stale.mark_tile(0, 0);
+        desktop.dirty_damage = Some(stale);
+
+        // A left-button press (not a Move) → must escalate to full-dirty.
+        let click = left_click_event(420.0, 460.0);
+        let overlay_before = desktop.shell.interactive_overlay_damage();
+        let _ = desktop.handle_event(&click);
+        desktop.mark_dirty_for_event(&click, overlay_before);
+
+        assert!(desktop.dirty, "a click must still mark the desktop dirty");
+        assert!(
+            desktop.dirty_damage.is_none(),
+            "a non-hover event must escalate to a FULL repaint (damage hint = None)"
         );
     }
 

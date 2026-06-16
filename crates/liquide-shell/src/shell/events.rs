@@ -373,6 +373,118 @@ impl Shell {
         Some(Rect::new(menu_x, menu_y, SHELL_BAR_MENU_WIDTH, menu_h))
     }
 
+    /// Compute the on-screen bounds of the context menu panel (matching the
+    /// hover hit-test geometry in [`Self::handle_platform_event`]). `None` when
+    /// the context menu is not visible.
+    pub(crate) fn context_menu_bounds(&self) -> Option<Rect> {
+        if !self.context_menu_visible {
+            return None;
+        }
+        let menu_padding = self.menu_padding();
+        let menu_item_height = self.menu_item_height();
+        let context_menu_width = self.context_menu_width();
+        let ctx_items = ContextMenuItem::defaults();
+        let ctx_h = menu_padding * 2.0 + ctx_items.len() as f32 * menu_item_height;
+        let ctx_x = self
+            .context_menu_pos
+            .x
+            .min(self.screen_rect.width - context_menu_width - 4.0)
+            .max(0.0);
+        let ctx_y = self
+            .context_menu_pos
+            .y
+            .min(self.screen_rect.height - ctx_h - 4.0)
+            .max(0.0);
+        Some(Rect::new(ctx_x, ctx_y, context_menu_width, ctx_h))
+    }
+
+    /// Whether any pop-up menu overlay (context / session / app menu) is open.
+    #[must_use]
+    pub fn any_menu_open(&self) -> bool {
+        self.context_menu_visible || self.session_menu_visible || self.app_menu_open.is_some()
+    }
+
+    /// Upper-bound damage region for a hover interaction **while a pop-up menu is
+    /// open** — the proven residual-lag / stale-pixel scenario (t79 Bug 1 & Bug
+    /// 2 #1). Returns `None` when no menu is open, so the caller keeps its own
+    /// conservative damage determination for ordinary hovers (a plain hover can
+    /// surface a tooltip or other unbounded chrome we deliberately do not try to
+    /// bound here).
+    ///
+    /// Returned in logical (CSS-pixel) layout coordinates — the same space the
+    /// renderer rasters in (the shell's `screen_rect` is sized in physical
+    /// pixels by `resize_screen`, matching the session's damage grid). This is a
+    /// deliberate **superset** of what a hover can change while a menu is open:
+    /// the whole menu panel (so any item-hover background flip lands inside it),
+    /// the dock band when shown (dock hover/badge), and a hovered window
+    /// titlebar (decoration-button hover). Each region is expanded by
+    /// [`OVERLAY_BACKDROP_MARGIN`] to also cover the menu's `backdrop-filter`
+    /// blur halo, which samples — and therefore repaints — pixels just outside
+    /// the panel rect.
+    ///
+    /// A consumer must treat this as an authoritative LOWER bound on the damage
+    /// set (mark EVERY returned rect; UNION with any scene diff; never narrow
+    /// past it), otherwise stale pixels can be left behind.
+    ///
+    /// Returns a SET of disjoint regions rather than a single bounding box: a
+    /// top-of-screen menu and the bottom dock band would, if merged into one
+    /// bbox, cover almost the whole screen and defeat the optimization. Each
+    /// region is damaged independently so the empty middle is never repainted.
+    /// Empty `Vec` means no menu is open and the caller should keep its own
+    /// damage determination.
+    #[must_use]
+    pub fn interactive_overlay_damage(&self) -> Vec<Rect> {
+        /// Margin (logical px) added around each overlay region to cover the
+        /// `backdrop-filter: blur(var(--blur-strong))` halo that samples
+        /// neighbouring pixels. Generously larger than the strong-blur radius so
+        /// the hint can never be narrower than the actually-repainted region.
+        const OVERLAY_BACKDROP_MARGIN: f32 = 48.0;
+
+        // Only engage while a menu is open. Without an open menu a hover can
+        // change unbounded chrome (e.g. a tooltip popping up anywhere), which
+        // this targeted hint does not cover — so we leave those frames on the
+        // caller's existing full-frame path.
+        if !self.any_menu_open() {
+            return Vec::new();
+        }
+
+        let mut rects: Vec<Rect> = Vec::new();
+        let mut add = |rect: Rect| rects.push(rect.expand(OVERLAY_BACKDROP_MARGIN));
+
+        if let Some(bounds) = self.context_menu_bounds() {
+            add(bounds);
+        }
+        if self.session_menu_visible {
+            add(self.session_menu_bounds());
+        }
+        if self.app_menu_open.is_some() {
+            // Item count mirrors `handle_platform_event`'s app-menu hover math.
+            const APP_MENU_ITEMS: usize = 5;
+            if let Some(bounds) = self.app_menu_bounds(APP_MENU_ITEMS) {
+                add(bounds);
+            }
+        }
+        if self.dock.is_visible() {
+            add(self.dock.compute_bounds(self.screen_rect));
+        }
+        // A hovered window-decoration button (close/maximize/minimize/pin)
+        // repaints in the window's title bar on hover. Include that band so a
+        // titlebar-button hover-highlight under an open menu is not under-damaged.
+        if let Some((window_id, _zone)) = self.hovered_button {
+            if let Some(window) = self.windows.get(&window_id) {
+                let tbh = self.decoration_style.title_bar_height;
+                add(Rect::new(
+                    window.bounds.x,
+                    window.bounds.y,
+                    window.bounds.width,
+                    tbh,
+                ));
+            }
+        }
+
+        rects
+    }
+
     fn cycle_menu_index(current: Option<usize>, len: usize, delta: isize) -> Option<usize> {
         if len == 0 {
             return None;
@@ -875,23 +987,11 @@ impl Shell {
         }
 
         // Context menu hover
-        if self.context_menu_visible {
+        if let Some(ctx_bounds) = self.context_menu_bounds() {
             let menu_padding = self.menu_padding();
             let menu_item_height = self.menu_item_height();
-            let context_menu_width = self.context_menu_width();
             let ctx_items = ContextMenuItem::defaults();
-            let ctx_h = menu_padding * 2.0 + ctx_items.len() as f32 * menu_item_height;
-            let ctx_x = self
-                .context_menu_pos
-                .x
-                .min(self.screen_rect.width - context_menu_width - 4.0)
-                .max(0.0);
-            let ctx_y = self
-                .context_menu_pos
-                .y
-                .min(self.screen_rect.height - ctx_h - 4.0)
-                .max(0.0);
-            let ctx_bounds = Rect::new(ctx_x, ctx_y, context_menu_width, ctx_h);
+            let ctx_y = ctx_bounds.y;
             let prev_hover = self.context_menu_hover_index;
             if ctx_bounds.contains(pt) {
                 let rel_y = y - ctx_y - menu_padding;
@@ -1176,23 +1276,11 @@ impl Shell {
         }
 
         // Context menu click
-        if self.context_menu_visible {
+        if let Some(ctx_bounds) = self.context_menu_bounds() {
             let menu_padding = self.menu_padding();
             let menu_item_height = self.menu_item_height();
-            let context_menu_width = self.context_menu_width();
             let ctx_items = ContextMenuItem::defaults();
-            let ctx_h = menu_padding * 2.0 + ctx_items.len() as f32 * menu_item_height;
-            let ctx_x = self
-                .context_menu_pos
-                .x
-                .min(self.screen_rect.width - context_menu_width - 4.0)
-                .max(0.0);
-            let ctx_y = self
-                .context_menu_pos
-                .y
-                .min(self.screen_rect.height - ctx_h - 4.0)
-                .max(0.0);
-            let ctx_bounds = Rect::new(ctx_x, ctx_y, context_menu_width, ctx_h);
+            let ctx_y = ctx_bounds.y;
             if ctx_bounds.contains(pt) {
                 let rel_y = y - ctx_y - menu_padding;
                 self.context_menu_visible = false;

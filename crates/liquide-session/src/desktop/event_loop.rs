@@ -88,6 +88,71 @@ impl DesktopCompositor {
         true
     }
 
+    /// Decide how to mark the desktop dirty after an event was handled.
+    ///
+    /// Background: every event that returns `need_redraw` used to call
+    /// [`Self::mark_full_dirty`], which drops any targeted damage hint to `None`.
+    /// On the live threaded path a `None` hint forces the per-frame full-scene
+    /// diff to be the *only* thing that can avoid a ~300ms full-frame raster —
+    /// and whenever the diff yields `None`/empty the frame falls all the way to
+    /// full (residual interactive lag, t79 Bug 2 #1).
+    ///
+    /// For pure hover (`MouseEvent::Move`) interactions the shell already knows
+    /// exactly which interactive-overlay rects can change (the open menu panel,
+    /// the dock band, a hovered titlebar button). We plumb that as a real
+    /// targeted damage hint so the hover frame carries a small, explicit damage
+    /// set instead of falling to the full path. The hint is unioned across the
+    /// overlay footprint BEFORE and AFTER the event (so a hover that moves the
+    /// highlight off one item / dismisses a panel still repaints the vacated
+    /// pixels) and the render thread further UNIONs it with the scene diff
+    /// (`render_thread.rs`), so it can only ever ADD damage, never narrow it.
+    ///
+    /// Every other event kind (button/scroll/key/resize/redraw, and any move
+    /// that is not confined to a known overlay) keeps the conservative
+    /// full-dirty path — a click can open a window, start a drag, swap themes,
+    /// etc., which the overlay hint does not bound.
+    pub(super) fn mark_dirty_for_event(
+        &mut self,
+        event: &liquide_platform::PlatformEvent,
+        overlay_before: Vec<Rect>,
+    ) {
+        use liquide_input::mouse::MouseEvent;
+        use liquide_platform::PlatformEvent;
+
+        let is_hover_move = matches!(
+            event,
+            PlatformEvent::MouseInput {
+                event: MouseEvent::Move { .. },
+                ..
+            }
+        );
+
+        if !is_hover_move {
+            self.mark_full_dirty();
+            return;
+        }
+
+        // Combine the pre- and post-event overlay footprints. The post-event
+        // footprint reflects the new menu/dock/titlebar hover state; the
+        // pre-event one covers anything the move just left (the
+        // previously-hovered item's vacated region). Each rect is marked
+        // independently (the shell returns a disjoint SET, not one bbox) so the
+        // empty space between a top menu and the bottom dock is never repainted.
+        let overlay_after = self.shell.interactive_overlay_damage();
+
+        // No menu open before OR after this move => we cannot bound the change;
+        // keep the conservative full repaint (matches the legacy behavior for
+        // ordinary hovers, e.g. one that surfaces a tooltip).
+        if overlay_before.is_empty() && overlay_after.is_empty() {
+            self.mark_full_dirty();
+            return;
+        }
+
+        for rect in overlay_before.into_iter().chain(overlay_after) {
+            self.mark_rect_dirty(rect);
+        }
+    }
+
     /// Ensure the slow-frame telemetry counter is registered on the viewer
     /// metrics registry. Idempotent — `register` is a no-op if the metric
     /// already exists, so this is safe to call once per `run()`.
@@ -345,8 +410,13 @@ impl DesktopCompositor {
             let mut had_event = false;
             while let Some(event) = platform.poll_event() {
                 had_event = true;
+                // Snapshot the interactive-overlay footprint BEFORE handling the
+                // event so a hover that moves/closes a menu can union the OLD and
+                // NEW footprints (the disappearing panel's pixels must be in the
+                // damage hint or they go stale — t80-hint).
+                let overlay_before = self.shell.interactive_overlay_damage();
                 if self.handle_event(&event) {
-                    self.mark_full_dirty();
+                    self.mark_dirty_for_event(&event, overlay_before);
                 }
             }
 

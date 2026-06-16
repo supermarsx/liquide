@@ -54,6 +54,24 @@ fn key_press(key: KeyCode) -> PlatformEvent {
     }
 }
 
+/// Return the first hint rect that is a strict superset of `panel` (covers it
+/// with a backdrop margin on every side), used to pick the menu's own region
+/// out of the disjoint overlay-hint set.
+fn first_rect_covering(
+    hints: &[liquide_compositor::geometry::Rect],
+    panel: &liquide_compositor::geometry::Rect,
+) -> Option<liquide_compositor::geometry::Rect> {
+    hints
+        .iter()
+        .find(|h| {
+            h.x < panel.x
+                && h.y < panel.y
+                && h.right() > panel.right()
+                && h.bottom() > panel.bottom()
+        })
+        .copied()
+}
+
 // ── Context menu dimensions (must match shell/mod.rs constants) ──────
 const MENU_W: f32 = 200.0;
 const ITEM_H: f32 = 28.0; // CSS: menu-item { height: 28; }
@@ -846,6 +864,136 @@ fn app_menu_keyboard_activation_targets_the_open_window() {
     assert_eq!(action, Some(ShellAction::MinimizeWindow));
     assert_eq!(shell.focus_manager().focused(), Some(second));
     assert!(shell.app_menu_open.is_none());
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Targeted damage hint (t80-hint)
+//
+//  The shell exposes `interactive_overlay_damage()` so the session can plumb a
+//  SMALL, SUPERSET-SAFE damage hint for hover/menu frames instead of forcing a
+//  full-frame repaint. These tests are the anti-fake-green teeth: they fail if
+//  the hint is dropped (returns None when a menu is open) or NARROWED (no longer
+//  fully contains the painted menu panel).
+// ══════════════════════════════════════════════════════════════════
+
+/// (a) An open context menu yields a targeted hint that is SMALL relative to the
+/// full screen — the whole point of the optimization. Fails if a hover/menu
+/// interaction ever falls back to full-frame damage via this path.
+#[test]
+fn overlay_damage_for_context_menu_is_small_not_full() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    assert!(
+        shell.interactive_overlay_damage().is_empty(),
+        "no menu open => no targeted hint (caller keeps its own determination)"
+    );
+
+    shell.handle_platform_event(&mouse_click(100.0, 100.0, MouseButton::Right));
+    assert!(shell.context_menu_visible);
+
+    let hints = shell.interactive_overlay_damage();
+    assert!(
+        !hints.is_empty(),
+        "an open context menu must produce a targeted damage hint"
+    );
+
+    let screen_area = 1920.0 * 1080.0;
+    // The summed area of the disjoint hint rects (menu panel + dock band, each
+    // with a 48px backdrop margin) is tiny compared to the full screen. Assert
+    // it is well under half the screen so this genuinely engages the
+    // partial-damage path rather than degenerating into a full repaint. (Summed
+    // area over-counts any overlap, so this is a conservative upper bound.)
+    let total: f32 = hints.iter().map(|r| r.area()).sum();
+    assert!(
+        total < screen_area * 0.5,
+        "context-menu hint must be SMALL targeted regions, got summed area {total} of {screen_area}"
+    );
+    // And critically: it must NOT degenerate into a single near-full-screen bbox.
+    for r in &hints {
+        assert!(
+            r.area() < screen_area * 0.5,
+            "no single hint rect may approach full-screen, got {}x{}",
+            r.width,
+            r.height
+        );
+    }
+}
+
+/// (b) The hint must be a SUPERSET of the actual painted menu panel — never
+/// narrower. If a future change shrinks the hint below the panel bounds, stale
+/// pixels would be left behind; this test bites.
+#[test]
+fn overlay_damage_is_never_narrower_than_the_menu_panel() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.handle_platform_event(&mouse_click(300.0, 300.0, MouseButton::Right));
+
+    // The painted panel rect, taken from the SAME geometry the hover hit-test
+    // and the renderer use.
+    let panel = shell
+        .context_menu_bounds()
+        .expect("menu visible => bounds exist");
+    let hints = shell.interactive_overlay_damage();
+    assert!(!hints.is_empty(), "menu visible => hint exists");
+
+    // One of the returned regions must fully contain the painted panel AND
+    // extend beyond it on every side (covering the backdrop-blur halo). If a
+    // future change narrowed the hint below the panel, no rect would satisfy
+    // this and the test bites.
+    let covers_panel_with_margin = hints.iter().any(|h| {
+        h.x < panel.x
+            && h.y < panel.y
+            && h.right() > panel.right()
+            && h.bottom() > panel.bottom()
+    });
+    assert!(
+        covers_panel_with_margin,
+        "some hint rect must be a strict superset of painted panel {:?}; got {:?}",
+        (panel.x, panel.y, panel.right(), panel.bottom()),
+        hints
+            .iter()
+            .map(|h| (h.x, h.y, h.right(), h.bottom()))
+            .collect::<Vec<_>>(),
+    );
+}
+
+/// The hint tracks the menu's ACTUAL position — moving the menu moves the hint,
+/// so it can never be a stale rectangle that misses the real panel.
+#[test]
+fn overlay_damage_follows_the_menu_position() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+
+    shell.handle_platform_event(&mouse_click(200.0, 200.0, MouseButton::Right));
+    let panel_a = shell.context_menu_bounds().unwrap();
+    let menu_hint_a = first_rect_covering(&shell.interactive_overlay_damage(), &panel_a)
+        .expect("hint A must cover panel A");
+
+    shell.handle_platform_event(&key_press(KeyCode::Escape));
+    shell.handle_platform_event(&mouse_click(900.0, 700.0, MouseButton::Right));
+    let panel_b = shell.context_menu_bounds().unwrap();
+    let menu_hint_b = first_rect_covering(&shell.interactive_overlay_damage(), &panel_b)
+        .expect("hint B must cover panel B");
+
+    assert!(
+        menu_hint_b.x > menu_hint_a.x && menu_hint_b.y > menu_hint_a.y,
+        "the menu hint must move with the menu: a={:?} b={:?}",
+        (menu_hint_a.x, menu_hint_a.y),
+        (menu_hint_b.x, menu_hint_b.y),
+    );
+}
+
+/// (c) Closing the menu drops the hint to None, so the caller falls back to its
+/// own (conservative) damage determination — proving the hint is overlay-scoped
+/// and not a permanently-stuck rectangle.
+#[test]
+fn overlay_damage_clears_when_no_overlay_active() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.handle_platform_event(&mouse_click(400.0, 400.0, MouseButton::Right));
+    assert!(!shell.interactive_overlay_damage().is_empty());
+
+    shell.handle_platform_event(&key_press(KeyCode::Escape));
+    assert!(
+        shell.interactive_overlay_damage().is_empty(),
+        "with no menu open the shell must report no targeted hint"
+    );
 }
 
 #[test]
