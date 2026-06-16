@@ -592,4 +592,64 @@ mod tests {
         let style = resolver.resolve("card", &[], &[], None).unwrap();
         assert_eq!(style.width, Some(200.0), "50cqw of 400px container");
     }
+
+    #[test]
+    fn test_resolve_container_block_and_minmax() {
+        // Guard cqh/cqb/cqmin/cqmax against raw passthrough or wrong-axis bugs.
+        // Container 400×300 → min axis 300, max axis 400.
+        let css = "card { width: 50cqmin; height: 50cqmax; border-radius: 10cqh; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let mut ctx = ResolveContext::from_viewport(1920.0, 1080.0);
+        ctx.container_width = 400.0;
+        ctx.container_height = 300.0;
+        let resolver = StyleResolver::new(engine).with_context(ctx);
+        let style = resolver.resolve("card", &[], &[], None).unwrap();
+        // 50cqmin = 50% of min(400,300)=300 → 150 (raw=50, cqmax-confusion=200).
+        assert_eq!(style.width, Some(150.0), "50cqmin of min(400,300)=300");
+        // 50cqmax = 50% of max(400,300)=400 → 200 (raw=50, cqmin-confusion=150).
+        assert_eq!(style.height, Some(200.0), "50cqmax of max(400,300)=400");
+        // 10cqh = 10% of container height 300 → 30 (raw=10, against-width=40).
+        assert_eq!(style.border_radius, 30.0, "10cqh of 300px container height");
+    }
+
+    #[test]
+    fn test_resolve_vmin_vmax() {
+        // Guard vmin/vmax against raw passthrough or axis confusion.
+        // Viewport 1000×800 → vmin axis 800, vmax axis 1000.
+        let css = "panel { width: 10vmin; height: 10vmax; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let resolver =
+            StyleResolver::new(engine).with_context(ResolveContext::from_viewport(1000.0, 800.0));
+        let style = resolver.resolve("panel", &[], &[], None).unwrap();
+        // 10vmin = 10% of min(1000,800)=800 → 80 (raw=10, vmax-confusion=100).
+        assert_eq!(style.width, Some(80.0), "10vmin of min(1000,800)=800");
+        // 10vmax = 10% of max(1000,800)=1000 → 100 (raw=10, vmin-confusion=80).
+        assert_eq!(style.height, Some(100.0), "10vmax of max(1000,800)=1000");
+    }
+
+    #[test]
+    fn test_resolve_small_large_viewport_units() {
+        // Guard svh/lvh against raw passthrough; resolve against viewport height.
+        let css = "a { height: 100svh; } b { height: 50lvh; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let resolver =
+            StyleResolver::new(engine).with_context(ResolveContext::from_viewport(900.0, 600.0));
+        let svh = resolver.resolve("a", &[], &[], None).unwrap();
+        let lvh = resolver.resolve("b", &[], &[], None).unwrap();
+        assert_eq!(svh.height, Some(600.0), "100svh of 600px (raw would be 100)");
+        assert_eq!(lvh.height, Some(300.0), "50lvh of 600px (raw would be 50)");
+    }
+
+    #[test]
+    fn test_resolve_line_height_unit() {
+        // Guard lh against raw passthrough; lh ≈ 1.2 × font-size.
+        let css = "row { height: 2lh; }";
+        let engine = ThemeEngine::from_css(css).unwrap();
+        let mut ctx = ResolveContext::default();
+        ctx.font_size = 20.0;
+        let resolver = StyleResolver::new(engine).with_context(ctx);
+        let style = resolver.resolve("row", &[], &[], None).unwrap();
+        // 2lh = 2 × 20 × 1.2 → 48 (raw would be 2, em-only would be 40).
+        assert_eq!(style.height, Some(48.0), "2lh of 20px font (1.2 line box)");
+    }
 }
