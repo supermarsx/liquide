@@ -31,7 +31,7 @@ impl SpringLoadConfig {
     #[must_use]
     pub fn disabled() -> Self {
         Self {
-            hover_delay_ms: 800,
+            hover_delay_ms: 350,
             enabled: false,
         }
     }
@@ -40,7 +40,10 @@ impl SpringLoadConfig {
 impl Default for SpringLoadConfig {
     fn default() -> Self {
         Self {
-            hover_delay_ms: 800,
+            // Spring-load hover-open delay. Kept snappy (350ms) so dragging
+            // over a folder reveals its contents without a long dwell; a
+            // longer delay (e.g. 800ms) feels janky/unresponsive.
+            hover_delay_ms: 350,
             enabled: true,
         }
     }
@@ -238,8 +241,51 @@ mod tests {
     #[test]
     fn test_config_default() {
         let cfg = SpringLoadConfig::default();
-        assert_eq!(cfg.hover_delay_ms, 800);
+        assert_eq!(cfg.hover_delay_ms, 350);
         assert!(cfg.enabled);
+    }
+
+    /// Regression (t77-A4): the default spring-load hover-open delay must be
+    /// 350ms, not the old 800ms. Pins the exact responsiveness budget so a
+    /// revert to 800 (or any other value) fails loudly.
+    #[test]
+    fn test_default_hover_delay_is_350ms() {
+        assert_eq!(
+            SpringLoadConfig::default().hover_delay_ms,
+            350,
+            "default spring-load hover delay regressed away from 350ms"
+        );
+    }
+
+    /// Regression (t77-A4): with the default config, the state machine must
+    /// NOT fire OpenFolder before 350ms of dwell, and MUST fire once the
+    /// accumulated hover time reaches 350ms.
+    ///
+    /// Teeth: at the old 800ms delay, a 349ms+1ms (=350ms total) dwell would
+    /// still be below threshold, so the final assertion (fires at exactly
+    /// 350ms) would fail.
+    #[test]
+    fn test_default_fires_at_350ms_not_before() {
+        let mut state = SpringLoadState::with_defaults();
+        let rect = test_rect();
+        let path = "/home/folder";
+
+        // Just under threshold: 349ms accumulated -> must NOT fire.
+        let r = state.tick((150.0, 125.0), rect, path, 349.0);
+        assert!(
+            r.is_none(),
+            "spring-load fired before reaching the 350ms threshold (at 349ms)"
+        );
+        assert!(state.is_pending());
+
+        // Cross the 350ms threshold (349 + 1 = 350ms) -> must fire exactly once.
+        let r = state.tick((150.0, 125.0), rect, path, 1.0);
+        assert_eq!(
+            r,
+            Some(SpringLoadAction::OpenFolder(path.to_string())),
+            "spring-load did not fire OpenFolder at the 350ms threshold"
+        );
+        assert!(!state.is_pending(), "state should have fired and cleared pending");
     }
 
     #[test]
