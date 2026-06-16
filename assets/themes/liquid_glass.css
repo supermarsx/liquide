@@ -18,9 +18,6 @@ desktop-background {
        same blue-to-violet wash (bloom kept in the upper band, deep-even dark
        body) tuned so the translucent status bar keeps contrast against the
        desktop body rather than reading as a flat slab. */
-    /* Fallback gradient FIRST: this is what paints if the image declaration
-       below is absent/unsupported (later `background` wins the cascade when the
-       wallpaper is present). Same blue-to-violet wash from t69. */
     background: linear-gradient(
         180deg,
         rgb(14, 16, 44) 0%,
