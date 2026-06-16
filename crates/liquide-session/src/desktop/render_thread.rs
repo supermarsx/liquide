@@ -21,6 +21,34 @@ use super::PresentPacingState;
 use super::cursor_state::CURSOR_SIZE;
 use super::scene_split::{SplitScene, split_flat_nodes};
 
+// Test-observable counter of how many times the worker actually executed the
+// per-frame `scene_diff_damage` (the O(n) diff) inside `render_full_job`
+// (t83-snappy lever #4). The incremental fast path bumps this NOT at all when a
+// frame carries authoritative precomputed damage, and exactly once on a frame
+// that takes the conservative diff path. Used only by tests to prove the bypass
+// (a) skips the diff on an incremental frame and (b) still runs it on a full
+// rebuild.
+//
+// THREAD-LOCAL on purpose: in tests `render_full_job` is invoked directly on the
+// calling test thread, so a thread-local counter is fully isolated from other
+// tests running concurrently (a process-global atomic would race). In the real
+// runtime the worker runs on its own thread; the counter is test-only and never
+// read in production.
+#[cfg(test)]
+thread_local! {
+    static SCENE_DIFF_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+#[inline]
+fn note_scene_diff_ran() {
+    SCENE_DIFF_RUNS.with(|c| c.set(c.get() + 1));
+}
+
+#[cfg(not(test))]
+#[inline]
+fn note_scene_diff_ran() {}
+
 // ---------------------------------------------------------------------------
 // Render thread types
 // ---------------------------------------------------------------------------
@@ -36,6 +64,17 @@ pub(super) struct RenderJob {
     pub(super) tile_size: u32,
     /// Optional tile damage hint. None means render the full frame.
     pub(super) damage: Option<DamageSet>,
+    /// AUTHORITATIVE, superset-safe tile damage precomputed by the shell on the
+    /// incremental fast path (t82/t83-snappy lever #4). When `Some`, this set is
+    /// a proven upper bound on everything that changed this frame, so the worker
+    /// uses it verbatim and SKIPS both the per-frame `scene_diff_damage` and the
+    /// prev-scene clone — the two O(n) costs the diff path otherwise pays every
+    /// frame. `None` keeps the conservative diff path. Derived from
+    /// `Shell::take_precomputed_damage()` (screen-pixel rects + 48px blur margin)
+    /// converted to tiles on the main thread; left `None` if that conversion is
+    /// empty / covers the whole frame / otherwise can't be proven a true superset
+    /// (correctness-first: any doubt → fall back to the diff/full path).
+    pub(super) authoritative_damage: Option<DamageSet>,
     /// Window ID being dragged (for skeleton rendering - outline only).
     pub(super) dragged_window: Option<u64>,
     /// When true, the OS renders the cursor — skip the software cursor node.
@@ -275,6 +314,59 @@ fn full_damage(tile_size: u32, width: u32, height: u32) -> DamageSet {
     let grid_w = width.div_ceil(tile_size);
     let grid_h = height.div_ceil(tile_size);
     DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive)
+}
+
+/// Convert a shell-precomputed, superset-safe damage rect set (screen-pixel
+/// space, already padded with the 48px backdrop-blur margin by the producer —
+/// see `Shell::take_precomputed_damage`) into a tile [`DamageSet`] for the
+/// incremental fast path (t83-snappy lever #4).
+///
+/// Rects are rasterised to tiles with the SAME clamp/floor/ceil expansion the
+/// scene diff uses (see [`scene_diff_damage`]), so each rect's tile coverage is a
+/// superset of the rect — the tile grid never narrows a damaged region.
+///
+/// Returns `None` (caller falls back to the conservative diff/full path) when the
+/// hint cannot be trusted as a true frame superset: empty input, degenerate
+/// frame dimensions, every rect rasterising to nothing, or the result already
+/// covering (nearly) the whole frame — in which case the plain full-frame path is
+/// both cheaper and unambiguous. CORRECTNESS: this only ever marks tiles; any
+/// doubt collapses to `None`, never to a narrower set.
+fn precomputed_damage_to_tiles(
+    rects: &[Rect],
+    tile_size: u32,
+    width: u32,
+    height: u32,
+) -> Option<DamageSet> {
+    if rects.is_empty() || tile_size == 0 || width == 0 || height == 0 {
+        return None;
+    }
+    let grid_w = width.div_ceil(tile_size);
+    let grid_h = height.div_ceil(tile_size);
+    let fb_w = width as f32;
+    let fb_h = height as f32;
+    let mut damage = DamageSet::new(tile_size);
+    for r in rects {
+        let x0 = r.x.max(0.0).min(fb_w).floor();
+        let y0 = r.y.max(0.0).min(fb_h).floor();
+        let x1 = (r.x + r.width).max(0.0).min(fb_w).ceil();
+        let y1 = (r.y + r.height).max(0.0).min(fb_h).ceil();
+        let w = (x1 - x0).max(0.0) as u32;
+        let h = (y1 - y0).max(0.0) as u32;
+        if w == 0 || h == 0 {
+            continue;
+        }
+        damage.mark_rect(x0 as u32, y0 as u32, w, h, grid_w, grid_h);
+    }
+    damage.dedup();
+    if damage.is_empty() {
+        return None;
+    }
+    // If the bounded hint already covers (nearly) the whole frame there is no
+    // partial-path benefit; let the caller take the simpler full path.
+    if damage_covers_frame(&damage, width, height) {
+        return None;
+    }
+    Some(damage)
 }
 
 /// The synthetic cursor `FlatNode` id (see [`cursor_flat_node`]). The cursor is
@@ -1224,6 +1316,33 @@ impl DesktopCompositor {
         self.sync_devtools_template();
         let mut scene = self.shell.build_scene();
 
+        // INCREMENTAL FAST PATH (t83-snappy lever #4). Immediately after
+        // `build_scene`, drain any superset-safe precomputed damage the shell
+        // produced for a contained chrome change (hover highlight, badge, etc.).
+        // When present it is authoritative — the worker uses it verbatim and
+        // SKIPS the per-frame O(n) `scene_diff_damage` + prev-scene clone.
+        //
+        // MUST be a `take` regardless of whether we use the result, so the
+        // channel resets to `None` for the next build (the producer's contract).
+        //
+        // We DISCARD the hint (→ conservative diff path) when:
+        //  * a window is being dragged — the worker skeletonises the scene and
+        //    the chrome-only hint would not cover the moving window; or
+        //  * the devtools panel is visible — `overlay_scene` (below) injects
+        //    nodes AFTER `build_scene` that the chrome hint cannot bound, so the
+        //    hint would no longer be a true frame superset.
+        // Any conversion that can't be proven a superset also collapses to
+        // `None` (see `precomputed_damage_to_tiles`), keeping correctness first.
+        let precomputed = self.shell.take_precomputed_damage();
+        let dragged_window = self.shell.dragged_window();
+        let authoritative_damage = if dragged_window.is_some() || self.devtools_panel_visible() {
+            None
+        } else {
+            precomputed.and_then(|rects| {
+                precomputed_damage_to_tiles(&rects, self.tiles.tile_size, self.width, self.height)
+            })
+        };
+
         // Overlay devtools panel scene nodes (if active).
         self.dt.overlay_scene(
             &mut scene,
@@ -1241,9 +1360,6 @@ impl DesktopCompositor {
         let images = self.drain_new_images();
         let cursor_theme = self.shell.cursor_theme();
 
-        // Get current state for telemetry.
-        let dragged_window = self.shell.dragged_window();
-
         // Update telemetry for interactive window.
         if let Some(wid) = dragged_window {
             if let Ok(mut telemetry) = self.telemetry.write() {
@@ -1260,6 +1376,7 @@ impl DesktopCompositor {
             height: self.height,
             tile_size: self.tiles.tile_size,
             damage: self.dirty_damage.take(),
+            authoritative_damage,
             dragged_window: dragged_window.map(|wid| wid.0),
             hardware_cursor: self.cursor.use_hardware,
             images,
@@ -1982,7 +2099,24 @@ impl DesktopCompositor {
         // and the drag path already feeds the renderer its own scene). The cache
         // holds the UNFILTERED current scene, so the diff uses pre-cursor,
         // pre-skeleton geometry — exactly the painted scene.
-        let scene_damage = if latest_job.dragged_window.is_none() {
+        //
+        // INCREMENTAL FAST PATH (t83-snappy lever #4): when the job carries
+        // shell-precomputed `authoritative_damage`, that set is already a proven
+        // superset of everything that changed this frame, so we SKIP both the
+        // O(n) `scene_diff_damage` AND the per-frame prev-scene clone below — the
+        // two costs the diff path otherwise pays every frame. We must NOT publish
+        // a fresh cursor cache from this frame either: the authoritative path
+        // does not refill `prev`, so a later cursor-only frame reusing it would
+        // miss this frame's change. Instead we INVALIDATE the cache (the same
+        // safe fallback the drag path uses): the next cursor-only frame skips
+        // (waits for a full frame) and the next diff frame, finding no `prev`,
+        // returns `None` → full repaint. Both fallbacks are SUPERSETS — they
+        // never narrow damage, so no stale pixel survives the bypass.
+        let has_authoritative = latest_job.authoritative_damage.is_some();
+        let scene_damage = if has_authoritative {
+            None
+        } else if latest_job.dragged_window.is_none() {
+            note_scene_diff_ran();
             cached_flat_nodes.as_deref().and_then(|prev| {
                 scene_diff_damage(
                     prev,
@@ -1996,7 +2130,11 @@ impl DesktopCompositor {
             None
         };
 
-        if latest_job.dragged_window.is_none() {
+        if has_authoritative {
+            // Skip the prev-scene clone (lever #4). Drop the cursor cache so no
+            // later cursor-only frame reuses a scene missing this frame's change.
+            *cached_flat_nodes = None;
+        } else if latest_job.dragged_window.is_none() {
             // Double-buffer the previous flat scene instead of allocating a fresh
             // Vec every frame (t80-hint / t79 Bug 2 #1). The cache buffer's
             // backing storage is retained across frames and refilled in place, so
@@ -2074,8 +2212,20 @@ impl DesktopCompositor {
         //    request can mean "something the flat scene cannot express changed"
         //    (late wallpaper decode, theme reload, first paint), which must not
         //    be under-damaged. The post-raster hash trim is the final gate.
+        //  * Incremental fast path (`authoritative_damage`, t83-snappy lever #4):
+        //    the shell already computed a proven superset of this frame's change,
+        //    so use it directly INSTEAD of the diff path — still UNIONed with any
+        //    caller `damage` hint (e.g. a clock-tick dirty region) so a
+        //    co-incident hinted change is never dropped. `needs_new` still wins:
+        //    a fresh/resized framebuffer has no trustworthy previous pixels, so a
+        //    partial set would leave the rest of the surface uninitialised.
         let mut damage = if needs_new {
             full_damage(latest_job.tile_size, latest_job.width, latest_job.height)
+        } else if let Some(mut authoritative) = latest_job.authoritative_damage.take() {
+            if let Some(hint) = latest_job.damage.take() {
+                authoritative.merge(&hint);
+            }
+            authoritative
         } else {
             match latest_job.damage {
                 Some(mut hint) => {
@@ -2527,6 +2677,7 @@ mod tests {
             height: 128,
             tile_size: 64,
             damage: None,
+            authoritative_damage: None,
             dragged_window: dragged.then_some(window_id),
             hardware_cursor: true,
             images: Vec::new(),
@@ -2552,6 +2703,7 @@ mod tests {
             height: 64,
             tile_size: 64,
             damage: None,
+            authoritative_damage: None,
             dragged_window: None,
             hardware_cursor: true,
             images: Vec::new(),
@@ -2743,6 +2895,233 @@ mod tests {
         assert_eq!(renderer.damages[1].len(), 1);
         assert_eq!(renderer.damages[1].tiles[0].x, 1);
         assert_eq!(renderer.damages[1].tiles[0].y, 0);
+    }
+
+    // ── t83-snappy lever #4: precomputed-damage bypass (incremental fast path) ──
+    //
+    // These tests prove the worker SKIPS the per-frame `scene_diff_damage` when a
+    // job carries authoritative precomputed damage, still RUNS it for a
+    // conventional frame, and that the bypassed frame's damage is a SUPERSET of
+    // the change (never narrower). They are anti-fake-green: each fails if the
+    // bypass either runs the diff redundantly OR narrows damage below the hint.
+
+    /// Reads the per-thread `scene_diff_damage` run counter. Each test drives
+    /// `render_full_job` directly on its own thread, so this is isolated.
+    fn scene_diff_runs() -> usize {
+        SCENE_DIFF_RUNS.with(std::cell::Cell::get)
+    }
+
+    /// Build a non-drag 128×128 (tile 64 → 2×2 grid) job whose authoritative
+    /// damage marks exactly tile (0,0) — a contained, sub-full superset such as a
+    /// menu-item / dock hover-highlight would produce.
+    fn incremental_hover_job(id: u64) -> RenderJob {
+        let mut job = test_render_job(id);
+        job.width = 128;
+        job.height = 128;
+        let mut authoritative = DamageSet::new(64);
+        authoritative.mark_tile(0, 0);
+        job.authoritative_damage = Some(authoritative);
+        job
+    }
+
+    fn full_size_job(id: u64) -> RenderJob {
+        let mut job = test_render_job(id);
+        job.width = 128;
+        job.height = 128;
+        job
+    }
+
+    #[test]
+    fn t83_incremental_frame_uses_precomputed_damage_and_skips_scene_diff() {
+        let mut renderer = RecordingRenderer::default();
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, _rx) = mpsc::channel();
+
+        // Frame 1: establish the framebuffer + a previous flat scene (so a diff
+        // would be POSSIBLE on frame 2 — this is what makes the skip meaningful).
+        DesktopCompositor::render_full_job(
+            full_size_job(1),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+        assert!(
+            cached_flat_nodes.is_some(),
+            "a normal non-drag frame must publish a reusable prev-scene cache"
+        );
+
+        // Frame 2: carries authoritative precomputed damage. The diff MUST NOT run.
+        let before = scene_diff_runs();
+        DesktopCompositor::render_full_job(
+            incremental_hover_job(2),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+        assert_eq!(
+            scene_diff_runs(),
+            before,
+            "incremental frame with authoritative damage must SKIP scene_diff_damage"
+        );
+
+        // The damage fed to the renderer is the authoritative set — exactly the
+        // hinted tile (0,0), and NOT the full 4-tile frame.
+        let fed = renderer.damages.last().expect("frame 2 rendered");
+        assert!(!fed.is_full(), "bypass must not widen to a full repaint");
+        assert!(
+            fed.tiles.iter().any(|t| t.x == 0 && t.y == 0),
+            "authoritative damage tile (0,0) must be present in the rendered damage"
+        );
+
+        // Lever #4 also skips the prev-scene clone: the cursor cache is dropped so
+        // no later cursor-only frame reuses a scene missing this frame's change.
+        assert!(
+            cached_flat_nodes.is_none(),
+            "authoritative frame must invalidate the prev-scene cache (clone skipped)"
+        );
+    }
+
+    #[test]
+    fn t83_full_rebuild_frame_still_runs_scene_diff() {
+        let mut renderer = RecordingRenderer::default();
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, _rx) = mpsc::channel();
+
+        // Frame 1 establishes the framebuffer + prev scene.
+        DesktopCompositor::render_full_job(
+            full_size_job(1),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+
+        // Frame 2: NO authoritative damage (a full rebuild / fallback). The
+        // conservative diff path MUST run exactly once.
+        let before = scene_diff_runs();
+        DesktopCompositor::render_full_job(
+            full_size_job(2),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+        assert_eq!(
+            scene_diff_runs(),
+            before + 1,
+            "a frame WITHOUT precomputed damage must run scene_diff_damage (conservative path)"
+        );
+    }
+
+    #[test]
+    fn t83_precomputed_damage_is_superset_safe_no_stale_pixel() {
+        // The damage fed to the renderer on the incremental frame must be a
+        // SUPERSET of the precomputed hint — every hinted tile is rendered (no
+        // stale pixel left behind), and any co-incident caller `damage` hint is
+        // UNIONed in rather than dropped.
+        let mut renderer = RecordingRenderer::default();
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached_flat_nodes = None;
+        let mut flat_nodes_buf = Vec::new();
+        let (tx, _rx) = mpsc::channel();
+
+        DesktopCompositor::render_full_job(
+            full_size_job(1),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+
+        // Authoritative hint covers tile (0,0); the caller ALSO hints tile (1,1)
+        // (e.g. a co-incident clock tick). The union of both must reach the
+        // renderer — dropping either would leave a stale pixel.
+        let mut job = full_size_job(2);
+        let mut authoritative = DamageSet::new(64);
+        authoritative.mark_tile(0, 0);
+        job.authoritative_damage = Some(authoritative);
+        let mut hint = DamageSet::new(64);
+        hint.mark_tile(1, 1);
+        job.damage = Some(hint);
+
+        DesktopCompositor::render_full_job(
+            job,
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached_flat_nodes,
+            &mut flat_nodes_buf,
+            &tx,
+        );
+
+        let fed = renderer.damages.last().expect("frame 2 rendered");
+        let covers = |tx: u32, ty: u32| fed.is_full() || fed.tiles.iter().any(|t| t.x == tx && t.y == ty);
+        assert!(
+            covers(0, 0),
+            "authoritative tile (0,0) must be rendered (no stale pixel)"
+        );
+        assert!(
+            covers(1, 1),
+            "co-incident caller hint tile (1,1) must be UNIONed in, not dropped"
+        );
+    }
+
+    #[test]
+    fn t83_authoritative_damage_to_tiles_converts_rects_superset_safe() {
+        // A 60×60 chrome rect at (10,10) at tile 64 on a 256×256 frame straddles
+        // only tile (0,0); the helper must mark at least that tile and never widen
+        // to the whole frame. (Producer already pads with the 48px blur margin.)
+        let rects = [Rect::new(10.0, 10.0, 60.0, 60.0)];
+        let damage = precomputed_damage_to_tiles(&rects, 64, 256, 256)
+            .expect("a small contained rect yields a bounded, non-full damage set");
+        assert!(!damage.is_full(), "a small rect must not produce full-frame damage");
+        assert!(
+            damage.tiles.iter().any(|t| t.x == 0 && t.y == 0),
+            "the rect's tile (0,0) must be marked (superset of the rect)"
+        );
+
+        // A rect covering the whole frame collapses to None → caller takes the
+        // simpler/unambiguous full path.
+        let whole = [Rect::new(0.0, 0.0, 256.0, 256.0)];
+        assert!(
+            precomputed_damage_to_tiles(&whole, 64, 256, 256).is_none(),
+            "a frame-covering rect must collapse to None (full-path fallback)"
+        );
+
+        // Empty input / degenerate dims → None.
+        assert!(precomputed_damage_to_tiles(&[], 64, 256, 256).is_none());
+        assert!(precomputed_damage_to_tiles(&rects, 0, 256, 256).is_none());
     }
 
     #[test]

@@ -486,7 +486,7 @@ impl DesktopCompositor {
         true
     }
 
-    fn devtools_panel_visible(&self) -> bool {
+    pub(super) fn devtools_panel_visible(&self) -> bool {
         self.dt
             .devtools
             .as_ref()
