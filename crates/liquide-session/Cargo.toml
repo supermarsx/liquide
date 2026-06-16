@@ -36,6 +36,10 @@ liquide-theme-css.workspace = true
 liquide-plugin-host.workspace = true
 liquide-input.workspace = true
 liquide-platform.workspace = true
+# Multi-monitor foundation (t73-multimon §3.1): the session reads the platform
+# monitor set and builds the `liquide_display::DesktopLayout` it hands to the
+# shell. Previously unconsumed (t63 §2).
+liquide-display.workspace = true
 liquide-clipboard.workspace = true
 liquide-audio.workspace = true
 liquide-interop.workspace = true

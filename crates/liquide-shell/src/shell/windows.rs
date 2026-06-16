@@ -275,6 +275,9 @@ impl Shell {
             .record_at(id, WindowEventKind::Opened, ts);
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowCreated { window_id: id.0 });
+        // Assign the window to the monitor under its spawn center (t73-multimon
+        // §3.3). No-op when no multi-monitor layout is installed.
+        self.assign_window_to_monitor(id);
         self.mark_window_scene_dirty();
         id
     }
@@ -307,6 +310,9 @@ impl Shell {
         }
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowCreated { window_id: id.0 });
+        // Assign the window to the monitor under its spawn center (t73-multimon
+        // §3.3). No-op when no multi-monitor layout is installed.
+        self.assign_window_to_monitor(id);
         self.mark_window_scene_dirty();
         id
     }
@@ -333,6 +339,8 @@ impl Shell {
         // app's runtime is freed and no stale view/state outlives the window.
         self.app_views.remove(&id);
         self.app_content_revs.remove(&id);
+        // Drop the window's monitor assignment (t73-multimon §3.3).
+        self.window_monitors.remove(&id);
         if matches!(self.last_titlebar_click, Some((wid, _, _)) if wid == id) {
             self.last_titlebar_click = None;
         }

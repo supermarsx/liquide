@@ -22,6 +22,7 @@ mod event_handling;
 mod event_loop;
 mod loading;
 pub mod lockfree_queue;
+mod multimon;
 mod paint_state;
 mod render_thread;
 mod scene_split;

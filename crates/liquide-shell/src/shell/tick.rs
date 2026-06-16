@@ -577,13 +577,16 @@ impl Shell {
                 true
             }
             ShellAction::MoveToMonitorLeft => {
-                // Headless monitor proxy: shift the focused window one screen
-                // width to the left (the simulated shell has a single logical
-                // screen, so "monitors" are adjacent screen-width slots). The
-                // host multi-monitor compositor performs the real monitor move.
-                self.move_focused_window_by_monitor(-1.0)
+                // Real multi-monitor move when a DesktopLayout is installed
+                // (t73-multimon §3.4): step to the previous monitor and remap the
+                // window rect into its work area. With no layout (headless/test)
+                // this falls back to the single-screen shift proxy; a
+                // single-monitor layout is an acknowledged no-op.
+                self.move_focused_window_to_adjacent_monitor(-1)
             }
-            ShellAction::MoveToMonitorRight => self.move_focused_window_by_monitor(1.0),
+            ShellAction::MoveToMonitorRight => {
+                self.move_focused_window_to_adjacent_monitor(1)
+            }
             ShellAction::ScreenshotFull => {
                 self.request_screenshot(crate::shell::ScreenshotRequest::Full)
             }
@@ -610,7 +613,7 @@ impl Shell {
     /// +1 = right monitor). Headless single-screen proxy for `MoveToMonitor*`.
     /// Returns `true` (the gesture is always handled, even with no focused
     /// window — the action is acknowledged so it never silently no-ops).
-    fn move_focused_window_by_monitor(&mut self, direction: f32) -> bool {
+    pub(crate) fn move_focused_window_by_monitor(&mut self, direction: f32) -> bool {
         if let Some(wid) = self.focus.focused() {
             let dx = self.screen_rect.width * direction;
             if let Some(window) = self.windows.get_mut(&wid) {

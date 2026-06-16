@@ -444,6 +444,62 @@ impl ShortcutManager {
         self.bindings.insert(key, action)
     }
 
+    /// Bind a key combination expressed as a display string (e.g. `"Ctrl+Shift+A"`,
+    /// `"Super+L"`) to a shell action (t73-input hotkeys fold).
+    ///
+    /// This is the user-customization entry point folded in from
+    /// `liquide-hotkeys`: it parses the binding through the shared
+    /// `liquide_hotkeys::KeyBinding` display grammar — which both crates speak —
+    /// then translates the parsed key/modifiers into the shell's own
+    /// [`KeyBinding`]. Modifiers are byte-identical between the two crates
+    /// (`SHIFT=0x01`, `CTRL=0x02`, `ALT=0x04`, `SUPER=0x08` — verified by
+    /// t73-input), so the bits pass straight through. Returns the displaced
+    /// action (if any) on success, or `None` if the string did not parse OR the
+    /// key has no `liquide_input::KeyCode` equivalent.
+    pub fn bind_from_str(&mut self, binding: &str, action: ShellAction) -> Option<ShellAction> {
+        let parsed = liquide_hotkeys::KeyBinding::parse(binding)?;
+        let key = hotkey_key_to_keycode(parsed.key)?;
+        let modifiers = Modifiers::from_bits(parsed.modifiers.0);
+        self.bind(KeyBinding::new(key, modifiers), action)
+    }
+
+    /// Seed the shell's bindings from the canonical `liquide-hotkeys`
+    /// `default_bindings()` set, folding the global-hotkey binding model into the
+    /// single shell dispatcher (t73-input hotkeys decision: hotkeys is the
+    /// *data/parser* layer, `ShortcutManager` stays the sole dispatcher — no
+    /// second `GlobalHotkeyManager` on the live path).
+    ///
+    /// Each `(KeyBinding, HotkeyAction)` whose action maps to a `ShellAction`
+    /// (see [`hotkey_action_to_shell_action`]) and whose key has a `KeyCode`
+    /// equivalent is inserted. Existing bindings are OVERWRITTEN by the imported
+    /// ones for the same combination, so this is normally called to apply a user
+    /// hotkey profile on top of the built-in defaults. Returns the number of
+    /// bindings imported.
+    pub fn import_hotkey_defaults(&mut self) -> usize {
+        self.import_hotkey_bindings(liquide_hotkeys::default_bindings())
+    }
+
+    /// Import an arbitrary set of `liquide-hotkeys` bindings into the shell's
+    /// dispatcher (t73-input hotkeys fold). See [`Self::import_hotkey_defaults`].
+    pub fn import_hotkey_bindings(
+        &mut self,
+        bindings: Vec<(liquide_hotkeys::KeyBinding, liquide_hotkeys::HotkeyAction)>,
+    ) -> usize {
+        let mut imported = 0;
+        for (kb, action) in bindings {
+            let Some(key) = hotkey_key_to_keycode(kb.key) else {
+                continue;
+            };
+            let Some(shell_action) = hotkey_action_to_shell_action(&action) else {
+                continue;
+            };
+            let modifiers = Modifiers::from_bits(kb.modifiers.0);
+            self.bind(KeyBinding::new(key, modifiers), shell_action);
+            imported += 1;
+        }
+        imported
+    }
+
     /// Remove a binding, returning the action that was bound.
     pub fn unbind(&mut self, key: &KeyBinding) -> Option<ShellAction> {
         self.bindings.remove(key)
@@ -500,4 +556,141 @@ impl Default for ShortcutManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Translate a `liquide_hotkeys::Key` into the live shell `liquide_input::KeyCode`
+/// (t73-input hotkeys fold). Returns `None` for keys with no `KeyCode`
+/// equivalent (e.g. dedicated media/volume keys the shell input enum does not
+/// model), so those bindings are simply skipped rather than mis-mapped.
+pub(crate) fn hotkey_key_to_keycode(key: liquide_hotkeys::Key) -> Option<KeyCode> {
+    use liquide_hotkeys::Key as HK;
+    Some(match key {
+        HK::A => KeyCode::A,
+        HK::B => KeyCode::B,
+        HK::C => KeyCode::C,
+        HK::D => KeyCode::D,
+        HK::E => KeyCode::E,
+        HK::F => KeyCode::F,
+        HK::G => KeyCode::G,
+        HK::H => KeyCode::H,
+        HK::I => KeyCode::I,
+        HK::J => KeyCode::J,
+        HK::K => KeyCode::K,
+        HK::L => KeyCode::L,
+        HK::M => KeyCode::M,
+        HK::N => KeyCode::N,
+        HK::O => KeyCode::O,
+        HK::P => KeyCode::P,
+        HK::Q => KeyCode::Q,
+        HK::R => KeyCode::R,
+        HK::S => KeyCode::S,
+        HK::T => KeyCode::T,
+        HK::U => KeyCode::U,
+        HK::V => KeyCode::V,
+        HK::W => KeyCode::W,
+        HK::X => KeyCode::X,
+        HK::Y => KeyCode::Y,
+        HK::Z => KeyCode::Z,
+        HK::Digit0 => KeyCode::Digit0,
+        HK::Digit1 => KeyCode::Digit1,
+        HK::Digit2 => KeyCode::Digit2,
+        HK::Digit3 => KeyCode::Digit3,
+        HK::Digit4 => KeyCode::Digit4,
+        HK::Digit5 => KeyCode::Digit5,
+        HK::Digit6 => KeyCode::Digit6,
+        HK::Digit7 => KeyCode::Digit7,
+        HK::Digit8 => KeyCode::Digit8,
+        HK::Digit9 => KeyCode::Digit9,
+        HK::F1 => KeyCode::F1,
+        HK::F2 => KeyCode::F2,
+        HK::F3 => KeyCode::F3,
+        HK::F4 => KeyCode::F4,
+        HK::F5 => KeyCode::F5,
+        HK::F6 => KeyCode::F6,
+        HK::F7 => KeyCode::F7,
+        HK::F8 => KeyCode::F8,
+        HK::F9 => KeyCode::F9,
+        HK::F10 => KeyCode::F10,
+        HK::F11 => KeyCode::F11,
+        HK::F12 => KeyCode::F12,
+        HK::Escape => KeyCode::Escape,
+        HK::Tab => KeyCode::Tab,
+        HK::Space => KeyCode::Space,
+        HK::Enter => KeyCode::Enter,
+        HK::Backspace => KeyCode::Backspace,
+        HK::Delete => KeyCode::Delete,
+        HK::Insert => KeyCode::Insert,
+        HK::Home => KeyCode::Home,
+        HK::End => KeyCode::End,
+        HK::PageUp => KeyCode::PageUp,
+        HK::PageDown => KeyCode::PageDown,
+        HK::ArrowUp => KeyCode::ArrowUp,
+        HK::ArrowDown => KeyCode::ArrowDown,
+        HK::ArrowLeft => KeyCode::ArrowLeft,
+        HK::ArrowRight => KeyCode::ArrowRight,
+        HK::PrintScreen => KeyCode::PrintScreen,
+        HK::Minus => KeyCode::Minus,
+        HK::Equal => KeyCode::Equal,
+        HK::BracketLeft => KeyCode::BracketLeft,
+        HK::BracketRight => KeyCode::BracketRight,
+        HK::Backslash => KeyCode::Backslash,
+        HK::Semicolon => KeyCode::Semicolon,
+        HK::Quote => KeyCode::Quote,
+        HK::Comma => KeyCode::Comma,
+        HK::Period => KeyCode::Period,
+        HK::Slash => KeyCode::Slash,
+        HK::Grave => KeyCode::Grave,
+        // No KeyCode equivalent for dedicated media/volume/lock keys.
+        HK::VolumeUp
+        | HK::VolumeDown
+        | HK::VolumeMute
+        | HK::MediaPlay
+        | HK::MediaStop
+        | HK::MediaNext
+        | HK::MediaPrev
+        | HK::ScrollLock
+        | HK::Pause => return None,
+    })
+}
+
+/// Translate a `liquide_hotkeys::HotkeyAction` into the corresponding
+/// [`ShellAction`] (t73-input hotkeys fold, action map per the spec). Returns
+/// `None` for actions the shell has no equivalent for yet (Volume*/Media*/
+/// Custom), so those bindings are skipped rather than mis-fired.
+pub(crate) fn hotkey_action_to_shell_action(
+    action: &liquide_hotkeys::HotkeyAction,
+) -> Option<ShellAction> {
+    use liquide_hotkeys::HotkeyAction as HA;
+    Some(match action {
+        HA::ShowLauncher => ShellAction::OpenLauncher,
+        HA::ShowDesktop => ShellAction::ShowDesktop,
+        HA::LockScreen => ShellAction::LockSession,
+        HA::ToggleMaximize => ShellAction::MaximizeWindow,
+        HA::CloseWindow => ShellAction::CloseWindow,
+        HA::MinimizeWindow => ShellAction::MinimizeWindow,
+        HA::CycleFocus => ShellAction::SwitchWindowForward,
+        HA::CycleFocusReverse => ShellAction::SwitchWindowBackward,
+        HA::SnapLeft => ShellAction::TileLeft,
+        HA::SnapRight => ShellAction::TileRight,
+        HA::SnapUp => ShellAction::MaximizeWindow,
+        HA::SnapDown => ShellAction::RestoreMinimize,
+        HA::ToggleFullscreen => ShellAction::FullscreenToggle,
+        HA::ToggleTiling => ShellAction::TaskOverview,
+        HA::Screenshot => ShellAction::ScreenshotFull,
+        HA::ScreenshotRegion => ShellAction::ScreenshotRegion,
+        HA::OpenTerminal => ShellAction::OpenTerminal,
+        HA::OpenFileManager => ShellAction::OpenFileManager,
+        HA::OpenSettings => ShellAction::OpenSettings,
+        HA::SwitchWorkspace(n) => ShellAction::SwitchToWorkspace(*n),
+        HA::MoveToWorkspace(n) => ShellAction::MoveWindowToWorkspace(*n),
+        // Shell has no Volume/Media/custom ShellAction yet — skip (the binding
+        // model still carries them; only the shell dispatch is unmapped today).
+        HA::VolumeUp
+        | HA::VolumeDown
+        | HA::VolumeMute
+        | HA::MediaPlayPause
+        | HA::MediaNext
+        | HA::MediaPrev
+        | HA::Custom(_) => return None,
+    })
 }

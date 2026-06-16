@@ -13,6 +13,16 @@ liquide-dock.workspace = true
 liquide-input.workspace = true
 liquide-interop.workspace = true
 liquide-platform.workspace = true
+# Multi-monitor foundation (t73-multimon §3): the shell consumes
+# `DesktopLayout` / `WorkAreaInsets` to place chrome per-monitor, reserve work
+# areas, and make MoveToMonitor real. Previously unconsumed (t63 §2).
+liquide-display.workspace = true
+# Input-plane foundations (t73-input): the shell drives the IME engine on the
+# keyboard path (CJK/accent/emoji) and folds the canonical global-hotkey binding
+# model into its ShortcutManager. Both are byte-compatible with liquide-input's
+# Modifiers per t73-input.
+liquide-input-method = { path = "../liquide-input-method" }
+liquide-hotkeys = { path = "../liquide-hotkeys" }
 liquide-platform-win32.workspace = true
 liquide-ui.workspace = true
 liquide-theme-css = { path = "../liquide-theme-css" }

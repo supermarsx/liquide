@@ -16,6 +16,13 @@ pub mod history;
 pub mod launcher;
 pub mod layout;
 pub(crate) mod lockscreen_adapter;
+// Input-method (IME) drive on the keyboard path (t73-input §1): the shell feeds
+// pressed keys into its `InputMethodEngine` for CJK/accent/emoji composition.
+pub mod ime;
+// Multi-monitor wiring (t73-multimon §3.2–§3.4): the shell consumes the
+// session-built `liquide_display::DesktopLayout` to place chrome per-monitor,
+// reserve work areas, assign windows to monitors, and make MoveToMonitor real.
+pub mod multimon;
 // `notification` is single-sourced onto the canonical
 // `liquide-notification-daemon` (`chrome_notification_server`) for the
 // notification *data*: t51-e14 wired the daemon as the posting pipeline
@@ -222,6 +229,7 @@ pub use seamless::{
     SeamlessConfig, SeamlessManager, SeamlessMessage, SeamlessMode, SeamlessWindow,
     SeamlessWindowType,
 };
+pub use ime::ImeOutcome;
 pub use shortcuts::{Direction, KeyBinding, ShellAction, ShortcutManager};
 pub use theme::ShellTheme;
 // Tiling surface (single-sourced by t52-e3/e4). Production layout/snap is driven

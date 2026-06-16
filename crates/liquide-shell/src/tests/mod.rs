@@ -27,6 +27,7 @@ mod shell_tests;
 mod shortcuts_tests;
 mod stats_tests;
 mod t65_s2_tests;
+mod t75_shellact_tests;
 mod tiling_tests;
 mod tooltip_tests;
 mod window_bounds_tests;

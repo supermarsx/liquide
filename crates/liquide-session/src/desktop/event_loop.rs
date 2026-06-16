@@ -107,6 +107,15 @@ impl DesktopCompositor {
             }
         }
 
+        // Read the real platform monitor set and install the multi-monitor
+        // DesktopLayout on the shell (t73-multimon §3.1). This makes per-monitor
+        // chrome/work-area reservations and real MoveToMonitor live. A single
+        // monitor (or headless Null backend) yields a single-monitor layout that
+        // behaves exactly as the legacy single-screen path.
+        if !self.dt.dev_mode {
+            self.install_desktop_layout(platform);
+        }
+
         // Create a borderless fullscreen desktop window, or a resizable
         // windowed mode when dev_mode is active.
         debug!("creating desktop window {}x{}", self.width, self.height);

@@ -532,6 +532,28 @@ pub struct Shell {
     /// a pure audit channel consumed by `wiring_report()` / the wiring_audit
     /// test, so removing a live consumer flips its bit off and fails CI.
     pub(crate) wiring_touched: u32,
+    // ── Multi-monitor (t73-multimon §3) ──────────────────────────────────
+    /// The session-built multi-output layout (hardware arrangement + per-monitor
+    /// work-area reservations). `None` (the default) keeps the legacy
+    /// single-screen behavior driven purely by `screen_rect`; the session
+    /// installs a real layout via [`Shell::set_desktop_layout`] once it has read
+    /// the platform monitor set. A single-monitor layout behaves exactly as the
+    /// `None` path for MoveToMonitor (no adjacent monitor).
+    pub(crate) desktop_layout: Option<liquide_display::DesktopLayout>,
+    /// Per-window monitor assignment (t73-multimon §3.3). Populated only when a
+    /// layout is installed; keyed by the same [`WindowId`] as `windows`.
+    pub(crate) window_monitors: HashMap<WindowId, liquide_display::DisplayId>,
+    // ── Input method (t73-input IME wire) ────────────────────────────────
+    /// Built-in input-method engine driven on the keyboard path so CJK / accent
+    /// / emoji input works (t73-input §1). Inactive by default (Direct mode,
+    /// `Forward`-only), so an ASCII-input session behaves exactly as before — the
+    /// engine only intercepts once activated (Ctrl+Space) or switched to a
+    /// composing mode.
+    pub(crate) input_method: liquide_input_method::InputMethodEngine,
+    /// The current IME preedit (composition) string, mirrored from the engine so
+    /// the scene/host can render it where feasible (t73-input §1). Empty when not
+    /// composing.
+    pub(crate) ime_preedit: String,
 }
 
 impl Shell {
@@ -659,6 +681,10 @@ impl Shell {
             chrome_notification_server: None,
             chrome_shell_services: None,
             wiring_touched: 0,
+            desktop_layout: None,
+            window_monitors: HashMap::new(),
+            input_method: liquide_input_method::InputMethodEngine::new(),
+            ime_preedit: String::new(),
         };
         // Seed the CSS responsive-unit context with the live viewport so %, vw,
         // dvh, cq* units resolve against the real screen (t65-s2 item 5).
@@ -796,6 +822,10 @@ impl Shell {
             chrome_notification_server: None,
             chrome_shell_services: None,
             wiring_touched: 0,
+            desktop_layout: None,
+            window_monitors: HashMap::new(),
+            input_method: liquide_input_method::InputMethodEngine::new(),
+            ime_preedit: String::new(),
         };
         shell.update_style_resolver_context();
         shell

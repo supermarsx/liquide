@@ -6,6 +6,7 @@ use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
 use liquide_platform::PlatformEvent;
 
 use crate::decoration::{HitZone, hit_test_decoration};
+use crate::ime::ImeOutcome;
 use crate::launcher::SearchResultKind;
 use crate::shortcuts::ShellAction;
 use crate::window::{WindowFlags, WindowId, WindowState};
@@ -582,6 +583,30 @@ impl Shell {
                     return Some(ShellAction::Redraw);
                 }
 
+                // Input-method step (t73-input §1): drive the IME engine BEFORE
+                // the text-input seam so CJK / accent / emoji composition works.
+                // The engine is inactive by default (Direct mode → Forward), so
+                // an ASCII-input session falls straight through with no behavior
+                // change; it only intercepts once activated (Ctrl+Space) or
+                // switched to a composing mode. A committed string is routed into
+                // the focused window exactly like typed text; a consumed
+                // (preedit/candidate) key requests a redraw and stops here.
+                match self.drive_input_method(ke) {
+                    ImeOutcome::Commit(text) => {
+                        if let Some(wid) = self.focus.focused() {
+                            if self.windows.contains_key(&wid) {
+                                for ch in text.chars() {
+                                    self.route_char_to_focused_app(wid, ch);
+                                }
+                                return Some(ShellAction::Redraw);
+                            }
+                        }
+                        return Some(ShellAction::Redraw);
+                    }
+                    ImeOutcome::Consumed => return Some(ShellAction::Redraw),
+                    ImeOutcome::Forward => {}
+                }
+
                 // Text-input seam (t57-fG feature 2): when no shell overlay is
                 // capturing the key (handled above) and a printable character is
                 // typed with no command modifier (ctrl/alt/super), route it into
@@ -1079,6 +1104,9 @@ impl Shell {
                     if !self.apply_snap_on_release(window_id) {
                         self.clear_snap_preview();
                     }
+                    // Re-resolve the window's monitor from its dropped position
+                    // (t73-multimon §3.3). No-op when no layout is installed.
+                    self.assign_window_to_monitor(window_id);
                 } else {
                     self.clear_snap_preview();
                 }
