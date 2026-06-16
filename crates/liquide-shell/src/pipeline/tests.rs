@@ -317,6 +317,77 @@ fn container_query_matches_when_real_host_is_large_enough() {
     );
 }
 
+/// FIRST-FRAME teeth (t77): a `@container`-dependent property must resolve to the
+/// CONTAINER-derived value on the very FIRST rendered frame — never the viewport
+/// fallback that "snaps" to the right value only on frame 2.
+///
+/// Construction that makes the tooth load-bearing:
+///   * Viewport is 1000px wide.
+///   * Host (container) is 300px wide.
+///   * Two thresholds straddle the host width:
+///       - `@container (min-width: 200px)` MATCHES the 300px host  → blue.
+///       - `@container (min-width: 600px)` does NOT match the host but
+///         WOULD match the 1000px viewport → red (the wrong value).
+/// So the *correct* (container) answer and the *viewport-fallback* answer are
+/// DIFFERENT explicit colors. Exactly ONE `pipeline.run()` is issued (frame 1).
+/// If the corrective container pass ran on a later frame (or not at all), frame 1
+/// would carry the red viewport-fallback value and this assertion would fail.
+#[test]
+fn container_query_resolves_to_container_value_on_first_frame_not_viewport() {
+    let config = PipelineConfig {
+        width: 1000.0,
+        height: 600.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    pipeline.set_theme(
+        r#"
+        host {
+            display: block;
+            container-type: inline-size;
+            width: 300;
+            height: 80;
+        }
+        child { display: block; width: 40; height: 10; color: rgb(10, 10, 10); }
+        /* Matches the 300px host (and also the viewport) → desired value. */
+        @container (min-width: 200px) {
+            child { color: rgb(0, 0, 200); }
+        }
+        /* Does NOT match the 300px host, but WOULD match the 1000px viewport.
+           Listed last so source order would make it win IF the cascade saw a
+           (wrong) viewport-fallback match. */
+        @container (min-width: 600px) {
+            child { color: rgb(200, 0, 0); }
+        }
+        "#,
+    );
+    let mut desktop =
+        DesktopDocument::from_html(r#"<host id="host"><child id="child" /></host>"#);
+
+    // EXACTLY ONE frame — the first rendered frame.
+    let (output, _a) = pipeline.run(&mut desktop.doc, 16.0);
+
+    let child_id = desktop.doc.get_element_by_id("child").expect("child node");
+    let child_style = output.styles.get(child_id).expect("child style");
+
+    assert_eq!(
+        (child_style.color.r, child_style.color.g, child_style.color.b),
+        (0, 0, 200),
+        "on the FIRST frame the child must take the CONTAINER-derived value \
+         (min-width:200px matches the 300px host → blue). Red (200,0,0) means the \
+         cascade fell back to the 1000px VIEWPORT and matched the 600px query — \
+         the first-frame container-query bug."
+    );
+
+    // The host's real measured size must be recorded for the cascade to read on
+    // this same frame (not deferred to frame 2).
+    assert_eq!(
+        output.styles.container_size(host_id(&desktop)),
+        Some((300.0, 80.0)),
+        "the measured container size must be recorded on the first frame"
+    );
+}
+
 fn host_id(desktop: &DesktopDocument) -> liquide_dom::NodeId {
     desktop.doc.get_element_by_id("host").expect("host node")
 }

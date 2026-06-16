@@ -626,4 +626,59 @@ mod tests {
         assert_eq!(layout.button_right_margin, 9.0);
         assert_eq!(layout.button_corner_radius, 5.0);
     }
+
+    #[test]
+    fn decoration_style_resolves_from_css_not_hardcoded_fallback() {
+        // Teeth: every asserted value is DIFFERENT from
+        // `DecorationStyle::default()` (title_bar_height 36, border_width 1,
+        // corner_radius 8). The selectors used here — `window-titlebar` and
+        // `window` — are exactly what `assets/templates/window.html` emits, so
+        // a real on-disk theme that styles those elements reaches the
+        // decoration. If the resolver queried a selector the template never
+        // emits (the old bug), every field would fall back to the hardcoded
+        // default and these assertions would fail.
+        let defaults = crate::decoration::DecorationStyle::default();
+        let css = r#"
+            window {
+                border-width: 3;
+                border-radius: 12;
+            }
+
+            window-titlebar {
+                height: 44;
+            }
+        "#;
+
+        let parser = ThemeParser::new();
+        let stylesheet = parser.parse_str(css).unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+        let resolver = create_style_resolver(Arc::new(engine));
+
+        let style = resolve_decoration_style(&resolver);
+
+        assert_eq!(
+            style.title_bar_height, 44.0,
+            "title_bar_height must come from the `window-titlebar` CSS rule \
+             (template selector), not the hardcoded {} fallback",
+            defaults.title_bar_height
+        );
+        assert_eq!(
+            style.border_width, 3.0,
+            "border_width must come from the `window` CSS rule, not the \
+             hardcoded {} fallback",
+            defaults.border_width
+        );
+        assert_eq!(
+            style.corner_radius, 12.0,
+            "corner_radius must come from the `window` CSS rule, not the \
+             hardcoded {} fallback",
+            defaults.corner_radius
+        );
+
+        // Guard against a vacuously-green test: the asserted CSS values are all
+        // distinct from the defaults, so a fallback would be detectably wrong.
+        assert_ne!(style.title_bar_height, defaults.title_bar_height);
+        assert_ne!(style.border_width, defaults.border_width);
+        assert_ne!(style.corner_radius, defaults.corner_radius);
+    }
 }
