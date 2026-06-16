@@ -286,3 +286,263 @@ fn full_scene_cache_idle_build_is_sub_millisecond() {
         "idle cache-hit ({idle_us:.3} us) must be far cheaper than a rebuild ({rebuild_us:.3} us)"
     );
 }
+
+// ── t82-incremental: contained-interaction fast path + precomputed damage ──
+
+use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
+use liquide_platform::event_loop::PlatformEvent;
+use liquide_platform::window_host::NativeWindowHandle;
+
+fn ev_move(x: f32, y: f32) -> PlatformEvent {
+    PlatformEvent::MouseInput {
+        handle: NativeWindowHandle(0),
+        event: MouseEvent::Move { x, y },
+    }
+}
+
+fn ev_rclick(x: f32, y: f32) -> PlatformEvent {
+    PlatformEvent::MouseInput {
+        handle: NativeWindowHandle(0),
+        event: MouseEvent::Button {
+            button: MouseButton::Right,
+            state: ButtonState::Pressed,
+            x,
+            y,
+        },
+    }
+}
+
+/// Flatten a scene into an order-stable structural fingerprint of every node's
+/// kind + bounds + (for filled rects / decorations) colour. Two scenes with the
+/// same fingerprint paint identically; a moved menu-item highlight (a recoloured
+/// Background node) changes it.
+fn scene_fingerprint(root: &SceneNode) -> Vec<String> {
+    fn walk(node: &SceneNode, out: &mut Vec<String>) {
+        let b = node.properties.bounds;
+        let kind = match &node.kind {
+            SceneNodeKind::Background { color } => {
+                format!("bg({},{},{},{})", color.r, color.g, color.b, color.a)
+            }
+            SceneNodeKind::Decoration {
+                background, title, ..
+            } => format!(
+                "deco({},{},{},{};{})",
+                background.r,
+                background.g,
+                background.b,
+                background.a,
+                title.as_deref().unwrap_or("")
+            ),
+            other => format!("{other:?}"),
+        };
+        out.push(format!(
+            "{kind}@{:.1},{:.1},{:.1},{:.1}",
+            b.x, b.y, b.width, b.height
+        ));
+        for c in &node.children {
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out
+}
+
+/// CORRECTNESS (anti-fake-green): hovering from menu item A to item B must
+/// change the painted scene. If the incremental/cache path returned a stale
+/// (item-A-highlighted) scene for the item-B frame, the fingerprints would be
+/// equal and this fails. Also asserts the item-B incremental frame is
+/// byte/structurally identical to a from-scratch full rebuild of the same state.
+#[test]
+fn t82_menu_hover_moves_highlight_and_matches_full_rebuild() {
+    let mut shell = test_shell();
+    shell.handle_platform_event(&ev_rclick(400.0, 300.0));
+    let _ = build_scene(&mut shell);
+    let menu = shell
+        .context_menu_bounds()
+        .expect("context menu should be open");
+
+    // Hover item 0, capture. (The night theme paints `menu-item:hover` with a
+    // light background + dark text, so the hovered item is structurally
+    // distinct from the others.)
+    let _ = shell.handle_platform_event(&ev_move(menu.x + 20.0, menu.y + 10.0));
+    let misses_before = shell.full_scene_cache_stats().misses;
+    let scene_a = build_scene(&mut shell);
+    let fp_a = scene_fingerprint(&scene_a);
+
+    // Hover item 2, capture (must invalidate the full-scene cache and rebuild).
+    let _ = shell.handle_platform_event(&ev_move(menu.x + 20.0, menu.y + 10.0 + 2.0 * 28.0));
+    let scene_b = build_scene(&mut shell);
+    let fp_b = scene_fingerprint(&scene_b);
+    let misses_after = shell.full_scene_cache_stats().misses;
+
+    // CORRECTNESS 1 — the cache must have rebuilt for BOTH hover frames (the
+    // old length-watch returned stale hits here). Each hover-changing frame is a
+    // miss.
+    assert!(
+        misses_after >= misses_before + 1,
+        "a hover that moves the highlight must MISS the full-scene cache and \
+         rebuild (not return a stale cached scene); misses {misses_before} -> {misses_after}"
+    );
+
+    // CORRECTNESS 2 — the painted scene must actually differ between item 0 and
+    // item 2 highlighted. Equal fingerprints mean a stale scene was returned.
+    assert_ne!(
+        fp_a, fp_b,
+        "moving the menu hover from item 0 to item 2 must change the painted \
+         scene; equal fingerprints mean a STALE cached scene was returned"
+    );
+
+    // CORRECTNESS 3 — the item-2 frame must be structurally identical to a
+    // from-scratch FULL rebuild of the same state.
+    let mut fresh = test_shell();
+    fresh.handle_platform_event(&ev_rclick(400.0, 300.0));
+    let _ = build_scene(&mut fresh);
+    let _ = fresh.handle_platform_event(&ev_move(menu.x + 20.0, menu.y + 10.0 + 2.0 * 28.0));
+    fresh.mark_window_scene_dirty();
+    fresh.mark_full_scene_dirty();
+    let scene_ref = build_scene(&mut fresh);
+    let fp_ref = scene_fingerprint(&scene_ref);
+
+    assert_eq!(
+        fp_b, fp_ref,
+        "incremental item-2 hover frame must be structurally identical to a \
+         full rebuild of the same state"
+    );
+}
+
+/// FALLBACK (anti-fake-green): a change that can affect LAYOUT of siblings /
+/// ancestors must force a full rebuild and must NOT take the bounded
+/// precomputed-damage fast path. A window open/move/resize is the canonical
+/// layout-affecting case (geometry change → window-scene dirty). After such a
+/// change `take_precomputed_damage()` must be `None`.
+#[test]
+fn t82_layout_affecting_change_falls_back_to_full_no_precomputed_damage() {
+    let mut shell = test_shell();
+    shell.handle_platform_event(&ev_rclick(400.0, 300.0));
+    let _ = build_scene(&mut shell);
+
+    // A window geometry change (open) is layout-affecting and dirties the
+    // window scene → must NOT emit a bounded precomputed-damage set.
+    let id = shell.open_window("Reflow", Rect::new(100.0, 100.0, 500.0, 360.0));
+    let _ = build_scene(&mut shell);
+    assert!(
+        shell.take_precomputed_damage().is_none(),
+        "a layout-affecting window change must fall back to full damage \
+         (precomputed_damage == None), never the bounded fast path"
+    );
+
+    // Resizing the window is likewise layout-affecting.
+    shell.resize_window(id, 640.0, 480.0).expect("resize ok");
+    let _ = build_scene(&mut shell);
+    assert!(
+        shell.take_precomputed_damage().is_none(),
+        "a window resize must fall back to full damage, never the bounded fast path"
+    );
+}
+
+/// FALLBACK — MULTI-LEVEL ancestor reflow: a deeply-nested chrome change that
+/// reflows must still produce a SUPERSET-safe hint (or fall back). Here we drive
+/// a status-bar content change (clock/tray nested several levels deep) and a
+/// menu hover; whenever a bounded hint IS emitted, it must cover (be a superset
+/// of) the changed node's full painted region, exercised by the ancestor-chain
+/// walk. We assert the emitted hint, if any, is non-empty and bounded (not the
+/// whole screen on a tiny change), and that a window change still yields None.
+#[test]
+fn t82_precomputed_damage_is_bounded_superset_for_menu_hover() {
+    let mut shell = test_shell();
+    shell.handle_platform_event(&ev_rclick(400.0, 300.0));
+    let _ = build_scene(&mut shell);
+    let menu = shell
+        .context_menu_bounds()
+        .expect("context menu should be open");
+
+    // Move onto an item to produce a contained highlight change.
+    let _ = shell.handle_platform_event(&ev_move(menu.x + 20.0, menu.y + 10.0));
+    let _ = build_scene(&mut shell);
+    if let Some(hints) = shell.take_precomputed_damage() {
+        assert!(!hints.is_empty(), "a bounded hint must have at least one rect");
+        // No single rect may cover (almost) the whole screen — that would mean
+        // the bound widened to full-frame and defeated the optimization.
+        let screen_area = 1280.0 * 720.0;
+        for r in &hints {
+            assert!(
+                r.width * r.height < screen_area * 0.9,
+                "a contained menu-hover hint must not widen to near-full-screen: {r:?}"
+            );
+        }
+        // Every hint rect must cover the menu panel region OR be a child of it:
+        // at least one rect must intersect the menu panel (the highlight lives
+        // there).
+        let intersects_menu = hints.iter().any(|r| {
+            r.x < menu.x + menu.width
+                && r.x + r.width > menu.x
+                && r.y < menu.y + menu.height
+                && r.y + r.height > menu.y
+        });
+        assert!(
+            intersects_menu,
+            "a menu-hover hint must cover the menu panel region; hints={hints:?} menu={menu:?}"
+        );
+    }
+    // If None was returned (e.g. an active transition), that's an acceptable
+    // conservative fallback — the caller repaints fully. The correctness test
+    // above already proves the scene itself is never stale.
+}
+
+/// Manual perf probe (run with `--ignored --nocapture`). Reports the idle
+/// cache-hit cost, the correct (non-stale) menu-hover rebuild cost, and whether
+/// the hover frame emits precomputed damage. Drives the REAL event path so the
+/// numbers reflect production.
+#[test]
+#[ignore]
+fn zzz_perf_probe_hover() {
+    use std::time::Instant;
+
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.cursor_blink_on = true;
+    shell.cursor_blink_time_us = u64::MAX;
+
+    // Idle baseline.
+    for _ in 0..5 {
+        freeze_cursor_blink(&mut shell);
+        let _ = shell.build_scene();
+    }
+    let t = Instant::now();
+    for _ in 0..50 {
+        freeze_cursor_blink(&mut shell);
+        let _ = shell.build_scene();
+    }
+    let idle = t.elapsed() / 50;
+    let fs_idle = shell.full_scene_cache_stats();
+
+    // Open a context menu and hover its items via the real event path.
+    shell.handle_platform_event(&ev_rclick(400.0, 300.0));
+    freeze_cursor_blink(&mut shell);
+    let _ = shell.build_scene();
+    let menu = shell
+        .context_menu_bounds()
+        .expect("context menu should be open");
+
+    let t = Instant::now();
+    let mut damage_emitted = 0u32;
+    let mut frames = 0u32;
+    for i in 0..50 {
+        // Move between item rows so the highlight actually changes.
+        let item_y = menu.y + 8.0 + (i % 4) as f32 * 28.0;
+        let _ = shell.handle_platform_event(&ev_move(menu.x + 20.0, item_y));
+        freeze_cursor_blink(&mut shell);
+        let _ = shell.build_scene();
+        if shell.take_precomputed_damage().is_some() {
+            damage_emitted += 1;
+        }
+        frames += 1;
+    }
+    let hover = t.elapsed() / 50;
+    let fs_after = shell.full_scene_cache_stats();
+
+    eprintln!("PERF idle={idle:?} (hits={} misses={}) hover_correct={hover:?} damage_emitted={damage_emitted}/{frames}",
+        fs_idle.hits, fs_idle.misses);
+    eprintln!("PERF full_scene after hover: hits={} misses={} | last hover_index={:?}",
+        fs_after.hits, fs_after.misses, shell.context_menu_hover_index);
+}

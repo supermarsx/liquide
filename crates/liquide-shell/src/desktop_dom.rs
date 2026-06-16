@@ -664,6 +664,26 @@ impl DesktopDocument {
     // ── Generic menu hover helper ────────────────────────────────
 
     /// Set hover on a menu item by index within a menu element.
+    /// Set an attribute on `node` ONLY when its value actually differs from the
+    /// current one (t82-incremental).
+    ///
+    /// `Document::set_attribute` unconditionally marks the node style-dirty even
+    /// when the value is byte-identical. Per-frame chrome sync (e.g. the dock's
+    /// `data-position` / sizing custom-properties) writes the SAME values every
+    /// frame, which — once the shell consumes (`clear_all`) the DOM dirty set
+    /// each frame — would re-dirty a node every idle frame and defeat the
+    /// full-scene idle cache. Guarding on a real change keeps an unchanged idle
+    /// frame's DOM fully clean so the cache reuse predicate stays valid, while a
+    /// genuine attribute change still dirties exactly as before. Returns `true`
+    /// when a write (and thus a dirty mark) occurred.
+    pub fn set_attr_if_changed(&mut self, node: NodeId, key: &str, value: &str) -> bool {
+        if self.doc.get_attribute(node, key).as_deref() == Some(value) {
+            return false;
+        }
+        self.doc.set_attribute(node, key, value);
+        true
+    }
+
     pub fn set_menu_hover(&mut self, menu_id: &str, index: Option<usize>) {
         if let Some(menu_node) = self.doc.get_element_by_id(menu_id) {
             let children: Vec<NodeId> = self.doc.children(menu_node).to_vec();

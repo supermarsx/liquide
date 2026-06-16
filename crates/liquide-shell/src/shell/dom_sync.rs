@@ -88,19 +88,26 @@ impl Shell {
     ///
     /// Called once per frame just before the CSS pipeline runs.
     ///
-    /// Returns `true` if any template actually mutated the DOM this frame
-    /// (i.e. chrome content changed). Each `sync_*_template` early-returns when
-    /// its per-template HTML cache matches the rendered output, so an unchanged
-    /// chrome touches nothing. We detect a change by watching the DOM's dirty
-    /// set grow: every DOM mutation marks the affected node(s) style/layout/
-    /// paint-dirty. The shell's full-scene cache (t76-scenecache) uses this to
-    /// distinguish a genuinely-idle frame (reuse the cached root) from a
-    /// chrome-changed frame (rebuild). The `doc.dirty` set is otherwise
-    /// monotonic in the shell flow, so we compare its size before/after rather
-    /// than its emptiness.
+    /// Returns `true` if the DOM has any pending dirty nodes after sync
+    /// (i.e. chrome content changed this frame and must be re-rendered).
+    ///
+    /// The "chrome changed?" signal is simply "is the DOM dirty set non-empty?"
+    /// (t82-incremental). This is reliable because `build_scene` now CONSUMES the
+    /// dirty set every frame — on a cache miss after the pipeline reads it, and
+    /// on a cache hit right before returning — so at the start of any frame the
+    /// set is empty and only THIS frame's mutations remain. Those mutations come
+    /// from two places, both of which must count:
+    ///   * event-time DOM mutations (e.g. `dispatch_mouse_move` setting a
+    ///     `:hover` pseudo-state on the item under the cursor), which happen
+    ///     between builds, and
+    ///   * sync-time mutations from the `sync_*_template` calls below.
+    /// The previous before/after-LENGTH watch missed BOTH a repeat-dirtying of an
+    /// already-dirty node (HashSet length unchanged) and event-time hover
+    /// dirtying, so a moving menu-item hover returned a STALE cached scene. A
+    /// plain non-empty check fixes that. Each `sync_*_template` still early-
+    /// returns when its HTML cache matches, so an idle frame leaves the set
+    /// empty and this returns `false` (the idle full-scene cache may reuse).
     pub(crate) fn sync_dom(&mut self) -> bool {
-        let dirty_before = self.dom_dirty_len();
-
         self.sync_statusbar_template();
         self.sync_dock_template();
         self.sync_notifications_template();
@@ -119,7 +126,7 @@ impl Shell {
         // ── Thread coordinator fallback (remote rendering) ───
         self.sync_thread_coordinator();
 
-        let changed = self.dom_dirty_len() != dirty_before || self.dom_dirty;
+        let changed = self.dom_dirty_len() != 0 || self.dom_dirty;
         self.dom_dirty = false;
         changed
     }
@@ -480,14 +487,25 @@ impl Shell {
 
         let id = crate::desktop_dom::element_ids::DOCK;
         if let Some(dock) = self.desktop_dom.doc.get_element_by_id(id) {
-            let doc = &mut self.desktop_dom.doc;
-            doc.set_attribute(dock, "data-position", position);
-            doc.set_attribute(dock, "data-alignment", alignment);
-            doc.set_attribute(dock, "data-show-labels", show_labels);
-            doc.set_attribute(dock, "data-hidden", if hidden { "true" } else { "false" });
+            // Only write attributes that actually changed: these are the SAME
+            // values on every idle frame, and an unconditional `set_attribute`
+            // re-dirties the dock node each frame, which (now that the shell
+            // consumes the DOM dirty set per-frame) would defeat the full-scene
+            // idle cache (t82-incremental).
+            self.desktop_dom
+                .set_attr_if_changed(dock, "data-position", position);
+            self.desktop_dom
+                .set_attr_if_changed(dock, "data-alignment", alignment);
+            self.desktop_dom
+                .set_attr_if_changed(dock, "data-show-labels", show_labels);
+            self.desktop_dom.set_attr_if_changed(
+                dock,
+                "data-hidden",
+                if hidden { "true" } else { "false" },
+            );
             // CSS custom properties for sizing — the theme reads these via
             // `var(--dock-*)`; the scene path remains the geometry authority.
-            doc.set_attribute(
+            self.desktop_dom.set_attr_if_changed(
                 dock,
                 "style",
                 &format!(

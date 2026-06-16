@@ -451,6 +451,178 @@ impl Shell {
         self.full_scene_cache.stats()
     }
 
+    /// Take (and clear) the authoritative precomputed damage produced by the
+    /// most recent [`Shell::build_scene`] (t82-incremental).
+    ///
+    /// Returns `Some(rects)` only when that build took the contained-interactive-
+    /// change fast path and could bound the damage exactly (a menu-item / dock /
+    /// titlebar-button hover-highlight). Each rect is a **superset-safe** upper
+    /// bound in the shell's screen-pixel space (the same space as
+    /// [`Shell::interactive_overlay_damage`]); the render side may use this set
+    /// as the authoritative `latest_job.damage` and SKIP the per-frame
+    /// `scene_diff_damage`. `None` means the change was a full rebuild / an
+    /// unbounded chrome change / an idle cache hit, so the caller MUST keep its
+    /// own conservative damage path (full diff or full frame).
+    ///
+    /// This is a take: it returns the value and resets the channel to `None`, so
+    /// it must be called at most once per `build_scene`, immediately after it.
+    #[must_use]
+    pub fn take_precomputed_damage(&mut self) -> Option<Vec<Rect>> {
+        self.precomputed_damage.take()
+    }
+
+    /// Compute the precomputed damage for a contained chrome change, storing the
+    /// result in [`Shell::precomputed_damage`] (t82-incremental). See the call
+    /// site in [`Shell::build_scene`] for the eligibility contract. Leaves the
+    /// field `None` (caller falls back to its own damage path) whenever the
+    /// change cannot be proven bounded.
+    fn compute_precomputed_damage(
+        &mut self,
+        dirty_chrome_nodes: &[liquide_dom::NodeId],
+        pipeline_output: &crate::pipeline::PipelineOutput,
+        blink_toggled: bool,
+    ) {
+        /// Margin (logical px) added around each changed chrome rect to cover the
+        /// `backdrop-filter` blur halo that samples neighbouring pixels — matches
+        /// the `OVERLAY_BACKDROP_MARGIN` used by `interactive_overlay_damage`.
+        const BACKDROP_MARGIN: f32 = 48.0;
+
+        // ── Unbounded-change guards: bail to `None` (full fallback). ──
+        // A window-scene change (the window cache was dirty entering this build)
+        // can move/resize windows or change their content arbitrarily — not
+        // represented in the CSS chrome layout tree, so we cannot bound it here.
+        if self.window_scene_cache.stats().dirty {
+            return;
+        }
+        // An active animation/transition repaints a growing region each frame
+        // that is not captured by this frame's `dirty_chrome_nodes`.
+        if !self.css_pipeline.chrome_output_stable() {
+            return;
+        }
+        // The text caret blink toggles a node in the MANUAL window subtree, not
+        // the CSS layout tree, so its rect is not in `dirty_chrome_nodes`.
+        if blink_toggled {
+            return;
+        }
+        // Manual full-screen overlays (overview / lock screen) are not chrome
+        // layout boxes; if either is up, do not claim a bounded damage set.
+        if self.overview_visible || self.is_session_locked() {
+            return;
+        }
+        // Nothing chrome-level changed → we have no bounded footprint to emit.
+        if dirty_chrome_nodes.is_empty() {
+            return;
+        }
+
+        // Build the damage set from the absolute (screen-space) border rects of
+        // the changed nodes. For each changed node we ALSO include its parent's
+        // rect: a style change that *does* reflow (CSS `mark_style` always marks
+        // layout+paint, so we cannot distinguish a pure recolor from a reflow
+        // cheaply) can shift sibling positions WITHIN the parent's content box,
+        // and the parent rect is a tight superset of that. This keeps the hint a
+        // guaranteed upper bound without widening to the whole screen.
+        // Convert a layout-space border rect (expanded by the backdrop margin)
+        // into the compositor `Rect` damage space. Returns `None` for empty boxes.
+        let to_damage = |r: liquide_layout::Rect| -> Option<Rect> {
+            if r.width <= 0.0 || r.height <= 0.0 {
+                return None;
+            }
+            Some(Rect::new(
+                r.x - BACKDROP_MARGIN,
+                r.y - BACKDROP_MARGIN,
+                r.width + BACKDROP_MARGIN * 2.0,
+                r.height + BACKDROP_MARGIN * 2.0,
+            ))
+        };
+
+        use liquide_style_engine::computed::Position;
+
+        let layout = &pipeline_output.layout;
+        let styles = &pipeline_output.styles;
+        let mut rects: Vec<Rect> = Vec::new();
+        for &node in dirty_chrome_nodes {
+            let mut pushed_any = false;
+            if let Some(box_id) = layout.find_box_id_by_node(node) {
+                if let Some(d) = to_damage(layout.absolute_border_rect(box_id)) {
+                    rects.push(d);
+                    pushed_any = true;
+                }
+            }
+            // Walk UP the ancestor chain, unioning each ancestor's rect, and STOP
+            // at (inclusive) the nearest out-of-flow positioned ancestor
+            // (position: fixed / absolute / sticky).
+            //
+            // Why a chain walk at all: CSS `mark_style` unconditionally marks a
+            // node layout+paint dirty, so we cannot cheaply tell a pure recolor
+            // (no geometry change) from a size change that reflows. A size change
+            // reflows siblings WITHIN the parent's content box — covered by the
+            // parent rect — and if the parent itself grows, ITS siblings reflow
+            // within the grandparent, so a superset bound must climb.
+            //
+            // Why we may STOP at a positioned ancestor: an out-of-flow positioned
+            // box is its own containing block whose geometry is fixed by its
+            // own position/size, NOT by its content flowing into its parent — so
+            // a reflow inside it cannot move anything OUTSIDE it. All shell pop-up
+            // overlays (context / session / app menu, dock, tooltip) are
+            // `position: fixed`, so the walk stops at the overlay root: the hint
+            // is the overlay's own rect, never the full-screen `body`. If we reach
+            // the document root WITHOUT finding a positioned ancestor (a change in
+            // normal desktop flow that could reflow the whole page), we cannot
+            // prove a bound smaller than the viewport → bail to `None` (full
+            // fallback) rather than emit a misleadingly-small hint.
+            let mut ancestor = self.desktop_dom.doc.parent(node);
+            let mut depth = 0usize;
+            const MAX_ANCESTOR_DEPTH: usize = 64;
+            let mut hit_positioned_boundary = false;
+            while let Some(p) = ancestor {
+                depth += 1;
+                if depth > MAX_ANCESTOR_DEPTH {
+                    return;
+                }
+                if let Some(pbox) = layout.find_box_id_by_node(p) {
+                    if let Some(d) = to_damage(layout.absolute_border_rect(pbox)) {
+                        rects.push(d);
+                        pushed_any = true;
+                    }
+                }
+                // Stop once we have included an out-of-flow positioned containing
+                // block: reflow cannot escape it, so higher ancestors need not be
+                // damaged.
+                let positioned = styles
+                    .get(p)
+                    .map(|s| {
+                        matches!(
+                            s.position,
+                            Position::Fixed | Position::Absolute | Position::Sticky
+                        )
+                    })
+                    .unwrap_or(false);
+                if positioned {
+                    hit_positioned_boundary = true;
+                    break;
+                }
+                ancestor = self.desktop_dom.doc.parent(p);
+            }
+
+            // A changed node with NO layout box anywhere up its chain (e.g. an
+            // unlaid overlay) cannot be bounded — fall back.
+            if !pushed_any {
+                return;
+            }
+            // A change in normal flow (no positioned containing block before the
+            // root) could reflow arbitrarily far — fall back to full damage
+            // rather than emit a hint we cannot prove is a superset.
+            if !hit_positioned_boundary {
+                return;
+            }
+        }
+
+        if rects.is_empty() {
+            return;
+        }
+        self.precomputed_damage = Some(rects);
+    }
+
     /// Build the complete shell scene graph.
     ///
     /// **CSS pipeline approach**: the CSS pipeline renders ALL shell chrome
@@ -459,6 +631,13 @@ impl Shell {
     /// they require complex interactive state (decoration buttons, hover
     /// indices, z-ordered content surfaces) that the pipeline does not model.
     pub fn build_scene(&mut self) -> SceneNode {
+        // Reset the precomputed-damage channel for this frame (t82-incremental).
+        // It is set to `Some(..)` only on the contained-interactive-change fast
+        // path below; otherwise it stays `None` so the render side keeps its own
+        // conservative damage path. Clearing first means a stale value from a
+        // prior frame can never leak forward.
+        self.precomputed_damage = None;
+
         // Toggle cursor blink every 500ms. A toggle changes the painted scene
         // (terminal/app caret + the window-scene signature), so when it flips we
         // must NOT reuse the cached root this frame — invalidate the full-scene
@@ -467,7 +646,8 @@ impl Shell {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_micros() as u64;
-        if now_us.saturating_sub(self.cursor_blink_time_us) >= 500_000 {
+        let blink_toggled = now_us.saturating_sub(self.cursor_blink_time_us) >= 500_000;
+        if blink_toggled {
             self.cursor_blink_on = !self.cursor_blink_on;
             self.cursor_blink_time_us = now_us;
             self.full_scene_cache.mark_dirty();
@@ -525,6 +705,55 @@ impl Shell {
                 0, // base z-order
                 self.frame_delta_ms,
             );
+
+        // ── Snapshot + consume the DOM dirty set (t82-incremental) ──
+        // The CSS pipeline has just read `doc.dirty` to do its incremental
+        // restyle/relayout/repaint. We snapshot the changed chrome nodes here so
+        // the contained-change fast path below can turn them into authoritative
+        // precomputed damage; the union of the paint+layout dirty nodes is
+        // exactly the chrome that repainted. Then we CLEAR the set — this frame's
+        // mutations are now consumed (painted into the scene we are about to
+        // store).
+        //
+        // Consuming the set per-frame is what makes `sync_dom`'s "chrome
+        // changed?" signal reliable: at the start of the NEXT frame the set is
+        // empty, so any new mutation — whether event-time (a `dispatch_mouse_move`
+        // `:hover` flip on the item under the cursor) or sync-time — leaves it
+        // non-empty and is detected. Without this consume the set was monotonic
+        // and a moving menu-item hover returned a STALE cached scene. (A cache
+        // HIT frame needs no clear: a hit requires `!chrome_changed`, i.e. the
+        // set was already empty.)
+        let dirty_chrome_nodes: Vec<liquide_dom::NodeId> = {
+            let d = &self.desktop_dom.doc.dirty;
+            d.paint.iter().chain(d.layout.iter()).copied().collect()
+        };
+        self.desktop_dom.doc.dirty.clear_all();
+
+        // ── Precomputed (authoritative) damage for a CONTAINED chrome change ──
+        // When this rebuild was caused only by a bounded interactive chrome
+        // change (a menu-item hover-highlight, a dock hover, a hovered titlebar
+        // button — all style/paint-only flips), the changed chrome's screen
+        // footprint is exactly the laid-out rects of `dirty_chrome_nodes`. We
+        // emit those (as a superset-safe upper bound) so the render side can use
+        // them directly and skip the O(n) per-frame scene diff. We deliberately
+        // DO NOT emit precomputed damage (leave it `None` → caller falls back to
+        // the full diff / full frame) whenever the change is not provably
+        // bounded:
+        //   * a window-scene change (geometry / content / focus / app output) —
+        //     `window_scene_cache` was dirty entering this build,
+        //   * an active CSS animation / transition (its footprint grows each
+        //     frame and is not in `dirty_chrome_nodes`),
+        //   * the cursor blink toggled (caret lives in the manually-assembled
+        //     window subtree, not the CSS layout tree),
+        //   * an overview / lockscreen overlay is showing (manual full-screen
+        //     overlays not represented by chrome layout boxes),
+        //   * nothing chrome-level was dirtied (e.g. only a manual overlay
+        //     changed) — we cannot bound it from the CSS layout tree.
+        self.compute_precomputed_damage(
+            &dirty_chrome_nodes,
+            &pipeline_output,
+            blink_toggled,
+        );
 
         // Collect threaded fallback nodes. These are composited only when the
         // main pipeline returns no chrome nodes, to avoid duplicate rendering.

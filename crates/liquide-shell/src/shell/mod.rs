@@ -419,6 +419,27 @@ pub struct Shell {
     /// disappeared. Tracking last-frame visibility lets the predicate force a
     /// rebuild on the transition frame in addition to whenever it is visible.
     pub(crate) last_full_scene_tooltip_visible: bool,
+    /// Authoritative precomputed damage produced by the most recent
+    /// `build_scene` (t82-incremental). When `build_scene` rebuilds the scene
+    /// because of a CONTAINED interactive change whose screen footprint it can
+    /// bound exactly (a pop-up menu item hover-highlight, a dock-hover
+    /// highlight/tooltip, a hovered window-decoration button, the text-caret
+    /// blink), it records the union of the affected regions here — each a
+    /// **superset-safe** upper bound (expanded for any backdrop-blur sample
+    /// margin), in the same logical/physical pixel space as
+    /// [`Shell::interactive_overlay_damage`].
+    ///
+    /// The render side (a follow-up, `t82-session`) consumes this via
+    /// [`Shell::take_precomputed_damage`] right after `build_scene`: when it is
+    /// `Some`, the incremental update is the single source of truth for what
+    /// changed, so the render thread can feed these rects straight into
+    /// `latest_job.damage` and SKIP the O(n) per-frame `scene_diff_damage`
+    /// entirely. `None` means this frame's change could NOT be bounded (a full
+    /// rebuild / unbounded chrome change / idle cache hit) and the caller MUST
+    /// keep its own conservative damage path (full diff / full frame). The set
+    /// is cleared on every `build_scene` entry, so a stale value can never leak
+    /// into a later frame.
+    pub(crate) precomputed_damage: Option<Vec<liquide_compositor::geometry::Rect>>,
     pub(crate) dom_dirty: bool,
     pub(crate) event_dispatcher: EventDispatcher,
     /// Shared "default prevented" flag for the DOM dispatch path (t65-s2).
@@ -667,6 +688,7 @@ impl Shell {
             window_scene_cache: scene::WindowSceneCache::new(),
             full_scene_cache: scene::FullSceneCache::new(),
             last_full_scene_tooltip_visible: false,
+            precomputed_damage: None,
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
             dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -810,6 +832,7 @@ impl Shell {
             window_scene_cache: scene::WindowSceneCache::new(),
             full_scene_cache: scene::FullSceneCache::new(),
             last_full_scene_tooltip_visible: false,
+            precomputed_damage: None,
             dom_dirty: true,
             event_dispatcher: EventDispatcher::new(),
             dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
