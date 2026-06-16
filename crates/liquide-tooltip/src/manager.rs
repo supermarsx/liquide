@@ -535,6 +535,61 @@ mod tests {
         assert!(!mgr.is_visible()); // gone
     }
 
+    /// Regression for t77-A1 (hover-jank reduction): with the SHIPPING default
+    /// config, a hovered widget must become fully visible within the new
+    /// ~150ms budget (100ms show delay + 50ms fade-in).
+    ///
+    /// Teeth: it must NOT be visible before the default show delay elapses, and
+    /// after advancing 150ms it must be fully opaque. If the defaults regress to
+    /// the old 500ms/150ms (650ms budget), the post-150ms assertions FAIL
+    /// because the tooltip would still be in the Pending state.
+    #[test]
+    fn default_config_hover_visible_within_new_budget() {
+        let cfg = TooltipConfig::default();
+        let budget_ms = (cfg.show_delay_ms + cfg.fade_in_ms) as f32; // 150ms now
+        assert!(
+            budget_ms <= 150.0,
+            "default hover->visible budget regressed to {budget_ms}ms (jank)"
+        );
+
+        let mut mgr = TooltipManager::new(cfg);
+        let wid = WidgetId::new();
+        mgr.on_hover_begin(wid, "Files", 100.0, 100.0, 64.0, 24.0);
+
+        // Just before the show delay expires: still pending, not visible.
+        // (At the old 500ms default this is trivially true; at the new 100ms it
+        // is the meaningful lower-bound tooth.)
+        mgr.update((cfg.show_delay_ms as f32) - 1.0);
+        assert!(
+            !mgr.is_visible(),
+            "tooltip became visible before show_delay_ms ({}ms) elapsed",
+            cfg.show_delay_ms
+        );
+
+        // Drive the hover with FIXED frame steps that sum to the new ~150ms
+        // budget: one frame of 100ms (crosses the new show delay) then one of
+        // 50ms (crosses the new fade-in). These are constants, NOT derived from
+        // cfg, so the budget is genuinely pinned: at the old 500ms/150ms
+        // defaults the first 100ms frame leaves the tooltip in Pending and the
+        // assertions below FAIL (its show delay would not have elapsed).
+        let mut mgr = TooltipManager::new(cfg);
+        mgr.on_hover_begin(wid, "Files", 100.0, 100.0, 64.0, 24.0);
+        mgr.update(100.0); // cross the new show delay -> FadingIn
+        mgr.update(50.0); // cross the new fade-in -> Visible
+        assert!(
+            mgr.is_visible(),
+            "tooltip not visible after 150ms with default config; \
+             show_delay={}ms fade_in={}ms (regressed jank?)",
+            cfg.show_delay_ms,
+            cfg.fade_in_ms
+        );
+        assert_eq!(
+            mgr.opacity(),
+            1.0,
+            "tooltip not fully opaque after the 150ms hover budget"
+        );
+    }
+
     #[test]
     fn test_same_widget_hover_refreshes_anchor_geometry() {
         let mut mgr = TooltipManager::new(TooltipConfig {
