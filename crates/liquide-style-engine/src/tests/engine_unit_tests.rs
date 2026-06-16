@@ -243,6 +243,106 @@ fn restyle_dirty_rebuilds_ancestor_custom_property_scope() {
     );
 }
 
+/// When a var-DEFINING ancestor is itself the dirty node, an incremental
+/// `restyle_dirty` must re-propagate the (possibly changed) custom-property
+/// scope down to its consuming descendants instead of dropping it. Here the
+/// scope owner switches `--accent` from red to blue via a class change; the
+/// consuming child must pick up the new value through the force-restyle path.
+#[test]
+fn restyle_dirty_propagates_changed_scope_from_dirty_owner_to_children() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .red-scope { --accent: #ff0000; }
+            .blue-scope { --accent: #0000ff; }
+            .target { color: var(--accent); }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let scope_owner = doc.create_element("div");
+    doc.add_class(scope_owner, "red-scope");
+    doc.append_child(root, scope_owner);
+
+    let target = doc.create_element("span");
+    doc.add_class(target, "target");
+    doc.append_child(scope_owner, target);
+
+    let mut styles = engine.restyle_all(&doc);
+    let initial = styles.get(target).unwrap();
+    assert_eq!(
+        (initial.color.r, initial.color.g, initial.color.b),
+        (255, 0, 0)
+    );
+
+    // Flip the scope owner's class so it now defines --accent: blue, and mark
+    // ONLY the owner dirty. The child is clean and must inherit the new scope.
+    doc.remove_class(scope_owner, "red-scope");
+    doc.add_class(scope_owner, "blue-scope");
+
+    let mut dirty = liquide_dom::dirty::DirtySet::new();
+    dirty.mark_style(scope_owner);
+    engine.restyle_dirty(&doc, &dirty, &mut styles);
+
+    let updated = styles.get(target).unwrap();
+    assert_eq!(
+        (updated.color.r, updated.color.g, updated.color.b),
+        (0, 0, 255),
+        "child must pick up the dirty owner's updated --accent scope"
+    );
+}
+
+/// A clean intermediate node that DEFINES a custom property must still supply
+/// that property to a dirty grandchild during incremental restyle. The dirty
+/// grandchild rebuilds its inherited scope by walking ancestors, so the clean
+/// owner's scope must not be lost.
+#[test]
+fn restyle_dirty_keeps_scope_from_clean_intermediate_owner() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .scope { --accent: #00aa00; }
+            .target { color: var(--accent, #000000); }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let outer = doc.create_element("div");
+    doc.append_child(root, outer);
+
+    // Clean intermediate owner of --accent.
+    let owner = doc.create_element("div");
+    doc.add_class(owner, "scope");
+    doc.append_child(outer, owner);
+
+    let target = doc.create_element("span");
+    doc.add_class(target, "target");
+    doc.append_child(owner, target);
+
+    let mut styles = engine.restyle_all(&doc);
+    let initial = styles.get(target).unwrap();
+    assert_eq!(
+        (initial.color.r, initial.color.g, initial.color.b),
+        (0, 170, 0)
+    );
+
+    // Mark only the grandchild dirty; its ancestors stay clean.
+    let mut dirty = liquide_dom::dirty::DirtySet::new();
+    dirty.mark_style(target);
+    engine.restyle_dirty(&doc, &dirty, &mut styles);
+
+    let updated = styles.get(target).unwrap();
+    assert_eq!(
+        (updated.color.r, updated.color.g, updated.color.b),
+        (0, 170, 0),
+        "dirty grandchild must keep the clean intermediate owner's --accent"
+    );
+}
+
 #[test]
 fn shadow_root_custom_property_scope_stays_isolated() {
     let mut engine = StyleEngine::default();

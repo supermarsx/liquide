@@ -693,7 +693,16 @@ impl ComplexSelector {
         }
 
         let combinator = combinators[idx];
-        let next_compound = &compounds[idx + 1];
+        // Defensive bounds check: the storage invariant is
+        // `combinators.len() == compounds.len() - 1`, so reaching here implies
+        // `idx + 1 < compounds.len()`. Guard explicitly anyway so a malformed
+        // ComplexSelector (e.g. a relative `:has()` chain with a leading
+        // combinator and a short/empty compound list) fails closed instead of
+        // panicking with an out-of-bounds index.
+        let next_compound = match compounds.get(idx + 1) {
+            Some(c) => c,
+            None => return false,
+        };
 
         match combinator {
             Combinator::Child => {
@@ -1581,6 +1590,118 @@ fn following_element_siblings(doc: &Document, node_id: NodeId) -> Vec<NodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: relative `:has()` selectors with a leading combinator and a
+    /// short/long inner compound chain must never index past the compound list
+    /// (historical out-of-bounds panic). Exercises matching against every node
+    /// in a tree that has both descendant and following-sibling subtrees, plus
+    /// asserts a few correctness outcomes so the test has teeth beyond "no panic".
+    #[test]
+    fn has_relative_combinator_forms_match_without_panicking() {
+        // Build: root > article > (h1, p > img, span)
+        let mut doc = Document::new();
+        let root = doc.root();
+        let article = doc.create_element("article");
+        doc.append_child(root, article);
+        let h1 = doc.create_element("h1");
+        doc.append_child(article, h1);
+        let p = doc.create_element("p");
+        doc.append_child(article, p);
+        let img = doc.create_element("img");
+        doc.append_child(p, img);
+        let span = doc.create_element("span");
+        doc.append_child(article, span);
+
+        // Add a following sibling subtree to article: aside > (b > i)
+        let aside = doc.create_element("aside");
+        doc.append_child(root, aside);
+        let b = doc.create_element("b");
+        doc.append_child(aside, b);
+        let i_el = doc.create_element("i");
+        doc.append_child(b, i_el);
+
+        // Every form must parse and evaluate against every node without panicking,
+        // including leading-combinator + multi-compound inner chains.
+        let forms = [
+            "article:has(img)",
+            "article:has(> img)",
+            "article:has(> p img)",
+            "article:has(> p > img)",
+            "article:has(p img)",
+            "article:has(h1 + p)",
+            "article:has(> h1 + p)",
+            "article:has(h1 ~ span)",
+            "article:has(> h1 ~ span)",
+            "article:has(+ aside)",
+            "article:has(+ aside b)",
+            "article:has(+ aside > b)",
+            "article:has(+ aside > b > i)",
+            "article:has(~ aside)",
+            "article:has(~ aside b > i)",
+            "article:has(~ footer)",
+            "article:has(> .x > .y)",
+        ];
+        for f in forms {
+            let sel = ComplexSelector::parse(f)
+                .unwrap_or_else(|| panic!("selector should parse: {f}"));
+            for &n in &[root, article, h1, p, img, span, aside, b, i_el] {
+                let _ = sel.matches(&doc, n);
+            }
+        }
+
+        // Teeth: correctness of representative leading-combinator forms.
+        // `> img` is a DIRECT child of article? No — img is under p, not article.
+        assert!(!ComplexSelector::parse("article:has(> img)")
+            .unwrap()
+            .matches(&doc, article));
+        // `> p > img` — p is a direct child of article and img a direct child of p.
+        assert!(ComplexSelector::parse("article:has(> p > img)")
+            .unwrap()
+            .matches(&doc, article));
+        // descendant `:has(img)` — img is a descendant of article.
+        assert!(ComplexSelector::parse("article:has(img)")
+            .unwrap()
+            .matches(&doc, article));
+        // `+ aside` — aside is article's immediate next sibling.
+        assert!(ComplexSelector::parse("article:has(+ aside)")
+            .unwrap()
+            .matches(&doc, article));
+        // `~ aside b > i` — leading sibling combinator with a deeper inner chain.
+        assert!(ComplexSelector::parse("article:has(~ aside b > i)")
+            .unwrap()
+            .matches(&doc, article));
+    }
+
+    /// Teeth for the `match_rest` bounds guard: a manually-constructed relative
+    /// selector that VIOLATES the `combinators.len() == compounds.len() - 1`
+    /// storage invariant (a leading combinator plus a `combinators` list longer
+    /// than `compounds` supports) must fail closed rather than index past the
+    /// compound list and panic. Without the guard this panics with an
+    /// out-of-bounds slice index.
+    #[test]
+    fn malformed_relative_selector_with_extra_combinator_fails_closed() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent = doc.create_element("section");
+        doc.append_child(root, parent);
+        let child = doc.create_element("img");
+        doc.append_child(parent, child);
+
+        // compounds has 1 entry but combinators claims 1 combinator, so when
+        // match_rest advances to idx+1 it would read compounds[1] (out of bounds).
+        let malformed = ComplexSelector {
+            compounds: vec![CompoundSelector {
+                tag: Some("img".into()),
+                ..CompoundSelector::new()
+            }],
+            combinators: vec![Combinator::Child],
+            leading_combinator: Some(Combinator::Child),
+        };
+
+        // Must not panic; with the bounds guard it simply does not match.
+        assert!(!malformed.matches_relative_to_anchor(&doc, parent));
+        assert!(!malformed.matches_relative_to_anchor(&doc, root));
+    }
 
     #[test]
     fn parse_simple_tag() {
