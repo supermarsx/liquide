@@ -209,6 +209,70 @@ impl FilesRuntime {
         &self.navigation_history
     }
 
+    /// The current 0-based position within the navigation history.
+    #[must_use]
+    pub fn history_index(&self) -> usize {
+        self.history_index
+    }
+
+    /// Replace the current listing's entries in place, applying the active
+    /// sort/filter settings, without touching the navigation history. Used by
+    /// the widget seam to refresh a directory whose contents were resolved
+    /// out-of-band (e.g. a host-supplied listing).
+    pub fn set_current_entries(&mut self, entries: Vec<FileEntry>) {
+        self.current_listing.set_entries(entries);
+        self.selection.clear();
+    }
+
+    /// Point the current listing at `path` (with the given entries) **without**
+    /// recording a history step. This is the in-memory primitive behind the
+    /// toolbar back/forward/up actions, which move the history cursor
+    /// themselves; using [`navigate`](Self::navigate) there would corrupt the
+    /// history by pushing the destination again.
+    fn show_path(&mut self, path: String, entries: Vec<FileEntry>) {
+        self.current_listing = DirectoryListing::new(path);
+        self.current_listing.show_hidden = self.config.show_hidden;
+        self.current_listing.sort_field = self.config.default_sort;
+        self.current_listing.sort_ascending = self.config.sort_ascending;
+        self.current_listing.view_mode = self.config.view_mode;
+        self.current_listing.set_entries(entries);
+        self.selection.clear();
+    }
+
+    /// In-memory "back": move the history cursor back one step and show that
+    /// path (with empty entries — the in-memory history records only paths).
+    /// Returns the new current path, or `None` at the start of history.
+    pub fn go_back_to_listing(&mut self) -> Option<String> {
+        if !self.can_go_back() {
+            return None;
+        }
+        self.history_index -= 1;
+        let path = self.navigation_history[self.history_index].clone();
+        self.show_path(path.clone(), Vec::new());
+        Some(path)
+    }
+
+    /// In-memory "forward": move the history cursor forward one step and show
+    /// that path. Returns the new current path, or `None` at the end of history.
+    pub fn go_forward_to_listing(&mut self) -> Option<String> {
+        if !self.can_go_forward() {
+            return None;
+        }
+        self.history_index += 1;
+        let path = self.navigation_history[self.history_index].clone();
+        self.show_path(path.clone(), Vec::new());
+        Some(path)
+    }
+
+    /// In-memory "up": navigate to the current directory's parent, recording a
+    /// new history step (like [`navigate`](Self::navigate)). Returns the parent
+    /// path that was opened, or `None` at the filesystem root.
+    pub fn go_up_to_listing(&mut self) -> Option<String> {
+        let parent = self.current_listing.parent()?;
+        self.navigate(parent.clone(), Vec::new());
+        Some(parent)
+    }
+
     // =========================================================================
     // Real filesystem navigation
     // =========================================================================
