@@ -48,6 +48,12 @@ pub mod label;
 pub mod slider;
 pub mod toggle;
 
+// ── Group B — containers ────────────────────────────────────────────────────
+pub mod container;
+pub mod scroll_area;
+pub mod tabs;
+pub mod toolbar;
+
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
 mod gallery;
@@ -68,6 +74,16 @@ mod slider_tests;
 #[cfg(test)]
 mod toggle_tests;
 
+// Per-widget real-pipeline gallery tests (Group B).
+#[cfg(test)]
+mod container_tests;
+#[cfg(test)]
+mod scroll_area_tests;
+#[cfg(test)]
+mod tabs_tests;
+#[cfg(test)]
+mod toolbar_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -82,6 +98,12 @@ pub use input::TextInput;
 pub use label::{Label, Link};
 pub use slider::Slider;
 pub use toggle::{RadioGroup, Toggle, ToggleStyle};
+
+// Group B widgets (containers).
+pub use container::{Card, GroupBox, Panel};
+pub use scroll_area::ScrollArea;
+pub use tabs::Tabs;
+pub use toolbar::{Toolbar, ToolbarOrientation};
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.

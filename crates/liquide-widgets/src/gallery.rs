@@ -223,6 +223,17 @@ impl Gallery {
         self.hit_test = Some(hit);
     }
 
+    /// Inject a scroll/wheel event at `(x, y)` with delta `(dx, dy)` through the
+    /// real dispatcher (hit-tests the point, fires a `Scroll` to the hit node ->
+    /// queue). Used by the scroll-area to drive wheel scrolling end-to-end.
+    pub fn scroll(&mut self, x: f32, y: f32, dx: f32, dy: f32) {
+        let hit = self.hit_test.take().expect("relayout before events");
+        let _ = self
+            .dispatcher
+            .dispatch_scroll(Point::new(x, y), dx, dy, &hit);
+        self.hit_test = Some(hit);
+    }
+
     /// Process queued events against widget behaviors, returning emitted actions.
     /// Re-renders changed widgets into the DOM (their new pseudo-states/classes).
     pub fn process(&mut self) -> Vec<WidgetAction> {

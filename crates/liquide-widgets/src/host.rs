@@ -119,26 +119,62 @@ impl WidgetHost {
         let root = TemplateRenderer::apply_or_create(doc, parent, &id, &template);
 
         // 2. Register one handler per wanted event-kind that forwards the raw
-        //    event into the shared queue. We register on the widget ROOT; the
-        //    dispatcher bubbles descendant events up to it (hover chain / event
-        //    path), so a click on a sub-part still reaches the root handler.
+        //    event into the shared queue. For BUBBLING events we register on the
+        //    widget ROOT only: the dispatcher bubbles descendant events up to it
+        //    (hover chain / event path), so a click on a sub-part still reaches
+        //    the root handler. For NON-BUBBLING events (notably `Scroll`/wheel,
+        //    which per the W3C UI Events spec do NOT bubble) the dispatcher fires
+        //    only on the exact hit node, so we additionally register the handler
+        //    on every descendant of the widget root that exists at mount time.
+        //    `process_pending` resolves the owning widget from the event target
+        //    by ancestor walk, so a descendant-hit non-bubbling event is still
+        //    attributed to this widget.
         for sample in behavior.wanted_events() {
-            let queue = Arc::clone(&self.queue);
-            dispatcher.add_handler(
-                root,
-                Some(sample),
-                Box::new(move |ev: &DomEvent| {
-                    if let Ok(mut q) = queue.lock() {
-                        q.push(ev.clone());
-                    }
-                    Propagation::Continue
-                }),
-            );
+            let bubbles = sample.bubbles();
+            if bubbles {
+                self.register_handler(dispatcher, root, sample);
+            } else {
+                // Register on root + all current descendants so a wheel landing on
+                // any sub-part reaches the queue.
+                let mut targets = vec![root];
+                Self::collect_descendants(doc, root, &mut targets);
+                for node in targets {
+                    self.register_handler(dispatcher, node, sample.clone());
+                }
+            }
         }
 
         self.widgets.insert(id.clone(), behavior);
         self.roots.insert(id, root);
         root
+    }
+
+    /// Register one queue-forwarding handler on `node` for `sample`'s event kind.
+    fn register_handler(
+        &self,
+        dispatcher: &mut EventDispatcher,
+        node: NodeId,
+        sample: DomEventKind,
+    ) {
+        let queue = Arc::clone(&self.queue);
+        dispatcher.add_handler(
+            node,
+            Some(sample),
+            Box::new(move |ev: &DomEvent| {
+                if let Ok(mut q) = queue.lock() {
+                    q.push(ev.clone());
+                }
+                Propagation::Continue
+            }),
+        );
+    }
+
+    /// Collect every descendant of `node` (pre-order) into `out`.
+    fn collect_descendants(doc: &Document, node: NodeId, out: &mut Vec<NodeId>) {
+        for &child in doc.children(node) {
+            out.push(child);
+            Self::collect_descendants(doc, child, out);
+        }
     }
 
     /// Drain the queued dispatcher events and apply each to its owning widget,
