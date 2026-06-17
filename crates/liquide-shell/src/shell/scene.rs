@@ -806,15 +806,6 @@ impl Shell {
             blink_toggled,
         );
 
-        // Collect threaded fallback nodes. These are composited only when the
-        // main pipeline returns no chrome nodes, to avoid duplicate rendering.
-        let mut threaded_nodes = self
-            .thread_coordinator
-            .as_ref()
-            .map(|coordinator| coordinator.render_all(self.frame_delta_ms))
-            .unwrap_or_default();
-        let pipeline_empty = pipeline_nodes.is_empty();
-
         // ── Update hit-test engine with latest layout + styles ──
         self.hit_test_engine = Some(liquide_hit_test::HitTestEngine::new(
             Arc::clone(&pipeline_output.layout),
@@ -863,14 +854,13 @@ impl Shell {
         // are overlays that must render ABOVE windows, not below.
         let mut found_desktop_bg = false;
 
-        let all_nodes = if pipeline_empty && !threaded_nodes.is_empty() {
-            Self::normalize_threaded_scene_nodes(&mut threaded_nodes);
-            threaded_nodes
-        } else {
-            pipeline_nodes
-        };
-
-        for mut node in all_nodes {
+        // Every shell chrome surface (statusbar, dock, launcher, notifications,
+        // menus, overlays) is CSS-driven, so the CSS pipeline always emits at
+        // least the desktop-background fill — `pipeline_nodes` is never empty.
+        // The old imperative `thread_coordinator` fallback track (composited
+        // only when the pipeline produced nothing) was therefore dead and has
+        // been retired (t112-p9).
+        for mut node in pipeline_nodes {
             let nb = &node.properties.bounds;
             let node_area = nb.width * nb.height;
             let is_fullscreen_fill = matches!(
@@ -1281,6 +1271,14 @@ impl Shell {
             button_height: close_box.height,
             button_right_margin: right_margin,
             button_corner_radius: defaults.button_corner_radius,
+            // t112-b2 HANDOFF: `button_rects` (per-button CSS screen boxes for
+            // exact paint↔hit parity) and `frame_colors` (CSS-resolved
+            // titlebar/border/title-text colors) default to None here. To get
+            // exact per-button paint + CSS-driven frame colors, populate these
+            // from `window_decoration_adapter::window_button_bounds_from_css`
+            // (close/maximize/minimize/pin) + the resolved frame style. The
+            // renderer already honors them when present.
+            ..Default::default()
         })
     }
 
@@ -1572,32 +1570,6 @@ impl Shell {
         }
 
         ws_node
-    }
-
-    fn normalize_threaded_scene_nodes(nodes: &mut Vec<SceneNode>) {
-        let mut flattened = Vec::new();
-        for mut node in nodes.drain(..) {
-            if matches!(node.kind, SceneNodeKind::Root) {
-                flattened.extend(node.children.drain(..));
-            } else {
-                flattened.push(node);
-            }
-        }
-
-        let mut sequence = 0u64;
-        for node in &mut flattened {
-            Self::remap_thread_scene_ids(node, &mut sequence);
-        }
-        *nodes = flattened;
-    }
-
-    fn remap_thread_scene_ids(node: &mut SceneNode, sequence: &mut u64) {
-        const THREAD_NODE_ID_BASE: u64 = 9_000_000_000_000;
-        *sequence = sequence.saturating_add(1);
-        node.id = THREAD_NODE_ID_BASE.saturating_add(*sequence);
-        for child in &mut node.children {
-            Self::remap_thread_scene_ids(child, sequence);
-        }
     }
 
     /// Render app-specific content inside a window's content area.

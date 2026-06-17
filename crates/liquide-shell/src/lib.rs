@@ -55,7 +55,6 @@ pub mod stats;
 pub mod theme;
 pub(crate) mod theme_loader;
 pub mod themes;
-pub(crate) mod threading;
 // `tiling` is NOT a dead duplicate: it defines the shell-internal
 // `TilingEngine`/`SnapZone`/`TilingConfig`/`TilingLayoutKind`/`TilingMode` types
 // re-exported below and held live in the `Shell` struct (snap-preview

@@ -226,6 +226,10 @@ pub fn resolve_decoration_layout(
             legacy_button.border_radius,
         ])
         .unwrap_or(defaults.button_corner_radius),
+        // t112-b2 HANDOFF: per-button rects + CSS frame colors default to None;
+        // populate from the laid-out CSS boxes / frame style for exact
+        // paint↔hit parity + CSS-driven frame colors (renderer honors them).
+        ..Default::default()
     }
 }
 

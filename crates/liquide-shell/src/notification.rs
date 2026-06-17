@@ -11,8 +11,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 
-use liquide_compositor::geometry::Rect;
-use liquide_compositor::scene::SceneNode;
 use liquide_interop::notification::{Notification, Urgency};
 use serde::{Deserialize, Serialize};
 
@@ -715,71 +713,6 @@ impl NotificationManager {
     #[must_use]
     pub fn config(&self) -> &NotificationConfig {
         &self.config
-    }
-
-    /// Build the scene graph for active notifications.
-    pub fn build_scene(
-        &self,
-        screen: Rect,
-        theme: &crate::theme::ShellTheme,
-        layout: Option<&crate::css_integration::NotificationLayout>,
-    ) -> SceneNode {
-        use crate::scene_builder::*;
-        use liquide_compositor::scene::{GlassParams, NodeProperties, SceneNode, SceneNodeKind};
-
-        let defaults = crate::css_integration::NotificationLayout::default();
-        let layout = layout.unwrap_or(&defaults);
-
-        let mut container = SceneNode::new(
-            NODE_NOTIFICATION_BASE,
-            SceneNodeKind::Overlay,
-            NodeProperties::new(screen).with_z_order(960),
-        );
-
-        if self.active.is_empty() {
-            return container;
-        }
-
-        let notif_width = layout.width;
-        let notif_height = layout.height;
-        let gap = layout.gap;
-        let margin = layout.margin;
-        let top_offset = layout.top_offset;
-
-        for (i, _notif) in self.active.iter().enumerate() {
-            let (nx, ny) = match self.config.position {
-                NotificationPosition::TopRight => (
-                    screen.x + screen.width - notif_width - margin,
-                    screen.y + top_offset + margin + i as f32 * (notif_height + gap),
-                ),
-                NotificationPosition::TopLeft => (
-                    screen.x + margin,
-                    screen.y + top_offset + margin + i as f32 * (notif_height + gap),
-                ),
-                NotificationPosition::BottomRight => (
-                    screen.x + screen.width - notif_width - margin,
-                    screen.y + screen.height - margin - (i as f32 + 1.0) * (notif_height + gap),
-                ),
-                NotificationPosition::BottomLeft => (
-                    screen.x + margin,
-                    screen.y + screen.height - margin - (i as f32 + 1.0) * (notif_height + gap),
-                ),
-            };
-
-            let notif_bounds = Rect::new(nx, ny, notif_width, notif_height);
-            container.add_child(SceneNode::new(
-                NODE_NOTIFICATION_BASE + 1 + i as u64,
-                SceneNodeKind::Glass(GlassParams {
-                    blur_radius: layout.blur_radius,
-                    tint_color: theme.notification_glass_tint,
-                    inner_glow: true,
-                    parallax: false,
-                }),
-                NodeProperties::new(notif_bounds).with_z_order(961),
-            ));
-        }
-
-        container
     }
 
     /// Determine whether a notification with the given urgency should be shown

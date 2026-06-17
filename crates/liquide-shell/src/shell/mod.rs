@@ -54,7 +54,6 @@ use crate::screen_time::ScreenTimeTracker;
 use crate::seamless::SeamlessManager;
 use crate::shortcuts::{ShellAction, ShortcutManager};
 use crate::theme::ShellTheme;
-use crate::theme_loader;
 use crate::tiling::TilingEngine;
 use crate::window::{Window, WindowId};
 use crate::workspace::WorkspaceManager;
@@ -520,7 +519,6 @@ pub struct Shell {
     /// shortcut execution (the `events.rs` preventDefault wiring).
     pub(crate) dom_default_prevented: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) hit_test_engine: Option<HitTestEngine>,
-    pub(crate) thread_coordinator: Option<crate::threading::ShellThreadCoordinator>,
     pub(crate) sandbox_manager: crate::sandboxing::SandboxManager,
     pub(crate) template_registry: TemplateRegistry,
     /// Hook manager for the event hook chain.
@@ -732,13 +730,6 @@ impl Shell {
         let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
         css_pipeline.set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
 
-        let thread_css = theme_loader::default_theme_css().to_string();
-        let thread_coordinator = crate::threading::ShellThreadCoordinator::new(
-            thread_css,
-            screen_width as u32,
-            screen_height as u32,
-        );
-
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
         sandbox_manager.register_app("com.liquide.shell".to_string());
 
@@ -800,7 +791,6 @@ impl Shell {
             event_dispatcher: EventDispatcher::new(),
             dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             hit_test_engine: None,
-            thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
             hook_manager: HookManager::new(),
             template_registry: Self::init_template_registry(),
@@ -882,13 +872,6 @@ impl Shell {
         let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
         css_pipeline.set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
 
-        let thread_css = theme_loader::default_theme_css().to_string();
-        let thread_coordinator = crate::threading::ShellThreadCoordinator::new(
-            thread_css,
-            screen_width as u32,
-            screen_height as u32,
-        );
-
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
         sandbox_manager.register_app("com.liquide.shell".to_string());
 
@@ -950,7 +933,6 @@ impl Shell {
             event_dispatcher: EventDispatcher::new(),
             dom_default_prevented: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             hit_test_engine: None,
-            thread_coordinator: Some(thread_coordinator),
             sandbox_manager,
             hook_manager: HookManager::new(),
             template_registry: Self::init_template_registry(),
@@ -1331,14 +1313,6 @@ impl Shell {
             KeyCode::Comma => Some(','),
             KeyCode::Slash => Some('/'),
             _ => None,
-        }
-    }
-}
-
-impl Drop for Shell {
-    fn drop(&mut self) {
-        if let Some(coordinator) = self.thread_coordinator.take() {
-            coordinator.shutdown();
         }
     }
 }

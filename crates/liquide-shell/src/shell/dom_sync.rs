@@ -11,7 +11,6 @@ use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::desktop_dom::DockItemInfo;
 use crate::launcher::SearchResultKind;
 use liquide_dom::NodeId;
 use liquide_dom::escape_html;
@@ -131,9 +130,6 @@ impl Shell {
         // Keep the DOM viewport in sync with the screen rect.
         self.css_pipeline
             .set_viewport(self.screen_rect.width, self.screen_rect.height);
-
-        // ── Thread coordinator fallback (remote rendering) ───
-        self.sync_thread_coordinator();
 
         let changed = self.dom_dirty_len() != 0 || self.dom_dirty;
         self.dom_dirty = false;
@@ -2094,94 +2090,6 @@ impl Shell {
         // apply_overlay caller passes matching names.)
     }
 
-    /// Push state to the threaded fallback coordinator (for remote rendering).
-    fn sync_thread_coordinator(&self) {
-        let Some(coordinator) = &self.thread_coordinator else {
-            return;
-        };
-
-        let thread_dock_items: Vec<DockItemInfo> = self
-            .dock
-            .items()
-            .iter()
-            .map(|item| DockItemInfo {
-                app_id: item.app_id.clone(),
-                label: item.label.clone(),
-                icon: item.icon.clone(),
-                is_running: item.running_window_count > 0,
-                is_pinned: item.pinned_position.is_some(),
-            })
-            .collect();
-        coordinator.update_dock(thread_dock_items, self.dock.hover_index());
-
-        let statusbar_items: Vec<crate::threading::StatusBarItemUpdate> = self
-            .status_bar
-            .items()
-            .iter()
-            .map(|item| {
-                let content = self.status_bar_item_text(item);
-                let slot = match item.slot {
-                    liquide_statusbar::StatusBarSlot::Left => {
-                        crate::desktop_dom::StatusBarSlotKind::Left
-                    }
-                    liquide_statusbar::StatusBarSlot::Center => {
-                        crate::desktop_dom::StatusBarSlotKind::Center
-                    }
-                    liquide_statusbar::StatusBarSlot::Right => {
-                        crate::desktop_dom::StatusBarSlotKind::Right
-                    }
-                };
-
-                crate::threading::StatusBarItemUpdate {
-                    slot,
-                    item_id: item.id.clone(),
-                    content,
-                    visible: item.visible,
-                }
-            })
-            .collect();
-        coordinator.update_statusbar(statusbar_items);
-
-        let launcher_items: Vec<crate::desktop_dom::LauncherItemInfo> = self
-            .launcher
-            .results()
-            .iter()
-            .map(|r| {
-                let app_id = match &r.kind {
-                    SearchResultKind::Application { app_id } => app_id.clone(),
-                    _ => String::new(),
-                };
-                crate::desktop_dom::LauncherItemInfo {
-                    app_id,
-                    label: r.title.clone(),
-                    icon: r.icon.clone().unwrap_or_default(),
-                }
-            })
-            .collect();
-        coordinator.update_launcher(
-            self.launcher.is_visible(),
-            self.launcher.query().to_string(),
-            launcher_items,
-            if self.launcher.result_count() > 0 {
-                Some(self.launcher.selected_index())
-            } else {
-                None
-            },
-        );
-
-        let notifications: Vec<crate::threading::NotificationData> = self
-            .notifications
-            .active_notifications()
-            .iter()
-            .map(|sn| crate::threading::NotificationData {
-                id: sn.id.to_string(),
-                title: sn.notification.summary.clone(),
-                body: sn.notification.body.clone(),
-                urgency: format!("{:?}", sn.notification.urgency).to_lowercase(),
-            })
-            .collect();
-        coordinator.update_notifications(notifications);
-    }
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@ mod screen_time_tests;
 mod seamless_tests;
 mod shell_tests;
 mod shortcuts_tests;
+mod single_render_path_tests;
 mod stats_tests;
 mod t65_s2_tests;
 mod t75_shellact_tests;
