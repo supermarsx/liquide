@@ -1,0 +1,25 @@
+<!-- LiquiDE Lock Screen Component Template (t95-p4 full-CSS migration)
+
+     Rendered when the canonical lock screen is engaged. The whole surface
+     is DOM/CSS: a fixed full-screen `lockscreen-overlay` scrim containing a
+     centred cluster (clock, date, user name, and the password prompt).
+
+     The `lockscreen-prompt` element is the PASSWORD FIELD. Its on-screen
+     box is produced by the CSS layout (assets/themes/components.css); the
+     click/focus hit-test reads that laid-out box — never a hardcoded
+     constant. `{{focused_class}}` flips the `.focused` style when the
+     screen is in the password-entry phase.
+
+     Single-level {{#if}} only (flat template engine contract). -->
+
+<lockscreen-overlay id="{{id}}">
+  <lockscreen id="lockscreen-cluster">
+    <lockscreen-clock id="lockscreen-clock">{{clock}}</lockscreen-clock>
+    <lockscreen-date id="lockscreen-date">{{date}}</lockscreen-date>
+    <lockscreen-user id="lockscreen-user">{{display_name}}</lockscreen-user>
+    <lockscreen-prompt id="lockscreen-password" class="{{focused_class}}">
+      <lockscreen-password-dots id="lockscreen-password-dots">{{dots}}</lockscreen-password-dots>
+    </lockscreen-prompt>
+    {{#if has_error}}<lockscreen-error id="lockscreen-error">{{error}}</lockscreen-error>{{/if}}
+  </lockscreen>
+</lockscreen-overlay>

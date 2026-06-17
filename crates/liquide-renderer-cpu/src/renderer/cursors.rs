@@ -25,6 +25,14 @@ pub struct CursorTheme {
     /// the shape carried on the scene node (lets the shell force a CSS-resolved
     /// `cursor` value). When `None`, the node's own shape is used.
     pub shape_override: Option<CursorShape>,
+    /// CSS-driven size multiplier applied on top of the node's intrinsic scale.
+    ///
+    /// The cursor *geometry* is still derived from the scene node's bounds
+    /// (`bounds.width / 16.0`), keeping the shape path a deterministic
+    /// scene-kind. This factor lets a theme grow/shrink the cursor (e.g. a
+    /// `cursor { scale: 1.5 }` accessibility/large-cursor rule) without
+    /// changing the node bounds. `1.0` reproduces the historic size.
+    pub scale: f32,
 }
 
 impl Default for CursorTheme {
@@ -34,6 +42,7 @@ impl Default for CursorTheme {
             outline: Color::new(0, 0, 0, 255),
             fill: Color::WHITE,
             shape_override: None,
+            scale: 1.0,
         }
     }
 }
@@ -60,7 +69,16 @@ impl SoftwareRenderer {
         if let liquide_compositor::scene::SceneNodeKind::Cursor { shape } = node.kind_ref() {
             let cx = bounds.x;
             let cy = bounds.y;
-            let s = (bounds.width / 16.0).max(1.0);
+            // CSS seam: the node's intrinsic per-pixel scale times the
+            // theme-resolved size multiplier (defaults to 1.0 → historic size).
+            // Geometry stays node-driven (deterministic scene-kind); only the
+            // overall size is themeable.
+            let theme_scale = if self.cursor_theme.scale.is_finite() {
+                self.cursor_theme.scale.max(0.0)
+            } else {
+                1.0
+            };
+            let s = (bounds.width / 16.0).max(1.0) * theme_scale;
 
             // CSS seam: resolved colors (defaults reproduce the old hardcoded
             // black/white) and an optional shape override.
@@ -1175,6 +1193,7 @@ mod tests {
             outline: Color::new(0, 0, 0, 255),
             fill: red,
             shape_override: None,
+            scale: 1.0,
         });
         let fb = render(&mut r, &cursor_node(CursorShape::Arrow));
         assert!(
@@ -1207,6 +1226,70 @@ mod tests {
         assert!(
             !find_fill_pixel(&fb_cross, Color::WHITE),
             "shape override to Crosshair should not draw the arrow's white fill"
+        );
+    }
+
+    /// The painted vertical extent (lowest fill row) of the cursor.
+    fn lowest_fill_row(fb: &FrameBuffer, want: Color) -> Option<u32> {
+        let mut found = None;
+        for y in 0..fb.height {
+            for x in 0..fb.width {
+                let p = fb.get_pixel(x, y);
+                if p.r == want.r && p.g == want.g && p.b == want.b && p.a > 0 {
+                    found = Some(y);
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn cursor_theme_scale_grows_the_cursor() {
+        // A CSS-resolved `scale` > 1.0 must make the cursor physically larger:
+        // the arrow's fill reaches farther down the framebuffer. If the renderer
+        // ignored CursorTheme.scale, both renders would be identical and this
+        // would fail.
+        let mut normal = SoftwareRenderer::new();
+        let fb_1x = render(&mut normal, &cursor_node(CursorShape::Arrow));
+        let bottom_1x =
+            lowest_fill_row(&fb_1x, Color::WHITE).expect("1x cursor must draw white fill");
+
+        let mut big = SoftwareRenderer::new();
+        big.set_cursor_theme(CursorTheme {
+            scale: 2.0,
+            ..CursorTheme::default()
+        });
+        let fb_2x = render(&mut big, &cursor_node(CursorShape::Arrow));
+        let bottom_2x =
+            lowest_fill_row(&fb_2x, Color::WHITE).expect("2x cursor must draw white fill");
+
+        assert!(
+            bottom_2x > bottom_1x,
+            "scale=2.0 cursor should paint farther down ({bottom_2x}) than scale=1.0 ({bottom_1x})"
+        );
+        assert_eq!(big.cursor_theme().scale, 2.0);
+    }
+
+    #[test]
+    fn cursor_theme_non_finite_scale_falls_back_to_historic_size() {
+        // A garbage scale (NaN/inf/negative) must not blow up geometry; it falls
+        // back to the historic 1.0 size so the cursor stays renderable.
+        let mut normal = SoftwareRenderer::new();
+        let fb_1x = render(&mut normal, &cursor_node(CursorShape::Arrow));
+        let bottom_1x =
+            lowest_fill_row(&fb_1x, Color::WHITE).expect("1x cursor must draw white fill");
+
+        let mut bad = SoftwareRenderer::new();
+        bad.set_cursor_theme(CursorTheme {
+            scale: f32::NAN,
+            ..CursorTheme::default()
+        });
+        let fb_bad = render(&mut bad, &cursor_node(CursorShape::Arrow));
+        let bottom_bad =
+            lowest_fill_row(&fb_bad, Color::WHITE).expect("NaN-scale cursor must still draw fill");
+        assert_eq!(
+            bottom_bad, bottom_1x,
+            "non-finite scale must fall back to the historic 1.0 size"
         );
     }
 }

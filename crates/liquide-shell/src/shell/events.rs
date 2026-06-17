@@ -1278,6 +1278,20 @@ impl Shell {
 
         let pt = Point::new(x, y);
 
+        // Lock screen (t95-p4). When the session is locked the DOM/CSS lock
+        // overlay is topmost and modal: every press is consumed here so it
+        // cannot leak to windows/chrome behind the scrim. A press inside the
+        // CSS-laid-out password field box focuses it (Clock → PasswordEntry)
+        // via the canonical lock-screen logic — the hit-test geometry comes
+        // from the laid-out `#lockscreen-password` box, NOT a hardcoded
+        // constant (t86 hit-test-from-CSS-geometry contract).
+        if self.is_session_locked() {
+            if button == MouseButton::Left {
+                self.lockscreen_press(x, y);
+            }
+            return Some(ShellAction::Redraw);
+        }
+
         // Modal grab (t94-e4 gap #5b). While a modal dialog/window owns input,
         // a press anywhere outside the modal surface must NOT focus, raise, or
         // start a drag on any background window, nor open the desktop/window

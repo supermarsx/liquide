@@ -83,9 +83,11 @@ impl Shell {
     /// The CSS-resolved cursor appearance to feed the software renderer's
     /// cursor seam (`SoftwareRenderer::set_cursor_theme`, t64-p0 Primitive 4).
     ///
-    /// The fill is taken from the theme's `cursor { color }` rule (resolved by
-    /// the theme loader into [`ShellTheme::cursor_color`]); the outline is a
-    /// contrasting black so the cursor stays legible over the themed fill. The
+    /// The fill is taken from the theme's `cursor { color }` rule and the size
+    /// multiplier from `cursor { scale }` (resolved by the theme loader into
+    /// [`ShellTheme::cursor_color`]/[`ShellTheme::cursor_scale`]); the outline
+    /// is a contrasting black so the cursor stays legible over the themed fill.
+    /// The
     /// shape is **not** overridden here — the live cursor shape is carried on
     /// the scene `Cursor` node ([`Shell::cursor_shape`]), driven by hover/drag
     /// state — so the renderer honors the per-frame shape while still painting
@@ -96,6 +98,9 @@ impl Shell {
         liquide_renderer_cpu::CursorTheme {
             outline: liquide_compositor::pixel::Color::new(0, 0, 0, 255),
             fill: self.theme.cursor_color,
+            // CSS-driven size multiplier (`cursor { scale }`); 1.0 = historic
+            // size. The shape/geometry stays node-driven.
+            scale: self.theme.cursor_scale,
             shape_override: None,
         }
     }

@@ -155,6 +155,30 @@ const SHELL_DIALOG_TEMPLATE: &str = r#"<dialog-overlay id="{{id}}">
 const SHELL_DIALOG_BUTTON_TEMPLATE: &str =
     r#"<dialog-button data-index="{{index}}" {{#if is_primary}}class="primary"{{/if}}>{{label}}</dialog-button>"#;
 
+/// Embedded lock-screen template (t95-p4 full-CSS migration).
+///
+/// Replaces the prior imperative filled-rect lock overlay
+/// (`scene.rs::add_lockscreen_overlay`): a fixed full-screen
+/// `lockscreen-overlay` scrim containing a centred cluster (clock, date,
+/// user, and the password `lockscreen-prompt`). The password field's box is
+/// laid out by the CSS pipeline (`lockscreen-prompt` rule), so its
+/// click/focus hit-test reads the laid-out box from the live layout tree
+/// (`#lockscreen-password`), NOT a hardcoded constant — the recurring
+/// hit-test-from-CSS-geometry contract (t86). `focused_class` flips the
+/// `.focused` styling while in the password-entry phase. Single-level
+/// `{{#if}}` only (the flat template engine contract).
+const SHELL_LOCKSCREEN_TEMPLATE: &str = r#"<lockscreen-overlay id="{{id}}">
+  <lockscreen id="lockscreen-cluster">
+    <lockscreen-clock id="lockscreen-clock">{{clock}}</lockscreen-clock>
+    <lockscreen-date id="lockscreen-date">{{date}}</lockscreen-date>
+    <lockscreen-user id="lockscreen-user">{{display_name}}</lockscreen-user>
+    <lockscreen-prompt id="lockscreen-password" class="{{focused_class}}">
+      <lockscreen-password-dots id="lockscreen-password-dots">{{dots}}</lockscreen-password-dots>
+    </lockscreen-prompt>
+    {{#if has_error}}<lockscreen-error id="lockscreen-error">{{error}}</lockscreen-error>{{/if}}
+  </lockscreen>
+</lockscreen-overlay>"#;
+
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
 pub struct SessionMenuItem {
@@ -929,6 +953,10 @@ impl Shell {
         // labels as real text) instead of the imperative blank-rect path.
         registry.register("dialog", SHELL_DIALOG_TEMPLATE);
         registry.register("dialog-button", SHELL_DIALOG_BUTTON_TEMPLATE);
+        // Register the lock-screen template (t95-p4): the lock surface now
+        // renders through the DOM/CSS pipeline (clock/date/user/password field
+        // as real elements) instead of the imperative filled-rect overlay.
+        registry.register("lockscreen", SHELL_LOCKSCREEN_TEMPLATE);
         // Try loading from assets/templates on disk (overrides embedded defaults).
         //
         // NOTE (t57-f1): the search path is intentionally the CWD-relative

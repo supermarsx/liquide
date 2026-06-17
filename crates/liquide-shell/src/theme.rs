@@ -75,8 +75,11 @@ pub struct ShellTheme {
     pub notification_glass_tint: Color,
 
     // Cursor
-    /// Cursor fill color.
+    /// Cursor fill color (CSS `cursor { color }`).
     pub cursor_color: Color,
+    /// Cursor size multiplier (CSS `cursor { scale }`/`--cursor-scale`).
+    /// `1.0` is the historic size; larger values grow the cursor.
+    pub cursor_scale: f32,
 
     // Context / session menus
     /// Hover highlight color for context and session menu items.
@@ -217,6 +220,7 @@ impl ShellTheme {
                 210,
             ),
             cursor_color: Color::new(255, 255, 255, 255),
+            cursor_scale: 1.0,
             menu_item_hover: Color::new(255, 255, 255, 30),
             menu_separator: Color::new(255, 255, 255, 40),
             loading_overlay: Color::new(0, 0, 0, 180),
@@ -298,6 +302,7 @@ impl ShellTheme {
             launcher_item_normal: Color::new(240, 240, 245, 140),
             notification_glass_tint: Color::new(248, 248, 252, 230),
             cursor_color: Color::new(0, 0, 0, 255),
+            cursor_scale: 1.0,
             menu_item_hover: Color::new(0, 0, 0, 20),
             menu_separator: Color::new(0, 0, 0, 30),
             loading_overlay: Color::new(255, 255, 255, 160),
@@ -384,6 +389,7 @@ impl ShellTheme {
 
             // Cursor
             cursor_color: Color::new(255, 255, 255, 255),
+            cursor_scale: 1.0,
             menu_item_hover: Color::new(255, 255, 255, 40),
             menu_separator: Color::new(255, 255, 255, 40),
 
@@ -451,6 +457,7 @@ impl ShellTheme {
 
             // Cursor
             cursor_color: Color::new(0, 0, 0, 255),
+            cursor_scale: 1.0,
             menu_item_hover: Color::new(0, 0, 0, 20),
             menu_separator: Color::new(0, 0, 0, 30),
 

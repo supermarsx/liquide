@@ -177,9 +177,22 @@ fn cursor_theme_fed_from_css_color() {
     // carried on the scene node, so the seam leaves it to the node.
     assert!(seam.shape_override.is_none());
 
-    // Swapping the theme's cursor color flows through to the seam.
+    // The CSS-resolved cursor scale also flows into the seam (CursorTheme.scale).
+    assert_eq!(
+        shell.cursor_theme().scale,
+        shell.theme().cursor_scale,
+        "cursor seam scale must come from the CSS-resolved theme scale"
+    );
+
+    // Swapping the theme's cursor color + scale flows through to the seam.
     let mut theme = crate::theme::ShellTheme::default_dark();
     theme.cursor_color = Color::new(255, 0, 0, 255);
+    theme.cursor_scale = 1.75;
     shell.set_theme(theme);
     assert_eq!(shell.cursor_theme().fill, Color::new(255, 0, 0, 255));
+    assert_eq!(
+        shell.cursor_theme().scale,
+        1.75,
+        "a restyled cursor scale must reach the renderer-facing CursorTheme"
+    );
 }

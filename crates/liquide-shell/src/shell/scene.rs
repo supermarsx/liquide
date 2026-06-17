@@ -947,15 +947,14 @@ impl Shell {
         }
 
         // ── Lock screen (topmost) ─────────────────────────────────
-        // When the canonical lock-screen state is engaged (driven by the Lock
-        // action through `chrome_lockscreen`), paint the lock surface above
-        // everything else (t57-f9): a full-screen scrim plus a centred
-        // clock/prompt cluster. Previously the Lock action transitioned the
-        // canonical state but nothing painted, so the desktop stayed visible.
-        if self.is_session_locked() {
-            const LOCK_Z_BASE: u32 = 80_000;
-            self.add_lockscreen_overlay(&mut root, screen, LOCK_Z_BASE);
-        }
+        // The lock surface is now a DOM/CSS overlay (t95-p4 full-CSS
+        // migration): `sync_lockscreen_template` mounts the `lockscreen-overlay`
+        // subtree (clock/date/user/password field) into the DOM and the CSS
+        // pipeline lays it out + paints it at `z-index: 8000` (above windows
+        // and chrome). The prior imperative `add_lockscreen_overlay` filled-rect
+        // overlay is retired. Its password field is a real laid-out box whose
+        // hit-test geometry comes from CSS (see `events.rs` + the
+        // `lockscreen-prompt` rule), not hardcoded constants.
 
         // ── Retain the assembled root for idle-frame reuse (t76-scenecache) ──
         // Store a clone so the next steady-state frame can return this exact
@@ -965,46 +964,6 @@ impl Shell {
         // re-checked by the reuse predicate at the top of the next build.
         self.full_scene_cache.store(root.clone());
         root
-    }
-
-    /// Emit the lock-screen surface: a full-screen dimming scrim plus a centred
-    /// clock and password-prompt cluster, above all other layers (t57-f9).
-    ///
-    /// Uses themed filled rects for the scrim, clock, and prompt cluster so the
-    /// surface unambiguously paints content the visual regression can assert on.
-    /// Hit-testing the password field is a follow-up; this wires the rendering
-    /// half so the Lock action is no longer a no-op visually.
-    fn add_lockscreen_overlay(&self, root: &mut SceneNode, screen: Rect, base_z: u32) {
-        // Full-screen lock scrim.
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 80,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.launcher_overlay, 220),
-            },
-            NodeProperties::new(screen).with_z_order(base_z),
-        ));
-
-        // Centred clock band (top of the cluster).
-        let cluster_w = (screen.width * 0.32).clamp(220.0, 520.0);
-        let cx = (screen.width - cluster_w) / 2.0;
-        let clock = Rect::new(cx, screen.height * 0.28, cluster_w, 64.0);
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 81,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.status_bar_text, 235),
-            },
-            NodeProperties::new(clock).with_z_order(base_z + 1),
-        ));
-
-        // Password prompt field (below the clock).
-        let prompt = Rect::new(cx, screen.height * 0.28 + 96.0, cluster_w, 44.0);
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 82,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.launcher_search_bar, 235),
-            },
-            NodeProperties::new(prompt).with_z_order(base_z + 2),
-        ));
     }
 
     /// Emit the dock-hover tooltip bubble as a manual scene overlay.

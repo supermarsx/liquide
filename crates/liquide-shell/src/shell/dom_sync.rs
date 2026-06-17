@@ -117,6 +117,7 @@ impl Shell {
         self.sync_context_menu_template();
         self.sync_app_menu_template();
         self.sync_dialog_template();
+        self.sync_lockscreen_template();
         self.sync_tooltip_template();
 
         // Keep the DOM viewport in sync with the screen rect.
@@ -981,6 +982,54 @@ impl Shell {
         } else {
             self.remove_overlay("dialog-overlay");
             self.template_cache.remove("dialog");
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // Lock screen (t95-p4 full-CSS migration)
+    // ══════════════════════════════════════════════════════════
+
+    /// Sync the lock-screen overlay (t95-p4). When the canonical lock screen is
+    /// engaged (`chrome_lockscreen` locked), render the `lockscreen` template so
+    /// the clock, date, user name, and password field paint as real DOM/CSS
+    /// elements through the pipeline — replacing the prior imperative
+    /// filled-rect overlay (`scene.rs::add_lockscreen_overlay`).
+    ///
+    /// The password field (`#lockscreen-password`) is a real DOM box laid out by
+    /// the `lockscreen-prompt` CSS rule; its click/focus hit-test reads that
+    /// laid-out box (see `events.rs` lock-screen press handling +
+    /// `lockscreen_password_field_bounds`), NOT a hardcoded geometry constant.
+    fn sync_lockscreen_template(&mut self) {
+        use liquide_lockscreen::screen::ScreenPhase;
+
+        if let Some(layout) = self
+            .chrome_lockscreen
+            .as_ref()
+            .filter(|s| s.is_locked())
+            .map(|s| s.layout_info())
+        {
+            self.mark_wired(crate::shell::WiringBit::LockScreen);
+
+            // The field is "focused" once the screen leaves the bare clock
+            // phase (any password-entry / auth phase). Drives the `.focused`
+            // CSS so the click-to-focus is visible.
+            let focused = layout.phase != ScreenPhase::Clock;
+            let error = layout.error_message.clone().unwrap_or_default();
+
+            let mut ctx = TemplateContext::new();
+            ctx.set("id", "lockscreen-overlay");
+            ctx.set("clock", &layout.clock_text);
+            ctx.set("date", &layout.date_text);
+            ctx.set("display_name", &layout.display_name);
+            ctx.set("dots", &layout.password_dots);
+            ctx.set("focused_class", if focused { "focused" } else { "" });
+            ctx.set("has_error", !error.is_empty());
+            ctx.set("error", &error);
+
+            self.apply_overlay_template("lockscreen", "lockscreen-overlay", &ctx);
+        } else {
+            self.remove_overlay("lockscreen-overlay");
+            self.template_cache.remove("lockscreen");
         }
     }
 

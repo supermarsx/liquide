@@ -209,6 +209,9 @@
   --popover-bg:     rgba(39, 39, 42, 0.96);
   --popover-border: rgba(255, 255, 255, 0.10);
 
+  /* ── Cursor ── */
+  --cursor-scale: 1.0;
+
   /* ── Scrollbar ── */
   --scrollbar-thumb:  rgba(255, 255, 255, 0.15);
   --scrollbar-track:  transparent;

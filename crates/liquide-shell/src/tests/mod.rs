@@ -20,6 +20,7 @@ mod history_tests;
 mod hook_tests;
 mod launcher_tests;
 mod layout_tests;
+mod lockscreen_css_tests;
 mod notification_panel_tests;
 mod notification_tests;
 mod overview_thumbnail_tests;

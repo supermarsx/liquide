@@ -193,6 +193,14 @@ pub fn css_to_shell_theme(engine: &ThemeEngine) -> ShellTheme {
         cursor_color: query_color(engine, "cursor", &[], &[], "color")
             .unwrap_or_else(|| Color::new(255, 255, 255, 255)),
 
+        // Cursor size multiplier — themes set `cursor { scale: 1.5 }` (or a
+        // `--cursor-scale` custom property on the `cursor` rule) to grow/shrink
+        // the cursor. Defaults to 1.0 (historic size) when unset.
+        cursor_scale: query_number(engine, "cursor", &[], &[], "scale")
+            .or_else(|| query_number(engine, "cursor", &[], &[], "--cursor-scale"))
+            .filter(|s| s.is_finite() && *s > 0.0)
+            .unwrap_or(1.0),
+
         // Context / session menus
         menu_item_hover: query_color(engine, "menu-item", &[], &["hover".into()], "background")
             .unwrap_or_else(|| Color::new(0, 122, 255, 77)), // rgba(0,122,255,0.30)
@@ -269,6 +277,26 @@ fn query_color(
             None
         }
     }
+}
+
+/// Query a unitless number (or length resolved to px) from the CSS theme engine.
+///
+/// Used for scalar theme tokens such as the cursor size multiplier. Accepts a
+/// bare `Number` (e.g. `scale: 1.5`) or a `Length`/`calc()` resolved against a
+/// 16px base and a 1280×720 reference viewport (cursor scale is viewport-
+/// independent, so the reference is only a fallback for length units).
+fn query_number(
+    engine: &ThemeEngine,
+    element: &str,
+    classes: &[String],
+    pseudo_classes: &[String],
+    property: &str,
+) -> Option<f32> {
+    let styles = engine.query(element, classes, pseudo_classes).ok()?;
+    let value = styles.get(property)?;
+    value
+        .as_number()
+        .or_else(|| value.resolve_px(16.0, 1280.0, 720.0))
 }
 
 fn representative_gradient_color(gradient: &Gradient) -> Option<Color> {
@@ -601,5 +629,76 @@ mod tests {
         assert!(ThemePreset::from_id("default").is_some());
         assert!(ThemePreset::from_id("standard").is_some());
         assert!(ThemePreset::from_id("nonexistent").is_none());
+    }
+
+    // ── Cursor appearance is CSS-driven (t95-p2, t86 GAP-4) ──────────────
+
+    /// The on-disk theme asset's `cursor { color; scale }` rule must drive the
+    /// resolved `ShellTheme` cursor appearance — proving the cursor APPEARANCE
+    /// (not its shape) flows from CSS, not Rust defaults. Drives the REAL
+    /// shipped asset through the production resolver.
+    #[test]
+    fn cursor_appearance_is_css_driven_from_disk_asset() {
+        let css = include_str!("../../../assets/themes/liquid_glass.css");
+        let parser = ThemeParser::new();
+        let stylesheet = parser
+            .parse_str(css)
+            .expect("liquid_glass.css must parse");
+        let engine = ThemeEngine::new(stylesheet);
+        let theme = css_to_shell_theme(&engine);
+
+        // Color comes from `cursor { color: rgba(255,255,255,1.0) }`.
+        assert_eq!(
+            theme.cursor_color,
+            Color::new(255, 255, 255, 255),
+            "cursor color must be resolved from the asset's cursor rule"
+        );
+        // Scale comes from `cursor { scale: 1.0 }` (the shipped default).
+        assert!(
+            (theme.cursor_scale - 1.0).abs() < f32::EPSILON,
+            "cursor scale must be resolved from the asset's cursor rule, got {}",
+            theme.cursor_scale
+        );
+    }
+
+    /// ADVERSARIAL no-fake-green: changing the CSS `cursor { scale }` must
+    /// change the resolved `ShellTheme.cursor_scale`. If the resolver ignored
+    /// the CSS (e.g. hardcoded 1.0), this differential would fail.
+    #[test]
+    fn cursor_scale_tracks_the_css_value() {
+        let parse = |css: &str| {
+            let stylesheet = ThemeParser::new().parse_str(css).unwrap();
+            let engine = ThemeEngine::new(stylesheet);
+            css_to_shell_theme(&engine).cursor_scale
+        };
+
+        let small = parse("cursor { color: rgb(255,255,255); scale: 1.0; }");
+        let large = parse("cursor { color: rgb(255,255,255); scale: 2.5; }");
+
+        assert!((small - 1.0).abs() < f32::EPSILON, "scale 1.0 expected, got {small}");
+        assert!((large - 2.5).abs() < f32::EPSILON, "scale 2.5 expected, got {large}");
+        assert!(
+            large > small,
+            "a larger CSS cursor scale must yield a larger resolved scale ({large} vs {small})"
+        );
+    }
+
+    /// A missing or non-positive `cursor { scale }` must fall back to 1.0 so the
+    /// cursor never collapses to zero size from a bad theme.
+    #[test]
+    fn cursor_scale_falls_back_when_unset_or_invalid() {
+        let parse = |css: &str| {
+            let stylesheet = ThemeParser::new().parse_str(css).unwrap();
+            let engine = ThemeEngine::new(stylesheet);
+            css_to_shell_theme(&engine).cursor_scale
+        };
+
+        // No scale declared → default 1.0.
+        let unset = parse("cursor { color: rgb(0,0,0); }");
+        assert!((unset - 1.0).abs() < f32::EPSILON, "unset scale must default to 1.0");
+
+        // Zero / negative are rejected → default 1.0.
+        let zero = parse("cursor { color: rgb(0,0,0); scale: 0; }");
+        assert!((zero - 1.0).abs() < f32::EPSILON, "scale 0 must fall back to 1.0");
     }
 }

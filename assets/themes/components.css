@@ -394,6 +394,100 @@ dialog-button.danger:hover {
 
 
 /* ═══════════════════════════════════════════════════
+   3b. LOCK SCREEN  (t95-p4 — full-CSS migration)
+   ───────────────────────────────────────────────────
+   The lock surface is a DOM/CSS overlay (was an imperative
+   filled-rect overlay in scene.rs). `lockscreen-overlay` is a
+   fixed full-screen scrim; the centred `lockscreen` cluster holds
+   the clock, date, user name, and the password `lockscreen-prompt`.
+   The prompt's geometry is laid out by THIS CSS — the click/focus
+   hit-test for the password field reads the laid-out box, never a
+   hardcoded constant (the recurring hit-test-from-CSS requirement).
+   ═══════════════════════════════════════════════════ */
+
+lockscreen-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 8000;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(24);
+}
+
+lockscreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+}
+
+lockscreen-clock {
+  display: flex;
+  justify-content: center;
+  font-size: 72;
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+}
+
+lockscreen-date {
+  display: flex;
+  justify-content: center;
+  font-size: var(--font-size-lg);
+  color: var(--text-secondary);
+}
+
+lockscreen-user {
+  display: flex;
+  justify-content: center;
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+}
+
+/* The password field. Its laid-out box is the hit/focus target. */
+lockscreen-prompt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 280;
+  height: 44;
+  border-radius: var(--radius-large);
+  background: var(--search-bg);
+  border-width: var(--border-width);
+  border-style: solid;
+  border-color: var(--search-border);
+  cursor: text;
+}
+
+lockscreen-prompt.focused {
+  border-color: var(--accent-color);
+  background: var(--bg-tertiary);
+}
+
+lockscreen-password-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xl);
+  letter-spacing: 4;
+  color: var(--text-primary);
+}
+
+lockscreen-error {
+  display: flex;
+  justify-content: center;
+  font-size: var(--font-size-sm);
+  color: var(--error-color);
+}
+
+
+/* ═══════════════════════════════════════════════════
    4. HEADER BAR
    ═══════════════════════════════════════════════════ */
 
@@ -1054,6 +1148,10 @@ window-content {
 
 cursor {
   color: var(--text-primary);
+  /* Cursor size multiplier (1.0 = default). Resolved into
+     ShellTheme.cursor_scale and fed to the renderer's CursorTheme seam so a
+     theme/accessibility rule can grow the cursor without touching Rust. */
+  scale: var(--cursor-scale);
 }
 
 

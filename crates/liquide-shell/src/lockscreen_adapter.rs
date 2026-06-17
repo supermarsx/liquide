@@ -86,6 +86,61 @@ impl Shell {
             .as_ref()
             .is_some_and(LockScreenState::is_locked)
     }
+
+    /// Absolute bounds of the lock-screen password field, read from the CSS
+    /// **layout** (t95-p4 / t86 hit-test-from-CSS-geometry contract).
+    ///
+    /// The field is the laid-out `#lockscreen-password` (`lockscreen-prompt`)
+    /// DOM box; its rect is resolved from the live hit-test engine's layout
+    /// tree, NOT from a hardcoded constant. A theme change that moves/resizes
+    /// the box (via the `lockscreen-prompt` rule) therefore moves this rect —
+    /// the click-zone tracks the painted field. Returns `None` when the screen
+    /// is not locked, the overlay has not been laid out yet, or the field has
+    /// no layout box (e.g. `display: none`).
+    #[must_use]
+    pub(crate) fn lockscreen_password_field_bounds(
+        &self,
+    ) -> Option<liquide_layout::geometry::Rect> {
+        if !self.is_session_locked() {
+            return None;
+        }
+        let node = self
+            .desktop_dom
+            .doc
+            .get_element_by_id("lockscreen-password")?;
+        self.hit_test_engine
+            .as_ref()?
+            .bounds_for_node(node)
+    }
+
+    /// Handle a primary press on the locked screen at `(x, y)`.
+    ///
+    /// The lock surface is modal/topmost, so while locked EVERY press is
+    /// consumed here (it must not leak to windows/chrome behind the scrim).
+    /// When the press lands inside the CSS-laid-out password field box
+    /// ([`Self::lockscreen_password_field_bounds`]), the canonical
+    /// [`LockScreenAction::Click`] is driven, focusing the field
+    /// (Clock → PasswordEntry). The focus thus follows the CSS box: a theme
+    /// change that moves the field moves the click-zone with it.
+    ///
+    /// Returns `true` when the field was focused this press (so the caller can
+    /// invalidate the scene), `false` when the press was merely swallowed.
+    pub(crate) fn lockscreen_press(&mut self, x: f32, y: f32) -> bool {
+        let pt = liquide_layout::geometry::Point::new(x, y);
+        let in_field = self
+            .lockscreen_password_field_bounds()
+            .is_some_and(|r| r.contains(pt));
+        if !in_field {
+            return false;
+        }
+        // Drive the canonical click handler so the focus transition flows
+        // through the real lock-screen logic (Clock → PasswordEntry).
+        let auth = ShellLockAuth;
+        if let Some(state) = self.chrome_lockscreen.as_mut() {
+            state.handle_action(LockScreenAction::Click(x, y), &auth);
+        }
+        true
+    }
 }
 
 #[cfg(test)]

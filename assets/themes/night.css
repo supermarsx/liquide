@@ -696,9 +696,93 @@ loading-panel {
     font-family: monospace;
 }
 
-cursor { color: rgba(245, 245, 245, 0.96); }
+cursor { color: rgba(245, 245, 245, 0.96); scale: 1.0; }
 
 /* ── Dialog (modal message / confirm box) ── */
+
+/* ── Lock screen (t95-p4 full-CSS migration) ──
+   The lock surface is a DOM/CSS overlay synced through the shell. The theme
+   layer carries these rules (matching the dialog-overlay precedent) so the
+   dynamically-mounted lock overlay is styled on the render path. The password
+   field box (`lockscreen-prompt`) is laid out here; its click/focus hit-test
+   reads that laid-out box, never a hardcoded constant (t86). */
+lockscreen-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 8000;
+    background: rgba(0, 0, 0, 0.85);
+}
+
+lockscreen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16;
+    padding: 24;
+}
+
+lockscreen-clock {
+    display: flex;
+    justify-content: center;
+    font-size: 72;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+lockscreen-date {
+    display: flex;
+    justify-content: center;
+    font-size: 16;
+    color: var(--text-secondary);
+}
+
+lockscreen-user {
+    display: flex;
+    justify-content: center;
+    font-size: 14;
+    color: var(--text-secondary);
+}
+
+lockscreen-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 280;
+    height: 44;
+    border-radius: 12;
+    background: rgba(255, 255, 255, 0.08);
+    border-width: 1;
+    border-style: solid;
+    border-color: var(--border-default);
+    cursor: text;
+}
+
+lockscreen-prompt.focused {
+    border-color: var(--accent-color);
+}
+
+lockscreen-password-dots {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20;
+    letter-spacing: 4;
+    color: var(--text-primary);
+}
+
+lockscreen-error {
+    display: flex;
+    justify-content: center;
+    font-size: 12;
+    color: var(--error-color);
+}
 
 dialog-overlay {
     display: flex;
