@@ -49,6 +49,49 @@ fn note_scene_diff_ran() {
 #[inline]
 fn note_scene_diff_ran() {}
 
+// Test-observable record of the LAST `retained_flatten_into` outcome: how many
+// flat nodes were structurally patched in place from the retained buffer
+// (`patched`), how many were freshly cloned because they changed
+// (`copied_changed`), and whether the frame took the FULL-reflatten fallback
+// (`full`). The retained/incremental flatten (t97-flatten) keeps the flat-node
+// buffer across frames and, on a contained-change frame, reuses the unchanged
+// FlatNodes from the previous frame and clones ONLY the ones that actually
+// changed — instead of cloning every node every frame. A structural change
+// (node added/removed/reordered) forces `full = true` (a complete copy, which is
+// byte-identical to a from-scratch flatten of the current tree). Tests read this
+// to prove (a) a contained change patches only the affected nodes, (b) a
+// structural change falls back to full, and (c) the patched buffer equals a full
+// reflatten. Test-only; never read in production.
+#[cfg(test)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct RetainedFlattenStat {
+    patched: usize,
+    copied_changed: usize,
+    full: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    static LAST_RETAINED_FLATTEN: std::cell::Cell<RetainedFlattenStat> =
+        const { std::cell::Cell::new(RetainedFlattenStat { patched: 0, copied_changed: 0, full: false }) };
+}
+
+#[cfg(test)]
+#[inline]
+fn note_retained_flatten(patched: usize, copied_changed: usize, full: bool) {
+    LAST_RETAINED_FLATTEN.with(|c| {
+        c.set(RetainedFlattenStat {
+            patched,
+            copied_changed,
+            full,
+        })
+    });
+}
+
+#[cfg(not(test))]
+#[inline]
+fn note_retained_flatten(_patched: usize, _copied_changed: usize, _full: bool) {}
+
 // ---------------------------------------------------------------------------
 // Render thread types
 // ---------------------------------------------------------------------------
@@ -518,6 +561,91 @@ fn flat_node_visually_equal(a: &FlatNode, b: &FlatNode) -> bool {
         && a.clip == b.clip
         && a.corner_radius == b.corner_radius
         && a.clip_radius == b.clip_radius
+}
+
+/// Two flat nodes occupy the SAME structural slot when their `id`, `z_order`, and
+/// `kind` discriminant match. This is the cheap precondition for an in-place patch
+/// of one slot: the slot identity is stable, so only the node's per-frame VALUES
+/// (bounds/transform/opacity/clip/radius and the `kind` Arc) may differ and can be
+/// copied over the retained node. A mismatch here means the flattened SEQUENCE
+/// changed shape (a node added/removed/reordered, or a kind swapped to a different
+/// variant), which is a STRUCTURAL change that forces a full reflatten.
+///
+/// `z_order` is part of the slot identity because `flatten_walk` emits children in
+/// `(z_order, id)` order: two trees with the same id set but a reordered z-order
+/// produce a different FlatNode sequence, and patching index-by-index would write
+/// the wrong node into a slot. Comparing it here makes any reordering fall to the
+/// full path.
+fn flat_node_same_slot(a: &FlatNode, b: &FlatNode) -> bool {
+    a.id == b.id
+        && a.z_order == b.z_order
+        && std::mem::discriminant(a.kind.as_ref()) == std::mem::discriminant(b.kind.as_ref())
+}
+
+/// RETAINED / INCREMENTAL flatten (t97-flatten).
+///
+/// Update the persistent `retained` flat-node buffer to match the freshly
+/// flattened `fresh` slice, touching ONLY the slots that actually changed instead
+/// of rebuilding the whole list every frame.
+///
+/// After this returns, `retained` is ALWAYS byte/structurally IDENTICAL to a
+/// plain `retained.clear(); retained.extend_from_slice(fresh)` (a full reflatten
+/// copy):
+///   * Structural fast path: when `incremental_allowed` and the two lists have
+///     the same length and the same slot at every index ([`flat_node_same_slot`]),
+///     each slot already holds the previous frame's node. For every index we
+///     OVERWRITE `retained[i]` with `fresh[i]` ONLY when they are not
+///     [`flat_node_visually_equal`]; an equal slot is left untouched (no clone),
+///     and an equal slot is by definition bit-for-bit identical to `fresh[i]`
+///     (same `kind` Arc by `ptr_eq` + same geometry by value), so leaving it is
+///     identical to copying it.
+///   * Full fallback: on ANY structural difference (length differs or any slot
+///     mismatch) — or when `incremental_allowed` is `false` — `retained` is fully
+///     overwritten from `fresh`, equal to a from-scratch flatten by construction.
+///
+/// `incremental_allowed` gates the cheap path: callers pass `false` for frames
+/// that must always full-reflatten (first frame, resize, drag, full-rebuild
+/// frames) so the buffer is patched only when the frame is a known CONTAINED
+/// change.
+///
+/// Returns `true` if the incremental (in-place patch) path was taken, `false` if
+/// it fell back to a full overwrite.
+fn retained_flatten_into(
+    retained: &mut Vec<FlatNode>,
+    fresh: &[FlatNode],
+    incremental_allowed: bool,
+) -> bool {
+    let structural_match = incremental_allowed
+        && !retained.is_empty()
+        && retained.len() == fresh.len()
+        && retained
+            .iter()
+            .zip(fresh.iter())
+            .all(|(r, f)| flat_node_same_slot(r, f));
+
+    if !structural_match {
+        // Structural change (or incremental disallowed) → full reflatten: a
+        // complete overwrite of the retained buffer from the fresh walk.
+        retained.clear();
+        retained.extend_from_slice(fresh);
+        note_retained_flatten(0, 0, true);
+        return false;
+    }
+
+    // Contained change: patch in place. Overwrite only the slots whose node
+    // actually changed; leave visually-identical slots untouched (zero clone).
+    let mut patched = 0usize;
+    let mut copied_changed = 0usize;
+    for (r, f) in retained.iter_mut().zip(fresh.iter()) {
+        if flat_node_visually_equal(r, f) {
+            patched += 1;
+        } else {
+            *r = f.clone();
+            copied_changed += 1;
+        }
+    }
+    note_retained_flatten(patched, copied_changed, false);
+    true
 }
 
 /// Whether a node samples the pixels BEHIND it (glass / backdrop blur / filter).
@@ -2002,6 +2130,12 @@ impl DesktopCompositor {
         let mut cached_flat_nodes: Option<Vec<FlatNode>> = None;
         // Reusable buffer for flattened scene nodes (avoids allocation per frame).
         let mut flat_nodes_buf: Vec<FlatNode> = Vec::with_capacity(512);
+        // RETAINED flat-node buffer (t97-flatten): persists the previous frame's
+        // full, clean (pre-skeleton, pre-cursor) flatten across frames so a
+        // contained-change frame can patch only the slots that changed instead of
+        // re-cloning every node. Reconciled against the compositor's per-frame
+        // `flat_scene()` by `retained_flatten_into`.
+        let mut retained_flat: Vec<FlatNode> = Vec::with_capacity(512);
 
         while let Ok(msg) = rx.recv() {
             match msg {
@@ -2065,6 +2199,7 @@ impl DesktopCompositor {
                             &mut snapshot_recycler,
                             &mut cached_flat_nodes,
                             &mut flat_nodes_buf,
+                            &mut retained_flat,
                             &tx,
                         );
                         continue;
@@ -2220,6 +2355,7 @@ impl DesktopCompositor {
                         &mut snapshot_recycler,
                         &mut cached_flat_nodes,
                         &mut flat_nodes_buf,
+                        &mut retained_flat,
                         &tx,
                     );
                 }
@@ -2237,6 +2373,7 @@ impl DesktopCompositor {
         snapshot_recycler: &mut FrameSnapshotRecycler,
         cached_flat_nodes: &mut Option<Vec<FlatNode>>,
         flat_nodes_buf: &mut Vec<FlatNode>,
+        retained_flat: &mut Vec<FlatNode>,
         tx: &mpsc::Sender<RenderedFrame>,
     ) {
         let t_total = Instant::now();
@@ -2254,15 +2391,38 @@ impl DesktopCompositor {
         // 1. Add software cursor to scene (skip if hardware cursor is active).
         let scene = latest_job.scene;
 
-        // 2. Submit to compositor and flatten.
+        // 2. Submit to compositor, then RETAINED/INCREMENTAL flatten (t97-flatten).
+        //
+        // `submit_scene` already flattens the whole tree ONCE into the
+        // compositor's `flat_cache` (the single O(n) tree walk per frame — transform
+        // accumulation, clip intersection, per-parent z-sort). The worker used to
+        // re-walk the SAME tree a SECOND time here (`flatten_into(flat_nodes_buf)`),
+        // paying that O(n) cost twice every frame. We now consume the cache as the
+        // authoritative fresh flatten and reconcile it into the persistent
+        // `retained_flat` buffer:
+        //   * On a CONTAINED-change frame (the incremental fast path — the job
+        //     carries shell-precomputed `authoritative_damage` and is not a drag),
+        //     `retained_flatten_into` patches ONLY the slots that changed, leaving
+        //     unchanged nodes untouched, after a cheap structural-identity check.
+        //   * On a STRUCTURAL change (node added/removed/reordered) or any
+        //     full-rebuild frame, it falls back to a full overwrite — byte-identical
+        //     to a from-scratch flatten of the current tree.
+        // `retained_flat` is then copied into the working `flat_nodes_buf`, which is
+        // mutated below (skeleton filter, cursor push) without disturbing the
+        // retained copy used to patch the next frame.
         let _ = compositor.submit_scene(scene);
         compositor.prepare_frame();
 
-        if let Some(s) = compositor.scene() {
-            s.flatten_into(flat_nodes_buf);
-        } else {
-            flat_nodes_buf.clear();
-        }
+        // Incremental is sound only on a contained-change frame: the authoritative
+        // path means the shell proved a bounded change, and the structural-identity
+        // check inside `retained_flatten_into` is the final gate (a hidden
+        // structural change still forces the full overwrite). Drag frames skeletonise
+        // the scene and never take this path.
+        let incremental_allowed =
+            latest_job.authoritative_damage.is_some() && latest_job.dragged_window.is_none();
+        retained_flatten_into(retained_flat, compositor.flat_scene(), incremental_allowed);
+        flat_nodes_buf.clear();
+        flat_nodes_buf.extend_from_slice(retained_flat);
 
         // 3. Cache the FULL (unfiltered) flat scene for cursor-only reuse.
         //
@@ -3114,6 +3274,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, rx) = mpsc::channel();
 
         DesktopCompositor::render_full_job(
@@ -3125,6 +3286,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
         assert_eq!(
@@ -3141,6 +3303,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
         assert_eq!(
@@ -3159,6 +3322,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, _rx) = mpsc::channel();
 
         let mut first = test_render_job(1);
@@ -3173,6 +3337,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
 
@@ -3192,6 +3357,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
 
@@ -3244,6 +3410,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, _rx) = mpsc::channel();
 
         // Frame 1: establish the framebuffer + a previous flat scene (so a diff
@@ -3257,6 +3424,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
         assert!(
@@ -3275,6 +3443,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
         assert_eq!(
@@ -3309,6 +3478,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, _rx) = mpsc::channel();
 
         // Frame 1 establishes the framebuffer + prev scene.
@@ -3321,6 +3491,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
 
@@ -3336,12 +3507,210 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
         assert_eq!(
             scene_diff_runs(),
             before + 1,
             "a frame WITHOUT precomputed damage must run scene_diff_damage (conservative path)"
+        );
+    }
+
+    /// Build a 128×128 two-window scene with `kind_shared` pre-populated (by
+    /// flattening it once) so that CLONES of it across frames reuse the SAME
+    /// `kind` Arcs for unchanged nodes — exactly as the shell's scene cache does.
+    fn warm_multi_node_scene() -> SceneNode {
+        let mut root = SceneNode::new(
+            1,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, 128.0, 128.0)),
+        );
+        for i in 0..3u64 {
+            root.add_child(SceneNode::new(
+                100 + i,
+                SceneNodeKind::Tint {
+                    color: liquide_compositor::pixel::Color::new(10, 20, 30, 255),
+                },
+                NodeProperties::new(Rect::new(i as f32 * 30.0, 0.0, 28.0, 28.0))
+                    .with_z_order(i as u32),
+            ));
+        }
+        // Populate kind_shared on every node so clones preserve the Arcs.
+        let _ = root.flatten();
+        root
+    }
+
+    fn job_for(scene: SceneNode, authoritative: Option<DamageSet>) -> RenderJob {
+        let mut job = full_size_job(1);
+        job.scene = scene;
+        job.authoritative_damage = authoritative;
+        job
+    }
+
+    fn run_job(
+        job: RenderJob,
+        renderer: &mut RecordingRenderer,
+        compositor: &mut Compositor,
+        fb: &mut Option<FrameBuffer>,
+        tile_hash_tracker: &mut FrameTileHashTracker,
+        cached_flat_nodes: &mut Option<Vec<FlatNode>>,
+        flat_nodes_buf: &mut Vec<FlatNode>,
+        retained_flat: &mut Vec<FlatNode>,
+    ) {
+        let (tx, _rx) = mpsc::channel();
+        DesktopCompositor::render_full_job(
+            job,
+            renderer,
+            compositor,
+            fb,
+            tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
+            cached_flat_nodes,
+            flat_nodes_buf,
+            retained_flat,
+            &tx,
+        );
+    }
+
+    // END-TO-END (a): driving `render_full_job`, a CONTAINED change on an
+    // authoritative frame patches the retained flatten and the worker's resulting
+    // flat-node buffer is IDENTICAL to a from-scratch `flatten()` of that frame's
+    // tree. Fails if the retained/incremental path drifts from a full reflatten.
+    #[test]
+    fn t97_worker_incremental_flatten_equals_full_reflatten() {
+        let mut renderer = RecordingRenderer::default();
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+
+        // Frame 1: full (no authoritative damage) — establishes retained buffer.
+        let base = warm_multi_node_scene();
+        run_job(
+            job_for(base.clone(), None),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached,
+            &mut buf,
+            &mut retained,
+        );
+
+        // Frame 2: move ONE child (node 101); authoritative damage present →
+        // contained-change incremental path. Clone preserves the kind Arcs so
+        // unchanged nodes (100, 102) stay ptr-equal across frames.
+        let mut moved_scene = base.clone();
+        if let Some(child) = moved_scene.children.iter_mut().find(|c| c.id == 101) {
+            child.properties.bounds.x += 4.0;
+        }
+        let reference = moved_scene.clone().flatten(); // from-scratch reflatten
+        let mut authoritative = DamageSet::new(64);
+        authoritative.mark_tile(0, 0);
+        run_job(
+            job_for(moved_scene, Some(authoritative)),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached,
+            &mut buf,
+            &mut retained,
+        );
+
+        let stat = LAST_RETAINED_FLATTEN.with(std::cell::Cell::get);
+        assert!(
+            !stat.full,
+            "contained change on an authoritative frame must take the incremental patch path"
+        );
+        assert_eq!(stat.copied_changed, 1, "only the moved node (101) changed");
+
+        // IDENTITY: the worker buffer (hardware_cursor=true, no drag → no extra
+        // nodes) equals a from-scratch flatten of frame 2's tree.
+        assert_eq!(buf.len(), reference.len(), "node count must match reflatten");
+        for (i, (got, want)) in buf.iter().zip(reference.iter()).enumerate() {
+            assert_eq!(got.id, want.id, "node {i} id");
+            assert_eq!(got.absolute_bounds, want.absolute_bounds, "node {i} bounds");
+            assert_eq!(got.opacity, want.opacity, "node {i} opacity");
+            assert_eq!(got.clip, want.clip, "node {i} clip");
+            assert_eq!(got.z_order, want.z_order, "node {i} z_order");
+        }
+        // The patched moved node must carry the NEW x position (not the stale one).
+        let moved = buf.iter().find(|n| n.id == 101).expect("node 101 present");
+        assert!(
+            (moved.absolute_bounds.x - 34.0).abs() < 1e-4,
+            "patched node must reflect the new bounds, got x={}",
+            moved.absolute_bounds.x
+        );
+    }
+
+    // END-TO-END (b): a STRUCTURAL change (a window appears) on an authoritative
+    // frame forces a full reflatten in the worker, and the buffer still equals a
+    // from-scratch flatten of the new tree.
+    #[test]
+    fn t97_worker_structural_change_forces_full_reflatten() {
+        let mut renderer = RecordingRenderer::default();
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+
+        let base = warm_multi_node_scene();
+        run_job(
+            job_for(base.clone(), None),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached,
+            &mut buf,
+            &mut retained,
+        );
+
+        // Frame 2: ADD a node (structural) while carrying authoritative damage —
+        // the incremental path is attempted but the structural-identity check must
+        // reject it and full-reflatten.
+        let mut grown = base.clone();
+        grown.add_child(SceneNode::new(
+            200,
+            SceneNodeKind::Tint {
+                color: liquide_compositor::pixel::Color::new(1, 2, 3, 255),
+            },
+            NodeProperties::new(Rect::new(90.0, 90.0, 20.0, 20.0)).with_z_order(9),
+        ));
+        let reference = grown.clone().flatten();
+        let mut authoritative = DamageSet::new(64);
+        authoritative.mark_tile(1, 1);
+        run_job(
+            job_for(grown, Some(authoritative)),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached,
+            &mut buf,
+            &mut retained,
+        );
+
+        assert!(
+            LAST_RETAINED_FLATTEN.with(std::cell::Cell::get).full,
+            "an added node is structural → worker must full-reflatten"
+        );
+        assert_eq!(
+            buf.len(),
+            reference.len(),
+            "full reflatten must contain the added node"
+        );
+        assert!(
+            buf.iter().any(|n| n.id == 200),
+            "the newly added node must be present after full reflatten"
         );
     }
 
@@ -3358,6 +3727,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, _rx) = mpsc::channel();
 
         DesktopCompositor::render_full_job(
@@ -3369,6 +3739,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
 
@@ -3392,6 +3763,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
 
@@ -3443,6 +3815,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, rx) = mpsc::channel();
 
         for id in 1..=4 {
@@ -3455,6 +3828,7 @@ mod tests {
                 &mut FrameSnapshotRecycler::default(),
                 &mut cached_flat_nodes,
                 &mut flat_nodes_buf,
+                &mut retained_flat,
                 &tx,
             );
         }
@@ -3825,6 +4199,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, _rx) = mpsc::channel();
 
         DesktopCompositor::render_full_job(
@@ -3836,6 +4211,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
 
@@ -3860,6 +4236,7 @@ mod tests {
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         let mut cached_flat_nodes = None;
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, _rx) = mpsc::channel();
 
         // Frame A: window 3.
@@ -3872,6 +4249,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
         let cache_a = cached_flat_nodes.clone().expect("frame A publishes a cache");
@@ -3894,6 +4272,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
         let cache_b = cached_flat_nodes.as_ref().expect("frame B publishes a cache");
@@ -4021,6 +4400,7 @@ mod tests {
         // Seed a stale cache from a prior non-drag frame.
         let mut cached_flat_nodes = Some(vec![cursor_flat_node(0.0, 0.0, CursorShape::Arrow)]);
         let mut flat_nodes_buf = Vec::new();
+        let mut retained_flat = Vec::new();
         let (tx, _rx) = mpsc::channel();
 
         DesktopCompositor::render_full_job(
@@ -4032,6 +4412,7 @@ mod tests {
             &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
+            &mut retained_flat,
             &tx,
         );
 
@@ -4184,6 +4565,241 @@ mod tests {
         if let Some(handle) = desktop.render_thread.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod retained_flatten_tests {
+    //! Tests for the RETAINED / INCREMENTAL flatten (t97-flatten). They exercise
+    //! [`retained_flatten_into`] directly on flat-node slices so the identity
+    //! contract is proven in isolation, then end-to-end through
+    //! [`DesktopCompositor::render_full_job`] so the worker wiring is proven.
+    //!
+    //! PRIME INVARIANT (anti-fake-green): after `retained_flatten_into`, the
+    //! retained buffer MUST be byte/structurally IDENTICAL to a from-scratch
+    //! `flatten()` of the current tree — on BOTH the contained-patch path and the
+    //! structural full-reflatten fallback. Each test below fails if the patched
+    //! buffer drifts from the full reflatten, or if the path classification is
+    //! wrong (a contained change taking the full path, or a structural change
+    //! taking the patch path).
+
+    use super::*;
+    use liquide_compositor::geometry::Affine2D;
+    use liquide_compositor::pixel::Color;
+    use liquide_compositor::scene::NodeId;
+
+    fn last_stat() -> RetainedFlattenStat {
+        LAST_RETAINED_FLATTEN.with(std::cell::Cell::get)
+    }
+
+    /// A painting node with a FRESH `kind` Arc.
+    fn node(id: NodeId, x: f32, y: f32) -> FlatNode {
+        FlatNode {
+            id,
+            kind: SceneNodeKind::Tint {
+                color: Color::new(10, 20, 30, 255),
+            }
+            .into(),
+            absolute_bounds: Rect::new(x, y, 40.0, 40.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: id as u32,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    /// Clone a node keeping the SAME `kind` Arc but MOVING it (geometry change) —
+    /// models a contained paint/position change of an existing slot (e.g. a hover
+    /// highlight shifting). Same id/z_order/kind-variant → same slot; different
+    /// bounds → not visually equal → must be patched.
+    fn moved(n: &FlatNode, dx: f32, dy: f32) -> FlatNode {
+        let mut m = n.clone(); // preserves the kind Arc (ptr_eq stays true)
+        m.absolute_bounds = Rect::new(
+            n.absolute_bounds.x + dx,
+            n.absolute_bounds.y + dy,
+            n.absolute_bounds.width,
+            n.absolute_bounds.height,
+        );
+        m
+    }
+
+    /// Field-by-field identity of two flat-node lists, treating `kind` by Arc
+    /// pointer (the strongest identity — a reflatten reuses the SAME kind Arc for
+    /// an unchanged node via `kind_shared`, so a drifted buffer that re-cloned the
+    /// payload into a fresh Arc would FAIL here).
+    fn assert_lists_identical(a: &[FlatNode], b: &[FlatNode], ctx: &str) {
+        assert_eq!(a.len(), b.len(), "{ctx}: length differs");
+        for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+            assert!(
+                std::sync::Arc::ptr_eq(&x.kind, &y.kind),
+                "{ctx}: node {i} kind Arc differs (drift)"
+            );
+            assert_eq!(x.id, y.id, "{ctx}: node {i} id differs");
+            assert_eq!(
+                x.absolute_bounds, y.absolute_bounds,
+                "{ctx}: node {i} bounds differ"
+            );
+            assert_eq!(x.opacity, y.opacity, "{ctx}: node {i} opacity differs");
+            assert_eq!(x.clip, y.clip, "{ctx}: node {i} clip differs");
+            assert_eq!(x.z_order, y.z_order, "{ctx}: node {i} z_order differs");
+            assert_eq!(
+                x.corner_radius, y.corner_radius,
+                "{ctx}: node {i} corner_radius differs"
+            );
+            assert_eq!(
+                x.clip_radius, y.clip_radius,
+                "{ctx}: node {i} clip_radius differs"
+            );
+        }
+    }
+
+    // (a) A CONTAINED change (one slot's geometry shifts, structure otherwise
+    // identical) takes the PATCH path, touches ONLY the changed slot, and the
+    // patched retained buffer equals a full overwrite of the fresh list.
+    #[test]
+    fn contained_change_patches_only_affected_node_and_equals_full() {
+        let prev = vec![node(1, 0.0, 0.0), node(2, 50.0, 0.0), node(3, 100.0, 0.0)];
+        // Frame 2: node 2 moved; nodes 1 and 3 reuse their kind Arcs unchanged.
+        let fresh = vec![reused(&prev[0]), moved(&prev[1], 5.0, 0.0), reused(&prev[2])];
+
+        let mut retained = prev.clone();
+        let was_incremental = retained_flatten_into(&mut retained, &fresh, true);
+
+        assert!(was_incremental, "contained change must take the patch path");
+        let stat = last_stat();
+        assert!(!stat.full, "must not be a full reflatten");
+        assert_eq!(stat.copied_changed, 1, "exactly one slot changed (node 2)");
+        assert_eq!(stat.patched, 2, "the other two slots reused untouched");
+
+        // IDENTITY: the patched buffer equals a from-scratch full overwrite.
+        let mut full = Vec::new();
+        full.extend_from_slice(&fresh);
+        assert_lists_identical(&retained, &full, "contained-patch vs full");
+    }
+
+    // Reuse the `scene_diff_tests` "Clone preserves the Arc" idiom locally.
+    fn reused(n: &FlatNode) -> FlatNode {
+        n.clone()
+    }
+
+    // (b1) A STRUCTURAL change — a node ADDED — forces the full-reflatten
+    // fallback even though `incremental_allowed` is true, and the result equals
+    // the fresh list.
+    #[test]
+    fn structural_add_forces_full_reflatten() {
+        let prev = vec![node(1, 0.0, 0.0), node(2, 50.0, 0.0)];
+        let fresh = vec![
+            reused(&prev[0]),
+            reused(&prev[1]),
+            node(3, 100.0, 0.0), // ADDED
+        ];
+
+        let mut retained = prev.clone();
+        let was_incremental = retained_flatten_into(&mut retained, &fresh, true);
+
+        assert!(
+            !was_incremental,
+            "an added node is structural → full reflatten"
+        );
+        assert!(last_stat().full, "stat must report the full path");
+        assert_lists_identical(&retained, &fresh, "structural-add full vs fresh");
+    }
+
+    // (b2) A STRUCTURAL change — nodes REORDERED by z-order (same id set) —
+    // changes the flattened SEQUENCE and MUST force the full path (patching
+    // index-by-index would write the wrong node into a slot).
+    #[test]
+    fn structural_reorder_forces_full_reflatten() {
+        let a = node(1, 0.0, 0.0); // z_order 1
+        let b = node(2, 50.0, 0.0); // z_order 2
+        let prev = vec![a.clone(), b.clone()];
+        // Fresh emits them in swapped order (as a z-order flip would).
+        let fresh = vec![b, a];
+
+        let mut retained = prev.clone();
+        let was_incremental = retained_flatten_into(&mut retained, &fresh, true);
+
+        assert!(!was_incremental, "reorder is structural → full reflatten");
+        assert!(last_stat().full);
+        assert_lists_identical(&retained, &fresh, "reorder full vs fresh");
+    }
+
+    // (b3) A STRUCTURAL change — a node REMOVED — forces the full path.
+    #[test]
+    fn structural_remove_forces_full_reflatten() {
+        let prev = vec![node(1, 0.0, 0.0), node(2, 50.0, 0.0), node(3, 100.0, 0.0)];
+        let fresh = vec![reused(&prev[0]), reused(&prev[2])]; // node 2 removed
+
+        let mut retained = prev.clone();
+        assert!(!retained_flatten_into(&mut retained, &fresh, true));
+        assert!(last_stat().full);
+        assert_lists_identical(&retained, &fresh, "remove full vs fresh");
+    }
+
+    // A kind-VARIANT swap in a stable slot is structural (the discriminant
+    // changed): treat as full so an in-place value patch never blends two kinds.
+    #[test]
+    fn kind_variant_swap_forces_full_reflatten() {
+        let mut prev = vec![node(1, 0.0, 0.0)];
+        prev.push(node(2, 50.0, 0.0));
+        let mut fresh = vec![reused(&prev[0])];
+        let mut swapped = prev[1].clone();
+        swapped.kind = SceneNodeKind::BlurBackdrop.into(); // different variant
+        fresh.push(swapped);
+
+        let mut retained = prev.clone();
+        assert!(!retained_flatten_into(&mut retained, &fresh, true));
+        assert!(last_stat().full);
+        assert_lists_identical(&retained, &fresh, "variant-swap full vs fresh");
+    }
+
+    // When `incremental_allowed` is FALSE (full-rebuild/first/resize/drag frames)
+    // even an otherwise-contained change takes the full overwrite path — and is
+    // still identical to the fresh list.
+    #[test]
+    fn incremental_disallowed_takes_full_path() {
+        let prev = vec![node(1, 0.0, 0.0)];
+        let fresh = vec![moved(&prev[0], 3.0, 0.0)];
+
+        let mut retained = prev.clone();
+        let was_incremental = retained_flatten_into(&mut retained, &fresh, false);
+        assert!(!was_incremental, "incremental disallowed → full path");
+        assert!(last_stat().full);
+        assert_lists_identical(&retained, &fresh, "disallowed full vs fresh");
+    }
+
+    // An empty retained buffer (first frame) cannot be patched → full path.
+    #[test]
+    fn empty_retained_takes_full_path() {
+        let fresh = vec![node(1, 0.0, 0.0)];
+        let mut retained = Vec::new();
+        assert!(!retained_flatten_into(&mut retained, &fresh, true));
+        assert!(last_stat().full);
+        assert_lists_identical(&retained, &fresh, "first-frame full vs fresh");
+    }
+
+    // (c) DETERMINISM: patching the same fresh list twice yields the same buffer,
+    // and a no-op contained frame (nothing changed) patches ZERO slots while
+    // staying identical to the fresh list.
+    #[test]
+    fn determinism_noop_contained_frame_patches_nothing() {
+        let prev = vec![node(1, 0.0, 0.0), node(2, 50.0, 0.0)];
+        let fresh = vec![reused(&prev[0]), reused(&prev[1])]; // identical
+
+        let mut retained = prev.clone();
+        assert!(retained_flatten_into(&mut retained, &fresh, true));
+        let stat = last_stat();
+        assert!(!stat.full);
+        assert_eq!(stat.copied_changed, 0, "nothing changed → zero clones");
+        assert_eq!(stat.patched, 2, "both slots reused untouched");
+        assert_lists_identical(&retained, &fresh, "noop frame vs fresh");
+
+        // Apply again — must be stable (deterministic).
+        let mut retained2 = retained.clone();
+        assert!(retained_flatten_into(&mut retained2, &fresh, true));
+        assert_lists_identical(&retained2, &retained, "second apply is stable");
     }
 }
 
