@@ -321,6 +321,12 @@ impl Shell {
         self.workspaces.active_mut().add_window(id);
         self.register_window_chrome(id, "");
         self.register_window_tree(id);
+        // `register_window_tree` appends the new node to the TOP of the canonical
+        // tree, so a normal window opened after an always-on-top window is pinned
+        // would otherwise bury the AOT one in the tree-routed hit-test. Re-assert
+        // the band so the fresh normal window drops below the AOT band (t94-e3b /
+        // t92 gap #2 on the open path). No-op when no AOT window exists.
+        self.restack_tree_band_order();
         let ts = self.next_timestamp();
         self.window_history
             .record_at(id, WindowEventKind::Opened, ts);
@@ -352,6 +358,11 @@ impl Shell {
         self.workspaces.active_mut().add_window(id);
         self.register_window_chrome(id, &app_id_str);
         self.register_window_tree(id);
+        // Re-assert the always-on-top band: the tree insertion put this window on
+        // top, so a normal window opened after an AOT window is pinned must drop
+        // back below the AOT band in the tree-routed hit-test (t94-e3b / t92 gap
+        // #2 on the open path). No-op when no AOT window exists.
+        self.restack_tree_band_order();
         let ts = self.next_timestamp();
         self.window_history
             .record_at(id, WindowEventKind::Opened, ts);
@@ -1083,5 +1094,118 @@ impl Shell {
         let _ = self.set_focus(id);
         let _ = self.raise_window(id);
         id
+    }
+}
+
+#[cfg(test)]
+mod open_window_aot_band_tests {
+    use crate::shell::Shell;
+    use crate::shortcuts::ShellAction;
+    use crate::window::{WindowFlags, WindowId};
+    use liquide_compositor::geometry::Rect;
+
+    /// Pin `id` as always-on-top through the real `ToggleAlwaysOnTop` action
+    /// (operates on the focused window), so the band-aware restack runs exactly
+    /// as it does live.
+    fn pin(shell: &mut Shell, id: WindowId) {
+        shell.set_focus(id).unwrap();
+        assert!(shell.execute_action(&ShellAction::ToggleAlwaysOnTop));
+        assert!(
+            shell
+                .window(id)
+                .unwrap()
+                .flags
+                .contains(WindowFlags::ALWAYS_ON_TOP)
+        );
+    }
+
+    /// Opening a NORMAL window AFTER an always-on-top window is pinned must not
+    /// let the new normal window win the overlap hit-test over the pinned AOT
+    /// window. `register_window_tree` appends the fresh node to the top of the
+    /// canonical `WindowTree`, so without re-asserting the band on the open
+    /// path, the later normal window buries the AOT one in the tree-routed
+    /// `window_at_point` / `pick_window_at` (t94-e3b / t92 gap #2 on the open
+    /// path). FAILS before `open_window` re-asserts the band.
+    #[test]
+    fn opening_a_normal_window_after_pinning_keeps_aot_window_on_top() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+
+        // Pin A as always-on-top while it is the only window.
+        pin(&mut shell, a);
+        assert_eq!(
+            shell.window_at_point(300.0, 300.0),
+            Some(a),
+            "pinned A must win the hit-test before B exists"
+        );
+
+        // Open a NORMAL window B that overlaps A. The open path appends B to the
+        // top of the tree; the AOT band must be re-asserted so A stays on top.
+        let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+        assert!(!shell.window(b).unwrap().flags.contains(WindowFlags::ALWAYS_ON_TOP));
+
+        assert_eq!(
+            shell.window_at_point(300.0, 300.0),
+            Some(a),
+            "a normal window opened AFTER pinning an AOT window must not win the overlap hit-test"
+        );
+        assert_eq!(
+            shell.pick_window_at(300.0, 300.0),
+            Some(a),
+            "the live picker must route the overlap to the pinned AOT window, not the later normal one"
+        );
+        // Paint order agrees: A is the topmost (last-painted) window.
+        assert_eq!(
+            shell.visible_windows().last().map(|w| w.id),
+            Some(a),
+            "the pinned AOT window must remain topmost in paint order after a later normal open"
+        );
+    }
+
+    /// The app-window open path (`open_window_with_app`) must honor the same
+    /// band re-assertion: a NORMAL app window opened after an AOT window is
+    /// pinned stays below the AOT band in the tree-routed hit-test.
+    #[test]
+    fn opening_a_normal_app_window_after_pinning_keeps_aot_window_on_top() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+        pin(&mut shell, a);
+
+        let b = shell.open_window_with_app(
+            "B",
+            Rect::new(200.0, 200.0, 400.0, 300.0),
+            "com.example.b",
+        );
+        assert!(!shell.window(b).unwrap().flags.contains(WindowFlags::ALWAYS_ON_TOP));
+        assert_eq!(
+            shell.window_at_point(300.0, 300.0),
+            Some(a),
+            "a normal app window opened after pinning must not win the overlap hit-test"
+        );
+    }
+
+    /// Open ordering among NON-AOT windows is unchanged: with no AOT window the
+    /// band re-assertion is a no-op, so a later-opened normal window correctly
+    /// sits on top of an earlier one in the tree-routed hit-test (it appended to
+    /// the top of the tree). Two freshly-opened windows share `z_order == 0`
+    /// (the open path does not raise), so the paint-order tie-break between them
+    /// is undefined — only the tree pick is a meaningful invariant here, and it
+    /// must still return the later window B.
+    #[test]
+    fn normal_open_ordering_unchanged_with_no_aot_window() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let _a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+        let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+
+        assert_eq!(
+            shell.window_at_point(300.0, 300.0),
+            Some(b),
+            "with no AOT window, a later-opened normal window stays on top of an earlier one"
+        );
+        assert_eq!(
+            shell.pick_window_at(300.0, 300.0),
+            Some(b),
+            "the live picker routes the overlap to the later normal window when no AOT band exists"
+        );
     }
 }
