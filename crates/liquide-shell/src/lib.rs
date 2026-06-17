@@ -5,6 +5,9 @@
 //! mode, and calculator subsystems.
 
 pub mod app_history;
+// P8 full-CSS app content (t108): the generic AppWidgetModel → liquide-widgets
+// mapper + per-window WidgetHost integration engine.
+pub(crate) mod app_widgets;
 pub mod calculator;
 pub mod config;
 pub(crate) mod css_integration;

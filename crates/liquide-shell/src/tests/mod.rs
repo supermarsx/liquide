@@ -1,5 +1,6 @@
 mod app_history_tests;
 mod app_view_tests;
+mod app_widget_content_tests;
 mod batch_tests;
 mod calculator_tests;
 mod chrome_notification_dialog_tests;

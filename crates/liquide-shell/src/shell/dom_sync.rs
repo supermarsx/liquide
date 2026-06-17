@@ -120,6 +120,12 @@ impl Shell {
         self.sync_lockscreen_template();
         self.sync_overview_template();
         self.sync_window_decorations();
+        // App window content via CSS widgets (t108-p8). Drive the per-window
+        // widget hosts (action → model → re-render loop) FIRST so this frame's
+        // pipeline sees any model-driven re-render, then mount/position the
+        // content hosts (initial mount + structural remount + position sync).
+        let _app_widgets_changed = self.drive_app_widget_hosts();
+        self.sync_app_widget_content();
         self.sync_tooltip_template();
 
         // Keep the DOM viewport in sync with the screen rect.
@@ -137,7 +143,7 @@ impl Shell {
     /// Total number of DOM nodes currently flagged dirty (style+layout+paint).
     /// Used by [`Shell::sync_dom`] to detect whether a template mutation
     /// occurred this frame (the set only grows in the shell flow until cleared).
-    fn dom_dirty_len(&self) -> usize {
+    pub(crate) fn dom_dirty_len(&self) -> usize {
         let d = &self.desktop_dom.doc.dirty;
         d.style.len() + d.layout.len() + d.paint.len()
     }
@@ -1271,6 +1277,315 @@ impl Shell {
                 self.desktop_dom.doc.destroy_node(node);
             }
         }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // App window content — CSS widgets (t108-p8 full-CSS migration)
+    // ══════════════════════════════════════════════════════════
+
+    /// Sync the per-window CSS widget content (t108-p8). For every visible window
+    /// whose installed `AppView::widget_model()` is `Some`, maintain an
+    /// `app-content-host` element (`#app-content-<id>`) inside `workspace-container`
+    /// positioned (inline `style`, `position:fixed`) over the window's CONTENT
+    /// rect, and mount the model's widgets as a per-window
+    /// [`liquide_widgets::WidgetHost`] under it (mirroring the P6 `window-frame`
+    /// scaffold). Windows whose `widget_model()` is `None` (terminal /
+    /// un-migrated apps) get no host and keep the legacy `AppContentView` scene
+    /// path untouched.
+    ///
+    /// The widget DOM flows through the same CSS pipeline that paints all chrome,
+    /// so the laid-out boxes are the single source of truth for paint AND
+    /// hit-test (the t86 contract). To preserve the idle full-scene cache (t76)
+    /// and frame determinism (e2e_temporal), this writes the DOM ONLY when
+    /// something actually changed: a host is (re)mounted only when the model's
+    /// STRUCTURE signature changes, and the content-host position is written
+    /// through `set_inline_style_if_changed`. A steady-state frame writes
+    /// nothing, so `doc.dirty` stays empty and the idle cache holds. This NEVER
+    /// calls `mark_full_scene_dirty`; an app-content change bumps the per-window
+    /// `app_content_rev` instead (via `mark_app_content_dirty`).
+    pub(crate) fn sync_app_widget_content(&mut self) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let title_h = self.decoration_style.title_bar_height.round() as i32;
+
+        // Snapshot per-window content geometry + the widget model first (immutable
+        // borrows), so the mount/patch pass can borrow the DOM + host mutably
+        // without overlapping the window/app-view borrows.
+        struct ContentState {
+            id: WindowIdLocal,
+            x: i32,
+            y: i32,
+            w: i32,
+            h: i32,
+            model: liquide_interop::AppWidgetModel,
+            sig: u64,
+        }
+        // Local alias to avoid importing the type at module scope.
+        type WindowIdLocal = crate::window::WindowId;
+
+        let states: Vec<ContentState> = self
+            .visible_windows()
+            .iter()
+            .filter_map(|w| {
+                let view = self.app_views.get(&w.id)?;
+                let model = view.widget_model()?;
+                let decorated = w.flags.contains(crate::window::WindowFlags::DECORATED);
+                let t = if decorated { title_h } else { 0 };
+                let mut hasher = DefaultHasher::new();
+                // Structure-only signature: the variant shape + keys, NOT the
+                // mutable per-widget values (those re-render in place after an
+                // action). Hashing the full model is acceptable here because the
+                // remount path is gated on a CHANGE; a stable model hashes the
+                // same every frame and never remounts.
+                crate::app_widgets::model_structure(&model).hash(&mut hasher);
+                Some(ContentState {
+                    id: w.id,
+                    x: w.bounds.x.round() as i32,
+                    y: (w.bounds.y.round() as i32) + t,
+                    w: w.bounds.width.round() as i32,
+                    h: (w.bounds.height.round() as i32 - t).max(0),
+                    model,
+                    sig: hasher.finish(),
+                })
+            })
+            .collect();
+
+        let mut wanted: HashSet<u64> = HashSet::new();
+        for st in &states {
+            wanted.insert(st.id.0);
+            let host_id = format!("app-content-{}", st.id.0);
+
+            // Create the content-host element once if it does not exist yet.
+            let host_node = match self.desktop_dom.doc.get_element_by_id(&host_id) {
+                Some(n) => n,
+                None => {
+                    // Mount under the DOM ROOT (not `workspace-container`). A
+                    // `position:fixed` element's layout box is resolved against the
+                    // viewport, but the hit-test point-query accumulates each
+                    // ancestor's content offset as it descends — so a fixed element
+                    // mounted under the offset `workspace-container` would have its
+                    // HIT box shifted by that container's origin while its LAYOUT /
+                    // paint box (and `bounds_for_node`) stay at true screen coords,
+                    // making box-query and dispatcher-hit DIVERGE (the same engine
+                    // quirk the P6 deco frame sidesteps by reading `bounds_for_node`
+                    // directly instead of point-hit-testing through the subtree).
+                    // The chrome overlays that DO rely on point-hit (launcher /
+                    // menus) are all mounted under root, where the accumulated
+                    // offset is (0,0) and fixed coords agree. Mounting here keeps
+                    // box-query == dispatcher-hit for the widgets.
+                    let root = self.desktop_dom.doc.root();
+                    let el = self.desktop_dom.doc.create_element("app-content-host");
+                    self.desktop_dom.doc.set_id(el, &host_id);
+                    self.desktop_dom
+                        .doc
+                        .set_attribute(el, "data-window-id", &st.id.0.to_string());
+                    // Structural positioning is set INLINE (not via a theme rule)
+                    // so the content host lays out over the window content rect in
+                    // SCREEN coordinates (fixed, like the P6 deco frame) and clips
+                    // widget overflow to the content rect (composing with the
+                    // inescapable scissor) regardless of which theme is loaded.
+                    self.desktop_dom
+                        .doc
+                        .set_inline_style(el, "position", "fixed");
+                    self.desktop_dom
+                        .doc
+                        .set_inline_style(el, "overflow", "hidden");
+                    self.desktop_dom.doc.append_child(root, el);
+                    el
+                }
+            };
+
+            // Keep the host positioned over the window content rect (fixed →
+            // screen coordinates, like the P6 decoration frame). Change-guarded.
+            Self::set_inline_style_if_changed(
+                &mut self.desktop_dom.doc,
+                host_node,
+                "left",
+                &st.x.to_string(),
+            );
+            Self::set_inline_style_if_changed(
+                &mut self.desktop_dom.doc,
+                host_node,
+                "top",
+                &st.y.to_string(),
+            );
+            Self::set_inline_style_if_changed(
+                &mut self.desktop_dom.doc,
+                host_node,
+                "width",
+                &st.w.to_string(),
+            );
+            Self::set_inline_style_if_changed(
+                &mut self.desktop_dom.doc,
+                host_node,
+                "height",
+                &st.h.to_string(),
+            );
+
+            // (Re)mount the widgets only when the model STRUCTURE changed (first
+            // mount, or an external structural change). A stable model hashes the
+            // same every frame → no DOM write → idle cache holds.
+            let needs_mount = self.app_widget_sigs.get(&st.id) != Some(&st.sig)
+                || !self.app_widget_hosts.contains_key(&st.id);
+            if needs_mount {
+                // Tear down any previous host subtree + host state for this window.
+                let children: Vec<NodeId> =
+                    self.desktop_dom.doc.children(host_node).to_vec();
+                for child in children {
+                    self.desktop_dom.doc.remove_child(host_node, child);
+                    self.desktop_dom.doc.destroy_node(child);
+                }
+                let mut host = liquide_widgets::WidgetHost::new();
+                crate::app_widgets::mount_model_into(
+                    &st.model,
+                    st.id.0,
+                    host_node,
+                    &mut host,
+                    &mut self.desktop_dom.doc,
+                    &mut self.event_dispatcher,
+                );
+                self.app_widget_hosts.insert(st.id, host);
+                self.app_widget_sigs.insert(st.id, st.sig);
+            }
+        }
+
+        // Reconcile: tear down content hosts for windows that are no longer
+        // visible / widget-backed (closed, minimized, switched to text path).
+        let stale: Vec<u64> = self
+            .live_app_content_ids()
+            .into_iter()
+            .filter(|id| !wanted.contains(id))
+            .collect();
+        for id in stale {
+            let host_id = format!("app-content-{id}");
+            if let Some(node) = self.desktop_dom.doc.get_element_by_id(&host_id) {
+                if let Some(parent) = self.desktop_dom.doc.parent(node) {
+                    self.desktop_dom.doc.remove_child(parent, node);
+                }
+                self.desktop_dom.doc.destroy_node(node);
+            }
+            let wid = crate::window::WindowId(id);
+            self.app_widget_hosts.remove(&wid);
+            self.app_widget_sigs.remove(&wid);
+        }
+    }
+
+    /// Drive every widget-backed window's [`liquide_widgets::WidgetHost`] for one
+    /// frame (t108-p8): drain the events the real `EventDispatcher` queued into
+    /// the host (clicks/scroll on a widget) plus any focused-window keyboard,
+    /// translate each emitted [`liquide_widgets::WidgetAction`] into an
+    /// [`liquide_interop::AppWidgetAction`], feed it to the window's
+    /// `AppView::apply_action`, and — when the model changed — re-render the acted
+    /// widget so its DOM reflects the new state.
+    ///
+    /// This is the action → model → re-render loop. It uses the live
+    /// `hit_test_engine` (the laid-out tree the user actually interacted with) so
+    /// all widget hit-geometry is layout-derived (never a constant). A steady
+    /// frame with no queued events drains nothing, applies nothing, and writes no
+    /// DOM, so the idle cache holds.
+    ///
+    /// Returns `true` if any model changed (so the caller can bump the relevant
+    /// per-window app-content revision / mark the window scene dirty).
+    pub(crate) fn drive_app_widget_hosts(&mut self) -> bool {
+        let Some(hit_test) = self.hit_test_engine.take() else {
+            return false;
+        };
+        let mut any_changed = false;
+        let window_ids: Vec<crate::window::WindowId> =
+            self.app_widget_hosts.keys().copied().collect();
+
+        for wid in window_ids {
+            // Take the host out so we can borrow it mutably alongside the doc /
+            // app-view / dispatcher (all disjoint Shell fields).
+            let Some(mut host) = self.app_widget_hosts.remove(&wid) else {
+                continue;
+            };
+
+            // 1. Drain queued pointer events against the behaviors (this also
+            //    re-renders any widget whose own interaction state changed, e.g. a
+            //    checkbox flipping `:checked`).
+            let mut actions =
+                host.process_pending(&mut self.desktop_dom.doc, &hit_test);
+
+            // 2. Route the focused widget's keyboard, when this is the focused
+            //    window and a widget owns DOM focus.
+            if self.focus.focused() == Some(wid) {
+                for key in std::mem::take(&mut self.pending_widget_keys) {
+                    let mut k =
+                        host.on_keyboard(key, &mut self.desktop_dom.doc, &hit_test);
+                    actions.append(&mut k);
+                }
+            }
+
+            // 3. Translate + apply each action to the app model, re-rendering the
+            //    acted widget on a real change so the DOM reflects the new state.
+            let mut this_window_changed = false;
+            if !actions.is_empty() {
+                if let Some(view) = self.app_views.get_mut(&wid) {
+                    // Re-fetch the model once so translate_action can pick the verb
+                    // by the target widget's family.
+                    let mut model = view.widget_model();
+                    for action in &actions {
+                        let app_key =
+                            crate::app_widgets::strip_widget_id(wid.0, &action.widget);
+                        let model_widget = model
+                            .as_mut()
+                            .and_then(|m| m.find_mut(&app_key))
+                            .map(|w| &*w);
+                        let translated = crate::app_widgets::translate_action(
+                            &app_key,
+                            model_widget,
+                            action,
+                        );
+                        if view.apply_action(&translated) {
+                            this_window_changed = true;
+                            // Reconcile: re-render the acted widget from its host
+                            // state (which already mutated) so the DOM is current.
+                            // Host-owned state survives because the widget id is
+                            // stable across reconciliation.
+                            host.rerender(&action.widget, &mut self.desktop_dom.doc);
+                        }
+                    }
+                }
+            }
+
+            self.app_widget_hosts.insert(wid, host);
+
+            if this_window_changed {
+                self.bump_app_content_rev(wid);
+                any_changed = true;
+            }
+        }
+
+        self.hit_test_engine = Some(hit_test);
+        // Drop any keys that were queued for a window whose host did not drain
+        // them this frame (e.g. focus moved away between the keypress and the
+        // drive), so stale keys never replay into the wrong widget next frame.
+        self.pending_widget_keys.clear();
+        any_changed
+    }
+
+    /// Window ids that currently have a live `app-content-host` element mounted
+    /// under the DOM root.
+    fn live_app_content_ids(&self) -> Vec<u64> {
+        let root = self.desktop_dom.doc.root();
+        self.desktop_dom
+            .doc
+            .children(root)
+            .iter()
+            .filter_map(|&child| {
+                let node = self.desktop_dom.doc.get(child)?;
+                if node.tag_name() != "app-content-host" {
+                    return None;
+                }
+                node.element_id
+                    .as_deref()?
+                    .strip_prefix("app-content-")?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .collect()
     }
 
     /// Set an inline style property ONLY when its value actually differs from

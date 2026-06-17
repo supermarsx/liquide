@@ -36,12 +36,16 @@ impl Shell {
                 liquide_input::mouse::ScrollAxis::Horizontal => (*delta, 0.0),
                 liquide_input::mouse::ScrollAxis::Vertical => (0.0, *delta),
             };
+            let modifiers = self.keyboard_modifiers;
             let scroll_target = {
                 let hit_test = match self.hit_test_engine.as_ref() {
                     Some(ht) => ht,
                     None => return,
                 };
-                self.event_dispatcher.dispatch_scroll(pos, dx, dy, hit_test);
+                // Seam-2: thread the live keyboard-modifier snapshot so a widget
+                // can read Ctrl/Shift off the synthesized event (e.g. Ctrl+wheel).
+                self.event_dispatcher
+                    .dispatch_scroll_with_modifiers(pos, dx, dy, modifiers, hit_test);
                 hit_test.hit_test(pos).and_then(|hit| {
                     let layout = hit_test.layout();
                     layout.find_box_id_by_node(hit.node).and_then(|box_id| {
@@ -64,6 +68,7 @@ impl Shell {
             return;
         }
 
+        let modifiers = self.keyboard_modifiers;
         let hit_test = match self.hit_test_engine.as_ref() {
             Some(ht) => ht,
             None => return,
@@ -88,19 +93,25 @@ impl Shell {
                     MouseButton::Middle => DomMouseButton::Middle,
                     _ => DomMouseButton::Left,
                 };
+                // Seam-2: thread the live keyboard-modifier snapshot through the
+                // pointer path so a widget reads Ctrl/Shift off the synthesized
+                // Click for multi-select (the value matches what `dispatch_key_*`
+                // already feeds the DOM key path).
                 match state {
                     ButtonState::Pressed => {
-                        self.event_dispatcher.dispatch_mouse_down(
+                        self.event_dispatcher.dispatch_mouse_down_with_modifiers(
                             pos,
                             dom_btn,
+                            modifiers,
                             &mut self.desktop_dom.doc,
                             hit_test,
                         );
                     }
                     ButtonState::Released => {
-                        self.event_dispatcher.dispatch_mouse_up(
+                        self.event_dispatcher.dispatch_mouse_up_with_modifiers(
                             pos,
                             dom_btn,
+                            modifiers,
                             &mut self.desktop_dom.doc,
                             hit_test,
                         );
@@ -532,6 +543,10 @@ impl Shell {
 
         match event {
             PlatformEvent::KeyInput { event: ke, .. } => {
+                // Seam-2: keep the live keyboard-modifier snapshot current so the
+                // pointer path (`dispatch_*_with_modifiers`) can read Ctrl/Shift
+                // for widget multi-select. Same opaque `u32` the DOM key path uses.
+                self.keyboard_modifiers = ke.modifiers.bits() as u32;
                 // Route the key into the DOM event dispatcher FIRST (t65-s2
                 // item 2) so a focused DOM/app KeyDown/KeyUp listener sees it.
                 // A listener may call `preventDefault`, which gates the shell
@@ -729,6 +744,27 @@ impl Shell {
                     }
                     ImeOutcome::Consumed => return Some(ShellAction::Redraw),
                     ImeOutcome::Forward => {}
+                }
+
+                // Widget-host keyboard seam (t108-p8 Seam-2): when the focused
+                // window is widget-backed AND a widget owns DOM focus (the host's
+                // focused slot), route the key into the host (queued for the
+                // per-frame drive's `on_keyboard`) instead of the app text path.
+                // The focused window's host owns DOM focus while a widget is
+                // focused, so this composes with the existing shell DOM focus.
+                if let Some(wid) = self.focus.focused() {
+                    let widget_focused = self
+                        .app_widget_hosts
+                        .get(&wid)
+                        .map_or(false, |h| h.focused().is_some());
+                    if widget_focused {
+                        if let Some(key) =
+                            Self::keycode_to_widget_key(ke.key, ke.modifiers)
+                        {
+                            self.pending_widget_keys.push(key);
+                            return Some(ShellAction::Redraw);
+                        }
+                    }
                 }
 
                 // Text-input seam (t57-fG feature 2): when no shell overlay is
@@ -1242,6 +1278,66 @@ impl Shell {
             KeyCode::PageDown => AppKey::PageDown,
             _ => return None,
         })
+    }
+
+    /// Map a platform `KeyCode` + `Modifiers` to a `liquide_widgets::KeyInput`
+    /// for routing into a focused widget host (t108-p8 Seam-2). Mirrors
+    /// [`Self::keycode_to_app_key`] but targets the toolkit's self-contained key
+    /// encoding (`liquide_widgets::keys`): printable keys become their Unicode
+    /// codepoint (shift uppercases letters), named keys map to the toolkit's
+    /// high-range constants, and the modifier bits are translated into the
+    /// toolkit's modifier bit layout. Returns `None` for keys the toolkit has no
+    /// encoding for, so they fall through to the shell's own handling.
+    fn keycode_to_widget_key(
+        key: liquide_input::keyboard::KeyCode,
+        modifiers: liquide_input::keyboard::Modifiers,
+    ) -> Option<liquide_widgets::KeyInput> {
+        use liquide_input::keyboard::KeyCode;
+        use liquide_widgets::keys;
+
+        // Toolkit modifier bit layout (matches `liquide_widgets::keys::modifiers`).
+        let mut mods = 0u32;
+        if modifiers.shift() {
+            mods |= keys::modifiers::SHIFT;
+        }
+        if modifiers.ctrl() {
+            mods |= keys::modifiers::CTRL;
+        }
+        if modifiers.alt() {
+            mods |= keys::modifiers::ALT;
+        }
+        if modifiers.super_key() {
+            mods |= keys::modifiers::SUPER;
+        }
+
+        let code = match key {
+            KeyCode::Enter => keys::ENTER,
+            KeyCode::Tab => keys::TAB,
+            KeyCode::Backspace => keys::BACKSPACE,
+            KeyCode::Delete => keys::DELETE,
+            KeyCode::Escape => keys::ESCAPE,
+            KeyCode::ArrowLeft => keys::ARROW_LEFT,
+            KeyCode::ArrowRight => keys::ARROW_RIGHT,
+            KeyCode::ArrowUp => keys::ARROW_UP,
+            KeyCode::ArrowDown => keys::ARROW_DOWN,
+            KeyCode::Home => keys::HOME,
+            KeyCode::End => keys::END,
+            KeyCode::PageUp => keys::PAGE_UP,
+            KeyCode::PageDown => keys::PAGE_DOWN,
+            other => {
+                let ch = Self::keycode_to_char(other)?;
+                // Shift uppercases ASCII letters for the inserted character; other
+                // shifted symbols keep their base codepoint (the toolkit reads the
+                // SHIFT modifier bit for non-text semantics like range-select).
+                let ch = if modifiers.shift() && ch.is_ascii_alphabetic() {
+                    ch.to_ascii_uppercase()
+                } else {
+                    ch
+                };
+                ch as u32
+            }
+        };
+        Some(liquide_widgets::KeyInput::new(code, mods))
     }
 
     /// Whether a title-bar press on `wid` at `pt` is the second click of a

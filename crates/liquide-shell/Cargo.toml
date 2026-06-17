@@ -33,6 +33,10 @@ liquide-layout.workspace = true
 liquide-paint.workspace = true
 liquide-hit-test.workspace = true
 liquide-components.workspace = true
+# P8 full-CSS app content (t108): the shell bridges the toolkit-free
+# `liquide-interop::AppWidgetModel` into real `liquide-widgets` Components and
+# drives a per-window `WidgetHost` so app UIs render + interact through DOM/CSS.
+liquide-widgets.workspace = true
 liquide-statusbar = { path = "../liquide-statusbar" }
 liquide-font-rasterizer.workspace = true
 liquide-animation = { path = "../liquide-animation" }

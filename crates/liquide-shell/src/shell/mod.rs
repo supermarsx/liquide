@@ -586,6 +586,34 @@ pub struct Shell {
     /// (typed text / keys / explicit `mark_app_content_dirty`). Folded into the
     /// window-scene cache signature so app-content changes invalidate the cache.
     pub(crate) app_content_revs: HashMap<WindowId, u64>,
+    /// Per-window CSS widget host (t108-p8). For every visible window whose
+    /// installed `AppView::widget_model()` is `Some`, the shell mounts the model's
+    /// widgets as a `liquide_widgets::WidgetHost` under that window's
+    /// `app-content-host` DOM node and drives `process_pending`/`on_keyboard` each
+    /// frame, translating the emitted `WidgetAction`s into `AppWidgetAction`s for
+    /// the app's `apply_action`. Windows with `widget_model() == None`
+    /// (terminal / un-migrated apps) have no entry and keep the legacy
+    /// `AppContentView` scene path untouched.
+    pub(crate) app_widget_hosts: HashMap<WindowId, liquide_widgets::WidgetHost>,
+    /// Per-window signature of the widget model that is currently MOUNTED in the
+    /// host (hash of its structure). The mount is rebuilt only when this changes,
+    /// so an idle frame (identical model) writes nothing and the idle cache holds
+    /// (t76). Action-driven value changes re-render the affected widget in place
+    /// without remounting, so this captures STRUCTURE, not per-widget value.
+    pub(crate) app_widget_sigs: HashMap<WindowId, u64>,
+    /// The live keyboard modifier snapshot (the same opaque `u32`
+    /// `liquide_input::Modifiers::bits()` the shell already feeds the DOM key
+    /// path). Updated on every `KeyInput` and supplied to the pointer
+    /// `dispatch_*_with_modifiers` entry points (Seam-2) so widgets can read
+    /// Ctrl/Shift off a synthesized Click for multi-select.
+    pub(crate) keyboard_modifiers: u32,
+    /// Keyboard keys queued for the focused window's widget host this frame
+    /// (Seam-2). The keyboard path translates a focused-widget-backed window's
+    /// `KeyCode`+`Modifiers` into a `liquide_widgets::KeyInput` and pushes it
+    /// here; `drive_app_widget_hosts` drains it into the focused host's
+    /// `on_keyboard`. Kept as a queue (not a single key) so a burst of keys in
+    /// one frame all reach the widget in order.
+    pub(crate) pending_widget_keys: Vec<liquide_widgets::KeyInput>,
     // ── Canonical chrome-crate managers (t51 mandate 2, Wave C0) ────────
     // Dormant injection points wired to nothing yet; later C1/C2/C3
     // executors construct/drive these and retire the shell duplicates.
@@ -787,6 +815,10 @@ impl Shell {
             app_views: HashMap::new(),
             app_view_factory: None,
             app_content_revs: HashMap::new(),
+            app_widget_hosts: HashMap::new(),
+            app_widget_sigs: HashMap::new(),
+            keyboard_modifiers: 0,
+            pending_widget_keys: Vec::new(),
             // Canonical chrome managers: dormant (None) until wired in C1+.
             // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
             chrome_tiling: None,
@@ -933,6 +965,10 @@ impl Shell {
             app_views: HashMap::new(),
             app_view_factory: None,
             app_content_revs: HashMap::new(),
+            app_widget_hosts: HashMap::new(),
+            app_widget_sigs: HashMap::new(),
+            keyboard_modifiers: 0,
+            pending_widget_keys: Vec::new(),
             // Canonical chrome managers: dormant (None) until wired in C1+.
             // (workspaces are single-sourced into `self.workspaces`, t52-e5.)
             chrome_tiling: None,

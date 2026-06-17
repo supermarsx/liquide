@@ -401,6 +401,10 @@ impl Shell {
         // app's runtime is freed and no stale view/state outlives the window.
         self.app_views.remove(&id);
         self.app_content_revs.remove(&id);
+        // Drop the window's CSS widget host (t108-p8) so its mounted behaviors
+        // and registered dispatcher handlers are freed with the window.
+        self.app_widget_hosts.remove(&id);
+        self.app_widget_sigs.remove(&id);
         // Drop the window's monitor assignment (t73-multimon §3.3).
         self.window_monitors.remove(&id);
         if matches!(self.last_titlebar_click, Some((wid, _, _)) if wid == id) {

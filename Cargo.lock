@@ -3563,6 +3563,7 @@ dependencies = [
  "liquide-tooltip",
  "liquide-ui",
  "liquide-ui-core",
+ "liquide-widgets",
  "liquide-window-class",
  "liquide-window-effects",
  "liquide-window-groups",
