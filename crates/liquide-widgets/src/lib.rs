@@ -60,6 +60,17 @@ pub mod menu;
 pub mod table;
 pub mod tree;
 
+// ── Group D — pickers / advanced ────────────────────────────────────────────
+pub mod accordion;
+pub mod breadcrumb;
+pub mod chip;
+pub mod color_picker;
+pub mod date_picker;
+pub mod dropdown;
+pub mod pagination;
+pub mod progress;
+pub mod segmented;
+
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
 mod gallery;
@@ -100,6 +111,26 @@ mod table_tests;
 #[cfg(test)]
 mod tree_tests;
 
+// Per-widget real-pipeline gallery tests (Group D).
+#[cfg(test)]
+mod accordion_tests;
+#[cfg(test)]
+mod breadcrumb_tests;
+#[cfg(test)]
+mod chip_tests;
+#[cfg(test)]
+mod color_picker_tests;
+#[cfg(test)]
+mod date_picker_tests;
+#[cfg(test)]
+mod dropdown_tests;
+#[cfg(test)]
+mod pagination_tests;
+#[cfg(test)]
+mod progress_tests;
+#[cfg(test)]
+mod segmented_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -126,6 +157,17 @@ pub use list::{List, SelectionMode};
 pub use menu::{Menu, MenuEntry};
 pub use table::{SortDir, Table};
 pub use tree::{Tree, TreeNode};
+
+// Group D widgets (pickers / advanced).
+pub use accordion::Accordion;
+pub use breadcrumb::Breadcrumb;
+pub use chip::Chip;
+pub use color_picker::{ColorPicker, Rgb};
+pub use date_picker::DatePicker;
+pub use dropdown::Dropdown;
+pub use pagination::Pagination;
+pub use progress::{Progress, Spinner};
+pub use segmented::Segmented;
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.

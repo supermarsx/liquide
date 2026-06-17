@@ -104,7 +104,53 @@
   lq-menu,
   lq-menu-item,
   lq-menu-label,
-  lq-menu-separator {
+  lq-menu-separator,
+  lq-dropdown,
+  lq-combobox,
+  lq-dropdown-button,
+  lq-dropdown-value,
+  lq-dropdown-arrow,
+  lq-dropdown-filter,
+  lq-popup,
+  lq-option,
+  lq-segmented,
+  lq-segment,
+  lq-breadcrumb,
+  lq-crumb,
+  lq-pagination,
+  lq-page-btn,
+  lq-page-ellipsis,
+  lq-chip,
+  lq-chip-label,
+  lq-chip-remove,
+  lq-spinner,
+  lq-spinner-arc,
+  lq-progress,
+  lq-progress-track,
+  lq-progress-fill,
+  lq-accordion,
+  lq-section,
+  lq-section-header,
+  lq-section-twisty,
+  lq-section-title,
+  lq-section-body,
+  lq-date-picker,
+  lq-date-button,
+  lq-date-nav,
+  lq-date-prev,
+  lq-date-next,
+  lq-date-title,
+  lq-date-grid,
+  lq-date-blank,
+  lq-date-day,
+  lq-color-picker,
+  lq-color-button,
+  lq-color-preview,
+  lq-color-value,
+  lq-color-grid,
+  lq-swatch,
+  lq-color-channels,
+  lq-channel {
     display: block;
     box-sizing: border-box;
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
@@ -754,5 +800,449 @@
     height: 1px;
     margin: 4px 6px;
     background-color: var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+
+  /* ── D1: dropdown / combobox ────────────────────────────────── */
+  lq-dropdown,
+  lq-combobox {
+    display: block;
+    min-width: 160px;
+  }
+  lq-dropdown > lq-dropdown-button,
+  lq-combobox > lq-dropdown-button {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 7px 10px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-dropdown > lq-dropdown-button > lq-dropdown-value,
+  lq-combobox > lq-dropdown-button > lq-dropdown-value {
+    display: inline-block;
+    flex-grow: 1;
+  }
+  lq-dropdown-button.placeholder {
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.55));
+  }
+  lq-dropdown-arrow {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-left: 8px;
+  }
+  lq-dropdown-arrow::before {
+    content: "\25BC"; /* ▼ */
+    color: var(--widget-fg-disabled, rgba(180, 180, 190, 0.75));
+  }
+  lq-dropdown.open > lq-dropdown-button,
+  lq-combobox.open > lq-dropdown-button {
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  /* The popup is laid out IN-FLOW directly below the trigger (not an absolute
+     overlay): the layout engine's absolute-offset resolution + the hit-test's
+     z-stacked overlap are unreliable here, and an in-flow popup keeps the
+     per-option hit-test reading the same boxes the dispatcher resolves. */
+  lq-popup {
+    display: block;
+    min-width: 160px;
+    margin-top: 4px;
+    padding: 4px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  }
+  lq-popup > lq-option {
+    display: block;
+    padding: 7px 10px;
+    border-radius: 4px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-popup > lq-option:hover,
+  lq-popup > lq-option:focus,
+  lq-popup > lq-option.highlighted {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-popup > lq-option:checked,
+  lq-popup > lq-option.selected {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-dropdown-filter {
+    display: block;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 4px;
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.06));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+
+  /* ── D2: segmented control ──────────────────────────────────── */
+  lq-segmented {
+    display: inline-flex;
+    flex-direction: row;
+    padding: 2px;
+    border-radius: 8px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-segmented > lq-segment {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 6px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-segmented > lq-segment:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-segmented > lq-segment:checked,
+  lq-segmented > lq-segment.selected {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-segmented:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── D3: breadcrumb ─────────────────────────────────────────── */
+  lq-breadcrumb {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+  }
+  lq-breadcrumb > lq-crumb {
+    display: inline-block;
+    padding: 2px 4px;
+    color: var(--widget-fg-disabled, rgba(180, 180, 190, 0.75));
+  }
+  lq-breadcrumb > lq-crumb.link {
+    color: var(--widget-accent, #3b82f6);
+  }
+  lq-breadcrumb > lq-crumb.link:hover,
+  lq-breadcrumb > lq-crumb.link:focus {
+    color: var(--widget-accent-hover, #60a5fa);
+    text-decoration: underline;
+  }
+  lq-breadcrumb > lq-crumb.current {
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    font-weight: 600;
+  }
+  /* Separator after every crumb except the current (last) one. */
+  lq-breadcrumb > lq-crumb.link::after {
+    content: "\203A"; /* › */
+    margin-left: 8px;
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.55));
+  }
+
+  /* ── D4: pagination ─────────────────────────────────────────── */
+  lq-pagination {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+  }
+  lq-pagination > lq-page-btn {
+    display: block;
+    padding: 6px 12px;
+    margin: 0 2px;
+    text-align: center;
+    border-radius: 6px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-pagination > lq-page-btn:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-pagination > lq-page-btn:checked,
+  lq-pagination > lq-page-btn.current {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-pagination > lq-page-btn:disabled,
+  lq-pagination > lq-page-btn.disabled {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-pagination > lq-page-ellipsis {
+    display: block;
+    padding: 6px 6px;
+    text-align: center;
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.55));
+  }
+
+  /* ── D5: chip / tag ─────────────────────────────────────────── */
+  lq-chip {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 12px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: var(--widget-bg-elevated, #3f3f46);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-chip:hover {
+    background-color: var(--widget-bg-hover-solid, #52525b);
+  }
+  lq-chip:checked,
+  lq-chip.selected {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-chip > lq-chip-label {
+    display: inline-block;
+  }
+  lq-chip > lq-chip-remove {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-left: 6px;
+    text-align: center;
+    border-radius: 8px;
+    color: var(--widget-fg-disabled, rgba(200, 200, 210, 0.8));
+    background-color: rgba(255, 255, 255, 0.10);
+  }
+  lq-chip > lq-chip-remove:hover {
+    background-color: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+  }
+  lq-chip:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── D6: spinner + progress ─────────────────────────────────── */
+  lq-spinner {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+  }
+  lq-spinner > lq-spinner-arc {
+    display: block;
+    width: 24px;
+    height: 24px;
+    border-radius: 12px;
+    border: 3px solid var(--widget-border, rgba(255, 255, 255, 0.15));
+    /* The top edge is the accent so the (possibly animated) ring shows motion;
+       a static ring is still a visible busy indicator if animation is absent. */
+    border-top-color: var(--widget-accent, #3b82f6);
+  }
+  lq-progress {
+    display: block;
+    width: 200px;
+  }
+  /* The track is a FLEX row so the fill's percentage width resolves against it
+     (the block layout path does not resolve percentage widths, but the flex
+     path does — see flex.rs). The fill is a non-growing, non-shrinking flex item
+     whose value-driven percentage basis/width sets its extent. */
+  lq-progress > lq-progress-track {
+    display: flex;
+    flex-direction: row;
+    height: 8px;
+    border-radius: 4px;
+    background-color: var(--widget-bg, #27272a);
+    overflow: hidden;
+  }
+  lq-progress > lq-progress-track > lq-progress-fill {
+    display: block;
+    height: 8px;
+    border-radius: 4px;
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  lq-progress > lq-progress-track > lq-progress-rest {
+    display: block;
+    height: 8px;
+  }
+
+  /* ── D7: accordion ──────────────────────────────────────────── */
+  lq-accordion {
+    display: block;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  lq-accordion > lq-section {
+    display: block;
+    border-bottom: 1px solid var(--widget-border, rgba(255, 255, 255, 0.08));
+  }
+  lq-accordion > lq-section > lq-section-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 10px 14px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-accordion > lq-section > lq-section-header:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-accordion > lq-section > lq-section-header:checked,
+  lq-accordion > lq-section > lq-section-header.expanded {
+    color: var(--widget-fg, #ffffff);
+    background-color: var(--widget-bg-elevated, #3f3f46);
+  }
+  lq-section-twisty {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 8px;
+  }
+  lq-section-twisty::before {
+    content: "\25B6"; /* ▶ */
+    color: var(--widget-fg-disabled, rgba(180, 180, 190, 0.75));
+  }
+  lq-section-header.expanded > lq-section-twisty::before,
+  lq-section-header:checked > lq-section-twisty::before {
+    content: "\25BC"; /* ▼ */
+    color: var(--widget-accent, #3b82f6);
+  }
+  lq-section-title {
+    display: inline-block;
+    flex-grow: 1;
+  }
+  lq-section-body {
+    display: block;
+    padding: 12px 14px;
+    color: var(--widget-fg, rgba(230, 230, 235, 0.9));
+    background-color: var(--widget-bg, #1f1f23);
+  }
+
+  /* ── D8: date picker ────────────────────────────────────────── */
+  lq-date-picker {
+    display: block;
+  }
+  lq-date-button {
+    display: inline-block;
+    padding: 7px 12px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-date-button.placeholder {
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.55));
+  }
+  lq-date-picker.open > lq-date-button {
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-date-nav {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  lq-date-title {
+    display: inline-block;
+    flex-grow: 1;
+    text-align: center;
+    font-weight: 600;
+  }
+  lq-date-prev,
+  lq-date-next {
+    display: inline-block;
+    width: 28px;
+    height: 28px;
+    text-align: center;
+    border-radius: 4px;
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-date-prev:hover,
+  lq-date-next:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-date-grid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 252px;
+  }
+  lq-date-blank,
+  lq-date-day {
+    display: inline-block;
+    width: 36px;
+    height: 32px;
+    text-align: center;
+    border-radius: 4px;
+  }
+  lq-date-day {
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-date-day:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-date-day:focus {
+    border: 1px solid var(--widget-accent, #3b82f6);
+  }
+  lq-date-day:checked,
+  lq-date-day.selected {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+
+  /* ── D8: color picker ───────────────────────────────────────── */
+  lq-color-picker {
+    display: block;
+  }
+  lq-color-button {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 6px 10px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-color-preview {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    margin-right: 8px;
+    border-radius: 4px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.08));
+  }
+  lq-color-value {
+    display: inline-block;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-color-grid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 192px;
+  }
+  lq-swatch {
+    display: inline-block;
+    width: 28px;
+    height: 28px;
+    margin: 2px;
+    border-radius: 6px;
+    border: 2px solid rgba(0, 0, 0, 0);
+  }
+  lq-swatch:hover,
+  lq-swatch:focus {
+    border-color: var(--widget-fg, rgba(255, 255, 255, 0.9));
+  }
+  lq-swatch:checked,
+  lq-swatch.selected {
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-color-channels {
+    display: flex;
+    flex-direction: row;
+    margin-top: 8px;
+  }
+  lq-channel {
+    display: inline-block;
+    margin-right: 10px;
+    color: var(--widget-fg-disabled, rgba(200, 200, 210, 0.8));
   }
 }
