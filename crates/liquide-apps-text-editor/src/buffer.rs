@@ -72,6 +72,11 @@ impl TextBuffer {
         self.modified = false;
     }
 
+    /// Set the modified flag (e.g. after replacing the whole buffer).
+    pub fn mark_modified(&mut self) {
+        self.modified = true;
+    }
+
     /// Total character count across all lines.
     #[must_use]
     pub fn char_count(&self) -> usize {
