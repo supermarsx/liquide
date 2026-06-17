@@ -213,6 +213,96 @@ impl FrameBuffer {
         hash
     }
 
+    /// Damage-scoped fingerprint: a deterministic hash of the buffer shape, the
+    /// damage geometry, and ONLY the pixel bytes inside the damaged tiles.
+    ///
+    /// This is the hot-path replacement for [`content_hash`](Self::content_hash)
+    /// (which scans the whole 8 MB framebuffer scalar-FNV every frame — t90 Lever
+    /// 1). The only consumers of the frame hash compare it for *equality* against
+    /// the previously presented frame to detect a changed/new surface and to tag
+    /// presentation metadata; neither needs a whole-frame digest, only "did the
+    /// presented (damaged) region change?".
+    ///
+    /// CORRECTNESS — why damage-scoping never misses a real change:
+    /// - Any pixel that actually changed this frame is, by construction, inside
+    ///   the frame's authoritative damage (the raster write-scissor forbids
+    ///   writes outside it). So an in-damage change always flips this hash.
+    /// - Pixels OUTSIDE the damage are, by definition, unchanged from the prior
+    ///   frame, so excluding them cannot hide a change.
+    /// - The damage GEOMETRY (tile coordinates + grid + tile size) is folded into
+    ///   the hash, so two frames that touch *different* regions can never collide
+    ///   to the same hash even if the touched bytes happen to match — a moved
+    ///   surface is always detected as a new presentation.
+    ///
+    /// A full-frame [`DamageSet`] hashes the whole buffer (identical coverage to
+    /// [`content_hash`](Self::content_hash), though not byte-identical output —
+    /// the deterministic capture/`render_frame_sync` path must keep using
+    /// [`content_hash`](Self::content_hash) for its full-frame digest).
+    #[must_use]
+    pub fn content_hash_damaged(&self, damage: &crate::damage::DamageSet) -> u64 {
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+        #[inline]
+        fn mix(hash: &mut u64, bytes: &[u8]) {
+            for byte in bytes {
+                *hash ^= u64::from(*byte);
+                *hash = hash.wrapping_mul(FNV_PRIME);
+            }
+        }
+
+        let mut hash = FNV_OFFSET;
+        mix(&mut hash, &self.width.to_le_bytes());
+        mix(&mut hash, &self.height.to_le_bytes());
+        mix(&mut hash, &self.stride.to_le_bytes());
+        mix(&mut hash, self.format.wire_name().as_bytes());
+
+        // Empty damage (a no-op keepalive frame): identity is purely the shape
+        // above plus a marker — distinct from any frame that hashed real bytes.
+        if damage.is_empty() {
+            mix(&mut hash, b"empty-damage");
+            return hash;
+        }
+
+        let bpp = self.format.bytes_per_pixel();
+        let tile_size = damage.tile_size.max(1);
+        let stride = self.stride;
+        let px = self.pixels();
+
+        // Hash the bytes of one tile (clamped to the surface), row-by-row.
+        let mut mix_tile = |hash: &mut u64, tx: u32, ty: u32| {
+            let x0 = tx.saturating_mul(tile_size).min(self.width);
+            let y0 = ty.saturating_mul(tile_size).min(self.height);
+            let x1 = x0.saturating_add(tile_size).min(self.width);
+            let y1 = y0.saturating_add(tile_size).min(self.height);
+            // Fold tile coordinates into the digest so distinct damage layouts
+            // never alias.
+            mix(hash, &tx.to_le_bytes());
+            mix(hash, &ty.to_le_bytes());
+            for y in y0..y1 {
+                let start = (y * stride + x0 * bpp) as usize;
+                let end = (y * stride + x1 * bpp) as usize;
+                if end <= px.len() {
+                    mix(hash, &px[start..end]);
+                }
+            }
+        };
+
+        if let Some((grid_w, grid_h, _class)) = damage.full_grid_dimensions() {
+            mix(&mut hash, b"full");
+            for ty in 0..grid_h {
+                for tx in 0..grid_w {
+                    mix_tile(&mut hash, tx, ty);
+                }
+            }
+        } else {
+            for tile in &damage.tiles {
+                mix_tile(&mut hash, tile.x, tile.y);
+            }
+        }
+        hash
+    }
+
     /// Get the BGRA pixel at `(x, y)` as a [`Color`].
     ///
     /// Assumes `Bgra8` format. For other formats the result is approximate.
@@ -497,6 +587,82 @@ mod pool_tests {
 
         assert_ne!(initial, changed);
         assert_eq!(changed, fb.content_hash());
+    }
+
+    // ── t90 Lever 1: damage-scoped content hash ──────────────────────────
+    use crate::damage::{DamageClass, DamageSet, DamageTile};
+
+    /// (a) A change INSIDE the damaged tile flips the damage-scoped hash; a
+    /// change OUTSIDE the damaged tile is NOT hashed (so the out-of-damage byte
+    /// cannot affect the digest). This proves the hash touches only ~damage
+    /// bytes, not the whole 8 MB framebuffer — and that it never misses a real
+    /// in-damage change. If `content_hash_damaged` ever reverted to scanning the
+    /// whole buffer, the out-of-damage assertion below would FAIL.
+    #[test]
+    fn content_hash_damaged_scopes_to_damage_tiles() {
+        // 128x128, tile 64 => 2x2 tile grid. Damage only tile (0,0).
+        let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
+
+        let baseline = fb.content_hash_damaged(&damage);
+
+        // Change a pixel OUTSIDE the damaged tile (tile (1,1), pixel (100,100)).
+        fb.set_pixel(100, 100, Color::new(10, 20, 30, 255));
+        assert_eq!(
+            baseline,
+            fb.content_hash_damaged(&damage),
+            "out-of-damage change must NOT be hashed (proves damage-scoping; not a whole-frame scan)"
+        );
+
+        // Change a pixel INSIDE the damaged tile (tile (0,0), pixel (5,5)).
+        fb.set_pixel(5, 5, Color::new(40, 80, 120, 255));
+        assert_ne!(
+            baseline,
+            fb.content_hash_damaged(&damage),
+            "in-damage change MUST be detected (no missed-change regression)"
+        );
+    }
+
+    /// Distinct damage GEOMETRY yields distinct hashes even when the hashed
+    /// bytes coincide — so a surface moving between two equal-content regions is
+    /// still detected as a new presentation (no collision).
+    #[test]
+    fn content_hash_damaged_folds_in_tile_geometry() {
+        let fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
+        let mut d00 = DamageSet::new(64);
+        d00.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
+        let mut d11 = DamageSet::new(64);
+        d11.add(DamageTile {
+            x: 1,
+            y: 1,
+            class: DamageClass::UiPrimitive,
+        });
+        // Both tiles are all-zero (identical bytes), but the geometry differs.
+        assert_ne!(
+            fb.content_hash_damaged(&d00),
+            fb.content_hash_damaged(&d11),
+            "distinct damage layouts must not collide"
+        );
+    }
+
+    /// A full-frame damage set hashes the whole buffer, so it still tracks any
+    /// pixel change anywhere (parity with `content_hash` coverage).
+    #[test]
+    fn content_hash_damaged_full_tracks_any_change() {
+        let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
+        let full = DamageSet::full(64, 2, 2, DamageClass::UiPrimitive);
+        let baseline = fb.content_hash_damaged(&full);
+        fb.set_pixel(100, 100, Color::new(1, 2, 3, 255));
+        assert_ne!(baseline, fb.content_hash_damaged(&full));
     }
 
     #[test]

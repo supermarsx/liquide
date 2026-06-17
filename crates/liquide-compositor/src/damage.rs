@@ -699,6 +699,61 @@ impl DamageTracker {
         }
     }
 
+    /// Damage-scoped change detection: CRC-hash and compare ONLY the tiles named
+    /// in `candidates`, returning the subset that actually changed (t90 Lever 2).
+    ///
+    /// `compute_damage`/`compute_damage_with_class` re-hash EVERY tile of the
+    /// whole grid every frame (~510 tiles / 8 MB at 1080p) just to discover that
+    /// a 16×16 cursor move touched one tile. The only purpose of the caller's
+    /// `trim_damage` is to drop tiles the raster *touched* this frame but didn't
+    /// actually *change* — so only the already-damaged candidate tiles need
+    /// re-hashing.
+    ///
+    /// CORRECTNESS:
+    /// - A tile NOT in `candidates` was not painted this frame (the raster
+    ///   write-scissor confines writes to the damage), so its pixels cannot have
+    ///   changed; skipping it can never miss a change. Its stored hash is left
+    ///   untouched and stays valid for the next frame.
+    /// - The first frame still forces full damage (the tracker has no baseline),
+    ///   matching `compute_damage`.
+    /// - Returns the changed subset; the caller intersects it with its own
+    ///   classified damage, never widening it.
+    ///
+    /// A full-frame or empty candidate set falls back to the whole-grid
+    /// [`compute_damage_with_class`] (full-frame must re-baseline every tile so a
+    /// later partial frame's stored hashes are correct).
+    pub fn compute_damage_for_candidates(
+        &mut self,
+        fb: &FrameBuffer,
+        candidates: &DamageSet,
+        class: DamageClass,
+    ) -> DamageSet {
+        if self.first_frame || candidates.is_full() {
+            return self.compute_damage_with_class(fb, class);
+        }
+        if candidates.is_empty() {
+            return DamageSet::new(self.tile_size);
+        }
+
+        let mut damage = DamageSet::new(self.tile_size);
+        for tile in &candidates.tiles {
+            if tile.x >= self.grid_width || tile.y >= self.grid_height {
+                continue;
+            }
+            let idx = (tile.y * self.grid_width + tile.x) as usize;
+            let hash = crc32c_tile(fb, tile.x, tile.y, self.tile_size);
+            if hash != self.previous_hashes[idx] {
+                damage.add(DamageTile {
+                    x: tile.x,
+                    y: tile.y,
+                    class,
+                });
+            }
+            self.previous_hashes[idx] = hash;
+        }
+        damage
+    }
+
     /// Reset damage tracking (forces full damage on next frame).
     pub fn reset(&mut self) {
         self.first_frame = true;
@@ -818,6 +873,129 @@ mod full_frame_damage_tests {
         assert!(full.is_full());
         let (_, _, class) = full.full_grid_dimensions().unwrap();
         assert_eq!(class, DamageClass::TextGlyph);
+    }
+}
+
+#[cfg(test)]
+mod candidate_scoped_damage_tests {
+    use super::*;
+    use crate::pixel::Color;
+
+    fn fb_128() -> FrameBuffer {
+        FrameBuffer::new(128, 128, crate::pixel::PixelFormat::Bgra8)
+    }
+
+    fn candidates(tiles: &[(u32, u32)]) -> DamageSet {
+        let mut set = DamageSet::new(64);
+        for &(x, y) in tiles {
+            set.add(DamageTile {
+                x,
+                y,
+                class: DamageClass::UiPrimitive,
+            });
+        }
+        set
+    }
+
+    // (c) compute_damage_for_candidates only hashes the candidate tiles: a
+    // change in a tile that is NOT a candidate is invisible to it (because that
+    // tile was never painted, so it cannot have changed in the real pipeline —
+    // and here we prove the tracker does not even look at it). If this ever
+    // reverted to hashing the whole grid, the out-of-candidate change WOULD be
+    // reported and this test would FAIL.
+    #[test]
+    fn candidate_scope_ignores_non_candidate_tiles() {
+        let mut tracker = DamageTracker::new(64, 128, 128);
+        let fb = fb_128();
+        // First frame forces full damage + baselines every tile.
+        let _ = tracker.compute_damage_for_candidates(
+            &fb,
+            &DamageSet::full(64, 2, 2, DamageClass::UiPrimitive),
+            DamageClass::UiPrimitive,
+        );
+
+        // Mutate a pixel in tile (1,1), but only offer tile (0,0) as candidate.
+        let mut fb2 = fb_128();
+        fb2.set_pixel(100, 100, Color::new(9, 9, 9, 255));
+        let changed =
+            tracker.compute_damage_for_candidates(&fb2, &candidates(&[(0, 0)]), DamageClass::UiPrimitive);
+        assert!(
+            changed.is_empty(),
+            "a change outside the candidate set must not be hashed/reported"
+        );
+    }
+
+    // A real change INSIDE a candidate tile is still detected (no missed change).
+    #[test]
+    fn candidate_scope_detects_in_candidate_change() {
+        let mut tracker = DamageTracker::new(64, 128, 128);
+        let fb = fb_128();
+        let _ = tracker.compute_damage_for_candidates(
+            &fb,
+            &DamageSet::full(64, 2, 2, DamageClass::UiPrimitive),
+            DamageClass::UiPrimitive,
+        );
+
+        let mut fb2 = fb_128();
+        fb2.set_pixel(5, 5, Color::new(7, 7, 7, 255)); // tile (0,0)
+        let changed =
+            tracker.compute_damage_for_candidates(&fb2, &candidates(&[(0, 0)]), DamageClass::UiPrimitive);
+        assert_eq!(changed.len(), 1, "in-candidate change must be detected");
+        assert!(changed.tiles.iter().any(|t| t.x == 0 && t.y == 0));
+    }
+
+    // A non-candidate tile's baseline hash is left UNTOUCHED, so a later frame
+    // that DOES offer it as a candidate still sees the accumulated change. This
+    // proves scoping does not corrupt the tracker's stored hashes.
+    #[test]
+    fn candidate_scope_preserves_untouched_baselines() {
+        let mut tracker = DamageTracker::new(64, 128, 128);
+        let fb = fb_128();
+        let _ = tracker.compute_damage_for_candidates(
+            &fb,
+            &DamageSet::full(64, 2, 2, DamageClass::UiPrimitive),
+            DamageClass::UiPrimitive,
+        );
+
+        // Frame 2: change tile (1,1) but DON'T offer it -> not detected, and its
+        // stored baseline must NOT be updated to the new value.
+        let mut fb2 = fb_128();
+        fb2.set_pixel(100, 100, Color::new(3, 3, 3, 255));
+        let none =
+            tracker.compute_damage_for_candidates(&fb2, &candidates(&[(0, 0)]), DamageClass::UiPrimitive);
+        assert!(none.is_empty());
+
+        // Frame 3: same pixels as frame 2, NOW offer tile (1,1). Because its
+        // baseline was never updated (still the frame-1 zero hash), the change is
+        // detected here.
+        let detected =
+            tracker.compute_damage_for_candidates(&fb2, &candidates(&[(1, 1)]), DamageClass::UiPrimitive);
+        assert_eq!(detected.len(), 1, "untouched baseline must still detect the change");
+        assert!(detected.tiles.iter().any(|t| t.x == 1 && t.y == 1));
+    }
+
+    // Full candidate set re-baselines the whole grid (parity with the full
+    // compute_damage path).
+    #[test]
+    fn full_candidate_falls_back_to_full_scan() {
+        let mut tracker = DamageTracker::new(64, 128, 128);
+        let fb = fb_128();
+        let _ = tracker.compute_damage_for_candidates(
+            &fb,
+            &DamageSet::full(64, 2, 2, DamageClass::UiPrimitive),
+            DamageClass::UiPrimitive,
+        );
+        let mut fb2 = fb_128();
+        fb2.set_pixel(100, 100, Color::new(2, 2, 2, 255)); // tile (1,1)
+        let changed = tracker.compute_damage_for_candidates(
+            &fb2,
+            &DamageSet::full(64, 2, 2, DamageClass::UiPrimitive),
+            DamageClass::UiPrimitive,
+        );
+        assert!(
+            changed.tiles.iter().any(|t| t.x == 1 && t.y == 1) || changed.is_full(),
+            "full candidate must scan the whole grid and find the (1,1) change"
+        );
     }
 }
 

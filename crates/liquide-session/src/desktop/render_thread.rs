@@ -254,13 +254,24 @@ impl FrameTileHashTracker {
         framebuf: &FrameBuffer,
         classified_damage: DamageSet,
     ) -> DamageSet {
-        let changed_damage = self.changed_tiles(tile_size, framebuf);
+        // t90 Lever 2: CRC-hash ONLY the candidate (already-damaged) tiles, not
+        // the whole grid. The tracker re-baselines every tile on the first frame
+        // / a full-frame candidate set; for a small candidate set it touches only
+        // those tiles (a tile outside the candidate set was not painted, so its
+        // pixels cannot have changed). The result is then intersected with the
+        // classified damage below, so this never widens damage.
+        let changed_damage = self.changed_tiles(tile_size, framebuf, &classified_damage);
         trim_damage_to_changed_tiles(classified_damage, &changed_damage)
     }
 
-    fn changed_tiles(&mut self, tile_size: u32, framebuf: &FrameBuffer) -> DamageSet {
+    fn changed_tiles(
+        &mut self,
+        tile_size: u32,
+        framebuf: &FrameBuffer,
+        candidates: &DamageSet,
+    ) -> DamageSet {
         self.ensure(tile_size, framebuf.width, framebuf.height)
-            .compute_damage(framebuf)
+            .compute_damage_for_candidates(framebuf, candidates, DamageClass::UiPrimitive)
     }
 
     fn ensure(&mut self, tile_size: u32, width: u32, height: u32) -> &mut DamageTracker {
@@ -279,6 +290,113 @@ impl FrameTileHashTracker {
         self.tracker
             .as_mut()
             .expect("tile hash tracker should exist after ensure")
+    }
+}
+
+/// Recycles the per-frame pixel snapshot handed to the main/present thread,
+/// avoiding the full 8 MB `pixels().to_vec()` allocation+copy every frame
+/// (t90 Lever 3).
+///
+/// The worker's `FrameBuffer` is RETAINED between frames and rendered
+/// incrementally — only the damaged tiles are cleared+repainted, so the
+/// undamaged region carries forward correct pixels. The previous snapshot we
+/// handed out is therefore a full mirror of the previous frame, which equals
+/// the current frame everywhere EXCEPT this frame's damaged tiles. So when we
+/// can reclaim that previous snapshot (the main thread has released its `Arc`),
+/// we reconstruct the current full frame by copying ONLY the damaged tiles into
+/// it — a damage-sized copy instead of an 8 MB one.
+///
+/// Fallbacks that preserve correctness:
+/// - No previous snapshot, or the previous one is still referenced by the main
+///   thread (`Arc::try_unwrap` fails), or it is the wrong size, or the damage is
+///   full/frame-covering → full copy from the framebuffer. The result is always
+///   a complete, correct full-size buffer, so every downstream consumer
+///   (`present_frame_damaged`, tile `encode_frame`, the presented-frame
+///   snapshot, host screenshots) sees an authoritative full frame exactly as
+///   before.
+#[derive(Default)]
+struct FrameSnapshotRecycler {
+    prev: Option<Arc<Vec<u8>>>,
+}
+
+impl FrameSnapshotRecycler {
+    fn snapshot(&mut self, framebuf: &FrameBuffer, damage: &DamageSet) -> Arc<Vec<u8>> {
+        let src = framebuf.pixels();
+        let needed = src.len();
+
+        // Try to reclaim the immediately-previous snapshot for in-place reuse.
+        let reclaimed = self
+            .prev
+            .take()
+            .and_then(|arc| Arc::try_unwrap(arc).ok())
+            .filter(|buf| buf.len() == needed);
+
+        let full_copy_needed =
+            damage.is_full() || damage_covers_frame(damage, framebuf.width, framebuf.height);
+
+        let buf = match reclaimed {
+            Some(mut buf) if !full_copy_needed => {
+                // `buf` is the previous full frame; patch only this frame's
+                // damaged tiles to reconstruct the current full frame.
+                copy_damage_tiles(&mut buf, src, framebuf.stride, framebuf.format, damage);
+                buf
+            }
+            Some(mut buf) => {
+                // Full/frame-covering damage: refresh the whole reused buffer.
+                buf.copy_from_slice(src);
+                buf
+            }
+            None => src.to_vec(),
+        };
+
+        let arc = Arc::new(buf);
+        self.prev = Some(Arc::clone(&arc));
+        arc
+    }
+}
+
+/// Copy ONLY the damaged tiles from `src` into `dst` (same layout/stride).
+/// Used by [`FrameSnapshotRecycler`] to patch a reused full-frame buffer.
+fn copy_damage_tiles(
+    dst: &mut [u8],
+    src: &[u8],
+    stride: u32,
+    format: PixelFormat,
+    damage: &DamageSet,
+) {
+    let bpp = format.bytes_per_pixel();
+    let stride_us = stride as usize;
+    // Surface dimensions derived from buffer length + stride (square-safe).
+    let height = if stride_us == 0 { 0 } else { src.len() / stride_us };
+    let width_px = if bpp == 0 { 0 } else { stride / bpp };
+
+    let mut copy_tile = |tx: u32, ty: u32| {
+        let x0 = tx.saturating_mul(damage.tile_size).min(width_px);
+        let y0 = ty.saturating_mul(damage.tile_size);
+        let x1 = x0.saturating_add(damage.tile_size).min(width_px);
+        let y1 = (y0 + damage.tile_size).min(height as u32);
+        let row_start = (x0 * bpp) as usize;
+        let row_end = (x1 * bpp) as usize;
+        for y in y0..y1 {
+            let base = y as usize * stride_us;
+            let s = base + row_start;
+            let e = base + row_end;
+            if e <= src.len() && e <= dst.len() {
+                dst[s..e].copy_from_slice(&src[s..e]);
+            }
+        }
+    };
+
+    if let Some((grid_w, grid_h, _)) = damage.full_grid_dimensions() {
+        for ty in 0..grid_h {
+            for tx in 0..grid_w {
+                copy_tile(tx, ty);
+            }
+        }
+    } else {
+        for tile in &damage.tiles {
+            copy_tile(tile.x, tile.y);
+        }
     }
 }
 
@@ -1818,6 +1936,9 @@ impl DesktopCompositor {
     ) {
         let mut fb: Option<FrameBuffer> = None;
         let mut tile_hash_tracker = FrameTileHashTracker::default();
+        // Recycles the per-frame pixel snapshot Arc so a small-damage frame does
+        // not allocate+copy the whole 8 MB framebuffer (t90 Lever 3).
+        let mut snapshot_recycler = FrameSnapshotRecycler::default();
         // Cache the last scene (without cursor) for cursor-only updates.
         let mut cached_flat_nodes: Option<Vec<FlatNode>> = None;
         // Reusable buffer for flattened scene nodes (avoids allocation per frame).
@@ -1882,6 +2003,7 @@ impl DesktopCompositor {
                             &mut compositor,
                             &mut fb,
                             &mut tile_hash_tracker,
+                            &mut snapshot_recycler,
                             &mut cached_flat_nodes,
                             &mut flat_nodes_buf,
                             &tx,
@@ -1984,10 +2106,14 @@ impl DesktopCompositor {
                     renderer.report_render_time(total_ms);
                     compositor.report_frame_time(total_ms);
 
-                    let content_hash = framebuf.content_hash();
-                    let pixel_data = framebuf.pixels().to_vec();
+                    // t90 Lever 1: damage-scoped content hash (only the cursor's
+                    // damaged tiles), not a whole-framebuffer scalar FNV scan.
+                    let content_hash = framebuf.content_hash_damaged(&damage);
+                    // t90 Lever 3: recycle the snapshot buffer (damage-sized copy)
+                    // instead of a full 8 MB `pixels().to_vec()`.
+                    let pixels = snapshot_recycler.snapshot(framebuf, &damage);
                     let result = RenderedFrame {
-                        pixels: Arc::new(pixel_data),
+                        pixels,
                         width: framebuf.width,
                         height: framebuf.height,
                         stride: framebuf.stride,
@@ -2032,6 +2158,7 @@ impl DesktopCompositor {
                         &mut compositor,
                         &mut fb,
                         &mut tile_hash_tracker,
+                        &mut snapshot_recycler,
                         &mut cached_flat_nodes,
                         &mut flat_nodes_buf,
                         &tx,
@@ -2048,6 +2175,7 @@ impl DesktopCompositor {
         compositor: &mut Compositor,
         fb: &mut Option<FrameBuffer>,
         tile_hash_tracker: &mut FrameTileHashTracker,
+        snapshot_recycler: &mut FrameSnapshotRecycler,
         cached_flat_nodes: &mut Option<Vec<FlatNode>>,
         flat_nodes_buf: &mut Vec<FlatNode>,
         tx: &mpsc::Sender<RenderedFrame>,
@@ -2293,11 +2421,13 @@ impl DesktopCompositor {
         // Per-component node breakdown for telemetry.
         let scene_split = split_flat_nodes(flat_nodes_buf);
 
-        // Send completed frame back — move pixels into Arc (zero-copy).
-        let content_hash = framebuf.content_hash();
-        let pixel_data = framebuf.pixels().to_vec();
+        // Send completed frame back. t90 Lever 1: damage-scoped content hash
+        // (only this frame's damaged tiles). t90 Lever 3: recycle the snapshot
+        // buffer (damage-sized copy) instead of a full 8 MB `pixels().to_vec()`.
+        let content_hash = framebuf.content_hash_damaged(&damage);
+        let pixels = snapshot_recycler.snapshot(framebuf, &damage);
         let result = RenderedFrame {
-            pixels: Arc::new(pixel_data),
+            pixels,
             width: framebuf.width,
             height: framebuf.height,
             stride: framebuf.stride,
@@ -2310,6 +2440,117 @@ impl DesktopCompositor {
             pending_glyphs,
         };
         let _ = tx.send(result);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_recycler_tests {
+    use super::*;
+    use liquide_compositor::damage::DamageTile;
+    use liquide_compositor::pixel::Color;
+
+    fn fb_128() -> FrameBuffer {
+        FrameBuffer::new(128, 128, PixelFormat::Bgra8)
+    }
+
+    fn small_damage() -> DamageSet {
+        let mut d = DamageSet::new(64);
+        d.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::CursorOnly,
+        });
+        d
+    }
+
+    // (d) On a small-damage steady frame the recycler REUSES the previously
+    // handed-out buffer (no fresh 8 MB allocation/copy): the returned Vec's data
+    // pointer is identical to the prior frame's. If the recycler ever reverted to
+    // `pixels().to_vec()` per frame, the allocation would differ and this would
+    // FAIL. The reused buffer is also a byte-correct full mirror of the
+    // framebuffer.
+    #[test]
+    fn recycler_reuses_buffer_on_small_damage() {
+        let mut rec = FrameSnapshotRecycler::default();
+        let mut fb = fb_128();
+        fb.clear(Color::new(10, 20, 30, 255));
+
+        // Frame 1: full damage -> first snapshot (fresh allocation expected).
+        let full = DamageSet::full(64, 2, 2, DamageClass::UiPrimitive);
+        let snap1 = rec.snapshot(&fb, &full);
+        let ptr1 = snap1.as_ptr();
+        assert_eq!(
+            snap1.as_slice(),
+            fb.pixels(),
+            "snapshot must be a byte-correct full mirror"
+        );
+        // Main thread releases its reference.
+        drop(snap1);
+
+        // Frame 2: change only tile (0,0); offer small damage. The recycler must
+        // reclaim the prior buffer (no new allocation) and patch only the tile.
+        fb.set_pixel(5, 5, Color::new(99, 99, 99, 255));
+        let snap2 = rec.snapshot(&fb, &small_damage());
+        assert_eq!(
+            snap2.as_ptr(),
+            ptr1,
+            "small-damage frame must REUSE the prior buffer, not allocate 8 MB"
+        );
+        assert_eq!(
+            snap2.as_slice(),
+            fb.pixels(),
+            "reused+patched snapshot must equal the full framebuffer (correctness)"
+        );
+    }
+
+    // When the main thread is STILL holding the previous snapshot, the recycler
+    // must fall back to a fresh full copy (cannot overwrite a buffer being read),
+    // and the result is still a correct full mirror.
+    #[test]
+    fn recycler_full_copies_when_prev_still_referenced() {
+        let mut rec = FrameSnapshotRecycler::default();
+        let mut fb = fb_128();
+        fb.clear(Color::new(1, 2, 3, 255));
+        let full = DamageSet::full(64, 2, 2, DamageClass::UiPrimitive);
+
+        let held = rec.snapshot(&fb, &full); // NOT dropped — consumer still reading
+        let ptr1 = held.as_ptr();
+
+        fb.set_pixel(5, 5, Color::new(50, 60, 70, 255));
+        let snap2 = rec.snapshot(&fb, &small_damage());
+        assert_ne!(
+            snap2.as_ptr(),
+            ptr1,
+            "must NOT overwrite a buffer the consumer is still reading"
+        );
+        assert_eq!(
+            snap2.as_slice(),
+            fb.pixels(),
+            "fallback full copy must be byte-correct"
+        );
+        drop(held);
+    }
+
+    // copy_damage_tiles must copy ONLY the damaged tile region and leave the rest
+    // of the destination untouched.
+    #[test]
+    fn copy_damage_tiles_copies_only_damaged_region() {
+        let mut src = fb_128();
+        src.clear(Color::new(200, 200, 200, 255));
+        let mut dst = vec![0u8; src.pixels().len()];
+        copy_damage_tiles(
+            &mut dst,
+            src.pixels(),
+            src.stride,
+            src.format,
+            &small_damage(),
+        );
+        // Tile (0,0) (pixel (5,5)) copied; tile (1,1) (pixel (100,100)) untouched.
+        let bpp = 4usize;
+        let off_in = 5usize * src.stride as usize + 5 * bpp;
+        let off_out = 100usize * src.stride as usize + 100 * bpp;
+        assert_eq!(&dst[off_in..off_in + bpp], &src.pixels()[off_in..off_in + bpp]);
+        assert_eq!(&dst[off_out..off_out + bpp], &[0, 0, 0, 0]);
     }
 }
 
@@ -2822,6 +3063,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -2837,6 +3079,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -2868,6 +3111,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -2886,6 +3130,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -2950,6 +3195,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -2967,6 +3213,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3012,6 +3259,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3026,6 +3274,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3058,6 +3307,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3080,6 +3330,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3142,6 +3393,7 @@ mod tests {
                 &mut compositor,
                 &mut fb,
                 &mut tile_hash_tracker,
+                &mut FrameSnapshotRecycler::default(),
                 &mut cached_flat_nodes,
                 &mut flat_nodes_buf,
                 &tx,
@@ -3522,6 +3774,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3557,6 +3810,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3578,6 +3832,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
@@ -3715,6 +3970,7 @@ mod tests {
             &mut compositor,
             &mut fb,
             &mut tile_hash_tracker,
+            &mut FrameSnapshotRecycler::default(),
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &tx,
