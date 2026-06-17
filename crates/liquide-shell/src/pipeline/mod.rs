@@ -61,6 +61,13 @@ pub struct DesktopPipeline {
     pub animation_scheduler: AnimationScheduler,
     /// Previous frame's computed styles for transition detection.
     pub prev_styles: std::collections::HashMap<liquide_dom::NodeId, std::sync::Arc<ComputedStyle>>,
+    /// Instrumentation: number of times the LAYOUT stage actually executed
+    /// (full or incremental). Used by tests to prove the paint-only fast path
+    /// reuses the cached layout instead of re-running layout.
+    pub layout_runs: u64,
+    /// Instrumentation: number of times the PAINT stage actually produced a new
+    /// display list (vs. reusing the cached one).
+    pub paint_runs: u64,
 }
 
 /// Configuration for the pipeline.

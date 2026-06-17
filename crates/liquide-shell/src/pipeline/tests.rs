@@ -1053,3 +1053,256 @@ fn text_bounds_remain_subpixel() {
         b.y
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEVER t91 — PAINT-ONLY DIRTY GRANULARITY.
+//
+// A change that affects ONLY paint properties (background-color, color,
+// opacity, box-shadow, border-color, …) must mark PAINT (and STYLE, to
+// recompute the value) but NOT LAYOUT, so the pipeline REUSES the cached
+// layout tree and re-runs only paint. A geometry change (width/padding/
+// font-size) must STILL run layout. These teeth fail if a paint-only change
+// runs layout, or if a geometry change skips it.
+//
+// "Layout did/didn't run" is measured by the pipeline's `layout_runs`
+// instrumentation counter (incremented in BOTH the full and incremental layout
+// branches, nowhere else), corroborated by structural equality of the layout
+// boxes (reuse → identical geometry).
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Snapshot every layout box as (node, content_rect) for structural comparison.
+fn layout_box_signature(
+    layout: &liquide_layout::LayoutTree,
+) -> Vec<(liquide_dom::NodeId, [u32; 4])> {
+    let mut v: Vec<_> = layout
+        .boxes
+        .iter()
+        .map(|b| {
+            (
+                b.node,
+                [
+                    b.content_rect.x.to_bits(),
+                    b.content_rect.y.to_bits(),
+                    b.content_rect.width.to_bits(),
+                    b.content_rect.height.to_bits(),
+                ],
+            )
+        })
+        .collect();
+    v.sort_by_key(|(n, _)| *n);
+    v
+}
+
+/// Extract a structural signature of every SolidColor/FillRect fill in a
+/// display list: (rounded rect, rgba). Order-preserving so two display lists are
+/// byte/structurally comparable for the recolour teeth.
+fn fill_signature(list: &DisplayList) -> Vec<([u32; 4], [u8; 4])> {
+    list.items
+        .iter()
+        .filter_map(|item| match item {
+            DisplayItem::SolidColor { rect, color, .. } | DisplayItem::FillRect { rect, color } => {
+                Some((
+                    [
+                        rect.x.to_bits(),
+                        rect.y.to_bits(),
+                        rect.width.to_bits(),
+                        rect.height.to_bits(),
+                    ],
+                    [color.r, color.g, color.b, color.a],
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A small two-child flex row with explicit backgrounds. A width change on one
+/// child visibly relayouts the row; a recolour does not.
+fn paint_lever_html() -> &'static str {
+    r#"<box id="row"><box id="a" /><box id="b" /></box>"#
+}
+
+fn paint_lever_theme() -> &'static str {
+    r#"
+    box { display: block; }
+    #row { display: flex; flex-direction: row; width: 200px; height: 40px; }
+    #a { width: 80px; height: 40px; background-color: rgb(10, 20, 30); }
+    #b { width: 80px; height: 40px; background-color: rgb(40, 50, 60); }
+    "#
+}
+
+#[test]
+fn paint_only_inline_recolor_reuses_layout_and_only_repaints() {
+    let config = PipelineConfig {
+        width: 400.0,
+        height: 200.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    pipeline.set_theme(paint_lever_theme());
+    let mut desktop = DesktopDocument::from_html(paint_lever_html());
+
+    // Frame 0: full pipeline populates caches.
+    let (out0, _) = pipeline.run(&mut desktop.doc, 16.0);
+    let layout_before = layout_box_signature(&out0.layout);
+    let runs_layout_0 = pipeline.layout_runs;
+    let runs_paint_0 = pipeline.paint_runs;
+    assert_eq!(runs_layout_0, 1, "frame 0 must run a full layout");
+    assert_eq!(runs_paint_0, 1, "frame 0 must paint");
+
+    // Simulate frame boundary: clear DOM dirty (the real caller does this).
+    desktop.doc.dirty.clear_all();
+
+    // Paint-only change: recolour #a's background. The property name is known,
+    // so the DOM classifies it paint-only → STYLE+PAINT, NOT LAYOUT.
+    let a_id = desktop.doc.get_element_by_id("a").expect("node a");
+    desktop
+        .doc
+        .set_inline_style(a_id, "background-color", "rgb(200, 0, 0)");
+    assert!(
+        !desktop.doc.dirty.layout.contains(&a_id),
+        "the recolour must not have marked the layout dirty set"
+    );
+
+    // Frame 1: paint-only fast path.
+    let (out1, _) = pipeline.run(&mut desktop.doc, 16.0);
+
+    // TOOTH 1: layout did NOT run again; paint DID.
+    assert_eq!(
+        pipeline.layout_runs, runs_layout_0,
+        "a paint-only recolour must NOT re-run layout (layout_runs incremented)"
+    );
+    assert_eq!(
+        pipeline.paint_runs,
+        runs_paint_0 + 1,
+        "a paint-only recolour must re-run paint exactly once"
+    );
+
+    // TOOTH 2: the layout geometry is byte-identical (reused, not recomputed).
+    let layout_after = layout_box_signature(&out1.layout);
+    assert_eq!(
+        layout_before, layout_after,
+        "the cached layout must be reused verbatim across a paint-only change"
+    );
+
+    // TOOTH 3: paint output actually reflects the NEW colour (not a no-op).
+    let fills = fill_signature(&out1.display_list);
+    assert!(
+        fills.iter().any(|(_, rgba)| *rgba == [200, 0, 0, 255]),
+        "the recoloured node's new background must appear in the repaint; fills = {fills:?}"
+    );
+    assert!(
+        !fills.iter().any(|(_, rgba)| *rgba == [10, 20, 30, 255]),
+        "the OLD background colour must be gone after the recolour"
+    );
+}
+
+#[test]
+fn paint_only_incremental_recolor_matches_full_rebuild() {
+    // TOOTH (c): the display list produced by the incremental paint-only path
+    // must be structurally identical to one produced by a from-scratch pipeline
+    // that renders the SAME recoloured DOM.
+    let config = PipelineConfig {
+        width: 400.0,
+        height: 200.0,
+        ..PipelineConfig::default()
+    };
+
+    // ── Incremental path: render base, then recolour on a second frame. ──
+    let mut inc = DesktopPipeline::new(&config);
+    inc.set_theme(paint_lever_theme());
+    let mut inc_doc = DesktopDocument::from_html(paint_lever_html());
+    let _ = inc.run(&mut inc_doc.doc, 16.0);
+    inc_doc.doc.dirty.clear_all();
+    let a_inc = inc_doc.doc.get_element_by_id("a").unwrap();
+    inc_doc
+        .doc
+        .set_inline_style(a_inc, "background-color", "rgb(7, 8, 9)");
+    let (inc_out, _) = inc.run(&mut inc_doc.doc, 16.0);
+    assert_eq!(
+        inc.layout_runs, 1,
+        "the incremental recolour frame must not have re-run layout"
+    );
+
+    // ── Full rebuild: a fresh pipeline rendering the already-recoloured DOM. ──
+    let mut full = DesktopPipeline::new(&config);
+    full.set_theme(paint_lever_theme());
+    let mut full_doc = DesktopDocument::from_html(paint_lever_html());
+    let a_full = full_doc.doc.get_element_by_id("a").unwrap();
+    full_doc
+        .doc
+        .set_inline_style(a_full, "background-color", "rgb(7, 8, 9)");
+    let (full_out, _) = full.run(&mut full_doc.doc, 16.0);
+
+    assert_eq!(
+        fill_signature(&inc_out.display_list),
+        fill_signature(&full_out.display_list),
+        "incremental paint-only output must be structurally identical to a full rebuild"
+    );
+    assert_eq!(
+        layout_box_signature(&inc_out.layout),
+        layout_box_signature(&full_out.layout),
+        "incremental-reused layout must match the from-scratch layout"
+    );
+}
+
+#[test]
+fn geometry_inline_change_still_runs_layout() {
+    // TOOTH (b): a geometry property MUST run layout — no false fast-path.
+    let config = PipelineConfig {
+        width: 400.0,
+        height: 200.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    pipeline.set_theme(paint_lever_theme());
+    let mut desktop = DesktopDocument::from_html(paint_lever_html());
+
+    let (out0, _) = pipeline.run(&mut desktop.doc, 16.0);
+    let layout_before = layout_box_signature(&out0.layout);
+    let runs_layout_0 = pipeline.layout_runs;
+    desktop.doc.dirty.clear_all();
+
+    // Widen #a — a geometry change. Must mark LAYOUT and actually relayout.
+    let a_id = desktop.doc.get_element_by_id("a").unwrap();
+    desktop.doc.set_inline_style(a_id, "width", "160px");
+    assert!(
+        desktop.doc.dirty.layout.contains(&a_id),
+        "a width change must mark the layout dirty set"
+    );
+
+    let (out1, _) = pipeline.run(&mut desktop.doc, 16.0);
+    assert!(
+        pipeline.layout_runs > runs_layout_0,
+        "a geometry change MUST re-run layout (layout_runs unchanged = false fast-path)"
+    );
+
+    // And the geometry actually changed (so the layout run was meaningful).
+    let layout_after = layout_box_signature(&out1.layout);
+    let b_id = desktop.doc.get_element_by_id("b").unwrap();
+    let before_b = layout_before.iter().find(|(n, _)| *n == b_id).copied();
+    let after_b = layout_after.iter().find(|(n, _)| *n == b_id).copied();
+    assert_ne!(
+        before_b, after_b,
+        "widening #a must shift sibling #b's position in the flex row"
+    );
+}
+
+#[test]
+fn pseudo_state_change_is_conservatively_layout_dirty() {
+    // The DOM cannot know which properties a `:hover` rule changes, so a
+    // pseudo-state flip is CONSERVATIVELY marked layout-dirty (err toward
+    // LAYOUT). This guards against an over-eager fast path that would assume all
+    // hovers are paint-only — a wrong assumption could leave stale layout if a
+    // hover rule changed geometry.
+    let mut desktop = DesktopDocument::from_html(r#"<box id="x" />"#);
+    desktop.doc.dirty.clear_all();
+    let x = desktop.doc.get_element_by_id("x").unwrap();
+    desktop
+        .doc
+        .set_pseudo_state(x, liquide_dom::PseudoStateFlags::HOVER, true);
+    assert!(
+        desktop.doc.dirty.layout.contains(&x),
+        "a pseudo-state change must be conservatively layout-dirty (unknown rule properties)"
+    );
+}

@@ -459,19 +459,27 @@ impl Document {
     pub fn set_inline_style(&mut self, node_id: NodeId, property: &str, value: &str) {
         if let Some(node) = self.nodes.get_mut(&node_id) {
             node.inline_styles.set(property, value);
-            node.dirty.mark_style_dirty();
+            // The property name is known here, so classify precisely: a
+            // provably paint-only property (color, background, opacity, …)
+            // marks STYLE|PAINT but NOT LAYOUT, so the cached layout box is
+            // reused. Geometry / unknown properties escalate to full layout.
+            node.dirty.mark_style_dirty_for_property(property);
         }
-        self.dirty.mark_style(node_id);
+        self.dirty.mark_style_for_property(node_id, property);
     }
 
     /// Remove an inline style property.
     pub fn remove_inline_style(&mut self, node_id: NodeId, property: &str) {
+        let mut removed = false;
         if let Some(node) = self.nodes.get_mut(&node_id) {
             if node.inline_styles.remove(property).is_some() {
-                node.dirty.mark_style_dirty();
+                removed = true;
+                node.dirty.mark_style_dirty_for_property(property);
             }
         }
-        self.dirty.mark_style(node_id);
+        if removed {
+            self.dirty.mark_style_for_property(node_id, property);
+        }
     }
 
     /// Clear all inline styles from a node.
@@ -1099,6 +1107,51 @@ mod tests {
 
         doc.add_class(el, "foo");
         assert!(doc.dirty.style.contains(&el));
+    }
+
+    #[test]
+    fn set_inline_paint_only_style_skips_layout_dirty() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let el = doc.create_element("div");
+        doc.append_child(root, el);
+        // Clear BOTH the document-level dirty set and the per-node flags (node
+        // creation/append marks both); we want to observe only the recolour's
+        // effect.
+        doc.dirty.clear_all();
+        doc.get_mut(el).unwrap().dirty.clear_all();
+
+        // A paint-only inline property: STYLE + PAINT but NOT LAYOUT.
+        doc.set_inline_style(el, "background-color", "#ff0000");
+        assert!(doc.dirty.style.contains(&el));
+        assert!(doc.dirty.paint.contains(&el));
+        assert!(
+            !doc.dirty.layout.contains(&el),
+            "background-color is paint-only — it must not mark the layout dirty set"
+        );
+        assert!(doc.get(el).unwrap().dirty.needs_paint());
+        assert!(
+            !doc.get(el).unwrap().dirty.needs_layout(),
+            "per-node layout flag must stay clean for a paint-only inline change"
+        );
+    }
+
+    #[test]
+    fn set_inline_geometry_style_marks_layout_dirty() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let el = doc.create_element("div");
+        doc.append_child(root, el);
+        doc.dirty.clear_all();
+
+        // A geometry inline property MUST still mark layout (no false fast-path).
+        doc.set_inline_style(el, "width", "120px");
+        assert!(doc.dirty.style.contains(&el));
+        assert!(
+            doc.dirty.layout.contains(&el),
+            "width is a geometry property — it must mark the layout dirty set"
+        );
+        assert!(doc.get(el).unwrap().dirty.needs_layout());
     }
 
     #[test]

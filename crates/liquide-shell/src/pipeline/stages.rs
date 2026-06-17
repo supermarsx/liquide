@@ -53,6 +53,8 @@ impl DesktopPipeline {
             transition_engine: TransitionEngine::new(),
             animation_scheduler: AnimationScheduler::new(),
             prev_styles: std::collections::HashMap::new(),
+            layout_runs: 0,
+            paint_runs: 0,
         }
     }
 
@@ -221,6 +223,14 @@ impl DesktopPipeline {
 
         // 1. Style — unwrap Arc for mutation (try_unwrap succeeds when we're
         //    the sole owner, otherwise falls back to clone).
+        //
+        // `style_was_full` records whether the style map was rebuilt from
+        // scratch (`restyle_all`). A full restyle invalidates the layout cache
+        // (a brand-new StyleMap has no relationship to the cached layout tree),
+        // so it forces a full layout below. An *incremental* restyle reuses the
+        // cached StyleMap and only re-cascades the dirty subtrees, so it can
+        // pair with layout reuse on a paint-only frame.
+        let mut style_was_full = false;
         let mut styles = if has_style_work {
             if let Some(arc) = self.last_styles.take() {
                 let mut cached = match Arc::try_unwrap(arc) {
@@ -231,6 +241,7 @@ impl DesktopPipeline {
                 self.style_engine.invalidate(doc, &changed, &mut cached);
                 cached
             } else {
+                style_was_full = true;
                 self.style_engine.restyle_all(doc)
             }
         } else if let Some(arc) = self.last_styles.take() {
@@ -239,22 +250,41 @@ impl DesktopPipeline {
                 Err(a) => (*a).clone(),
             }
         } else {
+            style_was_full = true;
             self.style_engine.restyle_all(doc)
         };
 
-        // 2. Layout — unwrap Arc for mutation
-        let recompute_layout = has_style_work || has_layout_work || self.last_layout.is_none();
+        // 2. Layout — unwrap Arc for mutation.
+        //
+        // PAINT-ONLY FAST PATH (lever t91): the layout stage is gated on the
+        // LAYOUT dirty set, NOT on `has_style_work`. The DOM's per-property
+        // dirty classification (`liquide_dom::dirty::classify_property`) only
+        // records a node in `doc.dirty.layout` when the changed property can
+        // affect geometry / intrinsic size; a provably paint-only change (a
+        // `:hover`/inline recolour, opacity, box-shadow, border-color, …) lands
+        // in `doc.dirty.style` + `doc.dirty.paint` but NOT `doc.dirty.layout`.
+        // So a paint-only style frame re-cascades the style (to compute the new
+        // colour) and repaints, but REUSES the cached layout tree verbatim —
+        // skipping the full layout pass that dominates change-frame cost. A full
+        // restyle, an empty cache, or any layout-affecting change still runs
+        // layout. (Conservative: when the DOM cannot prove a change is
+        // paint-only — class/attr/pseudo edits — it marks LAYOUT, so this path
+        // is not taken and layout runs.)
+        let needs_full_layout = style_was_full || self.last_layout.is_none();
+        let recompute_layout = needs_full_layout || has_layout_work;
         // `layout_was_full` gates the TODO-11 container second pass: a fresh full
         // style+layout is the only case whose first style pass used viewport-
         // fallback container sizes (an incremental relayout reuses prior styles
         // that already carried measured container sizes).
-        let layout_was_full = has_style_work || self.last_layout.is_none();
-        let layout = if has_style_work || self.last_layout.is_none() {
+        let layout_was_full = needs_full_layout;
+        let layout = if needs_full_layout {
             // Full style recompute invalidates layout cache
             let _ = self.last_layout.take();
+            self.layout_runs += 1;
             self.layout_engine
                 .layout(doc, &styles, text_measurer, &image_measurer)
         } else if has_layout_work {
+            self.layout_runs += 1;
             let mut layout = match self.last_layout.take() {
                 Some(arc) => match Arc::try_unwrap(arc) {
                     Ok(l) => l,
@@ -394,6 +424,7 @@ impl DesktopPipeline {
             recompute_layout || has_paint_work || self.last_display_list.is_none();
         let display_list = if recompute_paint {
             let _ = self.last_display_list.take();
+            self.paint_runs += 1;
             self.painter.paint(doc, &layout, &styles)
         } else {
             match self.last_display_list.take() {
