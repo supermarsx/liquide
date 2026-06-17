@@ -488,6 +488,75 @@ lockscreen-error {
 
 
 /* ═══════════════════════════════════════════════════
+   3b. OVERVIEW / EXPOSÉ (t101-p5 full-CSS migration)
+
+   The overview is a DOM/CSS overlay synced through the shell. The structure
+   (scrim, grid, tiles, labels) is fully CSS-driven — the imperative
+   `cols=sqrt(count)` grid math is retired. Each `overview-tile` box is laid
+   out HERE; its click hit-test reads that laid-out box (via the
+   `#overview-tile-<id>` element), never a hardcoded grid cell (the recurring
+   hit-test-from-CSS requirement, t86). The window thumbnail (or glass
+   placeholder) is painted onto each tile's laid-out box by the scene builder.
+   ═══════════════════════════════════════════════════ */
+
+overview-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 7000;
+  background: var(--bg-overlay);
+}
+
+overview-grid {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 24;
+  padding: 48;
+}
+
+overview-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  width: 320;
+  height: 220;
+  border-radius: var(--radius-large);
+  background: var(--bg-tertiary);
+  border-width: var(--border-width);
+  border-style: solid;
+  border-color: var(--border-subtle);
+}
+
+overview-tile.focused {
+  border-color: var(--accent-color);
+}
+
+overview-tile-thumb {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+overview-tile-label {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  height: 24;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+
+/* ═══════════════════════════════════════════════════
    4. HEADER BAR
    ═══════════════════════════════════════════════════ */
 

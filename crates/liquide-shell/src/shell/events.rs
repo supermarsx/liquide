@@ -1292,6 +1292,20 @@ impl Shell {
             return Some(ShellAction::Redraw);
         }
 
+        // Overview / exposé (t101-p5 full-CSS migration). While the overview is
+        // open it is topmost and modal: every press is consumed here so it
+        // cannot leak to windows/chrome behind the scrim. A left press inside a
+        // tile's CSS-laid-out box focuses + raises that window and closes the
+        // overview; an empty-scrim press dismisses it. The picked window comes
+        // from the laid-out `#overview-tile-<id>` box (see `overview_adapter`),
+        // NOT hardcoded grid geometry — the t86 hit-test-from-CSS contract.
+        if self.overview_visible {
+            if button == MouseButton::Left {
+                return Some(self.overview_press(x, y));
+            }
+            return Some(ShellAction::Redraw);
+        }
+
         // Modal grab (t94-e4 gap #5b). While a modal dialog/window owns input,
         // a press anywhere outside the modal surface must NOT focus, raise, or
         // start a drag on any background window, nor open the desktop/window

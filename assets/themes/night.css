@@ -784,6 +784,68 @@ lockscreen-error {
     color: var(--error-color);
 }
 
+/* ── Overview / exposé (t101-p5 full-CSS migration) ──
+   The overview surface is a DOM/CSS overlay synced through the shell. The
+   theme layer carries these rules (matching the lockscreen/dialog precedent)
+   so the dynamically-mounted overview overlay is styled on the render path.
+   The `overview-tile` box is laid out HERE; its click hit-test reads that
+   laid-out box, never a hardcoded grid cell (t86). */
+overview-overlay {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 7000;
+    background: rgba(2, 4, 10, 0.84);
+}
+
+overview-grid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 24;
+    padding: 48;
+}
+
+overview-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    width: 320;
+    height: 220;
+    border-radius: 12;
+    background: rgba(255, 255, 255, 0.05);
+    border-width: 1;
+    border-style: solid;
+    border-color: var(--border-default);
+}
+
+overview-tile.focused {
+    border-color: var(--accent-color);
+}
+
+overview-tile-thumb {
+    display: flex;
+    width: 100%;
+    height: 100%;
+}
+
+overview-tile-label {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    height: 24;
+    font-size: 12;
+    color: var(--text-primary);
+}
+
 dialog-overlay {
     display: flex;
     position: fixed;

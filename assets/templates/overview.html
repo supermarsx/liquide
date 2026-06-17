@@ -1,0 +1,20 @@
+<!-- LiquiDE Overview / Exposé Component Template (t101-p5 full-CSS migration)
+
+     Rendered when the task/workspace overview is toggled. The whole surface
+     is DOM/CSS: a fixed full-screen `overview-overlay` scrim containing an
+     `overview-grid` whose `overview-tile` children are laid out by CSS grid
+     (the imperative `cols=sqrt(count)` grid math is retired).
+
+     Each `overview-tile` carries `data-window-id` so its CLICK hit-test reads
+     the laid-out CSS tile box (`#overview-tile-<id>`) — never hardcoded grid
+     geometry (the recurring hit-test-from-CSS requirement, t86). The window
+     thumbnail (or glass placeholder) is painted onto each tile's laid-out box
+     by the scene builder; the `<overview-tile-label>` carries the title text.
+
+     Flat {{#each}} only (the flat template engine contract). -->
+
+<overview-overlay id="{{id}}">
+  <overview-grid id="overview-grid" data-count="{{count}}">
+    {{#each tiles}}<overview-tile id="overview-tile-{{window_id}}" data-window-id="{{window_id}}" class="{{focused_class}}"><overview-tile-thumb></overview-tile-thumb><overview-tile-label>{{title}}</overview-tile-label></overview-tile>{{/each}}
+  </overview-grid>
+</overview-overlay>

@@ -920,14 +920,19 @@ impl Shell {
         // removed (t65-s3). The DOM overlay carries `z-index: 3000` in CSS so
         // it composites above windows and the chrome band.
 
-        // ── Overview overlay (task / workspace overview) ──────────
-        // Emitted ABOVE both windows and chrome when the overview is toggled
-        // (t57-f-overview): a dim scrim plus a tile per visible window. The
-        // overview z-base sits above the chrome overlay band so it occludes the
-        // dock/statusbar like a real overview.
+        // ── Overview overlay thumbnails (task / workspace overview) ──────────
+        // The overview STRUCTURE (scrim, grid, tiles, labels) is now a DOM/CSS
+        // subtree synced via `sync_overview_template` and laid out by the CSS
+        // pipeline above at `z-index: 7000` (t101-p5 full-CSS migration) — the
+        // prior imperative `cols=sqrt(count)` grid math is retired. Here we only
+        // PAINT each tile's captured window thumbnail (a `Surface` node carrying
+        // the framebuffer snapshot, t93-e6) — or the glass placeholder fallback
+        // — onto the tile's LAID-OUT CSS box (`#overview-tile-<id>`), keyed off
+        // the layout tree rather than recomputed geometry. The thumbnail layer
+        // sits just above the DOM tiles so it reads as the window proxy.
         if self.overview_visible {
-            const OVERVIEW_Z_BASE: u32 = 50_000;
-            self.add_overview_overlay(&mut root, screen, OVERVIEW_Z_BASE);
+            const OVERVIEW_THUMB_Z_BASE: u32 = 55_000;
+            self.paint_overview_thumbnails(&mut root, OVERVIEW_THUMB_Z_BASE);
         }
 
         // ── Dock-hover tooltip (above chrome) ─────────────────────
@@ -1134,53 +1139,43 @@ impl Shell {
         !self.overview_thumbnails.is_empty()
     }
 
-    /// Emit the task/workspace overview overlay: a dim full-screen scrim and a
-    /// grid of tiles, one per visible window, above all other layers.
+    /// Paint each overview tile's window thumbnail onto its **laid-out CSS box**
+    /// (t101-p5 full-CSS migration).
     ///
-    /// Each tile paints a real window thumbnail (a `Surface` node carrying the
-    /// captured framebuffer snapshot, t93-e6 / gap #1) when one exists for that
-    /// window, scaled to fit the tile; it falls back to the placeholder glass +
-    /// solid fill when no capture is available (window off-screen / zero-size /
-    /// first frame before the host has run a capture pass). The glass backing is
-    /// kept under the thumbnail so the tile still reads as a window proxy.
-    fn add_overview_overlay(&self, root: &mut SceneNode, screen: Rect, base_z: u32) {
+    /// The overview scrim/grid/tiles/labels are DOM/CSS elements laid out by the
+    /// pipeline (see `dom_sync::sync_overview_template` + the `overview*` CSS
+    /// rules). This function only adds the per-tile WINDOW THUMBNAIL — a
+    /// `Surface` node carrying the captured framebuffer snapshot (t93-e6) — that
+    /// the CSS pipeline cannot express (a `DisplayItem::Surface` from the DOM
+    /// carries no pixel buffer). It reads each tile's box from the live layout
+    /// tree (`#overview-tile-<id>` via the hit-test engine), NOT recomputed grid
+    /// geometry, so a CSS change that moves the tiles moves the painted
+    /// thumbnails with them. When no capture exists for a window (off-screen /
+    /// zero-size / first frame), it paints the glass placeholder onto the same
+    /// CSS box so the tile still reads as a window proxy.
+    fn paint_overview_thumbnails(&self, root: &mut SceneNode, base_z: u32) {
         use liquide_compositor::scene::GlassParams;
 
-        // Dim scrim across the whole screen.
-        root.add_child(SceneNode::new(
-            NODE_ROOT + 50,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.launcher_overlay, 200),
-            },
-            NodeProperties::new(screen).with_z_order(base_z),
-        ));
-
-        let windows = self.visible_windows();
-        if windows.is_empty() {
+        let Some(hit_test) = self.hit_test_engine.as_ref() else {
             return;
-        }
+        };
 
-        // Lay the tiles out on a grid sized to the window count.
-        let count = windows.len();
-        let cols = (count as f32).sqrt().ceil().max(1.0) as usize;
-        let rows = count.div_ceil(cols);
-        let margin = (screen.width.min(screen.height) * 0.06).max(24.0);
-        let gap = margin * 0.6;
-        let grid_w = screen.width - margin * 2.0;
-        let grid_h = screen.height - margin * 2.0;
-        let cell_w = (grid_w - gap * (cols as f32 - 1.0)) / cols as f32;
-        let cell_h = (grid_h - gap * (rows as f32 - 1.0)) / rows as f32;
+        for (i, window) in self.visible_windows().iter().enumerate() {
+            // Resolve the tile's laid-out CSS box from the DOM/layout tree. The
+            // tile element id mirrors the template (`overview-tile-<window_id>`).
+            let tile_el_id = format!("overview-tile-{}", window.id.0);
+            let Some(tile_node) = self.desktop_dom.doc.get_element_by_id(&tile_el_id) else {
+                continue;
+            };
+            let Some(css_box) = hit_test.bounds_for_node(tile_node) else {
+                continue;
+            };
+            let tile = Rect::new(css_box.x, css_box.y, css_box.width, css_box.height);
+            if tile.width < 1.0 || tile.height < 1.0 {
+                continue;
+            }
 
-        for (i, window) in windows.iter().enumerate() {
-            let col = i % cols;
-            let row = i / cols;
-            let tile = Rect::new(
-                margin + col as f32 * (cell_w + gap),
-                margin + row as f32 * (cell_h + gap),
-                cell_w.max(1.0),
-                cell_h.max(1.0),
-            );
-            let tile_z = base_z + 1 + i as u32 * 2;
+            let tile_z = base_z + i as u32 * 2;
             let tile_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE + 7;
 
             // Glass tile backing so the tile reads as a window proxy (kept under
@@ -1199,10 +1194,11 @@ impl Shell {
             match self.overview_thumbnails.get(&window.id) {
                 Some(thumb) => {
                     // Real window thumbnail (t93-e6): a Surface node carrying the
-                    // captured snapshot, scaled to fit the tile rect. The Surface
-                    // blit consumes the buffer's own dimensions, so re-fit the
-                    // cached thumbnail to the tile size here (deterministic
-                    // bilinear). Center it inside the tile preserving aspect.
+                    // captured snapshot, scaled to fit the laid-out tile rect.
+                    // The Surface blit consumes the buffer's own dimensions, so
+                    // re-fit the cached thumbnail to the CSS tile size here
+                    // (deterministic bilinear). Center it inside the tile
+                    // preserving aspect.
                     let (fit_w, fit_h) =
                         fit_within(thumb.width, thumb.height, tile.width, tile.height);
                     let scaled = thumb.scaled_to(fit_w, fit_h);

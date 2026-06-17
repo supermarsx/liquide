@@ -118,6 +118,7 @@ impl Shell {
         self.sync_app_menu_template();
         self.sync_dialog_template();
         self.sync_lockscreen_template();
+        self.sync_overview_template();
         self.sync_tooltip_template();
 
         // Keep the DOM viewport in sync with the screen rect.
@@ -1030,6 +1031,52 @@ impl Shell {
         } else {
             self.remove_overlay("lockscreen-overlay");
             self.template_cache.remove("lockscreen");
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // Overview / exposé (t101-p5 full-CSS migration)
+    // ══════════════════════════════════════════════════════════
+
+    /// Sync the overview / exposé overlay (t101-p5). When the overview is
+    /// toggled (`overview_visible`), render the `overview` template so the grid
+    /// of window tiles paints as real DOM/CSS elements laid out by CSS grid —
+    /// replacing the prior imperative grid painter
+    /// (`scene.rs::add_overview_overlay`'s `cols=sqrt(count)` math).
+    ///
+    /// Each `overview-tile` (`#overview-tile-<id>`) carries `data-window-id`;
+    /// its click hit-test reads that laid-out CSS box (see
+    /// `overview_adapter::overview_tile_window_at`), NOT hardcoded grid
+    /// geometry — the recurring hit-test-from-CSS-geometry contract (t86). The
+    /// captured window thumbnail (or glass placeholder) is painted onto each
+    /// tile's laid-out box by `scene.rs::paint_overview_thumbnails`.
+    fn sync_overview_template(&mut self) {
+        if self.overview_visible {
+            let focused = self.focus.focused();
+            let tiles: Vec<TemplateContext> = self
+                .visible_windows()
+                .iter()
+                .map(|w| {
+                    let mut tc = TemplateContext::new();
+                    tc.set("window_id", &w.id.0.to_string());
+                    tc.set("title", &w.title);
+                    tc.set(
+                        "focused_class",
+                        if focused == Some(w.id) { "focused" } else { "" },
+                    );
+                    tc
+                })
+                .collect();
+
+            let mut ctx = TemplateContext::new();
+            ctx.set("id", "overview-overlay");
+            ctx.set("count", &tiles.len().to_string());
+            ctx.set("tiles", tiles);
+
+            self.apply_overlay_template("overview", "overview-overlay", &ctx);
+        } else {
+            self.remove_overlay("overview-overlay");
+            self.template_cache.remove("overview");
         }
     }
 

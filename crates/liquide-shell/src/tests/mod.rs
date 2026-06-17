@@ -23,6 +23,7 @@ mod layout_tests;
 mod lockscreen_css_tests;
 mod notification_panel_tests;
 mod notification_tests;
+mod overview_css_tests;
 mod overview_thumbnail_tests;
 mod scene_cache_tests;
 mod screen_time_tests;

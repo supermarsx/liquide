@@ -14,10 +14,18 @@ use liquide_compositor::scene::{SceneNode, SceneNodeKind};
 const W: f32 = 1280.0;
 const H: f32 = 720.0;
 
+/// The REAL shipped component stylesheet — the overview tile boxes are laid out
+/// by its `overview*` rules (t101-p5). The thumbnails are painted onto those
+/// laid-out tile boxes, so the overview CSS must be loaded for the scene to
+/// emit any tile / thumbnail. Driving the real on-disk CSS keeps these tests
+/// honest (a regressed tile rule would collapse the boxes and drop the tiles).
+const COMPONENTS_CSS: &str = include_str!("../../../../assets/themes/components.css");
+
 fn test_shell() -> Shell {
     let mut shell = Shell::new(W, H);
     shell.cursor_blink_on = true;
     shell.cursor_blink_time_us = u64::MAX;
+    shell.add_stylesheet(COMPONENTS_CSS);
     shell
 }
 

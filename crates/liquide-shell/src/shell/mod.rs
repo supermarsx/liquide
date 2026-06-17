@@ -179,6 +179,24 @@ const SHELL_LOCKSCREEN_TEMPLATE: &str = r#"<lockscreen-overlay id="{{id}}">
   </lockscreen>
 </lockscreen-overlay>"#;
 
+/// Embedded default overview / exposé template (t101-p5 full-CSS migration).
+///
+/// Replaces the prior imperative grid painter
+/// (`scene.rs::add_overview_overlay`): a fixed full-screen `overview-overlay`
+/// scrim containing an `overview-grid` whose `overview-tile` children are
+/// laid out by CSS grid (the `cols=sqrt(count)` Rust math is retired). Each
+/// tile carries `data-window-id` so its CLICK hit-test reads the laid-out CSS
+/// tile box (`#overview-tile-<id>`), NOT hardcoded grid geometry — the
+/// recurring hit-test-from-CSS-geometry contract (t86). The window thumbnail
+/// (or glass placeholder) is painted onto each tile's laid-out box by the
+/// scene builder; the tile's `<overview-tile-label>` carries the title text.
+/// Flat `{{#each}}` only (the flat template engine contract).
+const SHELL_OVERVIEW_TEMPLATE: &str = r#"<overview-overlay id="{{id}}">
+  <overview-grid id="overview-grid" data-count="{{count}}">
+    {{#each tiles}}<overview-tile id="overview-tile-{{window_id}}" data-window-id="{{window_id}}" class="{{focused_class}}"><overview-tile-thumb></overview-tile-thumb><overview-tile-label>{{title}}</overview-tile-label></overview-tile>{{/each}}
+  </overview-grid>
+</overview-overlay>"#;
+
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
 pub struct SessionMenuItem {
@@ -957,6 +975,12 @@ impl Shell {
         // renders through the DOM/CSS pipeline (clock/date/user/password field
         // as real elements) instead of the imperative filled-rect overlay.
         registry.register("lockscreen", SHELL_LOCKSCREEN_TEMPLATE);
+        // Register the overview / exposé template (t101-p5): the overview now
+        // renders through the DOM/CSS pipeline (a CSS grid of `overview-tile`
+        // elements carrying `data-window-id`) instead of the imperative grid
+        // painter. The captured window thumbnail (or glass placeholder) is
+        // painted onto each tile's laid-out box by the scene builder.
+        registry.register("overview", SHELL_OVERVIEW_TEMPLATE);
         // Try loading from assets/templates on disk (overrides embedded defaults).
         //
         // NOTE (t57-f1): the search path is intentionally the CWD-relative
