@@ -444,3 +444,140 @@ fn mouse_down_sets_focus() {
 
     assert_eq!(dispatcher.focus(), Some(child), "clicking should set focus");
 }
+
+// ── Keyboard modifiers on pointer events ─────────────────────────────────
+//
+// Seam-1: synthesized pointer events must carry the keyboard modifiers passed
+// into the dispatch entry point (same opaque bit layout as KeyDown's
+// `modifiers`), so widgets can do Ctrl/Shift multi-select. These tests fail if
+// modifiers are dropped anywhere on the synthesis path.
+
+/// A representative modifier bit (the real encoding is the shell's; this test
+/// only proves the value is threaded through UNCHANGED, not what it means).
+const CTRL: u32 = 1 << 2;
+const SHIFT: u32 = 1 << 0;
+
+#[test]
+fn mouse_down_carries_modifiers() {
+    let (mut doc, engine, _root, _child) = simple_setup();
+    let mut dispatcher = EventDispatcher::new();
+
+    let events = dispatcher.dispatch_mouse_down_with_modifiers(
+        Point::new(150.0, 150.0),
+        MouseButton::Left,
+        CTRL,
+        &mut doc,
+        &engine,
+    );
+
+    let md = events
+        .iter()
+        .find(|e| matches!(e.kind, DomEventKind::MouseDown { .. }))
+        .expect("should generate MouseDown");
+    assert_eq!(
+        md.modifiers & CTRL,
+        CTRL,
+        "MouseDown must carry the Ctrl bit passed into dispatch"
+    );
+}
+
+#[test]
+fn synthesized_click_carries_modifiers() {
+    let (mut doc, engine, _root, _child) = simple_setup();
+    let mut dispatcher = EventDispatcher::new();
+
+    // Down then up at the same node synthesizes a Click.
+    dispatcher.dispatch_mouse_down_with_modifiers(
+        Point::new(150.0, 150.0),
+        MouseButton::Left,
+        CTRL | SHIFT,
+        &mut doc,
+        &engine,
+    );
+    let events = dispatcher.dispatch_mouse_up_with_modifiers(
+        Point::new(150.0, 150.0),
+        MouseButton::Left,
+        CTRL | SHIFT,
+        &mut doc,
+        &engine,
+    );
+
+    let click = events
+        .iter()
+        .find(|e| matches!(e.kind, DomEventKind::Click { .. }))
+        .expect("should synthesize a Click");
+    assert_eq!(
+        click.modifiers,
+        CTRL | SHIFT,
+        "synthesized Click must carry the exact modifiers passed into dispatch \
+         (Ctrl+Shift multi-select)"
+    );
+
+    // And the MouseUp envelope carries them too.
+    let up = events
+        .iter()
+        .find(|e| matches!(e.kind, DomEventKind::MouseUp { .. }))
+        .expect("should generate MouseUp");
+    assert_eq!(up.modifiers, CTRL | SHIFT);
+}
+
+#[test]
+fn context_menu_carries_modifiers() {
+    let (mut doc, engine, _root, _child) = simple_setup();
+    let mut dispatcher = EventDispatcher::new();
+
+    let events = dispatcher.dispatch_mouse_up_with_modifiers(
+        Point::new(150.0, 150.0),
+        MouseButton::Right,
+        SHIFT,
+        &mut doc,
+        &engine,
+    );
+
+    let ctx = events
+        .iter()
+        .find(|e| matches!(e.kind, DomEventKind::ContextMenu { .. }))
+        .expect("right-up should synthesize a ContextMenu");
+    assert_eq!(ctx.modifiers & SHIFT, SHIFT, "ContextMenu must carry Shift");
+}
+
+#[test]
+fn scroll_carries_modifiers() {
+    let (mut doc, engine, _root, _child) = simple_setup();
+    let mut dispatcher = EventDispatcher::new();
+    let _ = &mut doc;
+
+    let events = dispatcher.dispatch_scroll_with_modifiers(
+        Point::new(150.0, 150.0),
+        0.0,
+        10.0,
+        CTRL,
+        &engine,
+    );
+
+    let scroll = events
+        .iter()
+        .find(|e| matches!(e.kind, DomEventKind::Scroll { .. }))
+        .expect("should generate Scroll");
+    assert_eq!(scroll.modifiers & CTRL, CTRL, "Scroll must carry Ctrl");
+}
+
+#[test]
+fn legacy_entry_points_default_modifiers_to_zero() {
+    let (mut doc, engine, _root, _child) = simple_setup();
+    let mut dispatcher = EventDispatcher::new();
+
+    // The original (non-modifier) entry points must still exist and produce
+    // events with modifiers == 0 (no modifier source yet).
+    let events = dispatcher.dispatch_mouse_down(
+        Point::new(150.0, 150.0),
+        MouseButton::Left,
+        &mut doc,
+        &engine,
+    );
+    let md = events
+        .iter()
+        .find(|e| matches!(e.kind, DomEventKind::MouseDown { .. }))
+        .expect("should generate MouseDown");
+    assert_eq!(md.modifiers, 0, "legacy entry point defaults modifiers to 0");
+}

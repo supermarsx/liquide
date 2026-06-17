@@ -33,6 +33,22 @@ pub struct DomEvent {
     pub event_path: Vec<NodeId>,
     /// The event kind.
     pub kind: DomEventKind,
+    /// Keyboard modifier flags active when this event was generated.
+    ///
+    /// Same opaque bit layout as the [`DomEventKind::KeyDown`]/`KeyUp`
+    /// `modifiers` field (the shell owns the encoding; this crate only threads
+    /// the value through). Carried on the **event envelope** rather than inside
+    /// each pointer variant so that adding modifier support does not change the
+    /// shape of the `DomEventKind` variants (which downstream crates match and
+    /// construct as exhaustive struct literals) — i.e. every existing consumer
+    /// keeps compiling while pointer events (`Click`, `MouseDown`, `MouseUp`,
+    /// `DoubleClick`, `ContextMenu`, `Scroll`) now carry modifiers here.
+    ///
+    /// Defaults to `0` (no modifiers) for every event built via
+    /// [`DomEvent::new`]; the modifier-aware `dispatch_*_with_modifiers` entry
+    /// points set it to the value the shell supplies. Widgets read it for
+    /// Ctrl/Shift multi-select.
+    pub modifiers: u32,
     /// Propagation state.
     pub propagation: Propagation,
     /// Current event phase.
@@ -46,8 +62,18 @@ pub struct DomEvent {
 }
 
 impl DomEvent {
-    /// Create a new DOM event.
+    /// Create a new DOM event with no keyboard modifiers (`modifiers == 0`).
     pub fn new(target: NodeId, kind: DomEventKind) -> Self {
+        Self::with_modifiers(target, kind, 0)
+    }
+
+    /// Create a new DOM event carrying the given keyboard `modifiers`.
+    ///
+    /// `modifiers` uses the same opaque bit layout as
+    /// [`DomEventKind::KeyDown`]'s `modifiers` field. Used by the
+    /// modifier-aware dispatch entry points so synthesized pointer events
+    /// (Click / MouseDown / etc.) carry the modifier state.
+    pub fn with_modifiers(target: NodeId, kind: DomEventKind, modifiers: u32) -> Self {
         let bubbles = kind.bubbles();
         let cancelable = kind.cancelable();
         Self {
@@ -55,6 +81,7 @@ impl DomEvent {
             current_target: target,
             event_path: Vec::new(),
             kind,
+            modifiers,
             propagation: Propagation::default(),
             phase: EventPhase::None,
             bubbles,

@@ -138,11 +138,34 @@ impl EventDispatcher {
         events
     }
 
-    /// Dispatch a mouse button down event.
+    /// Dispatch a mouse button down event (no keyboard modifiers).
+    ///
+    /// Equivalent to [`dispatch_mouse_down_with_modifiers`] with `modifiers == 0`.
+    /// Retained so existing callers (which have no modifier source yet) keep
+    /// compiling; the shell (Seam-2) calls the `_with_modifiers` variant.
+    ///
+    /// [`dispatch_mouse_down_with_modifiers`]: Self::dispatch_mouse_down_with_modifiers
     pub fn dispatch_mouse_down(
         &mut self,
         pos: Point,
         button: MouseButton,
+        doc: &mut Document,
+        hit_test: &HitTestEngine,
+    ) -> Vec<DomEvent> {
+        self.dispatch_mouse_down_with_modifiers(pos, button, 0, doc, hit_test)
+    }
+
+    /// Dispatch a mouse button down event carrying keyboard `modifiers`.
+    ///
+    /// The synthesized `MouseDown` event carries `modifiers` (same opaque bit
+    /// layout as [`DomEventKind::KeyDown`]) on its envelope so widgets can read
+    /// Ctrl/Shift for multi-select. This is the entry point the shell (Seam-2)
+    /// supplies real modifier state to.
+    pub fn dispatch_mouse_down_with_modifiers(
+        &mut self,
+        pos: Point,
+        button: MouseButton,
+        modifiers: u32,
         doc: &mut Document,
         hit_test: &HitTestEngine,
     ) -> Vec<DomEvent> {
@@ -153,13 +176,14 @@ impl EventDispatcher {
             // Set :active
             doc.set_pseudo_state(h.node, PseudoStateFlags::ACTIVE, true);
 
-            events.push(DomEvent::new(
+            events.push(DomEvent::with_modifiers(
                 h.node,
                 DomEventKind::MouseDown {
                     button,
                     x: pos.x,
                     y: pos.y,
                 },
+                modifiers,
             ));
 
             // Focus management
@@ -170,11 +194,34 @@ impl EventDispatcher {
         events
     }
 
-    /// Dispatch a mouse button up event. Also generates Click/DoubleClick.
+    /// Dispatch a mouse button up event (no keyboard modifiers).
+    ///
+    /// Equivalent to [`dispatch_mouse_up_with_modifiers`] with `modifiers == 0`.
+    /// Retained for existing callers; the shell (Seam-2) calls the
+    /// `_with_modifiers` variant.
+    ///
+    /// [`dispatch_mouse_up_with_modifiers`]: Self::dispatch_mouse_up_with_modifiers
     pub fn dispatch_mouse_up(
         &mut self,
         pos: Point,
         button: MouseButton,
+        doc: &mut Document,
+        hit_test: &HitTestEngine,
+    ) -> Vec<DomEvent> {
+        self.dispatch_mouse_up_with_modifiers(pos, button, 0, doc, hit_test)
+    }
+
+    /// Dispatch a mouse button up event carrying keyboard `modifiers`. Also
+    /// generates Click / DoubleClick / ContextMenu, all carrying the same
+    /// `modifiers` on their envelope (same opaque bit layout as
+    /// [`DomEventKind::KeyDown`]). This is the entry point the shell (Seam-2)
+    /// supplies real modifier state to, so widgets can do Ctrl/Shift
+    /// multi-select on click.
+    pub fn dispatch_mouse_up_with_modifiers(
+        &mut self,
+        pos: Point,
+        button: MouseButton,
+        modifiers: u32,
         doc: &mut Document,
         hit_test: &HitTestEngine,
     ) -> Vec<DomEvent> {
@@ -185,13 +232,14 @@ impl EventDispatcher {
             // Clear :active
             doc.set_pseudo_state(h.node, PseudoStateFlags::ACTIVE, false);
 
-            events.push(DomEvent::new(
+            events.push(DomEvent::with_modifiers(
                 h.node,
                 DomEventKind::MouseUp {
                     button,
                     x: pos.x,
                     y: pos.y,
                 },
+                modifiers,
             ));
 
             // Generate click
@@ -205,19 +253,21 @@ impl EventDispatcher {
                 };
 
                 if is_double {
-                    events.push(DomEvent::new(
+                    events.push(DomEvent::with_modifiers(
                         h.node,
                         DomEventKind::DoubleClick { x: pos.x, y: pos.y },
+                        modifiers,
                     ));
                     self.last_click = None;
                 } else {
-                    events.push(DomEvent::new(
+                    events.push(DomEvent::with_modifiers(
                         h.node,
                         DomEventKind::Click {
                             button: MouseButton::Left,
                             x: pos.x,
                             y: pos.y,
                         },
+                        modifiers,
                     ));
                     self.last_click = Some((h.node, now));
                 }
@@ -225,9 +275,10 @@ impl EventDispatcher {
 
             // Right-click context menu
             if matches!(button, MouseButton::Right) {
-                events.push(DomEvent::new(
+                events.push(DomEvent::with_modifiers(
                     h.node,
                     DomEventKind::ContextMenu { x: pos.x, y: pos.y },
+                    modifiers,
                 ));
             }
         }
@@ -236,7 +287,13 @@ impl EventDispatcher {
         events
     }
 
-    /// Dispatch a scroll event.
+    /// Dispatch a scroll event (no keyboard modifiers).
+    ///
+    /// Equivalent to [`dispatch_scroll_with_modifiers`] with `modifiers == 0`.
+    /// Retained for existing callers; the shell (Seam-2) calls the
+    /// `_with_modifiers` variant.
+    ///
+    /// [`dispatch_scroll_with_modifiers`]: Self::dispatch_scroll_with_modifiers
     pub fn dispatch_scroll(
         &mut self,
         pos: Point,
@@ -244,16 +301,31 @@ impl EventDispatcher {
         delta_y: f32,
         hit_test: &HitTestEngine,
     ) -> Vec<DomEvent> {
+        self.dispatch_scroll_with_modifiers(pos, delta_x, delta_y, 0, hit_test)
+    }
+
+    /// Dispatch a scroll event carrying keyboard `modifiers` (e.g. Ctrl+wheel
+    /// for zoom). The synthesized `Scroll` event carries `modifiers` (same
+    /// opaque bit layout as [`DomEventKind::KeyDown`]) on its envelope.
+    pub fn dispatch_scroll_with_modifiers(
+        &mut self,
+        pos: Point,
+        delta_x: f32,
+        delta_y: f32,
+        modifiers: u32,
+        hit_test: &HitTestEngine,
+    ) -> Vec<DomEvent> {
         let mut events = Vec::new();
         let hit = hit_test.hit_test(pos);
 
         if let Some(h) = &hit {
-            events.push(DomEvent::new(
+            events.push(DomEvent::with_modifiers(
                 h.node,
                 DomEventKind::Scroll {
                     dx: delta_x,
                     dy: delta_y,
                 },
+                modifiers,
             ));
         }
 
@@ -424,7 +496,11 @@ impl EventDispatcher {
                                 continue;
                             }
                         }
-                        let mut bubbled = DomEvent::new(event.target, event.kind.clone());
+                        let mut bubbled = DomEvent::with_modifiers(
+                            event.target,
+                            event.kind.clone(),
+                            event.modifiers,
+                        );
                         bubbled.current_target = ancestor;
                         let result = handler(&bubbled);
                         match result {
