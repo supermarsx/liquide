@@ -153,6 +153,129 @@ pub struct SurfaceBuffer {
     pub format: PixelFormat,
 }
 
+impl SurfaceBuffer {
+    /// Produce a tightly-packed copy of this buffer bilinearly scaled to
+    /// `dst_w` x `dst_h` (t93-e6 cheap window thumbnails / gap #1).
+    ///
+    /// Used to fit a captured window region into an overview tile. The result
+    /// has `stride == dst_w * bpp` (no padding) so it can be blitted directly.
+    /// The sampler is a deterministic bilinear filter (clamped edges) — the same
+    /// math the renderer-cpu image path uses when scaling — so the capture /
+    /// golden path stays byte-stable for a given input. A request for a 1:1 size
+    /// returns an exact tight copy (no resampling).
+    ///
+    /// A zero-size request, an empty source, or a non-`Bgra8`/`Rgba8` format
+    /// (the only 4-byte interleaved formats this samples) yields a `1x1`
+    /// transparent buffer so callers always get a paintable surface.
+    #[must_use]
+    pub fn scaled_to(&self, dst_w: u32, dst_h: u32) -> SurfaceBuffer {
+        let bpp = self.format.bytes_per_pixel();
+
+        let transparent = || SurfaceBuffer {
+            pixels: Arc::new(vec![0u8; bpp as usize]),
+            width: 1,
+            height: 1,
+            stride: bpp,
+            format: self.format,
+        };
+
+        if dst_w == 0 || dst_h == 0 || self.width == 0 || self.height == 0 {
+            return transparent();
+        }
+        // This sampler reads 4 interleaved bytes per texel.
+        if bpp != 4 {
+            return transparent();
+        }
+
+        let src = self.pixels.as_slice();
+        let out_stride = (dst_w * 4) as usize;
+        let mut out = vec![0u8; out_stride * dst_h as usize];
+
+        let sw = self.width;
+        let sh = self.height;
+        let src_stride = self.stride as usize;
+
+        let texel = |x: u32, y: u32| -> [f32; 4] {
+            let i = y as usize * src_stride + x as usize * 4;
+            if i + 3 < src.len() {
+                [
+                    src[i] as f32,
+                    src[i + 1] as f32,
+                    src[i + 2] as f32,
+                    src[i + 3] as f32,
+                ]
+            } else {
+                [0.0; 4]
+            }
+        };
+
+        // 1:1 — exact tight copy, no resampling (deterministic identity path).
+        if dst_w == sw && dst_h == sh {
+            for y in 0..sh {
+                for x in 0..sw {
+                    let t = texel(x, y);
+                    let o = y as usize * out_stride + x as usize * 4;
+                    out[o] = t[0] as u8;
+                    out[o + 1] = t[1] as u8;
+                    out[o + 2] = t[2] as u8;
+                    out[o + 3] = t[3] as u8;
+                }
+            }
+            return SurfaceBuffer {
+                pixels: Arc::new(out),
+                width: dst_w,
+                height: dst_h,
+                stride: dst_w * 4,
+                format: self.format,
+            };
+        }
+
+        let dw = dst_w as f32;
+        let dh = dst_h as f32;
+        let fsw = sw as f32;
+        let fsh = sh as f32;
+        let clamp_x = |v: f32| -> u32 { (v as i32).clamp(0, sw as i32 - 1) as u32 };
+        let clamp_y = |v: f32| -> u32 { (v as i32).clamp(0, sh as i32 - 1) as u32 };
+
+        for dst_y in 0..dst_h {
+            let rel_y = (dst_y as f32 + 0.5) / dh;
+            let fy = rel_y * fsh - 0.5;
+            let y0 = fy.floor();
+            let ty = fy - y0;
+            let ya = clamp_y(y0);
+            let yb = clamp_y(y0 + 1.0);
+            for dst_x in 0..dst_w {
+                let rel_x = (dst_x as f32 + 0.5) / dw;
+                let fx = rel_x * fsw - 0.5;
+                let x0 = fx.floor();
+                let tx = fx - x0;
+                let xa = clamp_x(x0);
+                let xb = clamp_x(x0 + 1.0);
+
+                let c00 = texel(xa, ya);
+                let c10 = texel(xb, ya);
+                let c01 = texel(xa, yb);
+                let c11 = texel(xb, yb);
+
+                let o = dst_y as usize * out_stride + dst_x as usize * 4;
+                for k in 0..4 {
+                    let top = c00[k] + (c10[k] - c00[k]) * tx;
+                    let bot = c01[k] + (c11[k] - c01[k]) * tx;
+                    out[o + k] = (top + (bot - top) * ty + 0.5) as u8;
+                }
+            }
+        }
+
+        SurfaceBuffer {
+            pixels: Arc::new(out),
+            width: dst_w,
+            height: dst_h,
+            stride: dst_w * 4,
+            format: self.format,
+        }
+    }
+}
+
 /// The type-specific payload of a scene graph node.
 #[derive(Debug, Clone)]
 pub enum SceneNodeKind {

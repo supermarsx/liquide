@@ -369,6 +369,24 @@ pub struct Shell {
     /// (toggled by the `TaskOverview` / `WorkspaceOverview` actions; the scene
     /// builder emits a tiled overview overlay of the visible windows when set).
     pub(crate) overview_visible: bool,
+    /// Cheap window thumbnails for the overview (t93-e6 / gap #1), keyed by
+    /// [`WindowId`]. Each is a snapshot of the window's on-screen rect captured
+    /// from the LAST composited framebuffer at overview-open time and pre-scaled
+    /// to a tile; the overview overlay paints these as `Surface` nodes instead
+    /// of the placeholder glass tile.
+    ///
+    /// HONEST caveats (these are stale snapshots, not live mirrors):
+    /// - captured once when the overview opens (refreshed on each open), so they
+    ///   do not animate with the underlying window;
+    /// - an occluded window captures whatever covered it — you cannot capture
+    ///   pixels never drawn for the covered window. Full fidelity needs
+    ///   per-surface render-to-texture (E7), deferred.
+    ///
+    /// Empty (the placeholder tile is used) until a capture is supplied, and
+    /// cleared when the overview closes so a window that vanished cannot leak a
+    /// stale thumbnail into a later overview session.
+    pub(crate) overview_thumbnails:
+        HashMap<WindowId, liquide_compositor::scene::SurfaceBuffer>,
     /// Whether the clipboard-history overlay is shown (Super+V). State-level
     /// toggle consumed by the scene/DOM (t65-s2 dead-arm wiring).
     pub(crate) clipboard_history_visible: bool,
@@ -681,6 +699,7 @@ impl Shell {
             status_bar_visible: true,
             notification_panel_visible: false,
             overview_visible: false,
+            overview_thumbnails: HashMap::new(),
             clipboard_history_visible: false,
             quick_settings_visible: false,
             screen_reader_enabled: false,
@@ -826,6 +845,7 @@ impl Shell {
             status_bar_visible: true,
             notification_panel_visible: false,
             overview_visible: false,
+            overview_thumbnails: HashMap::new(),
             clipboard_history_visible: false,
             quick_settings_visible: false,
             screen_reader_enabled: false,

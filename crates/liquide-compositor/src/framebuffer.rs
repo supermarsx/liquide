@@ -148,6 +148,90 @@ impl FrameBuffer {
         out
     }
 
+    /// Capture a rectangular sub-region of the framebuffer into an owned
+    /// [`SurfaceBuffer`] (t93-e6 cheap window thumbnails / gap #1).
+    ///
+    /// This is a READ-ONLY copy of the already-composited pixels: it never
+    /// writes the framebuffer and never touches the damage model or the
+    /// write-scissor, so it is safe to call after a present without perturbing
+    /// the incremental-scene / disappear-class invariants. The returned buffer
+    /// is a tight, zero-padded copy (its `stride == width * bpp`), so consumers
+    /// (e.g. an overview thumbnail) can scale/blit it directly.
+    ///
+    /// Bounds handling (deterministic):
+    /// - the requested rect is rounded to integer pixels (floor origin, the
+    ///   right/bottom edge taken from the ceil of the far edge) and then CLAMPED
+    ///   to the framebuffer bounds, so an off-screen or partially off-screen
+    ///   window yields only its on-screen pixels;
+    /// - a zero-area (or fully off-screen) request yields a `1x1` transparent
+    ///   buffer rather than an empty one, so callers always get a paintable
+    ///   surface and never index an empty slice.
+    ///
+    /// HONEST caveat (documented for gap #1): this captures whatever was DRAWN
+    /// at those coordinates in the last frame. For an OCCLUDED window that means
+    /// the pixels of whatever covered it — you cannot capture pixels that were
+    /// never rasterised for the covered window. That is exactly what per-surface
+    /// render-to-texture (E7) solves later; for an overview snapshot the
+    /// last-composited content is an acceptable, cheap approximation.
+    #[must_use]
+    pub fn capture_region(&self, rect: crate::geometry::Rect) -> crate::scene::SurfaceBuffer {
+        use crate::scene::SurfaceBuffer;
+        use std::sync::Arc;
+
+        let bpp = self.format.bytes_per_pixel();
+
+        // Round to integer pixels, then clamp to the framebuffer. `floor` the
+        // origin and `ceil` the far edge so a fractional rect captures every
+        // pixel it touches; saturating math keeps a negative origin at 0.
+        let x0 = rect.x.floor().max(0.0) as u32;
+        let y0 = rect.y.floor().max(0.0) as u32;
+        let x1 = rect.right().ceil().max(0.0) as u32;
+        let y1 = rect.bottom().ceil().max(0.0) as u32;
+        let x0 = x0.min(self.width);
+        let y0 = y0.min(self.height);
+        let x1 = x1.min(self.width);
+        let y1 = y1.min(self.height);
+
+        let cw = x1.saturating_sub(x0);
+        let ch = y1.saturating_sub(y0);
+
+        // Empty / off-screen request → a 1x1 transparent surface (never empty).
+        if cw == 0 || ch == 0 {
+            return SurfaceBuffer {
+                pixels: Arc::new(vec![0u8; bpp as usize]),
+                width: 1,
+                height: 1,
+                stride: bpp,
+                format: self.format,
+            };
+        }
+
+        let out_stride = (cw * bpp) as usize;
+        let row_bytes = out_stride;
+        let mut out = vec![0u8; out_stride * ch as usize];
+        let src = self.pixels();
+
+        for row in 0..ch {
+            let src_offset = ((y0 + row) * self.stride + x0 * bpp) as usize;
+            let dst_offset = (row as usize) * out_stride;
+            // Defensive bound: a GPU-backed (empty `pixels()`) framebuffer or a
+            // truncated buffer leaves the destination zero-filled rather than
+            // panicking.
+            if src_offset + row_bytes <= src.len() {
+                out[dst_offset..dst_offset + row_bytes]
+                    .copy_from_slice(&src[src_offset..src_offset + row_bytes]);
+            }
+        }
+
+        SurfaceBuffer {
+            pixels: Arc::new(out),
+            width: cw,
+            height: ch,
+            stride: cw * bpp,
+            format: self.format,
+        }
+    }
+
     /// Clear the entire buffer to a solid color.
     pub fn clear(&mut self, color: Color) {
         let bpp = self.format.bytes_per_pixel() as usize;

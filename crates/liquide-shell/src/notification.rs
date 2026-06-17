@@ -1178,7 +1178,18 @@ impl Shell {
             buttons,
             default_button: dialog.default_button,
         });
+        // A new message dialog REPLACES any dialog already tracked in the
+        // single `chrome_active_dialog` slot, so release the superseded dialog's
+        // modal grab before establishing this one's — otherwise the stack would
+        // accumulate orphaned grabs the slot can no longer dismiss. (True nested
+        // modals are a stack property exercised via the focus manager; the
+        // single-slot dialog API is replace-semantics.)
+        if let Some(prev) = self.chrome_active_dialog {
+            self.focus.remove_modal(prev.0);
+        }
         self.chrome_active_dialog = Some(id);
+        // Establish a modal input grab for this dialog (t94-e4 gap #5b).
+        self.focus.push_modal(id.0);
         id
     }
 
@@ -1198,7 +1209,12 @@ impl Shell {
             buttons: vec!["Cancel".to_string(), "OK".to_string()],
             default_button: 1, // OK is the default action
         });
+        if let Some(prev) = self.chrome_active_dialog {
+            self.focus.remove_modal(prev.0);
+        }
         self.chrome_active_dialog = Some(id);
+        // Establish a modal input grab for this dialog (t94-e4 gap #5b).
+        self.focus.push_modal(id.0);
         id
     }
 
@@ -1214,9 +1230,39 @@ impl Shell {
         self.chrome_active_dialog.is_some()
     }
 
+    /// Whether a modal input grab is currently in effect (t94-e4 gap #5b).
+    /// While true, input is grabbed to the topmost modal and the window/desktop
+    /// input paths swallow clicks/keys outside it. Backed by the focus
+    /// manager's modal stack, so this is correct under nested modals.
+    #[must_use]
+    pub fn has_active_modal(&self) -> bool {
+        self.focus.has_active_modal()
+    }
+
+    /// Depth of the active modal grab stack (number of nested modals).
+    #[must_use]
+    pub fn modal_depth(&self) -> usize {
+        self.focus.modal_depth()
+    }
+
     /// Dismiss the currently-open canonical dialog, if any.
+    ///
+    /// Releases the topmost dialog's modal input grab (t94-e4 gap #5b). Because
+    /// grabs are stacked, dismissing the active dialog restores the grab to the
+    /// modal beneath it (if any) rather than releasing all grabs — so a
+    /// nested-modal chain unwinds one level at a time. After the pop, the
+    /// tracked active dialog is updated to the next-innermost modal (if one
+    /// remains), keeping `chrome_active_dialog` consistent with the grab stack.
     pub fn dismiss_active_dialog(&mut self) {
-        self.chrome_active_dialog = None;
+        // Pop the topmost modal grab; fall back to removing the tracked dialog's
+        // token if (defensively) the stack and the field ever disagree.
+        if self.focus.pop_modal().is_none() {
+            if let Some(id) = self.chrome_active_dialog {
+                self.focus.remove_modal(id.0);
+            }
+        }
+        // Reflect the next-innermost modal (if any) as the tracked active dialog.
+        self.chrome_active_dialog = self.focus.active_modal().map(liquide_dialogs::DialogId);
         self.chrome_dialog_content = None;
     }
 

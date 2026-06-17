@@ -168,6 +168,12 @@ pub(super) enum RenderMsg {
 /// producing a huge time jump that snaps animations forward.
 const MAX_MEASURED_FRAME_DT_MS: f32 = 50.0;
 
+/// Longer-edge cap (px) for a stored overview window thumbnail (t93-e6 / gap #1).
+/// Bounds the per-window snapshot so a large window does not retain a full-size
+/// buffer per overview tile; the overview re-fits the cached thumbnail to the
+/// actual tile rect at paint time.
+const OVERVIEW_THUMBNAIL_MAX_EDGE: u32 = 320;
+
 /// Clamp a measured inter-frame elapsed time (ms) for use as the live animation
 /// dt. Returns `None` for a non-positive delta (no advance applied), otherwise
 /// the elapsed time capped at [`MAX_MEASURED_FRAME_DT_MS`].
@@ -892,6 +898,33 @@ impl DesktopCompositor {
     ) {
         let frame_start = Instant::now();
 
+        // 0. Cheap window-thumbnail capture for the overview (t93-e6 / gap #1).
+        // When the overview has just opened but no thumbnails have been captured
+        // yet, snapshot each window's on-screen rect from the LAST composited
+        // framebuffer — which, at this point (BEFORE the new overview scene is
+        // built/composited below), still holds the pre-overview window content
+        // (no scrim). This reuses the single-framebuffer pipeline: a read-only
+        // sub-rect memcpy, no write / damage / scissor interaction. Refreshed on
+        // each open; cleared when the overview closes.
+        if !self.loading
+            && self.shell.overview_visible()
+            && !self.shell.has_overview_thumbnails()
+        {
+            if let Some(compositor) = self.compositor.as_ref() {
+                let fb = compositor.frame_buffer();
+                if !fb.pixels().is_empty() {
+                    self.shell.capture_overview_thumbnails(fb, OVERVIEW_THUMBNAIL_MAX_EDGE);
+                }
+            }
+        } else if !self.loading
+            && !self.shell.overview_visible()
+            && self.shell.has_overview_thumbnails()
+        {
+            // Overview closed — drop stale snapshots so the next session
+            // re-captures rather than reusing an out-of-date frame.
+            self.shell.clear_overview_thumbnails();
+        }
+
         // 1. Build the scene graph.
         let mut scene = if self.loading {
             self.build_loading_scene()
@@ -1429,6 +1462,32 @@ impl DesktopCompositor {
             }
         }
         self.last_live_frame_at = Some(now);
+
+        // Cheap window-thumbnail capture for the overview (t93-e6 / gap #1), live
+        // path. The composited framebuffer lives on the worker thread here, so we
+        // snapshot from `last_presented_frame` — the pixels of the LAST presented
+        // frame, which (when the overview has just opened) still show the
+        // pre-overview window content. Captured once per open; cleared on close.
+        if self.shell.overview_visible() && !self.shell.has_overview_thumbnails() {
+            if let Some(snapshot) = self.last_presented_frame.clone() {
+                // The desktop compositor always presents Bgra8 (see Compositor::new).
+                let fb = FrameBuffer {
+                    memory: liquide_compositor::framebuffer::FrameMemory::Cpu(
+                        snapshot.pixels.as_ref().clone(),
+                    ),
+                    width: snapshot.width,
+                    height: snapshot.height,
+                    stride: snapshot.stride,
+                    format: PixelFormat::Bgra8,
+                };
+                if !fb.pixels().is_empty() {
+                    self.shell
+                        .capture_overview_thumbnails(&fb, OVERVIEW_THUMBNAIL_MAX_EDGE);
+                }
+            }
+        } else if !self.shell.overview_visible() && self.shell.has_overview_thumbnails() {
+            self.shell.clear_overview_thumbnails();
+        }
 
         // Build the scene graph (lightweight tree construction).
         self.sync_devtools_template();

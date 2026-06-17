@@ -6,6 +6,7 @@ use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
 use liquide_platform::PlatformEvent;
 
 use crate::decoration::{HitZone, hit_test_decoration};
+use crate::focus::FocusPolicy;
 use crate::ime::ImeOutcome;
 use crate::launcher::SearchResultKind;
 use crate::shortcuts::ShellAction;
@@ -695,6 +696,17 @@ impl Shell {
                     return Some(ShellAction::Redraw);
                 }
 
+                // Modal grab (t94-e4 gap #5b): while a modal owns input, keys
+                // must not activate or switch background windows. The DOM/app
+                // key dispatch above already gave the modal overlay (and any
+                // `preventDefault` it wants) its chance; here we swallow the
+                // remainder so Alt-Tab window switching, the text-input seam to
+                // a background window, and global shortcuts cannot fire behind
+                // the modal. Respects the nested-modal stack.
+                if self.has_active_modal() {
+                    return None;
+                }
+
                 // Input-method step (t73-input §1): drive the IME engine BEFORE
                 // the text-input seam so CJK / accent / emoji composition works.
                 // The engine is inactive by default (Direct mode → Forward), so
@@ -1111,11 +1123,54 @@ impl Shell {
             need_redraw = true;
         }
 
+        // Focus-follows-mouse (t94-e4 gap #5a). Opt-in via the focus policy —
+        // click-to-focus is the DEFAULT (FocusManager is constructed with
+        // FocusPolicy::ClickToFocus), so this block is inert unless the policy
+        // is switched to FocusFollowsMouse. When enabled, a pointer move that
+        // crosses into a *different* window focuses that window WITHOUT raising
+        // it (classic FFM: focus tracks the pointer; auto-raise stays a
+        // click-only behavior). Thrash guards:
+        //   • an active drag/resize already returned above, so we never refocus
+        //     mid-drag;
+        //   • a move that stays over the same window is a no-op (only a genuine
+        //     change calls set_focus);
+        //   • while a modal grab is active, FFM is suppressed entirely so input
+        //     stays with the modal.
+        // Hit-testing goes through the SINGLE canonical tree router
+        // (`window_at_point`, t93-e3) — no flat z-scan is reintroduced. We use
+        // the exact-bounds `window_at_point` (not the resize-ring `pick_window_at`)
+        // so the off-frame resize tolerance does not bleed focus to a window the
+        // pointer is not actually over.
+        if self.focus.policy() == FocusPolicy::FocusFollowsMouse && !self.has_active_modal() {
+            let target = self.window_at_point(x, y);
+            if let Some(wid) = target {
+                if self.focus.focused() != Some(wid) {
+                    let _ = self.set_focus(wid);
+                    need_redraw = true;
+                }
+            }
+        }
+
         if need_redraw {
             Some(ShellAction::Redraw)
         } else {
             None
         }
+    }
+
+    /// The active focus policy (t94-e4 gap #5a). Defaults to
+    /// [`FocusPolicy::ClickToFocus`].
+    #[must_use]
+    pub fn focus_policy(&self) -> FocusPolicy {
+        self.focus.policy()
+    }
+
+    /// Set the focus policy (t94-e4 gap #5a). Opt in to focus-follows-mouse via
+    /// `FocusPolicy::FocusFollowsMouse`; the default is click-to-focus. This is
+    /// the config/consumer entry point for the FFM behavior wired into
+    /// [`Self::handle_mouse_move`].
+    pub fn set_focus_policy(&mut self, policy: FocusPolicy) {
+        self.focus.set_policy(policy);
     }
 
     /// Route a typed character into the focused window. When a live app view is
@@ -1222,6 +1277,21 @@ impl Shell {
         }
 
         let pt = Point::new(x, y);
+
+        // Modal grab (t94-e4 gap #5b). While a modal dialog/window owns input,
+        // a press anywhere outside the modal surface must NOT focus, raise, or
+        // start a drag on any background window, nor open the desktop/window
+        // context menus. The modal surface itself (the `dialog-overlay` and its
+        // buttons) is a DOM/CSS overlay handled by `dispatch_dom_mouse_event`
+        // (run before this handler in `handle_platform_event`), so it keeps
+        // receiving its clicks; here we simply swallow the press so it cannot
+        // leak through the scrim to the windows behind it. The grab respects the
+        // modal STACK (nested modals): it stays in effect until every modal is
+        // dismissed. We keep the scrim up by requesting a redraw (a v1 stand-in
+        // for an optional bell/flash).
+        if self.has_active_modal() {
+            return Some(ShellAction::Redraw);
+        }
 
         // Right-click
         if button == MouseButton::Right {

@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{
@@ -37,6 +38,32 @@ pub struct WindowSceneCacheStats {
 fn themed_alpha(mut color: Color, alpha: u8) -> Color {
     color.a = alpha;
     color
+}
+
+/// Scale `(w, h)` down so its longer edge is at most `max_edge`, preserving
+/// aspect (never upscales). Used to bound a stored overview thumbnail (t93-e6).
+fn scale_within(w: u32, h: u32, max_edge: u32) -> (u32, u32) {
+    let max_edge = max_edge.max(1);
+    let longer = w.max(h);
+    if longer <= max_edge || longer == 0 {
+        return (w.max(1), h.max(1));
+    }
+    let s = max_edge as f32 / longer as f32;
+    (((w as f32 * s).round() as u32).max(1), ((h as f32 * s).round() as u32).max(1))
+}
+
+/// Fit `(w, h)` inside `(box_w, box_h)` preserving aspect (never upscales past
+/// the box; may downscale). Returns integer pixel dimensions for the painted
+/// overview thumbnail (t93-e6).
+fn fit_within(w: u32, h: u32, box_w: f32, box_h: f32) -> (u32, u32) {
+    if w == 0 || h == 0 || box_w < 1.0 || box_h < 1.0 {
+        return (1, 1);
+    }
+    let s = (box_w / w as f32).min(box_h / h as f32);
+    (
+        ((w as f32 * s).round() as u32).max(1),
+        ((h as f32 * s).round() as u32).max(1),
+    )
 }
 
 /// Lightweight counters for the full-scene (whole `build_scene` root) cache.
@@ -1073,14 +1100,90 @@ impl Shell {
         ));
     }
 
+    /// Capture cheap window thumbnails for the overview from the last composited
+    /// framebuffer (t93-e6 / gap #1).
+    ///
+    /// For each visible window this reads the window's SETTLED on-screen rect out
+    /// of `fb` (a read-only copy — no framebuffer write, no damage, no scissor
+    /// interaction) and stores a tile-scaled snapshot keyed by `WindowId`. The
+    /// host (session render thread) calls this on the frame the overview opens,
+    /// BEFORE the dim scrim is composited, so the snapshot is the window content
+    /// rather than the scrim. Refreshing every open keeps the thumbnails roughly
+    /// current.
+    ///
+    /// HONEST caveats (see [`Shell::overview_thumbnails`]): thumbnails are stale
+    /// snapshots, and an occluded window captures whatever covered it. A window
+    /// whose rect is fully off-screen / zero-size yields no usable capture and
+    /// falls back to the placeholder tile in [`Self::add_overview_overlay`].
+    ///
+    /// `tile_max` bounds the stored thumbnail's longer edge so a 4K window does
+    /// not store a 4K buffer per tile; the overview re-fits it to the actual tile
+    /// rect at paint time, but a sane upper bound keeps the cache cheap.
+    pub fn capture_overview_thumbnails(&mut self, fb: &FrameBuffer, tile_max: u32) {
+        let tile_max = tile_max.max(1);
+        // Collect (id, bounds) first to avoid borrowing self while mutating the
+        // thumbnail map. Use SETTLED bounds (window.bounds), never mid-animation
+        // geometry — the snapshot should be of the window at rest.
+        let targets: Vec<(crate::window::WindowId, Rect)> = self
+            .visible_windows()
+            .into_iter()
+            .map(|w| (w.id, w.bounds))
+            .collect();
+
+        self.overview_thumbnails.clear();
+        for (id, bounds) in targets {
+            if bounds.width < 1.0 || bounds.height < 1.0 {
+                continue; // zero-size → placeholder
+            }
+            let cap = fb.capture_region(bounds);
+            // A 1x1 transparent buffer means the rect was off-screen / empty —
+            // skip it so the overview falls back to the placeholder tile.
+            if cap.width <= 1 && cap.height <= 1 {
+                continue;
+            }
+            // Pre-scale to a bounded thumbnail (preserve aspect) so the cache is
+            // cheap; the overview re-fits to the exact tile at paint time.
+            let (tw, th) = scale_within(cap.width, cap.height, tile_max);
+            let thumb = cap.scaled_to(tw, th);
+            self.overview_thumbnails.insert(id, thumb);
+        }
+        // The overview overlay is part of the full-scene root, so a changed
+        // thumbnail set must invalidate the cached scene — otherwise the idle
+        // full-scene fast path serves the stale (placeholder) overview and the
+        // capture "works in a test but never repaints live" (t93 hard
+        // constraint).
+        self.mark_window_scene_dirty();
+    }
+
+    /// Drop all captured overview thumbnails (t93-e6). Called when the overview
+    /// closes so a window that later vanishes cannot leak a stale thumbnail into
+    /// a future overview session.
+    pub fn clear_overview_thumbnails(&mut self) {
+        if self.overview_thumbnails.is_empty() {
+            return;
+        }
+        self.overview_thumbnails.clear();
+        // Invalidate the cached scene so a subsequent overview build does not
+        // serve a stale thumbnail from the full-scene fast path.
+        self.mark_window_scene_dirty();
+    }
+
+    /// Whether any overview thumbnail has been captured (t93-e6) — host hint to
+    /// decide if a capture pass is still needed for the current overview.
+    #[must_use]
+    pub fn has_overview_thumbnails(&self) -> bool {
+        !self.overview_thumbnails.is_empty()
+    }
+
     /// Emit the task/workspace overview overlay: a dim full-screen scrim and a
     /// grid of tiles, one per visible window, above all other layers.
     ///
-    /// Kept deliberately simple (filled tiles, not live thumbnails): the goal is
-    /// a real, painted overview surface the user can see and that the visual
-    /// regression (`overview_paints_tiles`) can assert on. Hit-testing /
-    /// click-to-activate is a follow-up; this wires the rendering half so the
-    /// `TaskOverview` / `WorkspaceOverview` actions are no longer no-ops.
+    /// Each tile paints a real window thumbnail (a `Surface` node carrying the
+    /// captured framebuffer snapshot, t93-e6 / gap #1) when one exists for that
+    /// window, scaled to fit the tile; it falls back to the placeholder glass +
+    /// solid fill when no capture is available (window off-screen / zero-size /
+    /// first frame before the host has run a capture pass). The glass backing is
+    /// kept under the thumbnail so the tile still reads as a window proxy.
     fn add_overview_overlay(&self, root: &mut SceneNode, screen: Rect, base_z: u32) {
         use liquide_compositor::scene::GlassParams;
 
@@ -1121,7 +1224,8 @@ impl Shell {
             let tile_z = base_z + 1 + i as u32 * 2;
             let tile_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE + 7;
 
-            // Glass tile backing so the tile reads as a window proxy.
+            // Glass tile backing so the tile reads as a window proxy (kept under
+            // both the thumbnail and the placeholder).
             root.add_child(SceneNode::new(
                 tile_base,
                 SceneNodeKind::Glass(GlassParams {
@@ -1132,15 +1236,48 @@ impl Shell {
                 }),
                 NodeProperties::new(tile).with_z_order(tile_z),
             ));
-            // Solid fill so the tile is unambiguously painted (and visible even
-            // when glass blur degrades to a no-op on the fast path).
-            root.add_child(SceneNode::new(
-                tile_base + 1,
-                SceneNodeKind::Background {
-                    color: themed_alpha(self.theme.window_content_background, 235),
-                },
-                NodeProperties::new(tile).with_z_order(tile_z + 1),
-            ));
+
+            match self.overview_thumbnails.get(&window.id) {
+                Some(thumb) => {
+                    // Real window thumbnail (t93-e6): a Surface node carrying the
+                    // captured snapshot, scaled to fit the tile rect. The Surface
+                    // blit consumes the buffer's own dimensions, so re-fit the
+                    // cached thumbnail to the tile size here (deterministic
+                    // bilinear). Center it inside the tile preserving aspect.
+                    let (fit_w, fit_h) =
+                        fit_within(thumb.width, thumb.height, tile.width, tile.height);
+                    let scaled = thumb.scaled_to(fit_w, fit_h);
+                    let off_x = tile.x + (tile.width - fit_w as f32) * 0.5;
+                    let off_y = tile.y + (tile.height - fit_h as f32) * 0.5;
+                    root.add_child(SceneNode::new(
+                        tile_base + 1,
+                        SceneNodeKind::Surface {
+                            surface_id: window.id.0,
+                            buffer: Some(scaled),
+                        },
+                        NodeProperties::new(Rect::new(
+                            off_x,
+                            off_y,
+                            fit_w as f32,
+                            fit_h as f32,
+                        ))
+                        .with_z_order(tile_z + 1),
+                    ));
+                }
+                None => {
+                    // Placeholder fallback: solid fill so the tile is
+                    // unambiguously painted (and visible even when glass blur
+                    // degrades to a no-op on the fast path) when no capture
+                    // exists (off-screen / zero-size / first frame).
+                    root.add_child(SceneNode::new(
+                        tile_base + 1,
+                        SceneNodeKind::Background {
+                            color: themed_alpha(self.theme.window_content_background, 235),
+                        },
+                        NodeProperties::new(tile).with_z_order(tile_z + 1),
+                    ));
+                }
+            }
         }
     }
 

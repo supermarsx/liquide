@@ -33,6 +33,14 @@ pub struct FocusManager {
     current_app: Option<String>,
     /// Timestamp (us) of the last accepted (user-driven) focus change.
     last_activity_us: u64,
+    /// Stack of active modal grabs, innermost (topmost) modal last (t94-e4
+    /// gap #5b). Each entry is an opaque modal token (the shell uses the
+    /// canonical `DialogId` value). While this is non-empty input is grabbed
+    /// to the topmost modal: clicks/keys outside it must not focus or activate
+    /// other windows. A *stack* (not a single slot) is what makes nested
+    /// modals correct — dismissing the innermost modal restores the grab to
+    /// the one beneath it rather than releasing the grab entirely.
+    modal_stack: Vec<u64>,
 }
 
 impl FocusManager {
@@ -46,7 +54,58 @@ impl FocusManager {
             guard: FocusGuard::new(GroupFocusPolicy::default()),
             current_app: None,
             last_activity_us: 0,
+            modal_stack: Vec::new(),
         }
+    }
+
+    // ── Modal grab stack (t94-e4 gap #5b) ──────────────────────────────
+
+    /// Push a modal grab. While any modal is active, input is grabbed to the
+    /// topmost one; clicks/keys outside it must be swallowed/redirected by the
+    /// caller rather than focusing or activating other windows. Nested modals
+    /// stack: pushing a second modal makes it the new grab target.
+    pub fn push_modal(&mut self, token: u64) {
+        // Defensive: never stack the same token twice (re-requesting the same
+        // dialog should not require N dismissals to release the grab).
+        self.modal_stack.retain(|t| *t != token);
+        self.modal_stack.push(token);
+    }
+
+    /// Pop the topmost modal grab (if any), returning its token. Dismissing the
+    /// innermost modal restores the grab to the modal beneath it (if any).
+    pub fn pop_modal(&mut self) -> Option<u64> {
+        self.modal_stack.pop()
+    }
+
+    /// Remove a specific modal from the stack by token (e.g. when a dialog is
+    /// dismissed out of stack order). Preserves the order of the remaining
+    /// modals so the next-innermost still owns the grab.
+    pub fn remove_modal(&mut self, token: u64) {
+        self.modal_stack.retain(|t| *t != token);
+    }
+
+    /// Clear all modal grabs.
+    pub fn clear_modals(&mut self) {
+        self.modal_stack.clear();
+    }
+
+    /// The token of the topmost (active) modal grab, if any. This is the modal
+    /// that currently owns input.
+    #[must_use]
+    pub fn active_modal(&self) -> Option<u64> {
+        self.modal_stack.last().copied()
+    }
+
+    /// Whether any modal grab is active.
+    #[must_use]
+    pub fn has_active_modal(&self) -> bool {
+        !self.modal_stack.is_empty()
+    }
+
+    /// Depth of the modal grab stack (number of nested modals).
+    #[must_use]
+    pub fn modal_depth(&self) -> usize {
+        self.modal_stack.len()
     }
 
     /// Get the currently focused window.
