@@ -61,8 +61,14 @@
   lq-input,
   lq-checkbox,
   lq-radio,
+  lq-radiogroup,
   lq-switch,
+  lq-indicator,
+  lq-field,
   lq-slider,
+  lq-track,
+  lq-fill,
+  lq-thumb,
   lq-panel,
   lq-card,
   lq-list,
@@ -99,5 +105,242 @@
   lq-box:active {
     background-color: var(--widget-accent, #3b82f6);
     border-color: var(--widget-accent-active, #2563eb);
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     GROUP A — foundational controls
+     ════════════════════════════════════════════════════════════ */
+
+  /* ── A1 button ───────────────────────────────────────────────
+     Box size + colours are CSS-driven so the hit-test reads them from
+     layout. :hover/:active/:focus/:disabled restyle the fill. */
+  lq-button {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: 120px;
+    height: 36px;
+    padding: 8px 14px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-button > lq-label {
+    display: inline;
+  }
+  lq-button:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+    border-color: var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+  }
+  lq-button:active {
+    background-color: var(--widget-accent, #3b82f6);
+    border-color: var(--widget-accent-active, #2563eb);
+  }
+  lq-button:focus {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-button:disabled {
+    background-color: var(--widget-bg, #27272a);
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    border-color: var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  /* Variants (pure CSS classes). */
+  lq-button.primary {
+    background-color: var(--widget-accent, #3b82f6);
+    border-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-button.primary:hover {
+    background-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-button.danger {
+    background-color: #b91c1c;
+    border-color: #991b1b;
+    color: #ffffff;
+  }
+  lq-button.ghost {
+    background-color: rgba(0, 0, 0, 0);
+    border-color: rgba(0, 0, 0, 0);
+  }
+
+  /* ── A2 label / link ─────────────────────────────────────────
+     Label is inert text. Link is interactive: accent colour, underline,
+     :hover/:active/:focus restyle. */
+  lq-label {
+    display: inline;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-link {
+    display: inline;
+    color: var(--widget-accent, #3b82f6);
+    text-decoration: underline;
+  }
+  lq-link:hover {
+    color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-link:active {
+    color: var(--widget-accent-active, #2563eb);
+  }
+  lq-link:focus {
+    color: var(--widget-accent-hover, #60a5fa);
+  }
+
+  /* ── A3 text input ───────────────────────────────────────────
+     The field is the laid-out hit/caret box. The caret is a real in-flow
+     element so layout positions it (no px-per-char constant). */
+  lq-input {
+    display: block;
+    width: 200px;
+    height: 32px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    padding: 0;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-input > lq-field {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 200px;
+    height: 32px;
+    padding: 6px 8px;
+  }
+  lq-input lq-caret {
+    display: inline-block;
+    width: 2px;
+    height: 16px;
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-input:focus {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-input:focus lq-caret {
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-input .placeholder {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+  lq-input:disabled {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    background-color: var(--widget-bg, #27272a);
+  }
+
+  /* ── A4 checkbox / radio / switch ────────────────────────────
+     The indicator is the box/track; :checked fills it with the accent and
+     reveals the check glyph (::before). */
+  lq-checkbox,
+  lq-radio {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-checkbox > lq-indicator,
+  lq-radio > lq-indicator {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    margin-right: 8px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 4px;
+  }
+  lq-radio > lq-indicator {
+    border-radius: 9px;
+  }
+  lq-checkbox:checked > lq-indicator,
+  lq-radio:checked > lq-indicator {
+    background-color: var(--widget-accent, #3b82f6);
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-checkbox:hover > lq-indicator,
+  lq-radio:hover > lq-indicator {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-checkbox:focus > lq-indicator,
+  lq-radio:focus > lq-indicator,
+  lq-switch:focus > lq-indicator {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-checkbox:disabled,
+  lq-radio:disabled,
+  lq-switch:disabled {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+
+  lq-switch {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+  }
+  lq-switch > lq-indicator {
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    margin-right: 8px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 10px;
+  }
+  lq-switch:checked > lq-indicator {
+    background-color: var(--widget-accent, #3b82f6);
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-radiogroup {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── A5 slider ───────────────────────────────────────────────
+     The track is the laid-out geometry the value math reads. Fill width and
+     thumb left are value-driven (% of the CSS track). */
+  lq-slider {
+    display: block;
+    width: 200px;
+    height: 24px;
+    padding: 0;
+  }
+  lq-slider > lq-track {
+    display: block;
+    width: 200px;
+    height: 6px;
+    margin-top: 9px;
+    background-color: var(--widget-bg, #27272a);
+    border-radius: 3px;
+  }
+  /* Fill is an in-flow block whose width is a value-driven percentage of the
+     laid-out track (block layout resolves percent width against the containing
+     block). No absolute positioning — the layout engine does not resolve
+     absolute %-offsets. */
+  lq-slider lq-fill {
+    display: block;
+    height: 6px;
+    background-color: var(--widget-accent, #3b82f6);
+    border-radius: 3px;
+  }
+  lq-slider lq-thumb {
+    display: block;
+    width: 16px;
+    height: 16px;
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    border: 1px solid var(--widget-accent, #3b82f6);
+    border-radius: 8px;
+  }
+  lq-slider:hover lq-thumb {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-slider:active lq-thumb {
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  lq-slider:focus lq-track {
+    border: 1px solid var(--widget-focus-ring, #3b82f6);
+  }
+  lq-slider:disabled lq-fill {
+    background-color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
   }
 }

@@ -37,8 +37,16 @@
 pub mod behavior;
 pub mod focus;
 pub mod host;
+pub mod keys;
 pub mod layout_query;
 pub mod reference;
+
+// ── Group A — foundational controls ─────────────────────────────────────────
+pub mod button;
+pub mod input;
+pub mod label;
+pub mod slider;
+pub mod toggle;
 
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
@@ -48,6 +56,18 @@ mod gallery;
 #[cfg(test)]
 mod gallery_tests;
 
+// Per-widget real-pipeline gallery tests (Group A).
+#[cfg(test)]
+mod button_tests;
+#[cfg(test)]
+mod input_tests;
+#[cfg(test)]
+mod label_tests;
+#[cfg(test)]
+mod slider_tests;
+#[cfg(test)]
+mod toggle_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -55,6 +75,13 @@ pub use focus::{FocusRing, FOCUSABLE_ATTR};
 pub use host::{WidgetAction, WidgetHost};
 pub use layout_query::LayoutQuery;
 pub use reference::ReferenceBox;
+
+// Group A widgets.
+pub use button::Button;
+pub use input::TextInput;
+pub use label::{Label, Link};
+pub use slider::Slider;
+pub use toggle::{RadioGroup, Toggle, ToggleStyle};
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.

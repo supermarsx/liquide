@@ -200,6 +200,29 @@ impl Gallery {
         self.hit_test = Some(hit);
     }
 
+    /// Inject a left mouse-DOWN at `(x, y)` (preceded by a move to build the
+    /// hover chain) through the real dispatcher — for scripted drags where down,
+    /// move, and up must be separated (e.g. a slider drag).
+    pub fn mouse_down(&mut self, x: f32, y: f32) {
+        let hit = self.hit_test.take().expect("relayout before events");
+        let p = Point::new(x, y);
+        let _ = self.dispatcher.dispatch_mouse_move(p, &mut self.doc, &hit);
+        let _ = self
+            .dispatcher
+            .dispatch_mouse_down(p, MouseButton::Left, &mut self.doc, &hit);
+        self.hit_test = Some(hit);
+    }
+
+    /// Inject a left mouse-UP at `(x, y)` through the real dispatcher.
+    pub fn mouse_up(&mut self, x: f32, y: f32) {
+        let hit = self.hit_test.take().expect("relayout before events");
+        let p = Point::new(x, y);
+        let _ = self
+            .dispatcher
+            .dispatch_mouse_up(p, MouseButton::Left, &mut self.doc, &hit);
+        self.hit_test = Some(hit);
+    }
+
     /// Process queued events against widget behaviors, returning emitted actions.
     /// Re-renders changed widgets into the DOM (their new pseudo-states/classes).
     pub fn process(&mut self) -> Vec<WidgetAction> {
