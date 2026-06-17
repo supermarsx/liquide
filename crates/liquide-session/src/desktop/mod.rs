@@ -604,15 +604,46 @@ impl DesktopCompositor {
         None
     }
 
+    /// The deterministic load order of the base-layer stylesheets, loaded
+    /// BEFORE the active per-theme file (and before user `custom.css`). This is
+    /// the single source of truth for both the on-disk chain (`load_external_css`)
+    /// and the embedded in-binary fallback ([`embedded_base_layer_css`]). The
+    /// full cascade order is:
+    ///   variables.css -> components.css -> widgets.css -> {theme}.css -> custom.css
+    /// `widgets.css` (t98 P7 / S0, the `<lq-*>` widget toolkit base/token layer)
+    /// MUST sit AFTER `components.css` and BEFORE the theme so the packaged
+    /// themes restyle the toolkit via the semantic tokens.
+    const BASE_LAYER_CSS_ORDER: &'static [&'static str] =
+        &["variables.css", "components.css", "widgets.css"];
+
+    /// The in-binary copy of a base-layer stylesheet, used as the EMBEDDED
+    /// fallback when the on-disk asset fails to load. Mirrors the on-disk chain
+    /// (`variables.css` → `components.css` → `widgets.css`) from the SAME source
+    /// files via `include_str!`, so the base layers — including the widget
+    /// toolkit (`widgets.css`) — still style the live DE when assets are absent.
+    /// Prior work flagged that the embedded path diverged from disk; keeping the
+    /// fallback single-sourced from the same files prevents that drift.
+    fn embedded_base_layer_css(file_name: &str) -> Option<&'static str> {
+        match file_name {
+            "variables.css" => Some(include_str!("../../../../assets/themes/variables.css")),
+            "components.css" => Some(include_str!("../../../../assets/themes/components.css")),
+            "widgets.css" => Some(include_str!("../../../../assets/themes/widgets.css")),
+            _ => None,
+        }
+    }
+
     /// Load a packaged base-layer stylesheet (`themes/{file_name}`) into the
     /// shell's style pipeline via `add_stylesheet`.
     ///
-    /// Base layers (design-token variables + shared component defaults) must be
-    /// loaded BEFORE the active per-theme file so theme rules can override them
-    /// via normal source-order cascade. Resolves through the t56 asset resolver
-    /// (`resolve_asset_root`), and emits a loud `warn!` if the file is expected
-    /// but missing (consistent with t56's loud-failure pattern), since a missing
-    /// base layer leaves shared components — e.g. tooltips/popovers — unstyled.
+    /// Base layers (design-token variables + shared component defaults + the
+    /// widget toolkit) must be loaded BEFORE the active per-theme file so theme
+    /// rules can override them via normal source-order cascade. Resolves through
+    /// the t56 asset resolver (`resolve_asset_root`); if the on-disk file cannot
+    /// be read it falls back to the EMBEDDED in-binary copy
+    /// ([`embedded_base_layer_css`]) so the same base layers still apply, and
+    /// only emits a loud `warn!` when neither source is available (consistent
+    /// with t56's loud-failure pattern), since a missing base layer leaves shared
+    /// components — e.g. tooltips/popovers/widgets — unstyled.
     fn load_base_layer_css(shell: &mut Shell, themes_dir: &std::path::Path, file_name: &str) {
         let candidate = themes_dir.join(file_name);
         match std::fs::read_to_string(&candidate) {
@@ -620,14 +651,24 @@ impl DesktopCompositor {
                 info!("loaded base-layer CSS from {:?}", candidate);
                 shell.add_stylesheet(&css);
             }
-            Err(err) => {
-                tracing::warn!(
-                    ?candidate,
-                    error = %err,
-                    "base-layer CSS not loaded; shared component styling \
-                     (tooltips, popovers, etc.) may render unstyled"
-                );
-            }
+            Err(err) => match Self::embedded_base_layer_css(file_name) {
+                Some(css) => {
+                    tracing::warn!(
+                        ?candidate,
+                        error = %err,
+                        "base-layer CSS not found on disk; using embedded in-binary fallback"
+                    );
+                    shell.add_stylesheet(css);
+                }
+                None => {
+                    tracing::warn!(
+                        ?candidate,
+                        error = %err,
+                        "base-layer CSS not loaded; shared component styling \
+                         (tooltips, popovers, etc.) may render unstyled"
+                    );
+                }
+            },
         }
     }
 
@@ -704,13 +745,15 @@ impl DesktopCompositor {
     /// 1. `<asset-root>/themes/variables.css` — design-token `:root` defaults
     /// 2. `<asset-root>/themes/components.css` — shared component defaults
     ///    (tooltip/popover/etc.), which consume the tokens above
-    /// 3. `<asset-root>/themes/components/*.css` — split component fragments
+    /// 3. `<asset-root>/themes/widgets.css` — reusable `<lq-*>` widget toolkit
+    ///    base/token layer (t98 P7 / S0); resolves into the variables above
+    /// 4. `<asset-root>/themes/components/*.css` — split component fragments
     ///    (devtools/dock/launcher/menus/notifications/statusbar), loaded in
     ///    deterministic order; carry the status-indicator glyph `::before` rules
     ///    that are unique to the split set (TODO 16)
-    /// 4. `<asset-root>/themes/{theme_name}.css` — the active packaged theme
+    /// 5. `<asset-root>/themes/{theme_name}.css` — the active packaged theme
     ///    (overrides the base layers)
-    /// 5. `~/.config/liquide/custom.css` — user overrides (highest priority)
+    /// 6. `~/.config/liquide/custom.css` — user overrides (highest priority)
     ///
     /// Any CSS found is appended to the shell's stylesheet pipeline.
     fn load_external_css(shell: &mut Shell) {
@@ -731,14 +774,22 @@ impl DesktopCompositor {
         let themes_dir = Self::resolve_asset_root().join("themes");
 
         // BASE LAYERS first (before the active theme) so theme rules win on
-        // equal-specificity selectors. variables.css defines the `:root` design
-        // tokens that components.css references via `var(--…)`, so it must load
-        // before components.css. components.css carries the shared component
-        // styling (notably `tooltip { position: fixed; z-index: … }` plus
-        // popover/dialog/search-bar/etc.) that no per-theme file defines — if it
-        // is not loaded those components fall into normal flow at (0,0) (t57-f6b).
-        Self::load_base_layer_css(shell, &themes_dir, "variables.css");
-        Self::load_base_layer_css(shell, &themes_dir, "components.css");
+        // equal-specificity selectors. The order is the single source of truth in
+        // `BASE_LAYER_CSS_ORDER`:
+        //   variables.css -> components.css -> widgets.css -> {theme}.css -> custom.css
+        // - variables.css defines the `:root` design tokens that components.css
+        //   and widgets.css reference via `var(--…)`, so it must load first.
+        // - components.css carries the shared component styling (notably
+        //   `tooltip { position: fixed; z-index: … }` plus popover/dialog/etc.)
+        //   that no per-theme file defines — if it is not loaded those components
+        //   fall into normal flow at (0,0) (t57-f6b).
+        // - widgets.css (t98 P7 / S0) is the reusable `<lq-*>` widget toolkit
+        //   base/token layer; loaded AFTER components.css and BEFORE the theme so
+        //   the four packaged themes (and user custom.css) restyle the whole
+        //   toolkit for free via the semantic tokens.
+        for base in Self::BASE_LAYER_CSS_ORDER {
+            Self::load_base_layer_css(shell, &themes_dir, base);
+        }
 
         // Split component fragments (TODO 16): loaded after the monolithic
         // components.css and before the theme. The monolithic file and the split
@@ -854,6 +905,131 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// t100-csswire: the widget toolkit base layer (`widgets.css`) must be wired
+    /// into the runtime CSS load order at the canonical position — AFTER
+    /// `components.css` and BEFORE the active `{theme}.css` — so the four packaged
+    /// themes (and user `custom.css`) restyle the `<lq-*>` toolkit for free. This
+    /// asserts the production order constant directly; it fails if `widgets.css`
+    /// is omitted, listed before `components.css`, or otherwise mis-ordered.
+    #[test]
+    fn base_layer_css_order_places_widgets_after_components_before_theme() {
+        let order = DesktopCompositor::BASE_LAYER_CSS_ORDER;
+
+        let variables = order
+            .iter()
+            .position(|f| *f == "variables.css")
+            .expect("variables.css must be in the base-layer load order");
+        let components = order
+            .iter()
+            .position(|f| *f == "components.css")
+            .expect("components.css must be in the base-layer load order");
+        let widgets = order
+            .iter()
+            .position(|f| *f == "widgets.css")
+            .expect("widgets.css must be wired into the base-layer load order");
+
+        assert!(
+            variables < components,
+            "variables.css must load before components.css (tokens before consumers): {order:?}"
+        );
+        assert!(
+            components < widgets,
+            "widgets.css must load AFTER components.css so component defaults are \
+             in place before the widget toolkit: {order:?}"
+        );
+        // The base layers are all loaded BEFORE the active theme + custom.css in
+        // `load_external_css`, so widgets being last among the base layers (and
+        // present at all) guarantees the canonical
+        //   variables -> components -> widgets -> {theme} -> custom
+        // order. Guard that it is the final base layer so a future insertion
+        // after it (which would push it before the theme is still fine, but a
+        // file landing AFTER widgets would change cascade priority unexpectedly).
+        assert_eq!(
+            order.last().copied(),
+            Some("widgets.css"),
+            "widgets.css must be the LAST base layer (immediately before the \
+             theme) so the theme still wins on equal-specificity selectors: {order:?}"
+        );
+    }
+
+    /// t100-csswire: prove `widgets.css` actually reaches the shell's loaded
+    /// style set through the real loader (not merely listed). Mirrors
+    /// `split_component_css_is_loaded_into_shell` for the widget base layer.
+    #[test]
+    fn widgets_css_is_loaded_into_shell() {
+        let dir = std::env::temp_dir().join(format!(
+            "liquide-t100-widgets-css-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A real, parseable widget rule unique to this file.
+        std::fs::write(
+            dir.join("widgets.css"),
+            "lq-button { display: inline-flex; padding: 8; }\n",
+        )
+        .unwrap();
+
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let sheets_before = shell.stylesheet_count();
+        let rules_before = shell.css_rule_count();
+
+        DesktopCompositor::load_base_layer_css(&mut shell, &dir, "widgets.css");
+
+        assert_eq!(
+            shell.stylesheet_count(),
+            sheets_before + 1,
+            "widgets.css must be loaded as a stylesheet into the shell"
+        );
+        assert!(
+            shell.css_rule_count() > rules_before,
+            "the widget toolkit rules must reach the loaded style set"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// t100-csswire: when the on-disk asset is absent, the EMBEDDED in-binary
+    /// fallback must still carry the widget toolkit (prior work flagged the
+    /// embedded path diverged from disk). Driving `load_base_layer_css` against a
+    /// directory with NO `widgets.css` must still add a stylesheet with real
+    /// rules from the bundled `include_str!` copy.
+    #[test]
+    fn embedded_base_layer_fallback_includes_widgets() {
+        // A non-existent directory: forces the on-disk read to fail.
+        let missing = std::env::temp_dir().join(format!(
+            "liquide-t100-embedded-missing-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        // The embedded copy itself must be non-empty and recognizably widgets.
+        let embedded = DesktopCompositor::embedded_base_layer_css("widgets.css")
+            .expect("widgets.css must have an embedded in-binary fallback");
+        assert!(
+            embedded.contains("@layer widgets"),
+            "embedded widgets fallback must be the real widget toolkit CSS"
+        );
+
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let sheets_before = shell.stylesheet_count();
+
+        DesktopCompositor::load_base_layer_css(&mut shell, &missing, "widgets.css");
+
+        assert_eq!(
+            shell.stylesheet_count(),
+            sheets_before + 1,
+            "embedded widgets.css fallback must load even when the on-disk asset \
+             is missing so widget styling works in the in-binary path"
+        );
     }
 
     /// A missing `components/` directory is a benign no-op: the monolithic +
