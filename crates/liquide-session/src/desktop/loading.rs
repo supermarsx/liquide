@@ -52,21 +52,28 @@ mod tests {
 
     /// The loading scene must be produced by the DOM/CSS mini-pipeline, not the
     /// old hardcoded primitives. A pipeline-produced scene emits MANY paint
-    /// nodes (panel, accent, title, subtitle, progress track + fill, status,
-    /// plus the full-viewport backdrop) parented under a Root. If this reverts
-    /// to a single hardcoded fill — or the pipeline fails to emit the template
-    /// structure — this fails.
+    /// nodes (backdrop, watermark title, status label, progress track + fill,
+    /// subtitle) parented under a Root. If this reverts to a single hardcoded
+    /// fill — or the pipeline fails to emit the template structure — this fails.
+    ///
+    /// The redesign is a minimal "game loading" layout: a deep-blue
+    /// full-viewport backdrop with the ACTIVE status + progress group tucked
+    /// into the BOTTOM-LEFT corner via `position: fixed; left; bottom`. This
+    /// test also pins the bottom-left placement so a regression that re-centers
+    /// the group (or hardcodes its geometry) is caught.
     #[test]
     fn loading_scene_is_built_from_dom_css_pipeline() {
-        let scene = loading_pipeline::build_loading_scene_nodes(1280, 800);
+        const W: u32 = 1280;
+        const H: u32 = 800;
+        let scene = loading_pipeline::build_loading_scene_nodes(W, H);
 
         assert!(
             matches!(scene.kind, SceneNodeKind::Root),
             "loading scene root must be a Root node"
         );
 
-        // The template has 7 styled elements (screen, panel, accent, title,
-        // subtitle, progress, fill, status) + text runs; a real pipeline run
+        // The template has several styled elements (screen, title, panel,
+        // status, progress, fill, subtitle) + text runs; a real pipeline run
         // emits a background fill for each painted box plus text glyphs. Far
         // more than the 0–1 nodes a stub/blank scene would have.
         let count = paint_node_count(&scene);
@@ -87,10 +94,33 @@ mod tests {
             "expected a full-viewport backdrop node at ~(0,0,1280,800) from \
              loading-screen CSS; bounds were {bounds:?}"
         );
+
+        // The active loader group is `position: fixed; left: 40; bottom: 40`
+        // with a 320×44 panel, so the engine resolves its origin to the
+        // bottom-left: x ≈ 40, panel top ≈ H - 40 - 44 = 716. The slim
+        // progress fill (width 112, height 4) must land inside that lower-left
+        // band — NOT centered. This fails if the group is re-centered or its
+        // coordinates are hardcoded instead of CSS-driven.
+        let panel_top = H as f32 - 40.0 - 44.0; // 716
+        let has_bottom_left_fill = bounds.iter().any(|(x, y, w, h)| {
+            (*w - 112.0).abs() < 1.0
+                && (*h - 4.0).abs() < 1.0
+                && *x >= 39.0
+                && *x <= 60.0
+                && *y >= panel_top
+                && *y <= H as f32 - 40.0
+        });
+        assert!(
+            has_bottom_left_fill,
+            "expected the 112×4 progress fill in the bottom-left band \
+             (x≈40, y in [{panel_top}, {}]) from `position: fixed; left/bottom` \
+             CSS — is the loader group still bottom-left & CSS-driven? bounds were {bounds:?}",
+            H as f32 - 40.0
+        );
     }
 
     /// TOOTH: a CSS change must move the rendered loading screen. We render the
-    /// progress fill at its real CSS width (140), then render again with the
+    /// progress fill at its real CSS width (112), then render again with the
     /// fill width doubled in the stylesheet, and assert a node's width tracked
     /// the CSS edit. This fails if the scene is NOT actually driven by the CSS
     /// (e.g. if someone re-hardcodes the geometry while leaving the asset).
@@ -126,8 +156,8 @@ mod tests {
 
         // Double the progress-fill width in the stylesheet.
         let widened = LOADING_CSS.replace(
-            "loading-progress-fill {\n  display: flex;\n  width: 140;",
-            "loading-progress-fill {\n  display: flex;\n  width: 280;",
+            "loading-progress-fill {\n  display: flex;\n  width: 112;",
+            "loading-progress-fill {\n  display: flex;\n  width: 224;",
         );
         assert_ne!(
             widened, LOADING_CSS,
@@ -136,11 +166,11 @@ mod tests {
         );
         let changed = widths_for_css(&widened);
 
-        // Some node must now report the new 280 width that did NOT exist before.
-        let had_280_before = baseline.iter().any(|w| (*w - 280.0).abs() < 0.5);
-        let has_280_after = changed.iter().any(|w| (*w - 280.0).abs() < 0.5);
+        // Some node must now report the new 224 width that did NOT exist before.
+        let had_224_before = baseline.iter().any(|w| (*w - 224.0).abs() < 0.5);
+        let has_224_after = changed.iter().any(|w| (*w - 224.0).abs() < 0.5);
         assert!(
-            !had_280_before && has_280_after,
+            !had_224_before && has_224_after,
             "a CSS width edit must move the emitted scene (CSS-driven proof). \
              before={baseline:?} after={changed:?}"
         );

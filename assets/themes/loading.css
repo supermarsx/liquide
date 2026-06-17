@@ -9,15 +9,24 @@
    no dependence on any other stylesheet.
 
    Keep this deterministic and cheap — it gates startup latency. Layout is
-   simple block/flex; colors are literal so a one-shot restyle + layout +
-   paint is all the engine has to do.
+   simple block/flex/fixed; colors are literal so a one-shot restyle +
+   layout + paint is all the engine has to do.
 
-   Migrated from the old imperative `build_loading_scene` (hardcoded
-   Rect::new / Color::new). The element vocabulary lives in loading.html.
+   DESIGN — minimal "game loading screen":
+     • a deep-blue full-viewport backdrop (subtle vertical gradient);
+     • a faint, oversized word-mark drifting in the upper area;
+     • the ACTIVE loader group (small status label + a slim progress bar)
+       tucked into the BOTTOM-LEFT corner with a comfortable margin.
+
+   Bottom-left placement is done by the layout engine's positioned pass:
+   `loading-panel` is `position: fixed` with `left` + `bottom` offsets, so
+   the engine resolves its origin against the viewport
+   (x = left, y = viewport_h - bottom - panel_height). NO hardcoded scene
+   primitives — the geometry below drives the emitted nodes.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Full-screen dark backdrop with a subtle blue tint. This is the
-   full-viewport fill (matches the old Color::new(12,16,24,255)). */
+/* Full-viewport deep-blue backdrop with a subtle top→bottom gradient.
+   This is the first-frame fill; it replaces the old flat dark color. */
 loading-screen {
   display: flex;
   position: fixed;
@@ -25,81 +34,83 @@ loading-screen {
   left: 0;
   width: 100%;
   height: 100%;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: rgb(12, 16, 24);
+  background: linear-gradient(180deg, rgb(13, 28, 58) 0%, rgb(7, 16, 36) 100%);
 }
 
-/* Centered glass-style panel (old Color::new(24,28,40,230), 480×200). */
-loading-panel {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 480;
-  height: 200;
-  border-radius: 12;
-  border-width: 1;
-  border-style: solid;
-  border-color: rgba(60, 140, 240, 0.25);
-  background: rgba(24, 28, 40, 0.90);
-}
-
-/* Top accent strip (old vibrant blue bar, 3px). */
-loading-accent {
-  display: flex;
-  width: 480;
-  height: 3;
-  background: rgb(60, 140, 240);
-}
-
-/* "LIQUIDE" branding word mark. */
+/* Faint oversized word-mark — decorative only, sits high-left, low contrast
+   so it reads as a watermark behind the active loader, not a headline. */
 loading-title {
   display: flex;
-  height: 40;
-  margin-top: 24;
-  font-size: 30;
+  position: fixed;
+  top: 56;
+  left: 48;
+  height: 64;
+  font-size: 56;
   font-weight: 700;
-  letter-spacing: 6;
-  color: rgb(80, 160, 250);
+  letter-spacing: 10;
+  color: rgba(120, 165, 235, 0.16);
 }
 
-/* Subtitle / tagline. */
-loading-subtitle {
+/* ── BOTTOM-LEFT active loader group ──────────────────────────────────
+   Fixed to the lower-left corner, 40px in from the left and bottom edges.
+   Holds the status label stacked above the slim progress bar. */
+loading-panel {
   display: flex;
-  height: 18;
-  margin-top: 6;
-  font-size: 13;
-  color: rgba(180, 190, 210, 0.65);
+  position: fixed;
+  left: 40;
+  bottom: 40;
+  width: 320;
+  height: 44;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0);
 }
 
-/* Progress bar track (old dark inset, 400×6). */
-loading-progress {
-  display: flex;
-  width: 400;
-  height: 6;
-  margin-top: 28;
-  border-radius: 3;
-  background: rgba(10, 14, 22, 0.80);
-}
-
-/* Progress bar fill — deterministic 35% (matches old static value so the
-   first frame is stable and golden-comparable). A CSS width change here
-   MUST move the fill in the emitted scene; that is the migration tooth. */
-loading-progress-fill {
-  display: flex;
-  width: 140;
-  height: 6;
-  border-radius: 3;
-  background: rgb(60, 150, 255);
-}
-
-/* Status line below the bar. */
+/* Small status / title label above the bar. */
 loading-status {
   display: flex;
+  height: 16;
+  font-size: 13;
+  font-weight: 600;
+  letter-spacing: 1;
+  color: rgba(214, 226, 246, 0.92);
+}
+
+/* Progress bar track — slim inset, full group width. */
+loading-progress {
+  display: flex;
+  width: 320;
+  height: 4;
+  margin-top: 12;
+  border-radius: 2;
+  background: rgba(150, 175, 220, 0.18);
+}
+
+/* Progress bar fill — deterministic 35% (≈112 of 320) so the first frame
+   is stable and golden-comparable. A CSS width change here MUST move the
+   fill in the emitted scene; that is the migration tooth. */
+loading-progress-fill {
+  display: flex;
+  width: 112;
+  height: 4;
+  border-radius: 2;
+  background: rgb(96, 165, 255);
+}
+
+/* Subtitle / tagline — small, muted, beneath the bar. */
+loading-subtitle {
+  display: flex;
   height: 14;
-  margin-top: 14;
-  font-size: 12;
-  color: rgba(120, 130, 150, 0.70);
+  margin-top: 10;
+  font-size: 11;
+  letter-spacing: 1;
+  color: rgba(150, 170, 205, 0.55);
+}
+
+/* Accent element retired from the layout (kept zero-sized so the template
+   element, if present, contributes nothing). The active accent is now the
+   blue progress fill. */
+loading-accent {
+  display: flex;
+  width: 0;
+  height: 0;
 }

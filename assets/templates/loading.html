@@ -6,19 +6,22 @@
   loading_pipeline.rs). Styled exclusively by assets/themes/loading.css —
   this template carries NO inline styles and NO shell-theme dependency.
 
-  Migrated from the old imperative build_loading_scene (Rect/Color
-  literals). Element vocabulary: loading-screen > loading-panel >
-  { loading-accent, loading-title, loading-subtitle,
-    loading-progress > loading-progress-fill, loading-status }.
+  Minimal "game loading screen" composition:
+    - loading-screen  : deep-blue full-viewport backdrop.
+    - loading-title   : faint oversized word-mark watermark (upper-left).
+    - loading-panel   : the ACTIVE loader group, fixed bottom-left, holding
+        loading-status (small label) > loading-progress >
+        loading-progress-fill, with loading-subtitle beneath.
+  Element vocabulary (unchanged) is mapped to the new layout by loading.css.
 -->
 <loading-screen id="loading-screen">
+  <loading-title id="loading-title">LIQUIDE</loading-title>
   <loading-panel id="loading-panel">
     <loading-accent id="loading-accent"></loading-accent>
-    <loading-title id="loading-title">LIQUIDE</loading-title>
-    <loading-subtitle id="loading-subtitle">Liquid Desktop Environment</loading-subtitle>
+    <loading-status id="loading-status">Starting up...</loading-status>
     <loading-progress id="loading-progress">
       <loading-progress-fill id="loading-progress-fill"></loading-progress-fill>
     </loading-progress>
-    <loading-status id="loading-status">Starting up...</loading-status>
+    <loading-subtitle id="loading-subtitle">Liquid Desktop Environment</loading-subtitle>
   </loading-panel>
 </loading-screen>
