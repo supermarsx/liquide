@@ -187,13 +187,40 @@ pub trait AppContentProvider {
 
 /// The object-safe seam the shell holds per window: `Box<dyn AppView>`.
 ///
-/// It is the union of input routing and content provision. Both halves are
-/// required so the shell can (a) forward typed text/keys into the model and
-/// (b) repaint the window from the resulting model state.
+/// It is the union of input routing, content provision, and the optional
+/// widget-UI seam. The text content path and the widget path coexist: the shell
+/// prefers a [`crate::AppWidgetModel`] when [`AppView::widget_model`] returns
+/// `Some`, and otherwise renders the [`AppContentView`] text path.
+///
+/// The widget-seam methods ([`widget_model`](AppView::widget_model) /
+/// [`apply_action`](AppView::apply_action)) are **defaulted** (model `None`,
+/// `apply_action` `false`), so terminal and un-migrated apps keep compiling and
+/// keep the text path with **no** changes. An app *opts in* to the widget UI by
+/// overriding `widget_model` (and `apply_action`); apps that prefer to keep the
+/// widget logic in a separate impl can implement [`crate::AppWidgetProvider`]
+/// and forward to it from these methods.
 pub trait AppView: AppTextInput + AppContentProvider + Send {
     /// A stable reverse-DNS identifier of the backing app (for diagnostics /
     /// the shell's per-`app_id` styling fallbacks).
     fn app_id(&self) -> &str;
+
+    /// The current widget UI, or `None` to fall back to the text content path.
+    ///
+    /// Defaults to `None` (no widget UI) so un-migrated apps keep the text path.
+    /// See [`crate::AppWidgetProvider::widget_model`].
+    fn widget_model(&self) -> Option<crate::AppWidgetModel> {
+        None
+    }
+
+    /// Apply a host-delivered [`crate::AppWidgetAction`] to the model.
+    ///
+    /// Returns `true` if the model changed (and the window should be redrawn).
+    /// Defaults to a no-op returning `false`. See
+    /// [`crate::AppWidgetProvider::apply_action`].
+    fn apply_action(&mut self, action: &crate::AppWidgetAction) -> bool {
+        let _ = action;
+        false
+    }
 
     /// Advance the app's asynchronous state by one frame.
     ///

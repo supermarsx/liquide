@@ -3,6 +3,7 @@
 use crate::app_view::{
     AppContentProvider, AppContentView, AppKey, AppTextInput, AppView, ContentKind, ContentRow,
 };
+use crate::app_widget::AppWidgetProvider;
 
 /// A tiny model implementing the full seam, used to prove object-safety and the
 /// routing contract independent of any real app crate.
@@ -36,6 +37,10 @@ impl AppContentProvider for StubModel {
         v
     }
 }
+
+// An un-migrated app: it satisfies the widget seam purely through the default
+// methods (model `None`, `apply_action` `false`) and keeps the text path.
+impl AppWidgetProvider for StubModel {}
 
 impl AppView for StubModel {
     fn app_id(&self) -> &str {
@@ -72,6 +77,18 @@ fn appkey_name_maps_to_str_protocol() {
     assert_eq!(AppKey::Enter.name(), "Enter");
     assert_eq!(AppKey::Left.name(), "ArrowLeft");
     assert_eq!(AppKey::Named("F5".into()).name(), "F5");
+}
+
+#[test]
+fn unmigrated_app_view_keeps_text_path_and_has_no_widget_model() {
+    use crate::app_widget::AppWidgetAction;
+    let mut view: Box<dyn AppView> = Box::new(StubModel::default());
+    // Widget seam reachable through the trait object, defaults to no model.
+    assert!(view.widget_model().is_none());
+    assert!(!view.apply_action(&AppWidgetAction::new("x", "click", "")));
+    // Text path still works.
+    assert!(view.handle_text("hi"));
+    assert_eq!(view.content_view(80, 24).rows[0].text, "hi");
 }
 
 #[test]

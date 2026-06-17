@@ -2,6 +2,7 @@
 //! MIME type handling, icon themes, notifications, and system tray abstractions.
 
 pub mod app_view;
+pub mod app_widget;
 pub mod desktop_entry;
 pub mod icon;
 pub mod mime;
@@ -15,6 +16,10 @@ mod tests;
 pub use app_view::{
     AppContentProvider, AppContentView, AppKey, AppTextInput, AppView, ContentKind, ContentRow,
     ContentSpan,
+};
+pub use app_widget::{
+    AccordionSection, AppWidget, AppWidgetAction, AppWidgetModel, AppWidgetProvider, ButtonKind,
+    SelectionMode, SortDirection, Tab, TableColumn, TableSort, TreeNode, WidgetOption,
 };
 pub use desktop_entry::{DesktopAction, DesktopEntry, DesktopEntryType};
 pub use icon::{IconContext, IconDirectory, IconLookup, IconMatch, IconTheme, IconType};
