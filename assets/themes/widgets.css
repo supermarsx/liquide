@@ -1,0 +1,103 @@
+/* ===================================================
+   LiquiDE Widget Toolkit — base + token layer
+   (t98 P7 / S0 shared infrastructure)
+
+   This is the @layer the reusable CSS widgets (<lq-*>) bottom out in. It
+   defines:
+     1. element resets for the widget custom elements, and
+     2. the WIDGET TOKEN CONTRACT: a small set of --widget-* / per-widget vars
+        that resolve to the SEMANTIC tokens declared in variables.css
+        (--accent-color, --text-primary, --bg-*, --border-*, --hover-bg,
+        --active-bg, --selection-bg, ...).
+
+   COMPOSITION: every var() reference carries an explicit fallback, so a widget
+   renders sensibly even when loaded ALONE (the S0 gallery harness loads only
+   this layer). When composed in the real shell, the load order is
+       variables.css -> components.css -> widgets.css -> {theme}.css -> custom.css
+   so the 4 existing themes (liquid_glass / night / midday / sunset) restyle the
+   whole toolkit for free by overriding the semantic tokens, with theme + user
+   overrides winning via @layer order.
+
+   NO widget families are defined here yet — only the shared base/token layer.
+   Group A-D widgets append their own @layer widgets sections.
+   =================================================== */
+
+@layer widgets;
+
+@layer widgets {
+
+  /* ── Widget token contract ──────────────────────────────────
+     Widget-scoped vars with semantic fallbacks. Widget CSS references only
+     these (var(--widget-*)) so a theme can retint either the global semantic
+     token OR the widget var. Each falls back to a literal so the gallery (which
+     loads no variables.css) still paints. */
+  :root {
+    --widget-bg:            var(--bg-tertiary,    #27272a);
+    --widget-bg-hover:      var(--hover-bg,       rgba(255, 255, 255, 0.06));
+    /* A SOLID hover surface (vs the translucent overlay above) so a hover
+       restyle is unambiguously observable over any backdrop. */
+    --widget-bg-hover-solid: var(--bg-elevated,   #3f3f46);
+    --widget-bg-active:     var(--active-bg,      rgba(255, 255, 255, 0.10));
+    --widget-fg:            var(--text-primary,   rgba(250, 250, 250, 0.95));
+    --widget-fg-disabled:   var(--text-disabled,  rgba(113, 113, 122, 0.48));
+    --widget-border:        var(--border-default, rgba(255, 255, 255, 0.10));
+    --widget-border-strong: var(--border-strong,  rgba(255, 255, 255, 0.18));
+    --widget-accent:        var(--accent-color,   #3b82f6);
+    --widget-accent-hover:  var(--accent-hover,   #60a5fa);
+    --widget-accent-active: var(--accent-active,  #2563eb);
+    --widget-selection:     var(--selection-bg,   rgba(59, 130, 246, 0.30));
+    --widget-radius:        6;
+    --widget-focus-ring:    var(--accent-color,   #3b82f6);
+  }
+
+  /* ── Custom-element resets ──────────────────────────────────
+     The <lq-*> custom elements are unknown to the engine's default UA rules, so
+     give them a predictable box model up front. Individual widgets refine. */
+  lq-gallery,
+  lq-box,
+  lq-button,
+  lq-label,
+  lq-link,
+  lq-input,
+  lq-checkbox,
+  lq-radio,
+  lq-switch,
+  lq-slider,
+  lq-panel,
+  lq-card,
+  lq-list,
+  lq-list-item,
+  lq-table,
+  lq-tree,
+  lq-menu {
+    display: block;
+    box-sizing: border-box;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+
+  /* ── Reference widget (S0 infra validation, NOT a Group-A widget) ──
+     Proves: a styled <lq-box> renders a paint box; :hover/:active restyle it;
+     a click on its CSS box fires an action (the action is behavior-side, this
+     just makes the interactive states visually distinct so a pixel test can
+     observe the restyle). Geometry is CSS-driven (the box size lives here, NOT
+     in Rust), so the hit-test reads it from layout. */
+  lq-box {
+    width: 120px;
+    height: 40px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    padding: 8px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+
+  lq-box:hover {
+    background-color: var(--widget-bg-hover-solid, #3a3a40);
+    border-color: var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+  }
+
+  lq-box:active {
+    background-color: var(--widget-accent, #3b82f6);
+    border-color: var(--widget-accent-active, #2563eb);
+  }
+}

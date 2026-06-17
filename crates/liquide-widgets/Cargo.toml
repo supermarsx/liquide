@@ -1,0 +1,33 @@
+[package]
+name = "liquide-widgets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Reusable CSS-driven, DOM-rendered, interactive widget toolkit (Component/TemplateNode pattern + WidgetHost interaction layer)"
+
+[lib]
+name = "liquide_widgets"
+path = "src/lib.rs"
+
+[dependencies]
+# The DOM the widgets emit into (Document / NodeId / PseudoStateFlags).
+liquide-dom.workspace = true
+# The proven authoring + reconciliation substrate we GENERALIZE — Component,
+# TemplateNode (fluent DOM builder), TemplateRenderer (keyed reconciliation +
+# pseudo-state patching). Re-exported so widget authors use ONE path.
+liquide-components.workspace = true
+# EventDispatcher + DomEvent/DomEventKind + HitTestEngine — the interaction layer
+# WidgetHost plugs into and the layout tree LayoutQuery reads geometry from.
+liquide-hit-test.workspace = true
+# Geometry types (Rect/Point) for LayoutQuery results.
+liquide-layout.workspace = true
+
+[dev-dependencies]
+# Real style -> layout -> paint pipeline for the no-fake-green gallery harness
+# (mirrors liquide-session/src/desktop/loading_pipeline.rs).
+liquide-shell.workspace = true
+liquide-style-engine.workspace = true
+# Rasterize the produced scene to real pixels so interaction effects (e.g. a
+# :hover restyle) can be proven against the framebuffer, not just the DOM.
+liquide-compositor.workspace = true
+liquide-renderer-cpu.workspace = true

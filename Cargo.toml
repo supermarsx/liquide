@@ -136,6 +136,9 @@ members = [
     # Shell components (templates)
     "crates/liquide-components",
 
+    # CSS-driven widget toolkit (DOM+CSS widgets via the Component pattern)
+    "crates/liquide-widgets",
+
     # Icon database
     "crates/liquide-icons",
 
@@ -460,6 +463,7 @@ liquide-paint = { path = "crates/liquide-paint" }
 liquide-hit-test = { path = "crates/liquide-hit-test" }
 liquide-region = { path = "crates/liquide-region" }
 liquide-components = { path = "crates/liquide-components" }
+liquide-widgets = { path = "crates/liquide-widgets" }
 liquide-icons = { path = "crates/liquide-icons" }
 liquide-devtools = { path = "crates/liquide-devtools" }
 liquide-simd = { path = "crates/liquide-simd" }

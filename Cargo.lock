@@ -3892,6 +3892,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-widgets"
+version = "0.1.0"
+dependencies = [
+ "liquide-components",
+ "liquide-compositor",
+ "liquide-dom",
+ "liquide-hit-test",
+ "liquide-layout",
+ "liquide-renderer-cpu",
+ "liquide-shell",
+ "liquide-style-engine",
+]
+
+[[package]]
 name = "liquide-window-class"
 version = "0.1.0"
 
