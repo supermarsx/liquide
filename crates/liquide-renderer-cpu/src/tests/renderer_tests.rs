@@ -1883,3 +1883,283 @@ fn glass_tint_respects_corner_radius() {
         center
     );
 }
+
+// ---------------------------------------------------------------------------
+// t112-b2: Decoration scene-kind reads per-button rects + frame colors from CSS
+// ---------------------------------------------------------------------------
+//
+// These tests pin the painter to the CSS-supplied per-button rects
+// (DecorationLayout::button_rects) and CSS-supplied frame colors
+// (DecorationLayout::frame_colors). They are written to FAIL if the painter
+// reverts to the legacy fixed-stride button layout or to the ShellTheme-sourced
+// background / border_color / title_color node fields.
+
+use liquide_compositor::scene::{
+    DecorationButtonRects, DecorationButtons, DecorationColors, DecorationFrameColors,
+    DecorationLayout,
+};
+
+/// Build + render a Decoration node into a fresh framebuffer with the whole
+/// surface marked damaged, so the painter touches every covered pixel.
+#[allow(clippy::too_many_arguments)]
+fn render_decoration(
+    bounds: Rect,
+    layout: DecorationLayout,
+    colors: DecorationColors,
+    state: DecorationButtons,
+    fb_w: u32,
+    fb_h: u32,
+    node_bg: Color,
+    node_border: Color,
+    node_title: Color,
+) -> FrameBuffer {
+    let mut renderer = SoftwareRenderer::new();
+    let mut fb = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+    let tile = 16u32;
+    let damage = DamageSet::full(
+        tile,
+        fb_w.div_ceil(tile),
+        fb_h.div_ceil(tile),
+        DamageClass::UiPrimitive,
+    );
+    let node = FlatNode {
+        id: 30,
+        kind: SceneNodeKind::Decoration {
+            title: Some("T".to_string()),
+            title_color: node_title,
+            background: node_bg,
+            border_color: node_border,
+            border_width: 0.0,
+            corner_radius: 0.0,
+            button_state: state,
+            button_colors: colors,
+            button_layout: layout,
+        }
+        .into(),
+        absolute_bounds: bounds,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+    renderer.render(&[node], &mut fb, &damage).expect("render");
+    fb
+}
+
+/// Only the minimize button visible, with a fully-opaque distinctive fill, so we
+/// can locate the painted button by its color regardless of icon/glyph noise.
+fn only_minimize(min_bg: Color) -> (DecorationButtons, DecorationColors) {
+    let state = DecorationButtons {
+        close: false,
+        maximize: false,
+        minimize: true,
+        always_on_top: false,
+        ..DecorationButtons::default()
+    };
+    let colors = DecorationColors {
+        minimize_bg: min_bg,
+        // icon transparent so it does not contaminate the bg sampling
+        minimize_icon: Color::new(0, 0, 0, 0),
+        ..DecorationColors::default()
+    };
+    (state, colors)
+}
+
+#[test]
+fn decoration_paints_button_at_its_css_rect_not_fixed_stride() {
+    // Wide title bar; the CSS box for the minimize button is placed on the LEFT,
+    // far from where the fixed-stride model (right edge minus 3*btn_w) would put
+    // it. If the painter honors the per-button rect, the minimize fill lands at
+    // the CSS box; if it reverts to fixed stride, it lands on the right.
+    let bounds = Rect::new(0.0, 0.0, 400.0, 32.0);
+    let min_bg = Color::new(10, 200, 30, 255); // distinctive opaque green
+
+    // CSS-laid-out box on the LEFT third of the title bar.
+    let css_box = Rect::new(40.0, 6.0, 28.0, 20.0);
+    let rects = DecorationButtonRects {
+        minimize: Some(css_box),
+        ..DecorationButtonRects::default()
+    };
+    let layout = DecorationLayout {
+        title_bar_height: 32.0,
+        button_width: 28.0,
+        button_height: 20.0,
+        button_right_margin: 4.0,
+        button_corner_radius: 0.0,
+        button_rects: rects,
+        frame_colors: None,
+    };
+    let (state, colors) = only_minimize(min_bg);
+
+    let fb = render_decoration(
+        bounds,
+        layout,
+        colors,
+        state,
+        400,
+        32,
+        Color::new(0, 0, 0, 255),
+        Color::new(0, 0, 0, 0),
+        Color::new(0, 0, 0, 0),
+    );
+
+    // Center of the CSS box must be the minimize fill.
+    let css_cx = (css_box.x + css_box.width / 2.0) as u32;
+    let css_cy = (css_box.y + css_box.height / 2.0) as u32;
+    let at_css = fb.get_pixel(css_cx, css_cy);
+    assert!(
+        at_css.g > 150 && at_css.r < 80,
+        "minimize button must paint at its CSS rect center ({css_cx},{css_cy}); \
+         got {:?} (painter ignored per-button rect?)",
+        at_css
+    );
+
+    // The fixed-stride location (right edge - 3*btn_w - margin) must NOT carry
+    // the minimize fill -- it should be the plain title-bar background.
+    let stride_x = (bounds.width - 28.0 * 3.0 - 4.0 + 14.0) as u32; // center of stride box
+    let stride_y = css_cy;
+    let at_stride = fb.get_pixel(stride_x, stride_y);
+    assert!(
+        at_stride.g < 120,
+        "minimize button must NOT paint at the fixed-stride location \
+         ({stride_x},{stride_y}); got {:?} (painter reverted to fixed stride)",
+        at_stride
+    );
+}
+
+#[test]
+fn decoration_without_button_rects_uses_fixed_stride() {
+    // No per-button rects supplied -> the painter must keep the legacy
+    // fixed-stride behavior (back-compat for first frame / themes without boxes).
+    let bounds = Rect::new(0.0, 0.0, 400.0, 32.0);
+    let min_bg = Color::new(10, 200, 30, 255);
+    let layout = DecorationLayout {
+        title_bar_height: 32.0,
+        button_width: 28.0,
+        button_height: 20.0,
+        button_right_margin: 4.0,
+        button_corner_radius: 0.0,
+        button_rects: DecorationButtonRects::default(), // all None
+        frame_colors: None,
+    };
+    let (state, colors) = only_minimize(min_bg);
+
+    let fb = render_decoration(
+        bounds,
+        layout,
+        colors,
+        state,
+        400,
+        32,
+        Color::new(0, 0, 0, 255),
+        Color::new(0, 0, 0, 0),
+        Color::new(0, 0, 0, 0),
+    );
+
+    // Minimize at fixed stride (3rd from right).
+    let stride_x = (bounds.width - 28.0 * 3.0 - 4.0 + 14.0) as u32;
+    let stride_y = 16u32;
+    let at_stride = fb.get_pixel(stride_x, stride_y);
+    assert!(
+        at_stride.g > 150 && at_stride.r < 80,
+        "without per-button rects the minimize button must use fixed stride; \
+         got {:?} at ({stride_x},{stride_y})",
+        at_stride
+    );
+}
+
+#[test]
+fn decoration_uses_css_frame_colors_not_node_fields() {
+    // frame_colors present -> title-bar background must come from CSS frame
+    // colors, NOT the legacy (ShellTheme-sourced) background node field.
+    let bounds = Rect::new(0.0, 0.0, 120.0, 40.0);
+    let css_title_bar = Color::new(20, 40, 220, 255); // distinctive blue
+    let legacy_bg = Color::new(200, 30, 30, 255); // distinctive red (must NOT win)
+
+    let layout = DecorationLayout {
+        title_bar_height: 40.0,
+        button_width: 1.0,
+        button_height: 1.0,
+        button_right_margin: 0.0,
+        button_corner_radius: 0.0,
+        button_rects: DecorationButtonRects::default(),
+        frame_colors: Some(DecorationFrameColors {
+            title_bar_bg: css_title_bar,
+            border: Color::new(0, 0, 0, 0),
+            title_text: Color::new(0, 0, 0, 0),
+        }),
+    };
+    let state = DecorationButtons {
+        close: false,
+        maximize: false,
+        minimize: false,
+        always_on_top: false,
+        ..DecorationButtons::default()
+    };
+
+    let fb = render_decoration(
+        bounds,
+        layout,
+        DecorationColors::default(),
+        state,
+        120,
+        40,
+        legacy_bg, // node background -- must be overridden
+        Color::new(0, 0, 0, 0),
+        Color::new(0, 0, 0, 0),
+    );
+
+    let px = fb.get_pixel(60, 20);
+    assert!(
+        px.b > 150 && px.r < 80,
+        "title-bar must paint the CSS frame color (blue), got {:?} \
+         (painter used the legacy ShellTheme background field?)",
+        px
+    );
+}
+
+#[test]
+fn decoration_without_frame_colors_uses_node_background() {
+    // frame_colors absent -> the legacy node background field is used unchanged.
+    let bounds = Rect::new(0.0, 0.0, 120.0, 40.0);
+    let legacy_bg = Color::new(200, 30, 30, 255); // red
+
+    let layout = DecorationLayout {
+        title_bar_height: 40.0,
+        button_width: 1.0,
+        button_height: 1.0,
+        button_right_margin: 0.0,
+        button_corner_radius: 0.0,
+        button_rects: DecorationButtonRects::default(),
+        frame_colors: None,
+    };
+    let state = DecorationButtons {
+        close: false,
+        maximize: false,
+        minimize: false,
+        always_on_top: false,
+        ..DecorationButtons::default()
+    };
+
+    let fb = render_decoration(
+        bounds,
+        layout,
+        DecorationColors::default(),
+        state,
+        120,
+        40,
+        legacy_bg,
+        Color::new(0, 0, 0, 0),
+        Color::new(0, 0, 0, 0),
+    );
+
+    let px = fb.get_pixel(60, 20);
+    assert!(
+        px.r > 150 && px.b < 80,
+        "without frame_colors the legacy node background (red) must be used, \
+         got {:?}",
+        px
+    );
+}

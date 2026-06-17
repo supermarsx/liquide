@@ -27,13 +27,22 @@ impl SoftwareRenderer {
             button_layout,
         } = node.kind_ref()
         {
+            // CSS-resolved frame colors (titlebar bg / border / title text)
+            // override the legacy ShellTheme-sourced node fields when present
+            // (t112-b2 full-CSS frame colors). When absent, the legacy fields
+            // (`background` / `border_color` / `title_color`) are used unchanged.
+            let frame = button_layout.frame_colors;
+            let frame_title_bar_bg = frame.map(|f| f.title_bar_bg).unwrap_or(*background);
+            let frame_border = frame.map(|f| f.border).unwrap_or(*border_color);
+            let frame_title_text = frame.map(|f| f.title_text).unwrap_or(*title_color);
+
             // Check if this is a skeleton node (window being dragged)
             let is_skeleton = self.is_skeleton_node(node.id);
 
             if is_skeleton {
                 // Skeleton mode: Only render a simple border outline
                 if *border_width > 0.0 {
-                    let mut bc = *border_color;
+                    let mut bc = frame_border;
                     if opacity < 1.0 {
                         bc.a = (bc.a as f32 * opacity + 0.5) as u8;
                     }
@@ -52,7 +61,7 @@ impl SoftwareRenderer {
             } else {
                 // Normal mode: Full decoration with title bar, buttons, etc.
                 // Title bar background as a rounded rect (top corners only)
-                let mut bg = *background;
+                let mut bg = frame_title_bar_bg;
                 if opacity < 1.0 {
                     bg.a = (bg.a as f32 * opacity + 0.5) as u8;
                 }
@@ -67,7 +76,7 @@ impl SoftwareRenderer {
 
                 // Border stroke around the window bounds
                 if *border_width > 0.0 {
-                    let mut bc = *border_color;
+                    let mut bc = frame_border;
                     if opacity < 1.0 {
                         bc.a = (bc.a as f32 * opacity + 0.5) as u8;
                     }
@@ -88,16 +97,31 @@ impl SoftwareRenderer {
                 let btn_h = button_layout.button_height;
                 let btn_y = bounds.y + (title_bar_h - btn_h) / 2.0;
                 let btn_right_margin = button_layout.button_right_margin;
+                let rects = button_layout.button_rects;
+
+                // Resolve a button's paint rect: prefer the per-button CSS box
+                // (exact paint↔hit parity, t112-b2) when present, otherwise fall
+                // back to the legacy fixed-stride model. `stride` is the index
+                // from the right edge used by the fallback (close=1, max=2, …).
+                let resolve_rect = |css: Option<Rect>, stride: f32| -> Rect {
+                    css.unwrap_or_else(|| {
+                        let x = bounds.x + bounds.width - btn_w * stride - btn_right_margin;
+                        Rect::new(x, btn_y, btn_w, btn_h)
+                    })
+                };
 
                 // Close button
                 if button_state.close {
-                    let close_x = bounds.x + bounds.width - btn_w - btn_right_margin;
+                    let close_bounds = resolve_rect(rects.close, 1.0);
+                    let close_x = close_bounds.x;
+                    let btn_y = close_bounds.y;
+                    let btn_w = close_bounds.width;
+                    let btn_h = close_bounds.height;
                     let close_bg = if button_state.close_hovered {
                         button_colors.close_bg_hover
                     } else {
                         button_colors.close_bg
                     };
-                    let close_bounds = Rect::new(close_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
                         close_bounds,
@@ -144,13 +168,16 @@ impl SoftwareRenderer {
 
                 // Maximize button
                 if button_state.maximize {
-                    let max_x = bounds.x + bounds.width - btn_w * 2.0 - btn_right_margin;
+                    let max_bounds = resolve_rect(rects.maximize, 2.0);
+                    let max_x = max_bounds.x;
+                    let btn_y = max_bounds.y;
+                    let btn_w = max_bounds.width;
+                    let btn_h = max_bounds.height;
                     let btn_bg = if button_state.maximize_hovered {
                         button_colors.maximize_bg_hover
                     } else {
                         button_colors.maximize_bg
                     };
-                    let max_bounds = Rect::new(max_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
                         max_bounds,
@@ -196,13 +223,16 @@ impl SoftwareRenderer {
 
                 // Minimize button
                 if button_state.minimize {
-                    let min_x = bounds.x + bounds.width - btn_w * 3.0 - btn_right_margin;
+                    let min_bounds = resolve_rect(rects.minimize, 3.0);
+                    let min_x = min_bounds.x;
+                    let btn_y = min_bounds.y;
+                    let btn_w = min_bounds.width;
+                    let btn_h = min_bounds.height;
                     let btn_bg = if button_state.minimize_hovered {
                         button_colors.minimize_bg_hover
                     } else {
                         button_colors.minimize_bg
                     };
-                    let min_bounds = Rect::new(min_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
                         min_bounds,
@@ -224,7 +254,11 @@ impl SoftwareRenderer {
 
                 // Always-on-top button
                 if button_state.always_on_top {
-                    let aot_x = bounds.x + bounds.width - btn_w * 4.0 - btn_right_margin;
+                    let aot_bounds = resolve_rect(rects.always_on_top, 4.0);
+                    let aot_x = aot_bounds.x;
+                    let btn_y = aot_bounds.y;
+                    let btn_w = aot_bounds.width;
+                    let btn_h = aot_bounds.height;
                     let btn_bg = if button_state.is_topmost {
                         if button_state.always_on_top_hovered {
                             button_colors.pin_bg_active_hover
@@ -236,7 +270,6 @@ impl SoftwareRenderer {
                     } else {
                         button_colors.pin_bg
                     };
-                    let aot_bounds = Rect::new(aot_x, btn_y, btn_w, btn_h);
                     rasterizer::fill_rounded_rect(
                         fb,
                         aot_bounds,
@@ -278,7 +311,7 @@ impl SoftwareRenderer {
                 // Title text (centered in title bar)
                 if let Some(title_text) = title {
                     if !title_text.is_empty() {
-                        let mut tc = *title_color;
+                        let mut tc = frame_title_text;
                         if opacity < 1.0 {
                             tc.a = (tc.a as f32 * opacity + 0.5) as u8;
                         }
