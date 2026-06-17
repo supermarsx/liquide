@@ -12,6 +12,43 @@ use crate::shell::Shell;
 use crate::shortcuts::ShellAction;
 use crate::window::{WindowFlags, WindowId};
 use liquide_compositor::geometry::Rect;
+use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
+use liquide_platform::event_loop::PlatformEvent;
+use liquide_platform::window_host::NativeWindowHandle;
+
+/// A real left-button press at `(x, y)`, the way the live input path delivers it.
+fn left_press(x: f32, y: f32) -> PlatformEvent {
+    PlatformEvent::MouseInput {
+        handle: NativeWindowHandle(0),
+        event: MouseEvent::Button {
+            button: MouseButton::Left,
+            state: ButtonState::Pressed,
+            x,
+            y,
+        },
+    }
+}
+
+/// A real pointer move to `(x, y)`.
+fn mouse_move(x: f32, y: f32) -> PlatformEvent {
+    PlatformEvent::MouseInput {
+        handle: NativeWindowHandle(0),
+        event: MouseEvent::Move { x, y },
+    }
+}
+
+/// A real right-button press at `(x, y)`.
+fn right_press(x: f32, y: f32) -> PlatformEvent {
+    PlatformEvent::MouseInput {
+        handle: NativeWindowHandle(0),
+        event: MouseEvent::Button {
+            button: MouseButton::Right,
+            state: ButtonState::Pressed,
+            x,
+            y,
+        },
+    }
+}
 
 /// Pin / unpin `id` as always-on-top through the *real* action path
 /// (`ToggleAlwaysOnTop` operates on the focused window), so the band-aware
@@ -451,5 +488,228 @@ fn always_on_top_band_does_not_disturb_overlay_stacking() {
     assert!(
         !scene.children.is_empty(),
         "scene with a pinned window must still build"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Live hit-test router unification (t93-e3 / t92 gap #3)
+//
+// The live click/right-click paths must route window picking through the SINGLE
+// canonical resolver (`window_at_point`, the WindowTree hit-test) rather than a
+// second, flat z-ordered scan that could diverge from it. These tests
+// REPRODUCE a state where the old flat `z_order` scan and the canonical tree
+// disagreed, then prove a real mouse-down picks the window the tree (and the
+// user, via focus) sees as topmost — i.e. exactly one hit-test path remains.
+// ---------------------------------------------------------------------------
+
+/// REPRODUCE THE DIVERGENCE between the canonical tree and the retired flat
+/// `z_order` scan, then prove the LIVE press resolves through the tree.
+///
+/// Setup: open A then B, then `raise_window(b)` so `z_order` is A=0, B=1. Now
+/// `set_focus(a)` — this brings A to the top of the canonical TREE
+/// (`bring_to_top`) but does NOT change `z_order`. The two former sources of
+/// truth now genuinely disagree at the overlap point:
+///   - canonical tree (`window_at_point`)            → A (tree-topmost), and
+///   - the retired flat scan over `visible_windows()` → B (B still has the
+///     higher `z_order`, so `.rev()` ranks it first).
+/// The unified live router uses the tree, so a real left press must focus A.
+/// With the old flat scan still live, the press would have focused B — the
+/// exact two-sources-of-truth divergence this gap retires.
+#[test]
+fn live_left_press_matches_tree_router_not_flat_z_scan() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+
+    // Give the windows distinct z_order: A=0, B=1.
+    shell.raise_window(b).unwrap();
+    assert!(shell.window(a).unwrap().z_order < shell.window(b).unwrap().z_order);
+
+    // Focus the background window A: tree-topmost becomes A, z_order untouched.
+    shell.set_focus(a).unwrap();
+
+    // The two former paths now DIVERGE at the overlap point.
+    let pt = liquide_compositor::geometry::Point::new(300.0, 300.0);
+    let tree_pick = shell.window_at_point(300.0, 300.0);
+    let flat_pick = {
+        // Faithful mirror of the RETIRED flat scan: topmost by z_order first.
+        let mut v: Vec<_> = shell.visible_windows();
+        v.sort_by_key(|w| w.z_order);
+        v.into_iter().rev().find(|w| w.bounds.contains(pt)).map(|w| w.id)
+    };
+    assert_eq!(tree_pick, Some(a), "canonical tree router picks freshly-focused A");
+    assert_eq!(
+        flat_pick,
+        Some(b),
+        "the retired flat z_order scan diverges and picks B — two sources of truth"
+    );
+    assert_ne!(
+        tree_pick, flat_pick,
+        "the divergence must be real for this test to have teeth"
+    );
+
+    // Drive a REAL left press at the overlap. The unified live router must focus
+    // the tree's pick (A), proving the live path no longer uses the flat scan.
+    shell.handle_platform_event(&left_press(300.0, 300.0));
+    assert_eq!(
+        shell.focus.focused(),
+        tree_pick,
+        "a live left press must focus exactly the window the canonical tree router picks"
+    );
+    assert_eq!(
+        shell.focus.focused(),
+        Some(a),
+        "the unified router focuses A (tree pick), NOT B (the retired flat-scan pick)"
+    );
+}
+
+/// AOT-over-normal composition on the LIVE click path (E1 + E3 compose). A
+/// click over the overlap of an always-on-top window and a normal one must
+/// focus the AOT window, because the unified router resolves through the tree,
+/// which E1's `restack_tree_band_order` keeps band-correct. Reproduces the gap:
+/// a normal window raised last would, under a naive scan, steal the click.
+#[test]
+fn live_left_press_over_aot_window_focuses_the_aot_window() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+
+    // Pin A always-on-top through the real action path, then raise the normal B.
+    toggle_always_on_top(&mut shell, a);
+    shell.raise_window(b).unwrap();
+
+    // The canonical router places AOT A on top at the overlap.
+    assert_eq!(shell.window_at_point(300.0, 300.0), Some(a));
+
+    // A real left press at the overlap must focus the AOT window A, not the
+    // freshly-raised normal B.
+    shell.handle_platform_event(&left_press(300.0, 300.0));
+    assert_eq!(
+        shell.focus.focused(),
+        Some(a),
+        "a click over an AOT window covering a normal one must focus the AOT window"
+    );
+}
+
+/// The off-edge resize-ring fallback survives unification: a press just OUTSIDE
+/// a window's exact bounds (within `resize_tolerance`) still picks that window
+/// so the resize affordance works. The canonical tree (exact bounds) misses
+/// such a point, so this exercises the fallback half of `pick_window_at`.
+#[test]
+fn live_press_in_resize_ring_just_outside_bounds_still_picks_window() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    // A resizable, decorated window away from screen edges.
+    let id = shell.open_window("A", Rect::new(400.0, 400.0, 300.0, 200.0));
+    if let Ok(w) = shell.window_mut(id) {
+        w.flags.set(WindowFlags::DECORATED);
+        w.flags.set(WindowFlags::RESIZABLE);
+    }
+    let rt = shell.decoration_style.resize_tolerance;
+    assert!(rt > 0.0, "resize tolerance must be positive for this test");
+
+    // A point just LEFT of the exact bounds — inside the resize ring, outside
+    // the tree's exact-bounds hit-test.
+    let x = 400.0 - rt / 2.0;
+    let y = 500.0;
+    assert_eq!(
+        shell.window_at_point(x, y),
+        None,
+        "the exact-bounds tree hit-test misses a point in the off-edge resize ring"
+    );
+    assert_eq!(
+        shell.pick_window_at(x, y),
+        Some(id),
+        "the unified picker's resize-ring fallback still picks the window off-edge"
+    );
+
+    // And a real press there focuses the window (so a resize grab can start).
+    shell.handle_platform_event(&left_press(x, y));
+    assert_eq!(
+        shell.focus.focused(),
+        Some(id),
+        "a press in the resize ring focuses the window for resize"
+    );
+}
+
+/// Invariant guard for the common case: with no overlap and no focus/z skew,
+/// the unified picker and a plain band-ordered flat scan agree. This pins the
+/// requirement that the two former paths produce identical results for the
+/// ordinary case (so unification is behavior-preserving there).
+#[test]
+fn unified_picker_agrees_with_flat_scan_for_non_overlapping_windows() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 200.0, 150.0));
+    let b = shell.open_window("B", Rect::new(700.0, 100.0, 200.0, 150.0));
+
+    for (x, y, expect) in [
+        (150.0_f32, 150.0_f32, Some(a)),
+        (750.0_f32, 150.0_f32, Some(b)),
+        (500.0_f32, 800.0_f32, None), // empty desktop
+    ] {
+        let unified = shell.pick_window_at(x, y);
+        let flat = shell
+            .visible_windows()
+            .into_iter()
+            .rev()
+            .find(|w| w.bounds.contains(liquide_compositor::geometry::Point::new(x, y)))
+            .map(|w| w.id);
+        assert_eq!(unified, flat, "unified vs flat disagree at ({x},{y})");
+        assert_eq!(unified, expect, "wrong window at ({x},{y})");
+    }
+}
+
+/// Hover button-highlight routes through the canonical router too: a window
+/// occluded at the cursor must not get a title-bar-button hover. Reproduces the
+/// old flat-scan bug where a lower window whose title bar sat under the cursor
+/// could be highlighted even though a higher window covered that exact point.
+#[test]
+fn hover_button_highlight_uses_tree_router_not_occluded_window() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    // A: decorated; its title bar occupies y in [300, 336), buttons on the right.
+    let a = shell.open_window("A", Rect::new(300.0, 300.0, 400.0, 100.0));
+    // B: topmost, covers A's right-side title-bar button region with its body.
+    let b = shell.open_window("B", Rect::new(620.0, 300.0, 300.0, 200.0));
+    assert!(shell.window(a).unwrap().flags.contains(WindowFlags::DECORATED));
+
+    // A point over A's title-bar button strip that B now covers (B is topmost).
+    let (hx, hy) = (690.0_f32, 316.0_f32);
+    assert_eq!(
+        shell.window_at_point(hx, hy),
+        Some(b),
+        "canonical router places B on top at the hover point"
+    );
+
+    shell.handle_platform_event(&mouse_move(hx, hy));
+    // The occluded window A must NOT receive a button hover.
+    assert!(
+        shell.hovered_button.map(|(wid, _)| wid) != Some(a),
+        "an occluded window must not get a title-bar-button hover ({:?})",
+        shell.hovered_button
+    );
+}
+
+/// Right-click window picking also routes through the canonical router: a
+/// right-press on a window's title bar opens the app menu for the window the
+/// tree picks (the topmost), not a different window a flat scan might choose.
+#[test]
+fn live_right_press_on_titlebar_uses_tree_router_for_app_menu() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 100.0, 400.0, 300.0));
+    if let Ok(w) = shell.window_mut(a) {
+        w.flags.set(WindowFlags::DECORATED);
+    }
+    if let Ok(w) = shell.window_mut(b) {
+        w.flags.set(WindowFlags::DECORATED);
+    }
+
+    // Both title bars are at y in [100, 100+tbh). At x=300 both A and B overlap;
+    // B is topmost (created last). The tree picks B.
+    assert_eq!(shell.window_at_point(300.0, 110.0), Some(b));
+    shell.handle_platform_event(&right_press(300.0, 110.0));
+    assert_eq!(
+        shell.app_menu_open.as_deref(),
+        Some(format!("window-{}", b.0).as_str()),
+        "right-click on the overlapping title bar opens the app menu for the tree-topmost window"
     );
 }

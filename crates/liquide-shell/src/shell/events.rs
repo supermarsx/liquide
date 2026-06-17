@@ -887,36 +887,39 @@ impl Shell {
             }
         }
 
-        // Decoration button hover detection
+        // Decoration button hover detection. Resolve the topmost window at the
+        // cursor through the SINGLE canonical router (t93-e3) so hover highlights
+        // the same window a click would pick — a button-hover on a window that is
+        // actually occluded at this point can no longer fire. Only that window's
+        // own title-bar decoration is then hit-tested.
         let prev_hover = self.hovered_button;
         self.hovered_button = None;
         let tbh = self.decoration_style.title_bar_height;
-        for window in self.visible_windows().into_iter().rev() {
-            if !window.flags.contains(WindowFlags::DECORATED) {
-                continue;
-            }
-            if y >= window.bounds.y
-                && y < window.bounds.y + tbh
-                && x >= window.bounds.x
-                && x < window.bounds.x + window.bounds.width
-            {
-                let client = Rect::new(
-                    window.bounds.x,
-                    window.bounds.y + tbh,
-                    window.bounds.width,
-                    (window.bounds.height - tbh).max(0.0),
-                );
-                let zone = hit_test_decoration(client, &self.decoration_style, x, y);
-                match zone {
-                    HitZone::CloseButton
-                    | HitZone::MaximizeButton
-                    | HitZone::MinimizeButton
-                    | HitZone::AlwaysOnTopButton => {
-                        self.hovered_button = Some((window.id, zone));
+        if let Some(wid) = self.window_at_point(x, y) {
+            if let Some(window) = self.windows.get(&wid) {
+                if window.flags.contains(WindowFlags::DECORATED)
+                    && y >= window.bounds.y
+                    && y < window.bounds.y + tbh
+                    && x >= window.bounds.x
+                    && x < window.bounds.x + window.bounds.width
+                {
+                    let client = Rect::new(
+                        window.bounds.x,
+                        window.bounds.y + tbh,
+                        window.bounds.width,
+                        (window.bounds.height - tbh).max(0.0),
+                    );
+                    let zone = hit_test_decoration(client, &self.decoration_style, x, y);
+                    match zone {
+                        HitZone::CloseButton
+                        | HitZone::MaximizeButton
+                        | HitZone::MinimizeButton
+                        | HitZone::AlwaysOnTopButton => {
+                            self.hovered_button = Some((window.id, zone));
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
-                break;
             }
         }
         if self.hovered_button != prev_hover {
@@ -1081,24 +1084,25 @@ impl Shell {
             self.cursor_shape = CursorShape::Pointer;
         } else if self.hovered_button.is_some() {
             self.cursor_shape = CursorShape::Pointer;
-        } else {
-            for window in self.visible_windows().into_iter().rev() {
-                if !window.flags.contains(WindowFlags::DECORATED) {
-                    continue;
-                }
-                let client = Rect::new(
-                    window.bounds.x,
-                    window.bounds.y + tbh,
-                    window.bounds.width,
-                    (window.bounds.height - tbh).max(0.0),
-                );
-                let zone = hit_test_decoration(client, &self.decoration_style, x, y);
-                match zone {
-                    HitZone::Outside => continue,
-                    HitZone::TitleBar | HitZone::Client => break,
-                    zone => {
-                        self.cursor_shape = Self::cursor_for_hit_zone(zone);
-                        break;
+        } else if let Some(wid) = self.pick_window_at(x, y) {
+            // Resolve the cursor shape from the SAME canonical window the click
+            // path would pick (t93-e3): `pick_window_at` resolves the topmost
+            // window including its off-edge resize ring, and we hit-test only
+            // that window's decoration — so the resize cursor and the resize
+            // grab always agree on which window is being targeted.
+            if let Some(window) = self.windows.get(&wid) {
+                if window.flags.contains(WindowFlags::DECORATED) {
+                    let client = Rect::new(
+                        window.bounds.x,
+                        window.bounds.y + tbh,
+                        window.bounds.width,
+                        (window.bounds.height - tbh).max(0.0),
+                    );
+                    match hit_test_decoration(client, &self.decoration_style, x, y) {
+                        HitZone::Outside | HitZone::TitleBar | HitZone::Client => {}
+                        zone => {
+                            self.cursor_shape = Self::cursor_for_hit_zone(zone);
+                        }
                     }
                 }
             }
@@ -1239,16 +1243,19 @@ impl Shell {
                 self.context_menu_pos = pt;
                 return Some(ShellAction::Redraw);
             }
+            // Resolve the topmost window under the cursor through the SINGLE
+            // canonical router (t93-e3) — same source of truth the left-click /
+            // hover paths use — then refine: a press on its title bar opens the
+            // app menu, a press elsewhere on it is consumed, and a press on no
+            // window opens the desktop context menu.
             let tbh = self.decoration_style.title_bar_height;
-            let titlebar_window = self
-                .visible_windows()
-                .into_iter()
-                .rev()
-                .find(|w| {
-                    let title_rect = Rect::new(w.bounds.x, w.bounds.y, w.bounds.width, tbh);
-                    title_rect.contains(pt) && w.flags.contains(WindowFlags::DECORATED)
+            let on_window = self.window_at_point(x, y);
+            let titlebar_window = on_window.filter(|wid| {
+                self.windows.get(wid).is_some_and(|w| {
+                    w.flags.contains(WindowFlags::DECORATED)
+                        && Rect::new(w.bounds.x, w.bounds.y, w.bounds.width, tbh).contains(pt)
                 })
-                .map(|w| w.id);
+            });
             if let Some(wid) = titlebar_window {
                 // Show the app menu (Minimize/Maximize/Close) instead of generic context menu
                 let win_id_str = format!("window-{}", wid.0);
@@ -1258,12 +1265,7 @@ impl Shell {
                 self.context_menu_hover_index = None;
                 return Some(ShellAction::Redraw);
             }
-            let on_window = self
-                .visible_windows()
-                .iter()
-                .rev()
-                .any(|w| w.bounds.contains(pt));
-            if !on_window {
+            if on_window.is_none() {
                 self.context_menu_visible = true;
                 self.context_menu_pos = pt;
                 return Some(ShellAction::Redraw);
@@ -1460,24 +1462,16 @@ impl Shell {
             return None;
         }
 
-        // Window click with decoration hit-testing.
-        // Use resize_tolerance (not border_width) so the expanded rect covers
-        // the full area where hit_test_decoration can return resize zones.
-        let mut clicked = None;
+        // Window click. Route through the SINGLE canonical window hit-test
+        // (`pick_window_at`, t93-e3): the tree-routed `window_at_point` resolves
+        // the topmost window honoring z-order + the always-on-top band +
+        // child-over-parent + visibility, and an off-edge resize-ring fallback
+        // (same band order as paint) widens the hit area by `resize_tolerance`
+        // so a grab just outside a window's frame still starts a resize. This
+        // retires the old flat z-scan that duplicated (and could diverge from)
+        // the canonical tree pick.
         let tbh = self.decoration_style.title_bar_height;
-        for window in self.visible_windows().into_iter().rev() {
-            let rt = self.decoration_style.resize_tolerance;
-            let expanded = Rect::new(
-                window.bounds.x - rt,
-                window.bounds.y - rt,
-                window.bounds.width + rt * 2.0,
-                window.bounds.height + rt * 2.0,
-            );
-            if expanded.contains(pt) {
-                clicked = Some(window.id);
-                break;
-            }
-        }
+        let clicked = self.pick_window_at(x, y);
 
         if let Some(wid) = clicked {
             let is_decorated = self

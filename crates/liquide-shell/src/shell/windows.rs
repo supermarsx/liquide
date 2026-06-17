@@ -243,6 +243,57 @@ impl Shell {
             .map(|w| w.id)
     }
 
+    /// Resolve the window picked by a live pointer press/hover at `(x, y)` —
+    /// the **single** window hit-test router for click/drag/resize-edge picking
+    /// (t93-e3 / t92 gap #3).
+    ///
+    /// This unifies what used to be two divergent sources of truth: the live
+    /// click/hover paths used to run their own flat top-down z-scan of
+    /// [`Self::visible_windows`], while [`Self::window_at_point`] (the canonical
+    /// [`WindowTree`](liquide_window_tree::WindowTree) hit-test) was exercised
+    /// only by tests. Those two scans could disagree — e.g. after a focus that
+    /// brings a window to the top of the tree without changing its `z_order`,
+    /// the tree picks the focused window while the flat `z_order` scan picks a
+    /// different one. We retire the flat scan and route every live pick through
+    /// the canonical tree here.
+    ///
+    /// Resolution order:
+    /// 1. The canonical [`Self::window_at_point`] (tree-routed: z-order +
+    ///    always-on-top band + child-over-parent aware, skips
+    ///    minimized/hidden/transparent windows). This is the authoritative pick
+    ///    for any point that lands on a window's real bounds or decoration.
+    /// 2. **Resize-ring fallback only:** the resize affordance extends
+    ///    `resize_tolerance` px *outside* a window's exact bounds, which the tree
+    ///    (exact-bounds) does not cover. When — and only when — the tree misses,
+    ///    we test the expanded rect so an off-frame resize grab still works. The
+    ///    fallback iterates in the SAME band-aware top-down order as paint
+    ///    ([`Self::visible_windows`] reversed), so it never re-introduces a
+    ///    divergent z-ordering: it merely widens the canonical pick's hit area
+    ///    at the very edge. The common in-bounds case never reaches it.
+    #[must_use]
+    pub(crate) fn pick_window_at(&self, x: f32, y: f32) -> Option<WindowId> {
+        // Canonical tree-routed pick first.
+        if let Some(id) = self.window_at_point(x, y) {
+            return Some(id);
+        }
+        // Off-edge resize-ring fallback (same band order as paint/hit-test).
+        let pt = liquide_compositor::geometry::Point::new(x, y);
+        let rt = self.decoration_style.resize_tolerance;
+        self.visible_windows()
+            .into_iter()
+            .rev()
+            .find(|w| {
+                Rect::new(
+                    w.bounds.x - rt,
+                    w.bounds.y - rt,
+                    w.bounds.width + rt * 2.0,
+                    w.bounds.height + rt * 2.0,
+                )
+                .contains(pt)
+            })
+            .map(|w| w.id)
+    }
+
     /// Advance all active window effects by one frame and return the per-window
     /// frames produced. Finished effects are dropped. No-op (empty) when no
     /// effect manager has been constructed yet.
