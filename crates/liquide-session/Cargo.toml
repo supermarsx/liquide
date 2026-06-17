@@ -32,6 +32,11 @@ liquide-renderer-cpu.workspace = true
 liquide-font-rasterizer.workspace = true
 liquide-encoder.workspace = true
 liquide-shell.workspace = true
+# t95-p3 (t86 full-CSS P3): the pre-shell loading-screen mini-pipeline parses an
+# embedded loading.html into a `liquide_dom::Document` and runs it through the
+# shell's `DesktopPipeline`. liquide-dom was previously a dev-dep only; the
+# loading mini-pipeline needs it in the main build.
+liquide-dom.workspace = true
 liquide-theme-css.workspace = true
 liquide-plugin-host.workspace = true
 liquide-input.workspace = true
@@ -74,6 +79,5 @@ liquide-tiling = { path = "../liquide-tiling" }
 liquide-devtools = { path = "../liquide-devtools" }
 liquide-input = { path = "../liquide-input" }
 liquide-platform = { path = "../liquide-platform" }
-liquide-dom = { path = "../liquide-dom" }
 liquide-layout = { path = "../liquide-layout" }
 liquide-client-renderer = { path = "../liquide-client-renderer" }

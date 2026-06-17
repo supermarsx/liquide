@@ -1,0 +1,24 @@
+<!--
+  Liquide startup LOADING SCREEN  —  PRE-SHELL DOM template.
+
+  Rendered before the shell exists, through a minimal CSS mini-pipeline
+  (see crates/liquide-session/src/desktop/loading.rs +
+  loading_pipeline.rs). Styled exclusively by assets/themes/loading.css —
+  this template carries NO inline styles and NO shell-theme dependency.
+
+  Migrated from the old imperative build_loading_scene (Rect/Color
+  literals). Element vocabulary: loading-screen > loading-panel >
+  { loading-accent, loading-title, loading-subtitle,
+    loading-progress > loading-progress-fill, loading-status }.
+-->
+<loading-screen id="loading-screen">
+  <loading-panel id="loading-panel">
+    <loading-accent id="loading-accent"></loading-accent>
+    <loading-title id="loading-title">LIQUIDE</loading-title>
+    <loading-subtitle id="loading-subtitle">Liquid Desktop Environment</loading-subtitle>
+    <loading-progress id="loading-progress">
+      <loading-progress-fill id="loading-progress-fill"></loading-progress-fill>
+    </loading-progress>
+    <loading-status id="loading-status">Starting up...</loading-status>
+  </loading-panel>
+</loading-screen>

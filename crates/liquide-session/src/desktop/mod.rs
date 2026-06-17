@@ -21,6 +21,7 @@ mod devtools_state;
 mod event_handling;
 mod event_loop;
 mod loading;
+mod loading_pipeline;
 pub mod lockfree_queue;
 mod multimon;
 mod paint_state;
