@@ -197,6 +197,14 @@ const SHELL_OVERVIEW_TEMPLATE: &str = r#"<overview-overlay id="{{id}}">
   </overview-grid>
 </overview-overlay>"#;
 
+/// Embedded per-window frame decoration template (t103-p6 full-CSS migration),
+/// byte-compatible with `assets/templates/window-frame.html`. Mounted per
+/// visible decorated window by `dom_sync::sync_window_decorations`, absolutely
+/// positioned (inline style) over the window's titlebar screen rect so the
+/// pipeline lays out the title + close/maximize/minimize/pin buttons; the
+/// laid-out boxes drive both paint and hit-test (t86 geometry-from-CSS).
+const SHELL_WINDOW_FRAME_TEMPLATE: &str = r#"<window-frame id="window-deco-{{window_id}}" class="{{focused_class}}" data-window-id="{{window_id}}" style="left: {{x}}; top: {{y}}; width: {{w}}; height: {{h}}"><window-titlebar id="window-deco-{{window_id}}-titlebar"><window-title id="window-deco-{{window_id}}-title">{{title}}</window-title><titlebar-buttons id="window-deco-{{window_id}}-buttons"><pin-button id="window-deco-{{window_id}}-pin" class="{{pin_class}}" data-action="pin" data-window-id="{{window_id}}"></pin-button><minimize-button id="window-deco-{{window_id}}-min" data-action="minimize" data-window-id="{{window_id}}"></minimize-button><maximize-button id="window-deco-{{window_id}}-max" data-action="maximize" data-window-id="{{window_id}}"></maximize-button><close-button id="window-deco-{{window_id}}-close" data-action="close" data-window-id="{{window_id}}"></close-button></titlebar-buttons></window-titlebar></window-frame>"#;
+
 /// A configurable item for the session / end-session dialog.
 #[derive(Debug, Clone)]
 pub struct SessionMenuItem {
@@ -981,6 +989,12 @@ impl Shell {
         // painter. The captured window thumbnail (or glass placeholder) is
         // painted onto each tile's laid-out box by the scene builder.
         registry.register("overview", SHELL_OVERVIEW_TEMPLATE);
+        // Register the per-window frame decoration template (t103-p6): each
+        // visible decorated window's titlebar + buttons now flow through the
+        // DOM/CSS pipeline (a `window-frame` positioned over the window's
+        // titlebar rect), so the laid-out boxes drive both the painted
+        // decoration geometry and the titlebar/button hit-test.
+        registry.register("window-frame", SHELL_WINDOW_FRAME_TEMPLATE);
         // Try loading from assets/templates on disk (overrides embedded defaults).
         //
         // NOTE (t57-f1): the search path is intentionally the CWD-relative

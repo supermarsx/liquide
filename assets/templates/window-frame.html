@@ -1,0 +1,37 @@
+<!-- LiquiDE Window Frame Decoration Template (t103-p6 full-CSS migration)
+
+     One instance is mounted per visible DECORATED window into
+     `workspace-container` by `dom_sync::sync_window_decorations`. The root
+     `window-frame` element is absolutely positioned (inline `style`) over the
+     window's titlebar screen rect, so the CSS pipeline LAYS OUT the title and
+     the close/maximize/minimize/pin buttons inside it.
+
+     The laid-out boxes are the single source of truth for BOTH:
+       * paint  — `scene.rs::build_uncached_window_workspace_node` anchors the
+                  window `Decoration` node's button geometry to these boxes
+                  (read via `hit_test_engine.bounds_for_node`), and
+       * hit-test — `window_decoration_adapter` reads the same boxes for the
+                  titlebar drag region and each button's click zone.
+     A theme change that moves/resizes the buttons therefore moves the painted
+     glyphs AND the click zones together (the recurring hit-test-from-CSS
+     geometry contract, t86).
+
+     The button selectors (`close-button`, `maximize-button`,
+     `minimize-button`, `pin-button`) match what `css_integration.rs`'s
+     decoration resolvers query. `{{focused_class}}` flips the active/inactive
+     styling; the pin button additionally carries `active` when the window is
+     always-on-top.
+
+     Flat template engine: single-level substitution only. -->
+
+<window-frame id="window-deco-{{window_id}}" class="{{focused_class}}" data-window-id="{{window_id}}" style="left: {{x}}; top: {{y}}; width: {{w}}; height: {{h}}">
+  <window-titlebar id="window-deco-{{window_id}}-titlebar">
+    <window-title id="window-deco-{{window_id}}-title">{{title}}</window-title>
+    <titlebar-buttons id="window-deco-{{window_id}}-buttons">
+      <pin-button id="window-deco-{{window_id}}-pin" class="{{pin_class}}" data-action="pin" data-window-id="{{window_id}}"></pin-button>
+      <minimize-button id="window-deco-{{window_id}}-min" data-action="minimize" data-window-id="{{window_id}}"></minimize-button>
+      <maximize-button id="window-deco-{{window_id}}-max" data-action="maximize" data-window-id="{{window_id}}"></maximize-button>
+      <close-button id="window-deco-{{window_id}}-close" data-action="close" data-window-id="{{window_id}}"></close-button>
+    </titlebar-buttons>
+  </window-titlebar>
+</window-frame>

@@ -17,6 +17,7 @@ pub mod launcher;
 pub mod layout;
 pub(crate) mod lockscreen_adapter;
 pub(crate) mod overview_adapter;
+pub(crate) mod window_decoration_adapter;
 // Input-method (IME) drive on the keyboard path (t73-input §1): the shell feeds
 // pressed keys into its `InputMethodEngine` for CJK/accent/emoji composition.
 pub mod ime;

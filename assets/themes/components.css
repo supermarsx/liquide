@@ -1210,6 +1210,54 @@ window-content {
   overflow: hidden;
 }
 
+/* ── Window frame decoration (t103-p6 full-CSS migration) ──
+   The `window-frame` is mounted per visible decorated window and absolutely
+   positioned (inline style) over the window's titlebar screen rect, so the
+   pipeline lays out the title + buttons. The laid-out boxes drive BOTH paint
+   (scene.rs anchors the Decoration node's geometry to them) AND hit-test
+   (window_decoration_adapter reads the same boxes). The button selectors match
+   the css_integration decoration resolvers (close/maximize/minimize/pin). */
+window-frame {
+  /* Layout-only scaffold: `position: fixed` makes inline left/top viewport
+     (screen) coordinates equal to the window's bounds, and `opacity: 0` means
+     the subtree paints NOTHING — the visible titlebar/buttons/glyphs are drawn
+     by the manual window `Decoration` scene node anchored to these laid-out
+     boxes (the renderer owns the button glyphs). So this subtree exists purely
+     to produce the CSS-driven geometry that both paint and hit-test consume. */
+  position: fixed;
+  opacity: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+window-frame > window-titlebar {
+  flex-grow: 1;
+  width: 100%;
+}
+
+pin-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--titlebar-btn-size);
+  height: var(--titlebar-btn-size);
+  border-radius: var(--titlebar-btn-radius);
+  background: var(--window-btn-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+pin-button:hover {
+  background: var(--window-btn-hover-bg);
+}
+
+pin-button.active {
+  background: var(--accent-color);
+  color: var(--text-primary);
+}
+
 
 /* ═══════════════════════════════════════════════════
    14. CURSOR

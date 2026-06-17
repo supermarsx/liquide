@@ -119,6 +119,7 @@ impl Shell {
         self.sync_dialog_template();
         self.sync_lockscreen_template();
         self.sync_overview_template();
+        self.sync_window_decorations();
         self.sync_tooltip_template();
 
         // Keep the DOM viewport in sync with the screen rect.
@@ -1078,6 +1079,236 @@ impl Shell {
             self.remove_overlay("overview-overlay");
             self.template_cache.remove("overview");
         }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // Window frame decorations (t103-p6 full-CSS migration)
+    // ══════════════════════════════════════════════════════════
+
+    /// Sync the per-window frame decoration DOM (t103-p6). For every visible
+    /// **decorated** window, mount/maintain a `window-frame` element
+    /// (`#window-deco-<id>`) inside `workspace-container`, absolutely positioned
+    /// (inline `style`) over that window's titlebar screen rect, so the CSS
+    /// pipeline lays out the title + close/maximize/minimize/pin buttons.
+    ///
+    /// The laid-out boxes are the single source of truth for BOTH the painted
+    /// decoration geometry (`scene.rs::build_uncached_window_workspace_node`
+    /// anchors the `Decoration` node's button rects to them) and the
+    /// titlebar-drag / button hit-test (`window_decoration_adapter`), so a theme
+    /// change that moves/resizes the buttons moves the painted glyphs AND the
+    /// click zones together — the recurring hit-test-from-CSS contract (t86).
+    ///
+    /// To preserve the idle full-scene cache (t76) and frame-to-frame
+    /// determinism (e2e_temporal), the per-frame update mutates the DOM ONLY
+    /// when something actually changed: positions are integer-rounded and
+    /// written through `set_attr_if_changed`, classes through the already-guarded
+    /// `add_class`/`remove_class`, and the title text only when it differs. On a
+    /// steady-state frame nothing is written, so `doc.dirty` stays empty and the
+    /// idle cache holds.
+    fn sync_window_decorations(&mut self) {
+        use liquide_dom::PseudoStateFlags;
+
+        let focused = self.focus.focused();
+        let title_h = self.decoration_style.title_bar_height.round() as i32;
+
+        // The set of window ids that SHOULD have a live decoration this frame.
+        let mut wanted: HashSet<u64> = HashSet::new();
+
+        // Snapshot the per-window decoration state first (immutable borrow of
+        // `self.visible_windows`) so the mutation pass below can borrow the DOM
+        // mutably without overlapping the window borrow.
+        struct DecoState {
+            id: u64,
+            x: i32,
+            y: i32,
+            w: i32,
+            title: String,
+            focused: bool,
+            topmost: bool,
+        }
+        let decos: Vec<DecoState> = self
+            .visible_windows()
+            .iter()
+            .filter(|w| w.flags.contains(crate::window::WindowFlags::DECORATED))
+            .map(|w| DecoState {
+                id: w.id.0,
+                x: w.bounds.x.round() as i32,
+                y: w.bounds.y.round() as i32,
+                w: w.bounds.width.round() as i32,
+                title: w.title.clone(),
+                focused: focused == Some(w.id),
+                topmost: w.flags.contains(crate::window::WindowFlags::ALWAYS_ON_TOP),
+            })
+            .collect();
+
+        for deco in &decos {
+            wanted.insert(deco.id);
+            let frame_id = format!("window-deco-{}", deco.id);
+
+            // Create the subtree once if it does not exist yet.
+            if self.desktop_dom.doc.get_element_by_id(&frame_id).is_none() {
+                let mut ctx = TemplateContext::new();
+                ctx.set("window_id", &deco.id.to_string());
+                ctx.set("title", &deco.title);
+                // The template's `style="..."` provides the initial position;
+                // the layout engine takes unitless lengths, and the per-frame
+                // pass below keeps it in sync via `set_inline_style`.
+                ctx.set("x", &deco.x.to_string());
+                ctx.set("y", &deco.y.to_string());
+                ctx.set("w", &deco.w.to_string());
+                ctx.set("h", &title_h.to_string());
+                ctx.set("focused_class", if deco.focused { "focused" } else { "" });
+                ctx.set("pin_class", if deco.topmost { "active" } else { "" });
+
+                if let Some(html) = self.template_registry.render("window-frame", &ctx) {
+                    let workspace = self.desktop_dom.workspace;
+                    parse_html_into(&mut self.desktop_dom.doc, workspace, &html);
+                }
+            }
+
+            // Patch position/size in place via change-guarded INLINE STYLES so an
+            // idle frame leaves the DOM clean (the HTML parser consumes the
+            // `style` attribute into inline styles at parse time, so per-frame
+            // updates must go through `set_inline_style`, not the attribute).
+            if let Some(frame) = self.desktop_dom.doc.get_element_by_id(&frame_id) {
+                Self::set_inline_style_if_changed(
+                    &mut self.desktop_dom.doc,
+                    frame,
+                    "left",
+                    &deco.x.to_string(),
+                );
+                Self::set_inline_style_if_changed(
+                    &mut self.desktop_dom.doc,
+                    frame,
+                    "top",
+                    &deco.y.to_string(),
+                );
+                Self::set_inline_style_if_changed(
+                    &mut self.desktop_dom.doc,
+                    frame,
+                    "width",
+                    &deco.w.to_string(),
+                );
+                Self::set_inline_style_if_changed(
+                    &mut self.desktop_dom.doc,
+                    frame,
+                    "height",
+                    &title_h.to_string(),
+                );
+
+                // Focus class + pseudo-state (the `.focused` rule + `:focus`).
+                let has_focused = self
+                    .desktop_dom
+                    .doc
+                    .get(frame)
+                    .map(|n| n.has_class("focused"))
+                    .unwrap_or(false);
+                if deco.focused && !has_focused {
+                    self.desktop_dom.doc.add_class(frame, "focused");
+                } else if !deco.focused && has_focused {
+                    self.desktop_dom.doc.remove_class(frame, "focused");
+                }
+                self.desktop_dom
+                    .doc
+                    .set_pseudo_state(frame, PseudoStateFlags::FOCUS, deco.focused);
+
+                // Pin (always-on-top) active class.
+                let pin_id = format!("window-deco-{}-pin", deco.id);
+                if let Some(pin) = self.desktop_dom.doc.get_element_by_id(&pin_id) {
+                    let has_active = self
+                        .desktop_dom
+                        .doc
+                        .get(pin)
+                        .map(|n| n.has_class("active"))
+                        .unwrap_or(false);
+                    if deco.topmost && !has_active {
+                        self.desktop_dom.doc.add_class(pin, "active");
+                    } else if !deco.topmost && has_active {
+                        self.desktop_dom.doc.remove_class(pin, "active");
+                    }
+                }
+
+                // Title text — only update when it differs.
+                let title_id = format!("window-deco-{}-title", deco.id);
+                if let Some(title_el) = self.desktop_dom.doc.get_element_by_id(&title_id) {
+                    let current = self
+                        .desktop_dom
+                        .doc
+                        .children(title_el)
+                        .first()
+                        .and_then(|&c| self.desktop_dom.doc.get(c))
+                        .and_then(|n| n.text_content().map(str::to_string));
+                    match current {
+                        Some(t) if t == deco.title => {}
+                        Some(_) => {
+                            let child = self.desktop_dom.doc.children(title_el)[0];
+                            self.desktop_dom.doc.set_text_content(child, &deco.title);
+                        }
+                        None => {
+                            let txt = self.desktop_dom.doc.create_text(&deco.title);
+                            self.desktop_dom.doc.append_child(title_el, txt);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Reconcile: tear down decoration frames for windows that are no longer
+        // visible/decorated (closed, minimized, undecorated). Without this a
+        // stale frame would leak (and keep a hit-test box) after the window goes
+        // away.
+        let stale: Vec<u64> = self
+            .live_decoration_ids()
+            .into_iter()
+            .filter(|id| !wanted.contains(id))
+            .collect();
+        for id in stale {
+            let frame_id = format!("window-deco-{id}");
+            if let Some(node) = self.desktop_dom.doc.get_element_by_id(&frame_id) {
+                if let Some(parent) = self.desktop_dom.doc.parent(node) {
+                    self.desktop_dom.doc.remove_child(parent, node);
+                }
+                self.desktop_dom.doc.destroy_node(node);
+            }
+        }
+    }
+
+    /// Set an inline style property ONLY when its value actually differs from
+    /// the current one, so an idle frame writing the same geometry leaves the
+    /// node clean (preserving the idle full-scene cache, t76). Mirrors
+    /// `DesktopDocument::set_attr_if_changed` for inline styles.
+    fn set_inline_style_if_changed(
+        doc: &mut liquide_dom::Document,
+        node: liquide_dom::NodeId,
+        property: &str,
+        value: &str,
+    ) {
+        if doc.get_inline_style(node, property).as_deref() == Some(value) {
+            return;
+        }
+        doc.set_inline_style(node, property, value);
+    }
+
+    /// Window ids that currently have a live `window-frame` decoration element
+    /// mounted in the workspace container.
+    fn live_decoration_ids(&self) -> Vec<u64> {
+        let workspace = self.desktop_dom.workspace;
+        self.desktop_dom
+            .doc
+            .children(workspace)
+            .iter()
+            .filter_map(|&child| {
+                let node = self.desktop_dom.doc.get(child)?;
+                if node.tag_name() != "window-frame" {
+                    return None;
+                }
+                node.element_id
+                    .as_deref()?
+                    .strip_prefix("window-deco-")?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .collect()
     }
 
     // ══════════════════════════════════════════════════════════

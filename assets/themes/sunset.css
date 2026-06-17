@@ -168,6 +168,42 @@ window.focused {
     titlebar-background: rgba(40, 28, 14, 0.65);
 }
 
+/* Window frame decoration host (t103-p6). */
+window-frame {
+    /* Layout-only scaffold (t103-p6): fixed = screen coords, opacity 0 = paints
+       nothing; the manual window Decoration node draws the visible chrome. */
+    position: fixed;
+    opacity: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+window-frame > window-titlebar {
+    flex-grow: 1;
+    width: 100%;
+}
+
+pin-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14;
+    height: 14;
+    border-radius: 7;
+    background: rgba(255, 200, 120, 0.06);
+    color: rgba(255, 245, 230, 0.72);
+}
+
+pin-button:hover {
+    background: rgba(255, 200, 120, 0.16);
+}
+
+pin-button.active {
+    background: rgba(255, 140, 90, 0.55);
+    color: rgba(255, 255, 255, 1.0);
+}
+
 window-titlebar {
     display: flex;
     align-items: center;

@@ -1236,6 +1236,54 @@ impl Shell {
         }
     }
 
+    /// Derive a [`DecorationLayout`] for `window_id` from the LAID-OUT CSS boxes
+    /// of its `window-frame` decoration (t103-p6 full-CSS migration).
+    ///
+    /// Reads the titlebar box (`#window-deco-<id>-titlebar`) and the close
+    /// button box (`#window-deco-<id>-close`) from the live hit-test engine's
+    /// layout tree and turns them into the renderer's `DecorationLayout` so the
+    /// painted titlebar height + button size + right margin follow the CSS. The
+    /// button hit-test reads the SAME boxes (`window_decoration_adapter`), so
+    /// paint and hit-test share one source of truth.
+    ///
+    /// Returns `None` when the decoration is not laid out yet (first frame) or
+    /// the boxes are degenerate, so the caller falls back to the CSS-resolved
+    /// constant layout and geometry stays deterministic.
+    fn decoration_layout_from_css(
+        &self,
+        window_id: crate::window::WindowId,
+        paint_bounds: Rect,
+    ) -> Option<DecorationLayout> {
+        let hit_test = self.hit_test_engine.as_ref()?;
+
+        let tb_id = format!("window-deco-{}-titlebar", window_id.0);
+        let tb_node = self.desktop_dom.doc.get_element_by_id(&tb_id)?;
+        let tb_box = hit_test.bounds_for_node(tb_node)?;
+
+        let close_id = format!("window-deco-{}-close", window_id.0);
+        let close_node = self.desktop_dom.doc.get_element_by_id(&close_id)?;
+        let close_box = hit_test.bounds_for_node(close_node)?;
+
+        if tb_box.height < 1.0 || close_box.width < 1.0 || close_box.height < 1.0 {
+            return None;
+        }
+
+        // Right margin = gap from the window's right edge to the close button's
+        // right edge (the renderer measures buttons leftward from the right
+        // edge). Clamp to >= 0 so a sub-pixel overhang can't flip it negative.
+        let right_margin = (paint_bounds.x + paint_bounds.width - (close_box.x + close_box.width))
+            .max(0.0);
+
+        let defaults = DecorationLayout::default();
+        Some(DecorationLayout {
+            title_bar_height: tb_box.height,
+            button_width: close_box.width,
+            button_height: close_box.height,
+            button_right_margin: right_margin,
+            button_corner_radius: defaults.button_corner_radius,
+        })
+    }
+
     fn cached_window_workspace_node(
         &mut self,
         screen: Rect,
@@ -1412,7 +1460,23 @@ impl Shell {
 
             if window.flags.contains(WindowFlags::DECORATED) {
                 let is_focused = self.focus.focused() == Some(window.id);
-                let title_h = self.decoration_style.title_bar_height;
+
+                // Anchor the painted decoration geometry to the LAID-OUT CSS
+                // boxes (t103-p6 full-CSS migration). `sync_window_decorations`
+                // mounted a `window-frame` over this window's titlebar and the
+                // pipeline laid it out; `decoration_layout_from_css` reads the
+                // titlebar + close-button boxes from the live layout tree and
+                // returns a `DecorationLayout` whose title-bar height + button
+                // dimensions/margin track the CSS — so a theme change that
+                // resizes the titlebar/buttons moves the painted decoration with
+                // it (the same source of truth the button hit-test reads via
+                // `window_decoration_adapter`). Falls back to the CSS-resolved
+                // `button_layout` constants on the first frame (before the
+                // decoration is laid out) so geometry is always deterministic.
+                let effective_layout = self
+                    .decoration_layout_from_css(window.id, paint_bounds)
+                    .unwrap_or(*button_layout);
+                let title_h = effective_layout.title_bar_height;
                 let title_bar_bounds = Rect::new(
                     paint_bounds.x,
                     paint_bounds.y,
@@ -1469,7 +1533,7 @@ impl Shell {
                                 == Some((window.id, HitZone::AlwaysOnTopButton)),
                         },
                         button_colors: button_colors.clone(),
-                        button_layout: *button_layout,
+                        button_layout: effective_layout,
                     },
                     NodeProperties::new(paint_bounds).with_z_order(paint_z_base + 2),
                 ));

@@ -267,6 +267,45 @@ window.focused {
     box-shadow: 0px 12px 40px rgba(30, 80, 220, 0.35);
 }
 
+/* Window frame decoration host (t103-p6): absolutely positioned per window;
+   the titlebar fills it and lays out the title + buttons. Box geometry drives
+   both paint and hit-test. */
+window-frame {
+    /* Layout-only scaffold (t103-p6): fixed = screen coords, opacity 0 = paints
+       nothing; the manual window Decoration node draws the visible chrome. */
+    position: fixed;
+    opacity: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+window-frame > window-titlebar {
+    flex-grow: 1;
+    width: 100%;
+}
+
+pin-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14;
+    height: 14;
+    border-radius: 7;
+    background: rgba(60, 120, 220, 0.15);
+    color: rgba(180, 210, 255, 0.70);
+}
+
+pin-button:hover {
+    background: rgba(60, 120, 220, 0.30);
+    color: rgba(220, 235, 255, 1.0);
+}
+
+pin-button.active {
+    background: rgba(70, 140, 255, 0.55);
+    color: rgba(255, 255, 255, 1.0);
+}
+
 window-titlebar {
     display: flex;
     align-items: center;

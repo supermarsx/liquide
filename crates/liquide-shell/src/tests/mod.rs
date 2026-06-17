@@ -36,5 +36,6 @@ mod t75_shellact_tests;
 mod tiling_tests;
 mod tooltip_tests;
 mod window_bounds_tests;
+mod window_decoration_css_tests;
 mod window_tests;
 mod workspace_tests;

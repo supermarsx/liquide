@@ -907,30 +907,41 @@ impl Shell {
         let prev_hover = self.hovered_button;
         self.hovered_button = None;
         let tbh = self.decoration_style.title_bar_height;
-        if let Some(wid) = self.window_at_point(x, y) {
-            if let Some(window) = self.windows.get(&wid) {
-                if window.flags.contains(WindowFlags::DECORATED)
-                    && y >= window.bounds.y
-                    && y < window.bounds.y + tbh
-                    && x >= window.bounds.x
-                    && x < window.bounds.x + window.bounds.width
-                {
-                    let client = Rect::new(
-                        window.bounds.x,
-                        window.bounds.y + tbh,
-                        window.bounds.width,
-                        (window.bounds.height - tbh).max(0.0),
-                    );
-                    let zone = hit_test_decoration(client, &self.decoration_style, x, y);
-                    match zone {
-                        HitZone::CloseButton
-                        | HitZone::MaximizeButton
-                        | HitZone::MinimizeButton
-                        | HitZone::AlwaysOnTopButton => {
-                            self.hovered_button = Some((window.id, zone));
-                        }
-                        _ => {}
+        // Resolve the topmost window through the SAME canonical router the click
+        // path uses (`pick_window_at`, incl. the off-edge resize ring) so a hover
+        // and a click agree on which window — and so a button laid out a hair
+        // beyond the window's exact bounds (CSS flex overflow) is still reached.
+        if let Some(wid) = self.pick_window_at(x, y) {
+            let is_decorated = self
+                .windows
+                .get(&wid)
+                .map(|w| w.flags.contains(WindowFlags::DECORATED))
+                .unwrap_or(false);
+            if is_decorated {
+                // Button hover from the LAID-OUT CSS boxes (t103-p6 / t86): the
+                // CSS button box IS the hover zone (no rect-math window-bounds
+                // gate — that gate could exclude a button whose CSS box overflows
+                // the window edge). Fall back to the rect-based hit-test only when
+                // the decoration is not laid out yet (first frame).
+                let zone = self.window_button_zone_from_css(wid, x, y).or_else(|| {
+                    self.windows.get(&wid).map(|window| {
+                        let client = Rect::new(
+                            window.bounds.x,
+                            window.bounds.y + tbh,
+                            window.bounds.width,
+                            (window.bounds.height - tbh).max(0.0),
+                        );
+                        hit_test_decoration(client, &self.decoration_style, x, y)
+                    })
+                });
+                match zone {
+                    Some(HitZone::CloseButton)
+                    | Some(HitZone::MaximizeButton)
+                    | Some(HitZone::MinimizeButton)
+                    | Some(HitZone::AlwaysOnTopButton) => {
+                        self.hovered_button = Some((wid, zone.unwrap()));
                     }
+                    _ => {}
                 }
             }
         }
@@ -1590,7 +1601,15 @@ impl Shell {
                     bounds.width,
                     (bounds.height - tbh).max(0.0),
                 );
-                let zone = hit_test_decoration(client, &self.decoration_style, x, y);
+                // Buttons + titlebar drag come from the LAID-OUT CSS boxes
+                // (t103-p6 / t86 hit-test-from-CSS contract): a theme change
+                // that moves a button moves its click zone. Resize-edge zones
+                // extend outside the DOM box and have no CSS element, so they —
+                // and the first frame before layout — fall back to the
+                // rect-based `hit_test_decoration`.
+                let zone = self
+                    .window_decoration_zone_from_css(wid, x, y)
+                    .unwrap_or_else(|| hit_test_decoration(client, &self.decoration_style, x, y));
                 match zone {
                     HitZone::CloseButton => {
                         let _ = self.set_focus(wid);

@@ -102,6 +102,12 @@ impl Shell {
     /// Dynamically load an additional stylesheet into the CSS pipeline.
     pub fn add_stylesheet(&mut self, css: &str) -> bool {
         self.css_pipeline.add_stylesheet(css);
+        // The window decoration geometry is now anchored to the laid-out CSS
+        // boxes (t103-p6); a new stylesheet can move the titlebar/buttons, so it
+        // must invalidate the window-scene + full-scene caches — otherwise a
+        // steady-state hit could serve a window subtree painted against the old
+        // decoration layout.
+        self.mark_window_scene_dirty();
         true
     }
 
