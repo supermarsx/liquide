@@ -94,6 +94,16 @@ pub enum PlatformEvent {
     /// The system color scheme (light/dark mode) changed.
     ColorSchemeChanged { scheme: crate::ColorScheme },
 
+    /// The set of connected displays changed at runtime (a monitor was added,
+    /// removed, or had its resolution / position changed — monitor hotplug).
+    ///
+    /// Carries no payload: the consumer re-enumerates the live monitor set via
+    /// [`crate::DisplayBackend::monitors`] and diffs it against the layout it
+    /// last installed. On Win32 this is surfaced from `WM_DISPLAYCHANGE`; other
+    /// backends are free to emit it from their own hotplug signal (or never,
+    /// leaving single-monitor behaviour unchanged).
+    DisplaysChanged,
+
     /// The application should quit.
     Quit,
 }
@@ -255,6 +265,17 @@ mod tests {
         } else {
             panic!("wrong variant");
         }
+    }
+
+    #[test]
+    fn platform_event_displays_changed_is_payloadless_signal() {
+        // Monitor hotplug surfaces as a payload-less signal: the consumer
+        // re-enumerates the live monitor set rather than trusting any payload.
+        let event = PlatformEvent::DisplaysChanged;
+        let debug = format!("{event:?}");
+        assert!(debug.contains("DisplaysChanged"), "debug: {debug}");
+        // It must clone like every other event (it is drained from the queue).
+        assert!(matches!(event.clone(), PlatformEvent::DisplaysChanged));
     }
 
     #[test]

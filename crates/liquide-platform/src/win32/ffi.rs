@@ -278,6 +278,10 @@ pub const WM_CLOSE: UINT = 0x0010;
 pub const WM_QUIT: UINT = 0x0012;
 pub const WM_ERASEBKGND: UINT = 0x0014;
 pub const WM_SETCURSOR: UINT = 0x0020;
+/// Sent to all windows when the display resolution / monitor set changes
+/// (resolution change, monitor add/remove). The session uses this as the live
+/// monitor-hotplug signal to re-enumerate displays and re-install the layout.
+pub const WM_DISPLAYCHANGE: UINT = 0x007E;
 pub const WM_SIZING: UINT = 0x0214;
 pub const WM_KEYDOWN: UINT = 0x0100;
 pub const WM_KEYUP: UINT = 0x0101;

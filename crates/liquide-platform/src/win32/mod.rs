@@ -809,6 +809,19 @@ unsafe extern "system" fn wndproc(
             return 0;
         }
 
+        ffi::WM_DISPLAYCHANGE => {
+            // The display resolution or the connected-monitor set changed at
+            // runtime (monitor add/remove/geometry-change). Surface a single
+            // hotplug signal; the session re-enumerates `display().monitors()`
+            // and re-installs the desktop layout. We do NOT decode wParam/lParam
+            // (the new primary bit-depth / resolution) here — the session reads
+            // the authoritative monitor set fresh, so the payload-less event is
+            // sufficient and backend-agnostic.
+            push_event!(PlatformEvent::DisplaysChanged);
+            // Fall through to DefWindowProc so the OS still performs its own
+            // bookkeeping for the message.
+        }
+
         _ => {}
     }
 

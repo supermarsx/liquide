@@ -410,6 +410,17 @@ impl DesktopCompositor {
             let mut had_event = false;
             while let Some(event) = platform.poll_event() {
                 had_event = true;
+                // Monitor hotplug (t93 gap #5c): `DisplaysChanged` needs the live
+                // platform handle to re-enumerate displays, which `handle_event`
+                // does not receive — so it is handled here in the drain (which
+                // owns `platform`). The handler re-installs the layout, migrates
+                // stranded windows, resizes to the new primary, and marks dirty.
+                if matches!(event, liquide_platform::PlatformEvent::DisplaysChanged) {
+                    if self.handle_displays_changed(platform) {
+                        self.mark_full_dirty();
+                    }
+                    continue;
+                }
                 // Snapshot the interactive-overlay footprint BEFORE handling the
                 // event so a hover that moves/closes a menu can union the OLD and
                 // NEW footprints (the disappearing panel's pixels must be in the
