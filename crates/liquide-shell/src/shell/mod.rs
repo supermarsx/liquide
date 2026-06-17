@@ -542,6 +542,16 @@ pub struct Shell {
     /// Canonical window-effects manager (`liquide-window-effects`).
     /// Driven by t51-e11.
     pub(crate) chrome_window_effects: Option<liquide_window_effects::EffectManager>,
+    /// Per-window effect frame currently animating (t93-e2 / t92 gap #4).
+    ///
+    /// `tick_detailed` advances `chrome_window_effects` once per frame and stashes
+    /// the non-finished frames here keyed by [`WindowId`]; `build_scene` folds each
+    /// active frame's animated bounds + opacity into that window's painted subtree
+    /// (PAINT-ONLY — `visible_windows`/`window_at_point` keep using the window's
+    /// settled bounds, so an in-flight open/close animation never moves the live
+    /// hit-target). Empty (the default) means no window is animating and the window
+    /// subtree paints at static bounds / full opacity exactly as before.
+    pub(crate) active_window_effects: HashMap<WindowId, liquide_window_effects::EffectFrame>,
     /// Canonical lock-screen state (`liquide-lockscreen`) — drives the
     /// session-menu Lock path. Consumed read-only; driven by t51-e10.
     pub(crate) chrome_lockscreen: Option<liquide_lockscreen::LockScreenState>,
@@ -715,6 +725,7 @@ impl Shell {
             chrome_window_groups: None,
             chrome_window_class: None,
             chrome_window_effects: None,
+            active_window_effects: HashMap::new(),
             chrome_lockscreen: None,
             chrome_active_dialog: None,
             chrome_dialog_content: None,
@@ -859,6 +870,7 @@ impl Shell {
             chrome_window_groups: None,
             chrome_window_class: None,
             chrome_window_effects: None,
+            active_window_effects: HashMap::new(),
             chrome_lockscreen: None,
             chrome_active_dialog: None,
             chrome_dialog_content: None,

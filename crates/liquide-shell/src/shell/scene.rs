@@ -16,6 +16,15 @@ use crate::window::{Window, WindowFlags, WindowState};
 
 use super::Shell;
 
+/// Base id for the per-window effect/paint container (t93-e2 / t92 gap #4).
+///
+/// Each window's nodes are wrapped in one non-visual `Workspace`-kind container
+/// (id = base + `window_id`) that carries the per-window effect opacity. The
+/// container is stripped from the flattened paint output, so this id never
+/// reaches a `FlatNode`; it sits in its own reserved range purely to keep the
+/// scene-tree ids distinct from the window leaf-node ids.
+const NODE_WINDOW_EFFECT_GROUP_BASE: u64 = 50_000_000;
+
 /// Lightweight counters for the retained window workspace scene cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowSceneCacheStats {
@@ -192,6 +201,21 @@ struct WindowSceneSignature {
     /// (typed text, drained terminal output, …) invalidates the window scene
     /// cache even though the `Window` struct itself is unchanged.
     app_content: Vec<(u64, u64)>,
+    /// Per-window active effect frame (t93-e2 / t92 gap #4). An animating
+    /// window's frame (bounds + opacity) changes every tick, so it must be part
+    /// of the cache key — otherwise the signature-keyed window subtree cache
+    /// would serve a stale mid-animation (or pre-animation) subtree and the
+    /// animation would never advance. Idle windows contribute nothing, so a
+    /// steady-state scene keeps its cache exactly as before.
+    effects: Vec<WindowEffectSignature>,
+}
+
+/// Cache-key fingerprint of a single window's active effect frame (t93-e2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct WindowEffectSignature {
+    window_id: u64,
+    bounds: RectSignature,
+    opacity: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1179,6 +1203,24 @@ impl Shell {
                 revs.sort_unstable();
                 revs
             },
+            effects: {
+                let mut sigs: Vec<WindowEffectSignature> = self
+                    .active_window_effects
+                    .values()
+                    .map(|f| WindowEffectSignature {
+                        window_id: f.window_id,
+                        bounds: RectSignature {
+                            x: f32_signature(f.bounds.x),
+                            y: f32_signature(f.bounds.y),
+                            width: f32_signature(f.bounds.width),
+                            height: f32_signature(f.bounds.height),
+                        },
+                        opacity: f32_signature(f.opacity),
+                    })
+                    .collect();
+                sigs.sort_unstable_by_key(|s| s.window_id);
+                sigs
+            },
         }
     }
 
@@ -1200,16 +1242,72 @@ impl Shell {
             NodeProperties::new(screen).with_z_order(z_order),
         );
 
-        for window in &self.visible_windows() {
+        for (paint_rank, window) in self.visible_windows().iter().enumerate() {
             let win_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE;
 
-            let shadow_bounds = Rect::new(
-                window.bounds.x - 4.0,
-                window.bounds.y - 2.0,
-                window.bounds.width + 8.0,
-                window.bounds.height + 6.0,
+            // Band-aware paint z-base (t93-e2 / t92 gap #2+#4). `visible_windows`
+            // is sorted by the always-on-top band key (E1), so the iteration RANK
+            // is the authoritative stacking position — strictly monotonic with the
+            // AOT band. Deriving the per-node z from the rank (rather than the raw
+            // `window.z_order`, which a freshly-opened normal window can briefly
+            // hold ABOVE a pinned AOT window before the next normalize) guarantees
+            // paint order == live hit-test/band order. For an already-normalized
+            // stack the rank equals `z_order`, so static multi-window scenes (and
+            // their goldens) are unchanged.
+            let paint_z_base = paint_rank as u32 * 10;
+
+            // ── Window effects (t93-e2 / t92 gap #4) ──────────────────────────
+            // Fold any active effect frame into this window's PAINTED geometry +
+            // opacity. `paint_bounds` is the animated rect (open/close scale-pulse,
+            // transform tween) while `paint_opacity` is the per-frame fade; idle
+            // windows fall back to the settled `window.bounds` at full opacity, so
+            // a non-animating scene is byte-identical to the pre-effects scene.
+            //
+            // CRITICAL — paint-only: this uses the EFFECT bounds for paint but the
+            // window's *settled* bounds remain the live hit-target. `visible_windows`
+            // / `window_at_point` are unchanged, so clicking a window mid-open-scale
+            // still hits its final rect (plan §gap-4 correctness note).
+            //
+            // Z-order: this window's nodes (and the wrapper) all use `paint_z_base`
+            // (the band-aware rank computed above), so an animating *normal*
+            // window's effect can never paint over an always-on-top window — the
+            // AOT band owns the higher ranks in `visible_windows()`.
+            let (paint_bounds, paint_opacity) = match self.active_window_effects.get(&window.id) {
+                Some(frame) => (
+                    Rect::new(
+                        frame.bounds.x,
+                        frame.bounds.y,
+                        frame.bounds.width,
+                        frame.bounds.height,
+                    ),
+                    frame.opacity.clamp(0.0, 1.0),
+                ),
+                None => (window.bounds, 1.0),
+            };
+
+            // Per-window paint container. Non-visual (`Workspace` kind is skipped by
+            // the flatten output) and anchored at the origin so it adds no
+            // translation — it exists only to carry `paint_opacity`, which the
+            // compositor accumulates multiplicatively down to every window node
+            // (shadow/decoration/content), giving a single correct per-window fade.
+            // At opacity 1.0 (no active effect) the wrapper is a transparent no-op,
+            // so idle windows flatten to exactly the same FlatNodes as before.
+            let win_group_z = paint_z_base;
+            let mut win_group = SceneNode::new(
+                NODE_WINDOW_EFFECT_GROUP_BASE + window.id.0,
+                SceneNodeKind::Workspace { index: ws.id.0 },
+                NodeProperties::new(Rect::new(0.0, 0.0, screen.width, screen.height))
+                    .with_z_order(win_group_z)
+                    .with_opacity(paint_opacity),
             );
-            ws_node.add_child(SceneNode::new(
+
+            let shadow_bounds = Rect::new(
+                paint_bounds.x - 4.0,
+                paint_bounds.y - 2.0,
+                paint_bounds.width + 8.0,
+                paint_bounds.height + 6.0,
+            );
+            win_group.add_child(SceneNode::new(
                 win_base,
                 SceneNodeKind::Shadow {
                     spread: 4.0,
@@ -1217,20 +1315,20 @@ impl Shell {
                     color: theme.window_shadow,
                     corner_radius: self.decoration_style.corner_radius,
                 },
-                NodeProperties::new(shadow_bounds).with_z_order(window.z_order.max(0) as u32 * 10),
+                NodeProperties::new(shadow_bounds).with_z_order(paint_z_base),
             ));
 
             if window.flags.contains(WindowFlags::DECORATED) {
                 let is_focused = self.focus.focused() == Some(window.id);
                 let title_h = self.decoration_style.title_bar_height;
                 let title_bar_bounds = Rect::new(
-                    window.bounds.x,
-                    window.bounds.y,
-                    window.bounds.width,
+                    paint_bounds.x,
+                    paint_bounds.y,
+                    paint_bounds.width,
                     title_h,
                 );
 
-                ws_node.add_child(SceneNode::new(
+                win_group.add_child(SceneNode::new(
                     win_base + 10,
                     SceneNodeKind::Glass(GlassParams {
                         blur_radius: 12,
@@ -1238,8 +1336,7 @@ impl Shell {
                         inner_glow: false,
                         parallax: false,
                     }),
-                    NodeProperties::new(title_bar_bounds)
-                        .with_z_order(window.z_order.max(0) as u32 * 10 + 1),
+                    NodeProperties::new(title_bar_bounds).with_z_order(paint_z_base + 1),
                 ));
 
                 let title_bg = if is_focused {
@@ -1251,7 +1348,7 @@ impl Shell {
                     c.a = (c.a / 2).max(40);
                     c
                 };
-                ws_node.add_child(SceneNode::new(
+                win_group.add_child(SceneNode::new(
                     win_base + 1,
                     SceneNodeKind::Decoration {
                         title: Some(window.title.clone()),
@@ -1282,8 +1379,7 @@ impl Shell {
                         button_colors: button_colors.clone(),
                         button_layout: *button_layout,
                     },
-                    NodeProperties::new(window.bounds)
-                        .with_z_order(window.z_order.max(0) as u32 * 10 + 2),
+                    NodeProperties::new(paint_bounds).with_z_order(paint_z_base + 2),
                 ));
             }
 
@@ -1293,14 +1389,14 @@ impl Shell {
                 0.0
             };
             let content_bounds = Rect::new(
-                window.bounds.x,
-                window.bounds.y + title_h,
-                window.bounds.width,
-                (window.bounds.height - title_h).max(0.0),
+                paint_bounds.x,
+                paint_bounds.y + title_h,
+                paint_bounds.width,
+                (paint_bounds.height - title_h).max(0.0),
             );
-            let z_content = window.z_order.max(0) as u32 * 10 + 3;
+            let z_content = paint_z_base + 3;
 
-            ws_node.add_child(solid_rect(
+            win_group.add_child(solid_rect(
                 win_base + 2,
                 theme.window_content_background,
                 content_bounds,
@@ -1308,13 +1404,15 @@ impl Shell {
             ));
 
             self.build_window_content(
-                &mut ws_node,
+                &mut win_group,
                 window,
                 content_bounds,
                 win_base,
                 z_content,
                 theme,
             );
+
+            ws_node.add_child(win_group);
         }
 
         ws_node

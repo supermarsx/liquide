@@ -70,6 +70,16 @@ impl Shell {
         // `AppView::tick` drains the PTY and the grid repaints next frame.
         let app_views_dirty = self.tick_app_views();
 
+        // Window effects (t93-e2 / t92 gap #4): advance the canonical
+        // `liquide-window-effects` manager once per frame and route the produced
+        // per-window `EffectFrame`s into the scene. Until now `tick_window_effects`
+        // had NO live caller and its output never reached `build_scene`, so
+        // open/close/transform/focus animations ran in the manager but painted
+        // nothing. Here we drive the manager and stash the active (still-animating)
+        // frames on `self.active_window_effects`, which `build_scene` folds into
+        // each window's painted subtree (animated bounds + opacity).
+        let window_effects_dirty = self.drive_window_effects();
+
         // Tooltip: the canonical `liquide-tooltip` TooltipManager (t51-e9) is
         // driven from the shell's hover state. t51-e15 moved the single
         // per-frame *drive* into the render path (`sync_tooltip_template`,
@@ -87,12 +97,52 @@ impl Shell {
                 || repatriation_dirty
                 || auto_hide_dirty
                 || app_views_dirty
+                || window_effects_dirty
                 || tooltip_visible,
             status_bar_dirty: bar_dirty,
             notifications_dirty: !expired.is_empty(),
-            windows_dirty: repatriation_dirty || app_views_dirty,
+            windows_dirty: repatriation_dirty || app_views_dirty || window_effects_dirty,
             auto_hide_dirty,
         }
+    }
+
+    /// Advance window effects one frame and publish the active frames for paint.
+    ///
+    /// Drives the canonical `liquide-window-effects` manager via
+    /// [`Self::tick_window_effects`], replaces [`Self::active_window_effects`] with
+    /// the still-animating frames (finished frames are dropped so the window
+    /// settles back to its static bounds / full opacity), and marks the window
+    /// scene dirty whenever the set of active frames is non-empty OR has just
+    /// emptied this frame. Marking dirty is what makes an animation actually
+    /// repaint each frame on the live idle fast path (the full-scene cache would
+    /// otherwise serve a stale root); the one extra dirty on the settle frame
+    /// guarantees the final static frame replaces the last mid-animation frame.
+    ///
+    /// Returns `true` if a repaint is needed this frame (something was animating
+    /// or just settled). Effects are PAINT-ONLY: this never touches window bounds,
+    /// z-order, focus, or the hit-test — only the per-window paint override map.
+    fn drive_window_effects(&mut self) -> bool {
+        let frames = self.tick_window_effects();
+        let had_active = !self.active_window_effects.is_empty();
+
+        // Keep only the still-animating frames; a finished frame means that
+        // window has reached its settled bounds and should paint statically again.
+        self.active_window_effects.clear();
+        for frame in frames {
+            if !frame.finished {
+                self.active_window_effects
+                    .insert(WindowId(frame.window_id), frame);
+            }
+        }
+
+        let has_active = !self.active_window_effects.is_empty();
+        // Repaint while animating, and once more on the settle frame (active →
+        // empty) so the final static window replaces the last animated frame.
+        let dirty = has_active || had_active;
+        if dirty {
+            self.mark_window_scene_dirty();
+        }
+        dirty
     }
 
     /// Check if any windows are off-screen and repatriate them within bounds.

@@ -13,6 +13,7 @@ mod decoration_tests;
 mod dock_config_tests;
 mod dock_tests;
 mod edge_case_tests;
+mod effects_paint_tests;
 mod focus_tests;
 mod history_tests;
 mod hook_tests;
