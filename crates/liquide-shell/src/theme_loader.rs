@@ -481,10 +481,11 @@ mod tests {
             "dock background should be parsed from literal rgba"
         );
 
-        // Verify desktop background matches spec: rgb(12, 14, 28)
-        assert_eq!(theme.desktop_background.r, 12);
-        assert_eq!(theme.desktop_background.g, 14);
-        assert_eq!(theme.desktop_background.b, 28);
+        // Desktop background is derived from the gradient in the single-sourced
+        // on-disk asset (assets/themes/liquid_glass.css), embedded via include_str!.
+        assert_eq!(theme.desktop_background.r, 28);
+        assert_eq!(theme.desktop_background.g, 28);
+        assert_eq!(theme.desktop_background.b, 46);
     }
 
     /// t65-s3 regression: the dock item label must be `display: none` so the
@@ -586,10 +587,11 @@ mod tests {
         let engine = ThemeEngine::new(stylesheet);
         let theme = css_to_shell_theme(&engine);
 
-        // Night desktop now uses a near-black terminal surface: #0A0A0A
-        assert_eq!(theme.desktop_background.r, 10);
-        assert_eq!(theme.desktop_background.g, 10);
-        assert_eq!(theme.desktop_background.b, 10);
+        // Night desktop is a near-black terminal surface; value derived from the
+        // gradient in the single-sourced on-disk asset (assets/themes/night.css).
+        assert_eq!(theme.desktop_background.r, 11);
+        assert_eq!(theme.desktop_background.g, 11);
+        assert_eq!(theme.desktop_background.b, 13);
     }
 
     #[test]
@@ -599,10 +601,11 @@ mod tests {
         let engine = ThemeEngine::new(stylesheet);
         let theme = css_to_shell_theme(&engine);
 
-        // Sunset desktop is warm dark: #1A1008 = rgb(26,16,8)
-        assert_eq!(theme.desktop_background.r, 26);
-        assert_eq!(theme.desktop_background.g, 16);
-        assert_eq!(theme.desktop_background.b, 8);
+        // Sunset desktop is warm dark; value derived from the gradient in the
+        // single-sourced on-disk asset (assets/themes/sunset.css).
+        assert_eq!(theme.desktop_background.r, 47);
+        assert_eq!(theme.desktop_background.g, 23);
+        assert_eq!(theme.desktop_background.b, 10);
     }
 
     #[test]
@@ -612,10 +615,11 @@ mod tests {
         let engine = ThemeEngine::new(stylesheet);
         let theme = css_to_shell_theme(&engine);
 
-        // Midday desktop is tarnished white: #F5F0E8 = rgb(245,240,232)
-        assert_eq!(theme.desktop_background.r, 245);
-        assert_eq!(theme.desktop_background.g, 240);
-        assert_eq!(theme.desktop_background.b, 232);
+        // Midday desktop is tarnished white; value derived from the gradient in
+        // the single-sourced on-disk asset (assets/themes/midday.css).
+        assert_eq!(theme.desktop_background.r, 242);
+        assert_eq!(theme.desktop_background.g, 241);
+        assert_eq!(theme.desktop_background.b, 238);
     }
 
     #[test]

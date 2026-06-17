@@ -52,3 +52,76 @@ impl ThemePreset {
         }
     }
 }
+
+#[cfg(test)]
+mod drift_guard_tests {
+    use super::*;
+
+    /// The on-disk asset filename for a preset.
+    fn asset_file(preset: ThemePreset) -> &'static str {
+        match preset {
+            ThemePreset::LiquidGlass => "liquid_glass.css",
+            ThemePreset::Night => "night.css",
+            ThemePreset::Sunset => "sunset.css",
+            ThemePreset::Midday => "midday.css",
+        }
+    }
+
+    /// Read the on-disk theme asset at runtime (NOT via `include_str!`, so this
+    /// is a genuine, independent read — if the embedded copy is hand-maintained
+    /// and drifts, the comparison must fail).
+    fn read_disk_asset(preset: ThemePreset) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/themes")
+            .join(asset_file(preset));
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+    }
+
+    /// Each embedded theme's `css()` MUST be byte-for-byte identical to the
+    /// corresponding on-disk asset. This is the single-source guarantee: the
+    /// embedded fallback (used when disk assets fail to load) renders the same
+    /// DE as the on-disk theme, never a stale copy.
+    #[test]
+    fn embedded_theme_css_equals_on_disk_asset() {
+        for preset in [
+            ThemePreset::LiquidGlass,
+            ThemePreset::Night,
+            ThemePreset::Sunset,
+            ThemePreset::Midday,
+        ] {
+            let embedded = preset.css();
+            let disk = read_disk_asset(preset);
+            assert_eq!(
+                embedded,
+                disk.as_str(),
+                "embedded CSS for theme '{}' has drifted from on-disk asset {} \
+                 (embedded {} bytes vs disk {} bytes); the embedded fallback must \
+                 be single-sourced from the asset via include_str!",
+                preset.id(),
+                asset_file(preset),
+                embedded.len(),
+                disk.len(),
+            );
+        }
+    }
+
+    /// Spot-check that the embedded copy is actually substantial (guards against
+    /// an empty/truncated include resolving to an empty string).
+    #[test]
+    fn embedded_theme_css_is_nonempty() {
+        for preset in [
+            ThemePreset::LiquidGlass,
+            ThemePreset::Night,
+            ThemePreset::Sunset,
+            ThemePreset::Midday,
+        ] {
+            assert!(
+                preset.css().len() > 1000,
+                "embedded CSS for '{}' looks truncated ({} bytes)",
+                preset.id(),
+                preset.css().len(),
+            );
+        }
+    }
+}
