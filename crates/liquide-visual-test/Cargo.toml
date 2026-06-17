@@ -22,6 +22,15 @@ path = "src/bin/snapshot.rs"
 name = "render_bench"
 path = "src/bin/render_bench.rs"
 
+# HONEST end-to-end LIVE frame-time harness (t97). Unlike render_bench (raster
+# only), this faithfully reconstructs the live render worker's WHOLE per-frame
+# sequence from public APIs (build_scene + drain precomputed damage + flatten +
+# render_live + content_hash_damaged + tile-hash trim + snapshot recycle +
+# present-rect prep) and reports median/p95 ms + fps per live scenario.
+[[bin]]
+name = "frame_time_harness"
+path = "src/bin/frame_time_harness.rs"
+
 [dependencies]
 # CPU rasterizer (SoftwareRenderer) for the raster stage of the render_bench bin.
 liquide-renderer-cpu.workspace = true
