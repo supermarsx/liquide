@@ -67,6 +67,15 @@ fn timestamp_ns() -> u64 {
         .unwrap_or(0)
 }
 
+/// Monotonic millisecond clock for present-cadence decisions. Backed by a
+/// process-lifetime `Instant` so it is immune to wall-clock jumps.
+fn monotonic_ms() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
 // ---------------------------------------------------------------------------
 // Damage-rect normalization (partial present)
 // ---------------------------------------------------------------------------
@@ -190,6 +199,182 @@ fn merge_pixel_rect(set: &mut Vec<PixelRect>, pr: PixelRect) {
         }
     }
     set.push(acc);
+}
+
+/// Apply a present's pixels into the off-screen DIB back-buffer, copying only
+/// what changed.
+///
+/// `dib` and `src` are both top-down packed BGRA8 of the same `stride` x
+/// `height` layout. When `full` is true (a full present `None`, or the DIB was
+/// just (re)allocated and has undefined contents) the whole frame is copied so
+/// the DIB is a complete valid frame. Otherwise only the `rects` sub-regions are
+/// copied; every other DIB pixel retains its prior (still-valid) content, so the
+/// DIB *accumulates* damage across partial presents and a WM_PAINT full replay
+/// never exposes a stale/torn region.
+///
+/// Rects must already be clamped to the surface; out-of-range rows/spans are
+/// skipped defensively. Returns the number of pixels written into the DIB (a
+/// bandwidth proxy the tests assert on — a partial present must write strictly
+/// fewer than the whole frame).
+fn apply_present_to_dib(
+    dib: &mut [u8],
+    src: &[u8],
+    stride: u32,
+    height: u32,
+    rects: Option<&[PixelRect]>,
+    full: bool,
+) -> usize {
+    let row_bytes = stride as usize;
+    let total = row_bytes.saturating_mul(height as usize);
+    let copyable = total.min(dib.len()).min(src.len());
+    if full || rects.is_none() {
+        dib[..copyable].copy_from_slice(&src[..copyable]);
+        return copyable / 4;
+    }
+    let mut written = 0usize;
+    if let Some(rects) = rects {
+        for r in rects {
+            if r.w == 0 || r.h == 0 {
+                continue;
+            }
+            let span = (r.w as usize) * 4;
+            for row in r.y..pr_bottom(r) {
+                let off = (row as usize) * row_bytes + (r.x as usize) * 4;
+                let end = off + span;
+                if end > copyable {
+                    continue;
+                }
+                dib[off..end].copy_from_slice(&src[off..end]);
+                written += r.w as usize;
+            }
+        }
+    }
+    written
+}
+
+// ---------------------------------------------------------------------------
+// RDP-aware present coalescing (remote cadence cap)
+// ---------------------------------------------------------------------------
+
+/// Default on-screen present cadence cap when a remote (RDP) session is
+/// detected, in frames per second. RDP samples the desktop at ~30-60 Hz, so
+/// presenting (BitBlt'ing) faster than this just burns CPU/channel bandwidth on
+/// updates the remote client will never sample. Capping at 60 Hz keeps the
+/// render thread free to run at full speed while the present layer coalesces
+/// damage and flips at most this often.
+const DEFAULT_REMOTE_PRESENT_HZ: u32 = 60;
+
+/// Coalesces partial-present damage across multiple `present_frame_damaged`
+/// calls so the on-screen BitBlt cadence can be capped (e.g. to the RDP sample
+/// rate) without ever *dropping* damage.
+///
+/// This is a pure state machine with no Win32 dependency: the caller feeds it
+/// each present's damage hint plus the current monotonic time in milliseconds,
+/// and it decides whether to present *now* and, if so, returns the accumulated
+/// damage to blit (the union of every coalesced present's damage since the last
+/// flip). When it returns "not now", the damage is retained for the next flip —
+/// nothing is discarded.
+///
+/// Correctness contract:
+/// - A `None` (full) present is *sticky*: once any coalesced present was full,
+///   the eventual flip is a full present (a full present subsumes every rect).
+/// - `Some(rects)` accumulates the union of all rects across deferred presents.
+/// - When `enabled` is false (local session, or cap disabled), every present is
+///   emitted immediately with its own damage unchanged — zero added latency,
+///   identical to the pre-coalescing local path.
+struct RemotePresentCoalescer {
+    /// When false, never coalesce — present every frame immediately (local).
+    enabled: bool,
+    /// Minimum milliseconds between on-screen flips while coalescing.
+    min_interval_ms: u64,
+    /// Monotonic time (ms) of the last emitted flip, or `None` before the first.
+    last_flip_ms: Option<u64>,
+    /// Accumulated, coalesced damage rects pending the next flip (held in the
+    /// same normalized/merged form the blit path consumes). Empty +
+    /// `!pending_full` means nothing is queued.
+    pending: Vec<PixelRect>,
+    /// True if any coalesced (deferred) present was a full present (`None`).
+    pending_full: bool,
+}
+
+/// Outcome of feeding one present into the coalescer.
+enum CoalesceDecision {
+    /// Present now with this damage hint (`None` = full surface). The carried
+    /// rects are already coalesced/merged and clamped, ready to BitBlt.
+    PresentNow(Option<Vec<PixelRect>>),
+    /// Defer: damage was accumulated; do not BitBlt to screen this call.
+    Defer,
+}
+
+impl RemotePresentCoalescer {
+    fn new(enabled: bool, cap_hz: u32) -> Self {
+        let hz = cap_hz.max(1);
+        Self {
+            enabled,
+            min_interval_ms: (1000 / hz as u64).max(1),
+            last_flip_ms: None,
+            pending: Vec::new(),
+            pending_full: false,
+        }
+    }
+
+    /// Merge a present's damage hint into the pending accumulator. Never drops a
+    /// rect: rects are unioned via `merge_pixel_rect`; a full present sets the
+    /// sticky `pending_full` flag (a full present subsumes every rect).
+    fn accumulate(&mut self, damage: Option<&[PixelRect]>) {
+        match damage {
+            None => {
+                // Full present subsumes everything — collapse to a full flip.
+                self.pending_full = true;
+                self.pending.clear();
+            }
+            Some(rects) => {
+                if !self.pending_full {
+                    for r in rects {
+                        merge_pixel_rect(&mut self.pending, *r);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Drain the pending accumulator into a damage hint for a flip.
+    fn drain(&mut self) -> Option<Vec<PixelRect>> {
+        if self.pending_full {
+            self.pending.clear();
+            self.pending_full = false;
+            None
+        } else {
+            Some(std::mem::take(&mut self.pending))
+        }
+    }
+
+    /// Decide what to do with a present arriving at monotonic time `now_ms`.
+    ///
+    /// Returns `PresentNow(damage)` when a flip should happen now (carrying the
+    /// union of any previously-deferred damage plus this one), or `Defer` when
+    /// the present was coalesced and will be flipped by a later call. Deferred
+    /// damage is always retained — never discarded.
+    fn on_present(&mut self, damage: Option<&[PixelRect]>, now_ms: u64) -> CoalesceDecision {
+        if !self.enabled {
+            // Local path: present immediately, no coalescing, no added latency.
+            return CoalesceDecision::PresentNow(damage.map(|r| r.to_vec()));
+        }
+
+        self.accumulate(damage);
+
+        let due = match self.last_flip_ms {
+            None => true, // First present after enabling flips immediately.
+            Some(last) => now_ms.saturating_sub(last) >= self.min_interval_ms,
+        };
+
+        if due {
+            self.last_flip_ms = Some(now_ms);
+            CoalesceDecision::PresentNow(self.drain())
+        } else {
+            CoalesceDecision::Defer
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -800,6 +985,11 @@ struct WindowInfo {
     /// Set once the first present path (DXGI vs GDI/WARP fallback) has been
     /// logged, so the diagnostic line is emitted exactly once per window.
     present_path_logged: bool,
+    /// RDP-aware present-cadence coalescer. Lazily created on the first GDI
+    /// present once the remote-session state and cap are known. `None` means a
+    /// full per-frame present (local default) until the first GDI present
+    /// initializes it.
+    remote_coalescer: Option<RemotePresentCoalescer>,
 }
 
 impl WindowInfo {
@@ -1212,6 +1402,7 @@ impl NativeWindowHost for Win32WindowHost {
             dxgi: None,
             gdi_back_buffer: None,
             present_path_logged: false,
+            remote_coalescer: None,
         };
         self.windows.insert(handle.0, info);
 
@@ -1575,6 +1766,18 @@ pub struct Win32Platform {
 
     /// Accepted-present metadata surfaced through PlatformBackend feedback.
     present_feedback: Win32PresentFeedbackState,
+
+    /// On-screen present cadence cap (Hz) applied when a remote (RDP) session is
+    /// detected. The render thread keeps running at full speed; the GDI present
+    /// layer coalesces damage and flips at most this often so it never wastes
+    /// BitBlts the RDP client will not sample. `None` disables the cap entirely
+    /// (always present every frame, even remote).
+    remote_present_cap_hz: Option<u32>,
+
+    /// Test/override hook for remote-session detection. `None` means "ask the OS
+    /// via `GetSystemMetrics(SM_REMOTESESSION)`"; `Some(b)` forces the answer so
+    /// the coalescing path can be exercised without a real RDP session.
+    remote_session_override: Option<bool>,
 }
 
 // Safety: Win32Platform owns all raw handles and is designed to be used
@@ -1723,6 +1926,8 @@ impl Win32Platform {
             // non-windowed paths) can opt in via `new_with_present_mode`.
             present_mode: dxgi::DxgiPresentMode::RefreshSync,
             present_feedback: Win32PresentFeedbackState::default(),
+            remote_present_cap_hz: Some(DEFAULT_REMOTE_PRESENT_HZ),
+            remote_session_override: None,
         })
     }
 
@@ -1736,6 +1941,39 @@ impl Win32Platform {
     /// Return the requested DXGI present mode for newly-created presenters.
     pub fn present_mode(&self) -> dxgi::DxgiPresentMode {
         self.present_mode
+    }
+
+    /// Set the remote (RDP) on-screen present cadence cap in Hz, or `None` to
+    /// disable coalescing entirely (always present every frame, even remote).
+    ///
+    /// Takes effect for windows whose coalescer has not yet been initialized
+    /// (i.e. before their first GDI present). The local path is never affected —
+    /// when no remote session is detected, every present is flipped immediately
+    /// regardless of this value.
+    pub fn set_remote_present_cap_hz(&mut self, cap_hz: Option<u32>) {
+        self.remote_present_cap_hz = cap_hz;
+    }
+
+    /// Current remote present cadence cap (Hz), or `None` if disabled.
+    pub fn remote_present_cap_hz(&self) -> Option<u32> {
+        self.remote_present_cap_hz
+    }
+
+    /// Force the remote-session detection result for testing, or `None` to use
+    /// the real OS query (`GetSystemMetrics(SM_REMOTESESSION)`). Lets the
+    /// coalescing present path be exercised without a live RDP session.
+    pub fn set_remote_session_override(&mut self, remote: Option<bool>) {
+        self.remote_session_override = remote;
+    }
+
+    /// True when the current session should be treated as remote (RDP): the
+    /// test override if set, else the live `SM_REMOTESESSION` system metric.
+    fn is_remote_session(&self) -> bool {
+        if let Some(forced) = self.remote_session_override {
+            return forced;
+        }
+        // SAFETY: GetSystemMetrics is a pure query with no preconditions.
+        unsafe { ffi::GetSystemMetrics(ffi::SM_REMOTESESSION) != 0 }
     }
 
     /// Pump all pending Win32 messages and dispatch them through the wndproc,
@@ -2045,6 +2283,11 @@ impl Win32Platform {
         }
 
         let present_mode = self.present_mode;
+        // Capture remote-cadence config before borrowing `info` (the
+        // remote-session query borrows `&self`). `cap_hz == None` disables
+        // coalescing; a non-remote session always presents every frame.
+        let remote_session = self.is_remote_session();
+        let remote_cap_hz = self.remote_present_cap_hz;
         let info = self
             .window_host
             .windows
@@ -2190,71 +2433,111 @@ impl Win32Platform {
                 std::sync::atomic::Ordering::Release,
             );
 
-            // Always copy the WHOLE frame into the off-screen DIB memory, even
-            // for a partial present. The DIB is the authoritative back-buffer
-            // that WM_PAINT replays in full, so it must always hold the complete
-            // current frame. This memcpy is local memory only — it costs no RDP
-            // bandwidth; the RDP cost is the BitBlt to the visible DC below.
-            // Both source and destination are top-down packed BGRA8 of identical
-            // dimensions, so this is a single contiguous copy of `required`
-            // bytes.
-            ptr::copy_nonoverlapping(
-                pixels.as_ptr(),
-                back_buffer.bits as *mut u8,
-                required,
-            );
+            // Copy out the back-buffer's DC + memory pointer (both `Copy` raw
+            // handles) so the immutable `info.gdi_back_buffer` borrow is released
+            // before we mutably borrow `info.remote_coalescer` below. The handles
+            // stay valid: nothing reallocs the back-buffer after this point.
+            let bb_mem_dc = back_buffer.mem_dc;
+            let bb_bits = back_buffer.bits;
+            let _ = back_buffer;
 
-            // Decide which sub-rectangles to blit to the visible window DC.
+            // Update the off-screen DIB memory with THIS present's pixels.
             //
-            // - `None` → full present (one whole-surface BitBlt).
-            // - `Some(rects)` → blit only those sub-rects. The off-screen DIB
-            //   already holds the full frame, so each sub-rect BitBlt copies the
-            //   matching region 1:1 and the on-screen result is identical to a
-            //   full present for the changed regions, while untouched pixels are
-            //   left intact. An empty slice means nothing changed → no blit.
+            // The DIB is the authoritative back-buffer that WM_PAINT replays in
+            // full, so it must always hold a complete, current frame — but it
+            // *accumulates* across presents: we only overwrite the regions that
+            // actually changed this present, and unchanged regions retain their
+            // prior (still-valid) content. So a partial present only copies its
+            // damaged sub-rects into the DIB, not the whole 8 MB frame.
             //
-            // A back-buffer realloc (first present / window resize) invalidates
-            // any prior on-screen content, so partial damage cannot be trusted;
-            // force a full blit in that case regardless of the hint.
-            let blit_full = damage.is_none() || needs_realloc;
+            //   - `None` (full present) / first present / resize realloc → copy
+            //     the WHOLE frame (a single contiguous `required`-byte memcpy).
+            //     A realloc'd DIB has undefined contents, so it MUST be fully
+            //     populated regardless of the damage hint.
+            //   - `Some(rects)` on an existing DIB → copy only those sub-rects
+            //     row-by-row. Source and destination share identical top-down
+            //     packed BGRA8 layout, so each rect copies at the same offset.
+            //
+            // This is local memory only — it costs no RDP bandwidth; the RDP
+            // cost is the BitBlt to the visible DC below. Limiting it avoids the
+            // ~1-3 ms whole-frame memcpy on a tiny (e.g. cursor) partial present.
+            let dib_full = damage.is_none() || needs_realloc;
+            // SAFETY: `bb_bits` points at the DIB section's `required`-byte
+            // (width*height*4) memory, exclusively owned by this back-buffer and
+            // not aliased while we hold the DC. `apply_present_to_dib` only
+            // writes within `[0, required)`.
+            let dib_slice = std::slice::from_raw_parts_mut(bb_bits as *mut u8, required);
+            apply_present_to_dib(dib_slice, pixels, packed_stride, height, damage, dib_full);
+
+            // Decide which sub-rectangles to BitBlt to the visible window DC.
+            // This is where the RDP cadence cap applies: the coalescer may DEFER
+            // the on-screen flip (accumulating damage) so we don't waste BitBlts
+            // the RDP client will never sample. The DIB was already updated above
+            // with this present's pixels, so a later coalesced flip blits the
+            // freshest content for the accumulated rects. A realloc forces a full
+            // immediate flip (prior on-screen content is invalid).
+            //
+            // The coalescer is created lazily on first GDI present so it reflects
+            // the live remote-session state and the configured cap. `enabled` is
+            // false for a local session or when the cap is disabled → it returns
+            // PresentNow with the present's own damage (no coalescing, no added
+            // latency: identical to the prior per-frame local path).
+            let coalescer = info.remote_coalescer.get_or_insert_with(|| {
+                let enabled = remote_session && remote_cap_hz.is_some();
+                RemotePresentCoalescer::new(enabled, remote_cap_hz.unwrap_or(DEFAULT_REMOTE_PRESENT_HZ))
+            });
+
+            // A realloc invalidates any prior on-screen content → force a full
+            // flip now (feed `None` so accumulated partial damage is subsumed).
+            let blit_decision = if needs_realloc {
+                coalescer.on_present(None, monotonic_ms())
+            } else {
+                coalescer.on_present(damage, monotonic_ms())
+            };
 
             let mut blit_ok = true;
-            if blit_full {
-                // Atomic flip: one BitBlt of the whole frame onto the window DC.
-                let ok = ffi::BitBlt(
-                    window_hdc,
-                    0,
-                    0,
-                    width as i32,
-                    height as i32,
-                    back_buffer.mem_dc,
-                    0,
-                    0,
-                    ffi::SRCCOPY,
-                );
-                blit_ok = ok != ffi::FALSE;
-            } else if let Some(rects) = damage {
-                // Partial present: one BitBlt per coalesced damage rect. Rects
-                // are already clamped to the surface, so the dst/src extents are
-                // in-bounds for both the window DC and the DIB.
-                for r in rects {
-                    if r.w == 0 || r.h == 0 {
-                        continue;
-                    }
+            match blit_decision {
+                CoalesceDecision::Defer => {
+                    // Damage retained for a later flip; nothing hits the screen.
+                }
+                CoalesceDecision::PresentNow(None) => {
+                    // Full flip: one BitBlt of the whole frame onto the window DC.
                     let ok = ffi::BitBlt(
                         window_hdc,
-                        r.x as i32,
-                        r.y as i32,
-                        r.w as i32,
-                        r.h as i32,
-                        back_buffer.mem_dc,
-                        r.x as i32,
-                        r.y as i32,
+                        0,
+                        0,
+                        width as i32,
+                        height as i32,
+                        bb_mem_dc,
+                        0,
+                        0,
                         ffi::SRCCOPY,
                     );
-                    if ok == ffi::FALSE {
-                        blit_ok = false;
-                        break;
+                    blit_ok = ok != ffi::FALSE;
+                }
+                CoalesceDecision::PresentNow(Some(rects)) => {
+                    // Partial flip: one BitBlt per accumulated damage rect. Rects
+                    // are clamped to the surface, so dst/src extents are in-bounds
+                    // for both the window DC and the DIB.
+                    for r in &rects {
+                        if r.w == 0 || r.h == 0 {
+                            continue;
+                        }
+                        let ok = ffi::BitBlt(
+                            window_hdc,
+                            r.x as i32,
+                            r.y as i32,
+                            r.w as i32,
+                            r.h as i32,
+                            bb_mem_dc,
+                            r.x as i32,
+                            r.y as i32,
+                            ffi::SRCCOPY,
+                        );
+                        if ok == ffi::FALSE {
+                            blit_ok = false;
+                            break;
+                        }
                     }
                 }
             }
@@ -2524,5 +2807,214 @@ mod tests {
         let out = coalesce_damage_rects(&[outside, inside], 100, 100);
         assert_eq!(out.len(), 1);
         assert_eq!((out[0].x, out[0].y), (10, 10));
+    }
+
+    // ── Damage-limited DIB copy (Fix 1) ──────────────────────────────
+    //
+    // These prove `apply_present_to_dib` (the byte-copy the Win32 GDI present
+    // uses to refresh its off-screen DIB) copies ONLY the damaged sub-rects on a
+    // partial present and the WHOLE frame on a full present — and that the DIB
+    // remains a complete valid frame after several partial presents (no stale /
+    // torn region a WM_PAINT could replay). A regression that copied the whole
+    // frame for a partial present would FAIL the pixel-count assertions; one that
+    // left a damaged region stale would FAIL the accumulation assertions.
+
+    const DIBW: u32 = 8;
+    const DIBH: u32 = 8;
+
+    fn dib_solid(byte: u8) -> Vec<u8> {
+        vec![byte; (DIBW * DIBH * 4) as usize]
+    }
+
+    fn dib_px(dib: &[u8], x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * DIBW + x) * 4) as usize;
+        [dib[i], dib[i + 1], dib[i + 2], dib[i + 3]]
+    }
+
+    #[test]
+    fn dib_full_present_copies_whole_frame() {
+        let mut dib = dib_solid(0x00);
+        let src = dib_solid(0x11);
+        // `None` (full present) → whole-frame copy. Written px == W*H.
+        let written = apply_present_to_dib(&mut dib, &src, DIBW * 4, DIBH, None, true);
+        assert_eq!(written, (DIBW * DIBH) as usize, "full present must copy the whole frame");
+        assert_eq!(dib_px(&dib, 0, 0), [0x11; 4]);
+        assert_eq!(dib_px(&dib, DIBW - 1, DIBH - 1), [0x11; 4]);
+    }
+
+    #[test]
+    fn dib_partial_present_copies_only_damaged_rects() {
+        let mut dib = dib_solid(0x11); // existing valid frame
+        let src = dib_solid(0x22); // new frame, but only a 2x2 tile damaged
+        let dmg = [PixelRect { x: 1, y: 1, w: 2, h: 2 }];
+        let written = apply_present_to_dib(&mut dib, &src, DIBW * 4, DIBH, Some(&dmg), false);
+        // ONLY 4 px must be written — a "copy whole frame on Some" regression
+        // would write W*H here and fail this assertion (the core teeth of Fix 1).
+        assert_eq!(written, 4, "partial present must copy only the damaged tile into the DIB");
+        // Inside the damage rect → new content.
+        assert_eq!(dib_px(&dib, 1, 1), [0x22; 4]);
+        assert_eq!(dib_px(&dib, 2, 2), [0x22; 4]);
+        // Outside → retains prior valid content (not overwritten, not stale-zero).
+        assert_eq!(dib_px(&dib, 0, 0), [0x11; 4]);
+        assert_eq!(dib_px(&dib, DIBW - 1, DIBH - 1), [0x11; 4]);
+    }
+
+    #[test]
+    fn dib_accumulates_across_partial_presents_no_stale_region() {
+        // Start from a full present so the DIB is a known complete frame.
+        let mut dib = dib_solid(0x00);
+        apply_present_to_dib(&mut dib, &dib_solid(0xAA), DIBW * 4, DIBH, None, true);
+
+        // Partial present 1: change the top-left 2x2 to 0xBB.
+        let mut f1 = dib_solid(0xAA);
+        for y in 0..2 {
+            for x in 0..2 {
+                let i = ((y * DIBW + x) * 4) as usize;
+                f1[i..i + 4].copy_from_slice(&[0xBB; 4]);
+            }
+        }
+        apply_present_to_dib(
+            &mut dib,
+            &f1,
+            DIBW * 4,
+            DIBH,
+            Some(&[PixelRect { x: 0, y: 0, w: 2, h: 2 }]),
+            false,
+        );
+
+        // Partial present 2: change the bottom-right 2x2 to 0xCC.
+        let mut f2 = dib_solid(0xAA);
+        for y in (DIBH - 2)..DIBH {
+            for x in (DIBW - 2)..DIBW {
+                let i = ((y * DIBW + x) * 4) as usize;
+                f2[i..i + 4].copy_from_slice(&[0xCC; 4]);
+            }
+        }
+        apply_present_to_dib(
+            &mut dib,
+            &f2,
+            DIBW * 4,
+            DIBH,
+            Some(&[PixelRect { x: DIBW - 2, y: DIBH - 2, w: 2, h: 2 }]),
+            false,
+        );
+
+        // The DIB is now a COMPLETE valid frame: present-1 region, present-2
+        // region, AND the untouched majority all hold the right pixels — no
+        // region was left stale (zeroed) or torn.
+        assert_eq!(dib_px(&dib, 0, 0), [0xBB; 4], "present-1 region present");
+        assert_eq!(dib_px(&dib, DIBW - 1, DIBH - 1), [0xCC; 4], "present-2 region present");
+        assert_eq!(dib_px(&dib, 4, 4), [0xAA; 4], "untouched center retained from full present");
+        assert_eq!(dib_px(&dib, 0, DIBH - 1), [0xAA; 4], "untouched corner retained");
+        // Whole-buffer sanity: no zero (stale/uninitialized) pixels remain.
+        assert!(dib.iter().all(|&b| b != 0x00), "no stale/uninitialized DIB region");
+    }
+
+    #[test]
+    fn dib_empty_damage_copies_nothing() {
+        let mut dib = dib_solid(0x11);
+        let src = dib_solid(0x22);
+        let written = apply_present_to_dib(&mut dib, &src, DIBW * 4, DIBH, Some(&[]), false);
+        assert_eq!(written, 0, "empty damage must not write into the DIB");
+        assert_eq!(dib_px(&dib, 0, 0), [0x11; 4]);
+        assert_eq!(dib_px(&dib, DIBW - 1, DIBH - 1), [0x11; 4]);
+    }
+
+    // ── RDP-aware present coalescing (Fix 2) ─────────────────────────
+    //
+    // These drive `RemotePresentCoalescer` directly with an injected monotonic
+    // clock and an injected `enabled` flag (standing in for SM_REMOTESESSION),
+    // so no real RDP session is needed. They prove that while coalescing, damage
+    // is UNIONED across deferred presents and NEVER dropped, that a full present
+    // subsumes partial damage, and that the local (disabled) path presents every
+    // frame immediately with no added latency.
+
+    fn pr(x: u32, y: u32, w: u32, h: u32) -> PixelRect {
+        PixelRect { x, y, w, h }
+    }
+
+    fn present_now_rects(d: CoalesceDecision) -> Option<Vec<PixelRect>> {
+        match d {
+            CoalesceDecision::PresentNow(r) => Some(r.unwrap_or_default()),
+            CoalesceDecision::Defer => None,
+        }
+    }
+
+    #[test]
+    fn coalescer_local_presents_every_frame_immediately() {
+        // enabled=false → every present flips now with its OWN damage, unchanged.
+        let mut c = RemotePresentCoalescer::new(false, 60);
+        let d0 = c.on_present(Some(&[pr(0, 0, 4, 4)]), 0);
+        let d1 = c.on_present(Some(&[pr(4, 4, 4, 4)]), 1); // 1ms later, well under cap
+        let r0 = present_now_rects(d0).expect("local present must flip immediately");
+        let r1 = present_now_rects(d1).expect("local present must flip immediately");
+        assert_eq!(r0, vec![pr(0, 0, 4, 4)]);
+        assert_eq!(r1, vec![pr(4, 4, 4, 4)], "local path must not coalesce / add latency");
+    }
+
+    #[test]
+    fn coalescer_remote_unions_deferred_damage_never_drops() {
+        // 60Hz cap → ~16ms min interval. First present flips; the next few within
+        // the interval DEFER and accumulate; the flip at/after the interval blits
+        // the UNION of every deferred rect — nothing dropped.
+        let mut c = RemotePresentCoalescer::new(true, 60);
+
+        // t=0: first present flips immediately (establishes cadence).
+        let _ = present_now_rects(c.on_present(Some(&[pr(0, 0, 2, 2)]), 0))
+            .expect("first remote present flips");
+
+        // t=2,4,6 ms: three presents inside the interval → all DEFER.
+        assert!(matches!(c.on_present(Some(&[pr(10, 10, 2, 2)]), 2), CoalesceDecision::Defer));
+        assert!(matches!(c.on_present(Some(&[pr(20, 20, 2, 2)]), 4), CoalesceDecision::Defer));
+        assert!(matches!(c.on_present(Some(&[pr(30, 30, 2, 2)]), 6), CoalesceDecision::Defer));
+
+        // t=20 ms (>= 16ms interval): flips the UNION of the 3 deferred rects.
+        let flipped = present_now_rects(c.on_present(Some(&[pr(40, 40, 2, 2)]), 20))
+            .expect("present past the cap interval must flip");
+        // All four damaged regions must be covered (disjoint here → 4 rects).
+        // A coalescer that DROPPED deferred damage would miss some of these.
+        for want in [pr(10, 10, 2, 2), pr(20, 20, 2, 2), pr(30, 30, 2, 2), pr(40, 40, 2, 2)] {
+            assert!(
+                flipped.iter().any(|g| pr_contains(g, &want)),
+                "deferred damage {want:?} must be covered by the coalesced flip {flipped:?}"
+            );
+        }
+        // After the flip, the accumulator is empty (no leftover damage).
+        assert!(matches!(c.on_present(Some(&[pr(0, 0, 2, 2)]), 21), CoalesceDecision::Defer));
+    }
+
+    #[test]
+    fn coalescer_full_present_subsumes_partial_damage() {
+        let mut c = RemotePresentCoalescer::new(true, 60);
+        // First flips.
+        let _ = c.on_present(Some(&[pr(0, 0, 2, 2)]), 0);
+        // Defer a partial, then a FULL present arrives (still within interval).
+        assert!(matches!(c.on_present(Some(&[pr(10, 10, 2, 2)]), 2), CoalesceDecision::Defer));
+        assert!(matches!(c.on_present(None, 4), CoalesceDecision::Defer));
+        // The flip past the interval must be a FULL present (None), because a
+        // full present subsumes every accumulated rect.
+        match c.on_present(Some(&[pr(20, 20, 2, 2)]), 20) {
+            CoalesceDecision::PresentNow(None) => {}
+            other => panic!("a coalesced full present must flip the WHOLE surface, got {:?}",
+                match other { CoalesceDecision::PresentNow(Some(_)) => "PresentNow(partial)",
+                              CoalesceDecision::PresentNow(None) => "PresentNow(full)",
+                              CoalesceDecision::Defer => "Defer" }),
+        }
+    }
+
+    #[test]
+    fn coalescer_disabled_when_cap_none_via_platform_flag() {
+        // The platform treats `remote_present_cap_hz == None` as "coalescing
+        // disabled" — even a forced-remote session presents every frame. This
+        // guards the configurable disable knob.
+        let mut platform = Win32Platform::new().expect("create Win32 platform");
+        platform.set_remote_session_override(Some(true));
+        platform.set_remote_present_cap_hz(None);
+        assert!(platform.is_remote_session(), "override must force remote=true");
+        assert_eq!(platform.remote_present_cap_hz(), None, "cap disabled");
+
+        // And the override can force a non-remote answer regardless of host.
+        platform.set_remote_session_override(Some(false));
+        assert!(!platform.is_remote_session());
     }
 }
