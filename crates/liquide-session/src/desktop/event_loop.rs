@@ -153,6 +153,37 @@ impl DesktopCompositor {
         }
     }
 
+    /// Handle a single platform event drained from the backend. Shared by the
+    /// non-blocking drain at the top of the loop and the event-driven timed
+    /// wait at the tail (so an event that wakes the idle park is handled with
+    /// exactly the same routing — including the overlay-damage hint and the
+    /// monitor-hotplug special case).
+    fn dispatch_platform_event(
+        &mut self,
+        platform: &mut dyn PlatformBackend,
+        event: liquide_platform::PlatformEvent,
+    ) {
+        // Monitor hotplug (t93 gap #5c): `DisplaysChanged` needs the live
+        // platform handle to re-enumerate displays, which `handle_event` does
+        // not receive — so it is handled here (which owns `platform`). The
+        // handler re-installs the layout, migrates stranded windows, resizes to
+        // the new primary, and marks dirty.
+        if matches!(event, liquide_platform::PlatformEvent::DisplaysChanged) {
+            if self.handle_displays_changed(platform) {
+                self.mark_full_dirty();
+            }
+            return;
+        }
+        // Snapshot the interactive-overlay footprint BEFORE handling the event
+        // so a hover that moves/closes a menu can union the OLD and NEW
+        // footprints (the disappearing panel's pixels must be in the damage
+        // hint or they go stale — t80-hint).
+        let overlay_before = self.shell.interactive_overlay_damage();
+        if self.handle_event(&event) {
+            self.mark_dirty_for_event(&event, overlay_before);
+        }
+    }
+
     /// Ensure the slow-frame telemetry counter is registered on the viewer
     /// metrics registry. Idempotent — `register` is a no-op if the metric
     /// already exists, so this is safe to call once per `run()`.
@@ -192,59 +223,63 @@ impl DesktopCompositor {
         true
     }
 
-    /// Deepest the no-event idle sleep is allowed to go (t77-A3).
+    /// Deepest the fully-idle event-driven park is allowed to go (t97-wakeup).
     ///
-    /// `platform.poll_event()` in this loop is a NON-BLOCKING poll (verified
-    /// across every backend: win32 pumps the message queue then drains, x11 /
-    /// wayland dispatch-pending then drain, standalone / macos pop a queue — none
-    /// block on input; the separate `wait_event()` is the blocking variant and is
-    /// NOT used here). Because the poll never wakes on input, this sleep directly
-    /// bounds worst-case input-pickup latency: an event that lands the instant we
-    /// go to sleep is not seen until we wake. We therefore keep the cap MODEST
-    /// (24ms, ~1.5 frames at 60fps) rather than aggressive — a fully idle desktop
-    /// drops CPU, but a click is still picked up within ~24ms worst case. The
-    /// `had_event` branch stays at <=1ms so an actively-used desktop has no added
-    /// latency at all.
-    const IDLE_SLEEP_MAX: Duration = Duration::from_millis(24);
+    /// The run loop no longer relies on a non-blocking poll + sleep for idle
+    /// wakeups: it parks on [`PlatformBackend::wait_event_timeout`], which wakes
+    /// the INSTANT real input arrives (Win32 `MsgWaitForMultipleObjectsEx`).
+    /// Because input no longer has to wait out the timeout, this cap does NOT
+    /// bound input-pickup latency (that is now sub-ms / event-driven). It only
+    /// bounds how stale a *timer-driven* update (the ~1s clock tick, notification
+    /// expiry) may get when the desktop is otherwise idle. 100ms keeps the clock
+    /// and expiry comfortably timely (well under the 1s tick) while letting the
+    /// CPU drop to ~0% — the thread is parked in the OS wait, not spinning.
+    const IDLE_WAIT_MAX: Duration = Duration::from_millis(100);
 
-    /// Choose the idle sleep for the `!render_in_flight && !awaiting_ack` case
-    /// (the steady-state tail of the run loop). Pure so it is unit-testable
-    /// independently of the platform backend (t77-A3).
+    /// Choose how long to PARK on [`PlatformBackend::wait_event_timeout`] for the
+    /// `!render_in_flight && !awaiting_ack` case (the steady-state tail of the
+    /// run loop). Pure so it is unit-testable independently of the platform
+    /// backend (t97-wakeup).
     ///
-    /// Contract:
-    /// - `dirty && !frame_interval.is_zero()`: throttled — sleep the remaining
-    ///   time until the next frame is due (never longer than one frame).
-    /// - `!dirty && had_event`: we just processed input this iteration, so more
-    ///   may be arriving — sleep at most 1ms to pick it up immediately.
-    /// - `!dirty && !had_event`: fully idle — sleep up to [`Self::IDLE_SLEEP_MAX`]
-    ///   to drop CPU, clamped to `frame_interval` so an uncapped (0) interval
-    ///   still floors at 1ms.
-    /// - otherwise (`dirty && frame_interval.is_zero()`): no throttle, render
-    ///   immediately — zero sleep.
-    fn idle_sleep(
+    /// The returned value is a *parking budget*, not a fixed sleep: the timed
+    /// wait returns immediately when an event lands, so a longer budget never
+    /// adds latency — it only bounds how long the loop waits when NOTHING
+    /// happens. Contract:
+    /// - `dirty && !frame_interval.is_zero()`: throttled — wait the remaining
+    ///   time until the next frame is due (never longer than one frame). A new
+    ///   event still wakes us early.
+    /// - `dirty && frame_interval.is_zero()`: no throttle — return ZERO so the
+    ///   ready/active frame is submitted and presented ASAP with NO wait (this
+    ///   is what removes the old 1ms active wakeup floor).
+    /// - `!dirty`: idle (whether or not input was just processed) — park up to
+    ///   [`Self::IDLE_WAIT_MAX`]. The timed wait wakes immediately on the next
+    ///   event, so there is no input-latency penalty and no busy-spin: the
+    ///   thread is blocked in the OS wait, not looping. `frame_interval` clamps
+    ///   the lower bound so a finite interval shorter than the cap still bounds
+    ///   timer latency to one frame.
+    fn wait_budget(
         dirty: bool,
-        had_event: bool,
         frame_interval: Duration,
         last_render_elapsed: Duration,
     ) -> Duration {
-        if dirty && !frame_interval.is_zero() {
-            // Dirty but throttled — sleep until the next frame is due.
-            frame_interval.saturating_sub(last_render_elapsed)
-        } else if !dirty {
-            if had_event {
-                // Input was processed this iteration — stay hot for the next one.
-                // DO NOT raise this above 1ms: with a non-blocking poll it is the
-                // active-use input latency floor.
-                Duration::from_millis(1)
+        if dirty {
+            if frame_interval.is_zero() {
+                // Uncapped + dirty — present ASAP, no wait. (No 1ms floor.)
+                Duration::ZERO
             } else {
-                // Fully idle: sleep up to IDLE_SLEEP_MAX to shed CPU, but clamp to
-                // the frame interval so a 0 (uncapped) interval floors at 1ms.
-                let cap = Self::IDLE_SLEEP_MAX.as_millis() as u64;
-                Duration::from_millis(frame_interval.as_millis().clamp(1, cap as u128) as u64)
+                // Dirty but throttled — wait until the next frame is due.
+                frame_interval.saturating_sub(last_render_elapsed)
             }
         } else {
-            // dirty && frame_interval.is_zero() — no throttle, render now.
-            Duration::ZERO
+            // Idle: park on events. The timed wait wakes immediately on input,
+            // so this is the CPU-shedding park, NOT an input-latency cap. Clamp
+            // to the frame interval when finite so timer-driven updates stay at
+            // most one frame stale; otherwise park up to IDLE_WAIT_MAX.
+            if frame_interval.is_zero() || frame_interval >= Self::IDLE_WAIT_MAX {
+                Self::IDLE_WAIT_MAX
+            } else {
+                frame_interval
+            }
         }
     }
 
@@ -406,29 +441,10 @@ impl DesktopCompositor {
         while self.running {
             let _ = self.refresh_present_pacing(platform);
 
-            // Drain all pending events.
-            let mut had_event = false;
+            // Drain all pending events (non-blocking) so a burst of input is
+            // processed in one iteration before we decide whether to park.
             while let Some(event) = platform.poll_event() {
-                had_event = true;
-                // Monitor hotplug (t93 gap #5c): `DisplaysChanged` needs the live
-                // platform handle to re-enumerate displays, which `handle_event`
-                // does not receive — so it is handled here in the drain (which
-                // owns `platform`). The handler re-installs the layout, migrates
-                // stranded windows, resizes to the new primary, and marks dirty.
-                if matches!(event, liquide_platform::PlatformEvent::DisplaysChanged) {
-                    if self.handle_displays_changed(platform) {
-                        self.mark_full_dirty();
-                    }
-                    continue;
-                }
-                // Snapshot the interactive-overlay footprint BEFORE handling the
-                // event so a hover that moves/closes a menu can union the OLD and
-                // NEW footprints (the disappearing panel's pixels must be in the
-                // damage hint or they go stale — t80-hint).
-                let overlay_before = self.shell.interactive_overlay_damage();
-                if self.handle_event(&event) {
-                    self.mark_dirty_for_event(&event, overlay_before);
-                }
+                self.dispatch_platform_event(platform, event);
             }
 
             // Consume any host-side requests the shell recorded this iteration
@@ -540,36 +556,41 @@ impl DesktopCompositor {
                 }
             }
 
-            // Efficient idle with adaptive precision.
-            let target_sleep = if self.render_in_flight || self.present_pacing.awaiting_ack {
-                // Render in progress — brief yield to check for completion.
-                // (Left at 100us deliberately: changing it risks present cadence.)
+            // Event-driven wakeup with adaptive precision (t97-wakeup).
+            //
+            // We compute a PARK BUDGET and hand it to the platform's TIMED wait
+            // (`wait_event_timeout`), which returns the INSTANT an event lands or
+            // when the budget elapses — whichever first. This replaces the old
+            // "compute a fixed sleep then sleep" tail, which had two costs the
+            // timed wait removes: (1) a 1ms floor on active wakeups (capping the
+            // loop at 1000fps even with a ready frame), and (2) an up-to-24ms
+            // input-pickup spike at idle because the poll was non-blocking.
+            let park = if self.render_in_flight || self.present_pacing.awaiting_ack {
+                // Render in progress — short park to check for completion
+                // promptly. (Kept at 100us: changing it risks present cadence.)
+                // A real input event still wakes us immediately.
                 Duration::from_micros(100)
             } else {
-                // Steady-state idle selection, factored into a pure helper so the
-                // dirty/had_event/idle branches stay unit-testable (t77-A3). The
-                // no-event branch shedds CPU by sleeping up to IDLE_SLEEP_MAX
-                // (24ms); the had_event branch stays at <=1ms so an actively-used
-                // desktop keeps immediate input pickup with a non-blocking poll.
-                Self::idle_sleep(
-                    self.dirty,
-                    had_event,
-                    self.frame_interval,
-                    self.last_render.elapsed(),
-                )
+                // Steady-state budget, factored into a pure helper so the
+                // dirty/throttle/idle branches stay unit-testable. ZERO when an
+                // active/ready frame should present ASAP (no 1ms floor); a
+                // CPU-shedding event park (up to IDLE_WAIT_MAX) when idle — the
+                // timed wait makes that park wake on input with sub-ms latency,
+                // so it is NOT a busy-spin and NOT an input-latency cap.
+                Self::wait_budget(self.dirty, self.frame_interval, self.last_render.elapsed())
             };
 
-            // For sub-millisecond sleeps, use spin-wait instead of OS sleep
-            // (OS scheduler can't reliably sleep < 1ms on most platforms).
-            if target_sleep <= Duration::from_micros(500) {
-                if target_sleep > Duration::ZERO {
-                    let deadline = Instant::now() + target_sleep;
-                    while Instant::now() < deadline {
-                        std::hint::spin_loop();
-                    }
+            // ACTIVE/READY (park == ZERO): do NOT spin and do NOT block — fall
+            // straight back to the top of the loop so the just-submitted /
+            // ready frame is presented and the next is produced immediately.
+            // IDLE/THROTTLED (park > ZERO): park on the platform's TIMED wait.
+            // It blocks on the OS event primitive (CPU ~0%) and returns the
+            // instant input arrives; if it yields an event, dispatch it right
+            // here so it is not lost (the next iteration then renders it).
+            if !park.is_zero() {
+                if let Some(event) = platform.wait_event_timeout(park) {
+                    self.dispatch_platform_event(platform, event);
                 }
-            } else {
-                thread::sleep(target_sleep);
             }
         }
 
@@ -686,17 +707,30 @@ mod watchdog_tests {
              not wait out a 16.67ms interval"
         );
 
-        // And it must NOT busy-spin while idle: the idle path still yields a
-        // >=1ms wait even when fully idle and uncapped (a wait, not a spin).
-        let idle = DesktopCompositor::idle_sleep(
+        // A READY/active frame (dirty + uncapped) must present ASAP with NO
+        // wait at all — this is what removes the old 1ms active wakeup floor
+        // that capped the active loop at 1000fps.
+        let active = DesktopCompositor::wait_budget(
+            /*dirty*/ true,
+            desktop.frame_interval,
+            Duration::ZERO,
+        );
+        assert_eq!(
+            active,
+            Duration::ZERO,
+            "an active/ready frame must be scheduled with NO wait (no 1ms floor), got {active:?}"
+        );
+
+        // And it must NOT busy-spin while idle: the idle path parks on a real,
+        // non-zero event-wait budget (a wait, not a spin) even when uncapped.
+        let idle = DesktopCompositor::wait_budget(
             /*dirty*/ false,
-            /*had_event*/ false,
             desktop.frame_interval,
             Duration::ZERO,
         );
         assert!(
             idle >= Duration::from_millis(1),
-            "idle loop must wait (not busy-spin) even when uncapped, got {idle:?}"
+            "idle loop must park (not busy-spin) even when uncapped, got {idle:?}"
         );
     }
 
@@ -777,92 +811,101 @@ mod watchdog_tests {
         assert!(desktop.quit_requested, "quit must be recorded as requested");
     }
 
-    // ---- idle-sleep selection (t77-A3) -------------------------------------
+    // ---- wait-budget selection (t97-wakeup) --------------------------------
 
-    /// One 60fps frame, the interval the real loop runs with by default.
+    /// One 60fps frame, a representative finite interval.
     const FI_60: Duration = Duration::from_millis(16);
 
     #[test]
-    fn idle_sleep_had_event_is_immediate_pickup() {
-        // TOOTH (t77-A3): with a NON-BLOCKING poll, the no-render had_event sleep
-        // bounds active-use input latency, so it must stay <=1ms. If someone
-        // raises this branch to the deeper idle cap, this fails.
-        let s = DesktopCompositor::idle_sleep(
-            /*dirty*/ false,
-            /*had_event*/ true,
-            FI_60,
-            /*last_render_elapsed*/ Duration::ZERO,
+    fn wait_budget_active_ready_frame_has_no_floor() {
+        // ANTI-FAKE-GREEN (t97-wakeup): an active/ready frame (dirty + uncapped)
+        // must be scheduled with a ZERO park — NO 1ms (or any) wait. This is the
+        // core fix: the old loop floored every wakeup at >=1ms, capping the
+        // active loop at 1000fps even with a frame ready right now. Fails if a
+        // non-zero floor is reinstated for the active path.
+        let s = DesktopCompositor::wait_budget(
+            /*dirty*/ true,
+            /*frame_interval*/ Duration::ZERO,
+            Duration::ZERO,
         );
-        assert!(
-            s <= Duration::from_millis(1),
-            "had_event idle sleep must stay <=1ms for immediate input pickup, got {s:?}"
-        );
-    }
-
-    #[test]
-    fn idle_sleep_no_event_uses_deeper_sleep() {
-        // TOOTH (t77-A3): the fully-idle (!dirty && !had_event) branch must use
-        // the deeper sleep to shed CPU — strictly longer than the 1ms had_event
-        // floor — but never exceed the conservative IDLE_SLEEP_MAX (24ms) input
-        // latency cap. At a 16ms frame interval the result is 16ms (clamp keeps
-        // it under the 24ms cap). Fails if the deeper branch is reverted to the
-        // had_event 1ms floor.
-        let idle = DesktopCompositor::idle_sleep(false, false, FI_60, Duration::ZERO);
-        let active = DesktopCompositor::idle_sleep(false, true, FI_60, Duration::ZERO);
-        assert!(
-            idle > active,
-            "idle (no-event) sleep must be deeper than had_event sleep: idle={idle:?} active={active:?}"
-        );
-        assert!(
-            idle <= DesktopCompositor::IDLE_SLEEP_MAX,
-            "idle sleep must never exceed the 24ms input-latency cap, got {idle:?}"
-        );
-    }
-
-    #[test]
-    fn idle_sleep_no_event_cap_is_24ms() {
-        // TOOTH (t77-A3): the no-event cap was raised 16 -> 24ms. With a frame
-        // interval larger than the cap, the clamp must pin the sleep at exactly
-        // 24ms. Fails if IDLE_SLEEP_MAX is reverted to 16ms (would yield 16).
-        let big_interval = Duration::from_millis(1000);
-        let s = DesktopCompositor::idle_sleep(false, false, big_interval, Duration::ZERO);
         assert_eq!(
             s,
-            Duration::from_millis(24),
-            "fully-idle sleep must clamp to the 24ms cap"
+            Duration::ZERO,
+            "an active/ready frame must present ASAP with NO wait (no 1ms floor), got {s:?}"
+        );
+    }
+
+    #[test]
+    fn wait_budget_idle_parks_not_spins() {
+        // ANTI-FAKE-GREEN (t97-wakeup): the fully-idle branch must yield a real,
+        // NON-ZERO park budget so the loop BLOCKS on the platform's timed wait
+        // (CPU ~0%) instead of busy-spinning. Fails if idle collapses to ZERO
+        // (which would spin the loop) — true for both a finite and uncapped
+        // frame interval.
+        let idle_uncapped =
+            DesktopCompositor::wait_budget(false, Duration::ZERO, Duration::ZERO);
+        assert!(
+            idle_uncapped >= Duration::from_millis(1),
+            "idle (uncapped) must park, not spin: got {idle_uncapped:?}"
+        );
+        let idle_finite = DesktopCompositor::wait_budget(false, FI_60, Duration::ZERO);
+        assert!(
+            idle_finite >= Duration::from_millis(1),
+            "idle (finite interval) must park, not spin: got {idle_finite:?}"
+        );
+    }
+
+    #[test]
+    fn wait_budget_idle_caps_at_idle_wait_max() {
+        // The idle park is bounded by IDLE_WAIT_MAX so a timer-driven update
+        // (clock/notification expiry) can't get arbitrarily stale. With an
+        // uncapped (or large) frame interval the budget pins at the cap exactly.
+        let s = DesktopCompositor::wait_budget(false, Duration::ZERO, Duration::ZERO);
+        assert_eq!(
+            s,
+            DesktopCompositor::IDLE_WAIT_MAX,
+            "uncapped idle park must clamp to IDLE_WAIT_MAX"
+        );
+        let big = Duration::from_millis(1000);
+        let s = DesktopCompositor::wait_budget(false, big, Duration::ZERO);
+        assert_eq!(
+            s,
+            DesktopCompositor::IDLE_WAIT_MAX,
+            "an idle interval larger than the cap must clamp to IDLE_WAIT_MAX"
         );
         assert_eq!(
-            DesktopCompositor::IDLE_SLEEP_MAX,
-            Duration::from_millis(24),
-            "IDLE_SLEEP_MAX must be the raised 24ms cap"
+            DesktopCompositor::IDLE_WAIT_MAX,
+            Duration::from_millis(100),
+            "IDLE_WAIT_MAX must be 100ms (timer-latency bound, well under the 1s tick)"
         );
     }
 
     #[test]
-    fn idle_sleep_no_event_floors_at_1ms_when_uncapped() {
-        // A 0 (uncapped) frame interval must still floor the idle sleep at 1ms,
-        // not 0 — otherwise a fully idle uncapped desktop would busy-spin.
-        let s = DesktopCompositor::idle_sleep(false, false, Duration::ZERO, Duration::ZERO);
-        assert_eq!(s, Duration::from_millis(1));
+    fn wait_budget_idle_clamps_to_finite_interval() {
+        // A finite frame interval SHORTER than the cap bounds the idle park to
+        // one frame (so a capped desktop still produces timer updates promptly).
+        let s = DesktopCompositor::wait_budget(false, FI_60, Duration::ZERO);
+        assert_eq!(s, FI_60, "idle park must clamp to a sub-cap finite interval");
     }
 
     #[test]
-    fn idle_sleep_dirty_throttled_waits_until_next_frame() {
-        // Dirty + a real frame interval: sleep the REMAINING time until the next
-        // frame is due (interval - elapsed), never longer than one frame.
+    fn wait_budget_dirty_throttled_waits_until_next_frame() {
+        // Dirty + a finite frame interval: park the REMAINING time until the
+        // next frame is due (interval - elapsed), never longer than one frame.
+        // An event still wakes the timed wait early.
         let half = FI_60 / 2;
-        let s = DesktopCompositor::idle_sleep(/*dirty*/ true, false, FI_60, half);
+        let s = DesktopCompositor::wait_budget(/*dirty*/ true, FI_60, half);
         assert_eq!(s, FI_60 - half, "must wait the remaining frame budget");
 
         // Past the interval: nothing left to wait, render now.
-        let s = DesktopCompositor::idle_sleep(true, false, FI_60, FI_60 * 2);
-        assert_eq!(s, Duration::ZERO, "overdue frame must not sleep");
+        let s = DesktopCompositor::wait_budget(true, FI_60, FI_60 * 2);
+        assert_eq!(s, Duration::ZERO, "overdue frame must not wait");
     }
 
     #[test]
-    fn idle_sleep_dirty_uncapped_renders_immediately() {
-        // Dirty + uncapped (0) interval: no throttle, zero sleep.
-        let s = DesktopCompositor::idle_sleep(true, false, Duration::ZERO, Duration::ZERO);
+    fn wait_budget_dirty_uncapped_renders_immediately() {
+        // Dirty + uncapped (0) interval: no throttle, zero park.
+        let s = DesktopCompositor::wait_budget(true, Duration::ZERO, Duration::ZERO);
         assert_eq!(s, Duration::ZERO);
     }
 }

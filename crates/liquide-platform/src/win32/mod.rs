@@ -2141,6 +2141,74 @@ impl PlatformBackend for Win32Platform {
         }
     }
 
+    fn wait_event_timeout(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Option<PlatformEvent> {
+        // Fast path: anything already translated and queued returns with zero
+        // latency — no wait at all. This is what makes an ACTIVE/ready frame
+        // present ASAP instead of waiting out a fixed sleep.
+        // SAFETY: exclusive &mut self access; the wndproc only runs on this
+        // thread during pump_messages below, so no concurrent queue mutation.
+        let queue = unsafe { &mut *self.event_queue.get() };
+        if let Some(ev) = queue.pop_front() {
+            return Some(ev);
+        }
+
+        // Convert the timeout to whole milliseconds for the Win32 wait. A
+        // sub-millisecond (but non-zero) request is treated as "wake on the
+        // next available input or 1ms, whichever first" — the OS message wait
+        // has millisecond granularity, and an input that is already queued
+        // returns immediately regardless. A zero timeout is a non-blocking
+        // poll (present-now): we skip the wait entirely.
+        let ms = if timeout.is_zero() {
+            0
+        } else {
+            // Round UP so a sub-ms non-zero timeout still parks (>=1ms) rather
+            // than collapsing to a non-blocking poll that would busy-loop the
+            // caller. Saturate to u32 for very large idle timeouts.
+            let micros = timeout.as_micros();
+            let rounded = micros.div_ceil(1000);
+            rounded.min(u32::MAX as u128) as u32
+        };
+
+        if ms > 0 {
+            // Block until either a message lands in this thread's queue OR the
+            // timeout elapses — whichever first. With nCount == 0 this parks the
+            // thread on the OS message wait (CPU ~0% while idle) and wakes the
+            // INSTANT real input arrives. MWMO_INPUTAVAILABLE makes already-
+            // pending-but-undispatched input wake it too, closing a race where a
+            // message arrives between our queue drain above and the wait.
+            // SAFETY: nCount == 0 with a null handle array is the documented
+            // "wait for input only" form; all other args are plain integers.
+            let rc = unsafe {
+                ffi::MsgWaitForMultipleObjectsEx(
+                    0,
+                    ptr::null(),
+                    ms,
+                    ffi::QS_ALLINPUT,
+                    ffi::MWMO_INPUTAVAILABLE,
+                )
+            };
+            if rc == ffi::WAIT_TIMEOUT {
+                // Timeout elapsed with no input. Still pump once in case a
+                // non-input message (timer/paint) is sitting there, then report
+                // whatever (if anything) it produced.
+                self.pump_messages();
+                let queue = unsafe { &mut *self.event_queue.get() };
+                return queue.pop_front();
+            }
+            // Otherwise an event is available — fall through to pump + drain.
+        }
+
+        // Pump the now-available messages through the wndproc, then return the
+        // first PlatformEvent it produced (if any — some messages produce none).
+        self.pump_messages();
+        // SAFETY: same reasoning as above — exclusive &mut self access.
+        let queue = unsafe { &mut *self.event_queue.get() };
+        queue.pop_front()
+    }
+
     fn take_present_feedback(&mut self) -> Option<PresentFeedback> {
         self.present_feedback.take_feedback()
     }

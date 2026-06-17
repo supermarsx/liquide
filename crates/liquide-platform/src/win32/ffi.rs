@@ -331,6 +331,25 @@ pub const PM_REMOVE: UINT = 0x0001;
 pub const PM_NOREMOVE: UINT = 0x0000;
 
 // ---------------------------------------------------------------------------
+// MsgWaitForMultipleObjectsEx constants (timed/waitable event wakeup)
+// ---------------------------------------------------------------------------
+
+/// Wake-mask for `MsgWaitForMultipleObjectsEx`: any input message in the
+/// thread's queue (mouse, keyboard, paint, timer, posted messages, etc.).
+/// `QS_ALLINPUT = QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY |
+/// QS_SENDMESSAGE`.
+pub const QS_ALLINPUT: UINT = 0x04FF;
+
+/// `dwFlags` for `MsgWaitForMultipleObjectsEx`: return as soon as an input
+/// event matching the wake-mask is queued (don't require it to be dispatched).
+pub const MWMO_INPUTAVAILABLE: UINT = 0x0004;
+
+/// `MsgWaitForMultipleObjectsEx` return value: the timeout elapsed with no
+/// signalled object / queued input. Equal to `WAIT_OBJECT_0 + nCount` where
+/// `nCount == 0` here, i.e. `0x00000102`.
+pub const WAIT_TIMEOUT: u32 = 0x0000_0102;
+
+// ---------------------------------------------------------------------------
 // GDI constants
 // ---------------------------------------------------------------------------
 
@@ -716,6 +735,21 @@ unsafe extern "system" {
 
     pub fn TranslateMessage(lpMsg: *const MSG) -> BOOL;
     pub fn DispatchMessageW(lpMsg: *const MSG) -> LRESULT;
+
+    /// Block up to `dwMilliseconds` for either a handle in `pHandles` to be
+    /// signalled OR a queued input matching `dwWakeMask`, whichever comes first.
+    /// With `nCount == 0` and `pHandles == null` this is a pure
+    /// "wait-for-message-with-timeout" primitive: it returns `WAIT_OBJECT_0`
+    /// (== 0) when input is available and [`WAIT_TIMEOUT`] when the timeout
+    /// elapses. Unlike `GetMessageW` it does not block forever, so the event
+    /// loop can wake on a deadline without spinning.
+    pub fn MsgWaitForMultipleObjectsEx(
+        nCount: u32,
+        pHandles: *const *mut core::ffi::c_void,
+        dwMilliseconds: u32,
+        dwWakeMask: UINT,
+        dwFlags: UINT,
+    ) -> u32;
     pub fn PostQuitMessage(nExitCode: i32);
     pub fn PostMessageW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) -> BOOL;
 

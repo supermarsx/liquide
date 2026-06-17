@@ -982,6 +982,72 @@ mod tests {
     }
 
     #[test]
+    fn wait_event_timeout_returns_pending_event_immediately() {
+        // CONTRACT (t97-wakeup): a queued event must return with ~zero latency —
+        // the timed wait must NOT wait out the timeout when work is ready. This
+        // exercises the default (poll-based) impl's fast path; the Win32
+        // override has the same contract via MsgWaitForMultipleObjectsEx.
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let h = NativeWindowHandle(1);
+        platform.push_event(PlatformEvent::FocusGained { handle: h });
+
+        let start = std::time::Instant::now();
+        let ev = platform.wait_event_timeout(std::time::Duration::from_millis(500));
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(ev, Some(PlatformEvent::FocusGained { .. })),
+            "a pending event must be returned, got {ev:?}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "a ready event must return promptly, not wait out the timeout (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn wait_event_timeout_times_out_when_idle() {
+        // CONTRACT (t97-wakeup): with nothing queued the timed wait must return
+        // None AFTER (approximately) the timeout — it must block (park), not
+        // return instantly (busy-spin) and not block forever.
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+        let timeout = std::time::Duration::from_millis(30);
+
+        let start = std::time::Instant::now();
+        let ev = platform.wait_event_timeout(timeout);
+        let elapsed = start.elapsed();
+
+        assert!(ev.is_none(), "idle timed wait must return None, got {ev:?}");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(20),
+            "idle timed wait must actually wait ~the timeout (parked), not spin/return instantly (took {elapsed:?})"
+        );
+    }
+
+    #[test]
+    fn wait_event_timeout_zero_is_nonblocking_poll() {
+        // A zero timeout is a present-now non-blocking poll: returns whatever is
+        // queued (or None) WITHOUT blocking.
+        let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
+
+        let start = std::time::Instant::now();
+        let ev = platform.wait_event_timeout(std::time::Duration::ZERO);
+        assert!(ev.is_none(), "empty zero-timeout poll must be None");
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(10),
+            "zero timeout must not block"
+        );
+
+        let h = NativeWindowHandle(1);
+        platform.push_event(PlatformEvent::FocusGained { handle: h });
+        let ev = platform.wait_event_timeout(std::time::Duration::ZERO);
+        assert!(
+            matches!(ev, Some(PlatformEvent::FocusGained { .. })),
+            "zero-timeout poll must still drain a ready event, got {ev:?}"
+        );
+    }
+
+    #[test]
     fn present_frame_stores_pixels() {
         let mut platform = StandalonePlatform::new(StandaloneConfig::default()).unwrap();
         let handle = NativeWindowHandle(1);

@@ -364,6 +364,64 @@ pub trait PlatformBackend: Send {
         PlatformEvent::Quit
     }
 
+    /// Wait up to `timeout` for the next platform event, returning as soon as
+    /// one is available OR the timeout elapses — whichever happens first.
+    ///
+    /// This is the TIMED / waitable wakeup the event loop uses to get
+    /// sub-millisecond, event-driven scheduling without busy-spinning:
+    ///
+    /// - A pending event returns IMMEDIATELY (no wait), so a ready frame can be
+    ///   presented ASAP.
+    /// - `timeout == 0` is a non-blocking poll (present-now, never sleep).
+    /// - A non-zero `timeout` blocks the calling thread on the platform's native
+    ///   wait primitive (e.g. `MsgWaitForMultipleObjectsEx` on Win32) so the CPU
+    ///   is idle until either an event arrives (wakes immediately) or the timeout
+    ///   elapses. A truly idle loop passes a large timeout here and parks at ~0%
+    ///   CPU until real input arrives.
+    ///
+    /// Return value:
+    /// - `Some(event)` — an event was available within the timeout.
+    /// - `None` — the timeout elapsed with no event (the caller should loop /
+    ///   render / re-evaluate state).
+    ///
+    /// # Default implementation
+    ///
+    /// Backends that do not provide a native timed wait fall back to a
+    /// non-blocking [`poll_event`](Self::poll_event) followed by a bounded OS
+    /// sleep. This is correct (it never drops events and never spins) but coarse
+    /// — only Win32 (and any backend that overrides this) gets the true
+    /// event-driven wake. The fallback is split into short slices so a freshly
+    /// posted event is still picked up promptly rather than after the full
+    /// timeout.
+    fn wait_event_timeout(&mut self, timeout: core::time::Duration) -> Option<PlatformEvent> {
+        // Fast path: anything already queued returns with zero latency.
+        if let Some(ev) = self.poll_event() {
+            return Some(ev);
+        }
+        if timeout.is_zero() {
+            // Pure non-blocking poll — present-now semantics.
+            return None;
+        }
+
+        // Fallback: poll in short slices up to the deadline so we still wake
+        // promptly on an event without a native waitable primitive. Slices are
+        // capped at 1ms so worst-case event pickup latency stays sub-frame; the
+        // sleep means this never busy-spins.
+        let deadline = std::time::Instant::now() + timeout;
+        let slice = core::time::Duration::from_millis(1);
+        loop {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            let remaining = deadline - now;
+            std::thread::sleep(remaining.min(slice));
+            if let Some(ev) = self.poll_event() {
+                return Some(ev);
+            }
+        }
+    }
+
     /// Returns whether the backend can accept another present right now.
     ///
     /// Backends may opportunistically refresh lightweight presenter state
