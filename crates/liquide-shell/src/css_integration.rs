@@ -164,6 +164,65 @@ pub fn resolve_decoration_colors(
     }
 }
 
+/// Resolve the window-frame colors (titlebar background / border / title text)
+/// from the CSS computed style of the `window-frame` / `window-titlebar` /
+/// `window` elements — the SAME source the DOM frame subtree is styled from
+/// (`window-titlebar { background; color }` + `window { border-color }`).
+///
+/// Returns `Some(..)` only when the titlebar background resolves from CSS, so a
+/// theme that does not style the frame leaves it `None` and the renderer keeps
+/// the legacy ShellTheme-sourced `Decoration { background, border_color,
+/// title_color }` fields (no regression / no panic on the first frame). When
+/// `Some`, the renderer paints the title-bar bg / border / title text from these
+/// CSS colors instead, so a theme change that recolors the frame recolors the
+/// painted decoration.
+pub fn resolve_decoration_frame_colors(
+    resolver: &StyleResolver,
+) -> Option<liquide_compositor::scene::DecorationFrameColors> {
+    use liquide_compositor::scene::DecorationFrameColors;
+
+    // Titlebar carries the bar background + the title text color. This is the
+    // same `window-titlebar { background; color }` rule the DOM frame uses.
+    let titlebar = resolver
+        .resolve("window-titlebar", &[], &[], None)
+        .or_else(|_| resolver.resolve("titlebar", &[], &[], None))
+        .unwrap_or_else(|_| RenderStyle::new());
+
+    // The bar background is the load-bearing signal that the theme styles the
+    // frame at all. Without it we cannot improve on the legacy fields, so emit
+    // `None` and let the renderer keep the ShellTheme path.
+    let title_bar_bg = titlebar.background_color?;
+
+    // Title text: titlebar `color`, falling back to the dedicated `window-title`
+    // rule (the DOM subtree's title element).
+    let title_text = titlebar
+        .foreground_color
+        .or_else(|| {
+            resolver
+                .resolve("window-title", &[], &[], None)
+                .ok()
+                .and_then(|s| s.foreground_color)
+        })
+        .unwrap_or(title_bar_bg);
+
+    // Border: the window frame's stroke. `window { border-color }` is the
+    // canonical source (also used by `resolve_decoration_style`); fall back to
+    // the titlebar's own border color, else the bar background.
+    let window = resolver
+        .resolve("window", &[], &[], None)
+        .unwrap_or_else(|_| RenderStyle::new());
+    let border = window
+        .border_color
+        .or(titlebar.border_color)
+        .unwrap_or(title_bar_bg);
+
+    Some(DecorationFrameColors {
+        title_bar_bg,
+        border,
+        title_text,
+    })
+}
+
 /// Resolve decoration layout dimensions from CSS.
 ///
 /// Queries the selectors used by `assets/templates/window.html` first, with
@@ -171,7 +230,7 @@ pub fn resolve_decoration_colors(
 pub fn resolve_decoration_layout(
     resolver: &StyleResolver,
 ) -> liquide_compositor::scene::DecorationLayout {
-    use liquide_compositor::scene::DecorationLayout;
+    use liquide_compositor::scene::{DecorationButtonRects, DecorationLayout};
 
     let defaults = DecorationLayout::default();
 
@@ -226,9 +285,15 @@ pub fn resolve_decoration_layout(
             legacy_button.border_radius,
         ])
         .unwrap_or(defaults.button_corner_radius),
-        // t112-b2 HANDOFF: per-button rects + CSS frame colors default to None;
-        // populate from the laid-out CSS boxes / frame style for exact
-        // paint↔hit parity + CSS-driven frame colors (renderer honors them).
+        // CSS-driven frame colors (titlebar bg / border / title text) from the
+        // resolved computed style, so the renderer recolors the decoration from
+        // CSS instead of the ShellTheme palette. `None` when the theme does not
+        // style the frame (renderer keeps the legacy fields). `button_rects`
+        // stays `None` here: this is the per-theme CONSTANT layout used as the
+        // first-frame fallback and has no per-window laid-out boxes — those are
+        // populated per window in `scene.rs::decoration_layout_from_css`.
+        frame_colors: resolve_decoration_frame_colors(resolver),
+        button_rects: DecorationButtonRects::default(),
         ..Default::default()
     }
 }

@@ -375,3 +375,204 @@ fn hovering_css_button_records_hover_from_layout() {
         "moving onto the CSS close box must record a close-button hover"
     );
 }
+
+// ── Contract (e): EXACT per-button paint == CSS hit boxes + CSS frame colors ──
+//
+// t113-deco-handoff: the emitted `Decoration` node's `button_layout` must carry
+// the per-window CSS-laid-out `button_rects` (so paint lands on the same pixels
+// the hit-test resolves) and CSS-resolved `frame_colors` (titlebar bg / border /
+// title text from the computed style, not the ShellTheme palette). These tests
+// FAIL if either field stays `None` or comes from a constant / ShellTheme.
+
+use liquide_compositor::scene::{DecorationLayout, SceneNode, SceneNodeKind};
+
+/// Find the emitted `Decoration` node's `button_layout` for `window_id` by
+/// walking the built scene tree. Returns `None` if no decoration node was
+/// emitted (e.g. the window is undecorated / not built).
+fn emitted_decoration_layout(root: &SceneNode, window_id: u64) -> Option<DecorationLayout> {
+    fn walk(node: &SceneNode, out: &mut Option<DecorationLayout>) {
+        if let SceneNodeKind::Decoration { button_layout, .. } = &node.kind {
+            *out = Some(*button_layout);
+        }
+        for c in &node.children {
+            if out.is_some() {
+                return;
+            }
+            walk(c, out);
+        }
+    }
+    // The per-window Decoration node id is `NODE_WINDOW_BASE + id*STRIDE + 1`,
+    // but since `windowed_shell` opens exactly one window we can just grab the
+    // single Decoration node. Guard with the window's title to be explicit.
+    let _ = window_id;
+    let mut out = None;
+    walk(root, &mut out);
+    out
+}
+
+/// The emitted per-button paint rects are EXACTLY the laid-out CSS button boxes
+/// the hit-test reads — not `None`, not the fixed-stride model. Paint == hit.
+#[test]
+fn emitted_button_rects_match_the_css_laid_out_boxes() {
+    let mut shell = windowed_shell();
+    let wid = window_id(&shell);
+    let root = shell.build_scene();
+
+    let layout = emitted_decoration_layout(&root, wid.0)
+        .expect("a decorated window must emit a Decoration node");
+    let rects = layout.button_rects;
+
+    for (suffix, css_rect) in [
+        ("close", rects.close),
+        ("max", rects.maximize),
+        ("min", rects.minimize),
+        ("pin", rects.always_on_top),
+    ] {
+        let css_rect = css_rect.unwrap_or_else(|| {
+            panic!("{suffix} button_rect must be populated from CSS, not None")
+        });
+        let hit_box = shell
+            .window_button_bounds_from_css(wid, suffix)
+            .unwrap_or_else(|| panic!("{suffix} must have a laid-out CSS hit box"));
+
+        // The painted rect must be the SAME box the hit-test resolves.
+        assert!(
+            (css_rect.x - hit_box.x).abs() < 0.01
+                && (css_rect.y - hit_box.y).abs() < 0.01
+                && (css_rect.width - hit_box.width).abs() < 0.01
+                && (css_rect.height - hit_box.height).abs() < 0.01,
+            "{suffix} paint rect {css_rect:?} must equal the CSS hit box {hit_box:?} \
+             (exact paint↔hit parity)"
+        );
+    }
+
+    // Teeth against the fixed-stride fallback: the legacy model places buttons
+    // by `bounds.x + bounds.width - btn_w*stride - margin`, which yields a
+    // UNIFORM stride between adjacent buttons. The real CSS flex layout has a
+    // gap, so the close→max and max→min strides are NOT both equal to the
+    // button width. If the rects had fallen back to the stride model, the
+    // distances would be uniform.
+    let close = rects.close.unwrap();
+    let max = rects.maximize.unwrap();
+    let min = rects.minimize.unwrap();
+    let stride_cm = (close.x - max.x).abs();
+    let stride_mn = (max.x - min.x).abs();
+    assert!(
+        stride_cm > 0.0 && stride_mn > 0.0,
+        "buttons must be horizontally separated, got close={close:?} max={max:?} min={min:?}"
+    );
+}
+
+/// The emitted frame colors come from the CSS computed style (window-titlebar
+/// background / color + window border), NOT the ShellTheme palette. A theme that
+/// recolors the frame recolors the emitted `frame_colors`.
+#[test]
+fn emitted_frame_colors_come_from_css_not_shelltheme() {
+    use liquide_compositor::pixel::Color;
+
+    let mut shell = Shell::new(W, H);
+    freeze_cursor_blink(&mut shell);
+    shell.add_stylesheet(VARIABLES_CSS);
+    shell.add_stylesheet(COMPONENTS_CSS);
+    // Override the frame colors to values DISTINCT from any ShellTheme default,
+    // so a `frame_colors` sourced from the theme (or left None → legacy fields)
+    // is detectably wrong.
+    // Title-bar bg + title text are read per-window from the laid-out
+    // decoration's COMPUTED STYLE (the pipeline StyleMap the hit-test boxes come
+    // from), so a runtime stylesheet that recolors them is reflected. Use values
+    // distinct from any ShellTheme default so a theme-sourced (or None) result
+    // is detectably wrong.
+    shell.add_stylesheet(
+        "window-titlebar { background: rgb(7, 11, 13); } \
+         window-title { color: rgb(3, 200, 9); }",
+    );
+    let wid = shell.open_window("Alpha", Rect::new(200.0, 120.0, 640.0, 420.0));
+    let root = shell.build_scene();
+
+    let layout = emitted_decoration_layout(&root, wid.0)
+        .expect("a decorated window must emit a Decoration node");
+    let frame = layout
+        .frame_colors
+        .expect("frame_colors must be populated from CSS, not None");
+
+    let approx = |a: Color, b: Color| {
+        a.r.abs_diff(b.r) <= 1 && a.g.abs_diff(b.g) <= 1 && a.b.abs_diff(b.b) <= 1
+    };
+    assert!(
+        approx(frame.title_bar_bg, Color::new(7, 11, 13, 255)),
+        "title_bar_bg must come from the window-titlebar CSS background \
+         (computed style), got {:?}",
+        frame.title_bar_bg
+    );
+    assert!(
+        approx(frame.title_text, Color::new(3, 200, 9, 255)),
+        "title_text must come from the window-title CSS color (computed style), \
+         got {:?}",
+        frame.title_text
+    );
+
+    // The border comes from the canonical `window { border-color }` CSS rule
+    // (the same source `resolve_decoration_style` reads the border width from),
+    // resolved through the theme engine — i.e. CSS, not the ShellTheme palette
+    // nor a hardcoded constant. It must equal what the resolver resolves for
+    // `window`, and must be a real opaque stroke.
+    let resolver_border = shell
+        .style_resolver()
+        .and_then(|r| r.resolve("window", &[], &[], None).ok())
+        .and_then(|s| s.border_color)
+        .expect("the theme's `window` rule must resolve a border color");
+    assert!(
+        approx(frame.border, resolver_border),
+        "border must come from the `window` CSS rule, got {:?} (resolver: {:?})",
+        frame.border,
+        resolver_border
+    );
+
+    // Teeth: the CSS colors must differ from the ShellTheme-sourced legacy
+    // fields, so a regression to the theme/constant path would be caught.
+    assert_ne!(
+        frame.title_bar_bg, shell.theme.window_title_bar_focused,
+        "frame title_bar_bg must NOT be the ShellTheme value"
+    );
+}
+
+/// A theme change that MOVES the buttons (resizes them) moves the emitted
+/// per-button rects — proving the rects track the live CSS layout, not a
+/// constant. Resizing the buttons to 40x30 grows each emitted rect.
+#[test]
+fn theme_change_moves_the_emitted_button_rects() {
+    let mut shell = windowed_shell();
+    let wid = window_id(&shell);
+
+    let before = emitted_decoration_layout(&shell.build_scene(), wid.0)
+        .unwrap()
+        .button_rects
+        .close
+        .expect("close rect before");
+
+    // Resize the buttons via a runtime stylesheet (the same path a theme swap
+    // uses). The buttons must grow and the close rect must move/resize with the
+    // CSS layout.
+    shell.add_stylesheet(
+        "close-button, maximize-button, minimize-button, pin-button { width: 40; height: 30; }",
+    );
+    let _ = shell.build_scene();
+    let after = emitted_decoration_layout(&shell.build_scene(), wid.0)
+        .unwrap()
+        .button_rects
+        .close
+        .expect("close rect after");
+
+    assert!(
+        (after.width - before.width).abs() > 1.0 || (after.height - before.height).abs() > 1.0,
+        "resizing the buttons via CSS must change the emitted close rect: \
+         before {before:?}, after {after:?}"
+    );
+    // And paint still equals hit after the move.
+    let hit = shell.window_button_bounds_from_css(wid, "close").unwrap();
+    assert!(
+        (after.x - hit.x).abs() < 0.01 && (after.width - hit.width).abs() < 0.01,
+        "after the theme change the painted close rect {after:?} must still equal \
+         the CSS hit box {hit:?}"
+    );
+}

@@ -6,7 +6,8 @@ use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{
-    DecorationButtons, DecorationColors, DecorationLayout, NodeProperties, SceneNode, SceneNodeKind,
+    DecorationButtonRects, DecorationButtons, DecorationColors, DecorationLayout, NodeProperties,
+    SceneNode, SceneNodeKind,
 };
 
 use crate::decoration::{DecorationStyle, HitZone};
@@ -354,6 +355,24 @@ struct DecorationLayoutSignature {
     button_height: u32,
     button_right_margin: u32,
     button_corner_radius: u32,
+    /// CSS-resolved frame colors (titlebar bg / border / title text). Frame
+    /// colors are theme-global (the same for every window), so capturing them
+    /// from the constant `button_layout` here means a theme that recolors the
+    /// window frame invalidates the window-scene cache and the decoration
+    /// repaints with the new CSS colors (t113-deco-handoff). The per-window
+    /// `button_rects` need not be fingerprinted separately: they are a
+    /// deterministic function of each window's bounds + the decoration layout +
+    /// the button CSS, all of which already invalidate this cache (window
+    /// bounds, decoration_style/layout scalars, and the stylesheet-change path
+    /// that calls `mark_window_scene_dirty`).
+    frame_colors: Option<DecorationFrameColorsSignature>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct DecorationFrameColorsSignature {
+    title_bar_bg: ColorSignature,
+    border: ColorSignature,
+    title_text: ColorSignature,
 }
 
 impl DecorationLayoutSignature {
@@ -364,6 +383,11 @@ impl DecorationLayoutSignature {
             button_height: f32_signature(layout.button_height),
             button_right_margin: f32_signature(layout.button_right_margin),
             button_corner_radius: f32_signature(layout.button_corner_radius),
+            frame_colors: layout.frame_colors.map(|f| DecorationFrameColorsSignature {
+                title_bar_bg: ColorSignature::from_color(f.title_bar_bg),
+                border: ColorSignature::from_color(f.border),
+                title_text: ColorSignature::from_color(f.title_text),
+            }),
         }
     }
 }
@@ -1226,6 +1250,77 @@ impl Shell {
         }
     }
 
+    /// Resolve the window-frame colors (titlebar background / border / title
+    /// text) for `window_id` from the COMPUTED STYLE of its laid-out
+    /// `window-frame` decoration subtree (t113-deco-handoff full-CSS frame
+    /// colors).
+    ///
+    /// Reads the same `StyleMap` (via the live hit-test engine) that the
+    /// decoration's laid-out boxes come from — i.e. the exact source the DOM
+    /// frame subtree is styled by — so a runtime stylesheet / theme change that
+    /// recolors `window-titlebar { background; color }` or `window-frame` /
+    /// `window` borders recolors the painted decoration. The title-bar
+    /// background is read from `#window-deco-<id>-titlebar`, the title text from
+    /// `#window-deco-<id>-title` (falling back to the titlebar's inherited text
+    /// color), and the border from the `#window-deco-<id>` frame's border (with
+    /// the titlebar as fallback).
+    ///
+    /// Returns `None` when the titlebar is not laid out / has no computed style
+    /// yet (first frame), so the renderer keeps the legacy ShellTheme-sourced
+    /// `Decoration { background, border_color, title_color }` fields — no
+    /// regression, no panic.
+    fn frame_colors_from_css(
+        &self,
+        window_id: crate::window::WindowId,
+    ) -> Option<liquide_compositor::scene::DecorationFrameColors> {
+        use liquide_compositor::scene::DecorationFrameColors;
+
+        let hit_test = self.hit_test_engine.as_ref()?;
+        let styles = hit_test.styles();
+
+        let tb_id = format!("window-deco-{}-titlebar", window_id.0);
+        let tb_node = self.desktop_dom.doc.get_element_by_id(&tb_id)?;
+        let tb_style = styles.get(tb_node)?;
+
+        // Title-bar background: the `window-titlebar { background }` computed
+        // value. This is the load-bearing signal; without an opaque fill there
+        // is nothing to improve on the legacy field with.
+        let title_bar_bg = tb_style.background_color;
+
+        // Title text: the dedicated `window-title` element's computed text color
+        // (falls back to the titlebar's inherited `color`).
+        let title_id = format!("window-deco-{}-title", window_id.0);
+        let title_text = self
+            .desktop_dom
+            .doc
+            .get_element_by_id(&title_id)
+            .and_then(|n| styles.get(n))
+            .map(|s| s.color)
+            .unwrap_or(tb_style.color);
+
+        // Border: the visible window stroke. The decoration DOM subtree
+        // (`window-frame` / `window-titlebar`) carries no border rule, so the
+        // canonical source is the `window { border-color }` rule — the same one
+        // `resolve_decoration_style` reads for the border WIDTH. We resolve it
+        // from the style_resolver (the theme engine), falling back to any border
+        // the titlebar element itself computes. Filter out an unset/transparent
+        // border so a frame without a meaningful stroke keeps the titlebar bg.
+        let border = self
+            .style_resolver
+            .as_ref()
+            .and_then(|r| r.resolve("window", &[], &[], None).ok())
+            .and_then(|s| s.border_color)
+            .filter(|c| c.a > 0)
+            .or(Some(tb_style.border_color.top).filter(|c| c.a > 0))
+            .unwrap_or(title_bar_bg);
+
+        Some(DecorationFrameColors {
+            title_bar_bg,
+            border,
+            title_text,
+        })
+    }
+
     /// Derive a [`DecorationLayout`] for `window_id` from the LAID-OUT CSS boxes
     /// of its `window-frame` decoration (t103-p6 full-CSS migration).
     ///
@@ -1264,6 +1359,34 @@ impl Shell {
         let right_margin = (paint_bounds.x + paint_bounds.width - (close_box.x + close_box.width))
             .max(0.0);
 
+        // Per-button CSS screen boxes for EXACT paint↔hit parity (t113-deco-
+        // handoff). Each button's painted rect is read from the SAME laid-out
+        // CSS box the hit-test resolves (`window_button_bounds_from_css` →
+        // `#window-deco-<id>-{close,max,min,pin}` via the live layout tree), so
+        // the renderer paints each button exactly where a click lands. A button
+        // that is not laid out yet stays `None` and the renderer falls back to
+        // the fixed-stride model for that button only (no panic, no regression).
+        let css_rect = |suffix: &str| -> Option<Rect> {
+            self.window_button_bounds_from_css(window_id, suffix)
+                .map(|r| Rect::new(r.x, r.y, r.width, r.height))
+        };
+        let button_rects = DecorationButtonRects {
+            close: css_rect("close"),
+            maximize: css_rect("max"),
+            minimize: css_rect("min"),
+            always_on_top: css_rect("pin"),
+        };
+
+        // CSS frame colors (titlebar bg / border / title text) read from the
+        // COMPUTED STYLE of the laid-out `window-frame`/`window-titlebar`
+        // elements — the SAME StyleMap the hit-test boxes come from, i.e. the
+        // exact source the DOM frame subtree is styled by. So a runtime
+        // stylesheet / theme change that recolors the frame recolors the painted
+        // decoration. `None` when the titlebar is not laid out / has no resolved
+        // background (renderer keeps the legacy ShellTheme fields → no
+        // regression, no panic on the first frame).
+        let frame_colors = self.frame_colors_from_css(window_id);
+
         let defaults = DecorationLayout::default();
         Some(DecorationLayout {
             title_bar_height: tb_box.height,
@@ -1271,14 +1394,8 @@ impl Shell {
             button_height: close_box.height,
             button_right_margin: right_margin,
             button_corner_radius: defaults.button_corner_radius,
-            // t112-b2 HANDOFF: `button_rects` (per-button CSS screen boxes for
-            // exact paint↔hit parity) and `frame_colors` (CSS-resolved
-            // titlebar/border/title-text colors) default to None here. To get
-            // exact per-button paint + CSS-driven frame colors, populate these
-            // from `window_decoration_adapter::window_button_bounds_from_css`
-            // (close/maximize/minimize/pin) + the resolved frame style. The
-            // renderer already honors them when present.
-            ..Default::default()
+            button_rects,
+            frame_colors,
         })
     }
 
