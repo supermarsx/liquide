@@ -17,6 +17,8 @@ pub struct SoftwareCenterRuntime {
     queue: InstallQueue,
     updates: UpdateManager,
     search_query: String,
+    /// The currently-selected package id in the list UI, if any.
+    selected_id: Option<String>,
 }
 
 impl SoftwareCenterRuntime {
@@ -31,6 +33,7 @@ impl SoftwareCenterRuntime {
             queue: InstallQueue::new(),
             updates: UpdateManager::new(auto_check),
             search_query: String::new(),
+            selected_id: None,
         }
     }
 
@@ -43,6 +46,43 @@ impl SoftwareCenterRuntime {
     /// Mutable access to the search query (used by the app-view seam).
     pub(crate) fn search_query_mut(&mut self) -> &mut String {
         &mut self.search_query
+    }
+
+    /// Replace the free-text search query wholesale.
+    pub fn set_search_query(&mut self, query: impl Into<String>) {
+        self.search_query = query.into();
+    }
+
+    /// The id of the currently-selected package, if any.
+    #[must_use]
+    pub fn selected_id(&self) -> Option<&str> {
+        self.selected_id.as_deref()
+    }
+
+    /// Select a package by id. Selecting an unknown id clears the selection.
+    pub fn select_package(&mut self, id: &str) {
+        if self.catalog.find(id).is_some() {
+            self.selected_id = Some(id.to_string());
+        } else {
+            self.selected_id = None;
+        }
+    }
+
+    /// The packages currently matching the search query, in catalog order. An
+    /// empty query returns the full catalog. This is the single source of truth
+    /// for the list shown in the widget UI.
+    #[must_use]
+    pub fn visible_packages(&self) -> Vec<&PackageInfo> {
+        let needle = self.search_query.to_lowercase();
+        self.catalog
+            .all_packages()
+            .iter()
+            .filter(|p| {
+                needle.is_empty()
+                    || p.name.to_lowercase().contains(&needle)
+                    || p.summary.to_lowercase().contains(&needle)
+            })
+            .collect()
     }
 
     // ---- Catalog ----
