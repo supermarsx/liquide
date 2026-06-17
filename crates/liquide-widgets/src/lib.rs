@@ -54,6 +54,12 @@ pub mod scroll_area;
 pub mod tabs;
 pub mod toolbar;
 
+// ── Group C — collections ───────────────────────────────────────────────────
+pub mod list;
+pub mod menu;
+pub mod table;
+pub mod tree;
+
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
 mod gallery;
@@ -84,6 +90,16 @@ mod tabs_tests;
 #[cfg(test)]
 mod toolbar_tests;
 
+// Per-widget real-pipeline gallery tests (Group C).
+#[cfg(test)]
+mod list_tests;
+#[cfg(test)]
+mod menu_tests;
+#[cfg(test)]
+mod table_tests;
+#[cfg(test)]
+mod tree_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -104,6 +120,12 @@ pub use container::{Card, GroupBox, Panel};
 pub use scroll_area::ScrollArea;
 pub use tabs::Tabs;
 pub use toolbar::{Toolbar, ToolbarOrientation};
+
+// Group C widgets (collections).
+pub use list::{List, SelectionMode};
+pub use menu::{Menu, MenuEntry};
+pub use table::{SortDir, Table};
+pub use tree::{Tree, TreeNode};
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.

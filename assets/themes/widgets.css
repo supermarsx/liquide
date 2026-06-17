@@ -92,8 +92,19 @@
   lq-list,
   lq-list-item,
   lq-table,
+  lq-thead,
+  lq-th,
+  lq-tbody,
+  lq-tr,
+  lq-td,
   lq-tree,
-  lq-menu {
+  lq-tree-row,
+  lq-twisty,
+  lq-tree-label,
+  lq-menu,
+  lq-menu-item,
+  lq-menu-label,
+  lq-menu-separator {
     display: block;
     box-sizing: border-box;
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
@@ -543,5 +554,205 @@
   }
   lq-scroll-area > lq-scroll-track > lq-scroll-thumb:active {
     background-color: var(--widget-accent, #3b82f6);
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     GROUP C — collections
+     ════════════════════════════════════════════════════════════ */
+
+  /* ── C1 list ──────────────────────────────────────────────────
+     A vertical list of selectable rows. Each row's box is the laid-out hit
+     target (the behavior reads it from layout). :hover / :focus (the keyboard
+     cursor) / :checked (selected) restyle the row fill. */
+  lq-list {
+    display: block;
+    width: 220px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    padding: 4px;
+  }
+  lq-list > lq-list-item {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-list > lq-list-item:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-list > lq-list-item:checked {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  /* The keyboard cursor row carries a focus ring even when not selected. */
+  lq-list > lq-list-item:focus {
+    box-shadow: inset 0 0 0 1px var(--widget-focus-ring, #3b82f6);
+  }
+  lq-list:disabled > lq-list-item {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+
+  /* ── C2 table ─────────────────────────────────────────────────
+     Header row + body rows laid out as a CSS grid (per-row inline
+     grid-template-columns from the column widths). Row :checked = selected,
+     :focus = cursor, :hover = hover; zebra via :nth-child; sortable headers
+     show a sort glyph (::after) when sorted. */
+  lq-table {
+    display: block;
+    width: 360px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    overflow: hidden;
+  }
+  lq-table > lq-thead {
+    display: grid;
+    border-bottom: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.06));
+  }
+  lq-table > lq-thead > lq-th {
+    display: block;
+    padding: 8px 10px;
+    font-weight: 600;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-table > lq-thead > lq-th.sortable:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-table > lq-thead > lq-th.sorted-asc::after {
+    content: " \25B2"; /* ▲ */
+    color: var(--widget-accent, #3b82f6);
+  }
+  lq-table > lq-thead > lq-th.sorted-desc::after {
+    content: " \25BC"; /* ▼ */
+    color: var(--widget-accent, #3b82f6);
+  }
+  lq-table > lq-tbody {
+    display: block;
+  }
+  lq-table > lq-tbody > lq-tr {
+    display: grid;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-table > lq-tbody > lq-tr:nth-child(even) {
+    background-color: rgba(255, 255, 255, 0.03);
+  }
+  lq-table > lq-tbody > lq-tr > lq-td {
+    display: block;
+    padding: 7px 10px;
+  }
+  lq-table > lq-tbody > lq-tr:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-table > lq-tbody > lq-tr:checked {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+  }
+  lq-table > lq-tbody > lq-tr:focus {
+    box-shadow: inset 0 0 0 1px var(--widget-focus-ring, #3b82f6);
+  }
+
+  /* ── C3 tree ──────────────────────────────────────────────────
+     Flattened hierarchical rows. Indentation is depth-driven: each row's
+     padding-left = depth * --tree-indent (the row supplies the multiplier via an
+     inline calc; CSS owns the UNIT). The twisty is a disclosure triangle whose
+     direction flips when the node is :checked (expanded). */
+  lq-tree {
+    --tree-indent: 16px;
+    display: block;
+    width: 240px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    padding: 4px;
+  }
+  lq-tree > lq-tree-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    padding-right: 8px;
+    border-radius: 4px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-tree > lq-tree-row > lq-twisty {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 4px;
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.70));
+  }
+  /* A collapsed parent shows ▶; an expanded one ▼; a leaf shows nothing. */
+  lq-tree > lq-tree-row > lq-twisty[data-part]::before {
+    content: "\25B6"; /* ▶ */
+  }
+  lq-tree > lq-tree-row > lq-twisty:checked::before {
+    content: "\25BC"; /* ▼ */
+  }
+  lq-tree > lq-tree-row > lq-twisty.leaf::before {
+    content: "";
+  }
+  lq-tree > lq-tree-row > lq-tree-label {
+    display: inline-block;
+  }
+  lq-tree > lq-tree-row:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-tree > lq-tree-row:checked {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+  }
+  lq-tree > lq-tree-row:focus {
+    box-shadow: inset 0 0 0 1px var(--widget-focus-ring, #3b82f6);
+  }
+
+  /* ── C4 menu ──────────────────────────────────────────────────
+     A vertical menu of items + separators. Highlighted item (hover / keyboard
+     cursor) restyles via :hover/:focus; disabled items dim; a submenu parent
+     shows a ▶ marker (::after). Reusable in-app menu — the shell chrome
+     context-menu is separate and untouched. */
+  lq-menu {
+    display: block;
+    min-width: 180px;
+    padding: 4px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.40);
+  }
+  lq-menu > lq-menu-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 7px 12px;
+    border-radius: 4px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-menu > lq-menu-item > lq-menu-label {
+    display: inline-block;
+    flex-grow: 1;
+  }
+  lq-menu > lq-menu-item:hover,
+  lq-menu > lq-menu-item:focus {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-menu > lq-menu-item:disabled {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-menu > lq-menu-item.has-submenu::after {
+    content: "\25B6"; /* ▶ */
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.70));
+  }
+  lq-menu > lq-menu-separator {
+    display: block;
+    height: 1px;
+    margin: 4px 6px;
+    background-color: var(--widget-border, rgba(255, 255, 255, 0.10));
   }
 }
