@@ -10,7 +10,7 @@ use liquide_window_tree::{
 };
 
 use crate::history::WindowEventKind;
-use crate::window::{Window, WindowId, WindowState};
+use crate::window::{Window, WindowFlags, WindowId, WindowState};
 use crate::{Result, ShellError};
 
 use super::Shell;
@@ -662,6 +662,10 @@ impl Shell {
                 tree.bring_to_top(tree_id);
             }
         }
+        // Re-assert the always-on-top band after the focus restack: focusing a
+        // *normal* window must not lift it above the AOT band in the tree-routed
+        // hit-test (t93-e1 / t92 gap #2). No-op when no AOT window exists.
+        self.restack_tree_band_order();
         self.hook_manager
             .dispatch(&ShellHookEvent::WindowActivated { window_id: id.0 });
         // Drive the canonical focus-highlight effect.
@@ -732,8 +736,33 @@ impl Shell {
             .values()
             .filter(|w| w.visible && active.contains(w.id))
             .collect();
-        visible.sort_by_key(|w| w.z_order);
+        // Band-aware stacking (t93-e1 / t92 gap #2): always-on-top windows form a
+        // top band that sorts strictly above the normal band, while relative
+        // z_order within each band is preserved. This single sort feeds both the
+        // paint order AND (until the tree becomes the sole live router) the flat
+        // hover/click scan, so it fixes paint and hit-test in one place. A normal
+        // window raised to the top of the normal band still sits below every
+        // always-on-top window.
+        visible.sort_by_key(|w| Self::stacking_key(w));
         visible
+    }
+
+    /// Band-aware stacking key: `(always_on_top, z_order)`.
+    ///
+    /// The leading band bit makes always-on-top windows sort strictly above
+    /// non-AOT windows; the trailing `z_order` preserves relative order within
+    /// each band. Used by every place that needs the live stacking order so the
+    /// AOT band is honored consistently (paint, flat-scan hit-test fallback, and
+    /// the tree restack mirror).
+    fn stacking_key(w: &Window) -> (u8, i32) {
+        (u8::from(w.flags.contains(WindowFlags::ALWAYS_ON_TOP)), w.z_order)
+    }
+
+    /// Whether `id` is currently flagged always-on-top.
+    fn is_always_on_top(&self, id: WindowId) -> bool {
+        self.windows
+            .get(&id)
+            .is_some_and(|w| w.flags.contains(WindowFlags::ALWAYS_ON_TOP))
     }
 
     /// Apply the current layout to visible windows on the **active workspace**.
@@ -772,51 +801,90 @@ impl Shell {
         }
     }
 
-    /// Raise a window to the top (highest z_order).
+    /// Raise a window to the top of **its own stacking band** (highest z_order
+    /// within the band).
+    ///
+    /// Band-aware (t93-e1 / t92 gap #2): the max is computed over windows that
+    /// share the target's always-on-top flag, so raising a *normal* window can
+    /// never jump it above an always-on-top window, and raising an *AOT* window
+    /// keeps it inside the AOT band (above all normals). `normalize_z_orders`
+    /// then re-packs both bands so the global `z_order` stays monotonic with the
+    /// band, and the tree mirror re-applies the band so the live tree-routed
+    /// hit-test agrees with `visible_windows`.
     pub fn raise_window(&mut self, id: WindowId) -> Result<()> {
-        let max_z = self.windows.values().map(|w| w.z_order).max().unwrap_or(0);
+        if !self.windows.contains_key(&id) {
+            return Err(ShellError::WindowNotFound { id });
+        }
+        let target_aot = self.is_always_on_top(id);
+        let band_max = self
+            .windows
+            .values()
+            .filter(|w| w.flags.contains(WindowFlags::ALWAYS_ON_TOP) == target_aot)
+            .map(|w| w.z_order)
+            .max()
+            .unwrap_or(0);
         let win = self
             .windows
             .get_mut(&id)
             .ok_or(ShellError::WindowNotFound { id })?;
         let from_z = win.z_order;
-        win.z_order = max_z + 1;
+        win.z_order = band_max + 1;
         let ts = self.next_timestamp();
         self.window_history.record_at(
             id,
             WindowEventKind::ZOrderChanged {
                 from: from_z,
-                to: max_z + 1,
+                to: band_max + 1,
             },
             ts,
         );
         self.normalize_z_orders();
-        // Mirror the restack into the canonical tree z-order.
+        // Mirror the restack into the canonical tree z-order, then re-apply the
+        // AOT band so the tree never buries an always-on-top window under a
+        // freshly-raised normal one.
         if let Some(tree_id) = self.tree_id_of(id) {
             if let Some(tree) = self.chrome_window_tree.as_mut() {
                 tree.bring_to_top(tree_id);
             }
         }
+        self.restack_tree_band_order();
         self.mark_window_scene_dirty();
         Ok(())
     }
 
-    /// Lower a window to the bottom (lowest z_order).
+    /// Lower a window to the bottom of **its own stacking band** (lowest z_order
+    /// within the band).
+    ///
+    /// Band-aware (t93-e1): an always-on-top window lowered to the back of its
+    /// band still sits above every normal window; a normal window sinks below
+    /// the other normals but stays under the AOT band.
     pub fn lower_window(&mut self, id: WindowId) -> Result<()> {
         if !self.windows.contains_key(&id) {
             return Err(ShellError::WindowNotFound { id });
         }
-        // Temporarily set to -1 so it sorts below everything, then normalize.
+        let target_aot = self.is_always_on_top(id);
+        let band_min = self
+            .windows
+            .values()
+            .filter(|w| w.flags.contains(WindowFlags::ALWAYS_ON_TOP) == target_aot)
+            .map(|w| w.z_order)
+            .min()
+            .unwrap_or(0);
+        // Drop just below the band floor, then normalize re-packs both bands so
+        // the AOT band still sorts entirely above the normal band.
         if let Some(win) = self.windows.get_mut(&id) {
-            win.z_order = -1;
+            win.z_order = band_min - 1;
         }
         self.normalize_z_orders();
-        // Mirror the restack into the canonical tree z-order.
+        // Mirror the restack into the canonical tree z-order, then re-apply the
+        // AOT band so an AOT window sent to the back of its band stays above the
+        // normals in the tree-routed hit-test.
         if let Some(tree_id) = self.tree_id_of(id) {
             if let Some(tree) = self.chrome_window_tree.as_mut() {
                 tree.send_to_bottom(tree_id);
             }
         }
+        self.restack_tree_band_order();
         let new_z = self.windows.get(&id).map(|w| w.z_order).unwrap_or(0);
         let ts = self.next_timestamp();
         self.window_history.record_at(
@@ -834,13 +902,21 @@ impl Shell {
     /// Compact z_order values to sequential non-negative integers,
     /// preserving relative order. Prevents unbounded growth from
     /// repeated raise/lower operations.
+    ///
+    /// Band-aware (t93-e1): windows are packed by the full stacking key
+    /// `(always_on_top, z_order)`, so the always-on-top band is assigned the
+    /// higher ordinals and the normal band the lower ones. This makes the raw
+    /// `z_order` itself monotonic with the band — every AOT window ends up with a
+    /// strictly greater `z_order` than every normal window — so any consumer that
+    /// sorts purely by `z_order` (and not only the tuple key) still honors the
+    /// band, and within-band relative order is preserved.
     pub(crate) fn normalize_z_orders(&mut self) {
-        let mut sorted: Vec<(WindowId, i32)> = self
+        let mut sorted: Vec<(WindowId, (u8, i32))> = self
             .windows
             .iter()
-            .map(|(id, w)| (*id, w.z_order))
+            .map(|(id, w)| (*id, Self::stacking_key(w)))
             .collect();
-        sorted.sort_by_key(|(_, z)| *z);
+        sorted.sort_by_key(|(_, key)| *key);
         let mut changed = false;
         for (i, (id, _)) in sorted.iter().enumerate() {
             if let Some(w) = self.windows.get_mut(id) {
@@ -854,6 +930,55 @@ impl Shell {
         if changed {
             self.mark_window_scene_dirty();
         }
+    }
+
+    /// Re-apply the always-on-top band to the canonical [`WindowTree`] so the
+    /// live tree-routed hit-test never buries an AOT window under a normal one.
+    ///
+    /// The tree (used by [`Self::window_at_point`] on the live path) only knows
+    /// raw sibling order — it has no band concept of its own. After any restack
+    /// or AOT-flag toggle we therefore re-assert the band here: bring every
+    /// always-on-top window to the top of the tree in **ascending** within-band
+    /// `z_order`, so the highest-z AOT window ends up topmost and the whole AOT
+    /// band sits above the normal band. Within-band relative order is preserved
+    /// because we re-stack them lowest-first.
+    ///
+    /// No-op when no AOT window (or no tree) is present, so the common case pays
+    /// nothing.
+    fn restack_tree_band_order(&mut self) {
+        if self.chrome_window_tree.is_none() {
+            return;
+        }
+        // Collect AOT windows in ascending stacking order; bringing each to the
+        // top in this order leaves the highest-z AOT window topmost in the tree.
+        let mut aot: Vec<(i32, TreeWindowId)> = self
+            .windows
+            .values()
+            .filter(|w| w.flags.contains(WindowFlags::ALWAYS_ON_TOP))
+            .filter_map(|w| w.tree_id.map(|t| (w.z_order, TreeWindowId(t))))
+            .collect();
+        if aot.is_empty() {
+            return;
+        }
+        aot.sort_by_key(|(z, _)| *z);
+        if let Some(tree) = self.chrome_window_tree.as_mut() {
+            for (_, tree_id) in aot {
+                tree.bring_to_top(tree_id);
+            }
+        }
+    }
+
+    /// Re-apply the always-on-top band after a window's AOT flag changed.
+    ///
+    /// Called from the `ToggleAlwaysOnTop` action (tick.rs). The toggled window
+    /// has moved between bands, so re-pack `z_order` (band-aware
+    /// `normalize_z_orders`) and re-assert the band in the canonical tree, then
+    /// mark the scene dirty so the new stacking actually repaints on the live
+    /// idle fast path.
+    pub(crate) fn apply_always_on_top_band(&mut self) {
+        self.normalize_z_orders();
+        self.restack_tree_band_order();
+        self.mark_window_scene_dirty();
     }
 
     /// Open a new window for the given application, or focus an existing one.

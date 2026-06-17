@@ -9,7 +9,31 @@
 //!   - an effect (open/transform/focus) is driven on its trigger.
 
 use crate::shell::Shell;
+use crate::shortcuts::ShellAction;
+use crate::window::{WindowFlags, WindowId};
 use liquide_compositor::geometry::Rect;
+
+/// Pin / unpin `id` as always-on-top through the *real* action path
+/// (`ToggleAlwaysOnTop` operates on the focused window), so the band-aware
+/// restack runs exactly as it does live. Returns with `id` left focused.
+fn toggle_always_on_top(shell: &mut Shell, id: WindowId) {
+    shell.set_focus(id).unwrap();
+    assert!(shell.execute_action(&ShellAction::ToggleAlwaysOnTop));
+}
+
+/// Convenience: is `id`'s window currently flagged always-on-top?
+fn is_aot(shell: &Shell, id: WindowId) -> bool {
+    shell
+        .window(id)
+        .unwrap()
+        .flags
+        .contains(WindowFlags::ALWAYS_ON_TOP)
+}
+
+/// The id of the topmost (last-painted) window in the live stacking order.
+fn topmost(shell: &Shell) -> Option<WindowId> {
+    shell.visible_windows().last().map(|w| w.id)
+}
 
 #[test]
 fn open_window_inserts_node_into_window_tree() {
@@ -206,5 +230,226 @@ fn move_window_keeps_tree_hit_test_geometry_in_sync() {
         shell.window_at_point(850.0, 650.0),
         Some(id),
         "after move, the tree hit-test should track the new bounds"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Always-on-top band ordering (t93-e1 / t92 gap #2)
+//
+// Always-on-top windows form a top band that sorts strictly above the normal
+// band. raise/lower/focus respect the band: a normal window raised to the top
+// of its band still sits below every AOT window, and an AOT window lowered
+// stays within the AOT band (above all normals). Within each band, relative
+// order is preserved. Asserted on BOTH live consumers: `visible_windows`
+// (paint order) and `window_at_point` (the tree-routed hit-test).
+// ---------------------------------------------------------------------------
+
+/// The exact gap t92 described: pin A as always-on-top, then raise a *later*
+/// normal window B. AOT must keep A on top — over the overlap point AND in the
+/// paint order. This FAILS without band-aware ordering (raising B bumps it to
+/// the global max z and over A in both the flat sort and the tree).
+#[test]
+fn always_on_top_window_stays_above_a_later_raised_normal_window() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+
+    // Pin A as always-on-top (A becomes the top band).
+    toggle_always_on_top(&mut shell, a);
+    assert!(is_aot(&shell, a));
+    assert_eq!(
+        topmost(&shell),
+        Some(a),
+        "pinning A always-on-top must lift it to the top of the paint order"
+    );
+    assert_eq!(
+        shell.window_at_point(300.0, 300.0),
+        Some(a),
+        "pinned A must win the overlap hit-test"
+    );
+
+    // Raise the normal window B. It may top the *normal* band, but it must NOT
+    // climb above the always-on-top A.
+    shell.raise_window(b).unwrap();
+    assert_eq!(
+        topmost(&shell),
+        Some(a),
+        "raising a normal window must not lift it above an always-on-top window (paint)"
+    );
+    assert_eq!(
+        shell.window_at_point(300.0, 300.0),
+        Some(a),
+        "raising a normal window must not let it win the hit-test over an AOT window"
+    );
+    // Sanity: A's z_order is strictly above B's (band is monotonic in z_order).
+    assert!(
+        shell.window(a).unwrap().z_order > shell.window(b).unwrap().z_order,
+        "AOT band must occupy the higher z_order ordinals"
+    );
+}
+
+/// Focusing a normal window must not lift it above an always-on-top window on
+/// the live tree-routed hit-test. (set_focus mirrors a bring_to_top into the
+/// tree; the band must be re-asserted afterward.)
+#[test]
+fn focusing_a_normal_window_keeps_always_on_top_above_it() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+
+    toggle_always_on_top(&mut shell, a); // A pinned, top band
+    // Focus the normal background window B.
+    shell.set_focus(b).unwrap();
+    assert_eq!(
+        shell.window_at_point(300.0, 300.0),
+        Some(a),
+        "focusing a normal window must not steal the hit-test from an AOT window"
+    );
+    assert_eq!(
+        topmost(&shell),
+        Some(a),
+        "focusing a normal window must not lift it above the AOT band in paint order"
+    );
+}
+
+/// An always-on-top window *lowered* stays inside the AOT band — i.e. still
+/// above every normal window — even though it is at the back of its own band.
+#[test]
+fn lowered_always_on_top_window_stays_above_normals() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let _b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+
+    toggle_always_on_top(&mut shell, a); // A pinned
+    // Lower A. There is only one AOT window, so A is both top and bottom of its
+    // band — and the band floor is still above all normals.
+    shell.lower_window(a).unwrap();
+    assert_eq!(
+        topmost(&shell),
+        Some(a),
+        "an always-on-top window lowered within its band must stay above normals (paint)"
+    );
+    assert_eq!(
+        shell.window_at_point(300.0, 300.0),
+        Some(a),
+        "an always-on-top window lowered within its band must stay above normals (hit-test)"
+    );
+}
+
+/// Within the always-on-top band, relative order is preserved and raise/lower
+/// reorder only inside the band. Two pinned windows + one normal: the normals
+/// never appear above either AOT window, and raising one AOT window over the
+/// other keeps both above the normal.
+#[test]
+fn relative_order_preserved_within_each_band() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 600.0, 500.0));
+    let b = shell.open_window("B", Rect::new(120.0, 120.0, 600.0, 500.0));
+    let c = shell.open_window("C", Rect::new(140.0, 140.0, 600.0, 500.0));
+
+    // Pin A and B (both into the AOT band); C stays normal.
+    toggle_always_on_top(&mut shell, a);
+    toggle_always_on_top(&mut shell, b);
+    assert!(is_aot(&shell, a) && is_aot(&shell, b) && !is_aot(&shell, c));
+
+    // Both AOT windows must outrank the normal C in z_order.
+    let zc = shell.window(c).unwrap().z_order;
+    assert!(
+        shell.window(a).unwrap().z_order > zc && shell.window(b).unwrap().z_order > zc,
+        "both AOT windows must sit above the normal window"
+    );
+
+    // Raise C as high as a normal window can go: it must still be the bottom of
+    // the global stack, below both AOT windows.
+    shell.raise_window(c).unwrap();
+    let order: Vec<WindowId> = shell.visible_windows().iter().map(|w| w.id).collect();
+    let pos = |id: WindowId| order.iter().position(|&x| x == id).unwrap();
+    assert!(
+        pos(c) < pos(a) && pos(c) < pos(b),
+        "a raised normal window stays below the entire AOT band: {order:?}"
+    );
+
+    // Reorder *within* the AOT band: raise A above B. Both remain above C, and
+    // A is now the topmost.
+    shell.raise_window(a).unwrap();
+    assert_eq!(
+        topmost(&shell),
+        Some(a),
+        "raising A within the AOT band makes it topmost overall"
+    );
+    let order: Vec<WindowId> = shell.visible_windows().iter().map(|w| w.id).collect();
+    let pos = |id: WindowId| order.iter().position(|&x| x == id).unwrap();
+    assert!(
+        pos(b) > pos(c),
+        "B (still AOT) stays above the normal C after the within-band reorder: {order:?}"
+    );
+    assert!(
+        pos(a) > pos(b),
+        "A is above B within the AOT band after the reorder: {order:?}"
+    );
+}
+
+/// Un-pinning an always-on-top window drops it back into the single normal
+/// band, where it once again competes with the other normals on equal footing
+/// (no longer force-pinned on top): a normal window can now be raised over it.
+#[test]
+fn unpinning_always_on_top_returns_window_to_normal_band() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+
+    toggle_always_on_top(&mut shell, a);
+    assert_eq!(topmost(&shell), Some(a));
+
+    // Un-pin A: it rejoins the normal band. While pinned, A was forced on top no
+    // matter what; now that it is normal again, raising B *can* lift B over A —
+    // which it could NOT while A was always-on-top.
+    toggle_always_on_top(&mut shell, a);
+    assert!(!is_aot(&shell, a));
+    shell.raise_window(b).unwrap();
+    assert_eq!(
+        shell.window_at_point(300.0, 300.0),
+        Some(b),
+        "after un-pinning A, a normal window raised above it now wins the overlap"
+    );
+    assert_eq!(
+        topmost(&shell),
+        Some(b),
+        "after un-pinning A, normal stacking resumes and a raised normal can top it"
+    );
+}
+
+/// Overlay/modal stacking is independent of the window AOT band: the AOT band
+/// only re-packs *window* z ordinals (small sequential integers). It must never
+/// push a window into the high overlay z-bases (overview 50k / tooltip 60k /
+/// lock 80k in scene.rs), so modal/overlay layers keep compositing above every
+/// window — pinned or not. Even after pinning and a within-band raise, the
+/// maximum window ordinal stays far below those bases, and the scene builds.
+#[test]
+fn always_on_top_band_does_not_disturb_overlay_stacking() {
+    let mut shell = Shell::new(1920.0, 1080.0);
+    let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+    let b = shell.open_window("B", Rect::new(200.0, 200.0, 400.0, 300.0));
+    toggle_always_on_top(&mut shell, a);
+    shell.raise_window(b).unwrap();
+
+    let max_window_z = shell
+        .visible_windows()
+        .iter()
+        .map(|w| w.z_order)
+        .max()
+        .unwrap_or(0);
+    // The lowest overlay z-base is the overview band (50_000) — window ordinals
+    // must stay far below it so overlays always win.
+    assert!(
+        (max_window_z as f32) < 50_000.0,
+        "window z ordinals ({max_window_z}) must stay well below the overlay z-bases"
+    );
+
+    // The scene still assembles cleanly with the pinned window present.
+    let scene = shell.build_scene();
+    assert!(
+        !scene.children.is_empty(),
+        "scene with a pinned window must still build"
     );
 }

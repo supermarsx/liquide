@@ -264,7 +264,12 @@ impl Shell {
                 if let Some(wid) = self.focus.focused() {
                     if let Some(window) = self.windows.get_mut(&wid) {
                         window.flags.toggle(WindowFlags::ALWAYS_ON_TOP);
-                        self.mark_window_scene_dirty();
+                        // The window just changed bands. Re-pack z_order so the
+                        // band ordinals stay correct and re-assert the AOT band
+                        // in the canonical tree so the live hit-test agrees with
+                        // the band-aware paint order (t93-e1 / t92 gap #2).
+                        // `apply_always_on_top_band` marks the scene dirty.
+                        self.apply_always_on_top_band();
                     }
                 }
                 true
