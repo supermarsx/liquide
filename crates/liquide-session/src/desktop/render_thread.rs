@@ -1386,6 +1386,61 @@ impl DesktopCompositor {
         }
     }
 
+    /// Poll a `<video>` source for the frame due at `now` and, if a NEW frame was
+    /// selected, push it to the renderer's image texture cache under `image_id`
+    /// via `register_image_rgba` — exactly the seam wallpapers use
+    /// ([`apply_images_and_cursor_to_renderer`]). The surface's
+    /// `SceneNodeKind::Image` (keyed by the same `image_id`) blits it next frame
+    /// (renderer/images.rs).
+    ///
+    /// This is the per-tick poll→texture bridge for the silent pure-Rust AV1
+    /// `<video>` element (t155). It returns `true` when a new frame was uploaded
+    /// (so the caller can damage the surface region). `poll_frame` returns `None`
+    /// for a repeat / paused / not-yet-decoded frame, in which case nothing is
+    /// uploaded and the existing texture carries forward — no per-frame churn for
+    /// a paused or steady video.
+    ///
+    /// The live drive holds one [`liquide_video::VideoSourceApi`] per `<video>`
+    /// node (keyed by the `data-video-id` the shell mapper put on the `lq-video`
+    /// surface) and calls this each tick; that per-node registry lives in
+    /// `DesktopCompositor` / the dom_sync bridge (the documented follow-up,
+    /// mirroring t152's per-node embedded-host follow-up). This function is the
+    /// in-lock chokepoint both the live drive and the test call.
+    ///
+    /// Gated on the `video` feature: the bridge is only meaningful when a real
+    /// [`liquide_video::VideoSource`] can produce frames; the default session
+    /// build pays nothing (no `liquide-video` decode dep, no surface).
+    ///
+    /// `allow(dead_code)` outside tests: the LIVE per-node drive that calls this
+    /// each frame is the documented dom_sync follow-up (it must persist a
+    /// `VideoSource` per `<video>` node across frames, like t152's per-node host);
+    /// this chokepoint + its decode test are in lock today.
+    #[cfg(feature = "video")]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn push_video_frame(
+        renderer: &mut dyn Renderer,
+        source: &mut dyn liquide_video::VideoSourceApi,
+        image_id: u64,
+        now: Instant,
+    ) -> bool {
+        // Clone the chosen frame's pixels out from under the borrow so the
+        // register call (which needs `&mut renderer`) does not alias the source.
+        let frame = match source.poll_frame(now) {
+            Some(f) => (f.rgba.clone(), f.width, f.height),
+            None => return false,
+        };
+        let (pixels, w, h) = frame;
+        if let Some(sw) = renderer
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+        {
+            sw.register_image_rgba(image_id, pixels, w, h);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Render exactly one deterministic desktop frame synchronously and return a
     /// copy of the resulting CPU framebuffer.
     ///
@@ -2962,6 +3017,61 @@ mod tests {
         );
         // The CSS cursor theme must have been pushed onto the renderer.
         assert_eq!(sw.cursor_theme().fill, expected_cursor_fill);
+    }
+
+    /// The session per-tick `<video>` bridge: a real pure-Rust AV1 decode of the
+    /// committed IVF fixture, polled against the media clock, must push a frame to
+    /// the renderer via `register_image_rgba` under the surface's stable image id.
+    /// Anti-fake-green: the pixels asserted are non-zero (a stub returning nothing
+    /// would never register the texture, failing `has_image`).
+    #[test]
+    #[cfg(feature = "video")]
+    fn session_tick_pushes_a_decoded_video_frame_to_register_image_rgba() {
+        use liquide_video::{VideoControl, VideoSource, VideoSourceApi};
+
+        const FIXTURE: &[u8] =
+            include_bytes!("../../../liquide-video/tests/fixtures/solid_av1.ivf");
+
+        let mut desktop = DesktopCompositor::new(320, 240);
+        desktop.set_dev_mode(true);
+        desktop.loading = false;
+
+        let mut source =
+            VideoSource::from_ivf_bytes(FIXTURE.to_vec()).expect("open the AV1 fixture");
+        source.control(VideoControl::Play);
+
+        let image_id: u64 = 0x4000_0000_0000_1234; // a stable surface id
+        let renderer = desktop.renderer.as_mut().expect("renderer present");
+
+        // Poll-and-push each tick until the bridge uploads a frame (the decode is
+        // on a background thread; the first frame may take a moment).
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(10);
+        let mut uploaded = false;
+        while Instant::now() < deadline {
+            if DesktopCompositor::push_video_frame(
+                renderer.as_mut(),
+                &mut source as &mut dyn VideoSourceApi,
+                image_id,
+                Instant::now(),
+            ) {
+                uploaded = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(uploaded, "the tick must push a decoded frame within the deadline");
+
+        // The renderer now holds the video texture under the surface's image id,
+        // so the surface's Image scene node will blit it.
+        let sw = renderer
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+            .expect("dev-mode renderer downcasts to SoftwareRenderer");
+        assert!(
+            sw.has_image(image_id),
+            "the decoded video frame must be registered under the surface's image_id"
+        );
     }
 
     struct NoopRenderer;

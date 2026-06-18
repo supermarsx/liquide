@@ -79,6 +79,19 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap.workspace = true
 anyhow.workspace = true
+# Silent <video> element (t155): the per-tick poll→register_image_rgba bridge
+# (`push_video_frame` in desktop/render_thread.rs) drives a pure-Rust AV1
+# `liquide_video::VideoSource`. It is FEATURE-GATED behind `video` (off by
+# default) so the default session build pulls in NEITHER the bridge NOR the
+# rav1d decoder tree — exactly the wasm-apps / script-apps opt-in shape.
+liquide-video = { workspace = true, optional = true }
+
+[features]
+default = []
+# Turn on the real pure-Rust AV1 `<video>` decode bridge (also enables the
+# shell's `video` feature so the `lq-video` surface mounts).
+video = ["dep:liquide-video", "liquide-video/video", "liquide-shell/video"]
+
 [dev-dependencies]
 liquide-compositor = { path = "../liquide-compositor" }
 liquide-shell = { path = "../liquide-shell" }

@@ -156,6 +156,9 @@ members = [
     # Async HTTP fetch capability (remote resources: map tiles, images)
     "crates/liquide-http",
 
+    # Silent <video> element: pure-Rust AV1 (rav1d) decode + IVF demux
+    "crates/liquide-video",
+
     # Firewall & network security
     "crates/liquide-firewall",
 
@@ -502,6 +505,7 @@ liquide-telemetry-viewer = { path = "crates/liquide-telemetry-viewer" }
 liquide-xdg = { path = "crates/liquide-xdg" }
 liquide-visual-test = { path = "crates/liquide-visual-test" }
 liquide-http = { path = "crates/liquide-http" }
+liquide-video = { path = "crates/liquide-video" }
 
 [dev-dependencies]
 bytes.workspace = true

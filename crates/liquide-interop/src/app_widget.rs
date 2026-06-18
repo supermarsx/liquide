@@ -274,6 +274,23 @@ pub enum AppWidget {
     /// A breadcrumb trail (root → … → current).
     Breadcrumb { crumbs: Vec<String> },
 
+    // ---- media (t155) ------------------------------------------------------
+    /// A SILENT `<video>` surface. `src` names a video file (an IVF/AV1 clip for
+    /// the pure-Rust decoder). This is **plain data**: it carries only the source
+    /// path, never a decoder handle. The shell turns it into a real
+    /// `liquide-video` `VideoSource` (feature `video`) whose RGBA frames are
+    /// pushed to the renderer each tick, or a "video unavailable / no codec"
+    /// placeholder by default (Null source). Audio is out of scope (silent).
+    Video {
+        src: String,
+        /// Begin playing as soon as the surface mounts.
+        #[serde(default)]
+        autoplay: bool,
+        /// Restart from the beginning when playback reaches the end.
+        #[serde(default)]
+        loop_playback: bool,
+    },
+
     // ---- buttons -----------------------------------------------------------
     /// A clickable button.
     Button {
@@ -705,6 +722,29 @@ mod tests {
             back,
             AppWidget::WasmApp { module: WasmModuleSource::Bytes { bytes } }
                 if bytes == vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]
+        ));
+    }
+
+    #[test]
+    fn video_node_round_trips_through_serde_json() {
+        // A Video node round-trips byte-for-byte, including its flags.
+        let node = AppWidget::Video {
+            src: "clips/intro.ivf".into(),
+            autoplay: true,
+            loop_playback: true,
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        assert!(json.contains("\"type\":\"video\""), "tag: {json}");
+        assert!(json.contains("\"src\":\"clips/intro.ivf\""), "src: {json}");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+
+        // The flags default to false when omitted.
+        let back: AppWidget =
+            serde_json::from_str(r#"{"type":"video","src":"a.ivf"}"#).expect("deserialize");
+        assert!(matches!(
+            back,
+            AppWidget::Video { autoplay: false, loop_playback: false, src } if src == "a.ivf"
         ));
     }
 

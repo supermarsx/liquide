@@ -247,6 +247,63 @@ pub(crate) fn apply_action_to_script_app(
     }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Silent <video> surface (t155): the `Video` model node.
+//
+// A `Video { src, .. }` node is plain data naming a video file. At mount time:
+//  * Under the `video` feature (real pure-Rust AV1 decoder available) it mounts a
+//    `lq-video` SURFACE element bound to a stable per-node `image_id`. The session
+//    render loop holds a `liquide_video::VideoSource` for that node, polls a frame
+//    each tick, and pushes it via `register_image_rgba(image_id, rgba, w, h)`; the
+//    surface's `SceneNodeKind::Image` blits it (renderer/images.rs). That live
+//    poll→texture drive lives in `liquide-session` (render_thread.rs) — this
+//    mapper just emits the surface + the stable id binding it.
+//  * By default (no codec → `NullVideoSource` reports `Unavailable`) it mounts a
+//    graceful "video unavailable / no codec" placeholder model through the SAME
+//    widget pipeline (the t152 `runtime_placeholder_model` precedent) — never a
+//    panic, never an empty hole.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Whether the real pure-Rust video decoder is compiled in (the `video` feature).
+/// When false, a `Video` node mounts the "no codec" placeholder.
+#[must_use]
+pub(crate) fn video_codec_available() -> bool {
+    cfg!(feature = "video")
+}
+
+/// A stable per-node texture id for a `<video>` surface, derived from the window
+/// id and the source path so the session render loop can target the surface's
+/// `SceneNodeKind::Image` with `register_image_rgba`. Two videos with different
+/// sources (or in different windows) get distinct ids; the same one is stable
+/// across frames so each tick re-uploads under the same key.
+#[must_use]
+pub(crate) fn video_image_id(window_id: u64, src: &str) -> u64 {
+    // FNV-1a over the window id + src — stable, no extra dependency.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |bytes: &[u8]| {
+        for &b in bytes {
+            hash ^= b as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    mix(&window_id.to_le_bytes());
+    mix(b"/video/");
+    mix(src.as_bytes());
+    // Keep it out of the low range to avoid colliding with small wallpaper ids.
+    hash | 0x4000_0000_0000_0000
+}
+
+/// The placeholder model shown for a `Video` node when no codec is compiled in.
+#[must_use]
+pub(crate) fn video_placeholder_model(src: &str) -> AppWidgetModel {
+    AppWidgetModel::with_root(vec![AppWidget::GroupBox {
+        label: "Video".into(),
+        children: vec![AppWidget::Label {
+            text: format!("video unavailable: no codec (cannot play {src})"),
+        }],
+    }])
+}
+
 /// Per-window prefix for namespacing a widget's stable key into a globally-unique
 /// [`liquide_widgets::WidgetId`]: `aw-<window_id>-<key>`.
 #[must_use]
@@ -431,6 +488,10 @@ pub(crate) fn behavior_for(widget: &AppWidget) -> Option<Box<dyn WidgetBehavior>
         // ── embedded runtimes: rendered into a sub-model + mounted structurally
         //    by `mount_widget`, never as a behavior ─────────────────────────
         AppWidget::WasmApp { .. } | AppWidget::ScriptApp { .. } => return None,
+
+        // ── video: a live texture surface (or placeholder), mounted structurally
+        //    by `mount_widget`, never as a behavior ─────────────────────────
+        AppWidget::Video { .. } => return None,
     };
     Some(b)
 }
@@ -559,6 +620,15 @@ fn structure_into(widget: &AppWidget, out: &mut String) {
         AppWidget::ScriptApp { source, lang } => {
             out.push_str(&format!("Sa[{lang:?}:{}];", source.len()));
         }
+        // Video: a change to the source/flags is a structural change (the surface
+        // rebinds to a new texture id / restarts), so fold them into the signature.
+        AppWidget::Video {
+            src,
+            autoplay,
+            loop_playback,
+        } => {
+            out.push_str(&format!("Vd[{src}:{autoplay}:{loop_playback}];"));
+        }
     }
 }
 
@@ -639,6 +709,46 @@ fn mount_widget(
         doc.append_child(parent, wrapper);
         for child in &inner.root {
             mount_widget(child, window_id, wrapper, host, doc, dispatcher, mounted);
+        }
+        return;
+    }
+
+    // Video node: a live RGBA surface (codec compiled in) or a "no codec"
+    // placeholder (default build). Handled inline before the container check.
+    if let AppWidget::Video {
+        src,
+        autoplay,
+        loop_playback,
+    } = widget
+    {
+        if video_codec_available() {
+            // Mount a surface element bound to a stable texture id. The session
+            // render loop owns the VideoSource and pushes frames into that id via
+            // register_image_rgba each tick; the surface's Image scene node blits.
+            let surface = doc.create_element("lq-video");
+            let image_id = video_image_id(window_id, src);
+            doc.set_attribute(surface, "data-video-id", &image_id.to_string());
+            doc.set_attribute(surface, "data-video-src", src);
+            if *autoplay {
+                doc.set_attribute(surface, "data-autoplay", "true");
+            }
+            if *loop_playback {
+                doc.set_attribute(surface, "data-loop", "true");
+            }
+            doc.append_child(parent, surface);
+            // Record the namespaced id so callers can correlate the surface back
+            // to its node (mirrors how interactive widgets push their mount id).
+            mounted.push(widget_id(window_id, src));
+        } else {
+            // No codec: mount the graceful placeholder model through the normal
+            // widget pipeline (same shape as the embedded-runtime fallback).
+            let placeholder = video_placeholder_model(src);
+            let wrapper = doc.create_element("lq-app-embed");
+            doc.set_attribute(wrapper, "class", RUNTIME_PLACEHOLDER_CLASS);
+            doc.append_child(parent, wrapper);
+            for child in &placeholder.root {
+                mount_widget(child, window_id, wrapper, host, doc, dispatcher, mounted);
+            }
         }
         return;
     }
@@ -1250,6 +1360,129 @@ mod tests {
         assert!(!s1.is_empty());
         assert_ne!(s1, s2, "different script sources must remount");
         assert_ne!(s1, a, "a script node and a wasm node are distinct shapes");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Silent <video> surface (t155).
+    //
+    // These run under the DEFAULT build (no `video` feature → NullVideoSource),
+    // so a Video node mounts the "no codec" placeholder. The feature-on surface
+    // path (lq-video element + stable image id) is asserted by the codec-on test
+    // (gated on the feature) below; the live poll→register_image_rgba drive is in
+    // liquide-session (render_thread.rs).
+    // ════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn video_image_id_is_stable_and_distinct() {
+        // Same window + src → same id (stable across frames).
+        let a = video_image_id(7, "clip.ivf");
+        let b = video_image_id(7, "clip.ivf");
+        assert_eq!(a, b, "id must be stable for a given (window, src)");
+        // Different src → different id.
+        assert_ne!(a, video_image_id(7, "other.ivf"));
+        // Different window → different id.
+        assert_ne!(a, video_image_id(8, "clip.ivf"));
+        // High bit set (kept clear of small wallpaper ids).
+        assert_ne!(a & 0x4000_0000_0000_0000, 0);
+    }
+
+    #[test]
+    #[cfg(not(feature = "video"))]
+    fn video_node_default_build_mounts_the_no_codec_placeholder() {
+        // No codec compiled in: a Video node mounts the placeholder notice into
+        // the DOM (tagged so a theme can style it), and does NOT mount an
+        // lq-video surface (there is nothing to feed it).
+        let model = AppWidgetModel::with_root(vec![AppWidget::Video {
+            src: "movies/demo.ivf".into(),
+            autoplay: true,
+            loop_playback: false,
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let mounted = mount_model_into(&model, 5, root, &mut host, &mut doc, &mut dispatcher);
+
+        // No live surface element in the default build.
+        assert!(
+            !has_tag(&doc, root, "lq-video"),
+            "default build must NOT mount a video surface"
+        );
+        // The placeholder wrapper + Label mounted instead.
+        assert!(has_tag(&doc, root, "lq-app-embed"), "placeholder wrapper present");
+        assert!(!mounted.is_empty(), "placeholder Label mounts as a widget");
+        let text = collect_text(&doc, root);
+        assert!(
+            text.contains("video unavailable") && text.contains("no codec"),
+            "placeholder text must reach the DOM, got: {text:?}"
+        );
+        assert!(text.contains("movies/demo.ivf"), "names the src: {text:?}");
+    }
+
+    #[test]
+    #[cfg(not(feature = "video"))]
+    fn video_node_does_not_break_sibling_mounting() {
+        // A Video node next to a Button: both must mount (the walk is not aborted).
+        let model = AppWidgetModel::with_root(vec![AppWidget::Panel {
+            children: vec![
+                AppWidget::Video {
+                    src: "v.ivf".into(),
+                    autoplay: false,
+                    loop_playback: false,
+                },
+                AppWidget::Button {
+                    id: "ok".into(),
+                    label: "OK".into(),
+                    kind: ButtonKind::Primary,
+                },
+            ],
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let mounted = mount_model_into(&model, 3, root, &mut host, &mut doc, &mut dispatcher);
+        assert!(
+            mounted.iter().any(|id| id == "aw-3-ok"),
+            "Button sibling must still mount past the Video node, got {mounted:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "video")]
+    fn video_node_codec_build_mounts_a_surface_bound_to_a_stable_id() {
+        // With the codec compiled in, a Video node mounts an lq-video surface
+        // carrying the stable texture id + src the render loop uses.
+        let src = "movies/demo.ivf";
+        let model = AppWidgetModel::with_root(vec![AppWidget::Video {
+            src: src.into(),
+            autoplay: true,
+            loop_playback: true,
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let _ = mount_model_into(&model, 9, root, &mut host, &mut doc, &mut dispatcher);
+        assert!(has_tag(&doc, root, "lq-video"), "surface element must mount");
+        // The surface carries the stable image id.
+        let expect_id = video_image_id(9, src).to_string();
+        let mut found = false;
+        let mut stack = vec![root];
+        while let Some(n) = stack.pop() {
+            if doc.tag_name(n).as_deref() == Some("lq-video") {
+                assert_eq!(doc.get_attribute(n, "data-video-id").as_deref(), Some(expect_id.as_str()));
+                assert_eq!(doc.get_attribute(n, "data-video-src").as_deref(), Some(src));
+                found = true;
+            }
+            for &c in doc.children(n) {
+                stack.push(c);
+            }
+        }
+        assert!(found, "lq-video surface with id binding");
     }
 
     #[test]

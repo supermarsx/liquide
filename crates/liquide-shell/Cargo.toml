@@ -45,6 +45,13 @@ liquide-widgets.workspace = true
 # shell's `wasm-apps` / `script-apps` features turns on the real runtimes.
 liquide-wasm-host.workspace = true
 liquide-script-host.workspace = true
+# Silent <video> element (t155): a `Video` model node mounts a video surface
+# whose RGBA frames come from a pure-Rust AV1 decoder (`liquide-video`). The
+# heavy decoder (rav1d) is opt-in: under the default build this resolves to the
+# crate's `NullVideoSource` (reports `Unavailable`, so the mapper shows a "video
+# unavailable / no codec" placeholder); enabling the shell's `video` feature
+# turns on the real decoder.
+liquide-video.workspace = true
 liquide-statusbar = { path = "../liquide-statusbar" }
 liquide-font-rasterizer.workspace = true
 liquide-animation = { path = "../liquide-animation" }
@@ -83,6 +90,8 @@ default = []
 wasm-apps = ["liquide-wasm-host/wasm"]
 # Opt into the real sandboxed TS/JS runtime (boa+swc) for `ScriptApp` nodes.
 script-apps = ["liquide-script-host/script"]
+# Opt into the real pure-Rust AV1 decoder (rav1d) for `Video` nodes.
+video = ["liquide-video/video"]
 
 [dev-dependencies]
 criterion.workspace = true

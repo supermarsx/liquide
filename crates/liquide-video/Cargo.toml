@@ -1,0 +1,43 @@
+[package]
+name = "liquide-video"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# The plain-data `AppWidget::Video` node vocabulary lives in liquide-interop; the
+# crate's public API + the NullVideoSource stub are toolkit-free and always
+# compile, so this is always-on (like liquide-wasm-host / liquide-http).
+liquide-interop.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# The real decode pipeline (IVF demux + AV1 decode + YUV→RGBA) is FEATURE-GATED
+# behind `video` and OFF BY DEFAULT. With the feature off the crate exposes
+# `NullVideoSource`, which has the identical `VideoSourceApi` and reports
+# `Unavailable` / never yields a frame, so the default workspace build/link/test
+# pays nothing for the codec (mirrors the platform `Null*` hosts,
+# `liquide-wasm-host`'s `NullWasmHost`, and `liquide-http`'s `NullHttpClient`).
+#
+# PURE-RUST AV1 (user decision): `rav1d` is the pure-Rust port of dav1d. We
+# pin `default-features = false` + only `bitdepth_8` so the `asm` feature (which
+# would invoke nasm) stays OFF — there is NO native-C / nasm / meson / cmake /
+# vcpkg build dependency. The decoder builds with plain `cargo`. Demux is a
+# hand-written pure-Rust IVF reader (`ivf.rs`); no WebM/matroska crate is pulled.
+[dependencies.rav1d]
+version = "1.1"
+optional = true
+default-features = false
+features = ["bitdepth_8"]
+
+[features]
+default = []
+# Pull in the real pure-Rust rav1d AV1 decoder + the IVF demux + decode thread.
+video = ["dep:rav1d"]
+
+[dev-dependencies]
+# The decode test reads the committed real AV1 IVF fixture
+# (`tests/fixtures/solid_av1.ivf`, 3 frames, 64x48, I420) from disk; no extra
+# dev-dependency is needed.
