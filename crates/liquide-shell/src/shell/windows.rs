@@ -717,6 +717,18 @@ impl Shell {
             Some(app_id.clone())
         };
         self.focus.note_focus_context(ctx_app, ts2);
+        // Raise the focused window's `z_order` to the top of its stacking band so
+        // the PAINT order (which sorts by `z_order` via `visible_windows`) agrees
+        // with the tree-routed hit-test below. Without this, focusing a window
+        // brings it to the top of the WindowTree (so `window_at_point` picks it)
+        // but leaves its `z_order` unchanged — so a tie in `z_order` (e.g. two
+        // freshly-opened windows both at `z_order == 0`) leaves the OTHER window
+        // painted on top while clicks in the overlap route to the focused-but-
+        // visually-behind one (t143-hittest-behind: paint vs pick divergence,
+        // the live face of the t60-windows MAJOR-4 hazard). `raise_window` does
+        // this z-raise on the explicit-raise path; focus must do it too so the
+        // single canonical pick stays consistent with paint.
+        self.raise_focus_band_z_order(id);
         // Mirror the activation into the canonical WindowTree z-order so that
         // hit-testing favours the newly focused window. Without this, focusing a
         // background window (e.g. via a click) updates the focus manager but
@@ -829,6 +841,49 @@ impl Shell {
         self.windows
             .get(&id)
             .is_some_and(|w| w.flags.contains(WindowFlags::ALWAYS_ON_TOP))
+    }
+
+    /// Raise `id`'s `z_order` to the top of **its own stacking band** so that the
+    /// paint order (sorted by `z_order` in [`Self::visible_windows`]) keeps the
+    /// focused window topmost, agreeing with the tree-routed hit-test.
+    ///
+    /// This is the `z_order`-only half of [`Self::raise_window`] (no history
+    /// record, no tree mirror — the caller [`Self::set_focus`] already mirrors the
+    /// activation into the tree and re-asserts the AOT band). Band-aware (t93-e1):
+    /// the max is computed over windows that share `id`'s always-on-top flag, so
+    /// focusing a *normal* window can never jump it above an always-on-top one.
+    /// `normalize_z_orders` then re-packs both bands so the raw `z_order` stays
+    /// band-monotonic.
+    ///
+    /// No-op (no z change, no scene churn) when `id` is already strictly the
+    /// highest in its band — the common case of re-focusing the already-top
+    /// window pays nothing and does not perturb stacking.
+    fn raise_focus_band_z_order(&mut self, id: WindowId) {
+        let target_aot = self.is_always_on_top(id);
+        let cur_z = match self.windows.get(&id) {
+            Some(w) => w.z_order,
+            None => return,
+        };
+        // Highest z_order among the OTHER windows in the same band.
+        let others_band_max = self
+            .windows
+            .values()
+            .filter(|w| {
+                w.id != id && w.flags.contains(WindowFlags::ALWAYS_ON_TOP) == target_aot
+            })
+            .map(|w| w.z_order)
+            .max();
+        // Already strictly on top of its band (no peer at or above) → nothing to do.
+        match others_band_max {
+            Some(max) if cur_z > max => return,
+            None => return, // sole window in its band: already top.
+            Some(max) => {
+                if let Some(w) = self.windows.get_mut(&id) {
+                    w.z_order = max + 1;
+                }
+            }
+        }
+        self.normalize_z_orders();
     }
 
     /// Apply the current layout to visible windows on the **active workspace**.
@@ -1098,6 +1153,218 @@ impl Shell {
         let _ = self.set_focus(id);
         let _ = self.raise_window(id);
         id
+    }
+}
+
+#[cfg(test)]
+mod hittest_behind_tests {
+    //! t143-hittest-behind: when window A is stacked ABOVE window B, clicking on
+    //! B's EXPOSED region (the part of B that A does NOT cover) must hit/focus/
+    //! raise B, and a click in the OVERLAP must hit the window that is actually
+    //! painted on top.
+    //!
+    //! ROOT CAUSE (proven RED below): the live picker
+    //! ([`Shell::window_at_point`] / [`Shell::pick_window_at`]) routes through the
+    //! canonical `WindowTree`, while PAINT order is [`Shell::visible_windows`]
+    //! sorted by `z_order`. [`Shell::set_focus`] brought the focused window to the
+    //! TOP OF THE TREE but did NOT raise its `z_order`. So when two windows share
+    //! a `z_order` (e.g. both freshly opened at `z_order == 0`), focusing one
+    //! makes the tree pick it while the OTHER stays painted on top — the user
+    //! sees window X on top but every click in the overlap routes to the
+    //! focused-but-visually-behind window. The
+    //! `paint_and_pick_agree_after_focus` test pins this: it FAILS before
+    //! `set_focus` raises the focused window's band `z_order`.
+
+    use crate::shell::Shell;
+    use crate::window::WindowId;
+    use liquide_compositor::geometry::{Point, Rect};
+
+    /// The window that is actually PAINTED on top at `(x, y)` — the topmost
+    /// (highest in `visible_windows` paint order) window whose bounds contain the
+    /// point. This is the ground truth the live picker MUST agree with: a click
+    /// must hit whatever the user visually sees on top.
+    fn painted_topmost(shell: &Shell, x: f32, y: f32) -> Option<WindowId> {
+        let pt = Point::new(x, y);
+        shell
+            .visible_windows()
+            .into_iter()
+            .rev()
+            .find(|w| w.bounds.contains(pt))
+            .map(|w| w.id)
+    }
+
+    /// A above B: A = (100,100,400,300) covers x[100..500] y[100..400];
+    /// B = (300,250,400,300) covers x[300..700] y[250..550]. B has an exposed
+    /// lower-right region (e.g. (600,500)) that is NOT under A; the overlap is
+    /// x[300..500] y[250..400] (e.g. (400,300)); A has an exposed region
+    /// (e.g. (150,150)).
+    fn two_windows_a_above_b() -> (Shell, WindowId, WindowId) {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        let a = shell.open_window("A", Rect::new(100.0, 100.0, 400.0, 300.0));
+        let b = shell.open_window("B", Rect::new(300.0, 250.0, 400.0, 300.0));
+        // Bring A above B by FOCUSING it (the live path a click takes). B was
+        // opened last so it starts on top in both the tree and paint order;
+        // focusing A must make A the topmost window EVERYWHERE.
+        shell.set_focus(a).unwrap();
+        (shell, a, b)
+    }
+
+    // ---- Test A: confirms the bug (RED before the fix) -------------------
+
+    /// CONFIRMING TEST. With A stacked above B (A focused), the window painted on
+    /// top and the window the live picker returns MUST agree at every point.
+    ///
+    /// Before the fix, focusing A raises it in the tree but not in `z_order`, so
+    /// `visible_windows` still paints B on top while `window_at_point` returns A
+    /// over the overlap — a direct paint-vs-pick divergence. The click in B's
+    /// exposed region happens to still resolve to B (B's bounds contain it), but
+    /// the OVERLAP is mis-routed: the user sees B on top there yet the click hits
+    /// A. This asserts the invariant that fails RED.
+    #[test]
+    fn paint_and_pick_agree_after_focus() {
+        let (shell, a, b) = two_windows_a_above_b();
+
+        // A is focused, so A must be the topmost PAINTED window.
+        assert_eq!(
+            shell.visible_windows().last().map(|w| w.id),
+            Some(a),
+            "focusing A must make A the topmost painted window"
+        );
+
+        // The overlap (400,300) is inside BOTH. The painted-topmost there is A
+        // (A on top), and the live picker MUST return that SAME window.
+        let overlap_paint = painted_topmost(&shell, 400.0, 300.0);
+        let overlap_pick = shell.pick_window_at(400.0, 300.0);
+        assert_eq!(
+            overlap_paint,
+            Some(a),
+            "with A on top the overlap is painted as A"
+        );
+        assert_eq!(
+            overlap_pick, overlap_paint,
+            "the live picker must hit the window painted on top in the overlap \
+             (paint-vs-pick divergence is the hit-test-behind bug); pick={overlap_pick:?} paint={overlap_paint:?}"
+        );
+
+        // Sanity: B's exposed region still resolves to B regardless.
+        assert_eq!(
+            shell.pick_window_at(600.0, 500.0),
+            Some(b),
+            "a click in B's exposed region must hit B"
+        );
+    }
+
+    // ---- Test B: full fix (must all hold GREEN) --------------------------
+
+    /// FULL-FIX TEST. With A above B: overlap hits A (top); A's exposed region
+    /// hits A; B's exposed region hits B; outside both hits neither.
+    #[test]
+    fn clicks_route_to_the_correct_window_when_a_is_above_b() {
+        let (shell, a, b) = two_windows_a_above_b();
+
+        // Overlap region -> A (the top window).
+        assert_eq!(shell.pick_window_at(400.0, 300.0), Some(a), "overlap -> A (top)");
+        assert_eq!(shell.window_at_point(400.0, 300.0), Some(a), "overlap tree -> A");
+
+        // A's exposed region (inside A only) -> A.
+        assert_eq!(shell.pick_window_at(150.0, 150.0), Some(a), "A-exposed -> A");
+
+        // B's exposed lower-right region (inside B only, NOT under A) -> B.
+        assert_eq!(shell.pick_window_at(600.0, 500.0), Some(b), "B-exposed -> B");
+        assert_eq!(shell.window_at_point(600.0, 500.0), Some(b), "B-exposed tree -> B");
+
+        // Outside both -> neither (None). (1000,900) is below/right of both.
+        assert_eq!(shell.pick_window_at(1000.0, 900.0), None, "outside both -> None");
+    }
+
+    /// FULL-FIX TEST. Clicking B raises B above A; afterwards the overlap that
+    /// previously hit A now hits B, and A's exposed region still hits A.
+    #[test]
+    fn clicking_b_raises_it_above_a_then_overlap_hits_b() {
+        let (mut shell, a, b) = two_windows_a_above_b();
+
+        // Precondition: overlap currently hits A.
+        assert_eq!(shell.pick_window_at(400.0, 300.0), Some(a));
+
+        // Simulate the live click on B's EXPOSED region: the click router picks
+        // the window with `pick_window_at`, then focuses + raises it.
+        let picked = shell.pick_window_at(600.0, 500.0);
+        assert_eq!(picked, Some(b), "click in B's exposed region picks B");
+        shell.set_focus(b).unwrap();
+        shell.raise_window(b).unwrap();
+
+        // B is now on top: it is the topmost painted window, and the overlap that
+        // used to hit A now hits B in BOTH paint and pick.
+        assert_eq!(
+            shell.visible_windows().last().map(|w| w.id),
+            Some(b),
+            "after clicking B it must be the topmost painted window"
+        );
+        assert_eq!(
+            shell.pick_window_at(400.0, 300.0),
+            Some(b),
+            "after raising B, the overlap now hits B"
+        );
+        assert_eq!(
+            painted_topmost(&shell, 400.0, 300.0),
+            shell.pick_window_at(400.0, 300.0),
+            "paint and pick still agree in the overlap after the raise"
+        );
+
+        // A's still-exposed top-left region (inside A only) keeps hitting A.
+        assert_eq!(
+            shell.pick_window_at(150.0, 150.0),
+            Some(a),
+            "A's exposed region still hits A after B is raised"
+        );
+    }
+
+    /// FULL-FIX TEST. A window that FULLY covers another is never hit where it
+    /// covers it: a small window B entirely inside a large focused window A must
+    /// never win a pick anywhere within A.
+    #[test]
+    fn fully_covered_window_is_never_hit_where_covered() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        // Big A fully contains small B.
+        let a = shell.open_window("A", Rect::new(100.0, 100.0, 600.0, 500.0));
+        let b = shell.open_window("B", Rect::new(200.0, 200.0, 100.0, 100.0));
+        // A on top.
+        shell.set_focus(a).unwrap();
+
+        // Every point inside B is also inside A; with A on top, all must pick A.
+        for (px, py) in [(210.0, 210.0), (250.0, 250.0), (295.0, 295.0)] {
+            assert_eq!(
+                shell.pick_window_at(px, py),
+                Some(a),
+                "point ({px},{py}) is inside fully-covered B but A is on top -> A"
+            );
+        }
+        let _ = b;
+    }
+
+    /// FULL-FIX TEST (resize-ring precedence). A point that is clearly INSIDE B's
+    /// body but only within A's OUTER resize-tolerance ring must prefer B's body,
+    /// not A's resize ring: the canonical (exact-bounds) tree pick returns B
+    /// before the off-edge resize-ring fallback is ever consulted.
+    #[test]
+    fn point_in_b_body_within_a_resize_ring_prefers_b() {
+        let (shell, a, b) = two_windows_a_above_b();
+        // A bottom edge y=400; A right edge x=500. B covers y[250..550],
+        // x[300..700]. A point just below A's bottom edge but inside B
+        // (x=350 in [300..700], y=403 just past A's 8px ring boundary) is inside
+        // B's body and within A's bottom resize ring.
+        assert_eq!(
+            shell.pick_window_at(350.0, 403.0),
+            Some(b),
+            "a point inside B's body must pick B even within A's resize ring"
+        );
+        // Just right of A's right edge, inside B: also B.
+        assert_eq!(
+            shell.pick_window_at(503.0, 300.0),
+            Some(b),
+            "inside B just past A's right edge -> B, not A's resize ring"
+        );
+        let _ = a;
     }
 }
 

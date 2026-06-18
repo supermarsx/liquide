@@ -502,19 +502,18 @@ fn always_on_top_band_does_not_disturb_overlay_stacking() {
 // user, via focus) sees as topmost — i.e. exactly one hit-test path remains.
 // ---------------------------------------------------------------------------
 
-/// REPRODUCE THE DIVERGENCE between the canonical tree and the retired flat
-/// `z_order` scan, then prove the LIVE press resolves through the tree.
+/// The canonical tree and the `z_order` (paint) order must AGREE after a focus,
+/// and the LIVE press resolves through the tree.
 ///
 /// Setup: open A then B, then `raise_window(b)` so `z_order` is A=0, B=1. Now
-/// `set_focus(a)` — this brings A to the top of the canonical TREE
-/// (`bring_to_top`) but does NOT change `z_order`. The two former sources of
-/// truth now genuinely disagree at the overlap point:
-///   - canonical tree (`window_at_point`)            → A (tree-topmost), and
-///   - the retired flat scan over `visible_windows()` → B (B still has the
-///     higher `z_order`, so `.rev()` ranks it first).
-/// The unified live router uses the tree, so a real left press must focus A.
-/// With the old flat scan still live, the press would have focused B — the
-/// exact two-sources-of-truth divergence this gap retires.
+/// `set_focus(a)`. BEFORE t143-hittest-behind, focusing A brought A to the top
+/// of the canonical TREE (`bring_to_top`) but left its `z_order` stale, so the
+/// two sources of truth DIVERGED at the overlap point: the tree picked A while
+/// the `z_order`-sorted PAINT order still placed B on top — the user saw B on
+/// top yet clicks in the overlap routed to A (the hit-test-behind defect). The
+/// t143 fix makes `set_focus` also raise the focused window's band `z_order`, so
+/// paint and pick now CONVERGE on A. This test pins that convergence (and the
+/// live press focusing the tree's pick).
 #[test]
 fn live_left_press_matches_tree_router_not_flat_z_scan() {
     let mut shell = Shell::new(1920.0, 1080.0);
@@ -525,14 +524,19 @@ fn live_left_press_matches_tree_router_not_flat_z_scan() {
     shell.raise_window(b).unwrap();
     assert!(shell.window(a).unwrap().z_order < shell.window(b).unwrap().z_order);
 
-    // Focus the background window A: tree-topmost becomes A, z_order untouched.
+    // Focus the background window A. Post-t143 this brings A to the top of BOTH
+    // the canonical tree AND the `z_order` paint order, so the two agree.
     shell.set_focus(a).unwrap();
+    assert!(
+        shell.window(a).unwrap().z_order > shell.window(b).unwrap().z_order,
+        "focusing A must raise its z_order above B so paint matches the tree pick"
+    );
 
-    // The two former paths now DIVERGE at the overlap point.
+    // The tree pick and the `z_order`-sorted paint pick now AGREE at the overlap.
     let pt = liquide_compositor::geometry::Point::new(300.0, 300.0);
     let tree_pick = shell.window_at_point(300.0, 300.0);
     let flat_pick = {
-        // Faithful mirror of the RETIRED flat scan: topmost by z_order first.
+        // Paint order: topmost by z_order first.
         let mut v: Vec<_> = shell.visible_windows();
         v.sort_by_key(|w| w.z_order);
         v.into_iter().rev().find(|w| w.bounds.contains(pt)).map(|w| w.id)
@@ -540,16 +544,16 @@ fn live_left_press_matches_tree_router_not_flat_z_scan() {
     assert_eq!(tree_pick, Some(a), "canonical tree router picks freshly-focused A");
     assert_eq!(
         flat_pick,
-        Some(b),
-        "the retired flat z_order scan diverges and picks B — two sources of truth"
+        Some(a),
+        "paint order now agrees with the tree (t143: focus raises z_order) — no divergence"
     );
-    assert_ne!(
+    assert_eq!(
         tree_pick, flat_pick,
-        "the divergence must be real for this test to have teeth"
+        "tree pick and paint order must agree after focus (t143-hittest-behind)"
     );
 
-    // Drive a REAL left press at the overlap. The unified live router must focus
-    // the tree's pick (A), proving the live path no longer uses the flat scan.
+    // Drive a REAL left press at the overlap. The live router must focus the
+    // tree's pick (A), which is also the painted-topmost window.
     shell.handle_platform_event(&left_press(300.0, 300.0));
     assert_eq!(
         shell.focus.focused(),
@@ -559,7 +563,7 @@ fn live_left_press_matches_tree_router_not_flat_z_scan() {
     assert_eq!(
         shell.focus.focused(),
         Some(a),
-        "the unified router focuses A (tree pick), NOT B (the retired flat-scan pick)"
+        "the unified router focuses A (the topmost window in both tree and paint)"
     );
 }
 
