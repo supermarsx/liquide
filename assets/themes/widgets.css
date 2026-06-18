@@ -175,6 +175,46 @@
   lq-gradient-stop,
   lq-gradient-palette,
   lq-gradient-swatch,
+  lq-gauge,
+  lq-gauge-dial,
+  lq-gauge-arc,
+  lq-gauge-arc-fill,
+  lq-gauge-arc-rest,
+  lq-gauge-needle,
+  lq-gauge-value,
+  lq-sparkline,
+  lq-sparkline-plot,
+  lq-spark-col,
+  lq-spark-bar,
+  lq-spark-point,
+  lq-line-chart,
+  lq-line-plot,
+  lq-line-grid-layer,
+  lq-line-grid,
+  lq-line-series,
+  lq-line-cell,
+  lq-line-point,
+  lq-bar-chart,
+  lq-bar-plot,
+  lq-bar-grid-layer,
+  lq-bar-grid,
+  lq-bar-row,
+  lq-bar-col,
+  lq-bar,
+  lq-bar-value,
+  lq-donut-chart,
+  lq-donut-disc,
+  lq-donut-base,
+  lq-donut-seg,
+  lq-donut-spoke,
+  lq-donut-hole,
+  lq-donut-center,
+  lq-heatmap,
+  lq-heatmap-plot,
+  lq-heatmap-col,
+  lq-heatmap-cell,
+  lq-heatmap-value,
+  lq-chart-tooltip,
   lq-textarea,
   lq-textarea-body,
   lq-textarea-gutter,
@@ -1621,5 +1661,410 @@
   lq-gradient-swatch:checked,
   lq-gradient-swatch.selected {
     border-color: var(--widget-accent, #3b82f6);
+  }
+
+  /* ── Group F: DATA/VIZ controls (graphs/charts) ────────────────────────────
+     Every chart's geometry is data scaled to PERCENT of a laid-out plot box, so
+     resizing the box rescales the chart and the behaviors resolve hovered
+     elements from the same laid-out box (never a constant). Sizes here are
+     defaults; a consumer overrides width/height to fit its surface. */
+
+  /* lq-gauge — a radial value gauge. The dial is a round box; the needle is
+     pinned to its center and rotated by the value; the arc fill is a
+     proportional flex fill (value-driven). */
+  lq-gauge {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  lq-gauge-dial {
+    display: block;
+    position: relative;
+    width: 120px;
+    height: 120px;
+    border-radius: 60px;
+    background-color: var(--widget-bg, #27272a);
+    border: 2px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    overflow: hidden;
+  }
+  lq-gauge-arc {
+    display: flex;
+    flex-direction: row;
+    position: absolute;
+    left: 8%;
+    bottom: 8%;
+    width: 84%;
+    height: 12%;
+  }
+  lq-gauge-arc-fill {
+    display: block;
+    background-color: var(--widget-accent, #3b82f6);
+    border-radius: 3px;
+  }
+  lq-gauge-arc-rest {
+    display: block;
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+    border-radius: 3px;
+  }
+  lq-gauge-needle {
+    display: block;
+    position: absolute;
+    left: calc(50% - 2px);
+    top: 12%;
+    width: 4px;
+    height: 38%;
+    border-radius: 2px;
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    transform-origin: 2px 100%;
+  }
+  lq-gauge-value {
+    display: block;
+    margin-top: 6px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    text-align: center;
+  }
+
+  /* lq-sparkline — a compact inline mini chart, no axes. The plot box gives the
+     coordinate space; bars/points/segments are percent-positioned inside it. */
+  lq-sparkline {
+    display: inline-block;
+    position: relative;
+    width: 120px;
+    height: 32px;
+  }
+  lq-sparkline-plot {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  lq-spark-col {
+    display: block;
+    position: relative;
+    flex-grow: 1;
+    flex-basis: 0px;
+    height: 100%;
+  }
+  /* A full-height bar painted from the bottom; scaleY(frac) sets the extent. */
+  lq-spark-bar {
+    display: block;
+    position: absolute;
+    left: 15%;
+    top: 0;
+    width: 70%;
+    height: 100%;
+    background-color: var(--widget-accent, #3b82f6);
+    transform-origin: 50% 100%;
+  }
+  /* A thin full-height stem; scaleY(frac) (origin bottom) puts its painted top
+     edge at the value's screen y — the line/stem data point. */
+  lq-spark-point {
+    display: block;
+    position: absolute;
+    left: 35%;
+    top: 0;
+    width: 30%;
+    height: 100%;
+    background-color: var(--widget-accent, #3b82f6);
+    transform-origin: 50% 100%;
+  }
+
+  /* lq-line-chart — a multi-series line graph. The plot box is the coordinate
+     space; gridlines/points/segments are percent-positioned. The hovered point
+     is resolved from the plot box. */
+  lq-line-chart {
+    display: inline-block;
+    position: relative;
+    width: 360px;
+    height: 200px;
+  }
+  lq-line-plot {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-line-grid-layer {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  lq-line-grid {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    border-top: 1px solid var(--widget-border, rgba(255, 255, 255, 0.08));
+  }
+  /* A series is a flex row of equal cells filling the plot. */
+  lq-line-series {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  lq-line-cell {
+    display: block;
+    position: relative;
+    flex-grow: 1;
+    flex-basis: 0px;
+    height: 100%;
+  }
+  /* A thin full-height stem; scaleY(frac) (origin bottom) puts its painted top
+     edge at the value's screen y — the line data point. */
+  lq-line-point {
+    display: block;
+    position: absolute;
+    left: 42%;
+    top: 0;
+    width: 16%;
+    height: 100%;
+    background-color: var(--widget-accent, #3b82f6);
+    transform-origin: 50% 100%;
+  }
+  lq-line-point:hover {
+    left: 36%;
+    width: 28%;
+    background-color: var(--widget-accent-hover, #60a5fa);
+  }
+
+  /* lq-bar-chart — vertical bars. The plot box is the coordinate space; each bar
+     is percent-positioned and the hovered bar is resolved from the plot box. */
+  lq-bar-chart {
+    display: inline-block;
+    position: relative;
+    width: 360px;
+    height: 200px;
+  }
+  lq-bar-plot {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  /* The gridline overlay fills the plot; each line is a full-height bar scaled to
+     1/5 and positioned by transform-origin (the proven vertical mechanism). */
+  lq-bar-grid-layer {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  lq-bar-grid {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    border-top: 1px solid var(--widget-border, rgba(255, 255, 255, 0.08));
+  }
+  /* The bars row fills the plot; columns distribute the width via flex. */
+  lq-bar-row {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  lq-bar-col {
+    display: block;
+    position: relative;
+    flex-grow: 1;
+    flex-basis: 0px;
+    height: 100%;
+  }
+  /* A full-height bar; scaleY(frac) (origin bottom) sets the data-driven extent. */
+  lq-bar {
+    display: block;
+    position: absolute;
+    left: 12%;
+    top: 0;
+    width: 76%;
+    height: 100%;
+    box-sizing: border-box;
+    background-color: var(--widget-accent, #3b82f6);
+    border-radius: 2px 2px 0 0;
+    transform-origin: 50% 100%;
+  }
+  lq-bar:hover {
+    background-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-bar-value {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 2px;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background-color: var(--widget-bg-active, rgba(0, 0, 0, 0.8));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    font-size: 11px;
+    z-index: 5;
+  }
+
+  /* lq-donut-chart — proportional segments as clip-path wedges (the data spans).
+     The disc box gives the center + radius the hover hit is measured against. */
+  lq-donut-chart {
+    display: inline-block;
+    position: relative;
+    width: 200px;
+    height: 200px;
+  }
+  lq-donut-disc {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  /* The base ring: a single round disc (the renderer can't stack clip-path fills,
+     so the proportional split is shown by spokes + the hovered-segment wedge). */
+  lq-donut-base {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  /* The hovered segment, filled as a single clip-path wedge. */
+  lq-donut-seg {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--widget-accent-hover, #60a5fa);
+  }
+  /* A thin radial boundary line from the disc center, rotated to a segment start. */
+  lq-donut-spoke {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 2px;
+    height: 50%;
+    margin-left: -1px;
+    background-color: var(--widget-bg, #27272a);
+    transform-origin: 50% 100%;
+  }
+  lq-donut-hole {
+    display: block;
+    position: absolute;
+    border-radius: 50%;
+    background-color: var(--widget-bg, #27272a);
+    text-align: center;
+  }
+  lq-donut-center {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 100%;
+    transform: translateY(-50%);
+    text-align: center;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+
+  /* lq-heatmap — a grid of value-coloured cells. The plot box is the coordinate
+     space; each cell is percent-positioned and coloured by value; the hovered
+     cell is resolved from the plot box. */
+  lq-heatmap {
+    display: inline-block;
+    position: relative;
+    width: 240px;
+    height: 240px;
+  }
+  lq-heatmap-plot {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  lq-heatmap-col {
+    display: block;
+    position: relative;
+    flex-grow: 1;
+    flex-basis: 0px;
+    height: 100%;
+  }
+  /* Each cell fills the column; scaleY(1/rows) + a per-row transform-origin places
+     it into its vertical band (the proven box-relative vertical mechanism). */
+  lq-heatmap-cell {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--widget-bg, #27272a);
+  }
+  lq-heatmap-cell:hover {
+    border: 2px solid var(--widget-fg, rgba(255, 255, 255, 0.95));
+  }
+  lq-heatmap-value {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    color: #ffffff;
+    font-size: 10px;
+  }
+
+  /* Shared chart hover tooltip (line/donut). Percent-positioned within the plot
+     by the behavior; donut centers it. */
+  lq-chart-tooltip {
+    display: block;
+    position: absolute;
+    transform: translate(-50%, -130%);
+    white-space: nowrap;
+    padding: 3px 7px;
+    border-radius: 4px;
+    background-color: var(--widget-bg-active, rgba(0, 0, 0, 0.82));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    font-size: 11px;
+    pointer-events: none;
   }
 }

@@ -79,6 +79,15 @@ pub mod knob;
 pub mod range_slider;
 pub mod xy_pad;
 
+// ── Group F — DATA/VIZ controls (graphs/charts) ─────────────────────────────
+pub mod bar_chart;
+pub mod chart;
+pub mod donut_chart;
+pub mod gauge;
+pub mod heatmap;
+pub mod line_chart;
+pub mod sparkline;
+
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
 mod gallery;
@@ -153,6 +162,20 @@ mod range_slider_tests;
 #[cfg(test)]
 mod xy_pad_tests;
 
+// Per-widget real-pipeline gallery tests (Group F — DATA/VIZ).
+#[cfg(test)]
+mod bar_chart_tests;
+#[cfg(test)]
+mod donut_chart_tests;
+#[cfg(test)]
+mod gauge_tests;
+#[cfg(test)]
+mod heatmap_tests;
+#[cfg(test)]
+mod line_chart_tests;
+#[cfg(test)]
+mod sparkline_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -198,6 +221,15 @@ pub use gradient_editor::{GradientEditor, Stop};
 pub use knob::Knob;
 pub use range_slider::{RangeSlider, Thumb};
 pub use xy_pad::XyPad;
+
+// Group F widgets (DATA/VIZ — graphs/charts).
+pub use bar_chart::BarChart;
+pub use chart::Series;
+pub use donut_chart::{DonutChart, Segment};
+pub use gauge::Gauge;
+pub use heatmap::Heatmap;
+pub use line_chart::LineChart;
+pub use sparkline::{Sparkline, SparkMode};
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.
