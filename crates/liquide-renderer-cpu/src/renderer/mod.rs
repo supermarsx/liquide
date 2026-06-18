@@ -8,6 +8,9 @@ mod effects;
 mod gradients;
 mod helpers;
 mod images;
+mod occlusion;
+#[cfg(test)]
+pub(crate) use occlusion::{reset_cull_probe, was_culled};
 mod text;
 #[cfg(test)]
 pub(crate) use text::compute_font_id;
@@ -1054,17 +1057,46 @@ impl SoftwareRenderer {
     /// fully outside `damage_bbox`. Factored out of [`Self::render_with_mode`] so
     /// the serial damage-clipped path and the parallel full-frame path share one
     /// node-iteration body.
+    ///
+    /// **Front-to-back occlusion culling (t137):** in addition to the
+    /// damage-bbox cull above, a node is skipped if every pixel it would paint is
+    /// guaranteed to be over-painted by one or more *fully-opaque* nodes drawn
+    /// later in the list (higher z). Skipping a fully-occluded node by a
+    /// fully-opaque cover cannot change a single output pixel — the cover writes
+    /// the final value at every shared pixel regardless of what was beneath — so
+    /// this is byte-identical to painting it. See [`occlusion`] for the strict
+    /// (conservative) opaque-occluder rule and the coverage proof.
     fn render_nodes_in_order(
         &mut self,
         nodes: &[FlatNode],
         fb: &mut FrameBuffer,
         damage_bbox: Option<(f32, f32, f32, f32)>,
     ) {
-        for node in nodes {
+        // Precompute the set of later opaque-occluder rects so each node can be
+        // tested against everything painted ON TOP of it. The occluder rect for
+        // a node is its guaranteed fully-painted opaque region (bounds ∩ clip),
+        // or `None` if the node is not a safe opaque occluder.
+        let occluders = occlusion::occluder_rects(nodes);
+
+        for (i, node) in nodes.iter().enumerate() {
             // Skip nodes completely outside the damage bounding box.
             if let Some((dx0, dy0, dx1, dy1)) = damage_bbox {
                 let b = &node.absolute_bounds;
                 if b.x >= dx1 || b.y >= dy1 || b.x + b.width <= dx0 || b.y + b.height <= dy0 {
+                    continue;
+                }
+            }
+
+            // Front-to-back occlusion cull: if this node's painted rect (its
+            // bounds confined to the active raster clip — outside the clip
+            // nothing is written anyway) is ENTIRELY covered by the union of
+            // later fully-opaque occluder rects, it is invisible. Skip it.
+            if let Some(test_rect) =
+                occlusion::cullable_paint_rect(node, self.raster_clip)
+            {
+                if occlusion::is_fully_covered_by_later(test_rect, i, &occluders) {
+                    #[cfg(test)]
+                    occlusion::record_culled(node.id);
                     continue;
                 }
             }
