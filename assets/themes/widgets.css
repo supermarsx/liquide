@@ -191,6 +191,8 @@
   lq-line-plot,
   lq-line-grid-layer,
   lq-line-grid,
+  lq-line-stroke,
+  lq-line-seg,
   lq-line-series,
   lq-line-cell,
   lq-line-point,
@@ -204,9 +206,7 @@
   lq-bar-value,
   lq-donut-chart,
   lq-donut-disc,
-  lq-donut-base,
   lq-donut-seg,
-  lq-donut-spoke,
   lq-donut-hole,
   lq-donut-center,
   lq-heatmap,
@@ -1910,7 +1910,26 @@
     height: 100%;
     border-top: 1px solid var(--widget-border, rgba(255, 255, 255, 0.08));
   }
-  /* A series is a flex row of equal cells filling the plot. */
+  /* The stroked polyline layer: one per series, filling the plot. Each segment is
+     a sub-box spanning the gap between two points (left/width in % of the plot);
+     its inline clip-path polygon (percent verts) carves a thin band from one point
+     to the next — a real connected line. */
+  lq-line-stroke {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  lq-line-seg {
+    display: block;
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  /* A series is a flex row of equal cells filling the plot (the hover hit boxes). */
   lq-line-series {
     display: flex;
     flex-direction: row;
@@ -1928,21 +1947,25 @@
     flex-basis: 0px;
     height: 100%;
   }
-  /* A thin full-height stem; scaleY(frac) (origin bottom) puts its painted top
-     edge at the value's screen y — the line data point. */
+  /* A round marker pinned at the point's screen y via inline top:% (now resolving);
+     the negative margins centre the dot on the value. */
   lq-line-point {
     display: block;
     position: absolute;
-    left: 42%;
+    left: 50%;
     top: 0;
-    width: 16%;
-    height: 100%;
+    width: 8px;
+    height: 8px;
+    margin-left: -4px;
+    margin-top: -4px;
+    border-radius: 4px;
     background-color: var(--widget-accent, #3b82f6);
-    transform-origin: 50% 100%;
   }
   lq-line-point:hover {
-    left: 36%;
-    width: 28%;
+    width: 12px;
+    height: 12px;
+    margin-left: -6px;
+    margin-top: -6px;
     background-color: var(--widget-accent-hover, #60a5fa);
   }
 
@@ -2002,18 +2025,17 @@
     flex-basis: 0px;
     height: 100%;
   }
-  /* A full-height bar; scaleY(frac) (origin bottom) sets the data-driven extent. */
+  /* A bottom-anchored bar; inline height:% (now resolving) sets the data extent —
+     the bar's laid-out box reflects the value directly (no scaleY). */
   lq-bar {
     display: block;
     position: absolute;
     left: 12%;
-    top: 0;
+    bottom: 0;
     width: 76%;
-    height: 100%;
     box-sizing: border-box;
     background-color: var(--widget-accent, #3b82f6);
     border-radius: 2px 2px 0 0;
-    transform-origin: 50% 100%;
   }
   lq-bar:hover {
     background-color: var(--widget-accent-hover, #60a5fa);
@@ -2033,8 +2055,10 @@
     z-index: 5;
   }
 
-  /* lq-donut-chart — proportional segments as clip-path wedges (the data spans).
-     The disc box gives the center + radius the hover hit is measured against. */
+  /* lq-donut-chart — proportional segments, each a fully-filled clip-path wedge
+     (the data span). The renderer scopes each element's clip to itself, so the
+     stacked wedges paint as distinct slices with no leak. The disc box gives the
+     center + radius the hover hit is measured against. */
   lq-donut-chart {
     display: inline-block;
     position: relative;
@@ -2049,19 +2073,8 @@
     width: 100%;
     height: 100%;
   }
-  /* The base ring: a single round disc (the renderer can't stack clip-path fills,
-     so the proportional split is shown by spokes + the hovered-segment wedge). */
-  lq-donut-base {
-    display: block;
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    background-color: var(--widget-accent, #3b82f6);
-  }
-  /* The hovered segment, filled as a single clip-path wedge. */
+  /* Each segment: a full-disc round element filled with the segment colour and
+     clipped to its angular wedge via an inline clip-path polygon (percent verts). */
   lq-donut-seg {
     display: block;
     position: absolute;
@@ -2069,19 +2082,12 @@
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: var(--widget-accent-hover, #60a5fa);
+    border-radius: 50%;
   }
-  /* A thin radial boundary line from the disc center, rotated to a segment start. */
-  lq-donut-spoke {
-    display: block;
-    position: absolute;
-    left: 50%;
-    top: 0;
-    width: 2px;
-    height: 50%;
-    margin-left: -1px;
-    background-color: var(--widget-bg, #27272a);
-    transform-origin: 50% 100%;
+  /* The hovered slice brightens (the fill colour is set inline per segment; this
+     lifts it via opacity so it reads as highlighted regardless of its hue). */
+  lq-donut-seg:hover {
+    opacity: 0.82;
   }
   lq-donut-hole {
     display: block;
@@ -2127,15 +2133,13 @@
     flex-basis: 0px;
     height: 100%;
   }
-  /* Each cell fills the column; scaleY(1/rows) + a per-row transform-origin places
-     it into its vertical band (the proven box-relative vertical mechanism). */
+  /* Each cell is absolutely placed into its vertical band via inline top:%/height:%
+     (now resolving) — the laid-out box reflects the band directly. */
   lq-heatmap-cell {
     display: block;
     position: absolute;
     left: 0;
-    top: 0;
     width: 100%;
-    height: 100%;
     box-sizing: border-box;
     border: 1px solid var(--widget-bg, #27272a);
   }

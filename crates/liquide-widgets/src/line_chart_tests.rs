@@ -178,6 +178,90 @@ fn mouse_leave_clears_hover() {
     assert_eq!(as_chart(&g).hovered(), None, "leaving clears hover");
 }
 
+/// The laid-out box of the i-th stroke segment (data-part="seg").
+fn seg_box(g: &Gallery, series: usize, index: usize) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of("c").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    fn find_stroke(doc: &liquide_dom::Document, n: liquide_dom::NodeId, s: &str) -> Option<liquide_dom::NodeId> {
+        if doc.get_attribute(n, "data-part").as_deref() == Some("stroke")
+            && doc.get_attribute(n, "data-series").as_deref() == Some(s)
+        {
+            return Some(n);
+        }
+        for &c in doc.children(n) {
+            if let Some(f) = find_stroke(doc, c, s) {
+                return Some(f);
+            }
+        }
+        None
+    }
+    let stroke = find_stroke(g.doc(), root, &series.to_string()).expect("stroke layer");
+    let segs: Vec<_> = g
+        .doc()
+        .children(stroke)
+        .iter()
+        .copied()
+        .filter(|&c| g.doc().get_attribute(c, "data-part").as_deref() == Some("seg"))
+        .collect();
+    q.box_of(segs.get(index).copied().expect("seg node")).expect("seg box")
+}
+
+/// NO-FAKE-GREEN: the chart emits a REAL CONNECTED POLYLINE, not isolated stems.
+/// For n points there are n-1 stroke segments, and segment i's laid-out box spans
+/// exactly the horizontal gap from point i to point i+1 (its left == cell i center
+/// region, its right reaches point i+1) — so consecutive segments tile the plot
+/// width edge-to-edge with no gaps. Isolated stems (the old degraded rendering)
+/// would NOT produce gap-spanning boxes that meet end to end.
+#[test]
+fn emits_a_connected_polyline_not_isolated_stems() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-line-chart { width: 400px; height: 200px; }");
+    g.mount("c", Box::new(chart(vec![1.0, 4.0, 2.0, 6.0, 3.0])));
+    g.relayout();
+    let p = plot(&g);
+    // 5 points -> 4 segments. Each spans 1/4 of the plot width.
+    let s0 = seg_box(&g, 0, 0);
+    let s1 = seg_box(&g, 0, 1);
+    let s3 = seg_box(&g, 0, 3);
+    // Segment 0 starts at the left edge of the plot.
+    assert!((s0.x - p.x).abs() < p.width * 0.03, "seg0 starts at plot left (got {} vs {})", s0.x, p.x);
+    // Each segment spans ~1/4 of the plot.
+    assert!((s0.width - p.width / 4.0).abs() < p.width * 0.05, "seg spans 1/4 plot (got {})", s0.width);
+    // Consecutive segments are CONNECTED: seg1 starts where seg0 ends (within 1px).
+    assert!((s1.x - (s0.x + s0.width)).abs() < 2.0, "seg1 starts at seg0 end (connected, got {} vs {})", s1.x, s0.x + s0.width);
+    // The last segment reaches the right edge of the plot.
+    assert!(s3.x + s3.width > p.x + p.width * 0.95, "seg3 reaches plot right (got {})", s3.x + s3.width);
+}
+
+/// NO-FAKE-GREEN: the painted stroke is CONTINUOUS between adjacent points — at the
+/// horizontal midpoint between point 0 and point 1, the line paints at roughly the
+/// average of the two points' screen y (a real connecting segment), not at one
+/// point's y or absent (which isolated stems would give).
+#[test]
+fn stroke_is_continuous_between_points() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-line-chart { width: 400px; height: 200px; }");
+    // Two points: low (0) then high (10). The midpoint of the line should paint
+    // near the vertical middle of the plot.
+    g.mount("c", Box::new(chart(vec![0.0, 10.0])));
+    g.relayout();
+    let p = plot(&g);
+    let fb = g.rasterize();
+    let xmid = (p.x + p.width * 0.5) as u32;
+    // Find the painted blue stroke at the horizontal midpoint.
+    let mut line_y = None;
+    for y in (p.y as u32 + 1)..((p.y + p.height) as u32 - 1) {
+        let px = fb.get_pixel(xmid, y);
+        if px.b > 150 && px.r < 120 {
+            line_y = Some(y as f32);
+            break;
+        }
+    }
+    let ly = line_y.expect("stroke paints at the horizontal midpoint (continuous line)");
+    // Point 0 (value 0) is near the bottom, point 1 (value 10) near the top; the
+    // line midpoint is near the vertical center.
+    let center = p.y + p.height * 0.5;
+    assert!((ly - center).abs() < p.height * 0.25, "line midpoint near plot center ({ly} vs {center})");
+}
+
 /// Multiple series each lay out their own cells; overlapping points at the same
 /// index paint at different y (different values).
 #[test]

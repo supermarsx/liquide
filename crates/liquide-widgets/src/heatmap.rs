@@ -180,26 +180,27 @@ impl WidgetBehavior for Heatmap {
 
     fn render(&self) -> TemplateNode {
         // The plot is a horizontal flex row of equal columns (x distributes with
-        // the laid-out plot width). Within each column, cells are placed into their
-        // vertical band with `scaleY(1/rows)` + a percentage `transform-origin` —
-        // the proven box-relative vertical mechanism. Both axes rescale with the
-        // box; the colour encodes the value.
+        // the laid-out plot width). Within each column, each cell is absolutely
+        // placed into its vertical band via inline `top:%`/`height:%` (vertical `%`
+        // now resolves) — its laid-out box reflects the band directly (no scaleY).
+        // Both axes rescale with the box; the colour encodes the value.
         let mut plot = TemplateNode::el("lq-heatmap-plot").attr("data-part", "plot");
+        let row_h = if self.rows == 0 { 100.0 } else { 100.0 / self.rows as f32 };
 
         for c in 0..self.cols {
             let mut col = TemplateNode::el("lq-heatmap-col").attr("data-part", "col");
             for r in 0..self.rows {
                 let v = self.value_at(r, c);
                 let hovered = self.hover == Some((r, c));
-                let (tf, origin) = crate::chart::cell_row_transform(r, self.rows);
+                let top = r as f32 * row_h;
                 let mut cell = TemplateNode::el("lq-heatmap-cell")
                     .attr("data-part", "cell")
                     .attr("data-row", &r.to_string())
                     .attr("data-col", &c.to_string())
                     .attr("data-value", &format!("{v}"))
                     .style("background-color", &self.color_for(v))
-                    .style("transform", &tf)
-                    .style("transform-origin", &origin)
+                    .style("top", &format!("{top:.5}%"))
+                    .style("height", &format!("{row_h:.5}%"))
                     .pseudo_if(PseudoStateFlags::HOVER, hovered);
                 if hovered {
                     cell = cell.child(

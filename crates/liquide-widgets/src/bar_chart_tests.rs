@@ -1,9 +1,9 @@
 //! `<lq-bar-chart>` real-pipeline gallery tests.
 //!
-//! Vertical bar extent is a `scaleY` transform (paint-only — the layout box stays
-//! full-height), so height proportionality is asserted via PIXELS. Horizontal
-//! distribution uses flex columns (real layout). Hover is resolved from the
-//! laid-out plot box (bar-slot math), never a constant.
+//! Vertical bar extent is now a real inline `height:%` anchored at the bottom, so
+//! the bar's LAID-OUT BOX reflects the value directly (asserted via layout boxes)
+//! as well as via pixels. Horizontal distribution uses flex columns (real layout).
+//! Hover is resolved from the laid-out plot box (bar-slot math), never a constant.
 #![cfg(test)]
 
 use liquide_compositor::framebuffer::FrameBuffer;
@@ -62,8 +62,46 @@ fn painted_bar_height(fb: &FrameBuffer, plot: liquide_layout::geometry::Rect, co
     }
 }
 
+fn bar_box(g: &Gallery, idx: usize) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of("c").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    let mut bars = Vec::new();
+    fn walk(doc: &liquide_dom::Document, n: liquide_dom::NodeId, out: &mut Vec<liquide_dom::NodeId>) {
+        if doc.get_attribute(n, "data-part").as_deref() == Some("bar") {
+            out.push(n);
+        }
+        for &c in doc.children(n) {
+            walk(doc, c, out);
+        }
+    }
+    walk(g.doc(), root, &mut bars);
+    q.box_of(bars[idx]).expect("bar box")
+}
+
 fn chart(values: Vec<f32>) -> BarChart {
     BarChart::new(values)
+}
+
+/// NO-FAKE-GREEN: with real height-based sizing the bar's LAID-OUT BOX height is
+/// the value fraction of the plot, and the box is bottom-anchored. A half-value
+/// bar's box is ~half the plot tall; the max-value bar ~full; and the box bottom
+/// sits at the plot bottom. (The old scaleY rendering left every box full-height —
+/// this asserts the layout box itself now reflects the value.)
+#[test]
+fn bar_box_height_reflects_value() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-bar-chart { width: 400px; height: 200px; }");
+    g.mount("c", Box::new(chart(vec![0.0, 5.0, 10.0])));
+    g.relayout();
+    let p = plot(&g);
+    let b1 = bar_box(&g, 1); // value 5 of 10 -> ~half
+    let b2 = bar_box(&g, 2); // value 10 -> ~full
+    assert!(b2.height > b1.height, "taller value -> taller laid-out box ({} vs {})", b2.height, b1.height);
+    assert!((b2.height - p.height).abs() < p.height * 0.06, "max bar box ~= full plot ({} vs {})", b2.height, p.height);
+    assert!((b1.height - p.height * 0.5).abs() < p.height * 0.08, "mid bar box ~= half plot ({} vs {})", b1.height, p.height * 0.5);
+    // Bottom-anchored: each bar's bottom is at the plot bottom.
+    let plot_bottom = p.y + p.height;
+    assert!((b1.y + b1.height - plot_bottom).abs() < 3.0, "bar box bottom-anchored to plot bottom");
+    let _ = BG;
 }
 
 /// The chart renders a real plot box, and a bar paints accent pixels.

@@ -42,6 +42,46 @@ fn hsv_to_rgb_primaries() {
     assert_eq!(ColorWheel::hsv_to_rgb(0.0, 0.0, 0.0), (0, 0, 0));
 }
 
+/// The sv-cursor CENTER as a 0..1 fraction along the area's content box.
+fn cursor_frac(g: &Gallery) -> (f32, f32) {
+    let root = g.host.root_of("cw").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    let area = q.content_of_part(root, "area").expect("area content box");
+    let cur = part(g, "sv-cursor");
+    let fx = (cur.x + cur.width / 2.0 - area.x) / area.width;
+    let fy = (cur.y + cur.height / 2.0 - area.y) / area.height;
+    (fx, fy)
+}
+
+/// NO-FAKE-GREEN: the sv-cursor MARKER box sits at the sat/val fraction of the
+/// laid-out area (inline left/top:% now resolve), so paint matches the value:
+/// cursor x == sat, cursor y == (1 - value) of the area. The old degraded
+/// behaviour (inline % fell back to auto -> cursor pinned at the origin) gives a
+/// constant fraction, failing both the per-value check and the delta check.
+#[test]
+fn sv_cursor_box_sits_at_value_fraction() {
+    // The area is small (96px), so the marker box + sub-pixel border shift make the
+    // tolerance ~0.1 of the fraction; the delta check below is the strict
+    // anti-constant tooth (a constant marker has zero delta).
+    let g = gallery_with(ColorWheel::new(120.0, 0.3, 0.8));
+    let (fx, fy) = cursor_frac(&g);
+    assert!((fx - 0.3).abs() < 0.1, "cursor x ~= sat 0.3 (got {fx})");
+    assert!((fy - 0.2).abs() < 0.1, "cursor y ~= (1-val)=0.2 (got {fy})");
+
+    // Anti-constant: a higher saturation + lower value moves the cursor by the
+    // matching fraction delta. A constant marker gives ~0 delta.
+    let g2 = gallery_with(ColorWheel::new(120.0, 0.9, 0.2));
+    let (fx2, fy2) = cursor_frac(&g2);
+    assert!((fx2 - 0.9).abs() < 0.1, "cursor x ~= sat 0.9 (got {fx2})");
+    assert!((fy2 - 0.8).abs() < 0.1, "cursor y ~= (1-val)=0.8 (got {fy2})");
+    assert!(
+        (fx2 - fx) > 0.55 && (fy2 - fy) > 0.55,
+        "the cursor moves with sat/val (dx {} dy {}); a constant gives ~0",
+        fx2 - fx,
+        fy2 - fy
+    );
+}
+
 /// The ring + area + preview render real, CSS-sized boxes.
 #[test]
 fn wheel_renders_ring_and_area() {

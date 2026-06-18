@@ -133,6 +133,51 @@ fn keyboard_nudges_axes() {
     assert!(as_pad(&g).x() == 1.0 && as_pad(&g).y() == 1.0, "End -> (1,1)");
 }
 
+/// The laid-out handle box (data-part="handle").
+fn handle(g: &Gallery) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of("xy").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    q.box_of_part(root, "handle").expect("handle box")
+}
+
+/// The handle CENTER as a 0..1 fraction along the pad's content box (the area the
+/// percentage offsets resolve against).
+fn handle_frac(g: &Gallery) -> (f32, f32) {
+    let root = g.host.root_of("xy").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    let area = q.content_of_part(root, "pad").expect("pad content box");
+    let h = handle(g);
+    let fx = (h.x + h.width / 2.0 - area.x) / area.width;
+    let fy = (h.y + h.height / 2.0 - area.y) / area.height;
+    (fx, fy)
+}
+
+/// NO-FAKE-GREEN: the handle MARKER box sits at the VALUE FRACTION of the laid-out
+/// pad (inline left/top:% now resolve), so paint matches the value — the handle
+/// center lands at ~(x, y) of the pad area. The old degraded behaviour (inline %
+/// fell back to auto -> handle pinned at the origin) gives a constant fraction
+/// regardless of value, which fails both the per-value check and the delta check.
+#[test]
+fn handle_box_sits_at_value_fraction() {
+    let g = gallery_with(XyPad::new(0.25, 0.75));
+    let (fx, fy) = handle_frac(&g);
+    assert!((fx - 0.25).abs() < 0.06, "handle x ~= 0.25 fraction of the pad (got {fx})");
+    assert!((fy - 0.75).abs() < 0.06, "handle y ~= 0.75 fraction of the pad (got {fy})");
+
+    // Anti-constant: moving the value moves the handle by the SAME fraction delta.
+    // A constant marker would give delta 0.
+    let g2 = gallery_with(XyPad::new(0.9, 0.1));
+    let (fx2, fy2) = handle_frac(&g2);
+    assert!((fx2 - 0.9).abs() < 0.06, "handle x ~= 0.9 (got {fx2})");
+    assert!((fy2 - 0.1).abs() < 0.06, "handle y ~= 0.1 (got {fy2})");
+    assert!(
+        (fx2 - fx) > 0.55 && (fy - fy2) > 0.55,
+        "the handle moves with the value (dx {} dy {}); a constant gives ~0",
+        fx2 - fx,
+        fy - fy2
+    );
+}
+
 /// Disabled pad ignores input.
 #[test]
 fn disabled_pad_ignores_input() {

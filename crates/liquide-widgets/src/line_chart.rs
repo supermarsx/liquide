@@ -9,9 +9,14 @@
 //! Each series value is normalized against the shared y-domain
 //! ([`crate::chart::y_domain`]) and placed in a `position: relative` plot box with
 //! PERCENT geometry: point `i` of a series with `n` points sits at
-//! `left = i/(n-1) * 100%`, `top = (1 - value_frac) * 100%`. Consecutive points
-//! are joined by thin segment boxes rotated to the slope, with length a percent of
-//! the plot width. Resizing the plot box rescales the entire graph.
+//! `left = i/(n-1) * 100%`, `top = (1 - value_frac) * 100%` (inline `%` now
+//! resolves — engine gap #1/#2 fixed, e3c5d13). Consecutive points are joined by a
+//! real STROKED POLYLINE: each adjacent pair is a sub-box spanning the horizontal
+//! gap (`left`/`width` in `%` of the plot, full height) whose inline `clip-path`
+//! polygon (percent vertices) carves a thin band from the earlier point's screen y
+//! to the next point's — a real connected line, aspect-correct at any size and
+//! needing no laid-out pixel dimensions (scoped clip-path, gap #5 fixed, 487a435).
+//! A coloured marker sits at each point. Resizing the plot box rescales the graph.
 //!
 //! ## Hover from layout (no constants)
 //!
@@ -191,30 +196,65 @@ impl WidgetBehavior for LineChart {
             plot = plot.child(grid);
         }
 
-        // Each series is a flex row of equal cells (x distributes with the laid-out
-        // plot width). In each cell a `scaleY(1-frac)` spacer (origin top) lands its
-        // bottom edge at the value's screen y, and a marker sits at that edge — so
-        // the point's painted y is data-driven and the whole thing rescales with the
-        // box. (The line is drawn as connected markers; a stroked polyline needs
-        // engine primitives this CSS path can't assume.)
+        // Each series is drawn in two layers, both rescaling with the plot box:
+        //
+        // 1. A STROKED POLYLINE: for each adjacent pair of points, a sub-box spanning
+        //    the horizontal gap (`left`/`width` in `%` of the plot, full height) whose
+        //    inline `clip-path` polygon (percent vertices) is a thin band from the
+        //    earlier point's screen y to the next point's — a real connected line, not
+        //    isolated stems. (Inline `%` + scoped clip-path are both engine-working.)
+        // 2. A flex row of equal cells (x distributes with the laid-out plot width)
+        //    each carrying a point MARKER pinned by inline `top:%` at the value's y —
+        //    these laid-out cell boxes are what hover resolves against.
+        const HALF_THICK_PCT: f32 = 0.9;
         for (si, s) in self.series.iter().enumerate() {
             let count = s.values.len();
             let color = s.color.clone();
+            // Screen-y fraction (0 = top) of each point.
+            let ytop: Vec<f32> = s
+                .values
+                .iter()
+                .map(|&v| 1.0 - chart::value_fraction(v, lo, hi))
+                .collect();
+
+            // Layer 1: the connected stroke.
+            if count >= 2 {
+                let mut line = TemplateNode::el("lq-line-stroke")
+                    .attr("data-part", "stroke")
+                    .attr("data-series", &si.to_string());
+                for i in 0..count - 1 {
+                    let x0 = i as f32 / (count - 1) as f32;
+                    let x1 = (i + 1) as f32 / (count - 1) as f32;
+                    let (left, width, clip) =
+                        chart::polyline_band(x0, ytop[i], x1, ytop[i + 1], HALF_THICK_PCT);
+                    let mut seg = TemplateNode::el("lq-line-seg")
+                        .attr("data-part", "seg")
+                        .attr("data-index", &i.to_string())
+                        .style("left", &format!("{left:.4}%"))
+                        .style("width", &format!("{width:.4}%"))
+                        .style("clip-path", &clip);
+                    if let Some(c) = &color {
+                        seg = seg.style("background-color", c);
+                    }
+                    line = line.child(seg);
+                }
+                plot = plot.child(line);
+            }
+
+            // Layer 2: per-point markers in flex cells (the hover hit boxes).
             let mut srow = TemplateNode::el("lq-line-series")
                 .attr("data-part", "series")
                 .attr("data-series", &si.to_string());
             for i in 0..count {
-                let frac = chart::value_fraction(s.values[i], lo, hi);
                 let hovered = self.hover == Some((si, i));
-                // The point is a thin full-height stem scaled to `frac` from the
-                // bottom: its painted TOP EDGE lands at the value's screen y (the
-                // data point). This avoids nested-transform distortion and always
-                // paints a visible marker. Hover highlights the stem.
+                // The marker is pinned at the point's screen y via inline `top:%`
+                // (now resolving); a centring negative margin sits the dot on the
+                // value. Hover enlarges it. (Its laid-out cell box drives hover.)
                 let mut marker = TemplateNode::el("lq-line-point")
                     .attr("data-part", "point")
                     .attr("data-series", &si.to_string())
                     .attr("data-index", &i.to_string())
-                    .style("transform", &chart::bar_scale_y(frac))
+                    .style("top", &format!("{:.4}%", ytop[i] * 100.0))
                     .pseudo_if(PseudoStateFlags::HOVER, hovered);
                 if let Some(c) = &color {
                     marker = marker.style("background-color", c);

@@ -6,13 +6,15 @@
 //!
 //! ## Data -> layout scaling (no constants)
 //!
-//! The disc is a single circular element whose `background` is a
-//! `conic-gradient(...)` built from the DATA: each segment occupies an angular
-//! span proportional to its value (`value / total * 360deg`), emitted as a pair of
-//! hard colour stops in `deg`. The conic gradient resolves against the laid-out
-//! disc box, so resizing the chart box rescales the whole pie. Donut mode overlays
-//! a centered hole (a `border-radius:50%` box sized in PERCENT of the disc) — also
-//! geometry-driven, so the ring thickness scales with the box.
+//! Each segment is a full-disc element FILLED with its colour and clipped to its
+//! angular wedge via a `clip-path: polygon(...)` whose vertices are PERCENTAGES of
+//! the element box — a sector from the disc centre out along the arc, the span
+//! proportional to the segment value (`value / total * 360deg`). The renderer
+//! scopes each element's clip to itself (engine gap #5 fixed, 487a435), so N
+//! stacked wedges paint as N fully-filled slices with no clip leak across
+//! siblings. The percentage vertices rescale with the laid-out disc box. Donut
+//! mode overlays a centered hole (a `border-radius:50%` box sized in PERCENT of the
+//! disc) — also geometry-driven, so the ring thickness scales with the box.
 //!
 //! ## Hover from layout (no constants)
 //!
@@ -180,8 +182,9 @@ impl DonutChart {
     /// angular span `[a, b]` degrees clockwise from 12 o'clock. The polygon runs
     /// from the disc center out along the arc, sampled densely enough to read as a
     /// smooth sector — and because the points are percentages of the element box,
-    /// the wedge rescales with the disc. (Inline conic-gradients do not paint in
-    /// this engine; clip-path polygons do — so segments are clipped coloured discs.)
+    /// the wedge rescales with the disc. The renderer scopes the clip to the
+    /// element itself, so each segment is a fully-filled clipped coloured disc and
+    /// stacking N of them produces N slices with no cross-segment clip leak.
     fn wedge_clip(a: f32, b: f32) -> String {
         let mut pts = vec!["50% 50%".to_string()];
         let steps = (((b - a).abs() / 6.0).ceil() as usize).max(1);
@@ -253,35 +256,20 @@ impl WidgetBehavior for DonutChart {
         let mut disc = TemplateNode::el("lq-donut-disc").attr("data-part", "disc");
         let spans = self.spans();
 
-        // Base ring: a single round element (one solid disc — see note below).
-        disc = disc.child(TemplateNode::el("lq-donut-base").attr("data-part", "base"));
-
-        // The HOVERED segment is filled as a clip-path wedge. We render at most ONE
-        // clip-path element at a time: this engine's renderer leaks clip-path state
-        // across sibling elements in a paint pass (verified), so stacking N filled
-        // wedges would mis-clip — but a single highlight wedge is exact. The hovered
-        // wedge's geometry (its angular span) is data-driven from `spans`.
-        if let Some(i) = self.hover {
-            if let Some(&(a, b)) = spans.get(i) {
-                disc = disc.child(
-                    TemplateNode::el("lq-donut-seg")
-                        .attr("data-part", "segment")
-                        .attr("data-index", &i.to_string())
-                        .style("background-color", &self.color_of(i))
-                        .style("clip-path", &Self::wedge_clip(a, b)),
-                );
-            }
-        }
-
-        // Segment BOUNDARY spokes: a thin radial line at each segment's start angle,
-        // rotated by the data span (rotate transforms render correctly). These make
-        // the proportional split visible without stacking clip-paths.
-        for (i, &(a, _b)) in spans.iter().enumerate() {
+        // Every segment is a FULLY FILLED clip-path wedge in its own colour. The
+        // renderer scopes each element's clip to itself (gap #5 fixed), so the N
+        // stacked wedges paint as N slices with no cross-segment leak. The wedge
+        // geometry (its angular span) is data-driven from `spans`; the percentage
+        // polygon vertices rescale with the laid-out disc.
+        for (i, &(a, b)) in spans.iter().enumerate() {
+            let hovered = self.hover == Some(i);
             disc = disc.child(
-                TemplateNode::el("lq-donut-spoke")
-                    .attr("data-part", "spoke")
+                TemplateNode::el("lq-donut-seg")
+                    .attr("data-part", "segment")
                     .attr("data-index", &i.to_string())
-                    .style("transform", &format!("rotate({a:.3}deg)")),
+                    .style("background-color", &self.color_of(i))
+                    .style("clip-path", &Self::wedge_clip(a, b))
+                    .pseudo_if(PseudoStateFlags::HOVER, hovered),
             );
         }
 

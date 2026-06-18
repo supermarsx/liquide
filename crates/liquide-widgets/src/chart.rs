@@ -142,9 +142,54 @@ pub fn cell_row_transform(r: usize, rows: usize) -> (String, String) {
     (format!("scaleY({sy:.5})"), format!("0% {oy:.4}%"))
 }
 
+/// A connected polyline segment joining two adjacent data points, expressed
+/// PURELY in PERCENT geometry so it needs no laid-out pixel size and rescales with
+/// any plot box.
+///
+/// The widget places a sub-box at `left = x0%`, `width = (x1-x0)%`, `top: 0`,
+/// `height: 100%` of the plot (these inline `%` now resolve — gap #1/#2 fixed), so
+/// the box exactly spans the horizontal gap between the two points and is the full
+/// plot height. Inside it, this returns a `clip-path: polygon(...)` band running
+/// from `(0%, y0%)` to `(100%, y1%)` with half-thickness `t%` (clip-path percent
+/// vertices resolve against the element box, which is itself percent-sized — so the
+/// stroke is aspect-correct at any size). `y0`/`y1` are the screen-oriented value
+/// tops (0 = top) of the two points.
+///
+/// Returns `(left_pct, width_pct, clip_path)`. A degenerate zero-width gap (a
+/// single point) yields a zero width and is skipped by the caller.
+pub fn polyline_band(x0: f32, y0: f32, x1: f32, y1: f32, half_thick_pct: f32) -> (f32, f32, String) {
+    let left = x0 * 100.0;
+    let width = (x1 - x0) * 100.0;
+    let t = half_thick_pct;
+    let (a, b) = (y0 * 100.0, y1 * 100.0);
+    // A parallelogram band: top edge of each end offset up by t, bottom by t.
+    let clip = format!(
+        "polygon(0% {:.3}%, 0% {:.3}%, 100% {:.3}%, 100% {:.3}%)",
+        a - t,
+        a + t,
+        b + t,
+        b - t
+    );
+    (left, width, clip)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polyline_band_spans_the_gap_and_tracks_endpoints() {
+        // Points 0->1 of a 5-point series: x0=0, x1=0.25; values map to y tops.
+        let (left, width, clip) = polyline_band(0.0, 0.8, 0.25, 0.2, 2.0);
+        assert!((left - 0.0).abs() < 1e-3, "left at x0 (got {left})");
+        assert!((width - 25.0).abs() < 1e-3, "width spans the gap (got {width})");
+        // The clip band's left edge centers on y0 (80%), right edge on y1 (20%).
+        assert!(clip.contains("0% 78.000%") && clip.contains("0% 82.000%"), "left edge ~80% +/- t: {clip}");
+        assert!(clip.contains("100% 22.000%") && clip.contains("100% 18.000%"), "right edge ~20% +/- t: {clip}");
+        // A flat segment is a horizontal band.
+        let (_, _, flat) = polyline_band(0.5, 0.5, 0.75, 0.5, 1.0);
+        assert!(flat.contains("0% 49.000%") && flat.contains("100% 51.000%"), "flat band: {flat}");
+    }
 
     #[test]
     fn domain_guards_flat_and_empty() {

@@ -177,6 +177,83 @@ fn different_data_renders_differently() {
     assert!(diffs > 0, "different value splits -> the boundary spokes move (diffs={diffs})");
 }
 
+/// NO-FAKE-GREEN: every segment is FULLY FILLED with its own colour (not a single
+/// base ring + spokes). Four equal quarters in four distinct palette colours: each
+/// quadrant samples its segment's colour, and the four are all different — proving
+/// N stacked clip-path wedges paint as N filled slices with no leak.
+#[test]
+fn every_segment_is_filled_with_its_colour() {
+    let colored = vec![
+        Segment::new("a", 1.0).color("#ff0000"), // red,  top-right quadrant (45deg)
+        Segment::new("b", 1.0).color("#00ff00"), // green, bottom-right (135deg)
+        Segment::new("c", 1.0).color("#0000ff"), // blue, bottom-left (225deg)
+        Segment::new("d", 1.0).color("#ffff00"), // yellow, top-left (315deg)
+    ];
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-donut-chart { width: 200px; height: 200px; }");
+    g.mount("c", Box::new(DonutChart::pie(colored)));
+    g.relayout();
+    let d = disc(&g);
+    let fb = g.rasterize();
+    let cx = d.x + d.width / 2.0;
+    let cy = d.y + d.height / 2.0;
+    let r = d.width.min(d.height) / 2.0 * 0.65;
+    let samp = |deg: f32| {
+        let rad = deg.to_radians();
+        Gallery::pixel(&fb, (cx + rad.sin() * r) as u32, (cy - rad.cos() * r) as u32)
+    };
+    let tr = samp(45.0);
+    let br = samp(135.0);
+    let bl = samp(225.0);
+    let tl = samp(315.0);
+    // Each wedge shows its own colour (filled), and all four differ (no leak/overpaint).
+    assert!(tr.r > 150 && tr.g < 100 && tr.b < 100, "segment a (red) fills TR quadrant (got {tr:?})");
+    assert!(br.g > 150 && br.r < 100 && br.b < 100, "segment b (green) fills BR quadrant (got {br:?})");
+    assert!(bl.b > 150 && bl.r < 100 && bl.g < 100, "segment c (blue) fills BL quadrant (got {bl:?})");
+    assert!(tl.r > 150 && tl.g > 150 && tl.b < 100, "segment d (yellow) fills TL quadrant (got {tl:?})");
+}
+
+/// NO-FAKE-GREEN: a donut shows a CENTER LABEL with the total (then the hovered
+/// value). The label text is reconciled into the DOM under the hole.
+#[test]
+fn donut_center_label_shows_total_then_hovered() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-donut-chart { width: 200px; height: 200px; }");
+    g.mount("c", Box::new(DonutChart::donut(vec![
+        Segment::new("a", 3.0),
+        Segment::new("b", 7.0),
+    ])));
+    g.relayout();
+    let center_text = |g: &Gallery| -> Option<String> {
+        let root = g.host.root_of("c").unwrap();
+        fn find(doc: &liquide_dom::Document, n: liquide_dom::NodeId) -> Option<String> {
+            if doc.get_attribute(n, "data-part").as_deref() == Some("center") {
+                let mut s = String::new();
+                for &c in doc.children(n) {
+                    if let Some(t) = doc.get(c).and_then(|node| node.text_content()) {
+                        s.push_str(t);
+                    }
+                }
+                return Some(s);
+            }
+            for &c in doc.children(n) {
+                if let Some(f) = find(doc, c) { return Some(f); }
+            }
+            None
+        }
+        find(g.doc(), root)
+    };
+    assert_eq!(center_text(&g).as_deref(), Some("10"), "center shows total (3+7)");
+    // Hover segment 1 -> center shows its value.
+    let d = disc(&g);
+    let (cx, cy) = (d.x + d.width / 2.0, d.y + d.height / 2.0);
+    let r = d.width.min(d.height) / 2.0;
+    // Segment 0 is 3/10 (0..108deg); segment 1 is 7/10 (108..360). 270deg (left)
+    // is inside segment 1.
+    g.pointer_move(cx - r * 0.8, cy);
+    let _ = g.process();
+    assert_eq!(as_chart(&g).hovered(), Some(1), "left hits the big segment 1");
+    assert_eq!(center_text(&g).as_deref(), Some("7"), "center shows the hovered value");
+}
+
 /// Leaving clears the hover.
 #[test]
 fn mouse_leave_clears_hover() {

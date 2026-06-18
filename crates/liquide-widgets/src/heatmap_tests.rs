@@ -1,10 +1,11 @@
 //! `<lq-heatmap>` real-pipeline gallery tests.
 //!
-//! Cells are placed by flex columns (x, real layout) + `scaleY` with a per-row
-//! `transform-origin` (vertical, paint-only). Cell positions are therefore
-//! computed from the LAID-OUT plot box (rows/cols), and colour is asserted via
-//! PIXELS at those computed centers. Hover resolves the cell from the same plot
-//! box (grid math), never a constant.
+//! Cells are placed by flex columns (x, real layout) + a real inline
+//! `top:%`/`height:%` band per row (vertical, now a real layout box). Cell
+//! positions are computed from the LAID-OUT plot box (rows/cols); colour is
+//! asserted via PIXELS at those centers and the row band via the laid-out cell
+//! box. Hover resolves the cell from the same plot box (grid math), never a
+//! constant.
 #![cfg(test)]
 
 use crate::gallery::Gallery;
@@ -33,6 +34,46 @@ fn cell_center(p: liquide_layout::geometry::Rect, rows: usize, cols: usize, r: u
 
 fn map3x3() -> Heatmap {
     Heatmap::new(3, 3, (0..9).map(|v| v as f32).collect())
+}
+
+/// The laid-out box of cell (r,c) (located by data-row/data-col).
+fn cell_box(g: &Gallery, r: usize, c: usize) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of("c").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    fn find(doc: &liquide_dom::Document, n: liquide_dom::NodeId, r: &str, c: &str) -> Option<liquide_dom::NodeId> {
+        if doc.get_attribute(n, "data-part").as_deref() == Some("cell")
+            && doc.get_attribute(n, "data-row").as_deref() == Some(r)
+            && doc.get_attribute(n, "data-col").as_deref() == Some(c)
+        {
+            return Some(n);
+        }
+        for &ch in doc.children(n) {
+            if let Some(f) = find(doc, ch, r, c) { return Some(f); }
+        }
+        None
+    }
+    let node = find(g.doc(), root, &r.to_string(), &c.to_string()).expect("cell node");
+    q.box_of(node).expect("cell box")
+}
+
+/// NO-FAKE-GREEN: each cell's LAID-OUT BOX sits in its row band — top == r/rows of
+/// the plot height, height == 1/rows. (The old scaleY rendering left the box
+/// full-height; this asserts the real box now reflects the band.) Row 2 of a 3-row
+/// map starts ~2/3 down and is ~1/3 tall.
+#[test]
+fn cell_box_sits_in_its_row_band() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-heatmap { width: 210px; height: 210px; }");
+    g.mount("c", Box::new(map3x3()));
+    g.relayout();
+    let p = plot(&g);
+    let band = p.height / 3.0;
+    let c0 = cell_box(&g, 0, 1);
+    let c2 = cell_box(&g, 2, 1);
+    assert!((c0.height - band).abs() < band * 0.12, "row band ~= 1/3 plot (got {} vs {})", c0.height, band);
+    assert!((c2.height - band).abs() < band * 0.12, "row 2 band ~= 1/3 plot (got {})", c2.height);
+    assert!((c0.y - p.y).abs() < 3.0, "row 0 at the top of the plot");
+    assert!((c2.y - (p.y + 2.0 * band)).abs() < band * 0.12, "row 2 starts ~2/3 down (got {} vs {})", c2.y, p.y + 2.0 * band);
+    assert!(c2.y > c0.y, "lower row sits lower");
 }
 
 /// NO-FAKE-GREEN: the plot fills the chart box (rescales) and a cell paints.

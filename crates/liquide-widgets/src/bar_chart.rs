@@ -7,10 +7,11 @@
 //! ## Data -> layout scaling (no constants)
 //!
 //! Each value is normalized against the series domain and placed in a
-//! `position: relative` plot box with PERCENT geometry: bar `i` of `n` bars sits
-//! at `left = i/n * 100%`, `width = (1/n) * 100%` (minus a gap), pinned to the
-//! bottom with `height = value_frac * 100%`. Resizing the plot box rescales every
-//! bar.
+//! `position: relative` plot box. x distributes with a horizontal flex row of equal
+//! columns; within each column the bar is `position: absolute; bottom: 0` with an
+//! inline `height = value_frac * 100%` — vertical `%` now resolves (engine gap #3
+//! fixed, 7532a40), so the bar's LAID-OUT BOX itself reflects the value (no
+//! paint-only `scaleY`). Resizing the plot box rescales every bar.
 //!
 //! ## Hover from layout (no constants)
 //!
@@ -162,8 +163,9 @@ impl WidgetBehavior for BarChart {
         // The plot fills the chart box (absolute, via stylesheet). It holds an
         // optional gridline overlay plus a horizontal flex row of bar columns —
         // x distributes with the laid-out plot width (flex), the bar's vertical
-        // extent is a `scaleY(frac)` transform (the proven box-relative,
-        // data-driven mechanism). Both rescale when the plot box resizes.
+        // extent is a real inline `height:%` anchored at the bottom (vertical `%`
+        // now resolves). Both rescale when the plot box resizes, and the bar's
+        // laid-out box reflects the value directly.
         let mut plot = TemplateNode::el("lq-bar-plot").attr("data-part", "plot");
 
         if self.axes {
@@ -186,11 +188,13 @@ impl WidgetBehavior for BarChart {
             let frac = chart::value_fraction(v, lo, hi);
             let hovered = self.hover == Some(i);
             let mut col = TemplateNode::el("lq-bar-col").attr("data-part", "col");
+            // A min visible height keeps a near-zero datum painting a sliver.
+            let h = (frac.clamp(0.0, 1.0) * 100.0).max(1.2);
             let bar = TemplateNode::el("lq-bar")
                 .attr("data-part", "bar")
                 .attr("data-index", &i.to_string())
                 .attr("data-value", &format!("{v}"))
-                .style("transform", &chart::bar_scale_y(frac))
+                .style("height", &format!("{h:.4}%"))
                 .pseudo_if(PseudoStateFlags::HOVER, hovered);
             // A hovered bar shows a value tooltip pinned to the top of the column.
             if hovered {
