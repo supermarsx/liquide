@@ -283,7 +283,47 @@
   lq-textarea-viewport,
   lq-textarea-content,
   lq-textarea-row,
-  lq-textarea-text {
+  lq-textarea-text,
+  lq-command-palette,
+  lq-palette-search,
+  lq-palette-results,
+  lq-palette-item,
+  lq-palette-empty,
+  lq-stepper,
+  lq-stepper-head,
+  lq-step,
+  lq-step-marker,
+  lq-step-label,
+  lq-step-connector,
+  lq-stepper-foot,
+  lq-step-back,
+  lq-step-next,
+  lq-transfer,
+  lq-transfer-list,
+  lq-transfer-row,
+  lq-transfer-controls,
+  lq-transfer-btn,
+  lq-cascader,
+  lq-cascade-col,
+  lq-cascade-node,
+  lq-cascade-label,
+  lq-cascade-arrow,
+  lq-drawer,
+  lq-drawer-scrim,
+  lq-drawer-panel,
+  lq-drawer-header,
+  lq-drawer-body,
+  lq-popover,
+  lq-popover-trigger,
+  lq-popover-panel,
+  lq-file-embed,
+  lq-file-icon,
+  lq-file-meta,
+  lq-file-name,
+  lq-file-sub,
+  lq-file-actions,
+  lq-file-open,
+  lq-file-download {
     display: block;
     box-sizing: border-box;
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
@@ -2889,5 +2929,441 @@
   }
   lq-month-calendar:disabled {
     opacity: 0.5;
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     GROUP NAV/OVERLAY — navigation / overlay / embedded-file controls
+     ════════════════════════════════════════════════════════════ */
+
+  /* ── N1: command palette (fuzzy finder overlay) ──────────────
+     A search field over a ranked, filtered result list. Each result row's box is
+     the laid-out hit target (data-part item-<i>); :focus = the highlighted row,
+     :hover = mouse hover. A closed palette emits no rows at all. */
+  lq-command-palette {
+    display: block;
+    width: 420px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 10px;
+    background-color: var(--widget-bg, #27272a);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+  }
+  lq-palette-search {
+    display: block;
+    padding: 12px 14px;
+    font-size: 15px;
+    border-bottom: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-palette-search.placeholder {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.7));
+  }
+  lq-palette-results {
+    display: block;
+    max-height: 320px;
+    overflow: hidden;
+  }
+  lq-palette-item {
+    display: block;
+    padding: 8px 14px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    border-left: 2px solid rgba(0, 0, 0, 0);
+  }
+  lq-palette-item:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-palette-item.highlighted,
+  lq-palette-item:focus {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+    border-left-color: var(--widget-accent, #3b82f6);
+  }
+  lq-palette-empty {
+    display: block;
+    padding: 14px;
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.7));
+  }
+
+  /* ── N2: stepper (wizard) ────────────────────────────────────
+     A horizontal flex of step markers + a footer with Back/Next. Each marker box
+     is the laid-out hit target (reachable markers are interactive). State drives
+     the marker fill: .completed/.current/.upcoming + :checked. */
+  lq-stepper {
+    display: block;
+    width: 520px;
+  }
+  lq-stepper-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  lq-step {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-step.reachable:hover lq-step-marker {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-step-marker {
+    display: inline-block;
+    width: 28px;
+    height: 28px;
+    line-height: 26px;
+    text-align: center;
+    border-radius: 50%;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-step-label {
+    display: inline-block;
+    margin-left: 8px;
+    margin-right: 8px;
+    white-space: nowrap;
+  }
+  lq-step.upcoming {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.7));
+  }
+  lq-step.current lq-step-marker {
+    border-color: var(--widget-accent, #3b82f6);
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-step.completed lq-step-marker,
+  lq-step:checked lq-step-marker {
+    border-color: var(--widget-accent, #3b82f6);
+    background-color: var(--widget-accent-active, #2563eb);
+    color: #ffffff;
+  }
+  lq-step-connector {
+    display: inline-block;
+    flex-grow: 1;
+    height: 2px;
+    min-width: 16px;
+    background-color: var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-step-connector.filled {
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  lq-stepper-foot {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+  lq-step-back,
+  lq-step-next {
+    display: inline-block;
+    padding: 6px 18px;
+    border-radius: 6px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg, #27272a);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-step-next {
+    background-color: var(--widget-accent, #3b82f6);
+    border-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-step-back:hover,
+  lq-step-next:hover {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-step-back.disabled,
+  lq-step-next.disabled,
+  lq-step-back:disabled,
+  lq-step-next:disabled {
+    opacity: 0.4;
+  }
+
+  /* ── N3: transfer (dual-list shuttle) ────────────────────────
+     Two flex columns (source/target) with a center control column. Each row box
+     is the laid-out hit target; :checked = selected. */
+  lq-transfer {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    width: 480px;
+  }
+  lq-transfer-list {
+    display: block;
+    width: 200px;
+    height: 220px;
+    overflow: hidden;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-transfer-row {
+    display: block;
+    padding: 7px 10px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  lq-transfer-row:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-transfer-row.selected,
+  lq-transfer-row:checked {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+    box-shadow: inset 0 0 0 1px var(--widget-accent, #3b82f6);
+  }
+  lq-transfer-controls {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 10px;
+  }
+  lq-transfer-btn {
+    display: block;
+    width: 34px;
+    height: 30px;
+    margin: 4px 0;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 6px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg, #27272a);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-transfer-btn:hover {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-transfer-btn.disabled,
+  lq-transfer-btn:disabled {
+    opacity: 0.35;
+  }
+
+  /* ── N4: cascader (nested columns tree-select) ───────────────
+     A horizontal flex of columns; each column is a vertical stack of nodes. Each
+     node box is the laid-out hit target; .active/:checked = the picked node in
+     that column, :focus = cursor. Picking a branch reveals the next column. */
+  lq-cascader {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 8px;
+    background-color: var(--widget-bg, #27272a);
+    overflow: hidden;
+  }
+  lq-cascade-col {
+    display: block;
+    width: 160px;
+    height: 200px;
+    overflow: hidden;
+    border-right: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-cascade-node {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-cascade-label {
+    display: inline-block;
+    flex-grow: 1;
+  }
+  lq-cascade-arrow {
+    display: inline-block;
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.7));
+  }
+  lq-cascade-node:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-cascade-node.active,
+  lq-cascade-node:checked {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+  }
+  lq-cascade-node:focus {
+    box-shadow: inset 2px 0 0 0 var(--widget-accent, #3b82f6);
+  }
+
+  /* ── N5: drawer (slide-in sheet + scrim) ─────────────────────
+     The drawer root fills its positioning context; the scrim covers it; the panel
+     pins to the configured edge. A closed drawer emits neither. The scrim/panel
+     boxes are the laid-out hit targets (scrim-click outside the panel closes). */
+  lq-drawer {
+    display: block;
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  lq-drawer-scrim {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+  }
+  lq-drawer-panel {
+    display: block;
+    position: absolute;
+    background-color: var(--widget-bg, #27272a);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+  lq-drawer-panel.left,
+  lq-drawer-panel.right {
+    top: 0;
+    height: 100%;
+    width: 280px;
+    border-left: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+  }
+  lq-drawer-panel.left {
+    left: 0;
+  }
+  lq-drawer-panel.right {
+    right: 0;
+  }
+  lq-drawer-panel.top,
+  lq-drawer-panel.bottom {
+    left: 0;
+    width: 100%;
+    height: 200px;
+  }
+  lq-drawer-panel.top {
+    top: 0;
+  }
+  lq-drawer-panel.bottom {
+    bottom: 0;
+  }
+  lq-drawer-header {
+    display: block;
+    padding: 14px 16px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-drawer-body {
+    display: block;
+    padding: 16px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+
+  /* ── N6: popover (anchored floating panel) ───────────────────
+     A trigger plus, when open, an absolutely-positioned panel anchored to the
+     trigger's edge by placement. The panel's static origin is the trigger's
+     top-left (position:absolute;left/top:0 inside the relative popover), then the
+     placement class shifts it to the correct side — so the laid-out panel box
+     lands at the geometric placement relative to the laid-out trigger box. */
+  lq-popover {
+    display: inline-block;
+    position: relative;
+  }
+  lq-popover-trigger {
+    display: inline-block;
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg, #27272a);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-popover-trigger:hover {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-popover-trigger:active {
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.10));
+  }
+  /* The panel is absolutely anchored at the trigger's top-left; the behavior
+     emits inline margin-left/top (px, from the laid-out trigger+panel boxes) to
+     shift it to the placement edge. Percent left/top is intentionally NOT used
+     (the engine does not resolve % offsets on absolute children here). */
+  lq-popover-panel {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 180px;
+    height: 64px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg, #27272a);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+
+  /* ── N7: file embed (embedded file element) ──────────────────
+     A horizontal card: type icon + meta (name/size or error) + Open/Download.
+     The .error state retints the icon + sub line; affordance boxes are the
+     laid-out hit targets, inert (disabled) when the file is not present. */
+  lq-file-embed {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 380px;
+    padding: 10px 12px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 8px;
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-file-embed.error {
+    border-color: var(--widget-accent-active, #b91c1c);
+    background-color: rgba(127, 29, 29, 0.18);
+  }
+  lq-file-icon {
+    display: inline-block;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: 6px;
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.10));
+  }
+  lq-file-icon.image  { background-color: #2563eb; }
+  lq-file-icon.video  { background-color: #7c3aed; }
+  lq-file-icon.audio  { background-color: #db2777; }
+  lq-file-icon.pdf    { background-color: #dc2626; }
+  lq-file-icon.archive{ background-color: #d97706; }
+  lq-file-icon.code   { background-color: #059669; }
+  lq-file-icon.document { background-color: #4b5563; }
+  lq-file-embed.error lq-file-icon { background-color: #7f1d1d; }
+  lq-file-meta {
+    display: block;
+    flex-grow: 1;
+    margin: 0 12px;
+    overflow: hidden;
+  }
+  lq-file-name {
+    display: block;
+    font-weight: 600;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-file-sub {
+    display: block;
+    font-size: 12px;
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.7));
+  }
+  lq-file-sub.error {
+    color: #fca5a5;
+  }
+  lq-file-actions {
+    display: flex;
+    flex-direction: row;
+    flex-shrink: 0;
+  }
+  lq-file-open,
+  lq-file-download {
+    display: inline-block;
+    padding: 5px 12px;
+    margin-left: 6px;
+    border-radius: 6px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg, #27272a);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-file-open:hover,
+  lq-file-download:hover {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-file-open.disabled,
+  lq-file-download.disabled,
+  lq-file-open:disabled,
+  lq-file-download:disabled {
+    opacity: 0.35;
   }
 }

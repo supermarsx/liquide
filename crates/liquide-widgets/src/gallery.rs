@@ -200,6 +200,15 @@ impl Gallery {
         self.hit_test = Some(hit);
     }
 
+    /// Inject a DOUBLE-click at `(x, y)`: a left click immediately followed by a
+    /// second left click on the same point, which the real dispatcher coalesces
+    /// into a `DoubleClick` (its <500ms same-node rule) on the second up. Used by
+    /// the transfer widget to drive dblclick-to-shuttle through the real path.
+    pub fn double_click(&mut self, x: f32, y: f32) {
+        self.left_click(x, y);
+        self.left_click(x, y);
+    }
+
     /// Inject a left mouse-DOWN at `(x, y)` (preceded by a move to build the
     /// hover chain) through the real dispatcher — for scripted drags where down,
     /// move, and up must be separated (e.g. a slider drag).

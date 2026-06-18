@@ -36,6 +36,7 @@
 
 pub mod behavior;
 pub mod focus;
+pub mod fuzzy;
 pub mod host;
 pub mod keys;
 pub mod layout_query;
@@ -103,6 +104,15 @@ pub mod ip_input;
 pub mod listbox;
 pub mod listview;
 pub mod month_calendar;
+
+// ── Group NAV/OVERLAY — navigation / overlay / embedded-file controls ────────
+pub mod cascader;
+pub mod command_palette;
+pub mod drawer;
+pub mod file_embed;
+pub mod popover;
+pub mod stepper;
+pub mod transfer;
 
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
@@ -220,6 +230,22 @@ mod listview_tests;
 #[cfg(test)]
 mod month_calendar_tests;
 
+// Per-widget real-pipeline gallery tests (Group NAV/OVERLAY).
+#[cfg(test)]
+mod cascader_tests;
+#[cfg(test)]
+mod command_palette_tests;
+#[cfg(test)]
+mod drawer_tests;
+#[cfg(test)]
+mod file_embed_tests;
+#[cfg(test)]
+mod popover_tests;
+#[cfg(test)]
+mod stepper_tests;
+#[cfg(test)]
+mod transfer_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -290,6 +316,15 @@ pub use ip_input::IpInput;
 pub use listbox::{ListBox, ListItem};
 pub use listview::{ListView, ViewItem, ViewMode};
 pub use month_calendar::MonthCalendar;
+
+// Group NAV/OVERLAY widgets (navigation / overlay / embedded-file controls).
+pub use cascader::{CascadeNode, Cascader};
+pub use command_palette::{Command, CommandPalette};
+pub use drawer::{Drawer, Edge};
+pub use file_embed::{FileEmbed, FileState};
+pub use popover::{Placement, Popover};
+pub use stepper::Stepper;
+pub use transfer::Transfer;
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.
