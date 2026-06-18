@@ -1057,3 +1057,202 @@ fn custom_shadow_longhands_express_elevation() {
         "elevation must be expressible — not the old tight glow (blur=2, offset=0)"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// t147 — inline style values parsed with the REAL CSS grammar.
+//
+// Before t147, inline style values went through the single-value
+// `parse_inline_value`, which could only emit Number/Color/Keyword. So an inline
+// `width:50%`/`left:25%` became Keyword("50%") → Dimension::Auto (geometry
+// collapses), and an inline `background:conic-gradient(...)` became a bare
+// Keyword that no apply arm paints (flat fallback). The SAME values worked from a
+// stylesheet rule. These tests assert inline values now produce the same typed
+// PropertyValue (Percentage/Length/Gradient) as stylesheet values, and fail
+// (RED) if inline values degrade back to Auto/Keyword.
+// ════════════════════════════════════════════════════════════════════════════
+
+use crate::computed::{ComputedStyle, Position};
+use crate::dimension::Dimension;
+use liquide_compositor::scene::{BackgroundImage, GradientSpec};
+
+/// Gap #2: inline `width:50%` / `height:50%` must resolve to a real percentage
+/// Dimension (was Dimension::Auto), so layout resolves it to half the container.
+#[test]
+fn t147_inline_percent_width_height_resolves_to_half_container() {
+    let engine = StyleEngine::default();
+    let mut doc = Document::new();
+    let root = doc.root();
+    let el = doc.create_element("div");
+    doc.append_child(root, el);
+    doc.set_inline_style(el, "width", "50%");
+    doc.set_inline_style(el, "height", "50%");
+
+    let style = engine.compute_style(&doc, el);
+
+    assert_eq!(
+        style.width,
+        Dimension::Percent(50.0),
+        "inline width:50% must be a Percent dimension, not Auto (was the bug)"
+    );
+    assert_eq!(
+        style.height,
+        Dimension::Percent(50.0),
+        "inline height:50% must be a Percent dimension, not Auto (was the bug)"
+    );
+    // And it resolves to half a 400×300 containing block (the user-visible win).
+    assert_eq!(
+        style.width.resolve_px(400.0, 16.0, 16.0, 1920.0, 1080.0),
+        Some(200.0),
+        "inline width:50% of a 400px CB must resolve to 200px"
+    );
+    assert_eq!(
+        style.height.resolve_px(300.0, 16.0, 16.0, 1920.0, 1080.0),
+        Some(150.0),
+        "inline height:50% of a 300px CB must resolve to 150px"
+    );
+}
+
+/// Gap #1: inline `left:25%` / `top:25%` on a positioned element must resolve to
+/// a real percentage Dimension (was Auto → pinned to the CB origin).
+#[test]
+fn t147_inline_percent_left_top_resolves_against_containing_block() {
+    let engine = StyleEngine::default();
+    let mut doc = Document::new();
+    let root = doc.root();
+    let el = doc.create_element("div");
+    doc.append_child(root, el);
+    doc.set_inline_style(el, "position", "absolute");
+    doc.set_inline_style(el, "left", "25%");
+    doc.set_inline_style(el, "top", "25%");
+
+    let style = engine.compute_style(&doc, el);
+
+    assert_eq!(style.position, Position::Absolute);
+    assert_eq!(
+        style.left,
+        Dimension::Percent(25.0),
+        "inline left:25% must be a Percent dimension, not Auto (was the bug)"
+    );
+    assert_eq!(
+        style.top,
+        Dimension::Percent(25.0),
+        "inline top:25% must be a Percent dimension, not Auto (was the bug)"
+    );
+    assert_eq!(
+        style.left.resolve_px(400.0, 16.0, 16.0, 1920.0, 1080.0),
+        Some(100.0),
+        "inline left:25% of a 400px CB must resolve to 100px (not the origin)"
+    );
+    assert_eq!(
+        style.top.resolve_px(300.0, 16.0, 16.0, 1920.0, 1080.0),
+        Some(75.0),
+        "inline top:25% of a 300px CB must resolve to 75px (not the origin)"
+    );
+}
+
+/// Helper: does the computed background carry a gradient of the expected kind?
+fn background_gradient<'a>(style: &'a ComputedStyle) -> Option<&'a GradientSpec> {
+    style.background.iter().find_map(|bg| match &bg.image {
+        Some(BackgroundImage::Gradient(g)) => Some(g),
+        _ => None,
+    })
+}
+
+/// Gap #4: inline `background: conic-gradient(...)` must produce a Gradient that
+/// paints (a Conic GradientSpec), not a flat Keyword fallback.
+#[test]
+fn t147_inline_conic_gradient_produces_a_conic_gradient_spec() {
+    let engine = StyleEngine::default();
+    let mut doc = Document::new();
+    let root = doc.root();
+    let el = doc.create_element("div");
+    doc.append_child(root, el);
+    doc.set_inline_style(el, "background", "conic-gradient(red, blue)");
+
+    let style = engine.compute_style(&doc, el);
+
+    let g = background_gradient(&style)
+        .expect("inline conic-gradient must yield a paintable Gradient (was dropped to a Keyword)");
+    assert!(
+        matches!(g, GradientSpec::Conic { .. }),
+        "inline background:conic-gradient(...) must be a Conic GradientSpec, got {:?}",
+        g
+    );
+}
+
+/// Gap #4 (linear): inline `background: linear-gradient(...)` must also paint.
+#[test]
+fn t147_inline_linear_gradient_produces_a_linear_gradient_spec() {
+    let engine = StyleEngine::default();
+    let mut doc = Document::new();
+    let root = doc.root();
+    let el = doc.create_element("div");
+    doc.append_child(root, el);
+    doc.set_inline_style(el, "background", "linear-gradient(90deg, red, blue)");
+
+    let style = engine.compute_style(&doc, el);
+
+    let g = background_gradient(&style)
+        .expect("inline linear-gradient must yield a paintable Gradient (was dropped to a Keyword)");
+    assert!(
+        matches!(g, GradientSpec::Linear { .. }),
+        "inline background:linear-gradient(...) must be a Linear GradientSpec, got {:?}",
+        g
+    );
+}
+
+/// No-regression: the SAME percentage + gradient values must still parse from a
+/// STYLESHEET rule exactly as before (this path was never broken; the fix must
+/// not regress it).
+#[test]
+fn t147_stylesheet_percent_and_gradient_still_work() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+        div {
+            width: 50%;
+            height: 50%;
+            background: conic-gradient(red, blue);
+        }
+        "#,
+    );
+    let mut doc = Document::new();
+    let root = doc.root();
+    let el = doc.create_element("div");
+    doc.append_child(root, el);
+
+    let style = engine.compute_style(&doc, el);
+
+    assert_eq!(style.width, Dimension::Percent(50.0), "stylesheet width:50% regressed");
+    assert_eq!(style.height, Dimension::Percent(50.0), "stylesheet height:50% regressed");
+    let g = background_gradient(&style).expect("stylesheet conic-gradient regressed");
+    assert!(
+        matches!(g, GradientSpec::Conic { .. }),
+        "stylesheet conic gradient must remain a Conic GradientSpec"
+    );
+}
+
+/// No-regression: inline `var()` values must still flow through the apply-time
+/// var() resolution path (kept as a Keyword at cascade time, re-parsed at apply).
+/// A var() pointing at a conic gradient still paints (t117 behaviour preserved).
+#[test]
+fn t147_inline_var_gradient_still_paints() {
+    let engine = StyleEngine::default();
+    let mut doc = Document::new();
+    let root = doc.root();
+    let el = doc.create_element("div");
+    doc.append_child(root, el);
+    doc.set_inline_style(el, "--g", "conic-gradient(red, blue)");
+    doc.set_inline_style(el, "background", "var(--g)");
+
+    // var() resolution needs the scoped-variable tree path.
+    let map = engine.restyle_all(&doc);
+    let style = map.get(el).expect("element must be styled");
+
+    let g = background_gradient(style)
+        .expect("inline var()-indirected gradient must still paint (t117)");
+    assert!(
+        matches!(g, GradientSpec::Conic { .. }),
+        "var()-indirected conic gradient must remain Conic"
+    );
+}

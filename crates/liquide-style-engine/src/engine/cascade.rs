@@ -61,6 +61,96 @@ impl Drop for StyleDepthGuard {
     }
 }
 
+thread_local! {
+    /// Memoizes the full-grammar parse of an inline `prop: value` declaration.
+    ///
+    /// Inline styles are parsed per element that carries them, and chart/widget
+    /// nodes can rewrite inline geometry/gradients every frame, so the
+    /// lightningcss `parse_declaration` cost is paid repeatedly for identical
+    /// `(prop, value)` strings. Cache the parsed `PropertySet` (or its absence)
+    /// keyed by the declaration text. `None` records a value that has no
+    /// full-grammar parse (so the single-value inline fallback should run).
+    static INLINE_PARSE_CACHE: std::cell::RefCell<
+        HashMap<(String, String), Option<liquide_theme_css::property::PropertySet>>,
+    > = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Maximum number of distinct `(prop, value)` inline declarations to remember.
+/// Bounds memory for pathological churn (e.g. continuously unique inline values);
+/// past the cap the cache is cleared and rebuilt rather than growing unbounded.
+const INLINE_PARSE_CACHE_CAP: usize = 4096;
+
+/// Add a node's inline styles to the cascade, parsing each declaration with the
+/// REAL CSS property grammar (the same path stylesheet rules and `var()`
+/// re-parsing use) so inline values produce the same typed `PropertyValue`s as
+/// stylesheet values — i.e. inline `%`, `em`, `calc()`, gradients (linear/
+/// radial/conic), box-shadow, etc. all resolve instead of collapsing to a
+/// `Keyword` (and thence `Dimension::Auto`).
+///
+/// Mirrors the cascade priority of the previous single-value path
+/// (`CascadePriority::inline(order)`) and preserves `!important` via
+/// `add_properties`. Two fallbacks keep prior behaviour intact:
+/// * Values containing `var(`/`env(` are NOT pre-expanded — they are kept as a
+///   single `parse_inline_value` keyword so the existing apply-time var()
+///   substitution + re-parse path (`apply.rs`) owns them (CSS pending-
+///   substitution semantics, matching `CascadeMap::add_properties`).
+/// * Declarations with no full-grammar parse fall back to the single-value
+///   inline parser (numbers, colors, plain keywords).
+fn add_inline_styles_to_cascade(
+    inline_styles: &liquide_dom::attrs::AttributeMap,
+    cascade: &mut CascadeMap,
+) {
+    let mut inline_order = 0u32;
+    for (prop, value) in inline_styles.iter() {
+        let priority = CascadePriority::inline(inline_order);
+        inline_order += 1;
+
+        // var()/env() must keep flowing through the apply-time resolution path.
+        let trimmed = value.trim();
+        if trimmed.contains("var(") || trimmed.contains("env(") {
+            cascade.add(CascadeDeclaration {
+                property: prop.to_string(),
+                value: parse_inline_value(value),
+                priority,
+            });
+            continue;
+        }
+
+        if let Some(props) = parse_inline_declaration_cached(prop, value) {
+            cascade.add_properties(&props, priority);
+        } else {
+            // No full-grammar parse — keep the cheap single-value fallback.
+            cascade.add(CascadeDeclaration {
+                property: prop.to_string(),
+                value: parse_inline_value(value),
+                priority,
+            });
+        }
+    }
+}
+
+/// Cached full-grammar parse of one inline declaration. Returns the parsed
+/// `PropertySet` (cloned out of the cache) or `None` when the declaration has no
+/// recognized full-grammar parse.
+fn parse_inline_declaration_cached(
+    prop: &str,
+    value: &str,
+) -> Option<liquide_theme_css::property::PropertySet> {
+    INLINE_PARSE_CACHE.with(|cache| {
+        let key = (prop.to_string(), value.to_string());
+        if let Some(cached) = cache.borrow().get(&key) {
+            return cached.clone();
+        }
+        let parsed = liquide_theme_css::ThemeParser::new().parse_declaration(prop, value);
+        let mut map = cache.borrow_mut();
+        if map.len() >= INLINE_PARSE_CACHE_CAP {
+            map.clear();
+        }
+        map.insert(key, parsed.clone());
+        parsed
+    })
+}
+
 impl StyleEngine {
     /// Compute the style of a single node in isolation.
     ///
@@ -147,17 +237,9 @@ impl StyleEngine {
             }
         }
 
-        // Inline styles
-        let mut inline_order = 0u32;
-        for (prop, value) in node.inline_styles.iter() {
-            let pv = parse_inline_value(value);
-            cascade.add(CascadeDeclaration {
-                property: prop.to_string(),
-                value: pv,
-                priority: CascadePriority::inline(inline_order),
-            });
-            inline_order += 1;
-        }
+        // Inline styles — parsed with the real CSS grammar (see
+        // `add_inline_styles_to_cascade`).
+        add_inline_styles_to_cascade(&node.inline_styles, &mut cascade);
 
         let resolved = cascade.resolve();
         let empty_scope = ScopeVars::new();
@@ -355,16 +437,7 @@ impl StyleEngine {
                 }
             }
 
-            let mut inline_order = 0u32;
-            for (prop, value) in node.inline_styles.iter() {
-                let pv = parse_inline_value(value);
-                cascade.add(CascadeDeclaration {
-                    property: prop.to_string(),
-                    value: pv,
-                    priority: CascadePriority::inline(inline_order),
-                });
-                inline_order += 1;
-            }
+            add_inline_styles_to_cascade(&node.inline_styles, &mut cascade);
 
             let resolved = cascade.resolve();
 
@@ -540,17 +613,9 @@ impl StyleEngine {
                 }
             }
 
-            // Add inline styles with highest author priority
-            let mut inline_order = 0u32;
-            for (prop, value) in node.inline_styles.iter() {
-                let pv = parse_inline_value(value);
-                cascade.add(CascadeDeclaration {
-                    property: prop.to_string(),
-                    value: pv,
-                    priority: CascadePriority::inline(inline_order),
-                });
-                inline_order += 1;
-            }
+            // Add inline styles with highest author priority, parsed with the
+            // real CSS grammar (see `add_inline_styles_to_cascade`).
+            add_inline_styles_to_cascade(&node.inline_styles, &mut cascade);
 
             // Resolve the cascade and apply winners
             let resolved = cascade.resolve();
@@ -915,15 +980,7 @@ impl StyleEngine {
             }
         }
 
-        let mut inline_order = 0u32;
-        for (prop, value) in node.inline_styles.iter() {
-            cascade.add(CascadeDeclaration {
-                property: prop.to_string(),
-                value: parse_inline_value(value),
-                priority: CascadePriority::inline(inline_order),
-            });
-            inline_order += 1;
-        }
+        add_inline_styles_to_cascade(&node.inline_styles, &mut cascade);
 
         let resolved = cascade.resolve();
         self.build_local_variable_scope(&resolved, inherited_scope)
