@@ -11,7 +11,7 @@ use liquide_style_engine::StyleMap;
 
 use super::{
     DevToolsPanel, DevToolsTab, DockPosition, SideTab, format_mutation_record, mutation_class,
-    row_kv, row_kv_class,
+    row_kv, row_kv_class, row_kv_fixed_paint_only,
 };
 
 impl DevToolsPanel {
@@ -486,7 +486,17 @@ impl DevToolsPanel {
                 &snap.frame_number.to_string(),
                 "teal",
             ));
-            nodes.push(row_kv_class("FPS", &format!("{:.1}", snap.fps), fps_class));
+            // FPS is a per-frame live numeric in a bounded range (`0.0`..`999.9`):
+            // pin its value cell to a fixed 44px width so a same-row FPS bump is a
+            // pure PAINT (no relayout). 44px @ 10px mono comfortably fits 5 chars
+            // ("999.9") so the cell never clips. The Frame counter below stays on
+            // the LAYOUT path — it grows unbounded and would overflow a fixed cell.
+            nodes.push(row_kv_fixed_paint_only(
+                "FPS",
+                &format!("{:.1}", snap.fps),
+                fps_class,
+                44,
+            ));
             nodes.push(row_kv_class(
                 "Avg frame time",
                 &format!("{:.2}ms", snap.avg_frame_ms),

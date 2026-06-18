@@ -121,12 +121,52 @@ pub fn sync_statusbar_indicators(doc: &mut Document, slot_right: NodeId, bar: &S
         }
         if let Some(indicator) = bar.indicators.get(indicator_idx) {
             let label = indicator_label(indicator);
+            // Only the clock is provably size-stable: `indicator_label` formats it
+            // as a fixed-width `HH:MM` (zero-padded, always 5 chars), so a per-frame
+            // tick can never change the box's intrinsic width and we can demote the
+            // update from LAYOUT to PAINT (t136/t142). Battery/Wi-Fi/volume render
+            // `{}%` and the notification count are variable-width, so they stay on
+            // the conservative LAYOUT path (a wider value CAN reflow the slot).
+            let size_stable = matches!(indicator.kind, IndicatorKind::Clock { .. });
             let text_kids: Vec<NodeId> = doc.children(child).to_vec();
             if let Some(&first_txt) = text_kids.first() {
-                doc.set_text_content(first_txt, &label);
+                set_text_content_sized(doc, first_txt, &label, size_stable);
             }
             indicator_idx += 1;
         }
+    }
+}
+
+/// Apply a text-content change to an existing text node, optionally demoting the
+/// dirty scope to **paint-only** when the author guarantees the box is size-stable.
+///
+/// This mirrors `liquide_components::TemplateRenderer::patch_text` (t136) but
+/// operates directly on `liquide_dom` so the status-bar's hand-built DOM path can
+/// use the fast path without depending on the template engine. `set_text_content`
+/// always marks the node LAYOUT-dirty (the safe default, since a text change can
+/// alter intrinsic width). When `size_stable` is set, the box provably cannot
+/// move, so we remove the node from the LAYOUT scope (document + node flag) and
+/// leave it PAINT-dirty: the pipeline skips layout and just repaints, and mutation
+/// observers (scene/hit-test) still fire because we go through `set_text_content`.
+fn set_text_content_sized(doc: &mut Document, node_id: NodeId, text: &str, size_stable: bool) {
+    // No-op guard: re-setting identical content must not dirty anything.
+    if doc.get(node_id).and_then(|n| n.text_content()) == Some(text) {
+        return;
+    }
+
+    // Canonical mutator: updates node data, notifies observers, marks LAYOUT.
+    doc.set_text_content(node_id, text);
+
+    if !size_stable {
+        return;
+    }
+
+    // Size-stable opt-in: demote LAYOUT → PAINT (document scope + node flags).
+    doc.dirty.layout.remove(&node_id);
+    doc.dirty.paint.insert(node_id);
+    if let Some(node) = doc.get_mut(node_id) {
+        node.dirty.clear_layout();
+        node.dirty.mark_paint_dirty();
     }
 }
 
@@ -189,5 +229,134 @@ mod tests {
         // Right slot has indicators
         let right_count = doc.children(nodes.slot_right).len();
         assert!(right_count >= 1); // at least one indicator
+    }
+
+    // ── t142: clock indicator text update is paint-only ──────────────
+
+    use crate::indicator::SystemIndicator;
+
+    /// Locate the first text-node child of the indicator with class `cls`.
+    fn indicator_text_node(doc: &Document, slot_right: NodeId, cls: &str) -> NodeId {
+        for &child in doc.children(slot_right) {
+            if doc.get(child).map_or(false, |n| n.has_class(cls)) {
+                return *doc
+                    .children(child)
+                    .first()
+                    .expect("indicator must have a text child");
+            }
+        }
+        panic!("indicator with class `{cls}` not found");
+    }
+
+    /// Build a status bar with both a fixed-width clock and a variable-width
+    /// battery so the test can prove selectivity.
+    fn bar_with_clock_and_battery() -> StatusBar {
+        let mut bar = StatusBar::default();
+        // Replace indicators with a deterministic clock + battery pair.
+        bar.indicators = vec![SystemIndicator::clock(), SystemIndicator::battery(85)];
+        bar
+    }
+
+    #[test]
+    fn clock_text_update_is_paint_only_not_layout() {
+        let mut bar = bar_with_clock_and_battery();
+        let mut doc = Document::new();
+        let root = doc.root();
+        let nodes = build_statusbar_dom(&mut doc, root, &bar);
+
+        let clock_txt = indicator_text_node(&doc, nodes.slot_right, "clock");
+
+        // Clear dirty from construction.
+        doc.dirty.clear_all();
+        if let Some(n) = doc.get_mut(clock_txt) {
+            n.dirty.clear_all();
+        }
+
+        // Tick the clock (00:00 → 00:01): same fixed-width "HH:MM" shape.
+        bar.update_clock(60 * 1_000_000);
+        sync_statusbar_indicators(&mut doc, nodes.slot_right, &bar);
+
+        // Content updated (still rendered).
+        assert_eq!(
+            doc.get(clock_txt).and_then(|n| n.text_content()),
+            Some("00:01")
+        );
+
+        // The clock text update must be PAINT, NOT LAYOUT.
+        assert!(
+            !doc.dirty.layout.contains(&clock_txt),
+            "size-stable clock tick must not mark LAYOUT-dirty"
+        );
+        assert!(
+            !doc.get(clock_txt).unwrap().dirty.needs_layout(),
+            "clock text node must not carry the LAYOUT flag"
+        );
+        assert!(
+            doc.dirty.paint.contains(&clock_txt),
+            "clock tick must still mark PAINT-dirty so it repaints"
+        );
+        assert!(
+            doc.get(clock_txt).unwrap().dirty.needs_paint(),
+            "clock text node must carry the PAINT flag"
+        );
+    }
+
+    #[test]
+    fn variable_width_indicator_still_marks_layout() {
+        // SELECTIVITY / teeth: a battery `{}%` value can change width (85% → 100%)
+        // and reflow the slot, so it MUST stay on the conservative LAYOUT path.
+        // RED if someone blanket-marks every indicator paint-only.
+        let mut bar = bar_with_clock_and_battery();
+        let mut doc = Document::new();
+        let root = doc.root();
+        let nodes = build_statusbar_dom(&mut doc, root, &bar);
+
+        let battery_txt = indicator_text_node(&doc, nodes.slot_right, "battery");
+        doc.dirty.clear_all();
+        if let Some(n) = doc.get_mut(battery_txt) {
+            n.dirty.clear_all();
+        }
+
+        // Battery goes 85% → 100% (3 chars → 4 chars: a real width change).
+        if let crate::indicator::IndicatorKind::Battery { ref mut percent, .. } =
+            bar.indicators[1].kind
+        {
+            *percent = 100;
+        }
+        sync_statusbar_indicators(&mut doc, nodes.slot_right, &bar);
+
+        assert_eq!(
+            doc.get(battery_txt).and_then(|n| n.text_content()),
+            Some("100%")
+        );
+        assert!(
+            doc.dirty.layout.contains(&battery_txt),
+            "a variable-width indicator must mark LAYOUT-dirty"
+        );
+        assert!(
+            doc.get(battery_txt).unwrap().dirty.needs_layout(),
+            "a variable-width indicator must carry the LAYOUT flag"
+        );
+    }
+
+    #[test]
+    fn identical_clock_text_does_not_dirty_anything() {
+        // Re-syncing the SAME clock value must be a no-op (no dirty churn).
+        let bar = bar_with_clock_and_battery();
+        let mut doc = Document::new();
+        let root = doc.root();
+        let nodes = build_statusbar_dom(&mut doc, root, &bar);
+
+        let clock_txt = indicator_text_node(&doc, nodes.slot_right, "clock");
+        doc.dirty.clear_all();
+        if let Some(n) = doc.get_mut(clock_txt) {
+            n.dirty.clear_all();
+        }
+
+        // No timestamp change → same "00:00" text.
+        sync_statusbar_indicators(&mut doc, nodes.slot_right, &bar);
+
+        assert!(!doc.dirty.layout.contains(&clock_txt));
+        assert!(!doc.dirty.paint.contains(&clock_txt));
     }
 }

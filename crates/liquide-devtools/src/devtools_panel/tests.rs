@@ -191,3 +191,172 @@ fn detached_panel_bounds_fill_the_window() {
     let b = panel.panel_bounds();
     assert_eq!((b.x, b.y, b.width, b.height), (0.0, 0.0, 900.0, 600.0));
 }
+
+// ─── t142: per-frame FPS readout is paint-only, frame counter stays layout ───
+
+/// Mount the active tab's content template under a fresh parent and return
+/// (doc, parent). Mirrors how the shell reconciles the devtools template.
+fn mount_perf_panel(panel: &DevToolsPanel) -> (liquide_dom::Document, liquide_dom::NodeId) {
+    use liquide_components::{TemplateNode, TemplateRenderer};
+    let layout = liquide_layout::tree::LayoutTree::new();
+    let styles = liquide_style_engine::StyleMap::new();
+    let mut doc = liquide_dom::Document::new();
+    let root = doc.root();
+    let parent = doc.create_element("perf");
+    doc.append_child(root, parent);
+    let tmpl = TemplateNode::el("perf").children(panel.template_performance(&doc, &layout, &styles));
+    TemplateRenderer::apply_to_node(&mut doc, parent, &tmpl);
+    (doc, parent)
+}
+
+/// Find the text node whose ancestor row carries `label`, returning its NodeId.
+fn find_value_text(doc: &liquide_dom::Document, parent: liquide_dom::NodeId, label: &str)
+    -> Option<liquide_dom::NodeId>
+{
+    for &row in doc.children(parent) {
+        // Each row: <devtools-label>LABEL</> then <devtools-value><text></>.
+        let kids: Vec<liquide_dom::NodeId> = doc.children(row).to_vec();
+        let is_match = kids.first().is_some_and(|&lbl| {
+            doc.children(lbl)
+                .first()
+                .and_then(|&t| doc.get(t).and_then(|n| n.text_content()))
+                == Some(label)
+        });
+        if is_match {
+            if let Some(&value_el) = kids.get(1) {
+                return doc.children(value_el).first().copied();
+            }
+        }
+    }
+    None
+}
+
+#[test]
+fn fps_readout_text_update_is_paint_only_not_layout() {
+    use liquide_components::{TemplateNode, TemplateRenderer};
+
+    let mut panel = DevToolsPanel::with_defaults();
+    panel.set_tab(DevToolsTab::Performance);
+    panel.push_frame_snapshot(FrameSnapshot {
+        frame_number: 10,
+        fps: 59.9,
+        avg_frame_ms: 16.0,
+        css_rule_count: 1,
+        css_variable_count: 1,
+        stylesheet_count: 1,
+        viewport_w: 1920.0,
+        viewport_h: 1080.0,
+    });
+
+    // First mount.
+    let layout = liquide_layout::tree::LayoutTree::new();
+    let styles = liquide_style_engine::StyleMap::new();
+    let mut doc = liquide_dom::Document::new();
+    let root = doc.root();
+    let parent = doc.create_element("perf");
+    doc.append_child(root, parent);
+    let tmpl1 =
+        TemplateNode::el("perf").children(panel.template_performance(&doc, &layout, &styles));
+    TemplateRenderer::apply_to_node(&mut doc, parent, &tmpl1);
+
+    let fps_txt =
+        find_value_text(&doc, parent, "FPS").expect("FPS value text node must be present");
+    let frame_txt =
+        find_value_text(&doc, parent, "Frame").expect("Frame value text node must be present");
+
+    // Clear all dirty from the initial construction.
+    doc.dirty.clear_all();
+    for n in [fps_txt, frame_txt] {
+        if let Some(node) = doc.get_mut(n) {
+            node.dirty.clear_all();
+        }
+    }
+
+    // Next frame: FPS bumps (same row, new content) AND the frame number bumps.
+    panel.push_frame_snapshot(FrameSnapshot {
+        frame_number: 11,
+        fps: 60.0,
+        avg_frame_ms: 16.0,
+        css_rule_count: 1,
+        css_variable_count: 1,
+        stylesheet_count: 1,
+        viewport_w: 1920.0,
+        viewport_h: 1080.0,
+    });
+    let tmpl2 =
+        TemplateNode::el("perf").children(panel.template_performance(&doc, &layout, &styles));
+    TemplateRenderer::apply_to_node(&mut doc, parent, &tmpl2);
+
+    // Rendered output still updates (the text genuinely changed).
+    assert_eq!(doc.get(fps_txt).and_then(|n| n.text_content()), Some("60.0"));
+
+    // The FPS text update must be PAINT, NOT LAYOUT (the size-stable fast path).
+    assert!(
+        !doc.dirty.layout.contains(&fps_txt),
+        "FPS readout text update must not mark LAYOUT-dirty"
+    );
+    assert!(
+        !doc.get(fps_txt).unwrap().dirty.needs_layout(),
+        "FPS readout text node must not carry the LAYOUT flag"
+    );
+    assert!(
+        doc.dirty.paint.contains(&fps_txt),
+        "FPS readout text update must still mark PAINT-dirty so it repaints"
+    );
+    assert!(
+        doc.get(fps_txt).unwrap().dirty.needs_paint(),
+        "FPS readout text node must carry the PAINT flag"
+    );
+
+    // SELECTIVITY / teeth: the unbounded Frame counter is deliberately left on the
+    // conservative LAYOUT path (it can grow wide and reflow). If someone naively
+    // marks ALL perf rows paint-only this assertion turns RED.
+    assert_eq!(doc.get(frame_txt).and_then(|n| n.text_content()), Some("11"));
+    assert!(
+        doc.dirty.layout.contains(&frame_txt),
+        "the unbounded Frame counter must stay on the LAYOUT path"
+    );
+}
+
+#[test]
+fn fps_value_cell_is_fixed_width_so_swap_cannot_reflow() {
+    // The paint-only demotion is only sound because the FPS value box has a fixed
+    // pixel width (content-independent geometry). Assert the inline width style is
+    // present on the value cell — if it's dropped, the box could reflow and the
+    // paint-only path would risk a stale layout.
+    let mut panel = DevToolsPanel::with_defaults();
+    panel.set_tab(DevToolsTab::Performance);
+    panel.push_frame_snapshot(FrameSnapshot {
+        frame_number: 1,
+        fps: 60.0,
+        avg_frame_ms: 16.0,
+        css_rule_count: 0,
+        css_variable_count: 0,
+        stylesheet_count: 0,
+        viewport_w: 800.0,
+        viewport_h: 600.0,
+    });
+    let (doc, parent) = mount_perf_panel(&panel);
+
+    // Locate the FPS row's value element (sibling-after-label) and check width.
+    let mut found = false;
+    for &row in doc.children(parent) {
+        let kids: Vec<liquide_dom::NodeId> = doc.children(row).to_vec();
+        let is_fps = kids.first().is_some_and(|&lbl| {
+            doc.children(lbl)
+                .first()
+                .and_then(|&t| doc.get(t).and_then(|n| n.text_content()))
+                == Some("FPS")
+        });
+        if is_fps {
+            let value_el = kids[1];
+            assert_eq!(
+                doc.get_inline_style(value_el, "width").as_deref(),
+                Some("44px"),
+                "FPS value cell must be pinned to a fixed width"
+            );
+            found = true;
+        }
+    }
+    assert!(found, "FPS row must exist");
+}

@@ -503,6 +503,38 @@ pub(crate) fn row_kv_class(label: &str, value: &str, cls: &str) -> TemplateNode 
     row_kv(label, value, cls)
 }
 
+/// Build a key-value row whose VALUE cell is pinned to a fixed pixel `width` and
+/// whose value text is marked **paint-only** (t136/t142).
+///
+/// Use this ONLY for per-frame live numerics whose magnitude is bounded so a
+/// generous fixed-width cell can never clip them (e.g. the Performance-tab FPS
+/// readout, `0.0`..`999.9`). The fixed `width` makes the value box's geometry
+/// content-independent — a same-cell text swap (FPS bump) provably cannot reflow
+/// the row or its siblings — so the text update is safely demoted from LAYOUT to
+/// PAINT by [`TemplateNode::paint_only`]. The text is right-aligned so the digits
+/// stay anchored to the label as the value changes width.
+///
+/// Do NOT use this for unbounded numerics (e.g. the frame counter, which grows
+/// without limit and would eventually overflow any fixed cell); those stay on the
+/// conservative LAYOUT path via [`row_kv`].
+pub(crate) fn row_kv_fixed_paint_only(
+    label: &str,
+    value: &str,
+    cls: &str,
+    width_px: u32,
+) -> TemplateNode {
+    TemplateNode::el("devtools-row")
+        .child(TemplateNode::el("devtools-label").child(TemplateNode::text(label)))
+        .child(
+            TemplateNode::el("devtools-value")
+                .class(cls)
+                .style("width", &format!("{}px", width_px))
+                .style("text-align", "right")
+                .style("overflow", "hidden")
+                .child(TemplateNode::text(value).paint_only()),
+        )
+}
+
 /// Format a `TimingFunction` as a human-readable string.
 pub(crate) fn format_timing_function(
     tf: &liquide_style_engine::computed::TimingFunction,
