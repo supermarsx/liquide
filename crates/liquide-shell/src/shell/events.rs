@@ -523,6 +523,45 @@ impl Shell {
         true
     }
 
+    /// Begin a window RESIZE drag programmatically (the same `DragState::Resizing`
+    /// that grabbing a resize edge installs). `edge` is the resize hit-zone (e.g.
+    /// [`HitZone::ResizeRight`], [`HitZone::ResizeTopLeft`]); `grab` is the pointer
+    /// position at grab time. The window's current bounds are captured as
+    /// `start_bounds` so subsequent `MouseEvent::Move`s resize relative to the grab
+    /// point. Returns `false` if the window is unknown or `edge` is not a resize
+    /// zone.
+    ///
+    /// Exposed so the session-level drag-damage plumbing can be exercised
+    /// end-to-end without reconstructing a CSS resize-edge hit-test (symmetric
+    /// with [`Self::begin_move_drag`]).
+    pub fn begin_resize_drag(&mut self, window_id: WindowId, edge: HitZone, grab: Point) -> bool {
+        let is_resize_zone = matches!(
+            edge,
+            HitZone::ResizeTop
+                | HitZone::ResizeBottom
+                | HitZone::ResizeLeft
+                | HitZone::ResizeRight
+                | HitZone::ResizeTopLeft
+                | HitZone::ResizeTopRight
+                | HitZone::ResizeBottomLeft
+                | HitZone::ResizeBottomRight
+        );
+        if !is_resize_zone {
+            return false;
+        }
+        let Some(window) = self.windows.get(&window_id) else {
+            return false;
+        };
+        self.drag_state = Some(DragState::Resizing {
+            window_id,
+            edge,
+            start_bounds: window.bounds,
+            start_x: grab.x,
+            start_y: grab.y,
+        });
+        true
+    }
+
     /// Targeted damage for a window MOVE drag-frame: the union of the dragged
     /// window's OLD footprint (where it was before this move) and its NEW
     /// footprint (where it is now), each expanded by [`Self::DRAG_FOOTPRINT_MARGIN`]
@@ -543,14 +582,71 @@ impl Shell {
     /// its conservative full-frame path (no regression / no under-damage).
     #[must_use]
     pub fn drag_move_damage(&self, old_bounds: Rect) -> Vec<Rect> {
-        let Some(window_id) = self.dragged_window() else {
-            return Vec::new();
-        };
-        // Only window MOVE drags are confined here; resize drags keep the
-        // existing full-frame path (follow-up).
+        // Restrict to MOVE drags (resize drags go through `drag_resize_damage`,
+        // and the unified entry point is `drag_damage`).
         if !matches!(self.drag_state, Some(DragState::Moving { .. })) {
             return Vec::new();
         }
+        self.drag_old_union_new_damage(old_bounds)
+    }
+
+    /// Targeted damage for a window RESIZE drag-frame (t135-resizedrag): the
+    /// union of the dragged window's OLD footprint (its bounds BEFORE this resize
+    /// frame was applied) and its NEW footprint (its bounds after), each expanded
+    /// by [`Self::DRAG_FOOTPRINT_MARGIN`] to cover shadow/blur/decoration.
+    ///
+    /// A resize changes the window's bounds on one or more edges (right/bottom
+    /// grow the rect from a fixed origin; left/top/corners also move the origin).
+    /// The correct damage is the SAME old∪new footprint contract as a move: the
+    /// OLD footprint MUST be fully repainted so that when the window SHRINKS, the
+    /// band that was inside the larger old window — and is now outside the smaller
+    /// new window — is repainted to reveal what is behind it (otherwise a ghost
+    /// of the larger old window is left behind). The NEW footprint covers the
+    /// grown/relocated edges.
+    ///
+    /// `old_bounds` is the dragged window's `bounds` captured BEFORE the resize
+    /// event was handled (the caller snapshots it in `dispatch_platform_event`,
+    /// symmetric with the move path). Returns a disjoint SET (two rects, unioned
+    /// downstream into the `DamageSet`), NOT a single bbox.
+    ///
+    /// Returns an EMPTY `Vec` when this is not a window resize-drag, or when the
+    /// dragged window's current bounds are unavailable — the caller then keeps
+    /// its conservative full-frame path (no regression / no under-damage).
+    #[must_use]
+    pub fn drag_resize_damage(&self, old_bounds: Rect) -> Vec<Rect> {
+        if !matches!(self.drag_state, Some(DragState::Resizing { .. })) {
+            return Vec::new();
+        }
+        self.drag_old_union_new_damage(old_bounds)
+    }
+
+    /// Unified targeted damage for ANY active window drag-frame (MOVE or RESIZE):
+    /// the old∪new window footprint (+margin). This is the single entry point the
+    /// session event loop calls; it dispatches on the live [`DragState`] so the
+    /// caller does not need to know whether the user is moving or resizing — both
+    /// confine to the same old∪new footprint contract.
+    ///
+    /// Returns an EMPTY `Vec` when no window drag is in progress or the dragged
+    /// window's current bounds are unavailable (caller keeps the full-frame path).
+    #[must_use]
+    pub fn drag_damage(&self, old_bounds: Rect) -> Vec<Rect> {
+        match self.drag_state {
+            Some(DragState::Moving { .. }) | Some(DragState::Resizing { .. }) => {
+                self.drag_old_union_new_damage(old_bounds)
+            }
+            None => Vec::new(),
+        }
+    }
+
+    /// Shared old∪new footprint builder for the move/resize drag-damage paths.
+    /// `old_bounds` is the dragged window's pre-event footprint; the NEW footprint
+    /// is read from the dragged window's current (post-event) bounds. Each rect is
+    /// expanded by [`Self::DRAG_FOOTPRINT_MARGIN`]. Returns EMPTY if there is no
+    /// dragged window or its current bounds are unavailable.
+    fn drag_old_union_new_damage(&self, old_bounds: Rect) -> Vec<Rect> {
+        let Some(window_id) = self.dragged_window() else {
+            return Vec::new();
+        };
         let Some(window) = self.windows.get(&window_id) else {
             return Vec::new();
         };
@@ -1883,5 +1979,198 @@ impl Shell {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod resize_drag_damage_tests {
+    //! t135-resizedrag: a window RESIZE drag must confine its frame damage to the
+    //! dragged window's OLD∪NEW footprint (+ shadow/blur margin), the SAME
+    //! contract as a move-drag (t129). These tests fail if a resize emits the
+    //! full frame, omits the OLD footprint (→ stale ghost of the larger old
+    //! window when shrinking), or under-damages either rect.
+
+    use super::*;
+    use crate::Shell;
+
+    const SCREEN_W: f32 = 1920.0;
+    const SCREEN_H: f32 = 1080.0;
+
+    /// True if `rect` is fully contained within (covered by) the union of `rects`
+    /// where containment is checked as: every corner-region of `rect` is inside
+    /// at least one of `rects`. We use a simpler, stricter superset check: `rect`
+    /// must be a subset of one of the `rects` (each drag rect is a margin-expanded
+    /// footprint, so a footprint is a subset of its own expanded rect).
+    fn covered_by_any(rects: &[Rect], inner: Rect) -> bool {
+        rects.iter().any(|r| {
+            inner.x >= r.x
+                && inner.y >= r.y
+                && inner.x + inner.width <= r.x + r.width
+                && inner.y + inner.height <= r.y + r.height
+        })
+    }
+
+    fn shell_with_window(bounds: Rect) -> (Shell, WindowId) {
+        let mut shell = Shell::new(SCREEN_W, SCREEN_H);
+        let wid = shell.open_window("resize", bounds);
+        (shell, wid)
+    }
+
+    /// (a) A resize-drag (grow on the right edge) emits damage = old∪new
+    /// footprint (+margin), NOT empty, and is a SUPERSET of BOTH the old and new
+    /// rects. The new rect grows, so it strictly contains the old on the grown
+    /// axis — still both must be present.
+    #[test]
+    fn resize_grow_emits_old_union_new_footprint() {
+        let old_bounds = Rect::new(400.0, 300.0, 300.0, 200.0);
+        let (mut shell, wid) = shell_with_window(old_bounds);
+        let grab = Point::new(old_bounds.x + old_bounds.width, old_bounds.y + 100.0);
+        assert!(shell.begin_resize_drag(wid, HitZone::ResizeRight, grab));
+        assert!(shell.is_dragging());
+
+        // Apply a resize move: drag the right edge +120px.
+        let _ = shell.handle_mouse_move(grab.x + 120.0, grab.y);
+        let new_bounds = shell.window(wid).unwrap().bounds;
+        assert!(
+            new_bounds.width > old_bounds.width,
+            "right-edge drag must have grown the window: {} -> {}",
+            old_bounds.width,
+            new_bounds.width
+        );
+
+        let rects = shell.drag_resize_damage(old_bounds);
+        assert!(
+            !rects.is_empty(),
+            "a resize-drag must emit a confined damage hint, not empty/full"
+        );
+        // Superset of BOTH footprints.
+        assert!(
+            covered_by_any(&rects, old_bounds),
+            "resize damage must cover the OLD footprint"
+        );
+        assert!(
+            covered_by_any(&rects, new_bounds),
+            "resize damage must cover the NEW footprint"
+        );
+    }
+
+    /// (b) The CRITICAL shrink case: resizing the LEFT edge inward moves the
+    /// origin right and shrinks the width. The OLD footprint's left band (now
+    /// OUTSIDE the smaller new window) MUST be in the damage so the revealed area
+    /// repaints what's behind it (no ghost of the larger old window). The new
+    /// rect alone does NOT cover that left band.
+    #[test]
+    fn resize_shrink_includes_revealed_old_only_band() {
+        let old_bounds = Rect::new(400.0, 300.0, 300.0, 200.0);
+        let (mut shell, wid) = shell_with_window(old_bounds);
+        // Grab the LEFT edge and drag it inward (to the right) so the window
+        // shrinks from the left: origin moves right, width shrinks.
+        let grab = Point::new(old_bounds.x, old_bounds.y + 100.0);
+        assert!(shell.begin_resize_drag(wid, HitZone::ResizeLeft, grab));
+
+        let _ = shell.handle_mouse_move(grab.x + 120.0, grab.y);
+        let new_bounds = shell.window(wid).unwrap().bounds;
+        assert!(
+            new_bounds.x > old_bounds.x && new_bounds.width < old_bounds.width,
+            "left-edge inward drag must move origin right and shrink width: \
+             old=({},{}w) new=({},{}w)",
+            old_bounds.x,
+            old_bounds.width,
+            new_bounds.x,
+            new_bounds.width
+        );
+
+        let rects = shell.drag_resize_damage(old_bounds);
+
+        // The OLD footprint must be covered (it includes the revealed left band).
+        assert!(
+            covered_by_any(&rects, old_bounds),
+            "resize-shrink damage MUST cover the OLD footprint so the revealed \
+             left band repaints (no ghost of the larger old window)"
+        );
+
+        // TEETH: the revealed-only band (a point in the OLD window but OUTSIDE the
+        // NEW window) must be damaged. Sample a point in the old-left band.
+        let revealed_x = old_bounds.x + 10.0; // inside old, left of new origin
+        let revealed_y = old_bounds.y + 100.0;
+        assert!(
+            revealed_x < new_bounds.x,
+            "test setup: sample point must be left of the shrunk window's origin"
+        );
+        let revealed_pt = Point::new(revealed_x, revealed_y);
+        let in_some_rect = rects.iter().any(|r| r.contains(revealed_pt));
+        assert!(
+            in_some_rect,
+            "the revealed old-only band at ({revealed_x},{revealed_y}) must be in \
+             the resize damage — it is the area uncovered by the shrink"
+        );
+        // And prove the NEW footprint alone would MISS it (so old-inclusion is
+        // load-bearing, not incidentally covered by the new rect).
+        let new_margined = new_bounds.expand(Shell::DRAG_FOOTPRINT_MARGIN);
+        assert!(
+            !new_margined.contains(revealed_pt),
+            "test setup: the new (margined) footprint must NOT cover the revealed \
+             band, so dropping the OLD rect would leave it stale (red teeth)"
+        );
+    }
+
+    /// (c) `drag_resize_damage` returns EMPTY when this is NOT a resize drag — a
+    /// move-drag must not be hijacked by the resize path (and vice-versa
+    /// `drag_move_damage` must be empty during a resize).
+    #[test]
+    fn resize_damage_empty_for_non_resize_states() {
+        let old_bounds = Rect::new(400.0, 300.0, 300.0, 200.0);
+        let (mut shell, wid) = shell_with_window(old_bounds);
+
+        // No drag at all.
+        assert!(shell.drag_resize_damage(old_bounds).is_empty());
+
+        // A MOVE drag must yield empty from the resize entry point.
+        let grab = Point::new(old_bounds.x + 10.0, old_bounds.y + 5.0);
+        assert!(shell.begin_move_drag(wid, grab));
+        assert!(
+            shell.drag_resize_damage(old_bounds).is_empty(),
+            "drag_resize_damage must be empty during a MOVE drag"
+        );
+        // ...and the move path is non-empty there.
+        assert!(!shell.drag_move_damage(old_bounds).is_empty());
+
+        // A RESIZE drag: resize path non-empty, move path empty.
+        assert!(shell.begin_resize_drag(wid, HitZone::ResizeBottomRight, grab));
+        assert!(!shell.drag_resize_damage(old_bounds).is_empty());
+        assert!(
+            shell.drag_move_damage(old_bounds).is_empty(),
+            "drag_move_damage must be empty during a RESIZE drag"
+        );
+    }
+
+    /// (d) The unified `drag_damage` dispatches on the live state: non-empty for
+    /// both move and resize, empty when not dragging.
+    #[test]
+    fn unified_drag_damage_covers_move_and_resize() {
+        let old_bounds = Rect::new(400.0, 300.0, 300.0, 200.0);
+        let (mut shell, wid) = shell_with_window(old_bounds);
+        assert!(shell.drag_damage(old_bounds).is_empty(), "no drag → empty");
+
+        let grab = Point::new(old_bounds.x + 10.0, old_bounds.y + 5.0);
+        assert!(shell.begin_move_drag(wid, grab));
+        assert!(!shell.drag_damage(old_bounds).is_empty(), "move → non-empty");
+
+        assert!(shell.begin_resize_drag(wid, HitZone::ResizeRight, grab));
+        assert!(!shell.drag_damage(old_bounds).is_empty(), "resize → non-empty");
+    }
+
+    /// (e) `begin_resize_drag` rejects a non-resize zone (e.g. TitleBar) so it
+    /// cannot install a bogus Resizing state.
+    #[test]
+    fn begin_resize_drag_rejects_non_resize_zone() {
+        let old_bounds = Rect::new(400.0, 300.0, 300.0, 200.0);
+        let (mut shell, wid) = shell_with_window(old_bounds);
+        let grab = Point::new(old_bounds.x + 10.0, old_bounds.y + 5.0);
+        assert!(
+            !shell.begin_resize_drag(wid, HitZone::TitleBar, grab),
+            "a non-resize zone must not start a resize drag"
+        );
+        assert!(!shell.is_dragging());
     }
 }

@@ -126,10 +126,10 @@ impl DesktopCompositor {
     }
 
     /// `mark_dirty_for_event` with an optional snapshot of the dragged window's
-    /// footprint captured BEFORE the event (the OLD position). When present and
-    /// this is a window MOVE drag-frame, the damage is confined to the
-    /// old∪new window footprint instead of falling to the full-frame path
-    /// (t127-drag-perf).
+    /// footprint captured BEFORE the event (the OLD position/size). When present
+    /// and this is a window MOVE *or* RESIZE drag-frame, the damage is confined to
+    /// the old∪new window footprint instead of falling to the full-frame path
+    /// (t127-drag-perf move; t135-resizedrag resize).
     pub(super) fn mark_dirty_for_event_with_drag(
         &mut self,
         event: &liquide_platform::PlatformEvent,
@@ -152,17 +152,19 @@ impl DesktopCompositor {
             return;
         }
 
-        // Window MOVE drag (t127-drag-perf): a drag-move only relocates the
-        // dragged window, so the only pixels that change are its OLD footprint
-        // (revealed/repainted) and its NEW footprint (painted). Confine the
+        // Window MOVE or RESIZE drag (t127-drag-perf move; t135-resizedrag
+        // resize): a drag only relocates/resizes the dragged window, so the only
+        // pixels that change are its OLD footprint (revealed/repainted — for a
+        // SHRINKING resize this is the band that was inside the larger old window
+        // and is now behind it) and its NEW footprint (painted). Confine the
         // frame's damage to that union (each rect shadow/blur-margined) instead
         // of falling to the ~300ms full-frame raster. The OLD footprint MUST be
-        // included or the window's previous position leaves a stale ghost. If
-        // either bound is unavailable, fall through to the existing path (no
+        // included or the window's previous position/size leaves a stale ghost.
+        // If either bound is unavailable, fall through to the existing path (no
         // regression). The render thread further UNIONs this with the scene diff,
         // so it can only ADD damage, never narrow it.
         if let Some(old_bounds) = drag_window_before {
-            let drag_rects = self.shell.drag_move_damage(old_bounds);
+            let drag_rects = self.shell.drag_damage(old_bounds);
             if !drag_rects.is_empty() {
                 // Union with any open-menu overlay footprint so a drag with a
                 // menu still open does not under-damage the menu band.
@@ -1211,6 +1213,151 @@ mod drag_damage_tests {
         assert!(
             desktop.dirty_damage.is_none(),
             "missing old bounds must fall back to full-frame, never a partial hint"
+        );
+    }
+
+    // ---- RESIZE drag (t135-resizedrag) -------------------------------------
+
+    /// Stand up a desktop with one window and begin a RESIZE drag on the given
+    /// edge. Returns the desktop, window id, and grab point.
+    fn desktop_mid_resize_drag(
+        edge: liquide_shell::HitZone,
+        grab: Point,
+    ) -> (DesktopCompositor, liquide_shell::WindowId, Rect) {
+        let mut desktop = DesktopCompositor::new(SCREEN_W, SCREEN_H);
+        desktop.loading = false;
+        desktop.shell.resize_screen(SCREEN_W as f32, SCREEN_H as f32);
+
+        let bounds = Rect::new(400.0, 300.0, 300.0, 200.0);
+        let wid = desktop.shell.open_window("resize", bounds);
+        assert!(
+            desktop.shell.begin_resize_drag(wid, edge, grab),
+            "resize-drag must start"
+        );
+        assert!(desktop.shell.is_dragging());
+        (desktop, wid, bounds)
+    }
+
+    /// A RESIZE drag-frame must confine damage to old∪new footprint (NOT full),
+    /// and the damage must be a SUPERSET of BOTH the old and new window rects.
+    /// This is the resize analogue of `drag_move_emits_old_union_new_footprint_not_full`.
+    #[test]
+    fn drag_resize_emits_old_union_new_footprint_not_full() {
+        let grab = Point::new(700.0, 400.0); // right edge of the 400,300,300,200 window
+        let (mut desktop, wid, old_bounds) =
+            desktop_mid_resize_drag(liquide_shell::HitZone::ResizeRight, grab);
+
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let drag_before = desktop
+            .shell
+            .dragged_window()
+            .and_then(|id| desktop.shell.window(id).ok())
+            .map(|w| w.bounds);
+        // Grow the right edge by +200px.
+        let mv = move_event(grab.x + 200.0, grab.y);
+        assert!(desktop.handle_event(&mv), "a resize-move must request a redraw");
+        desktop.mark_dirty_for_event_with_drag(&mv, Vec::new(), drag_before);
+
+        let new_bounds = desktop.shell.window(wid).unwrap().bounds;
+        assert!(
+            new_bounds.width > old_bounds.width,
+            "the resize must have grown the window"
+        );
+
+        let damage = desktop
+            .dirty_damage
+            .as_ref()
+            .expect("a resize-drag must carry a TARGETED damage hint, not None/full");
+
+        assert!(
+            !damage.is_full(),
+            "resize damage must be confined, not a full-frame repaint"
+        );
+        let grid_w = SCREEN_W.div_ceil(damage.tile_size);
+        let grid_h = SCREEN_H.div_ceil(damage.tile_size);
+        let full_tiles = grid_w * grid_h;
+        assert!(
+            (damage.tiles.len() as u32) < full_tiles,
+            "resize damage ({} tiles) must be smaller than the full grid ({} tiles)",
+            damage.tiles.len(),
+            full_tiles
+        );
+
+        assert_superset_of(damage, old_bounds, "OLD");
+        assert_superset_of(damage, new_bounds, "NEW");
+    }
+
+    /// The CRITICAL shrink case: a left-edge inward resize shrinks the window and
+    /// moves its origin right. The revealed old-only band (inside the OLD window,
+    /// OUTSIDE the NEW window) MUST be damaged so the larger old window leaves no
+    /// ghost. TEETH: the old-only tile is asserted present and proven NOT covered
+    /// by the new footprint, so dropping the OLD rect would leave it stale.
+    #[test]
+    fn drag_resize_shrink_damages_revealed_old_only_band() {
+        let grab = Point::new(400.0, 400.0); // left edge of the 400,300,300,200 window
+        let (mut desktop, wid, old_bounds) =
+            desktop_mid_resize_drag(liquide_shell::HitZone::ResizeLeft, grab);
+
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let drag_before = Some(old_bounds);
+        // Drag the left edge inward (to the right) by +150px → shrink from left.
+        let mv = move_event(grab.x + 150.0, grab.y);
+        assert!(desktop.handle_event(&mv));
+        desktop.mark_dirty_for_event_with_drag(&mv, Vec::new(), drag_before);
+
+        let new_bounds = desktop.shell.window(wid).unwrap().bounds;
+        assert!(
+            new_bounds.x > old_bounds.x && new_bounds.width < old_bounds.width,
+            "left-inward resize must move origin right and shrink width"
+        );
+
+        let damage = desktop.dirty_damage.as_ref().expect("targeted hint");
+
+        // The OLD footprint must be a superset (covers the revealed left band).
+        assert_superset_of(damage, old_bounds, "OLD (revealed band)");
+
+        // TEETH: a tile in the revealed old-only band must be damaged, and it must
+        // NOT be covered by the new footprint — so the OLD rect is load-bearing.
+        let revealed = Rect::new(old_bounds.x, old_bounds.y, 10.0, old_bounds.height);
+        let (rx0, ry0, _rx1, _ry1) = tile_range(revealed, damage.tile_size);
+        assert!(
+            has_tile(damage, rx0, ry0),
+            "the revealed old-only band tile ({rx0},{ry0}) must be damaged on shrink"
+        );
+        // Prove the new (margined) footprint does NOT cover that revealed tile.
+        let margin = liquide_shell::Shell::DRAG_FOOTPRINT_MARGIN;
+        let new_margined = new_bounds.expand(margin);
+        let (nx0, ny0, nx1, ny1) = tile_range(new_margined, damage.tile_size);
+        let covered_by_new =
+            rx0 >= nx0 && rx0 <= nx1 && ry0 >= ny0 && ry0 <= ny1;
+        assert!(
+            !covered_by_new,
+            "test integrity: the revealed tile ({rx0},{ry0}) must lie OUTSIDE the \
+             new footprint so the OLD rect is what damages it (red teeth if dropped)"
+        );
+    }
+
+    /// A resize-drag with the OLD bounds unavailable falls back to full-frame,
+    /// never a partial (possibly under-damaging) hint — same safety as the move.
+    #[test]
+    fn drag_resize_without_old_bounds_falls_back_to_full() {
+        let grab = Point::new(700.0, 400.0);
+        let (mut desktop, _wid, _old) =
+            desktop_mid_resize_drag(liquide_shell::HitZone::ResizeRight, grab);
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let mv = move_event(grab.x + 100.0, grab.y);
+        assert!(desktop.handle_event(&mv));
+        desktop.mark_dirty_for_event_with_drag(&mv, Vec::new(), None);
+
+        assert!(
+            desktop.dirty_damage.is_none(),
+            "missing old bounds must fall back to full-frame for resize too"
         );
     }
 }
