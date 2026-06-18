@@ -18,6 +18,7 @@ mod cursor_state;
 mod debug;
 mod devtools;
 mod devtools_state;
+mod devtools_window;
 mod event_handling;
 mod event_loop;
 mod loading;

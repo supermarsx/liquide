@@ -65,6 +65,18 @@ devtools-panel.dock-left {
     border-right-color: var(--border-strong);
 }
 
+/* When detached into its OWN native window (dev mode), the panel fills the
+   entire window surface instead of docking to an edge of the DE. */
+devtools-panel.dock-detached {
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    border-top-width: 0;
+}
+
 /* ── Toolbar (tab bar + action buttons) ──────────────── */
 
 devtools-toolbar {

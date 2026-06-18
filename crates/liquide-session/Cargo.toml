@@ -37,6 +37,15 @@ liquide-shell.workspace = true
 # shell's `DesktopPipeline`. liquide-dom was previously a dev-dep only; the
 # loading mini-pipeline needs it in the main build.
 liquide-dom.workspace = true
+# t131-devtools-p2: the separate devtools window (dev-mode only) renders the
+# devtools UI through its own CSS mini-pipeline and routes its pointer events to
+# the panel via a hit-test over the window's own layout — needing the style /
+# layout / hit-test / template types directly in the main build (previously some
+# were dev-deps or pulled transitively only).
+liquide-style-engine.workspace = true
+liquide-layout.workspace = true
+liquide-hit-test.workspace = true
+liquide-components.workspace = true
 liquide-theme-css.workspace = true
 liquide-plugin-host.workspace = true
 liquide-input.workspace = true

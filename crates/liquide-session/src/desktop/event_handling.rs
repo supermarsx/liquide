@@ -469,7 +469,14 @@ impl DesktopCompositor {
             return false;
         }
 
-        if tick.windows_dirty || tick.notifications_dirty || self.devtools_panel_visible() {
+        // A visible devtools panel forces a conservative full repaint ONLY when
+        // it has live overlay scene nodes (picker / layout overlay / hover or
+        // selection highlight) that the precomputed-damage hint can't bound
+        // (t131 jank fix). A merely-visible panel — e.g. its Performance tab's
+        // FPS number ticking with no overlay — leaves the targeted damage path
+        // intact (the panel is part of the CSS pipeline, so its own content
+        // change is bounded by precomputed damage like any other chrome).
+        if tick.windows_dirty || tick.notifications_dirty || self.dt.has_active_overlays() {
             self.dirty_damage = None;
         } else if tick.status_bar_dirty || tick.auto_hide_dirty {
             let height = self.shell.status_bar().config().height.ceil().max(1.0);
@@ -486,12 +493,165 @@ impl DesktopCompositor {
         true
     }
 
-    pub(super) fn devtools_panel_visible(&self) -> bool {
-        self.dt
-            .devtools
-            .as_ref()
-            .is_some_and(|devtools| devtools.is_visible())
+    /// Route an event that targets the SEPARATE devtools window to the devtools
+    /// panel (NOT the main DE). Returns `true` if the event was for the devtools
+    /// window and was consumed here — the caller must then SKIP the normal main
+    /// DE routing. Returns `false` for events on the main window (or any other
+    /// handle), which fall through to the regular path.
+    ///
+    /// This is the `handle`-matched dispatch the multi-window architecture
+    /// relies on: every platform event carries its originating window handle, so
+    /// a click in the devtools window can only drive devtools panel state and
+    /// can never reach the desktop shell.
+    pub(super) fn try_handle_devtools_window_event(
+        &mut self,
+        platform: &mut dyn liquide_platform::PlatformBackend,
+        event: &PlatformEvent,
+    ) -> bool {
+        use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
+
+        let Some(win_handle) = self.dt.window_handle() else {
+            return false;
+        };
+
+        // Extract the originating handle; non-window events (e.g. DisplaysChanged,
+        // Quit, ColorSchemeChanged) are never devtools-window events.
+        let event_handle = match event {
+            PlatformEvent::WindowCloseRequested { handle }
+            | PlatformEvent::WindowDestroyed { handle }
+            | PlatformEvent::WindowRedraw { handle }
+            | PlatformEvent::FocusGained { handle }
+            | PlatformEvent::FocusLost { handle }
+            | PlatformEvent::WindowMinimized { handle }
+            | PlatformEvent::WindowMaximized { handle }
+            | PlatformEvent::WindowRestored { handle } => *handle,
+            PlatformEvent::WindowResized { handle, .. }
+            | PlatformEvent::WindowCreated { handle, .. }
+            | PlatformEvent::WindowMoved { handle, .. }
+            | PlatformEvent::DpiChanged { handle, .. }
+            | PlatformEvent::FileDrop { handle, .. } => *handle,
+            PlatformEvent::KeyInput { handle, .. }
+            | PlatformEvent::MouseInput { handle, .. }
+            | PlatformEvent::TouchInput { handle, .. } => *handle,
+            _ => return false,
+        };
+
+        if event_handle != win_handle {
+            return false;
+        }
+
+        // The event belongs to the devtools window. Coordinates from the window
+        // are in its own client space (the window pipeline runs at scale 1.0).
+        let mut needs_render = false;
+        match event {
+            PlatformEvent::WindowCloseRequested { .. } | PlatformEvent::WindowDestroyed { .. } => {
+                // The devtools window was closed (its X / OS close) — tear it
+                // down and re-dock the panel into the in-DE overlay.
+                self.dt.close_window(platform);
+                // Also hide the panel so dev-mode visibility tracking does not
+                // immediately respawn the window.
+                if let Some(d) = self.dt.devtools.as_mut() {
+                    d.hide();
+                }
+                return true;
+            }
+            PlatformEvent::WindowResized { width, height, .. } => {
+                self.dt.resize_window(*width, *height);
+                needs_render = true;
+            }
+            PlatformEvent::KeyInput { event: ke, .. } => {
+                if ke.state == KeyState::Pressed {
+                    // F12 on the devtools window closes / detaches it.
+                    if ke.key == KeyCode::F12 {
+                        self.dt.close_window(platform);
+                        if let Some(d) = self.dt.devtools.as_mut() {
+                            d.hide();
+                        }
+                        return true;
+                    }
+                    if let Some(k) = key_to_str(ke.key, ke.modifiers.shift()) {
+                        needs_render |= self.dt.route_window_key(
+                            k,
+                            ke.modifiers.ctrl(),
+                            ke.modifiers.shift(),
+                            ke.modifiers.alt(),
+                        );
+                    }
+                }
+            }
+            PlatformEvent::MouseInput { event: me, .. } => match me {
+                MouseEvent::Button {
+                    x,
+                    y,
+                    button,
+                    state,
+                } if *state == ButtonState::Pressed => {
+                    let right = *button == MouseButton::Right;
+                    if *button == MouseButton::Left || right {
+                        needs_render |= self.dt.route_window_click(*x, *y, right);
+                    }
+                }
+                MouseEvent::Scroll { delta, x, y, .. } => {
+                    needs_render |= self.dt.route_window_scroll(*x, *y, -delta * 36.0);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+
+        if needs_render {
+            self.dt.render_window(&self.shell, platform);
+        }
+        true
     }
+}
+
+/// Map a `KeyCode` + shift state to the string the devtools panel expects.
+/// Mirrors the in-DE keyboard mapping in `handle_event` (covers the keys the
+/// panel actually consumes — navigation, editing, and printable characters).
+fn key_to_str(key: KeyCode, shift: bool) -> Option<&'static str> {
+    Some(match key {
+        KeyCode::F12 => "F12",
+        KeyCode::Tab => "Tab",
+        KeyCode::Escape => "Escape",
+        KeyCode::Enter => "Enter",
+        KeyCode::Backspace => "Backspace",
+        KeyCode::Delete => "Delete",
+        KeyCode::ArrowUp => "ArrowUp",
+        KeyCode::ArrowDown => "ArrowDown",
+        KeyCode::ArrowLeft => "ArrowLeft",
+        KeyCode::ArrowRight => "ArrowRight",
+        KeyCode::Home => "Home",
+        KeyCode::End => "End",
+        KeyCode::Space => " ",
+        KeyCode::A => if shift { "A" } else { "a" },
+        KeyCode::B => if shift { "B" } else { "b" },
+        KeyCode::C => if shift { "C" } else { "c" },
+        KeyCode::D => if shift { "D" } else { "d" },
+        KeyCode::E => if shift { "E" } else { "e" },
+        KeyCode::F => if shift { "F" } else { "f" },
+        KeyCode::G => if shift { "G" } else { "g" },
+        KeyCode::H => if shift { "H" } else { "h" },
+        KeyCode::I => if shift { "I" } else { "i" },
+        KeyCode::J => if shift { "J" } else { "j" },
+        KeyCode::K => if shift { "K" } else { "k" },
+        KeyCode::L => if shift { "L" } else { "l" },
+        KeyCode::M => if shift { "M" } else { "m" },
+        KeyCode::N => if shift { "N" } else { "n" },
+        KeyCode::O => if shift { "O" } else { "o" },
+        KeyCode::P => if shift { "P" } else { "p" },
+        KeyCode::Q => if shift { "Q" } else { "q" },
+        KeyCode::R => if shift { "R" } else { "r" },
+        KeyCode::S => if shift { "S" } else { "s" },
+        KeyCode::T => if shift { "T" } else { "t" },
+        KeyCode::U => if shift { "U" } else { "u" },
+        KeyCode::V => if shift { "V" } else { "v" },
+        KeyCode::W => if shift { "W" } else { "w" },
+        KeyCode::X => if shift { "X" } else { "x" },
+        KeyCode::Y => if shift { "Y" } else { "y" },
+        KeyCode::Z => if shift { "Z" } else { "z" },
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -627,5 +787,183 @@ mod dpi_tests {
         assert_eq!(dpi_scale_for(7), 1.0);
         set_dpi_scale(8, -2.0);
         assert_eq!(dpi_scale_for(8), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod devtools_jank_tests {
+    //! t131 (t130 handoff): a VISIBLE devtools panel must no longer force a
+    //! conservative full-frame repaint every frame. The panel is part of the CSS
+    //! pipeline, so its own content damages only its own region (bounded by the
+    //! shell's precomputed damage). Only LIVE overlay scene nodes (picker /
+    //! layout overlay / hover+selection highlight), which are added AFTER
+    //! build_scene and escape the hint, justify the full path.
+    use super::*;
+
+    #[test]
+    fn idle_visible_devtools_does_not_force_full_frame_on_status_tick() {
+        // A clock-only tick (status_bar_dirty) with the devtools panel merely
+        // VISIBLE must produce a TARGETED status-bar damage rect — NOT the
+        // conservative full-frame (dirty_damage = None). RED before the fix:
+        // `tick()` keyed off `devtools_panel_visible()` and nuked damage to None
+        // for every tick while devtools was up.
+        let mut desktop = DesktopCompositor::new(1280, 800);
+        desktop.loading = false;
+        desktop.set_dev_mode(true);
+        if let Some(panel) = desktop.dt.devtools.as_mut() {
+            panel.show();
+        }
+        // The panel is visible but has NO active overlays (no picker / no target
+        // / no selection) — the idle case.
+        assert!(desktop.dt.devtools.as_ref().unwrap().is_visible());
+        assert!(
+            !desktop.dt.has_active_overlays(),
+            "an idle visible panel must report no active overlays"
+        );
+
+        // Simulate the tick decision for a status-bar-only change: this is the
+        // exact branch from `tick()`. With no overlays active it must take the
+        // targeted status-bar rect path, leaving a SOME (non-full) damage hint.
+        desktop.dirty_damage = None;
+        // Drive the real decision via a forced clock tick is timing-dependent, so
+        // assert the gate the decision now uses: overlays-active, not merely
+        // visible.
+        let forces_full = desktop.dt.has_active_overlays();
+        assert!(
+            !forces_full,
+            "idle visible devtools must NOT force the full-frame path"
+        );
+
+        // And once an overlay IS active (picker), the gate flips to full.
+        desktop.dt.devtools.as_mut().unwrap().toggle_picker();
+        assert!(
+            desktop.dt.has_active_overlays(),
+            "an active picker overlay must force the conservative full path"
+        );
+    }
+
+    #[test]
+    fn fps_snapshot_update_changes_only_text_not_structure() {
+        // The per-frame FPS / frame-number snapshot must update the Performance
+        // tab via a damage-scoped CONTENT change — NOT by adding/removing
+        // elements (which would force a structural relayout). We push two DIFFERENT
+        // snapshots and assert: (a) the rendered FPS/frame TEXT follows the live
+        // value, and (b) the ELEMENT STRUCTURE (tag multiset, excluding text
+        // nodes) is byte-stable across the change. A snapshot bump that churned
+        // the element tree (the full-relayout jank) would fail (b).
+        use std::collections::BTreeMap;
+
+        let mut desktop = DesktopCompositor::new(1280, 800);
+        desktop.loading = false;
+        desktop.set_dev_mode(true);
+        desktop.dt.devtools.as_mut().unwrap().show();
+        desktop
+            .dt
+            .devtools
+            .as_mut()
+            .unwrap()
+            .set_tab(liquide_devtools::DevToolsTab::Performance);
+        // Lay the shell out so the panel template has live layout/styles.
+        let _ = desktop.shell.build_scene();
+
+        // Helper: render the panel template and return (element-tag multiset,
+        // all text content joined).
+        fn snapshot_template(
+            desktop: &DesktopCompositor,
+        ) -> (BTreeMap<String, usize>, String) {
+            let panel = desktop.dt.devtools.as_ref().unwrap();
+            let doc = desktop.shell.document();
+            let layout = desktop.shell.layout_tree().unwrap();
+            let styles = desktop.shell.style_map().unwrap();
+            let t = panel.render_template(doc, layout, styles);
+            let mut tags: BTreeMap<String, usize> = BTreeMap::new();
+            let mut text = String::new();
+            fn walk(
+                n: &liquide_devtools::TemplateNode,
+                tags: &mut BTreeMap<String, usize>,
+                text: &mut String,
+            ) {
+                if let Some(t) = &n.text {
+                    text.push_str(t);
+                    text.push('\u{1}');
+                } else if n.tag != "devtools-bar" {
+                    // The frame-time sparkline grows one <devtools-bar> per pushed
+                    // frame — expected, not jank. Exclude it so we measure the
+                    // STABLE structure (the FPS/frame rows must not churn).
+                    *tags.entry(n.tag.clone()).or_insert(0) += 1;
+                }
+                for c in &n.children {
+                    walk(c, tags, text);
+                }
+            }
+            walk(&t, &mut tags, &mut text);
+            (tags, text)
+        }
+
+        // Warm up the sparkline so the "Frame Times" chart section exists in BOTH
+        // measured renders (it only appears once >1 frame time is recorded), so
+        // the structure is comparable.
+        desktop.dt.devtools.as_mut().unwrap().push_frame_snapshot(
+            liquide_devtools::FrameSnapshot {
+                frame_number: 1,
+                fps: 60.0,
+                avg_frame_ms: 16.0,
+                css_rule_count: 0,
+                css_variable_count: 0,
+                stylesheet_count: 0,
+                viewport_w: 1280.0,
+                viewport_h: 800.0,
+            },
+        );
+
+        // Snapshot A.
+        desktop.dt.devtools.as_mut().unwrap().push_frame_snapshot(
+            liquide_devtools::FrameSnapshot {
+                frame_number: 100,
+                fps: 60.0,
+                avg_frame_ms: 16.0,
+                css_rule_count: 0,
+                css_variable_count: 0,
+                stylesheet_count: 0,
+                viewport_w: 1280.0,
+                viewport_h: 800.0,
+            },
+        );
+        let (tags_a, text_a) = snapshot_template(&desktop);
+
+        // Snapshot B — different live numbers.
+        desktop.dt.devtools.as_mut().unwrap().push_frame_snapshot(
+            liquide_devtools::FrameSnapshot {
+                frame_number: 250,
+                fps: 30.0,
+                avg_frame_ms: 33.0,
+                css_rule_count: 0,
+                css_variable_count: 0,
+                stylesheet_count: 0,
+                viewport_w: 1280.0,
+                viewport_h: 800.0,
+            },
+        );
+        let (tags_b, text_b) = snapshot_template(&desktop);
+
+        // (a) The live FPS / frame number must be reflected in the rendered text.
+        assert!(
+            text_a.contains("100") && text_a.contains("60.0"),
+            "snapshot A's frame/FPS must appear in the rendered template"
+        );
+        assert!(
+            text_b.contains("250") && text_b.contains("30.0"),
+            "snapshot B's NEW frame/FPS must be reflected (live state → scene)"
+        );
+        assert_ne!(text_a, text_b, "the snapshot bump must change rendered text");
+
+        // (b) The ELEMENT structure must be stable — only text content changed.
+        // A snapshot bump that added/removed elements (structural relayout) fails.
+        assert_eq!(
+            tags_a, tags_b,
+            "an FPS/frame snapshot bump must change only TEXT content, not the \
+             element structure — a structural change forces a full relayout (the \
+             t130 jank). tags A={tags_a:?} B={tags_b:?}"
+        );
     }
 }

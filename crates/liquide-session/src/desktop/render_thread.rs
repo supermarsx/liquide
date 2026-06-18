@@ -1698,14 +1698,27 @@ impl DesktopCompositor {
         // We DISCARD the hint (→ conservative diff path) when:
         //  * a window is being dragged — the worker skeletonises the scene and
         //    the chrome-only hint would not cover the moving window; or
-        //  * the devtools panel is visible — `overlay_scene` (below) injects
+        //  * the devtools panel has ACTIVE OVERLAYS — `overlay_scene` (below)
+        //    injects element-picker / layout-overlay / hover+selection highlight
         //    nodes AFTER `build_scene` that the chrome hint cannot bound, so the
         //    hint would no longer be a true frame superset.
+        //
+        // NOTE (t131 jank fix): merely having the devtools panel VISIBLE no
+        // longer disables the fast path. The panel itself is part of the CSS
+        // pipeline (mounted via `sync_devtools_template` → `build_scene`), so the
+        // shell's precomputed damage already bounds it — its changed content
+        // damages only its own region like any other chrome. Only the direct
+        // overlay scene nodes (added after build_scene) escape the hint, and
+        // those exist solely while a picker / overlay / hover-or-selection
+        // highlight is live. An idle devtools frame (e.g. the Performance tab's
+        // FPS number ticking, with no overlay) therefore keeps the precomputed
+        // damage fast path instead of forcing a conservative full repaint.
         // Any conversion that can't be proven a superset also collapses to
         // `None` (see `precomputed_damage_to_tiles`), keeping correctness first.
         let precomputed = self.shell.take_precomputed_damage();
         let dragged_window = self.shell.dragged_window();
-        let authoritative_damage = if dragged_window.is_some() || self.devtools_panel_visible() {
+        let devtools_overlays_active = self.dt.has_active_overlays();
+        let authoritative_damage = if dragged_window.is_some() || devtools_overlays_active {
             None
         } else {
             precomputed.and_then(|rects| {

@@ -79,6 +79,9 @@ pub struct DevToolsPanel {
     pub(crate) scroll_offset: f32,
     /// Whether the panel is requesting detach into a separate window.
     pub(crate) detach_requested: bool,
+    /// Whether the panel is requesting that an attached separate devtools window
+    /// be closed / re-docked into the in-DE overlay.
+    pub(crate) close_window_requested: bool,
     /// Tab bar scroll offset (horizontal, for when many tabs exceed width).
     #[allow(dead_code)]
     pub(crate) tab_scroll: f32,
@@ -125,6 +128,7 @@ impl DevToolsPanel {
             screen_height: 1080.0,
             scroll_offset: 0.0,
             detach_requested: false,
+            close_window_requested: false,
             tab_scroll: 0.0,
             console_focused: false,
             caret_blink_epoch: Instant::now(),
@@ -162,6 +166,40 @@ impl DevToolsPanel {
     /// Whether the panel is visible.
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+
+    /// Whether [`build_scene`](Self::build_scene) would emit any direct overlay
+    /// scene nodes (element-picker highlight, layout overlay, or a hover/selected
+    /// element highlight) on TOP of the page viewport.
+    ///
+    /// These overlays are added to the scene graph AFTER `build_scene`, so the
+    /// shell's precomputed-damage fast-path hint cannot bound them. The render
+    /// loop uses this to decide whether the fast path is still a true superset:
+    /// when the devtools panel is merely visible (its panel is part of the CSS
+    /// pipeline and IS bounded by precomputed damage) with NO active overlays,
+    /// the fast path stays valid; when an overlay is live, the loop falls back to
+    /// the conservative full diff. This is what keeps an idle devtools frame from
+    /// forcing a full-frame repaint every frame (t130 jank).
+    pub fn has_active_overlays(&self) -> bool {
+        // Layout box overlay only paints when ENABLED *and* it has a target node
+        // (it emits nothing for a null target — see `LayoutOverlay::build_overlay`).
+        if self.layout_overlay.is_enabled() && self.layout_overlay.target().is_some() {
+            return true;
+        }
+        // Element picker highlight — emitted whenever the picker is active.
+        if self.element_picker.is_active() {
+            return true;
+        }
+        // Hover / selected element highlights are only emitted while visible.
+        if self.visible {
+            if self.active_tab == DevToolsTab::Elements && self.inspector.hovered().is_some() {
+                return true;
+            }
+            if self.selected_node.is_some() {
+                return true;
+            }
+        }
+        false
     }
 
     // ─── Pipeline Stats ───────────────────────────────────────
@@ -299,9 +337,15 @@ impl DevToolsPanel {
                 Rect::new(self.screen_width - size, 0.0, size, self.screen_height)
             }
             DockPosition::Left => Rect::new(0.0, 0.0, size, self.screen_height),
-            DockPosition::Float | DockPosition::Detached => {
-                // When detached, use same layout as Float but the desktop
-                // compositor will actually render in a separate window.
+            DockPosition::Detached => {
+                // When detached the panel fills its OWN native window, whose
+                // client size is mirrored into `screen_width`/`screen_height` by
+                // the host. Bounds == the whole window so panel hit-testing /
+                // scrolling cover the entire surface.
+                Rect::new(0.0, 0.0, self.screen_width, self.screen_height)
+            }
+            DockPosition::Float => {
+                // Floating overlay inside the DE: a centered box.
                 let w = (self.screen_width * 0.6).min(800.0);
                 let h = (self.screen_height * 0.5).min(500.0);
                 Rect::new(
@@ -346,14 +390,56 @@ impl DevToolsPanel {
         self.detach_requested = false;
     }
 
+    /// Whether the panel is requesting a previously-spawned separate devtools
+    /// window be torn down (and the panel returned to the in-DE overlay).
+    pub fn close_window_requested(&self) -> bool {
+        self.close_window_requested
+    }
+
+    /// Clear the close-window request after the host tears the window down.
+    pub fn clear_close_window_request(&mut self) {
+        self.close_window_requested = false;
+    }
+
+    /// Request that any open separate devtools window be torn down (used when
+    /// the panel is hidden while a window is open but the panel was not in the
+    /// Detached dock position).
+    pub fn request_close_window(&mut self) {
+        self.close_window_requested = true;
+    }
+
+    /// Whether the panel is currently detached into a separate window.
+    pub fn is_detached(&self) -> bool {
+        self.config.dock_position == DockPosition::Detached
+    }
+
     /// Toggle detached state.
+    ///
+    /// Going INTO detached state raises [`detach_requested`](Self::detach_requested)
+    /// so the host spawns a separate native window. Coming OUT of it raises
+    /// [`close_window_requested`](Self::close_window_requested) so the host tears
+    /// that window down and the panel returns to the in-DE bottom dock.
     pub fn toggle_detach(&mut self) {
         if self.config.dock_position == DockPosition::Detached {
             self.config.dock_position = DockPosition::Bottom;
+            self.close_window_requested = true;
+            self.detach_requested = false;
         } else {
             self.config.dock_position = DockPosition::Detached;
             self.detach_requested = true;
+            self.close_window_requested = false;
         }
+    }
+
+    /// Mark that the separate devtools window was closed by the OS / its own F12
+    /// or close button — re-dock the panel into the in-DE overlay without
+    /// re-raising a teardown request (the window is already gone).
+    pub fn on_window_closed(&mut self) {
+        if self.config.dock_position == DockPosition::Detached {
+            self.config.dock_position = DockPosition::Bottom;
+        }
+        self.detach_requested = false;
+        self.close_window_requested = false;
     }
 
     /// Whether the console input is focused.

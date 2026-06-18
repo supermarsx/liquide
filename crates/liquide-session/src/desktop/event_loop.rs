@@ -219,6 +219,14 @@ impl DesktopCompositor {
             }
             return;
         }
+        // SEPARATE DEVTOOLS WINDOW routing (dev-mode only): if this event
+        // targets the devtools window's `handle`, it drives the devtools panel —
+        // NOT the main DE. Consumed here so a click/key/scroll in the devtools
+        // window can never reach the desktop shell. Falls through for the main
+        // window (or any other handle).
+        if self.try_handle_devtools_window_event(platform, &event) {
+            return;
+        }
         // Snapshot the interactive-overlay footprint BEFORE handling the event
         // so a hover that moves/closes a menu can union the OLD and NEW
         // footprints (the disappearing panel's pixels must be in the damage
@@ -512,6 +520,20 @@ impl DesktopCompositor {
             let _ = self.consume_session_request();
             let _ = self.consume_screenshot_request();
 
+            // SEPARATE DEVTOOLS WINDOW (dev-mode only). In order:
+            //  1. follow the panel's visibility (F12 / Ctrl+Shift+I toggled it)
+            //     into a detach / close request,
+            //  2. reconcile that request by creating / destroying the native
+            //     window (never leaking it),
+            //  3. present a fresh devtools frame from the LIVE shell state.
+            // All three are no-ops when dev mode is off or no window is open, so
+            // the non-dev-mode in-DE overlay path is unaffected.
+            self.dt.dev_mode_follow_visibility();
+            self.dt.sync_window(platform);
+            if self.dt.has_window() {
+                self.dt.render_window(&self.shell, platform);
+            }
+
             // Honour a pending quit ONLY after flushing the final frame
             // (t60-runtime #1). A Quit/close event sets `quit_requested` rather
             // than stopping the loop outright, so any in-flight render job is
@@ -660,6 +682,10 @@ impl DesktopCompositor {
 
         // Shut down per-window render threads.
         self.window_render.shutdown_all();
+
+        // Tear down the separate devtools window (dev-mode only) so it is never
+        // leaked on exit.
+        self.dt.close_window(platform);
 
         // Clean up the window on exit.
         if let Some(handle) = self.window_handle.take() {
