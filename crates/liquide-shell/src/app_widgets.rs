@@ -32,7 +32,10 @@
 //!    mapped to the plain-data [`liquide_interop::AppWidgetAction`] triple the
 //!    app's `apply_action` consumes, using the widget's variant to pick the verb.
 
-use liquide_interop::{AppWidget, AppWidgetAction, AppWidgetModel, ButtonKind, SelectionMode};
+use liquide_interop::{
+    AppWidget, AppWidgetAction, AppWidgetModel, ButtonKind, ScriptLang, SelectionMode,
+    WasmModuleSource,
+};
 use liquide_widgets::{
     Breadcrumb, Button, Chip, Dropdown, Label, Link, List, Pagination, Progress, RadioGroup,
     Segmented, Slider, Table, TextArea, TextInput, Toggle, Tree, WidgetBehavior,
@@ -41,6 +44,208 @@ use liquide_widgets::{
 use liquide_dom::{Document, NodeId};
 use liquide_widgets::host::WidgetHost;
 use liquide_widgets::tree::TreeNode as WTreeNode;
+
+// ════════════════════════════════════════════════════════════════════════════
+// Embedded-runtime nodes (t152): WasmApp / ScriptApp.
+//
+// A `WasmApp { module }` / `ScriptApp { source, lang }` node is plain data that
+// names an untrusted WASM / TS-JS module. At mount time we instantiate the
+// corresponding host (the REAL sandboxed runtime under the `wasm-apps` /
+// `script-apps` feature, the crate's `Null*` stub otherwise), call `render()` to
+// obtain the inner [`AppWidgetModel`] the module emitted, and mount THAT through
+// the normal widget pipeline (`mount_model_into`). So a WASM/TS module's UI
+// renders through exactly the same CSS widget path as a native app's model.
+//
+// Under the default build (Null hosts) `render()` returns `Unavailable`, so the
+// mapper substitutes a graceful "runtime unavailable" placeholder model instead
+// of crashing — the wiring is identical, only the resolved model differs.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// The class added to an embedded-runtime placeholder wrapper so a theme can
+/// style the "runtime unavailable" notice distinctly.
+pub(crate) const RUNTIME_PLACEHOLDER_CLASS: &str = "app-runtime-unavailable";
+
+/// Build a synthetic placeholder [`AppWidgetModel`] shown when an embedded
+/// runtime cannot produce a UI (the feature is off → a Null host, or the real
+/// host errored: bad module, trap, decode failure). It is a normal model (a
+/// `GroupBox` + a `Label`), so it renders through the SAME widget pipeline as
+/// any other content — never a panic, never an empty hole.
+#[must_use]
+pub(crate) fn runtime_placeholder_model(runtime: &str, detail: &str) -> AppWidgetModel {
+    let text = if detail.is_empty() {
+        format!("{runtime} runtime unavailable")
+    } else {
+        format!("{runtime} runtime unavailable: {detail}")
+    };
+    AppWidgetModel::with_root(vec![AppWidget::GroupBox {
+        label: format!("{runtime} app"),
+        children: vec![AppWidget::Label { text }],
+    }])
+}
+
+/// Whether `model` is the synthetic "runtime unavailable" placeholder produced
+/// by [`runtime_placeholder_model`] (a single `GroupBox` containing one `Label`
+/// whose text carries the placeholder marker). Used to tag the mount wrapper so
+/// a theme can style the notice; a real emitted model is never mistaken for one.
+#[must_use]
+pub(crate) fn is_placeholder_model(model: &AppWidgetModel) -> bool {
+    matches!(
+        model.root.as_slice(),
+        [AppWidget::GroupBox { children, .. }]
+            if matches!(
+                children.as_slice(),
+                [AppWidget::Label { text }] if text.contains("runtime unavailable")
+            )
+    )
+}
+
+/// Resolve a [`WasmModuleSource`] to module bytes, reading a `Path` from disk.
+/// A missing/unreadable path is surfaced as the error string so the placeholder
+/// can explain it (and so the Null-host build never needs the bytes at all).
+#[cfg(feature = "wasm-apps")]
+fn wasm_module_bytes(module: &WasmModuleSource) -> std::result::Result<Vec<u8>, String> {
+    match module {
+        WasmModuleSource::Bytes { bytes } => Ok(bytes.clone()),
+        WasmModuleSource::Path { path } => {
+            std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))
+        }
+    }
+}
+
+/// Run an embedded WASM module's `render()` and return the inner model it
+/// emitted, or a placeholder model when the runtime is unavailable / errored.
+///
+/// Under the default build (no `wasm-apps` feature) this uses
+/// [`liquide_wasm_host::NullWasmHost`], whose `render()` reports `Unavailable`,
+/// so the placeholder is returned. With the feature on it loads the bytes into
+/// the real sandboxed [`liquide_wasm_host::WasmHost`].
+#[must_use]
+pub(crate) fn render_wasm_app(module: &WasmModuleSource) -> AppWidgetModel {
+    use liquide_wasm_host::WasmHostApi;
+
+    #[cfg(feature = "wasm-apps")]
+    let result: liquide_wasm_host::Result<AppWidgetModel> = (|| {
+        let bytes = wasm_module_bytes(module)
+            .map_err(liquide_wasm_host::WasmHostError::Load)?;
+        let mut host = liquide_wasm_host::WasmHost::from_bytes_default(&bytes)?;
+        host.render()
+    })();
+
+    #[cfg(not(feature = "wasm-apps"))]
+    let result: liquide_wasm_host::Result<AppWidgetModel> = {
+        // The Null host ignores the bytes and reports Unavailable; pass an empty
+        // slice so we never read a file in the default build.
+        let _ = module;
+        let mut host = liquide_wasm_host::NullWasmHost::from_bytes_default(&[])
+            .expect("null wasm host constructs");
+        host.render()
+    };
+
+    result.unwrap_or_else(|e| runtime_placeholder_model("WASM", &e.to_string()))
+}
+
+/// Run an embedded TS/JS module's `render()` and return the inner model it
+/// emitted, or a placeholder model when the runtime is unavailable / errored.
+///
+/// Under the default build (no `script-apps` feature) this uses
+/// [`liquide_script_host::NullScriptHost`] (reports `Unavailable` → placeholder);
+/// with the feature on it transpiles + runs the source in the real boa+swc host.
+/// `lang` is recorded for the future JS-vs-TS authoring distinction; both flow
+/// through the host's transpile step (a no-op for type-free JS).
+#[must_use]
+pub(crate) fn render_script_app(source: &str, lang: ScriptLang) -> AppWidgetModel {
+    use liquide_script_host::ScriptHostApi;
+    let _ = lang;
+
+    #[cfg(feature = "script-apps")]
+    let result: liquide_script_host::Result<AppWidgetModel> = (|| {
+        let mut host = liquide_script_host::ScriptHost::from_source_default(source)?;
+        host.render()
+    })();
+
+    #[cfg(not(feature = "script-apps"))]
+    let result: liquide_script_host::Result<AppWidgetModel> = {
+        let mut host = liquide_script_host::NullScriptHost::from_source_default(source)
+            .expect("null script host constructs");
+        host.render()
+    };
+
+    result.unwrap_or_else(|e| runtime_placeholder_model("Script", &e.to_string()))
+}
+
+/// Route an [`AppWidgetAction`] that targets a widget INSIDE an embedded
+/// runtime's emitted UI through that runtime's `apply_action()`, then re-render,
+/// returning the fresh inner model (or a placeholder if the runtime is
+/// unavailable / errored). This is the embedded-node analogue of the native
+/// app's `apply_action → re-render` loop: the action flows into the module that
+/// owns the sub-UI, and the module's new `render()` output is what re-mounts.
+///
+/// Note on statefulness: a freshly-instantiated host is used (the WASM host is
+/// stateless across calls by design — every call uses a fresh Store — so this is
+/// exact for it). A future dom_sync.rs follow-up should persist a per-node host
+/// across frames so a *stateful* script app retains in-context mutations between
+/// actions; the seam here keeps the render/apply contract in one place.
+///
+/// (Currently consumed only by tests — the live per-node action drive lives in
+/// `shell/dom_sync.rs::drive_app_widget_hosts`, which is the documented
+/// out-of-lock follow-up that persists a per-node host across frames; this seam
+/// is what that follow-up calls. `allow(dead_code)` keeps the default lib build
+/// warning-clean until then.)
+#[allow(dead_code)]
+#[must_use]
+pub(crate) fn apply_action_to_wasm_app(
+    module: &WasmModuleSource,
+    action: &AppWidgetAction,
+) -> AppWidgetModel {
+    let _ = action;
+
+    #[cfg(feature = "wasm-apps")]
+    {
+        use liquide_wasm_host::WasmHostApi;
+        let attempt = (|| -> liquide_wasm_host::Result<AppWidgetModel> {
+            let bytes =
+                wasm_module_bytes(module).map_err(liquide_wasm_host::WasmHostError::Load)?;
+            let mut host = liquide_wasm_host::WasmHost::from_bytes_default(&bytes)?;
+            host.apply_action(action)?;
+            host.render()
+        })();
+        attempt.unwrap_or_else(|e| runtime_placeholder_model("WASM", &e.to_string()))
+    }
+
+    #[cfg(not(feature = "wasm-apps"))]
+    {
+        // Null host: nothing to apply; re-render yields the placeholder.
+        render_wasm_app(module)
+    }
+}
+
+/// The [`ScriptApp`](AppWidget::ScriptApp) analogue of
+/// [`apply_action_to_wasm_app`] (see its note on the dom_sync.rs follow-up).
+#[allow(dead_code)]
+#[must_use]
+pub(crate) fn apply_action_to_script_app(
+    source: &str,
+    lang: ScriptLang,
+    action: &AppWidgetAction,
+) -> AppWidgetModel {
+    let _ = (lang, action);
+
+    #[cfg(feature = "script-apps")]
+    {
+        use liquide_script_host::ScriptHostApi;
+        let attempt = (|| -> liquide_script_host::Result<AppWidgetModel> {
+            let mut host = liquide_script_host::ScriptHost::from_source_default(source)?;
+            host.apply_action(action)?;
+            host.render()
+        })();
+        attempt.unwrap_or_else(|e| runtime_placeholder_model("Script", &e.to_string()))
+    }
+
+    #[cfg(not(feature = "script-apps"))]
+    {
+        render_script_app(source, lang)
+    }
+}
 
 /// Per-window prefix for namespacing a widget's stable key into a globally-unique
 /// [`liquide_widgets::WidgetId`]: `aw-<window_id>-<key>`.
@@ -222,6 +427,10 @@ pub(crate) fn behavior_for(widget: &AppWidget) -> Option<Box<dyn WidgetBehavior>
         | AppWidget::Tabs { .. }
         | AppWidget::Toolbar { .. }
         | AppWidget::Accordion { .. } => return None,
+
+        // ── embedded runtimes: rendered into a sub-model + mounted structurally
+        //    by `mount_widget`, never as a behavior ─────────────────────────
+        AppWidget::WasmApp { .. } | AppWidget::ScriptApp { .. } => return None,
     };
     Some(b)
 }
@@ -335,6 +544,21 @@ fn structure_into(widget: &AppWidget, out: &mut String) {
         AppWidget::Pagination { key, pages, .. } => {
             out.push_str(&format!("Pg[{key}:{pages}];"))
         }
+        // Embedded runtimes: a change to the module/source is a STRUCTURAL change
+        // (the emitted sub-model is re-rendered + remounted), so fold the module
+        // identity into the signature. We do NOT recurse the (host-rendered)
+        // inner model here — it does not exist until mount time; the remount on a
+        // source change re-runs render() and rebuilds the subtree.
+        AppWidget::WasmApp { module } => {
+            let id = match module {
+                WasmModuleSource::Path { path } => format!("p:{path}"),
+                WasmModuleSource::Bytes { bytes } => format!("b:{}", bytes.len()),
+            };
+            out.push_str(&format!("Wa[{id}];"));
+        }
+        AppWidget::ScriptApp { source, lang } => {
+            out.push_str(&format!("Sa[{lang:?}:{}];", source.len()));
+        }
     }
 }
 
@@ -394,6 +618,31 @@ fn mount_widget(
     dispatcher: &mut liquide_hit_test::EventDispatcher,
     mounted: &mut Vec<String>,
 ) {
+    // Embedded-runtime node: instantiate the host, render the inner model, and
+    // mount THAT inside a wrapper so the emitted UI flows through the normal
+    // widget pipeline. Under the default build the Null host yields a graceful
+    // placeholder model (see `render_wasm_app` / `render_script_app`).
+    if let AppWidget::WasmApp { .. } | AppWidget::ScriptApp { .. } = widget {
+        let inner = match widget {
+            AppWidget::WasmApp { module } => render_wasm_app(module),
+            AppWidget::ScriptApp { source, lang } => render_script_app(source, *lang),
+            _ => unreachable!("embedded-runtime guard"),
+        };
+        // Wrap so the emitted UI is grouped (and a placeholder is themable via
+        // `RUNTIME_PLACEHOLDER_CLASS`). The wrapper is a plain DOM element; the
+        // inner model's widgets mount under it as their own keyed host entries,
+        // so their actions still route through the standard apply_action loop.
+        let wrapper = doc.create_element("lq-app-embed");
+        if is_placeholder_model(&inner) {
+            doc.set_attribute(wrapper, "class", RUNTIME_PLACEHOLDER_CLASS);
+        }
+        doc.append_child(parent, wrapper);
+        for child in &inner.root {
+            mount_widget(child, window_id, wrapper, host, doc, dispatcher, mounted);
+        }
+        return;
+    }
+
     if is_container(widget) {
         // Create a plain DOM wrapper element (styled by widgets.css) and mount
         // the interactive children inside it, so nesting is preserved while each
@@ -769,5 +1018,253 @@ mod tests {
             },
         );
         assert_eq!(a, AppWidgetAction::new("wifi", "toggle", "true"));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Embedded-runtime wiring (t152): WasmApp / ScriptApp.
+    //
+    // These run under the DEFAULT build (no `wasm-apps` / `script-apps`
+    // feature), so the host crates resolve to their `Null*` stubs. The contract
+    // under test: a WasmApp / ScriptApp node is HANDLED (never panics, never an
+    // empty hole) and yields the graceful "runtime unavailable" placeholder —
+    // and that placeholder MOUNTS through the normal widget pipeline. The
+    // feature-on path (a real host's emitted model mounting) is exercised by the
+    // host crates' own sandbox tests (t139/t140), which compile a real module
+    // and assert `render()` returns a deserialised AppWidgetModel; this crate
+    // can't enable those heavy features in a default `cargo test` run, so it
+    // proves the wiring up to the host boundary and the placeholder fallback.
+    // ════════════════════════════════════════════════════════════════════════
+
+    use liquide_dom::{Document, NodeId};
+    use liquide_hit_test::EventDispatcher;
+    use liquide_interop::{ScriptLang, WasmModuleSource};
+    use liquide_widgets::host::WidgetHost;
+
+    /// Collect every text node's content under `node` (depth-first), joined by
+    /// spaces, so a test can assert the placeholder message reached the DOM.
+    fn collect_text(doc: &Document, node: NodeId) -> String {
+        let mut out = String::new();
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if let Some(node_ref) = doc.get(n) {
+                if let Some(t) = node_ref.text_content() {
+                    if !t.is_empty() {
+                        out.push_str(t);
+                        out.push(' ');
+                    }
+                }
+            }
+            // Push children (reverse so traversal is left-to-right; order is not
+            // asserted, only membership).
+            for &c in doc.children(n) {
+                stack.push(c);
+            }
+        }
+        out
+    }
+
+    /// Whether any element at/under `node` has tag `tag`.
+    fn has_tag(doc: &Document, node: NodeId, tag: &str) -> bool {
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if doc.tag_name(n).as_deref() == Some(tag) {
+                return true;
+            }
+            for &c in doc.children(n) {
+                stack.push(c);
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn wasm_app_default_build_renders_the_unavailable_placeholder() {
+        // The Null wasm host reports Unavailable, so render_wasm_app must return
+        // the placeholder model (NOT panic, NOT an empty model).
+        let model = render_wasm_app(&WasmModuleSource::Path {
+            path: "does/not/matter.wasm".into(),
+        });
+        assert!(
+            is_placeholder_model(&model),
+            "default (Null) build must yield the placeholder, got {model:?}"
+        );
+        // The message names the runtime and the unavailable reason.
+        let text = match &model.root[..] {
+            [AppWidget::GroupBox { children, .. }] => match &children[..] {
+                [AppWidget::Label { text }] => text.clone(),
+                other => panic!("expected one Label, got {other:?}"),
+            },
+            other => panic!("expected one GroupBox, got {other:?}"),
+        };
+        assert!(text.contains("WASM"), "message: {text}");
+        assert!(text.contains("runtime unavailable"), "message: {text}");
+    }
+
+    #[test]
+    fn script_app_default_build_renders_the_unavailable_placeholder() {
+        let model = render_script_app(
+            "export function render(){ return { root: [] }; }",
+            ScriptLang::TypeScript,
+        );
+        assert!(
+            is_placeholder_model(&model),
+            "default (Null) build must yield the placeholder, got {model:?}"
+        );
+        let text = collect_placeholder_text(&model);
+        assert!(text.contains("Script"), "message: {text}");
+        assert!(text.contains("runtime unavailable"), "message: {text}");
+    }
+
+    /// Helper: pull the placeholder Label text out of a placeholder model.
+    fn collect_placeholder_text(model: &AppWidgetModel) -> String {
+        match &model.root[..] {
+            [AppWidget::GroupBox { children, .. }] => match &children[..] {
+                [AppWidget::Label { text }] => text.clone(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        }
+    }
+
+    #[test]
+    fn mounting_a_wasm_app_node_emits_the_placeholder_into_the_dom() {
+        // The whole mapper path: a model containing a WasmApp node mounts without
+        // panicking and the placeholder notice reaches the DOM under the host
+        // node, tagged so a theme can style it.
+        let model = AppWidgetModel::with_root(vec![AppWidget::WasmApp {
+            module: WasmModuleSource::Bytes {
+                bytes: vec![0, 1, 2, 3],
+            },
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let mounted = mount_model_into(&model, 7, root, &mut host, &mut doc, &mut dispatcher);
+
+        // The embed wrapper element exists and carries the placeholder class.
+        assert!(
+            has_tag(&doc, root, "lq-app-embed"),
+            "embed wrapper must be mounted"
+        );
+        // The placeholder Label mounted as its own keyed host entry (so it is a
+        // real widget in the pipeline, not a dangling element).
+        assert!(!mounted.is_empty(), "placeholder Label must mount as a widget");
+        // The unavailable message reached the DOM text.
+        let text = collect_text(&doc, root);
+        assert!(
+            text.contains("runtime unavailable"),
+            "placeholder text must reach the DOM, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn mounting_a_script_app_node_emits_the_placeholder_into_the_dom() {
+        let model = AppWidgetModel::with_root(vec![AppWidget::ScriptApp {
+            source: "export function render(){return{root:[]}}".into(),
+            lang: ScriptLang::JavaScript,
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let mounted = mount_model_into(&model, 1, root, &mut host, &mut doc, &mut dispatcher);
+
+        assert!(has_tag(&doc, root, "lq-app-embed"));
+        assert!(!mounted.is_empty());
+        let text = collect_text(&doc, root);
+        assert!(
+            text.contains("runtime unavailable"),
+            "placeholder text must reach the DOM, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn embedded_runtime_node_does_not_break_sibling_mounting() {
+        // A WasmApp node next to a normal Button: BOTH must mount. This proves
+        // the embedded node is handled inline without aborting the walk (the
+        // anti-fake-green tooth: a node left unhandled would either panic on the
+        // exhaustive match or skip the sibling).
+        let model = AppWidgetModel::with_root(vec![AppWidget::Panel {
+            children: vec![
+                AppWidget::WasmApp {
+                    module: WasmModuleSource::Path {
+                        path: "x.wasm".into(),
+                    },
+                },
+                AppWidget::Button {
+                    id: "ok".into(),
+                    label: "OK".into(),
+                    kind: ButtonKind::Primary,
+                },
+            ],
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+
+        let mounted = mount_model_into(&model, 3, root, &mut host, &mut doc, &mut dispatcher);
+
+        // The Button sibling mounted (its namespaced id is present).
+        assert!(
+            mounted.iter().any(|id| id == "aw-3-ok"),
+            "the Button sibling must still mount past the WasmApp node, got {mounted:?}"
+        );
+        // The embed wrapper is present too.
+        assert!(has_tag(&doc, root, "lq-app-embed"));
+    }
+
+    #[test]
+    fn embedded_runtime_node_contributes_to_the_structure_signature() {
+        // The structure signature MUST change when the module/source changes, so
+        // a different embedded module remounts (re-runs render()). Two WasmApps
+        // with different paths must hash differently; identical ones the same.
+        let sig = |w: AppWidget| model_structure(&AppWidgetModel::with_root(vec![w]));
+
+        let a = sig(AppWidget::WasmApp {
+            module: WasmModuleSource::Path { path: "a.wasm".into() },
+        });
+        let b = sig(AppWidget::WasmApp {
+            module: WasmModuleSource::Path { path: "b.wasm".into() },
+        });
+        assert_ne!(a, b, "different wasm modules must remount");
+
+        let a2 = sig(AppWidget::WasmApp {
+            module: WasmModuleSource::Path { path: "a.wasm".into() },
+        });
+        assert_eq!(a, a2, "identical wasm modules must NOT remount");
+
+        // Script: different source length / lang must differ from wasm and each
+        // other; the signature is non-empty (the node is actually accounted for).
+        let s1 = sig(AppWidget::ScriptApp {
+            source: "render()".into(),
+            lang: ScriptLang::TypeScript,
+        });
+        let s2 = sig(AppWidget::ScriptApp {
+            source: "render(){}".into(),
+            lang: ScriptLang::TypeScript,
+        });
+        assert!(!s1.is_empty());
+        assert_ne!(s1, s2, "different script sources must remount");
+        assert_ne!(s1, a, "a script node and a wasm node are distinct shapes");
+    }
+
+    #[test]
+    fn apply_action_to_embedded_runtime_default_build_yields_placeholder() {
+        // Routing an action into a Null host's apply_action + re-render must not
+        // panic and must surface the placeholder (the Null host reports
+        // Unavailable for both apply_action and render).
+        let action = AppWidgetAction::new("inner", "click", "");
+        let wasm = apply_action_to_wasm_app(
+            &WasmModuleSource::Bytes { bytes: vec![0] },
+            &action,
+        );
+        assert!(is_placeholder_model(&wasm));
+
+        let script = apply_action_to_script_app("x", ScriptLang::TypeScript, &action);
+        assert!(is_placeholder_model(&script));
     }
 }

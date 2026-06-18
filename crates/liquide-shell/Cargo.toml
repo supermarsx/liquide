@@ -37,6 +37,14 @@ liquide-components.workspace = true
 # `liquide-interop::AppWidgetModel` into real `liquide-widgets` Components and
 # drives a per-window `WidgetHost` so app UIs render + interact through DOM/CSS.
 liquide-widgets.workspace = true
+# Embedded-runtime hosts (t152): a WasmApp / ScriptApp model node mounts the UI
+# emitted by a sandboxed WASM (wasmtime) or TS/JS (boa+swc) module through the
+# SAME widget pipeline. The heavy runtimes are opt-in: under the default build
+# these resolve to the crates' Null* hosts (which report `Unavailable`, so the
+# mapper shows a graceful "runtime unavailable" placeholder); enabling the
+# shell's `wasm-apps` / `script-apps` features turns on the real runtimes.
+liquide-wasm-host.workspace = true
+liquide-script-host.workspace = true
 liquide-statusbar = { path = "../liquide-statusbar" }
 liquide-font-rasterizer.workspace = true
 liquide-animation = { path = "../liquide-animation" }
@@ -64,6 +72,17 @@ liquide-renderer-cpu.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[features]
+# Default build: NO heavy runtimes. The WasmApp / ScriptApp model nodes still
+# wire up — they instantiate the host crates' Null* stubs, so they render a
+# graceful "runtime unavailable" placeholder instead of crashing or pulling in
+# wasmtime / boa+swc.
+default = []
+# Opt into the real sandboxed WASM runtime (wasmtime) for `WasmApp` nodes.
+wasm-apps = ["liquide-wasm-host/wasm"]
+# Opt into the real sandboxed TS/JS runtime (boa+swc) for `ScriptApp` nodes.
+script-apps = ["liquide-script-host/script"]
 
 [dev-dependencies]
 criterion.workspace = true

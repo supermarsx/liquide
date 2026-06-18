@@ -19,7 +19,8 @@ pub use app_view::{
 };
 pub use app_widget::{
     AccordionSection, AppWidget, AppWidgetAction, AppWidgetModel, AppWidgetProvider, ButtonKind,
-    SelectionMode, SortDirection, Tab, TableColumn, TableSort, TreeNode, WidgetOption,
+    ScriptLang, SelectionMode, SortDirection, Tab, TableColumn, TableSort, TreeNode,
+    WasmModuleSource, WidgetOption,
 };
 pub use desktop_entry::{DesktopAction, DesktopEntry, DesktopEntryType};
 pub use icon::{IconContext, IconDirectory, IconLookup, IconMatch, IconTheme, IconType};

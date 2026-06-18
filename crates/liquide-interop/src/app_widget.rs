@@ -164,6 +164,55 @@ pub struct AccordionSection {
     pub children: Vec<AppWidget>,
 }
 
+/// Where a [`WasmApp`](AppWidget::WasmApp)'s module bytes come from.
+///
+/// This is **plain data** — a path the host loads, or the bytes inline. It does
+/// NOT depend on `liquide-wasm-host`; the shell turns it into a real
+/// `WasmHost`/`NullWasmHost` at mount time. Keeping it here (interop) means an
+/// app can describe a WASM-backed sub-UI without depending on the runtime crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WasmModuleSource {
+    /// A filesystem path the host reads the `.wasm` bytes from at mount time.
+    Path { path: String },
+    /// The module bytes inlined directly (e.g. embedded / already fetched).
+    Bytes {
+        #[serde(with = "serde_bytes_vec")]
+        bytes: Vec<u8>,
+    },
+}
+
+/// `serde` adapter so inline WASM `bytes` round-trip as a JSON array of `u8`
+/// (portable, no base64 dependency) while staying a `Vec<u8>` in Rust.
+mod serde_bytes_vec {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(bytes.iter().copied())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        Vec::<u8>::deserialize(d)
+    }
+}
+
+/// The authoring language of a [`ScriptApp`](AppWidget::ScriptApp)'s `source`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptLang {
+    /// TypeScript — the host transpiles (type-strips) it to JS before running.
+    TypeScript,
+    /// Plain JavaScript — run as-is (still passes through the transpile step,
+    /// which is a no-op for type-free JS).
+    JavaScript,
+}
+
+impl Default for ScriptLang {
+    fn default() -> Self {
+        ScriptLang::TypeScript
+    }
+}
+
 /// One tab of a [`Tabs`](AppWidget::Tabs) container.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tab {
@@ -314,6 +363,25 @@ pub enum AppWidget {
     Progress { value: f64 },
     /// A pager; `page` is the current 0-based page of `pages` total.
     Pagination { key: String, page: u32, pages: u32 },
+
+    // ---- embedded runtimes (t152) -----------------------------------------
+    /// A sub-UI produced by an untrusted **WASM** module. The host loads
+    /// `module` into a sandboxed `liquide-wasm-host`, calls `render()` to obtain
+    /// an inner [`AppWidgetModel`], and mounts THAT through the normal widget
+    /// pipeline. Actions targeting widgets inside the emitted UI are routed back
+    /// through the host's `apply_action()`. This is **plain data**: it carries
+    /// only the module source, never a runtime handle.
+    WasmApp { module: WasmModuleSource },
+    /// A sub-UI produced by an untrusted **TypeScript/JavaScript** module. The
+    /// host transpiles + runs `source` (per `lang`) in a sandboxed
+    /// `liquide-script-host`, calls `render()` to obtain an inner
+    /// [`AppWidgetModel`], and mounts THAT through the normal widget pipeline.
+    /// Like [`WasmApp`](AppWidget::WasmApp) this is plain data.
+    ScriptApp {
+        source: String,
+        #[serde(default)]
+        lang: ScriptLang,
+    },
 }
 
 impl AppWidget {
@@ -607,6 +675,90 @@ mod tests {
             back,
             AppWidget::TextArea { value, gutter: true, readonly: true, .. }
                 if value == "first\nsecond\nthird"
+        ));
+    }
+
+    #[test]
+    fn wasm_app_node_round_trips_through_serde_json() {
+        // Path form.
+        let node = AppWidget::WasmApp {
+            module: WasmModuleSource::Path {
+                path: "apps/clock.wasm".into(),
+            },
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        assert!(json.contains("\"type\":\"wasm_app\""), "tag: {json}");
+        assert!(json.contains("\"kind\":\"path\""), "module tag: {json}");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+
+        // Inline-bytes form (a tiny wasm header) round-trips byte-for-byte.
+        let node = AppWidget::WasmApp {
+            module: WasmModuleSource::Bytes {
+                bytes: vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            },
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+        assert!(matches!(
+            back,
+            AppWidget::WasmApp { module: WasmModuleSource::Bytes { bytes } }
+                if bytes == vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]
+        ));
+    }
+
+    #[test]
+    fn script_app_node_round_trips_through_serde_json() {
+        let node = AppWidget::ScriptApp {
+            source: "export function render(){ return { root: [] }; }".into(),
+            lang: ScriptLang::TypeScript,
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        assert!(json.contains("\"type\":\"script_app\""), "tag: {json}");
+        assert!(json.contains("\"lang\":\"type_script\""), "lang: {json}");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+
+        // `lang` defaults to TypeScript when omitted.
+        let back: AppWidget =
+            serde_json::from_str(r#"{"type":"script_app","source":"x"}"#).expect("deserialize");
+        assert!(matches!(
+            back,
+            AppWidget::ScriptApp { lang: ScriptLang::TypeScript, .. }
+        ));
+    }
+
+    #[test]
+    fn find_mut_recurses_past_embedded_runtime_nodes() {
+        // A WasmApp / ScriptApp node has NO interop-level key and NO interop-level
+        // children (its inner model only materialises at host render time), so a
+        // find_mut walk neither matches them nor crashes on them, and STILL finds
+        // a keyed sibling inside the same container.
+        let mut model = AppWidgetModel::with_root(vec![AppWidget::Panel {
+            children: vec![
+                AppWidget::WasmApp {
+                    module: WasmModuleSource::Path {
+                        path: "a.wasm".into(),
+                    },
+                },
+                AppWidget::ScriptApp {
+                    source: "x".into(),
+                    lang: ScriptLang::JavaScript,
+                },
+                AppWidget::Button {
+                    id: "ok".into(),
+                    label: "OK".into(),
+                    kind: ButtonKind::Primary,
+                },
+            ],
+        }]);
+        // The runtime nodes are not keyed and are skipped.
+        assert!(model.find_mut("a.wasm").is_none());
+        // The keyed sibling is still reachable past them.
+        assert!(matches!(
+            model.find_mut("ok"),
+            Some(AppWidget::Button { .. })
         ));
     }
 
