@@ -236,8 +236,26 @@ impl CascadeMap {
                 priority
             };
 
-            // Try shorthand expansion first
-            if let Some(expanded) = crate::shorthand::expand_shorthand(key, &actual_val) {
+            // A shorthand whose value still contains `var()` (or `env()`)
+            // CANNOT be expanded here: the substitution is unknown at cascade
+            // collection time, so the shorthand parser cannot classify the
+            // unresolved token (e.g. `background: var(--accent)` looks like
+            // neither a color nor an image and would expand to NOTHING, silently
+            // dropping the fill). Per CSS Variables L1 §3, such a declaration is
+            // a "pending-substitution value": keep the shorthand intact so the
+            // var is resolved and the value re-parsed into longhands at apply
+            // time (`apply_single_property`), matching `background-color: var()`.
+            let value_has_var = actual_val
+                .as_string()
+                .map(|text| text.contains("var(") || text.contains("env("))
+                .unwrap_or(false);
+
+            // Try shorthand expansion first (unless deferred for var/env above).
+            if let Some(expanded) = if value_has_var {
+                None
+            } else {
+                crate::shorthand::expand_shorthand(key, &actual_val)
+            } {
                 for (longhand, lh_val) in expanded {
                     self.declarations.push(CascadeDeclaration {
                         property: longhand.to_string(),

@@ -205,6 +205,131 @@ fn invalidate_preserves_inherited_custom_property_scope() {
     );
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// `background:` shorthand combined with `var()` (t117-bgvar).
+//
+// REGRESSION: `background: var(--x)` silently DROPPED the fill (only text
+// painted). The cascade expanded the `background` shorthand BEFORE `var()`
+// substitution, and `expand_background` could not classify the unresolved
+// `var(--x)` token as either a color or an image, so it produced an EMPTY
+// longhand list — discarding the declaration entirely. `background-color:
+// var(--x)` worked because it is not a shorthand (no eager expansion), so the
+// raw `var()` reached `apply_single_property` and was resolved there.
+//
+// The fix defers expansion of any shorthand whose value text contains `var()`
+// so the var is resolved (and the value re-parsed into longhands) at apply
+// time, matching `background-color`'s behavior.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn background_shorthand_with_var_applies_the_fill() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .scope { --accent: #112233; }
+            .widget { background: var(--accent); }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let scope = doc.create_element("div");
+    doc.add_class(scope, "scope");
+    doc.append_child(root, scope);
+
+    let widget = doc.create_element("div");
+    doc.add_class(widget, "widget");
+    doc.append_child(scope, widget);
+
+    let styles = engine.restyle_all(&doc);
+    let widget_style = styles.get(widget).unwrap();
+
+    // The accent fill MUST be applied — not the default (transparent) fill.
+    assert_eq!(
+        (
+            widget_style.background_color.r,
+            widget_style.background_color.g,
+            widget_style.background_color.b,
+        ),
+        (0x11, 0x22, 0x33),
+        "`background: var(--accent)` dropped the fill — background_color is {:?}",
+        widget_style.background_color
+    );
+}
+
+#[test]
+fn background_shorthand_with_literal_color_still_applies_the_fill() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .widget { background: #445566; }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let widget = doc.create_element("div");
+    doc.add_class(widget, "widget");
+    doc.append_child(root, widget);
+
+    let styles = engine.restyle_all(&doc);
+    let widget_style = styles.get(widget).unwrap();
+
+    assert_eq!(
+        (
+            widget_style.background_color.r,
+            widget_style.background_color.g,
+            widget_style.background_color.b,
+        ),
+        (0x44, 0x55, 0x66),
+        "`background: <color>` literal fill regressed"
+    );
+}
+
+#[test]
+fn background_shorthand_var_matches_background_color_var() {
+    let mut engine = StyleEngine::default();
+    engine.add_stylesheet(
+        r#"
+            .scope     { --accent: #abcdef; }
+            .shorthand { background: var(--accent); }
+            .longhand  { background-color: var(--accent); }
+        "#,
+    );
+
+    let mut doc = Document::new();
+    let root = doc.root();
+
+    let scope = doc.create_element("div");
+    doc.add_class(scope, "scope");
+    doc.append_child(root, scope);
+
+    let shorthand = doc.create_element("div");
+    doc.add_class(shorthand, "shorthand");
+    doc.append_child(scope, shorthand);
+
+    let longhand = doc.create_element("div");
+    doc.add_class(longhand, "longhand");
+    doc.append_child(scope, longhand);
+
+    let styles = engine.restyle_all(&doc);
+    let sh = styles.get(shorthand).unwrap().background_color;
+    let lh = styles.get(longhand).unwrap().background_color;
+
+    assert_eq!(
+        (sh.r, sh.g, sh.b, sh.a),
+        (lh.r, lh.g, lh.b, lh.a),
+        "`background: var()` ({:?}) must resolve the SAME fill as \
+         `background-color: var()` ({:?})",
+        sh,
+        lh
+    );
+    // And it must be the real accent, not a coincidental default match.
+    assert_eq!((lh.r, lh.g, lh.b), (0xab, 0xcd, 0xef));
+}
+
 #[test]
 fn restyle_dirty_rebuilds_ancestor_custom_property_scope() {
     let mut engine = StyleEngine::default();
