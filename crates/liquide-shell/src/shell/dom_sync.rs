@@ -23,6 +23,31 @@ use super::Shell;
 
 const NOTIFICATION_ITEM_CACHE_PREFIX: &str = "notifications:";
 
+/// Marker class on a `<statusbar-item>` whose text is a fixed-width, provably
+/// size-stable indicator (the clock — a zero-padded `HH:MM`/`HH:MM:SS`). The
+/// in-place template patch ([`Shell::patch_node_in_place`]) keys off this class
+/// to take the LAYOUT→PAINT demotion fast path for the per-frame clock tick
+/// (t156, follow-up to t136/t142): a same-width text swap repaints WITHOUT a
+/// relayout instead of rebuilding the statusbar subtree. Variable-width fields
+/// (battery `{}%`, notification count) carry NO marker and keep the safe LAYOUT
+/// path, and even the clock falls back to LAYOUT on the rare width-changing tick
+/// (e.g. `9:59`→`10:00`) because the demotion is additionally gated on the new
+/// text being the SAME character count as the old.
+const SIZE_STABLE_TEXT_CLASS: &str = "size-stable-text";
+
+/// The CSS class string for a `<statusbar-item>` of the given kind. The clock is
+/// the only item whose text is fixed-width per tick, so it (and only it) carries
+/// the [`SIZE_STABLE_TEXT_CLASS`] marker that opts its text node into the
+/// paint-only fast path. Everything else renders with an empty class (unchanged
+/// from the prior verbatim `class=""`), preserving byte-identical output for
+/// non-clock items.
+fn statusbar_item_class(kind: &StatusBarItemKind) -> &'static str {
+    match kind {
+        StatusBarItemKind::Clock { .. } => SIZE_STABLE_TEXT_CLASS,
+        _ => "",
+    }
+}
+
 fn template_state_hash<T: Hash>(state: &T) -> String {
     let mut hasher = DefaultHasher::new();
     state.hash(&mut hasher);
@@ -282,8 +307,9 @@ impl Shell {
             }
             let text = self.status_bar_item_text(item);
             left_html.push_str(&format!(
-                "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
+                "<statusbar-item id=\"{id}\" class=\"{cls}\">{text}</statusbar-item>",
                 id = escape_html(&item.id),
+                cls = statusbar_item_class(&item.kind),
                 text = escape_html(&text),
             ));
         }
@@ -301,8 +327,9 @@ impl Shell {
             }
             let text = self.status_bar_item_text(item);
             center_html.push_str(&format!(
-                "<statusbar-item id=\"{id}\" class=\"\">{text}</statusbar-item>",
+                "<statusbar-item id=\"{id}\" class=\"{cls}\">{text}</statusbar-item>",
                 id = escape_html(&item.id),
+                cls = statusbar_item_class(&item.kind),
                 text = escape_html(&text),
             ));
         }
@@ -1600,6 +1627,45 @@ impl Shell {
         doc.set_inline_style(node, property, value);
     }
 
+    /// Whether `text_node`'s parent element is tagged as a size-stable indicator
+    /// (carries [`SIZE_STABLE_TEXT_CLASS`]) — i.e. a fixed-width clock whose
+    /// per-tick text swap is provably reflow-free at constant width (t156).
+    fn text_node_is_size_stable(&self, text_node: NodeId) -> bool {
+        self.desktop_dom
+            .doc
+            .parent(text_node)
+            .and_then(|parent| self.desktop_dom.doc.get(parent))
+            .is_some_and(|el| el.has_class(SIZE_STABLE_TEXT_CLASS))
+    }
+
+    /// Apply a text-content change, optionally demoting the dirty scope from
+    /// LAYOUT to **paint-only** when the caller has proven the box is
+    /// size-stable (t156). `set_text_content` always marks the node
+    /// LAYOUT-dirty (the safe default, since text can alter intrinsic width) and
+    /// notifies the scene/hit-test observers; when `size_stable` is set we then
+    /// remove the node from the LAYOUT scope (document + node flag) and leave it
+    /// PAINT-dirty, so the pipeline skips relayout and just repaints. This is the
+    /// live-shell mirror of the statusbar crate's `set_text_content_sized` (t142)
+    /// and of `liquide_components::TemplateRenderer::patch_text` (t136), kept on
+    /// the in-place template-patch path so the LIVE clock tick no longer reflows.
+    fn set_text_content_demotable(&mut self, node: NodeId, text: &str, size_stable: bool) {
+        let doc = &mut self.desktop_dom.doc;
+        // Canonical mutator: updates node data, notifies observers, marks LAYOUT.
+        doc.set_text_content(node, text);
+
+        if !size_stable {
+            return;
+        }
+
+        // Size-stable opt-in: demote LAYOUT → PAINT (document scope + node flag).
+        doc.dirty.layout.remove(&node);
+        doc.dirty.paint.insert(node);
+        if let Some(n) = doc.get_mut(node) {
+            n.dirty.clear_layout();
+            n.dirty.mark_paint_dirty();
+        }
+    }
+
     /// Window ids that currently have a live `window-frame` decoration element
     /// mounted in the workspace container.
     fn live_decoration_ids(&self) -> Vec<u64> {
@@ -1968,17 +2034,29 @@ impl Shell {
         // Text node: update content only when it actually changed (so an
         // unchanged text node stays clean and does not re-request glyphs).
         if let Some(new_text) = new_text {
-            let changed = self
-                .desktop_dom
-                .doc
-                .get(live)
-                .and_then(|n| match &n.data {
-                    NodeData::Text(s) => Some(s.as_str() != new_text),
-                    _ => Some(true),
-                })
-                .unwrap_or(true);
+            let old_text = self.desktop_dom.doc.get(live).and_then(|n| match &n.data {
+                NodeData::Text(s) => Some(s.clone()),
+                _ => None,
+            });
+            let changed = old_text.as_deref() != Some(new_text.as_str());
             if changed {
-                self.desktop_dom.doc.set_text_content(live, &new_text);
+                // Paint-only fast path (t156): a size-stable indicator's text
+                // (a fixed-width clock — see SIZE_STABLE_TEXT_CLASS) changing to
+                // a SAME-WIDTH value cannot reflow its box, so demote the dirty
+                // scope LAYOUT→PAINT instead of relayout. Gated on BOTH the
+                // parent carrying the marker AND `chars().count()` being equal,
+                // so a digit-boundary tick (`9:59`→`10:00`) or a variable-width
+                // field still takes the conservative LAYOUT path. Mirrors the
+                // statusbar crate's `set_text_content_sized` (t142) but on the
+                // live shell's in-place template patch.
+                let size_stable = old_text
+                    .as_deref()
+                    .map(|old| {
+                        old.chars().count() == new_text.chars().count()
+                            && self.text_node_is_size_stable(live)
+                    })
+                    .unwrap_or(false);
+                self.set_text_content_demotable(live, &new_text, size_stable);
             }
             return;
         }
@@ -2151,5 +2229,256 @@ mod dom_sync_escape_tests {
              data-label=\"Clock\" data-tooltip=\"12:00 PM\" class=\"seamless\">\
              </status-tray-item>"
         );
+    }
+}
+
+// ── t156: LIVE shell statusbar clock tick is paint-only, not layout ──────────
+//
+// The per-frame `sync_statusbar_template` rebuilt the statusbar HTML each frame,
+// so a once-a-minute clock tick reflowed the whole subtree. `apply_template` now
+// patches the changed nodes in place, and the clock's `<statusbar-item>` carries
+// the `size-stable-text` marker so its SAME-WIDTH text swap demotes LAYOUT→PAINT
+// (no relayout, no subtree rebuild). These tests prove that fast path, prove it
+// is SELECTIVE (variable-width fields still relayout; a width-changing clock
+// reconfigure still relayouts), and prove node/subtree identity is preserved.
+#[cfg(test)]
+mod statusbar_clock_paint_only_tests {
+    use super::*;
+    use crate::shell::Shell;
+
+    /// `#clock` element's first child = its text node.
+    fn clock_text_node(shell: &Shell) -> NodeId {
+        let clock = shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("clock")
+            .expect("clock statusbar-item must be mounted");
+        *shell
+            .desktop_dom
+            .doc
+            .children(clock)
+            .first()
+            .expect("clock item must have a text child")
+    }
+
+    fn element_by_id(shell: &Shell, id: &str) -> Option<NodeId> {
+        shell.desktop_dom.doc.get_element_by_id(id)
+    }
+
+    fn text_of(shell: &Shell, node: NodeId) -> Option<String> {
+        shell
+            .desktop_dom
+            .doc
+            .get(node)
+            .and_then(|n| n.text_content().map(str::to_string))
+    }
+
+    fn clear_dirty(shell: &mut Shell, nodes: &[NodeId]) {
+        shell.desktop_dom.doc.dirty.clear_all();
+        for &n in nodes {
+            if let Some(node) = shell.desktop_dom.doc.get_mut(n) {
+                node.dirty.clear_all();
+            }
+        }
+    }
+
+    /// A same-width clock tick (12:00 → 12:01) marks the clock text node
+    /// PAINT-dirty, NOT LAYOUT-dirty, and does NOT rebuild the statusbar subtree
+    /// (the clock text node + the center slot keep their identity). RED if the
+    /// sync rebuilds HTML per frame or marks the clock LAYOUT-dirty.
+    #[test]
+    fn live_clock_tick_is_paint_only_not_layout() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+
+        // 12:00 (UTC, %H:%M → "12:00", a fixed 5-char width).
+        shell
+            .status_bar
+            .update_clock(12 * 3600 * 1_000_000);
+        shell.sync_statusbar_template();
+
+        let clock_txt = clock_text_node(&shell);
+        let center_slot =
+            element_by_id(&shell, "statusbar-slot-center").expect("center slot mounted");
+        assert_eq!(text_of(&shell, clock_txt).as_deref(), Some("12:00"));
+
+        clear_dirty(&mut shell, &[clock_txt, center_slot]);
+
+        // Tick to 12:01 — same fixed-width "HH:MM" shape.
+        shell
+            .status_bar
+            .update_clock((12 * 3600 + 60) * 1_000_000);
+        shell.sync_statusbar_template();
+
+        // Subtree NOT rebuilt: same text node + same center slot identity.
+        assert_eq!(
+            clock_text_node(&shell),
+            clock_txt,
+            "clock text node identity must survive a tick (no subtree rebuild)"
+        );
+        assert_eq!(
+            element_by_id(&shell, "statusbar-slot-center"),
+            Some(center_slot),
+            "center slot identity must survive a tick (no subtree rebuild)"
+        );
+
+        // Content updated.
+        assert_eq!(text_of(&shell, clock_txt).as_deref(), Some("12:01"));
+
+        // PAINT, not LAYOUT.
+        assert!(
+            !shell.desktop_dom.doc.dirty.layout.contains(&clock_txt),
+            "size-stable clock tick must NOT mark the text node LAYOUT-dirty"
+        );
+        assert!(
+            !shell
+                .desktop_dom
+                .doc
+                .get(clock_txt)
+                .unwrap()
+                .dirty
+                .needs_layout(),
+            "clock text node must NOT carry the LAYOUT flag"
+        );
+        assert!(
+            shell.desktop_dom.doc.dirty.paint.contains(&clock_txt),
+            "clock tick must mark the text node PAINT-dirty so it repaints"
+        );
+        assert!(
+            shell
+                .desktop_dom
+                .doc
+                .get(clock_txt)
+                .unwrap()
+                .dirty
+                .needs_paint(),
+            "clock text node must carry the PAINT flag"
+        );
+    }
+
+    /// SELECTIVITY / teeth: a variable-width indicator (the notification count
+    /// going 0 → 10, a real 1→2 char width change) must stay on the conservative
+    /// LAYOUT path — it carries no `size-stable-text` marker. RED if someone
+    /// blanket-demotes every text patch to paint-only.
+    #[test]
+    fn variable_width_indicator_still_relayouts() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        shell.status_bar.update_notification_count(0);
+        shell.sync_statusbar_template();
+
+        let notif = element_by_id(&shell, "notifications")
+            .expect("notification indicator must be mounted");
+        let notif_txt = *shell
+            .desktop_dom
+            .doc
+            .children(notif)
+            .first()
+            .expect("notification indicator must have a text child");
+        assert_eq!(text_of(&shell, notif_txt).as_deref(), Some("0"));
+
+        clear_dirty(&mut shell, &[notif_txt, notif]);
+
+        // 0 → 10: a genuine width change that CAN reflow the right slot.
+        shell.status_bar.update_notification_count(10);
+        shell.sync_statusbar_template();
+
+        let notif_txt_after = *shell
+            .desktop_dom
+            .doc
+            .children(element_by_id(&shell, "notifications").unwrap())
+            .first()
+            .unwrap();
+        assert_eq!(text_of(&shell, notif_txt_after).as_deref(), Some("10"));
+        assert!(
+            shell
+                .desktop_dom
+                .doc
+                .dirty
+                .layout
+                .contains(&notif_txt_after),
+            "a variable-width indicator must mark LAYOUT-dirty"
+        );
+        assert!(
+            shell
+                .desktop_dom
+                .doc
+                .get(notif_txt_after)
+                .unwrap()
+                .dirty
+                .needs_layout(),
+            "a variable-width indicator must carry the LAYOUT flag"
+        );
+    }
+
+    /// SELECTIVITY / teeth: even the clock falls back to LAYOUT when the new text
+    /// is a DIFFERENT width (e.g. the user enabling seconds: "12:00" → "12:00:30",
+    /// 5 → 8 chars). The same-width gate, not the marker alone, guards the
+    /// demotion. RED if the gate is dropped and the marker blanket-demotes.
+    #[test]
+    fn width_changing_clock_falls_back_to_layout() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        shell
+            .status_bar
+            .update_clock((12 * 3600 + 30 * 60) * 1_000_000); // 12:30
+        shell.sync_statusbar_template();
+
+        let clock_txt = clock_text_node(&shell);
+        assert_eq!(text_of(&shell, clock_txt).as_deref(), Some("12:30"));
+
+        clear_dirty(&mut shell, &[clock_txt]);
+
+        // Enable seconds → next render is "12:30:00" (8 chars): a real width change.
+        shell.status_bar.set_clock_show_seconds(true);
+        shell
+            .status_bar
+            .update_clock((12 * 3600 + 30 * 60) * 1_000_000);
+        shell.sync_statusbar_template();
+
+        let clock_txt_after = clock_text_node(&shell);
+        assert_eq!(text_of(&shell, clock_txt_after).as_deref(), Some("12:30:00"));
+        assert!(
+            shell
+                .desktop_dom
+                .doc
+                .dirty
+                .layout
+                .contains(&clock_txt_after),
+            "a width-changing clock update must mark LAYOUT-dirty (same-width gate)"
+        );
+    }
+
+    /// The marker is applied to the clock and ONLY the clock; rendered text is
+    /// identical to a non-marked item. Proves the marker is selective and does
+    /// not alter visible output.
+    #[test]
+    fn size_stable_marker_is_clock_only() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        shell.status_bar.update_clock(9 * 3600 * 1_000_000);
+        shell.status_bar.update_notification_count(3);
+        shell.sync_statusbar_template();
+
+        let clock = element_by_id(&shell, "clock").expect("clock mounted");
+        assert!(
+            shell
+                .desktop_dom
+                .doc
+                .get(clock)
+                .unwrap()
+                .has_class(SIZE_STABLE_TEXT_CLASS),
+            "clock item must carry the size-stable marker"
+        );
+
+        let notif = element_by_id(&shell, "notifications").expect("notif mounted");
+        assert!(
+            !shell
+                .desktop_dom
+                .doc
+                .get(notif)
+                .unwrap()
+                .has_class(SIZE_STABLE_TEXT_CLASS),
+            "variable-width notification indicator must NOT carry the marker"
+        );
+
+        // Visible text unaffected by the marker.
+        assert_eq!(text_of(&shell, clock_text_node(&shell)).as_deref(), Some("09:00"));
     }
 }
