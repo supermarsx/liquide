@@ -1,0 +1,27 @@
+[package]
+name = "liquide-map"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "OpenStreetMap slippy-map: Web-Mercator tile math, a pannable/zoomable viewport, and a tile manager that fetches/caches OSM tiles via an injected HTTP client."
+
+[dependencies]
+# The HTTP fetch capability is FEATURE-GATED behind `net` and OFF BY DEFAULT, in
+# lock-step with liquide-http's own `net` feature. With the feature off the tile
+# manager binds to liquide-http's `NullHttpClient` (every fetch resolves to
+# `Unavailable`), so the default build links without the reqwest/tokio tree and
+# the map shows a graceful offline placeholder grid — no panic, no required net.
+liquide-http = { workspace = true }
+tracing.workspace = true
+
+[features]
+default = []
+# Pull in the real reqwest + tokio backed fetch service (via liquide-http/net)
+# so the tile manager actually fetches OSM tiles over the network.
+net = ["liquide-http/net"]
+
+[dev-dependencies]
+# The fetch-path test injects a FAKE in-process HttpClientApi (no real network),
+# so the request/decode/register flow is exercised deterministically and offline.

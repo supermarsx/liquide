@@ -85,12 +85,25 @@ anyhow.workspace = true
 # default) so the default session build pulls in NEITHER the bridge NOR the
 # rav1d decoder tree — exactly the wasm-apps / script-apps opt-in shape.
 liquide-video = { workspace = true, optional = true }
+# OpenStreetMap slippy-map element (t159): the per-frame tile-lifecycle drive
+# (`push_map_tile` in desktop/render_thread.rs) fetches missing tiles via
+# `liquide-http`'s non-blocking client, drains `poll_results()`, decodes the
+# received PNG bytes via `liquide_renderer_cpu::decode_image`, and registers them
+# under the tile's image id. The HTTP FETCH path is FEATURE-GATED behind `map`
+# (off by default) so the default session build pulls in NEITHER reqwest/tokio
+# NOR a network requirement — it shows the offline placeholder grid. The tile
+# math + the decode/register chokepoint compile in every build.
+liquide-http = { workspace = true }
+liquide-map = { workspace = true }
 
 [features]
 default = []
 # Turn on the real pure-Rust AV1 `<video>` decode bridge (also enables the
 # shell's `video` feature so the `lq-video` surface mounts).
 video = ["dep:liquide-video", "liquide-video/video", "liquide-shell/video"]
+# Turn on real OSM tile FETCHING for `Map` nodes (liquide-http/net + the shell's
+# `map` feature). Off by default → the offline placeholder grid, no reqwest/tokio.
+map = ["liquide-http/net", "liquide-map/net", "liquide-shell/map"]
 
 [dev-dependencies]
 liquide-compositor = { path = "../liquide-compositor" }

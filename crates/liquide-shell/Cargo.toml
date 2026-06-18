@@ -52,6 +52,13 @@ liquide-script-host.workspace = true
 # unavailable / no codec" placeholder); enabling the shell's `video` feature
 # turns on the real decoder.
 liquide-video.workspace = true
+# OpenStreetMap slippy-map element (t159): a `Map` model node mounts a tiled map
+# surface — `liquide-map` computes the visible tiles' screen rects + image keys
+# (pure Web-Mercator math, no network) and the shell emits them as positioned
+# Image nodes. Tile FETCH is opt-in via `liquide-map/net` (behind the shell's
+# `map` feature → `liquide-http/net`); the default build does the tile MATH only
+# and paints a placeholder grid + "offline" notice (no reqwest/tokio pulled in).
+liquide-map.workspace = true
 liquide-statusbar = { path = "../liquide-statusbar" }
 liquide-font-rasterizer.workspace = true
 liquide-animation = { path = "../liquide-animation" }
@@ -92,6 +99,10 @@ wasm-apps = ["liquide-wasm-host/wasm"]
 script-apps = ["liquide-script-host/script"]
 # Opt into the real pure-Rust AV1 decoder (rav1d) for `Video` nodes.
 video = ["liquide-video/video"]
+# Opt into real OSM tile FETCHING (liquide-http/net) for `Map` nodes. Off by
+# default: the map still does all the tile MATH and emits positioned tiles, but
+# paints the placeholder grid until tiles are fetched + decoded by the session.
+map = ["liquide-map/net"]
 
 [dev-dependencies]
 criterion.workspace = true

@@ -247,6 +247,68 @@ pub(crate) fn apply_action_to_script_app(
     }
 }
 
+/// Apply a pan/zoom action to a `Map` node's viewport and return the new
+/// `(center_lat, center_lon, zoom)`. Pure math: it builds a transient
+/// [`liquide_map::MapState`] for the current viewport, applies the action, and
+/// reads the updated centre/zoom back out. The caller writes those back into the
+/// `Map` model node (so the next render re-derives the visible-tile set).
+///
+/// Action verbs (`AppWidgetAction.name`):
+///   * `"pan"`  — payload `"dx,dy"` screen-pixel drag delta.
+///   * `"zoom"` — payload `"delta"` (centre-fixed) or `"delta@ax,ay"`
+///     (wheel-zoom toward screen anchor `(ax,ay)`).
+/// An unrecognised verb / unparseable payload leaves the viewport unchanged.
+///
+/// `allow(dead_code)` outside tests: the LIVE action drive that calls this — a
+/// drag on the laid-out map box → `pan`, a wheel → `zoom` toward the cursor,
+/// then writing the new centre/zoom back into the `Map` model node and
+/// remounting — is the documented dom_sync follow-up (it owns the per-node
+/// pointer/drag geometry from the laid-out box, like the t152/t155 follow-ups).
+/// This chokepoint + its tests are in lock today.
+#[allow(dead_code)]
+#[must_use]
+pub(crate) fn apply_map_action(
+    center_lat: f64,
+    center_lon: f64,
+    zoom: u32,
+    action: &AppWidgetAction,
+) -> (f64, f64, u32) {
+    let mut state = map_state_for(center_lat, center_lon, zoom);
+    match action.name.as_str() {
+        "pan" => {
+            if let Some((dx, dy)) = parse_pair(&action.payload) {
+                state.pan(dx, dy);
+            }
+        }
+        "zoom" => {
+            // "delta" or "delta@ax,ay".
+            let (delta_str, anchor) = match action.payload.split_once('@') {
+                Some((d, a)) => (d, parse_pair(a)),
+                None => (action.payload.as_str(), None),
+            };
+            if let Ok(delta) = delta_str.trim().parse::<i32>() {
+                match anchor {
+                    Some((ax, ay)) => {
+                        state.zoom_at(delta, ax, ay);
+                    }
+                    None => {
+                        state.zoom_by(delta);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    (state.viewport.center.lat, state.viewport.center.lon, state.viewport.zoom)
+}
+
+/// Parse a `"a,b"` pair of `f64`s; `None` if malformed.
+#[allow(dead_code)] // used by `apply_map_action` (the live drive is the dom_sync follow-up).
+fn parse_pair(s: &str) -> Option<(f64, f64)> {
+    let (a, b) = s.split_once(',')?;
+    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Silent <video> surface (t155): the `Video` model node.
 //
@@ -302,6 +364,62 @@ pub(crate) fn video_placeholder_model(src: &str) -> AppWidgetModel {
             text: format!("video unavailable: no codec (cannot play {src})"),
         }],
     }])
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// OpenStreetMap slippy-map surface (t159): the `Map` model node.
+//
+// A `Map { center_lat, center_lon, zoom }` node is plain data describing a
+// viewport. At mount time the shell builds a `liquide_map::MapState` for the
+// viewport, asks it for the visible tiles' SCREEN RECTS + stable IMAGE KEYS
+// (pure Web-Mercator math, no network), and emits one positioned tile element
+// per visible tile:
+//   * Each tile element is styled with `background-image: url(tile://z/x/y)`, so
+//     the scene bridge hashes that key to a renderer image id and the session
+//     decode path registers the fetched+decoded RGBA under the SAME hash — the
+//     tile's `Image` scene node then blits it (the wallpaper/video seam).
+//   * Tiles whose bytes are not (yet) loaded get a PLACEHOLDER class instead, so
+//     the default (no-net) build paints a graceful grid + an "offline" notice —
+//     no panic, no required network.
+// Pan (drag) + zoom (wheel/buttons) update the viewport through `apply_action`
+// (see `apply_map_action`); the laid-out map box gives the hit/drag geometry.
+//
+// The map box is laid out at a fixed default size here; the live per-node map
+// registry (one persistent `MapState` per Map node, ticked each frame to fetch
+// + decode tiles) is the documented session/dom_sync follow-up, mirroring the
+// t152 per-node host + t155 per-node VideoSource. This mapper emits the tiles +
+// their stable image-key bindings; the in-lock session chokepoint
+// (`push_map_tile`) + its decode test are wired today.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// The on-screen size (px) the map surface is laid out at when a `Map` node is
+/// mounted. The viewport's visible-tile math uses this box; the live drive can
+/// later resize it from the actual laid-out box (the documented follow-up).
+pub(crate) const MAP_SURFACE_WIDTH: f64 = 640.0;
+pub(crate) const MAP_SURFACE_HEIGHT: f64 = 400.0;
+
+/// The class added to the map wrapper when no tiles are loaded (the default
+/// offline build), so a theme can style the placeholder grid + "offline" notice.
+pub(crate) const MAP_OFFLINE_CLASS: &str = "map-offline";
+
+/// Whether real OSM tile fetching is compiled in (the shell's `map` feature →
+/// `liquide-map/net`). When false the map does the tile MATH only and shows the
+/// placeholder grid until something feeds it tiles.
+#[must_use]
+pub(crate) fn map_tile_fetch_available() -> bool {
+    cfg!(feature = "map")
+}
+
+/// Build the [`liquide_map::MapState`] for a `Map` node's viewport at the default
+/// surface size. Pure math — constructs no network client.
+#[must_use]
+pub(crate) fn map_state_for(center_lat: f64, center_lon: f64, zoom: u32) -> liquide_map::MapState {
+    liquide_map::MapState::new(
+        liquide_map::LatLon::new(center_lat, center_lon),
+        zoom,
+        MAP_SURFACE_WIDTH,
+        MAP_SURFACE_HEIGHT,
+    )
 }
 
 /// Per-window prefix for namespacing a widget's stable key into a globally-unique
@@ -492,6 +610,10 @@ pub(crate) fn behavior_for(widget: &AppWidget) -> Option<Box<dyn WidgetBehavior>
         // ── video: a live texture surface (or placeholder), mounted structurally
         //    by `mount_widget`, never as a behavior ─────────────────────────
         AppWidget::Video { .. } => return None,
+
+        // ── map: a tiled slippy-map surface, mounted structurally by
+        //    `mount_widget` (positioned tile Image nodes), never as a behavior ─
+        AppWidget::Map { .. } => return None,
     };
     Some(b)
 }
@@ -629,6 +751,20 @@ fn structure_into(widget: &AppWidget, out: &mut String) {
         } => {
             out.push_str(&format!("Vd[{src}:{autoplay}:{loop_playback}];"));
         }
+        // Map: the centre/zoom drive the visible-tile set, so a pan/zoom IS a
+        // structural change (the tile grid + their positions change). Folding the
+        // viewport into the signature remounts the surface so the new tile slots
+        // mount. (Rounded to keep tiny float jitter from over-remounting.)
+        AppWidget::Map {
+            center_lat,
+            center_lon,
+            zoom,
+        } => {
+            out.push_str(&format!(
+                "Mp[{:.5}:{:.5}:{zoom}];",
+                center_lat, center_lon
+            ));
+        }
     }
 }
 
@@ -749,6 +885,83 @@ fn mount_widget(
             for child in &placeholder.root {
                 mount_widget(child, window_id, wrapper, host, doc, dispatcher, mounted);
             }
+        }
+        return;
+    }
+
+    // Map node: a slippy-map surface. Emit one positioned tile element per
+    // visible tile (its screen rect from the viewport math); a loaded tile is
+    // styled with `background-image: url(tile://z/x/y)` (the scene bridge turns
+    // that into an Image node + the session decodes/registers the bytes under the
+    // same key), and a not-yet-loaded tile gets the placeholder class. Handled
+    // inline before the container check (it has no interop children).
+    if let AppWidget::Map {
+        center_lat,
+        center_lon,
+        zoom,
+    } = widget
+    {
+        // Build the viewport + (offline) tile state and lay tiles out by screen
+        // rect. No network here: `placement()` is pure math; tiles are "loaded"
+        // only once the live session drive has fetched + cached them, so under
+        // the default build every tile is a placeholder (the offline grid).
+        let map_state = map_state_for(*center_lat, *center_lon, *zoom);
+        let placement = map_state.placement();
+        let any_loaded = placement.iter().any(|p| p.loaded);
+
+        let surface = doc.create_element("lq-map");
+        // The surface is a positioning context sized to the viewport box.
+        doc.set_inline_style(surface, "position", "relative");
+        doc.set_inline_style(surface, "width", &format!("{}px", MAP_SURFACE_WIDTH));
+        doc.set_inline_style(surface, "height", &format!("{}px", MAP_SURFACE_HEIGHT));
+        doc.set_attribute(surface, "data-map-zoom", &zoom.to_string());
+        doc.set_attribute(surface, "data-map-lat", &center_lat.to_string());
+        doc.set_attribute(surface, "data-map-lon", &center_lon.to_string());
+        if !any_loaded {
+            // No tiles loaded (the default no-net build) → tag the surface so a
+            // theme can paint the placeholder grid + show the offline notice.
+            doc.set_attribute(surface, "class", MAP_OFFLINE_CLASS);
+        }
+        doc.append_child(parent, surface);
+
+        for p in &placement {
+            let tile_el = doc.create_element("lq-map-tile");
+            doc.set_inline_style(tile_el, "position", "absolute");
+            doc.set_inline_style(tile_el, "left", &format!("{}px", p.tile.x));
+            doc.set_inline_style(tile_el, "top", &format!("{}px", p.tile.y));
+            doc.set_inline_style(tile_el, "width", &format!("{}px", p.tile.size));
+            doc.set_inline_style(tile_el, "height", &format!("{}px", p.tile.size));
+            // The stable image key — hashed to the renderer image id on both the
+            // compositing side (scene bridge) and the session decode side.
+            doc.set_attribute(tile_el, "data-tile-key", &p.image_key);
+            if p.loaded {
+                // Loaded: bind the texture via background-image so the scene
+                // bridge emits an Image node keyed by hash(image_key).
+                doc.set_inline_style(
+                    tile_el,
+                    "background-image",
+                    &format!("url({})", p.image_key),
+                );
+            } else {
+                // Not loaded yet: the placeholder tile (styled by the theme).
+                doc.set_attribute(tile_el, "class", "map-tile-placeholder");
+            }
+            doc.append_child(surface, tile_el);
+        }
+
+        // An offline notice element (text reaches the DOM so a default build
+        // tells the user tiles can't be fetched). Present only when nothing is
+        // loaded, so a live (net) build with tiles shows no notice.
+        if !any_loaded {
+            let notice = doc.create_element("lq-map-notice");
+            let detail = if map_tile_fetch_available() {
+                "map tiles loading…"
+            } else {
+                "map offline: tile fetching unavailable (build without network)"
+            };
+            let txt = doc.create_text(detail);
+            doc.append_child(notice, txt);
+            doc.append_child(surface, notice);
         }
         return;
     }
@@ -1499,5 +1712,217 @@ mod tests {
 
         let script = apply_action_to_script_app("x", ScriptLang::TypeScript, &action);
         assert!(is_placeholder_model(&script));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // OpenStreetMap slippy-map surface (t159).
+    //
+    // Default build (no `map` feature → no tile fetch): a Map node mounts the
+    // surface with positioned placeholder tiles + an offline notice. The
+    // positioned-Image emit + tile decode/register live drive is in the session
+    // (render_thread.rs::push_map_tile); these prove the mapper end.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// Collect every element with tag `tag` under `node`.
+    fn nodes_with_tag(doc: &Document, node: NodeId, tag: &str) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if doc.tag_name(n).as_deref() == Some(tag) {
+                out.push(n);
+            }
+            for &c in doc.children(n) {
+                stack.push(c);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn map_node_mounts_a_surface_with_positioned_tiles() {
+        // A Map node emits an lq-map surface containing one positioned tile
+        // element per visible tile, each at the screen rect the viewport math
+        // produced and bound to a stable image key.
+        let model = AppWidgetModel::with_root(vec![AppWidget::Map {
+            center_lat: 0.0,
+            center_lon: 0.0,
+            zoom: 2,
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+        let _ = mount_model_into(&model, 1, root, &mut host, &mut doc, &mut dispatcher);
+
+        let surface = nodes_with_tag(&doc, root, "lq-map");
+        assert_eq!(surface.len(), 1, "exactly one map surface");
+        let tiles = nodes_with_tag(&doc, root, "lq-map-tile");
+        // The viewport math drives the count; it must equal the placement and be
+        // > 0 (a real tiled grid, not an empty surface).
+        let expected = map_state_for(0.0, 0.0, 2).placement();
+        assert!(!expected.is_empty());
+        assert_eq!(
+            tiles.len(),
+            expected.len(),
+            "one tile element per visible tile"
+        );
+        // Each tile carries its stable image key AND an absolute screen position
+        // that matches the viewport math (NOT a constant) — the anti-fake-green
+        // tooth: the tiles are placed by the slippy math, so the set of keys must
+        // equal the set of placement keys, and each key's left/top must equal its
+        // computed screen rect.
+        for t in &tiles {
+            let key = doc
+                .get_attribute(*t, "data-tile-key")
+                .expect("tile key attr");
+            let p = expected
+                .iter()
+                .find(|p| p.image_key == key)
+                .unwrap_or_else(|| panic!("tile key {key} not in placement"));
+            assert_eq!(
+                doc.get_inline_style(*t, "left").as_deref(),
+                Some(format!("{}px", p.tile.x).as_str()),
+                "tile {key} left must match the viewport math"
+            );
+            assert_eq!(
+                doc.get_inline_style(*t, "top").as_deref(),
+                Some(format!("{}px", p.tile.y).as_str()),
+                "tile {key} top must match the viewport math"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "map"))]
+    fn map_node_default_build_is_offline_with_placeholder_tiles_and_notice() {
+        // No tile fetch compiled in → every tile is a placeholder, the surface is
+        // tagged offline, and an offline notice reaches the DOM. No panic.
+        let model = AppWidgetModel::with_root(vec![AppWidget::Map {
+            center_lat: 48.8566,
+            center_lon: 2.3522,
+            zoom: 4,
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+        let _ = mount_model_into(&model, 2, root, &mut host, &mut doc, &mut dispatcher);
+
+        let surface = nodes_with_tag(&doc, root, "lq-map");
+        assert_eq!(surface.len(), 1);
+        assert_eq!(
+            doc.get_attribute(surface[0], "class").as_deref(),
+            Some(MAP_OFFLINE_CLASS),
+            "offline surface must be tagged"
+        );
+        // Every tile is a placeholder (none bound to a background-image texture).
+        let tiles = nodes_with_tag(&doc, root, "lq-map-tile");
+        assert!(!tiles.is_empty());
+        for t in &tiles {
+            assert_eq!(
+                doc.get_attribute(*t, "class").as_deref(),
+                Some("map-tile-placeholder"),
+                "offline tile must be a placeholder"
+            );
+            assert!(
+                doc.get_inline_style(*t, "background-image").is_none(),
+                "offline tile must NOT bind a texture"
+            );
+        }
+        // The offline notice text reaches the DOM.
+        let text = collect_text(&doc, root);
+        assert!(
+            text.contains("offline") && text.contains("unavailable"),
+            "offline notice must reach the DOM, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn map_node_does_not_break_sibling_mounting() {
+        // A Map node next to a Button: both must mount (the walk is not aborted).
+        let model = AppWidgetModel::with_root(vec![AppWidget::Panel {
+            children: vec![
+                AppWidget::Map {
+                    center_lat: 0.0,
+                    center_lon: 0.0,
+                    zoom: 1,
+                },
+                AppWidget::Button {
+                    id: "ok".into(),
+                    label: "OK".into(),
+                    kind: ButtonKind::Primary,
+                },
+            ],
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+        let mounted = mount_model_into(&model, 3, root, &mut host, &mut doc, &mut dispatcher);
+        assert!(
+            mounted.iter().any(|id| id == "aw-3-ok"),
+            "Button sibling must still mount past the Map node, got {mounted:?}"
+        );
+    }
+
+    #[test]
+    fn map_pan_action_shifts_the_centre_and_remounts() {
+        // A drag pans the viewport: apply_map_action moves the centre, and the
+        // structure signature changes (so the surface remounts with new tiles).
+        let (lat0, lon0, z0) = (0.0_f64, 0.0_f64, 4_u32);
+        let sig_before = {
+            let mut s = String::new();
+            structure_into(
+                &AppWidget::Map {
+                    center_lat: lat0,
+                    center_lon: lon0,
+                    zoom: z0,
+                },
+                &mut s,
+            );
+            s
+        };
+        // Drag content left → centre moves east (lon increases).
+        let (lat1, lon1, z1) =
+            apply_map_action(lat0, lon0, z0, &AppWidgetAction::new("map", "pan", "-256,0"));
+        assert_eq!(z1, z0, "pan does not change zoom");
+        assert!(lon1 > lon0, "dragging left pans east: {lon0} -> {lon1}");
+        assert!((lat1 - lat0).abs() < 1e-6, "horizontal pan keeps lat");
+        let sig_after = {
+            let mut s = String::new();
+            structure_into(
+                &AppWidget::Map {
+                    center_lat: lat1,
+                    center_lon: lon1,
+                    zoom: z1,
+                },
+                &mut s,
+            );
+            s
+        };
+        assert_ne!(sig_before, sig_after, "a pan must change the remount signature");
+    }
+
+    #[test]
+    fn map_zoom_action_changes_the_zoom_level() {
+        let (_, _, z_in) =
+            apply_map_action(0.0, 0.0, 4, &AppWidgetAction::new("map", "zoom", "1"));
+        assert_eq!(z_in, 5, "zoom +1");
+        let (_, _, z_out) =
+            apply_map_action(0.0, 0.0, 4, &AppWidgetAction::new("map", "zoom", "-1"));
+        assert_eq!(z_out, 3, "zoom -1");
+        // Wheel-zoom toward an anchor also changes zoom (and keeps the anchor
+        // point fixed; that property is unit-tested in liquide-map).
+        let (_, _, z_anchor) = apply_map_action(
+            40.0,
+            -74.0,
+            5,
+            &AppWidgetAction::new("map", "zoom", "1@320,80"),
+        );
+        assert_eq!(z_anchor, 6, "anchored zoom +1");
+        // An unparseable/unknown action leaves the viewport untouched.
+        let (la, lo, zz) =
+            apply_map_action(40.0, -74.0, 5, &AppWidgetAction::new("map", "wat", "x"));
+        assert!((la - 40.0).abs() < 1e-6 && (lo + 74.0).abs() < 1e-6 && zz == 5);
     }
 }

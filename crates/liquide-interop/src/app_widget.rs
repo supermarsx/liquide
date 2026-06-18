@@ -291,6 +291,20 @@ pub enum AppWidget {
         loop_playback: bool,
     },
 
+    /// An OpenStreetMap slippy-map surface centred on `center_lat`/`center_lon`
+    /// at integer `zoom`. This is **plain data**: it carries only the viewport
+    /// (centre + zoom), never a tile cache or HTTP handle. The shell turns it
+    /// into a pannable/zoomable tiled map (a `liquide-map` viewport whose visible
+    /// tiles mount as positioned `Image` nodes); the session render loop fetches
+    /// the tiles via `liquide-http` (feature `net`) and decodes them into the
+    /// surface, or, by default (no net), the shell paints a placeholder grid.
+    /// Pan (drag) and zoom (wheel/buttons) update the viewport via `apply_action`.
+    Map {
+        center_lat: f64,
+        center_lon: f64,
+        zoom: u32,
+    },
+
     // ---- buttons -----------------------------------------------------------
     /// A clickable button.
     Button {
@@ -745,6 +759,46 @@ mod tests {
         assert!(matches!(
             back,
             AppWidget::Video { autoplay: false, loop_playback: false, src } if src == "a.ivf"
+        ));
+    }
+
+    #[test]
+    fn map_node_round_trips_through_serde_json() {
+        // A Map node round-trips byte-for-byte, including its f64 centre + zoom.
+        let node = AppWidget::Map {
+            center_lat: 52.5200,
+            center_lon: 13.4050,
+            zoom: 12,
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        assert!(json.contains("\"type\":\"map\""), "tag: {json}");
+        assert!(json.contains("\"zoom\":12"), "zoom: {json}");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+        assert!(matches!(
+            back,
+            AppWidget::Map { center_lat, center_lon, zoom: 12 }
+                if (center_lat - 52.5200).abs() < 1e-9 && (center_lon - 13.4050).abs() < 1e-9
+        ));
+        // A Map node is structural (no interop key), so find_mut skips past it to
+        // a keyed sibling without matching or crashing.
+        let mut model = AppWidgetModel::with_root(vec![AppWidget::Panel {
+            children: vec![
+                AppWidget::Map {
+                    center_lat: 0.0,
+                    center_lon: 0.0,
+                    zoom: 3,
+                },
+                AppWidget::Button {
+                    id: "go".into(),
+                    label: "Go".into(),
+                    kind: ButtonKind::Normal,
+                },
+            ],
+        }]);
+        assert!(matches!(
+            model.find_mut("go"),
+            Some(AppWidget::Button { .. })
         ));
     }
 

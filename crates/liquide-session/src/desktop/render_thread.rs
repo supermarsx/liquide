@@ -1287,6 +1287,16 @@ impl DesktopCompositor {
         let asset_root = Self::resolve_asset_root();
         let mut decoded = Vec::new();
         for (image_id, url) in to_load {
+            // Map tiles (`tile://z/x/y`) are NOT read from disk — they are fetched
+            // over HTTP + decoded by the map tile drive (`push_map_tile`) and
+            // registered under this same `image_id` (= hash(url), the scene
+            // bridge's key). Do NOT record the id as loaded here, so the tile
+            // drive can register it when its bytes arrive (and the wallpaper
+            // disk-read path below never tries to open a `tile://` url).
+            if url.starts_with("tile://") {
+                continue;
+            }
+
             // Record the id up front (success OR failure) so a missing/corrupt
             // file is not re-read on every frame.
             self.loaded_image_ids.insert(image_id);
@@ -1435,6 +1445,50 @@ impl DesktopCompositor {
             .and_then(|any| any.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
         {
             sw.register_image_rgba(image_id, pixels, w, h);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Decode a fetched OSM map tile's encoded bytes (PNG/JPEG/...) and register
+    /// the RGBA into the renderer's image-texture cache under `image_id` — the
+    /// SAME `hash(tile-image-key)` the scene bridge keys the tile's `Image`
+    /// scene node by (delivered via `Shell::pending_images`). The tile's `Image`
+    /// node then blits it next frame (renderer/images.rs) — exactly the seam
+    /// wallpapers ([`apply_images_and_cursor_to_renderer`]) and `<video>`
+    /// ([`push_video_frame`]) use.
+    ///
+    /// This is the in-lock per-tile decode→register chokepoint (t159). The LIVE
+    /// drive that ties it together — owning a per-`Map`-node `liquide_map::MapState`
+    /// across frames, calling its `tick(client)` each frame to issue fetches via
+    /// the non-blocking `liquide_http` client, draining `poll_results()`, and
+    /// calling this for each newly-decoded tile — is the documented session /
+    /// dom_sync follow-up (it must persist a `MapState` + an `HttpClient` per Map
+    /// node, mirroring t152's per-node host + t155's per-node `VideoSource`).
+    /// This chokepoint + its decode test are wired today.
+    ///
+    /// Returns `true` if the bytes decoded and were registered, `false` on a
+    /// decode failure or an unsupported renderer (the tile then keeps its
+    /// placeholder — never a panic).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn push_map_tile(
+        renderer: &mut dyn Renderer,
+        image_id: u64,
+        encoded_bytes: &[u8],
+    ) -> bool {
+        let img = match liquide_renderer_cpu::image_decode::decode_image(encoded_bytes) {
+            Ok(img) => img,
+            Err(err) => {
+                warn!(image_id, %err, "failed to decode map tile; keeping placeholder");
+                return false;
+            }
+        };
+        if let Some(sw) = renderer
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+        {
+            sw.register_image_rgba(image_id, img.pixels, img.width, img.height);
             true
         } else {
             false
@@ -3072,6 +3126,155 @@ mod tests {
             sw.has_image(image_id),
             "the decoded video frame must be registered under the surface's image_id"
         );
+    }
+
+    /// A minimal, valid 1×1 opaque-red PNG (canonical 8-bit RGB). Hand-embedded
+    /// so the map-tile decode test needs NO image-encoder dev-dependency and no
+    /// committed asset. `decode_image` (the full `image` crate path) decodes it.
+    #[rustfmt::skip]
+    const TINY_PNG_1X1: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR length + type
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // width=1, height=1
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // bitdepth=8 colour=2(RGB)
+        0xDE,                                           // IHDR CRC (last byte)
+        0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, // IDAT length + type
+        0x78, 0x9C, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, // zlib: one red pixel
+        0x03, 0x01, 0x01, 0x00,                         // (filter 0 + RGB 255,0,0)
+        0xC9, 0xFE, 0x92, 0xEF,                         // IDAT CRC
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND length + type
+        0xAE, 0x42, 0x60, 0x82,                         // IEND CRC
+    ];
+
+    /// The in-lock session map-tile chokepoint (t159): decoding a fetched tile's
+    /// encoded bytes and registering the RGBA under the tile's `image_id` (the
+    /// scene-bridge key) must make the renderer hold that texture, so the tile's
+    /// `Image` scene node blits it. Anti-fake-green: a stub that skipped the
+    /// decode/register would fail `has_image`.
+    #[test]
+    fn session_decodes_and_registers_a_fetched_map_tile() {
+        let mut desktop = DesktopCompositor::new(320, 240);
+        desktop.set_dev_mode(true);
+        desktop.loading = false;
+        let image_id: u64 = 0x4000_0000_0000_ABCD;
+        let renderer = desktop.renderer.as_mut().expect("renderer present");
+
+        let ok = DesktopCompositor::push_map_tile(renderer.as_mut(), image_id, TINY_PNG_1X1);
+        assert!(ok, "a valid PNG tile must decode + register");
+
+        let sw = renderer
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+            .expect("dev-mode renderer downcasts to SoftwareRenderer");
+        assert!(
+            sw.has_image(image_id),
+            "the decoded tile must be registered under the tile's image_id"
+        );
+
+        // Garbage bytes do not panic and do not register a texture.
+        let other_id: u64 = 0x4000_0000_0000_EEEE;
+        assert!(!DesktopCompositor::push_map_tile(
+            renderer.as_mut(),
+            other_id,
+            b"not a png"
+        ));
+        let sw = renderer
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+            .expect("downcast");
+        assert!(!sw.has_image(other_id), "a failed decode registers nothing");
+    }
+
+    /// The full offline tile lifecycle through `liquide_map` + an INJECTED FAKE
+    /// HTTP client (NO real network): tick the map state to request + drain
+    /// tiles, then decode + register each loaded tile via the in-lock chokepoint.
+    /// Proves the request → poll_results → decode → register_image_rgba path the
+    /// live drive will run, end-to-end, deterministically.
+    #[test]
+    fn map_tile_lifecycle_fetches_decodes_and_registers_via_a_fake_client() {
+        use liquide_http::{Bytes, FetchResult, HttpClientApi, RequestId};
+        use std::cell::RefCell;
+        use std::collections::VecDeque;
+
+        struct FakeTileServer {
+            next: RefCell<u64>,
+            ready: RefCell<VecDeque<(RequestId, FetchResult)>>,
+        }
+        impl HttpClientApi for FakeTileServer {
+            fn fetch(&self, _url: &str) -> RequestId {
+                let mut n = self.next.borrow_mut();
+                let id = RequestId(*n);
+                *n += 1;
+                // Every tile resolves to the valid 1×1 PNG.
+                self.ready
+                    .borrow_mut()
+                    .push_back((id, Ok(Bytes::copy_from_slice(TINY_PNG_1X1))));
+                id
+            }
+            fn poll_results(&self) -> Vec<(RequestId, FetchResult)> {
+                self.ready.borrow_mut().drain(..).collect()
+            }
+        }
+
+        let client = FakeTileServer {
+            next: RefCell::new(0),
+            ready: RefCell::new(VecDeque::new()),
+        };
+        let mut map = liquide_map::MapState::new(
+            liquide_map::LatLon::new(0.0, 0.0),
+            2,
+            256.0,
+            256.0,
+        );
+        map.tick(&client); // request the visible tiles
+        let changed = map.tick(&client); // drain → cache the fetched tiles
+        assert!(!changed.is_empty(), "tiles must have completed");
+        assert!(
+            map.placement().iter().all(|p| p.loaded),
+            "every visible tile must be loaded after the fetch"
+        );
+
+        // Decode + register each loaded tile under the scene-bridge image id
+        // (hash of the tile's image key — the same key the shell sets as the
+        // tile element's background-image).
+        let mut desktop = DesktopCompositor::new(256, 256);
+        desktop.set_dev_mode(true);
+        desktop.loading = false;
+        let renderer = desktop.renderer.as_mut().expect("renderer present");
+        let mut registered = 0;
+        for p in map.placement() {
+            let bytes = map
+                .tiles
+                .ready_bytes(&p.tile.key)
+                .expect("loaded tile has bytes");
+            let image_id = scene_image_id(&p.image_key);
+            if DesktopCompositor::push_map_tile(renderer.as_mut(), image_id, &bytes) {
+                registered += 1;
+            }
+        }
+        assert!(registered > 0, "at least one tile decoded + registered");
+        let sw = renderer
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+            .expect("downcast");
+        // A spot-check tile's texture is present under its scene-bridge id.
+        let first = map.placement()[0].image_key.clone();
+        assert!(
+            sw.has_image(scene_image_id(&first)),
+            "the registered tile must be keyed by hash(image_key) = the scene id"
+        );
+    }
+
+    /// Mirror of the shell scene bridge's `hash_string` so the test registers a
+    /// tile under the SAME image id the bridge will key its `Image` node by.
+    /// (The live drive reads the id directly from `Shell::pending_images`, which
+    /// the bridge populates with this same hash; this local copy lets the test
+    /// assert the keying without reaching the shell's private helper.)
+    fn scene_image_id(s: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        s.hash(&mut hasher);
+        hasher.finish()
     }
 
     struct NoopRenderer;

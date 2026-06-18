@@ -3823,6 +3823,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "liquide-map"
+version = "0.1.0"
+dependencies = [
+ "liquide-http",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-message-queue"
 version = "0.1.0"
 dependencies = [
@@ -4145,9 +4153,11 @@ dependencies = [
  "liquide-encoder",
  "liquide-font-rasterizer",
  "liquide-hit-test",
+ "liquide-http",
  "liquide-input",
  "liquide-interop",
  "liquide-layout",
+ "liquide-map",
  "liquide-message-queue",
  "liquide-platform",
  "liquide-plugin-host",
@@ -4208,6 +4218,7 @@ dependencies = [
  "liquide-interop",
  "liquide-layout",
  "liquide-lockscreen",
+ "liquide-map",
  "liquide-notification-daemon",
  "liquide-paint",
  "liquide-platform",

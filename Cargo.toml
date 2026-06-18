@@ -156,6 +156,9 @@ members = [
     # Async HTTP fetch capability (remote resources: map tiles, images)
     "crates/liquide-http",
 
+    # OpenStreetMap slippy-map element (Web-Mercator tile math + viewport + tile fetch/cache)
+    "crates/liquide-map",
+
     # Silent <video> element: pure-Rust AV1 (rav1d) decode + IVF demux
     "crates/liquide-video",
 
@@ -505,6 +508,7 @@ liquide-telemetry-viewer = { path = "crates/liquide-telemetry-viewer" }
 liquide-xdg = { path = "crates/liquide-xdg" }
 liquide-visual-test = { path = "crates/liquide-visual-test" }
 liquide-http = { path = "crates/liquide-http" }
+liquide-map = { path = "crates/liquide-map" }
 liquide-video = { path = "crates/liquide-video" }
 
 [dev-dependencies]
