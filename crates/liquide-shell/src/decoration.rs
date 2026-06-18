@@ -57,6 +57,27 @@ pub enum HitZone {
     Outside,
 }
 
+impl HitZone {
+    /// `true` when this zone is a window resize edge or corner (the eight
+    /// `Resize*` variants). Used so a resize grab takes precedence over the CSS
+    /// titlebar drag region where they overlap (the titlebar box spans the
+    /// corner tolerance — see `events.rs` decoration hit-test).
+    #[must_use]
+    pub fn is_resize(self) -> bool {
+        matches!(
+            self,
+            HitZone::ResizeTop
+                | HitZone::ResizeBottom
+                | HitZone::ResizeLeft
+                | HitZone::ResizeRight
+                | HitZone::ResizeTopLeft
+                | HitZone::ResizeTopRight
+                | HitZone::ResizeBottomLeft
+                | HitZone::ResizeBottomRight
+        )
+    }
+}
+
 impl std::fmt::Display for HitZone {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")

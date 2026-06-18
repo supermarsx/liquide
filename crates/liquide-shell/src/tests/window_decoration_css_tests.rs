@@ -576,3 +576,234 @@ fn theme_change_moves_the_emitted_button_rects() {
          the CSS hit box {hit:?}"
     );
 }
+
+// ── t115-titlebar: drag-to-move from the CSS titlebar handle region ────────
+//
+// The titlebar drag region is the laid-out `window-titlebar` CSS box MINUS the
+// button boxes. A press+drag on that handle moves the window by the cursor
+// delta; a press on any button starts NO drag and fires the button's action; a
+// theme change that resizes the buttons moves the handle/button split with the
+// CSS; the topmost window is the one that drags; and a press in the resize
+// corner of the titlebar starts a RESIZE, not a move (the migration regression).
+
+/// A left mouse move to `(x, y)` (cursor motion; drives an active drag).
+fn mouse_move(x: f32, y: f32) -> PlatformEvent {
+    PlatformEvent::MouseInput {
+        handle: NativeWindowHandle(0),
+        event: MouseEvent::Move { x, y },
+    }
+}
+
+/// (a) A press+drag on the titlebar handle region (the title text area, left of
+/// the buttons) moves the window by the drag delta. The drag offset/zone is
+/// derived from the laid-out CSS titlebar box, so this exercises the full
+/// CSS-geometry → drag path.
+#[test]
+fn titlebar_handle_drag_moves_window_by_delta() {
+    let mut shell = windowed_shell();
+    let wid = window_id(&shell);
+    let start = shell.windows[&wid].bounds;
+    let tb = shell.window_titlebar_bounds_from_css(wid).expect("titlebar box");
+
+    // A point on the titlebar, left of the button cluster (the draggable handle).
+    let grab_x = tb.x + 24.0;
+    let grab_y = tb.y + tb.height / 2.0;
+    // Sanity: this point resolves to the drag zone, not a button.
+    assert_eq!(
+        shell.window_decoration_zone_from_css(wid, grab_x, grab_y),
+        Some(HitZone::TitleBar),
+        "the handle point must be a titlebar drag zone, not a button"
+    );
+
+    let action = shell.handle_platform_event(&press(grab_x, grab_y));
+    assert!(
+        matches!(action, Some(crate::shortcuts::ShellAction::Redraw)),
+        "pressing the titlebar handle should arm a drag (Redraw), got {action:?}"
+    );
+
+    let (dx, dy) = (73.0, 41.0);
+    let _ = shell.handle_platform_event(&mouse_move(grab_x + dx, grab_y + dy));
+    let moved = shell.windows[&wid].bounds;
+    assert!(
+        (moved.x - (start.x + dx)).abs() < 0.5 && (moved.y - (start.y + dy)).abs() < 0.5,
+        "dragging the titlebar handle by ({dx},{dy}) must move the window by that \
+         delta: start {start:?}, moved {moved:?}"
+    );
+    assert!(
+        (moved.width - start.width).abs() < 0.5 && (moved.height - start.height).abs() < 0.5,
+        "a titlebar drag must not resize the window"
+    );
+}
+
+/// (b) A press on EACH titlebar button (close/min/max/pin) does NOT start a
+/// window drag — and fires that button's action. (The CSS button box wins over
+/// the titlebar drag zone in `window_decoration_zone_from_css`.)
+#[test]
+fn pressing_a_button_fires_action_and_never_drags() {
+    use crate::shortcuts::ShellAction;
+    let cases = [
+        ("close", ShellAction::CloseWindow),
+        ("min", ShellAction::MinimizeWindow),
+        ("max", ShellAction::MaximizeWindow),
+        ("pin", ShellAction::ToggleAlwaysOnTop),
+    ];
+    for (suffix, expected) in cases {
+        let mut shell = windowed_shell();
+        let wid = window_id(&shell);
+        let b = shell
+            .window_button_bounds_from_css(wid, suffix)
+            .unwrap_or_else(|| panic!("{suffix} box"));
+        let cx = b.x + b.width / 2.0;
+        let cy = b.y + b.height / 2.0;
+
+        let action = shell.handle_platform_event(&press(cx, cy));
+        assert!(
+            action.as_ref() == Some(&expected),
+            "pressing the {suffix} button must fire {expected:?}, got {action:?}"
+        );
+        assert!(
+            shell.drag_state.is_none(),
+            "pressing the {suffix} button must NOT start a window drag (drag_state={:?})",
+            shell.drag_state
+        );
+    }
+}
+
+/// (c) The drag region is derived from the CSS titlebar box MINUS the button
+/// boxes: a theme change that grows the buttons shrinks the draggable handle and
+/// MOVES the boundary between drag and button. After widening the buttons, a
+/// point that was a drag handle before (just left of the old narrow cluster) is
+/// now inside a button box and no longer drags — proving the split is laid-out,
+/// not a hardcoded stride. Fails if the drag/button split were hardcoded.
+#[test]
+fn drag_handle_is_css_titlebar_minus_buttons() {
+    let mut shell = windowed_shell();
+    let wid = window_id(&shell);
+
+    // Baseline: the gap just LEFT of the leftmost (pin) button is a drag handle.
+    let pin_before = shell.window_button_bounds_from_css(wid, "pin").expect("pin box");
+    let probe_y = pin_before.y + pin_before.height / 2.0;
+    let probe_x = pin_before.x - 6.0; // just left of the narrow button cluster
+    assert_eq!(
+        shell.window_decoration_zone_from_css(wid, probe_x, probe_y),
+        Some(HitZone::TitleBar),
+        "left of the narrow button cluster must be a drag handle to start with"
+    );
+
+    // Grow the buttons substantially. The cluster widens leftward (buttons are
+    // right-aligned), so the SAME probe point is now inside the (now-wide) pin
+    // button box → no longer a drag handle.
+    shell.add_stylesheet(
+        "close-button, maximize-button, minimize-button, pin-button { width: 60; height: 30; }",
+    );
+    let _ = shell.build_scene();
+
+    let pin_after = shell.window_button_bounds_from_css(wid, "pin").expect("pin box after");
+    assert!(
+        pin_after.width - pin_before.width > 10.0,
+        "the override must widen the pin button (before {pin_before:?}, after {pin_after:?})"
+    );
+    let zone_after = shell.window_decoration_zone_from_css(wid, probe_x, probe_y);
+    let is_button = matches!(
+        zone_after,
+        Some(
+            HitZone::CloseButton
+                | HitZone::MaximizeButton
+                | HitZone::MinimizeButton
+                | HitZone::AlwaysOnTopButton
+        )
+    );
+    assert!(
+        is_button,
+        "after widening the buttons (cluster grows leftward) the same point is now \
+         inside a button box, not a drag handle — the drag/button split tracks the \
+         CSS layout, not a hardcoded stride (got {zone_after:?})"
+    );
+}
+
+/// (d) Titlebar drag picks the TOPMOST window: with two overlapping decorated
+/// windows, a press on the shared titlebar region drags the one on top (the
+/// canonical `pick_window_at` router), not the one beneath.
+#[test]
+fn titlebar_drag_picks_topmost_window() {
+    let mut shell = windowed_shell();
+    let lower = window_id(&shell);
+    // Open a second window overlapping the first's titlebar; it becomes topmost.
+    let upper = shell.open_window("Beta", Rect::new(220.0, 110.0, 640.0, 420.0));
+    let _ = shell.build_scene();
+
+    let upper_tb = shell
+        .window_titlebar_bounds_from_css(upper)
+        .expect("upper titlebar box");
+    // A handle point inside the upper window's titlebar that also lies over the
+    // lower window's titlebar/body.
+    let gx = upper_tb.x + 30.0;
+    let gy = upper_tb.y + upper_tb.height / 2.0;
+    assert_eq!(
+        shell.pick_window_at(gx, gy),
+        Some(upper),
+        "the shared point must pick the topmost (upper) window"
+    );
+
+    let upper_start = shell.windows[&upper].bounds;
+    let lower_start = shell.windows[&lower].bounds;
+    let _ = shell.handle_platform_event(&press(gx, gy));
+    let _ = shell.handle_platform_event(&mouse_move(gx + 30.0, gy + 30.0));
+
+    assert!(
+        (shell.windows[&upper].bounds.x - (upper_start.x + 30.0)).abs() < 0.5,
+        "the topmost window must move on the drag"
+    );
+    assert_eq!(
+        shell.windows[&lower].bounds, lower_start,
+        "the window beneath must NOT move"
+    );
+}
+
+/// REGRESSION (t115-titlebar root cause): the CSS `window-titlebar` box spans the
+/// whole title row, so before this fix `window_decoration_zone_from_css` returned
+/// `TitleBar` even at the top-left/top-right resize CORNERS of a resizable
+/// window, shadowing the rect-based `ResizeTopLeft`/`ResizeTopRight` zones the
+/// pre-P6 code detected there — i.e. a resizable window could no longer be
+/// grabbed for resize at its top corners (it started a MOVE instead). A press in
+/// the titlebar's top-left corner tolerance must start a RESIZE, not a move.
+#[test]
+fn titlebar_top_corner_starts_resize_not_move() {
+    use crate::shell::DragState;
+    let mut shell = windowed_shell();
+    let wid = window_id(&shell);
+    let b = shell.windows[&wid].bounds;
+
+    // Top-left corner, within the resize tolerance, but inside the titlebar
+    // Y-band (so the CSS adapter reports TitleBar).
+    let cx = b.x + 2.0;
+    let cy = b.y + 8.0;
+
+    let _ = shell.handle_platform_event(&press(cx, cy));
+    match shell.drag_state {
+        Some(DragState::Resizing { edge, .. }) => {
+            assert_eq!(
+                edge,
+                HitZone::ResizeTopLeft,
+                "the top-left titlebar corner must start a top-left resize"
+            );
+        }
+        other => panic!(
+            "pressing the top-left titlebar corner of a resizable window must start a \
+             RESIZE, got drag_state={other:?}"
+        ),
+    }
+
+    // And a press in the MIDDLE of the titlebar (away from any corner) still
+    // starts a MOVE, not a resize — the fix must not turn every titlebar press
+    // into a resize.
+    let mut shell2 = windowed_shell();
+    let wid2 = window_id(&shell2);
+    let b2 = shell2.windows[&wid2].bounds;
+    let _ = shell2.handle_platform_event(&press(b2.x + b2.width / 2.0, b2.y + 8.0));
+    assert!(
+        matches!(shell2.drag_state, Some(DragState::Moving { .. })),
+        "the middle of the titlebar must start a MOVE, got {:?}",
+        shell2.drag_state
+    );
+}

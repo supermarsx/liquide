@@ -1703,9 +1703,41 @@ impl Shell {
                 // extend outside the DOM box and have no CSS element, so they —
                 // and the first frame before layout — fall back to the
                 // rect-based `hit_test_decoration`.
-                let zone = self
-                    .window_decoration_zone_from_css(wid, x, y)
-                    .unwrap_or_else(|| hit_test_decoration(client, &self.decoration_style, x, y));
+                //
+                // PRECEDENCE (t115-titlebar fix): the CSS `window-titlebar` box
+                // spans the whole title row, so `window_decoration_zone_from_css`
+                // returns `TitleBar` even for points inside the resize-CORNER
+                // tolerance at the titlebar's top-left/top-right (the corners the
+                // rect model treats as `ResizeTopLeft`/`ResizeTopRight`). The CSS
+                // adapter knows nothing about resize edges, so before the P6
+                // migration these corners started a resize; afterwards the CSS
+                // `TitleBar` shadowed them and they started a MOVE instead — i.e.
+                // a resizable window could no longer be grabbed for resize at its
+                // top corners. Fix: a rect-based resize zone takes precedence over
+                // a CSS `TitleBar` (but NEVER over a CSS button — you don't resize
+                // from the close button). So: CSS button > rect resize edge/corner
+                // > CSS titlebar/zone > rect fallback.
+                let css_zone = self.window_decoration_zone_from_css(wid, x, y);
+                let rect_zone = hit_test_decoration(client, &self.decoration_style, x, y);
+                let zone = match css_zone {
+                    // A CSS button always wins (resize never overrides a button).
+                    Some(
+                        z @ (HitZone::CloseButton
+                        | HitZone::MaximizeButton
+                        | HitZone::MinimizeButton
+                        | HitZone::AlwaysOnTopButton),
+                    ) => z,
+                    // CSS says titlebar drag — but if the rect model says this
+                    // point is actually a resize edge/corner AND the window is
+                    // resizable, prefer the resize (the CSS titlebar box overlaps
+                    // the corner tolerance). For a non-resizable window the corner
+                    // stays a drag (TitleBar), as before.
+                    Some(HitZone::TitleBar) if is_resizable && rect_zone.is_resize() => rect_zone,
+                    Some(z) => z,
+                    // Decoration not laid out yet (first frame): rect fallback,
+                    // which also owns the resize-edge zones outside the DOM box.
+                    None => rect_zone,
+                };
                 match zone {
                     HitZone::CloseButton => {
                         let _ = self.set_focus(wid);
