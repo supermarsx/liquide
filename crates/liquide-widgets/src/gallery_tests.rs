@@ -223,6 +223,106 @@ fn reference_box_joins_focus_ring_and_can_be_focused() {
     );
 }
 
+/// PROOF 6 (the F1 fix, end-to-end in REAL CSS) — `background: var(--x)`
+/// shorthand paints the fill through the FULL pipeline.
+///
+/// The style engine used to expand the `background` shorthand BEFORE `var()`
+/// substitution, so `background: var(--x)` reached the shorthand expander as an
+/// unclassifiable `var(--x)` token and the fill was DROPPED (only text painted).
+/// `background-color: var(--x)` worked because it is not a shorthand. The F1 fix
+/// (cascade.rs, commit a579420) defers expansion of any shorthand whose value
+/// text contains `var()` so the var is resolved and re-parsed into longhands at
+/// apply time — matching `background-color`.
+///
+/// This is the FULL-PIPELINE regression guard (the F1 commit added STYLE-ENGINE
+/// unit tests; this exercises style -> layout -> paint -> raster on the real
+/// widgets.css base layer + a custom `--probe` token, asserting the rasterized
+/// pixel carries the probe color). It is RED if the F1 fix regresses: a dropped
+/// fill leaves the box backdrop (black/transparent), not the probe color.
+///
+/// The probe color rgb(170,80,200) is deliberately unlike any default widget
+/// token, so a coincidental default match cannot make this pass.
+#[test]
+fn background_shorthand_with_var_paints_fill_in_real_pipeline() {
+    // A distinctive probe color that matches no widgets.css default token.
+    const PROBE: (u8, u8, u8) = (170, 80, 200); // #aa50c8
+
+    // `extra_css` is unlayered, so it wins over the @layer widgets base rule for
+    // `lq-box`. We define `--probe` on :root and fill the box via the SHORTHAND.
+    let mut g = Gallery::new(
+        W,
+        H,
+        "lq-gallery { padding: 24px; } \
+         :root { --probe: #aa50c8; } \
+         lq-box { background: var(--probe); }",
+    );
+    g.mount("ref-box", Box::new(ReferenceBox::new("ping")));
+    g.relayout();
+
+    let node = g.host.root_of("ref-box").unwrap();
+    let rect = g.box_of(node).expect("box must have a layout box");
+    let cx = (rect.x + rect.width / 2.0) as u32;
+    let cy = (rect.y + rect.height / 2.0) as u32;
+
+    let px = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    // The shorthand+var fill MUST have painted the probe color — NOT been dropped
+    // (which would leave the transparent/black backdrop showing through).
+    assert!(px.a > 0, "shorthand+var fill must paint (alpha {})", px.a);
+    assert!(
+        (px.r as i32 - PROBE.0 as i32).abs() <= 2
+            && (px.g as i32 - PROBE.1 as i32).abs() <= 2
+            && (px.b as i32 - PROBE.2 as i32).abs() <= 2,
+        "`background: var(--probe)` must paint the probe color {PROBE:?} through \
+         the real pipeline — got {px:?} (F1 shorthand+var fill regressed: dropped)"
+    );
+}
+
+/// PROOF 7 (the F1 invariant the cleanup relies on) — `background: var(--x)` and
+/// `background-color: var(--x)` produce the SAME rasterized fill.
+///
+/// This is the contract that makes the `background-color: var()` workaround
+/// throughout widgets.css/themes OPTIONAL: both spellings now resolve to an
+/// identical fill, so switching a workaround to the `background:` shorthand is a
+/// no-op visually. If this diverges, the F1 fix regressed and the workaround
+/// would once again be REQUIRED — so a CSS cleanup must not be done.
+#[test]
+fn background_shorthand_var_equals_background_color_var_in_pixels() {
+    let probe_at_center = |decl: &str| -> Color {
+        let css = format!(
+            "lq-gallery {{ padding: 24px; }} \
+             :root {{ --probe: #aa50c8; }} \
+             lq-box {{ {decl} }}"
+        );
+        let mut g = Gallery::new(W, H, &css);
+        g.mount("ref-box", Box::new(ReferenceBox::new("ping")));
+        g.relayout();
+        let node = g.host.root_of("ref-box").unwrap();
+        let rect = g.box_of(node).expect("box laid out");
+        let cx = (rect.x + rect.width / 2.0) as u32;
+        let cy = (rect.y + rect.height / 2.0) as u32;
+        Gallery::pixel(&g.rasterize(), cx, cy)
+    };
+
+    let shorthand = probe_at_center("background: var(--probe);");
+    let longhand = probe_at_center("background-color: var(--probe);");
+
+    assert_eq!(
+        (shorthand.r, shorthand.g, shorthand.b, shorthand.a),
+        (longhand.r, longhand.g, longhand.b, longhand.a),
+        "`background: var()` ({shorthand:?}) must rasterize the SAME fill as the \
+         `background-color: var()` workaround ({longhand:?}) — this equality is \
+         what makes the workaround optional (cleanup safe, no visual shift)"
+    );
+    // And it must be the real probe, not a coincidental default match.
+    assert!(
+        (longhand.r as i32 - 170).abs() <= 2
+            && (longhand.g as i32 - 80).abs() <= 2
+            && (longhand.b as i32 - 200).abs() <= 2,
+        "the shared fill must be the probe color, got {longhand:?}"
+    );
+}
+
 /// Downcast a `&dyn WidgetBehavior` to `&ReferenceBox` via the trait's `as_any`
 /// hook (safe; no transmute).
 fn downcast(b: &dyn WidgetBehavior) -> &ReferenceBox {
