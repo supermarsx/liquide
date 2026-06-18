@@ -9,11 +9,17 @@
 //! reads the LIVE devtools/shell state directly each frame.
 //!
 //! Rendering mirrors the loading-screen mini-pipeline ([`super::loading_pipeline`]):
-//! a self-contained [`DesktopPipeline`] (which already loads the full default
-//! theme cascade, so the `var(--…)` tokens devtools.css depends on resolve) is
-//! fed the devtools panel's template each frame, lays it out + paints it, and
-//! the resulting scene is rasterised into a CPU framebuffer and presented to the
-//! devtools window via the platform's `present_frame`.
+//! a self-contained [`DesktopPipeline`] is fed the devtools panel's template each
+//! frame, lays it out + paints it, and the resulting scene is rasterised into a
+//! CPU framebuffer and presented to the devtools window via `present_frame`.
+//!
+//! IMPORTANT: `DesktopPipeline::new` loads ONLY the theme file, which defines no
+//! `:root` design-token variables. devtools.css is written entirely against those
+//! tokens (`var(--bg-secondary)`, `var(--text-primary)`, …), so this window MUST
+//! also load the base-layer cascade (`variables.css` → `components.css`) before
+//! devtools.css — exactly like the shell does. Without it every `var(--…)` fails
+//! to resolve, the panel's `background:` drops, and the window renders fully
+//! black (the t132 black-window regression).
 //!
 //! Lifecycle: created when the panel is detached (or F12/Ctrl+Shift+I detaches
 //! in dev mode), torn down when the window is closed (its own close button /
@@ -39,7 +45,7 @@ use liquide_shell::pipeline::{DesktopPipeline, PipelineConfig};
 use liquide_style_engine::StyleMap;
 use tracing::{info, warn};
 
-use super::devtools_state::DEVTOOLS_CSS;
+use super::devtools_state::{COMPONENTS_CSS, DEVTOOLS_CSS, VARIABLES_CSS};
 
 /// Default initial size of the separate devtools window (logical px).
 const DEVTOOLS_WINDOW_W: u32 = 900;
@@ -97,13 +103,21 @@ impl DevToolsWindow {
         let width = DEVTOOLS_WINDOW_W;
         let height = DEVTOOLS_WINDOW_H;
 
-        // The pipeline loads the default theme (variables + components + widgets),
-        // then the devtools component stylesheet on top so `var(--…)` resolves.
+        // Stand up the mini-pipeline. `DesktopPipeline::new` loads ONLY the theme
+        // file (Night), which defines NO `:root` design-token variables — those
+        // live in `variables.css`. devtools.css is written entirely against those
+        // tokens (`background: var(--bg-secondary)`, `color: var(--text-primary)`,
+        // border colors, etc.), so we MUST load the same base-layer cascade the
+        // shell loads (`variables → components`) BEFORE devtools.css. Without it
+        // every `var(--…)` fails to resolve, the panel's `background:` drops, and
+        // the window renders fully black.
         let mut pipeline = DesktopPipeline::new(&PipelineConfig {
             width: width as f32,
             height: height as f32,
             base_font_size: 14.0,
         });
+        pipeline.add_stylesheet(VARIABLES_CSS);
+        pipeline.add_stylesheet(COMPONENTS_CSS);
         pipeline.add_stylesheet(DEVTOOLS_CSS);
 
         let fb = FrameBuffer::new(width, height, PixelFormat::Bgra8);
@@ -174,17 +188,14 @@ impl DevToolsWindow {
 
         let scene = self.build_scene(panel, doc, layout, styles);
 
-        // 3. Flatten + rasterise into the framebuffer (full-frame damage — this
-        //    is a self-contained surface, not tile-throttled).
+        // 3. Flatten + rasterise into the framebuffer.
         let flat = scene.flatten();
-        let tile_size = 64u32;
-        let mut damage = liquide_compositor::damage::DamageSet::new(tile_size);
-        damage.mark_all(self.width.div_ceil(tile_size), self.height.div_ceil(tile_size));
         // Clear the surface first so removed content does not survive as stale
         // pixels (the devtools panel is opaque, but tabs change content shape).
         if let Some(px) = self.fb.pixels_mut() {
             px.iter_mut().for_each(|b| *b = 0);
         }
+        let damage = Self::full_surface_damage(self.width, self.height);
         let _ = self.renderer.render(&flat, &mut self.fb, &damage);
 
         // 4. Present to the devtools window.
@@ -198,6 +209,23 @@ impl DevToolsWindow {
         ) {
             warn!(%err, handle = self.handle.0, "failed to present devtools window frame");
         }
+    }
+
+    /// A TRUE full-frame damage set for the whole window surface. Using a full
+    /// set (not `mark_all`, which materialises individual tiles and reports
+    /// `is_full() == false`) makes the renderer install NO write-scissor / raster
+    /// clip for this render: the devtools window is a self-contained surface
+    /// repainted whole each frame, so (a) nothing can clip its own paint to black
+    /// and (b) it leaves the per-thread scissor untouched (`None` in → `None`
+    /// out), so a subsequent same-thread render never inherits a stale clip.
+    fn full_surface_damage(width: u32, height: u32) -> liquide_compositor::damage::DamageSet {
+        let tile_size = 64u32;
+        liquide_compositor::damage::DamageSet::full(
+            tile_size,
+            width.div_ceil(tile_size),
+            height.div_ceil(tile_size),
+            liquide_compositor::damage::DamageClass::UiPrimitive,
+        )
     }
 
     /// Build the devtools scene for THIS window from the LIVE panel + shell
@@ -240,6 +268,28 @@ impl DevToolsWindow {
             scene.add_child(node);
         }
         scene
+    }
+
+    /// Test-only: build + rasterise the devtools scene into the window's
+    /// framebuffer exactly as `render_and_present` does, but WITHOUT presenting,
+    /// and return a clone of the rasterised BGRA pixels. Lets tests assert the
+    /// window surface is actually painted (not all-black).
+    #[cfg(test)]
+    pub(super) fn render_to_pixels_for_test(
+        &mut self,
+        panel: &DevToolsPanel,
+        doc: &Document,
+        layout: &LayoutTree,
+        styles: &StyleMap,
+    ) -> Vec<u8> {
+        let scene = self.build_scene(panel, doc, layout, styles);
+        let flat = scene.flatten();
+        if let Some(px) = self.fb.pixels_mut() {
+            px.iter_mut().for_each(|b| *b = 0);
+        }
+        let damage = Self::full_surface_damage(self.width, self.height);
+        let _ = self.renderer.render(&flat, &mut self.fb, &damage);
+        self.fb.pixels().to_vec()
     }
 
     /// Destroy the native window. Idempotent.

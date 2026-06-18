@@ -13,6 +13,23 @@ use crate::telemetry::TelemetryHandle;
 pub(super) static DEVTOOLS_CSS: &str =
     include_str!("../../../../assets/themes/components/devtools.css");
 
+/// Design-token `:root` variables (`--bg-secondary`, `--text-primary`, …) that
+/// `devtools.css` references via `var(--…)`. The shell loads this into the live
+/// DE cascade at startup, but the separate devtools window stands up its OWN
+/// `DesktopPipeline` whose `DesktopPipeline::new` only loads the theme file
+/// (which defines NO variables) — so WITHOUT this the window's `var(--…)` tokens
+/// all fail to resolve and every `background: var(--…)` drops, rendering the
+/// window fully black. Embedded from the same source the shell uses (single
+/// source of truth), so the window's tokens never drift from the live DE.
+pub(super) static VARIABLES_CSS: &str =
+    include_str!("../../../../assets/themes/variables.css");
+
+/// Shared component defaults that `devtools.css` builds on. Loaded into the
+/// window pipeline AFTER variables (so its `var(--…)` resolve) and BEFORE
+/// `DEVTOOLS_CSS`, mirroring the shell's `variables → components → …` cascade.
+pub(super) static COMPONENTS_CSS: &str =
+    include_str!("../../../../assets/themes/components.css");
+
 /// DevTools panel lifecycle and integration state.
 pub(super) struct DevToolsState {
     pub(super) dev_mode: bool,
@@ -235,12 +252,24 @@ impl DevToolsState {
     ///
     /// Must be called **before** `shell.build_scene()` so the CSS pipeline
     /// can lay out and paint the devtools panel.
+    ///
+    /// When the panel is DETACHED into its own native window it is rendered by
+    /// that window's mini-pipeline ([`DevToolsWindow`]) and must NOT also be
+    /// mounted into the main DE: while detached the panel carries the
+    /// `dock-detached` class (`position:fixed; inset:0; width/height:100%`), so a
+    /// stale in-DE mount paints a full-window devtools overlay (toolbar / borders
+    /// / status strip) on top of the desktop — the main-DE artifact. The separate
+    /// window owns the panel exclusively, so we UNMOUNT it from the shell here.
     pub(super) fn sync_template(&self, shell: &mut Shell) {
         if !self.dev_mode {
             return;
         }
 
-        if let Some(devtools) = self.devtools.as_ref().filter(|d| d.is_visible()) {
+        if let Some(devtools) = self
+            .devtools
+            .as_ref()
+            .filter(|d| d.is_visible() && !d.is_detached())
+        {
             let template = {
                 let doc = shell.document();
                 match (shell.layout_tree(), shell.style_map()) {
@@ -292,9 +321,19 @@ impl DevToolsState {
         }
 
         if let (Some(layout), Some(styles)) = (shell.layout_tree(), shell.style_map()) {
+            // Keep the Scene-tab debugger snapshot fresh from the MAIN scene even
+            // when detached — the window's Scene tab inspects the live desktop.
             devtools.scene_debugger.snapshot(scene);
-            for node in devtools.build_scene(doc, layout, styles) {
-                scene.add_child(node);
+            // But the direct overlay scene nodes (element-picker / layout-overlay
+            // / hover+selection highlights) belong to whichever surface hosts the
+            // panel. When DETACHED they are emitted by the separate window's
+            // pipeline; adding them to the MAIN DE scene too would paint stray
+            // devtools overlay marks (highlight rects / picker lines) on the
+            // desktop. Skip them here while detached — the window owns the panel.
+            if !devtools.is_detached() {
+                for node in devtools.build_scene(doc, layout, styles) {
+                    scene.add_child(node);
+                }
             }
         }
     }
@@ -318,6 +357,20 @@ impl DevToolsState {
         };
         let (layout, styles) = (shell.layout_tree()?, shell.style_map()?);
         Some(win.build_scene(panel, shell.document(), layout, styles))
+    }
+
+    /// Test-only: rasterise the separate devtools window into its framebuffer and
+    /// return the BGRA pixels (no present). `None` if no window / panel is open.
+    #[cfg(test)]
+    pub(super) fn render_window_to_pixels_for_test(
+        &mut self,
+        shell: &Shell,
+    ) -> Option<Vec<u8>> {
+        let (Some(win), Some(panel)) = (self.window.as_mut(), self.devtools.as_ref()) else {
+            return None;
+        };
+        let (layout, styles) = (shell.layout_tree()?, shell.style_map()?);
+        Some(win.render_to_pixels_for_test(panel, shell.document(), layout, styles))
     }
 }
 
@@ -450,6 +503,105 @@ mod tests {
             !src_text.iter().any(|t| t.contains("Pipeline Metrics")),
             "the Sources scene must no longer show the Performance heading — the \
              window must re-render from the CHANGED live state, not a stale scene"
+        );
+    }
+
+    /// Count non-black (any non-zero channel) BGRA pixels in a frame buffer.
+    fn count_nonblack(px: &[u8]) -> usize {
+        px.chunks_exact(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count()
+    }
+
+    /// Build the MAIN DE scene exactly as the desktop loop does: mount the
+    /// devtools template into the shell DOM (`sync_template`), build the shell
+    /// scene, then overlay the direct devtools scene nodes. This is the frame the
+    /// user sees on the main monitor.
+    fn build_main_de_scene(dt: &mut DevToolsState, shell: &mut Shell) -> SceneNode {
+        let telemetry = crate::telemetry::create_telemetry(60);
+        dt.sync_template(shell);
+        let mut scene = shell.build_scene();
+        dt.overlay_scene(&mut scene, shell, 0, &telemetry, 1280, 800);
+        scene
+    }
+
+    /// Whether the scene contains any devtools panel content (a tab label text
+    /// node such as "Console" / "Performance", emitted only when the panel DOM
+    /// is mounted/overlaid into this scene).
+    fn scene_has_devtools_panel(scene: &SceneNode) -> bool {
+        let mut text = Vec::new();
+        collect_text(scene, &mut text);
+        text.iter().any(|t| {
+            t.contains("Pipeline Metrics")
+                || t == "Console"
+                || t == "Performance"
+                || t == "Elements"
+        })
+    }
+
+    #[test]
+    fn detached_panel_does_not_render_in_the_main_de() {
+        // Test B (main-DE artifact / cross-window isolation): once the devtools
+        // panel is DETACHED into its own native window, it must NOT also render in
+        // the MAIN DE. When detached the panel carries `dock-detached`
+        // (position:fixed; inset:0; width/height:100%), so leaving it mounted in
+        // the shell DOM paints a full-window devtools overlay (its toolbar /
+        // borders / strips) on top of the desktop — the artifact the user sees
+        // only while the devtools window is open. RED before the fix (panel
+        // present in the main scene), GREEN after (window owns it exclusively).
+        let (mut dt, mut shell) = dev_state_with_visible_panel();
+        let mut platform = NullPlatform::default();
+
+        // Baseline: BEFORE detaching, the visible in-DE panel SHOULD be in the
+        // main scene (this is the normal non-dev / pre-detach overlay).
+        let baseline = build_main_de_scene(&mut dt, &mut shell);
+        assert!(
+            scene_has_devtools_panel(&baseline),
+            "sanity: the visible docked panel must render in the main DE before detach"
+        );
+
+        // Detach into a separate window (dev-mode F12 behavior).
+        dt.dev_mode_follow_visibility();
+        dt.sync_window(&mut platform);
+        assert!(dt.has_window(), "panel must detach into a window");
+        assert!(
+            dt.devtools.as_ref().unwrap().is_detached(),
+            "panel must be in the Detached dock position"
+        );
+
+        // Now the MAIN DE scene must NOT contain the panel — the separate window
+        // owns it exclusively.
+        let with_window = build_main_de_scene(&mut dt, &mut shell);
+        assert!(
+            !scene_has_devtools_panel(&with_window),
+            "while detached into its own window, the devtools panel must NOT also \
+             render in the main DE (full-window dock-detached overlay = artifact)"
+        );
+    }
+
+    #[test]
+    fn devtools_window_renders_nonblack_panel() {
+        // Test A (RED before fix / GREEN after): the separate devtools window's
+        // framebuffer must contain the OPAQUE panel background + content pixels —
+        // NOT be all-black. A black window means the scene never painted (panel
+        // didn't fill the surface, theme/var() dropped the background, or the
+        // raster clipped everything away).
+        let (mut dt, shell) = dev_state_with_visible_panel();
+        let mut platform = NullPlatform::default();
+        dt.dev_mode_follow_visibility();
+        dt.sync_window(&mut platform);
+        assert!(dt.has_window(), "window must be open for the render test");
+
+        let px = dt
+            .render_window_to_pixels_for_test(&shell)
+            .expect("window must rasterise");
+        let total = px.len() / 4;
+        let nonblack = count_nonblack(&px);
+        // The opaque devtools panel fills the whole window when detached, so the
+        // VAST majority of pixels must be painted. A handful of painted pixels is
+        // not enough — black-window means ~0.
+        assert!(
+            nonblack > total / 2,
+            "devtools window must paint the opaque panel over most of the surface; \
+             only {nonblack}/{total} pixels are non-black (black-window regression)"
         );
     }
 
