@@ -215,6 +215,28 @@
   lq-heatmap-cell,
   lq-heatmap-value,
   lq-chart-tooltip,
+  lq-tag-input,
+  lq-token,
+  lq-token-label,
+  lq-token-remove,
+  lq-tag-field,
+  lq-spinbox,
+  lq-spin-value,
+  lq-spin-buttons,
+  lq-spin-up,
+  lq-spin-down,
+  lq-rating,
+  lq-star,
+  lq-star-base,
+  lq-split-button,
+  lq-split-primary,
+  lq-split-caret,
+  lq-masked-input,
+  lq-mask-field,
+  lq-mask-slot,
+  lq-toggle-group,
+  lq-toggle-opt,
+  lq-caret,
   lq-textarea,
   lq-textarea-body,
   lq-textarea-gutter,
@@ -2066,5 +2088,328 @@
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
     font-size: 11px;
     pointer-events: none;
+  }
+
+  /* ===================================================================
+     Group COMPOSITE — composite INPUT controls
+     (tag-input, spinbox, rating, split-button, masked-input, toggle-group)
+     =================================================================== */
+
+  /* ── COMP-1: tag / token input ──────────────────────────────── */
+  lq-tag-input {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    min-width: 240px;
+    min-height: 32px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-tag-input:focus {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-tag-input > lq-token {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    margin-right: 4px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    color: #ffffff;
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  lq-tag-input lq-token-label {
+    display: inline-block;
+  }
+  lq-tag-input lq-token-remove {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-left: 4px;
+    text-align: center;
+    border-radius: 7px;
+    color: rgba(255, 255, 255, 0.85);
+    background-color: rgba(0, 0, 0, 0.18);
+  }
+  lq-tag-input lq-token-remove:hover {
+    background-color: rgba(0, 0, 0, 0.40);
+    color: #ffffff;
+  }
+  lq-tag-input > lq-tag-field {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+    min-width: 40px;
+  }
+  lq-tag-input lq-tag-field .placeholder {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+  lq-tag-input lq-tag-field lq-caret {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-tag-input:focus lq-tag-field lq-caret {
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-tag-input:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── COMP-2: spinbox (numeric stepper) ──────────────────────── */
+  /* Horizontal flex only (vertical flex-grow does not distribute height in the
+     engine — proven limit). Heights are explicit; the two stepper buttons get
+     fixed half-heights so their laid-out boxes are the real, stable hit zones. */
+  lq-spinbox {
+    display: flex;
+    flex-direction: row;
+    width: 120px;
+    height: 32px;
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-spinbox:focus {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-spinbox > lq-spin-value {
+    display: block;
+    flex-grow: 1;
+    height: 30px;
+    line-height: 30px;
+    padding: 0 8px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-spinbox > lq-spin-buttons {
+    display: block;
+    width: 22px;
+    height: 30px;
+    border-left: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-spinbox lq-spin-up,
+  lq-spinbox lq-spin-down {
+    display: block;
+    width: 22px;
+    height: 15px;
+    line-height: 15px;
+    text-align: center;
+    font-size: 8px;
+    color: var(--widget-fg-disabled, rgba(200, 200, 210, 0.8));
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+  lq-spinbox lq-spin-up {
+    border-bottom: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-spinbox lq-spin-up:hover,
+  lq-spinbox lq-spin-down:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+    color: #ffffff;
+  }
+  lq-spinbox lq-spin-up:disabled,
+  lq-spinbox lq-spin-down:disabled,
+  lq-spinbox lq-spin-up.disabled,
+  lq-spinbox lq-spin-down.disabled {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.10));
+  }
+  lq-spinbox:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── COMP-3: rating (stars / hearts) ────────────────────────── */
+  lq-rating {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+  }
+  lq-rating > lq-star {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    margin-right: 2px;
+    font-size: 20px;
+    line-height: 24px;
+    text-align: center;
+    border-radius: 4px;
+    /* The fill state is encoded on the symbol box itself (background + glyph
+       color) so it paints reliably regardless of whether the chosen glyph is in
+       the active font — an empty star is a dim outlined box, a filled star is an
+       accent-filled box. */
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.12));
+  }
+  lq-rating > lq-star.filled {
+    background-color: var(--widget-accent, #f5a623);
+    border-color: var(--widget-accent, #f5a623);
+  }
+  lq-rating > lq-star.half {
+    background-color: var(--widget-accent-active, #c77f12);
+    border-color: var(--widget-accent-active, #c77f12);
+  }
+  lq-rating lq-star-base {
+    display: block;
+    width: 100%;
+    height: 100%;
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.65));
+  }
+  lq-rating > lq-star.filled lq-star-base,
+  lq-rating > lq-star.half lq-star-base {
+    color: #ffffff;
+  }
+  lq-rating:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── COMP-4: split button ───────────────────────────────────── */
+  lq-split-button {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: stretch;
+    position: relative;
+    height: 32px;
+    border-radius: 6px;
+    overflow: visible;
+  }
+  lq-split-button > lq-split-primary {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 0 14px;
+    color: #ffffff;
+    background-color: var(--widget-accent, #3b82f6);
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+  }
+  lq-split-button > lq-split-primary:hover {
+    background-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-split-button > lq-split-caret {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    color: #ffffff;
+    background-color: var(--widget-accent, #3b82f6);
+    border-left: 1px solid rgba(0, 0, 0, 0.20);
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+  }
+  lq-split-button > lq-split-caret:hover,
+  lq-split-button > lq-split-caret:active {
+    background-color: var(--widget-accent-active, #2563eb);
+  }
+  lq-split-button > lq-popup {
+    display: block;
+    position: absolute;
+    top: 34px;
+    left: 0;
+    min-width: 140px;
+    padding: 4px;
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    z-index: 50;
+  }
+  lq-split-button > lq-popup > lq-menu-item {
+    display: block;
+    padding: 6px 10px;
+    border-radius: 4px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-split-button > lq-popup > lq-menu-item:hover,
+  lq-split-button > lq-popup > lq-menu-item:focus,
+  lq-split-button > lq-popup > lq-menu-item.highlighted {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-split-button:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── COMP-5: masked input ───────────────────────────────────── */
+  lq-masked-input {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    font-family: monospace;
+  }
+  lq-masked-input:focus {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-masked-input.complete {
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-masked-input > lq-mask-field {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+  }
+  /* Each slot is a fixed-width cell; literals + editable cells lay out in a row
+     so the laid-out slot boxes mark the real mask positions. */
+  lq-masked-input lq-mask-slot {
+    display: inline-block;
+    min-width: 9px;
+    text-align: center;
+  }
+  lq-masked-input lq-mask-slot.literal {
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.65));
+  }
+  lq-masked-input lq-mask-slot.empty {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+  lq-masked-input lq-caret {
+    display: inline-block;
+    width: 2px;
+    height: 16px;
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-masked-input:focus lq-caret {
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-masked-input:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── COMP-6: toggle group ───────────────────────────────────── */
+  lq-toggle-group {
+    display: inline-flex;
+    flex-direction: row;
+    padding: 2px;
+    border-radius: 8px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-toggle-group > lq-toggle-opt {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 6px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-toggle-group > lq-toggle-opt:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-toggle-group > lq-toggle-opt:focus {
+    border: 1px solid var(--widget-focus-ring, #3b82f6);
+  }
+  lq-toggle-group > lq-toggle-opt:checked,
+  lq-toggle-group > lq-toggle-opt.active {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-toggle-group:disabled {
+    opacity: 0.5;
   }
 }

@@ -88,6 +88,14 @@ pub mod heatmap;
 pub mod line_chart;
 pub mod sparkline;
 
+// ── Group COMPOSITE — composite INPUT controls ──────────────────────────────
+pub mod masked_input;
+pub mod rating;
+pub mod spinbox;
+pub mod split_button;
+pub mod tag_input;
+pub mod toggle_group;
+
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
 mod gallery;
@@ -176,6 +184,20 @@ mod line_chart_tests;
 #[cfg(test)]
 mod sparkline_tests;
 
+// Per-widget real-pipeline gallery tests (Group COMPOSITE).
+#[cfg(test)]
+mod masked_input_tests;
+#[cfg(test)]
+mod rating_tests;
+#[cfg(test)]
+mod spinbox_tests;
+#[cfg(test)]
+mod split_button_tests;
+#[cfg(test)]
+mod tag_input_tests;
+#[cfg(test)]
+mod toggle_group_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -230,6 +252,14 @@ pub use gauge::Gauge;
 pub use heatmap::Heatmap;
 pub use line_chart::LineChart;
 pub use sparkline::{Sparkline, SparkMode};
+
+// Group COMPOSITE widgets (composite INPUT controls).
+pub use masked_input::MaskedInput;
+pub use rating::Rating;
+pub use spinbox::Spinbox;
+pub use split_button::SplitButton;
+pub use tag_input::TagInput;
+pub use toggle_group::{ToggleGroup, ToggleMode};
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.
