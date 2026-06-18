@@ -151,6 +151,30 @@
   lq-swatch,
   lq-color-channels,
   lq-channel,
+  lq-knob,
+  lq-knob-dial,
+  lq-knob-indicator,
+  lq-knob-value,
+  lq-xy-pad,
+  lq-xy-area,
+  lq-xy-handle,
+  lq-color-wheel,
+  lq-wheel-ring,
+  lq-wheel-hue-marker,
+  lq-wheel-area,
+  lq-wheel-sv-cursor,
+  lq-wheel-preview,
+  lq-range-slider,
+  lq-range-track,
+  lq-range-spacer,
+  lq-range-fill,
+  lq-range-thumb,
+  lq-gradient-editor,
+  lq-gradient-bar,
+  lq-gradient-spacer,
+  lq-gradient-stop,
+  lq-gradient-palette,
+  lq-gradient-swatch,
   lq-textarea,
   lq-textarea-body,
   lq-textarea-gutter,
@@ -1338,5 +1362,264 @@
     display: inline-block;
     margin-right: 10px;
     color: var(--widget-fg-disabled, rgba(200, 200, 210, 0.8));
+  }
+
+  /* ── Group E: esoteric / creative PRO controls ────────────────────────────
+     Geometry (sizes, centers, track/bar/pad extents) lives HERE in CSS so the
+     behaviors read it from the laid-out box — value-driven bits (rotation,
+     handle offset, gradient stops, swatch fills) ride inline styles. */
+
+  /* lq-knob — a rotary dial. The dial is a fixed-size round box; its laid-out
+     CENTER (read by the behavior from box_of) is the pivot the drag angle is
+     measured against. The indicator is a thin bar pinned to the dial center and
+     rotated by the value. */
+  lq-knob {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  lq-knob-dial {
+    display: block;
+    position: relative;
+    width: 64px;
+    height: 64px;
+    border-radius: 32px;
+    background-color: var(--widget-bg, #27272a);
+    border: 2px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+  }
+  lq-knob:hover lq-knob-dial {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-knob:active lq-knob-dial {
+    border-color: var(--widget-accent, #3b82f6);
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.10));
+  }
+  lq-knob:disabled lq-knob-dial {
+    border-color: var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-knob-indicator {
+    display: block;
+    position: absolute;
+    left: 30px;
+    top: 6px;
+    width: 4px;
+    height: 26px;
+    border-radius: 2px;
+    background-color: var(--widget-accent, #3b82f6);
+    transform-origin: 2px 26px;
+  }
+  lq-knob-value {
+    display: block;
+    margin-top: 6px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-knob:disabled lq-knob-value {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+
+  /* lq-xy-pad — a square 2D input. The pad's laid-out box gives x/y fractions;
+     the handle is absolutely positioned at left/top = value%. */
+  lq-xy-pad {
+    display: inline-block;
+  }
+  lq-xy-area {
+    display: block;
+    position: relative;
+    width: 160px;
+    height: 160px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 6px;
+  }
+  lq-xy-pad:hover lq-xy-area {
+    border-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-xy-pad:active lq-xy-area {
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-xy-pad:disabled lq-xy-area {
+    border-color: var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-xy-handle {
+    display: block;
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    margin-left: -7px;
+    margin-top: -7px;
+    border-radius: 7px;
+    background-color: var(--widget-accent, #3b82f6);
+    border: 2px solid var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+
+  /* lq-color-wheel — a hue ring wrapping a sat/val area. The ring box gives the
+     center the hue angle is measured against; the area box gives sat/val
+     fractions. The area's base tint + preview carry the colour inline. */
+  lq-color-wheel {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  lq-wheel-ring {
+    display: block;
+    position: relative;
+    width: 180px;
+    height: 180px;
+    border-radius: 90px;
+    background-color: var(--widget-bg, #27272a);
+    border: 12px solid var(--widget-border-strong, rgba(255, 255, 255, 0.30));
+  }
+  lq-wheel-hue-marker {
+    display: block;
+    position: absolute;
+    left: 78px;
+    top: -10px;
+    width: 6px;
+    height: 16px;
+    border-radius: 3px;
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    transform-origin: 3px 100px;
+  }
+  lq-wheel-area {
+    display: block;
+    position: absolute;
+    left: 30px;
+    top: 30px;
+    width: 96px;
+    height: 96px;
+    border-radius: 6px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.18));
+  }
+  lq-wheel-sv-cursor {
+    display: block;
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    margin-left: -6px;
+    margin-top: -6px;
+    border-radius: 6px;
+    background-color: rgba(0, 0, 0, 0);
+    border: 2px solid var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-wheel-preview {
+    display: block;
+    margin-top: 10px;
+    width: 120px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    text-align: center;
+  }
+
+  /* lq-range-slider — dual-thumb track. The track box gives the value mapping;
+     thumbs + range fill are positioned by value% along it. */
+  lq-range-slider {
+    display: block;
+    padding: 12px 0;
+  }
+  lq-range-track {
+    /* A flex row of [spacer-low][thumb-low][range][thumb-high][spacer-rest]:
+       the spacers' proportional flex-grow place each thumb at its value
+       fraction of the REAL laid-out track width. */
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 240px;
+    height: 16px;
+    border-radius: 8px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-range-spacer {
+    display: block;
+    height: 100%;
+    flex-shrink: 0;
+  }
+  lq-range-fill,
+  lq-range-spacer[data-part="range"] {
+    display: block;
+    height: 100%;
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  lq-range-thumb {
+    display: block;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin-left: -8px;
+    margin-right: -8px;
+    border-radius: 8px;
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    border: 2px solid var(--widget-accent, #3b82f6);
+  }
+  lq-range-thumb:focus,
+  lq-range-thumb.focused {
+    border-color: var(--widget-accent-hover, #60a5fa);
+    background-color: var(--widget-accent-hover, #60a5fa);
+  }
+  lq-range-slider:disabled lq-range-spacer[data-part="range"] {
+    background-color: var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+  }
+
+  /* lq-gradient-editor — colour stops along a bar. The bar box gives the stop
+     position fraction; each stop handle is positioned by its pos% and tinted by
+     its colour; the recolour palette mirrors the colour-picker swatches. */
+  lq-gradient-editor {
+    display: inline-block;
+  }
+  lq-gradient-bar {
+    /* A flex row of [gap][stop][gap][stop]...[gap]: the gaps' proportional
+       flex-grow place each stop at its position fraction of the REAL bar width. */
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 280px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-gradient-spacer {
+    display: block;
+    height: 100%;
+    flex-shrink: 0;
+  }
+  lq-gradient-stop {
+    display: block;
+    width: 14px;
+    height: 40px;
+    flex-shrink: 0;
+    margin-left: -7px;
+    margin-right: -7px;
+    border-radius: 4px;
+    border: 2px solid var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-gradient-stop:checked,
+  lq-gradient-stop.selected {
+    border-color: var(--widget-accent, #3b82f6);
+    box-shadow: 0 0 0 1px var(--widget-accent, #3b82f6);
+  }
+  lq-gradient-palette {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 280px;
+    margin-top: 14px;
+  }
+  lq-gradient-swatch {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    margin: 2px;
+    border-radius: 5px;
+    border: 2px solid rgba(0, 0, 0, 0);
+  }
+  lq-gradient-swatch:hover {
+    border-color: var(--widget-fg, rgba(255, 255, 255, 0.9));
+  }
+  lq-gradient-swatch:checked,
+  lq-gradient-swatch.selected {
+    border-color: var(--widget-accent, #3b82f6);
   }
 }

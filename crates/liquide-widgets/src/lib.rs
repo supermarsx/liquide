@@ -72,6 +72,13 @@ pub mod pagination;
 pub mod progress;
 pub mod segmented;
 
+// ── Group E — esoteric / creative PRO controls ──────────────────────────────
+pub mod color_wheel;
+pub mod gradient_editor;
+pub mod knob;
+pub mod range_slider;
+pub mod xy_pad;
+
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
 mod gallery;
@@ -134,6 +141,18 @@ mod progress_tests;
 #[cfg(test)]
 mod segmented_tests;
 
+// Per-widget real-pipeline gallery tests (Group E).
+#[cfg(test)]
+mod color_wheel_tests;
+#[cfg(test)]
+mod gradient_editor_tests;
+#[cfg(test)]
+mod knob_tests;
+#[cfg(test)]
+mod range_slider_tests;
+#[cfg(test)]
+mod xy_pad_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -172,6 +191,13 @@ pub use dropdown::Dropdown;
 pub use pagination::Pagination;
 pub use progress::{Progress, Spinner};
 pub use segmented::Segmented;
+
+// Group E widgets (esoteric / creative PRO controls).
+pub use color_wheel::ColorWheel;
+pub use gradient_editor::{GradientEditor, Stop};
+pub use knob::Knob;
+pub use range_slider::{RangeSlider, Thumb};
+pub use xy_pad::XyPad;
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.
