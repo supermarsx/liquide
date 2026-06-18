@@ -35,7 +35,7 @@
 use liquide_interop::{AppWidget, AppWidgetAction, AppWidgetModel, ButtonKind, SelectionMode};
 use liquide_widgets::{
     Breadcrumb, Button, Chip, Dropdown, Label, Link, List, Pagination, Progress, RadioGroup,
-    Segmented, Slider, Table, TextInput, Toggle, Tree, WidgetBehavior,
+    Segmented, Slider, Table, TextArea, TextInput, Toggle, Tree, WidgetBehavior,
 };
 
 use liquide_dom::{Document, NodeId};
@@ -117,6 +117,17 @@ pub(crate) fn behavior_for(widget: &AppWidget) -> Option<Box<dyn WidgetBehavior>
 
         // ── inputs ──────────────────────────────────────────────────────
         AppWidget::TextInput { value, .. } => Box::new(TextInput::new("").with_text(value.clone())),
+        AppWidget::TextArea {
+            value,
+            gutter,
+            readonly,
+            ..
+        } => Box::new(
+            TextArea::new("")
+                .with_text(value.clone())
+                .with_gutter(*gutter)
+                .disabled(*readonly),
+        ),
         AppWidget::Checkbox { checked, .. } => Box::new(Toggle::checkbox("").checked(*checked)),
         AppWidget::Switch { checked, .. } => Box::new(Toggle::switch("").checked(*checked)),
         AppWidget::RadioGroup {
@@ -299,6 +310,9 @@ fn structure_into(widget: &AppWidget, out: &mut String) {
             out.push_str(&format!("Sg[{key}:{}];", options.len()))
         }
         AppWidget::TextInput { key, .. } => out.push_str(&format!("Ti[{key}];")),
+        AppWidget::TextArea { key, gutter, .. } => {
+            out.push_str(&format!("Tx[{key}:{gutter}];"))
+        }
         AppWidget::Checkbox { key, .. } => out.push_str(&format!("Cb[{key}];")),
         AppWidget::Switch { key, .. } => out.push_str(&format!("Sw[{key}];")),
         AppWidget::RadioGroup { key, options, .. } => {
@@ -470,6 +484,7 @@ pub(crate) fn translate_action(
         (Some(AppWidget::Button { .. }), _) => "click",
         (Some(AppWidget::Checkbox { .. }), _) | (Some(AppWidget::Switch { .. }), _) => "toggle",
         (Some(AppWidget::TextInput { .. }), "changed") => "change",
+        (Some(AppWidget::TextArea { .. }), "changed") => "change",
         (Some(AppWidget::Slider { .. }), "changed") => "change",
         (Some(AppWidget::Dropdown { .. }), "changed") => "select",
         (Some(AppWidget::Segmented { .. }), "changed") => "select",
@@ -544,6 +559,72 @@ mod tests {
         .is_some());
         // Containers are NOT behaviors.
         assert!(behavior_for(&AppWidget::Panel { children: vec![] }).is_none());
+    }
+
+    #[test]
+    fn behavior_for_textarea_produces_a_multiline_textarea_with_key_value_and_gutter() {
+        // The TextArea node must map to a real liquide_widgets::TextArea carrying
+        // the model's full (newline-bearing) text and the gutter flag — NOT a
+        // single-line TextInput. Downcast the behavior to prove the concrete type.
+        let widget = AppWidget::TextArea {
+            key: "document".into(),
+            value: "line one\nline two\nline three".into(),
+            gutter: true,
+            readonly: false,
+        };
+        let behavior = behavior_for(&widget).expect("TextArea maps to a behavior");
+
+        // It must be a TextArea (the multi-line widget), not a TextInput.
+        assert!(
+            behavior.as_any().downcast_ref::<TextInput>().is_none(),
+            "TextArea must NOT map to the single-line TextInput"
+        );
+        let ta = behavior
+            .as_any()
+            .downcast_ref::<TextArea>()
+            .expect("behavior must be a liquide_widgets::TextArea");
+
+        // The full multi-line value round-trips (the newline is preserved).
+        assert_eq!(ta.text(), "line one\nline two\nline three");
+        assert_eq!(ta.line_count(), 3);
+        // The gutter flag flowed through.
+        assert!(ta.gutter_visible(), "gutter flag must reach the widget");
+    }
+
+    #[test]
+    fn behavior_for_textarea_readonly_disables_the_widget() {
+        let widget = AppWidget::TextArea {
+            key: "doc".into(),
+            value: "ro".into(),
+            gutter: false,
+            readonly: true,
+        };
+        let behavior = behavior_for(&widget).expect("behavior");
+        let ta = behavior
+            .as_any()
+            .downcast_ref::<TextArea>()
+            .expect("TextArea");
+        // A read-only TextArea is not focusable (disabled).
+        assert!(!ta.focusable(), "readonly TextArea must be disabled");
+    }
+
+    #[test]
+    fn translate_action_textarea_changed_maps_to_change_with_full_text() {
+        let a = translate_action(
+            "document",
+            Some(&AppWidget::TextArea {
+                key: "document".into(),
+                value: "old".into(),
+                gutter: false,
+                readonly: false,
+            }),
+            &liquide_widgets::WidgetAction {
+                widget: "aw-1-document".into(),
+                name: "changed".into(),
+                payload: Some("new\nbody".into()),
+            },
+        );
+        assert_eq!(a, AppWidgetAction::new("document", "change", "new\nbody"));
     }
 
     #[test]

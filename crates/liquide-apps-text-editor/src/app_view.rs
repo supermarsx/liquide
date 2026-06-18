@@ -100,22 +100,17 @@ impl AppContentProvider for EditorRuntime {
 
 impl EditorRuntime {
     /// Build the toolkit-free widget model from the live runtime: a toolbar
-    /// (new / open / save) over a single text field bound to the active
+    /// (new / open / save) over a multi-line text field bound to the active
     /// document buffer (key [`DOCUMENT_KEY`]).
     ///
-    /// ## Multi-line limitation (documented, not faked)
-    ///
-    /// The document body is exposed as a single [`AppWidget::TextInput`] whose
-    /// `value` is the *entire* buffer text (lines joined by `\n`). The current
-    /// `<lq-*>` toolkit has no multi-line text-area widget with a per-line
-    /// gutter and an in-flow caret, so the rich editor body (line gutter,
-    /// syntax-highlit spans, caret rendering) still lives on the text
-    /// [`AppContentView`] path (`content_view`), which the shell renders when an
-    /// app does not prefer the widget model. The widget seam here is honest
-    /// about what the toolkit supports today: the buffer round-trips through the
-    /// `TextInput` value, edits apply to the real buffer, and full rich
-    /// multi-line editing (gutter/caret inside the widget) needs a dedicated
-    /// text-area widget enhancement — noted, not stubbed.
+    /// The document body is exposed as an [`AppWidget::TextArea`] whose `value`
+    /// is the *entire* buffer text (lines joined by `\n`) and whose line-number
+    /// gutter is enabled. The shell maps this to the real multi-line
+    /// `liquide_widgets::TextArea` (with a per-line gutter and an in-flow caret),
+    /// so the editor body is a genuine multi-line editor rather than the
+    /// single-line `TextInput` fallback it used previously. A `change` action
+    /// carries the full edited text back through [`set_document_text`], which
+    /// preserves newlines.
     fn build_widget_model(&self) -> AppWidgetModel {
         let title = self
             .active_document()
@@ -142,14 +137,16 @@ impl EditorRuntime {
             ],
         };
 
-        // The document body as a single text field carrying the whole buffer.
+        // The document body as a multi-line editor carrying the whole buffer.
         let body_text = self
             .active_document()
             .map(|d| d.buffer.text())
             .unwrap_or_default();
-        let body = AppWidget::TextInput {
+        let body = AppWidget::TextArea {
             key: DOCUMENT_KEY.to_string(),
             value: body_text,
+            gutter: true,
+            readonly: false,
         };
 
         AppWidgetModel {
@@ -340,15 +337,26 @@ mod tests {
     }
 
     #[test]
-    fn widget_model_document_field_reflects_buffer_text() {
-        // The buffer's current text must appear in the document TextInput value.
+    fn widget_model_document_field_is_a_multiline_textarea_reflecting_buffer_text() {
+        // The buffer's current (multi-line) text must appear in the document
+        // body, and that body must be a multi-line TextArea (with a gutter), NOT
+        // the single-line TextInput it used to fall back to.
         let mut rt = editor_with_doc();
         rt.handle_text("alpha\nbeta");
         let model = rt.widget_model().expect("model");
         let body = find(&model, DOCUMENT_KEY).expect("document field present");
+        // Must NOT regress to a single-line TextInput.
         assert!(
-            matches!(body, AppWidget::TextInput { value, .. } if value == "alpha\nbeta"),
-            "document field must mirror the buffer text, got {body:?}"
+            !matches!(body, AppWidget::TextInput { .. }),
+            "document body must not be a single-line TextInput, got {body:?}"
+        );
+        // Must be a TextArea carrying the full newline-bearing buffer text.
+        assert!(
+            matches!(
+                body,
+                AppWidget::TextArea { value, gutter: true, .. } if value == "alpha\nbeta"
+            ),
+            "document field must be a multi-line TextArea mirroring the buffer, got {body:?}"
         );
     }
 
@@ -380,7 +388,7 @@ mod tests {
         let model = rt.widget_model().expect("model");
         assert!(matches!(
             find(&model, DOCUMENT_KEY),
-            Some(AppWidget::TextInput { value, .. }) if value == "new text"
+            Some(AppWidget::TextArea { value, .. }) if value == "new text"
         ));
     }
 
@@ -395,6 +403,16 @@ mod tests {
         assert_eq!(doc.buffer.line(1), Some("line2"));
         // The replacement marks the document modified.
         assert!(doc.is_modified());
+        // The re-emitted model carries the full multi-line text in a TextArea —
+        // the newline is preserved across the apply→re-render round-trip.
+        let model = rt.widget_model().expect("model");
+        assert!(
+            matches!(
+                find(&model, DOCUMENT_KEY),
+                Some(AppWidget::TextArea { value, .. }) if value == "line1\nline2\nline3"
+            ),
+            "the document TextArea must carry the full multi-line edit"
+        );
     }
 
     #[test]

@@ -244,6 +244,17 @@ pub enum AppWidget {
     // ---- inputs ------------------------------------------------------------
     /// A single-line text field.
     TextInput { key: String, value: String },
+    /// A multi-line text field / editor body. `value` is the full text with
+    /// lines joined by `\n`. `gutter` shows line numbers; `readonly` disables
+    /// editing.
+    TextArea {
+        key: String,
+        value: String,
+        #[serde(default)]
+        gutter: bool,
+        #[serde(default)]
+        readonly: bool,
+    },
     /// A boolean checkbox.
     Checkbox { key: String, checked: bool },
     /// A boolean switch/toggle.
@@ -316,6 +327,7 @@ impl AppWidget {
             AppWidget::Button { id, .. } => Some(id),
             AppWidget::Segmented { key, .. }
             | AppWidget::TextInput { key, .. }
+            | AppWidget::TextArea { key, .. }
             | AppWidget::Checkbox { key, .. }
             | AppWidget::Switch { key, .. }
             | AppWidget::RadioGroup { key, .. }
@@ -526,10 +538,18 @@ mod tests {
                     tabs: vec![Tab {
                         id: "general".into(),
                         label: "General".into(),
-                        children: vec![AppWidget::TextInput {
-                            key: "username".into(),
-                            value: "ada".into(),
-                        }],
+                        children: vec![
+                            AppWidget::TextInput {
+                                key: "username".into(),
+                                value: "ada".into(),
+                            },
+                            AppWidget::TextArea {
+                                key: "bio".into(),
+                                value: "line one\nline two".into(),
+                                gutter: true,
+                                readonly: false,
+                            },
+                        ],
                     }],
                     selected: 0,
                 },
@@ -568,6 +588,29 @@ mod tests {
     }
 
     #[test]
+    fn textarea_node_round_trips_through_serde_json() {
+        // A multi-line TextArea must serialize and deserialize byte-for-byte,
+        // including its newline-bearing value and the gutter/readonly flags.
+        let node = AppWidget::TextArea {
+            key: "doc".into(),
+            value: "first\nsecond\nthird".into(),
+            gutter: true,
+            readonly: true,
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        // The tagged enum names the variant in snake_case.
+        assert!(json.contains("\"type\":\"text_area\""), "tag: {json}");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+        // The value's newlines survive the round-trip.
+        assert!(matches!(
+            back,
+            AppWidget::TextArea { value, gutter: true, readonly: true, .. }
+                if value == "first\nsecond\nthird"
+        ));
+    }
+
+    #[test]
     fn action_round_trips_through_serde_json() {
         let action = AppWidgetAction::new("opacity", "change", "0.75");
         let json = serde_json::to_string(&action).expect("serialize");
@@ -587,6 +630,11 @@ mod tests {
         assert!(matches!(
             model.find_mut("username"),
             Some(AppWidget::TextInput { .. })
+        ));
+        // Multi-line TextArea, also inside the Tab sub-tree.
+        assert!(matches!(
+            model.find_mut("bio"),
+            Some(AppWidget::TextArea { gutter: true, .. })
         ));
         // Button by id.
         assert!(matches!(
@@ -630,6 +678,10 @@ mod tests {
                     *value = action.payload.clone();
                     true
                 }
+                (AppWidget::TextArea { value, .. }, "change") => {
+                    *value = action.payload.clone();
+                    true
+                }
                 (AppWidget::Dropdown { selected, .. }, "select") => {
                     *selected = Some(action.payload.clone());
                     true
@@ -664,6 +716,17 @@ mod tests {
         assert!(matches!(
             app.model.find_mut("username"),
             Some(AppWidget::TextInput { value, .. }) if value == "grace"
+        ));
+
+        // TextArea change carrying a multi-line payload (must preserve the newline).
+        assert!(app.apply_action(&AppWidgetAction::new(
+            "bio",
+            "change",
+            "alpha\nbeta\ngamma"
+        )));
+        assert!(matches!(
+            app.model.find_mut("bio"),
+            Some(AppWidget::TextArea { value, .. }) if value == "alpha\nbeta\ngamma"
         ));
 
         // Dropdown select.
