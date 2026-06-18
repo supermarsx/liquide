@@ -1,0 +1,44 @@
+[package]
+name = "liquide-wasm-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# The AppWidgetModel / AppWidgetAction seam the host emits/consumes. Always on:
+# the model + the host's public API are toolkit-free plain data, so the crate
+# (and its NullWasmHost stub) compiles without wasmtime.
+liquide-interop.workspace = true
+# Reused manifest / capability / resource-limit vocabulary. The wasm host does
+# NOT invent its own limit types where the ABI already has them.
+liquide-plugin-abi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# The actual runtime is FEATURE-GATED behind `wasm` and OFF BY DEFAULT, because
+# wasmtime (Cranelift) is a heavy build-time / binary-size cost we must not
+# inflict on the default workspace build or CI. With the feature off the crate
+# exposes a NullWasmHost stub with the same API that returns `Unavailable`.
+#
+# default-features = false keeps the dependency lean; we opt into exactly the
+# pieces we use: `cranelift` (JIT compiler) for the runtime + `wat` so tests can
+# load real modules from inline WebAssembly text. No WASI feature is enabled:
+# the sandbox is deny-by-default and grants NO ambient authority.
+[dependencies.wasmtime]
+version = "45"
+optional = true
+default-features = false
+features = ["cranelift", "runtime", "wat"]
+
+[features]
+default = []
+# Pull in the real wasmtime-backed sandboxed host.
+wasm = ["dep:wasmtime"]
+
+[dev-dependencies]
+# Tests build real WASM modules from inline WAT via wasmtime's `wat` feature
+# (enabled above under the `wasm` feature), so no extra dev-dep is required.

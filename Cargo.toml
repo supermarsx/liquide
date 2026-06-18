@@ -39,6 +39,7 @@ members = [
     "crates/liquide-plugin-host",
     "crates/liquide-plugin-abi",
     "crates/liquide-plugins",
+    "crates/liquide-wasm-host",
 
     # Session management (binaries)
     "crates/liquide-session",
@@ -421,6 +422,7 @@ liquide-shell = { path = "crates/liquide-shell" }
 liquide-shell-services = { path = "crates/liquide-shell-services" }
 liquide-plugin-host = { path = "crates/liquide-plugin-host" }
 liquide-plugin-abi = { path = "crates/liquide-plugin-abi" }
+liquide-wasm-host = { path = "crates/liquide-wasm-host" }
 liquide-session = { path = "crates/liquide-session" }
 liquide-supervisor = { path = "crates/liquide-supervisor" }
 liquide-client = { path = "crates/liquide-client" }
