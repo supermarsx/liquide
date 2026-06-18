@@ -497,6 +497,70 @@ impl Shell {
         rects
     }
 
+    /// Margin (logical px) added around the dragged window's footprint to cover
+    /// its drop-shadow / glass halo / decoration so the confined drag damage is
+    /// a true SUPERSET of every pixel the move touches. Mirrors the
+    /// `OVERLAY_BACKDROP_MARGIN` precedent used by [`Self::interactive_overlay_damage`]
+    /// (and `BACKDROP_MARGIN` in `scene.rs`).
+    pub const DRAG_FOOTPRINT_MARGIN: f32 = 48.0;
+
+    /// Begin a window MOVE drag programmatically (the same `DragState::Moving`
+    /// that a title-bar press installs). `grab` is the pointer position at grab
+    /// time; the offset is recorded so subsequent `MouseEvent::Move`s relocate
+    /// the window under the cursor. Returns `false` if the window is unknown.
+    ///
+    /// Exposed so the session-level drag-damage plumbing can be exercised
+    /// end-to-end without reconstructing a CSS title-bar hit-test.
+    pub fn begin_move_drag(&mut self, window_id: WindowId, grab: Point) -> bool {
+        let Some(window) = self.windows.get(&window_id) else {
+            return false;
+        };
+        self.drag_state = Some(DragState::Moving {
+            window_id,
+            offset_x: grab.x - window.bounds.x,
+            offset_y: grab.y - window.bounds.y,
+        });
+        true
+    }
+
+    /// Targeted damage for a window MOVE drag-frame: the union of the dragged
+    /// window's OLD footprint (where it was before this move) and its NEW
+    /// footprint (where it is now), each expanded by [`Self::DRAG_FOOTPRINT_MARGIN`]
+    /// to cover shadow/blur/decoration.
+    ///
+    /// `old_bounds` is the dragged window's `bounds` captured BEFORE the move
+    /// event was handled (the caller snapshots it in `dispatch_platform_event`,
+    /// symmetric with the overlay-damage before/after capture). The OLD rect MUST
+    /// be in the union or the window's previous position is never repainted and
+    /// leaves a stale ghost (the smear/disappear class).
+    ///
+    /// Returns a disjoint SET (two rects, unioned downstream into the
+    /// `DamageSet`), NOT a single bbox: a long fling leaves a wide gap between
+    /// old and new and merging them would re-raster the untouched middle.
+    ///
+    /// Returns an EMPTY `Vec` when this is not a window move-drag, or when the
+    /// dragged window's current bounds are unavailable — the caller then keeps
+    /// its conservative full-frame path (no regression / no under-damage).
+    #[must_use]
+    pub fn drag_move_damage(&self, old_bounds: Rect) -> Vec<Rect> {
+        let Some(window_id) = self.dragged_window() else {
+            return Vec::new();
+        };
+        // Only window MOVE drags are confined here; resize drags keep the
+        // existing full-frame path (follow-up).
+        if !matches!(self.drag_state, Some(DragState::Moving { .. })) {
+            return Vec::new();
+        }
+        let Some(window) = self.windows.get(&window_id) else {
+            return Vec::new();
+        };
+        let new_bounds = window.bounds;
+        vec![
+            old_bounds.expand(Self::DRAG_FOOTPRINT_MARGIN),
+            new_bounds.expand(Self::DRAG_FOOTPRINT_MARGIN),
+        ]
+    }
+
     fn cycle_menu_index(current: Option<usize>, len: usize, delta: isize) -> Option<usize> {
         if len == 0 {
             return None;

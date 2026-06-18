@@ -111,10 +111,30 @@ impl DesktopCompositor {
     /// that is not confined to a known overlay) keeps the conservative
     /// full-dirty path — a click can open a window, start a drag, swap themes,
     /// etc., which the overlay hint does not bound.
+    /// Backward-compatible entry (no drag-footprint hint): a caller that does
+    /// not snapshot the dragged window's old bounds gets the original
+    /// overlay-only routing. The live loop calls the `_with_drag` form; this
+    /// 2-arg shim only exists for the existing render-thread test callers, so it
+    /// is `cfg(test)`-only to avoid a dead-code warning in the release build.
+    #[cfg(test)]
     pub(super) fn mark_dirty_for_event(
         &mut self,
         event: &liquide_platform::PlatformEvent,
         overlay_before: Vec<Rect>,
+    ) {
+        self.mark_dirty_for_event_with_drag(event, overlay_before, None);
+    }
+
+    /// `mark_dirty_for_event` with an optional snapshot of the dragged window's
+    /// footprint captured BEFORE the event (the OLD position). When present and
+    /// this is a window MOVE drag-frame, the damage is confined to the
+    /// old∪new window footprint instead of falling to the full-frame path
+    /// (t127-drag-perf).
+    pub(super) fn mark_dirty_for_event_with_drag(
+        &mut self,
+        event: &liquide_platform::PlatformEvent,
+        overlay_before: Vec<Rect>,
+        drag_window_before: Option<Rect>,
     ) {
         use liquide_input::mouse::MouseEvent;
         use liquide_platform::PlatformEvent;
@@ -130,6 +150,31 @@ impl DesktopCompositor {
         if !is_hover_move {
             self.mark_full_dirty();
             return;
+        }
+
+        // Window MOVE drag (t127-drag-perf): a drag-move only relocates the
+        // dragged window, so the only pixels that change are its OLD footprint
+        // (revealed/repainted) and its NEW footprint (painted). Confine the
+        // frame's damage to that union (each rect shadow/blur-margined) instead
+        // of falling to the ~300ms full-frame raster. The OLD footprint MUST be
+        // included or the window's previous position leaves a stale ghost. If
+        // either bound is unavailable, fall through to the existing path (no
+        // regression). The render thread further UNIONs this with the scene diff,
+        // so it can only ADD damage, never narrow it.
+        if let Some(old_bounds) = drag_window_before {
+            let drag_rects = self.shell.drag_move_damage(old_bounds);
+            if !drag_rects.is_empty() {
+                // Union with any open-menu overlay footprint so a drag with a
+                // menu still open does not under-damage the menu band.
+                for rect in drag_rects.into_iter().chain(overlay_before) {
+                    self.mark_rect_dirty(rect);
+                }
+                let overlay_after = self.shell.interactive_overlay_damage();
+                for rect in overlay_after {
+                    self.mark_rect_dirty(rect);
+                }
+                return;
+            }
         }
 
         // Combine the pre- and post-event overlay footprints. The post-event
@@ -179,8 +224,18 @@ impl DesktopCompositor {
         // footprints (the disappearing panel's pixels must be in the damage
         // hint or they go stale — t80-hint).
         let overlay_before = self.shell.interactive_overlay_damage();
+        // Snapshot the dragged window's footprint BEFORE handling the event so a
+        // window MOVE drag-frame can union the OLD position (which must be
+        // repainted/revealed or it leaves a stale ghost) with the NEW position
+        // (t127-drag-perf). `None` whenever a move-drag is not in progress, in
+        // which case the conservative full-frame path is kept.
+        let drag_window_before = self
+            .shell
+            .dragged_window()
+            .and_then(|id| self.shell.window(id).ok())
+            .map(|w| w.bounds);
         if self.handle_event(&event) {
-            self.mark_dirty_for_event(&event, overlay_before);
+            self.mark_dirty_for_event_with_drag(&event, overlay_before, drag_window_before);
         }
     }
 
@@ -907,5 +962,229 @@ mod watchdog_tests {
         // Dirty + uncapped (0) interval: no throttle, zero park.
         let s = DesktopCompositor::wait_budget(true, Duration::ZERO, Duration::ZERO);
         assert_eq!(s, Duration::ZERO);
+    }
+}
+
+#[cfg(test)]
+mod drag_damage_tests {
+    //! t127-drag-perf: a window MOVE drag must confine its frame damage to the
+    //! dragged window's OLD∪NEW footprint (+ shadow/blur margin) instead of
+    //! falling to the ~300ms full-frame raster. These tests fail if the drag
+    //! damage is full-frame, omits the OLD footprint (→ stale ghost of the old
+    //! position), or under-damages either rect.
+
+    use super::*;
+    use liquide_compositor::geometry::Point;
+
+    const SCREEN_W: u32 = 1920;
+    const SCREEN_H: u32 = 1080;
+
+    fn move_event(x: f32, y: f32) -> liquide_platform::PlatformEvent {
+        liquide_platform::PlatformEvent::MouseInput {
+            handle: liquide_platform::NativeWindowHandle(0),
+            event: liquide_input::mouse::MouseEvent::Move { x, y },
+        }
+    }
+
+    /// Stand up a desktop with one window and begin a move-drag on it. Returns
+    /// the desktop, the window id, and the grab point (top-left + a small inset
+    /// so the offset is non-zero).
+    fn desktop_mid_move_drag() -> (DesktopCompositor, liquide_shell::WindowId, Point) {
+        let mut desktop = DesktopCompositor::new(SCREEN_W, SCREEN_H);
+        desktop.loading = false;
+        desktop.shell.resize_screen(SCREEN_W as f32, SCREEN_H as f32);
+
+        let bounds = Rect::new(300.0, 200.0, 400.0, 300.0);
+        let wid = desktop.shell.open_window("drag", bounds);
+        let grab = Point::new(bounds.x + 20.0, bounds.y + 10.0);
+        assert!(
+            desktop.shell.begin_move_drag(wid, grab),
+            "move-drag must start"
+        );
+        assert!(desktop.shell.is_dragging());
+        (desktop, wid, grab)
+    }
+
+    /// Inclusive tile range covered by `rect` (clamped to the grid), matching the
+    /// renderer's `DamageSet::mark_rect` tiling. Used to assert the damage is a
+    /// true SUPERSET of a footprint.
+    fn tile_range(rect: Rect, tile_size: u32) -> (u32, u32, u32, u32) {
+        let grid_w = SCREEN_W.div_ceil(tile_size);
+        let grid_h = SCREEN_H.div_ceil(tile_size);
+        let x0 = (rect.x.max(0.0) as u32) / tile_size;
+        let y0 = (rect.y.max(0.0) as u32) / tile_size;
+        let x1 = (((rect.x + rect.width).max(0.0) as u32) / tile_size).min(grid_w - 1);
+        let y1 = (((rect.y + rect.height).max(0.0) as u32) / tile_size).min(grid_h - 1);
+        (x0, y0, x1, y1)
+    }
+
+    fn has_tile(damage: &liquide_compositor::damage::DamageSet, tx: u32, ty: u32) -> bool {
+        damage.is_full() || damage.tiles.iter().any(|t| t.x == tx && t.y == ty)
+    }
+
+    fn assert_superset_of(
+        damage: &liquide_compositor::damage::DamageSet,
+        rect: Rect,
+        label: &str,
+    ) {
+        let (x0, y0, x1, y1) = tile_range(rect, damage.tile_size);
+        for ty in y0..=y1 {
+            for tx in x0..=x1 {
+                assert!(
+                    has_tile(damage, tx, ty),
+                    "drag damage must cover the {label} footprint tile ({tx},{ty}); \
+                     missing tile leaves a stale region"
+                );
+            }
+        }
+    }
+
+    /// (a) A drag-move emits damage = old∪new footprint (+margin), NOT None/full,
+    /// and NOT just the new position. (b) The damage is a SUPERSET of BOTH the
+    /// old and new window rects.
+    #[test]
+    fn drag_move_emits_old_union_new_footprint_not_full() {
+        let (mut desktop, wid, _grab) = desktop_mid_move_drag();
+
+        // Snapshot the OLD bounds exactly as the live loop does (before the move
+        // event is handled).
+        let old_bounds = desktop.shell.window(wid).unwrap().bounds;
+
+        // Clear any pending dirt from window-open so we observe only the drag
+        // frame's damage.
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        // Move the cursor far enough that old and new footprints are DISJOINT
+        // (a fling), so "old∪new" is provable: the new rect alone cannot cover
+        // the old tiles.
+        let drag_before = desktop
+            .shell
+            .dragged_window()
+            .and_then(|id| desktop.shell.window(id).ok())
+            .map(|w| w.bounds);
+        let mv = move_event(900.0, 700.0);
+        assert!(desktop.handle_event(&mv), "a drag-move must request a redraw");
+        desktop.mark_dirty_for_event_with_drag(&mv, Vec::new(), drag_before);
+
+        let new_bounds = desktop.shell.window(wid).unwrap().bounds;
+        assert_ne!(
+            (old_bounds.x, old_bounds.y),
+            (new_bounds.x, new_bounds.y),
+            "the move must have relocated the window"
+        );
+
+        let damage = desktop
+            .dirty_damage
+            .as_ref()
+            .expect("a drag-move must carry a TARGETED damage hint, not None/full");
+
+        // NOT full-frame.
+        assert!(
+            !damage.is_full(),
+            "drag damage must be confined, not a full-frame repaint"
+        );
+        let grid_w = SCREEN_W.div_ceil(damage.tile_size);
+        let grid_h = SCREEN_H.div_ceil(damage.tile_size);
+        let full_tiles = grid_w * grid_h;
+        assert!(
+            (damage.tiles.len() as u32) < full_tiles,
+            "drag damage ({} tiles) must be smaller than the full grid ({} tiles)",
+            damage.tiles.len(),
+            full_tiles
+        );
+
+        // SUPERSET of BOTH the old and the new footprint.
+        assert_superset_of(damage, old_bounds, "OLD");
+        assert_superset_of(damage, new_bounds, "NEW");
+
+        // Must include the OLD footprint — proven because the OLD and NEW rects
+        // are disjoint here, so a "just the new position" hint would MISS the
+        // old tiles. Assert at least one old-only tile is present.
+        let (ox0, oy0, _ox1, _oy1) = tile_range(old_bounds, damage.tile_size);
+        let (nx0, ny0, nx1, ny1) = tile_range(new_bounds, damage.tile_size);
+        let old_outside_new = !(ox0 >= nx0 && ox0 <= nx1 && oy0 >= ny0 && oy0 <= ny1);
+        assert!(
+            old_outside_new,
+            "test setup: old and new footprints must be disjoint to prove old-inclusion"
+        );
+        assert!(
+            has_tile(damage, ox0, oy0),
+            "drag damage MUST include the OLD footprint (tile {ox0},{oy0}); \
+             omitting it leaves a ghost of the window's previous position"
+        );
+    }
+
+    /// The margin around each footprint is a real superset margin: the tile just
+    /// OUTSIDE the bare window rect (inside the +48px margin band) is damaged.
+    #[test]
+    fn drag_damage_margin_covers_shadow_blur_band() {
+        let (mut desktop, wid, _grab) = desktop_mid_move_drag();
+        let old_bounds = desktop.shell.window(wid).unwrap().bounds;
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let drag_before = Some(old_bounds);
+        // Small move so old∪new stays compact; the margin band is what we probe.
+        let mv = move_event(360.0, 230.0);
+        assert!(desktop.handle_event(&mv));
+        desktop.mark_dirty_for_event_with_drag(&mv, Vec::new(), drag_before);
+
+        let damage = desktop.dirty_damage.as_ref().expect("targeted hint");
+        let new_bounds = desktop.shell.window(wid).unwrap().bounds;
+
+        // The expanded rect (what drag_move_damage actually emits) must be fully
+        // covered — including the shadow/blur margin band around the window.
+        let margin = liquide_shell::Shell::DRAG_FOOTPRINT_MARGIN;
+        assert_superset_of(damage, old_bounds.expand(margin), "OLD+margin");
+        assert_superset_of(damage, new_bounds.expand(margin), "NEW+margin");
+    }
+
+    /// (c) A non-drag hover move with no menu open still falls to the
+    /// conservative full path (damage hint = None) — the drag arm must not
+    /// hijack ordinary hovers.
+    #[test]
+    fn non_drag_move_without_menu_still_goes_full() {
+        let mut desktop = DesktopCompositor::new(SCREEN_W, SCREEN_H);
+        desktop.loading = false;
+        desktop.shell.resize_screen(SCREEN_W as f32, SCREEN_H as f32);
+        let _ = desktop.shell.open_window("hover", Rect::new(300.0, 200.0, 400.0, 300.0));
+        assert!(!desktop.shell.is_dragging());
+
+        // Seed a stale targeted hint to prove the full path CLEARS it.
+        let mut stale = liquide_compositor::damage::DamageSet::new(desktop.tiles.tile_size);
+        stale.mark_tile(0, 0);
+        desktop.dirty_damage = Some(stale);
+
+        let mv = move_event(800.0, 600.0);
+        let _ = desktop.handle_event(&mv);
+        // No drag in progress → drag_window_before is None (as the loop would
+        // compute it), and no menu is open → full path.
+        desktop.mark_dirty_for_event_with_drag(&mv, Vec::new(), None);
+
+        assert!(
+            desktop.dirty_damage.is_none(),
+            "a non-drag hover with no menu must escalate to a FULL repaint (None hint)"
+        );
+    }
+
+    /// A drag-move with the OLD bounds unavailable (None) must NOT under-damage:
+    /// it falls back to the existing path (full repaint), never a partial hint.
+    #[test]
+    fn drag_move_without_old_bounds_falls_back_to_full() {
+        let (mut desktop, _wid, _grab) = desktop_mid_move_drag();
+        desktop.dirty = false;
+        desktop.dirty_damage = None;
+
+        let mv = move_event(900.0, 700.0);
+        assert!(desktop.handle_event(&mv));
+        // Old bounds unavailable → must not emit a confined (possibly
+        // under-damaging) hint; falls through to full.
+        desktop.mark_dirty_for_event_with_drag(&mv, Vec::new(), None);
+
+        assert!(
+            desktop.dirty_damage.is_none(),
+            "missing old bounds must fall back to full-frame, never a partial hint"
+        );
     }
 }
