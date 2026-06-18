@@ -1272,6 +1272,106 @@ mod tests {
     }
 
     #[test]
+    fn contain_fit_letterboxes_preserving_aspect() {
+        // t144: object-fit: contain on a SQUARE source inside a WIDE box must
+        // letterbox — the image is centered, scaled to fit the smaller axis
+        // (height), leaving uncovered (transparent) bands on the left and right.
+        use liquide_compositor::geometry::Affine2D;
+        use liquide_compositor::scene::ImageFit;
+
+        // 4x4 fully-opaque white square.
+        let mut renderer = SoftwareRenderer::new();
+        renderer.register_image_rgba(201, vec![255u8; 4 * 4 * 4], 4, 4);
+
+        // 40 wide x 20 tall box. Contain scales the 1:1 source by min(40/4, 20/4)
+        // = 5 → 20x20 centered → painted band x in [10,30), transparent outside.
+        let node = FlatNode {
+            id: 201,
+            kind: SceneNodeKind::Image {
+                image_id: 201,
+                width: 4,
+                height: 4,
+                fit: ImageFit::Contain,
+            }
+            .into(),
+            absolute_bounds: Rect::new(0.0, 0.0, 40.0, 20.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+        let mut fb = FrameBuffer::new(40, 20, PixelFormat::Bgra8);
+        renderer
+            .render(std::slice::from_ref(&node), &mut fb, &full_damage())
+            .unwrap();
+
+        // Center is painted (opaque white texel).
+        assert_eq!(fb.get_pixel(20, 10).a, 255, "contain fills the centered area");
+        // The left/right letterbox bands are uncovered (transparent) — contain
+        // never stretches to fill the wide box.
+        assert_eq!(
+            fb.get_pixel(2, 10).a,
+            0,
+            "contain must leave a transparent left letterbox band"
+        );
+        assert_eq!(
+            fb.get_pixel(37, 10).a,
+            0,
+            "contain must leave a transparent right letterbox band"
+        );
+    }
+
+    #[test]
+    fn cover_fit_crops_to_fill_without_distortion_no_transparent_edge() {
+        // t144: object-fit: cover on a SQUARE source inside a WIDE box must crop
+        // (scale to the LARGER axis) so the box is fully covered — every pixel an
+        // opaque texel, no transparent letterbox.
+        use liquide_compositor::geometry::Affine2D;
+        use liquide_compositor::scene::ImageFit;
+
+        let mut renderer = SoftwareRenderer::new();
+        renderer.register_image_rgba(202, vec![255u8; 4 * 4 * 4], 4, 4);
+
+        // Small inset box (NOT background-scale, so cover keeps its exact bounds):
+        // 40 wide x 20 tall at (60,60) on a larger framebuffer.
+        let node = FlatNode {
+            id: 202,
+            kind: SceneNodeKind::Image {
+                image_id: 202,
+                width: 4,
+                height: 4,
+                fit: ImageFit::Cover,
+            }
+            .into(),
+            absolute_bounds: Rect::new(60.0, 60.0, 40.0, 20.0),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+        let mut fb = FrameBuffer::new(200, 200, PixelFormat::Bgra8);
+        renderer
+            .render(std::slice::from_ref(&node), &mut fb, &full_damage())
+            .unwrap();
+
+        // Every corner + center of the box is an opaque texel — cover leaves no
+        // uncovered edge.
+        for (x, y) in [(60u32, 60u32), (99, 60), (60, 79), (99, 79), (80, 70)] {
+            assert_eq!(
+                fb.get_pixel(x, y).a,
+                255,
+                "cover must fully cover pixel ({x},{y}) with an opaque texel"
+            );
+        }
+        // Just outside the box stays untouched (the small image was not snapped).
+        assert_eq!(fb.get_pixel(50, 70).a, 0, "outside the box is untouched");
+    }
+
+    #[test]
     fn unregistered_image_paints_placeholder_not_texels() {
         use liquide_compositor::geometry::Affine2D;
         use liquide_compositor::scene::ImageFit;

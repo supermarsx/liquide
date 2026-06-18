@@ -4003,6 +4003,7 @@ name = "liquide-renderer-cpu"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "image",
  "liquide-common",
  "liquide-compositor",
  "liquide-font-rasterizer",

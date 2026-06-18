@@ -502,6 +502,13 @@ impl<'a> HtmlToDom<'a> {
 
         doc.append_child(parent, el);
 
+        // Promote `<img>` to a NodeData::Image content node so the painter emits
+        // an Image display item (template-authored chrome/app images). The `src`
+        // attribute is left in place for the layout replaced-element path.
+        if tag.eq_ignore_ascii_case("img") {
+            doc.convert_element_to_image(el);
+        }
+
         if self_closing || is_void_element(&tag) {
             return;
         }

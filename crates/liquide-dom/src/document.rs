@@ -71,6 +71,36 @@ impl Document {
         id
     }
 
+    /// Promote an existing `<img>` element node to a [`NodeData::Image`] content
+    /// node, reading its `src`/`alt` attributes.
+    ///
+    /// The painter only emits an `Image` display item for `NodeData::Image`
+    /// (a generic `Element` carries no image), so an HTML-parsed `<img src=...>`
+    /// must be converted here for it to render. The `src`/`alt` **attributes are
+    /// deliberately left in place**: the layout engine's replaced-element path
+    /// (`liquide-layout::replaced`) reads `src` from the attribute map to resolve
+    /// the intrinsic size via the `ImageMeasurer`. We therefore mirror the value
+    /// into `NodeData::Image` rather than moving it. No-op if the node is missing
+    /// or already an `Image`.
+    pub fn convert_element_to_image(&mut self, node_id: NodeId) {
+        let Some(node) = self.nodes.get_mut(&node_id) else {
+            return;
+        };
+        if matches!(node.data, NodeData::Image { .. }) {
+            return;
+        }
+        let src = node.attrs.get("src").map(String::from).unwrap_or_default();
+        let alt = node.attrs.get("alt").map(String::from).unwrap_or_default();
+        node.data = NodeData::Image {
+            src,
+            alt,
+            natural_width: None,
+            natural_height: None,
+        };
+        node.dirty.mark_style_dirty();
+        self.dirty.mark_style(node_id);
+    }
+
     /// Create a text node (detached).
     pub fn create_text(&mut self, text: &str) -> NodeId {
         let id = self.alloc_id();

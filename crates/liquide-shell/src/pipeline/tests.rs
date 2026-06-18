@@ -72,6 +72,109 @@ fn pipeline_converts_gradient_background_to_scene_node() {
     );
 }
 
+/// Find the Image scene node (if any) and return (image_id, width, height, fit).
+fn find_image_node(
+    nodes: &[liquide_compositor::scene::SceneNode],
+) -> Option<(
+    u64,
+    u32,
+    u32,
+    liquide_compositor::scene::ImageFit,
+    liquide_compositor::geometry::Rect,
+)> {
+    nodes.iter().find_map(|n| match &n.kind {
+        SceneNodeKind::Image {
+            image_id,
+            width,
+            height,
+            fit,
+        } => Some((*image_id, *width, *height, *fit, n.properties.bounds)),
+        _ => None,
+    })
+}
+
+#[test]
+fn img_element_emits_image_scene_node_sized_by_css_box_with_object_fit() {
+    // An <img src=...> element must emit a SceneNodeKind::Image whose bounds are
+    // the element's laid-out CSS box and whose fit reflects `object-fit`. This is
+    // the t144 wiring: an HTML-parsed <img> becomes NodeData::Image -> painter
+    // ImageRect -> scene Image. Its src must be queued in pending_images for the
+    // host loader to decode/register.
+    let config = PipelineConfig {
+        width: 400.0,
+        height: 300.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    pipeline.set_theme(
+        r#"
+        img#hero {
+            position: absolute;
+            left: 10px;
+            top: 20px;
+            width: 120px;
+            height: 80px;
+            object-fit: contain;
+        }
+    "#,
+    );
+
+    let mut desktop = DesktopDocument::from_html(r#"<img id="hero" src="hero.png">"#);
+    let (nodes, _) = pipeline.render_to_scene(&mut desktop.doc, 0, 16.0);
+
+    let (image_id, w, h, fit, bounds) =
+        find_image_node(&nodes).expect("an <img> must emit a SceneNodeKind::Image node");
+
+    // Sized + positioned by the CSS box (content box = 120x80 at 10,20).
+    assert_eq!(bounds.width, 120.0, "image node width = CSS box width");
+    assert_eq!(bounds.height, 80.0, "image node height = CSS box height");
+    assert_eq!(bounds.x, 10.0);
+    assert_eq!(bounds.y, 20.0);
+    assert_eq!(w, 120);
+    assert_eq!(h, 80);
+
+    // object-fit: contain must reach the scene as ImageFit::Contain.
+    assert_eq!(
+        fit,
+        liquide_compositor::scene::ImageFit::Contain,
+        "object-fit: contain must map to ImageFit::Contain"
+    );
+
+    // The src must be queued for the host image loader, keyed by the same hashed
+    // id as the scene node (so register_image lands on this node's texture key).
+    let pending = pipeline.pending_images();
+    assert!(
+        pending.iter().any(|(id, url)| *id == image_id && url == "hero.png"),
+        "img src must be queued in pending_images keyed by the node image_id; got {pending:?}"
+    );
+}
+
+#[test]
+fn img_object_fit_cover_maps_to_cover_and_fill_maps_to_fill() {
+    // object-fit: cover and fill must reach the scene as the matching ImageFit so
+    // the renderer's cover/contain/fill src-rect/dst-rect math is selected
+    // correctly.
+    for (css_fit, expected) in [
+        ("cover", liquide_compositor::scene::ImageFit::Cover),
+        ("fill", liquide_compositor::scene::ImageFit::Fill),
+    ] {
+        let config = PipelineConfig {
+            width: 400.0,
+            height: 300.0,
+            ..PipelineConfig::default()
+        };
+        let mut pipeline = DesktopPipeline::new(&config);
+        pipeline.set_theme(&format!(
+            "img#p {{ position: absolute; left:0; top:0; width:100px; height:50px; object-fit: {css_fit}; }}"
+        ));
+        let mut desktop = DesktopDocument::from_html(r#"<img id="p" src="p.png">"#);
+        let (nodes, _) = pipeline.render_to_scene(&mut desktop.doc, 0, 16.0);
+        let (_, _, _, fit, _) =
+            find_image_node(&nodes).expect("img emits an Image node");
+        assert_eq!(fit, expected, "object-fit: {css_fit}");
+    }
+}
+
 #[test]
 fn theme_switching() {
     let config = PipelineConfig::default();

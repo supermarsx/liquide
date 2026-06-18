@@ -20,6 +20,7 @@ pub enum ImageFormat {
     Ico,
     Jpeg,
     WebP,
+    Gif,
     Unknown,
 }
 
@@ -38,6 +39,8 @@ impl ImageFormat {
             Self::WebP
         } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
             Self::Jpeg
+        } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+            Self::Gif
         } else if data.len() >= 4 && &data[0..4] == &[0x00, 0x00, 0x01, 0x00] {
             Self::Ico
         } else {
@@ -55,6 +58,7 @@ impl ImageFormat {
             "ico" => Self::Ico,
             "jpg" | "jpeg" => Self::Jpeg,
             "webp" => Self::WebP,
+            "gif" => Self::Gif,
             _ => Self::Unknown,
         }
     }
@@ -471,12 +475,70 @@ pub fn decode_bmp(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
 }
 
 /// Decode an image from raw bytes, detecting format automatically.
+///
+/// Uses the [`image`] crate (curated feature set: PNG/JPEG/GIF/WebP/BMP) to
+/// decode any of the common embedded-image formats into RGBA8, feeding the same
+/// [`DecodedImage`] the texture/register path consumes. The
+/// [`MAX_IMAGE_DIM`]/[`MAX_IMAGE_BYTES`] caps are enforced on the decoded result
+/// to bound memory just as the hand-rolled PNG/BMP decoders do.
+///
+/// Empty input is rejected early. Unknown / unsupported formats surface as
+/// [`ImageDecodeError::UnsupportedFormat`] rather than a panic, so a bad `<img
+/// src>` falls back gracefully (the renderer paints its not-loaded placeholder).
 pub fn decode_image(data: &[u8]) -> Result<DecodedImage, ImageDecodeError> {
-    match ImageFormat::from_magic(data) {
-        ImageFormat::Png => decode_png(data),
-        ImageFormat::Bmp => decode_bmp(data),
-        _ => Err(ImageDecodeError::UnsupportedFormat),
+    if data.is_empty() {
+        return Err(ImageDecodeError::TruncatedData);
     }
+
+    let detected = ImageFormat::from_magic(data);
+
+    // Decode via the `image` crate. `load_from_memory` sniffs the format from the
+    // header, so a GIF/JPEG/WebP that our minimal `from_magic` would tag Unknown
+    // (animated GIF, exotic WebP variant) still decodes. We map the crate's error
+    // onto our enum; an unrecognised container becomes UnsupportedFormat.
+    let dynimg = image::load_from_memory(data).map_err(|e| match e {
+        image::ImageError::Unsupported(_) => ImageDecodeError::UnsupportedFormat,
+        image::ImageError::Decoding(d) => {
+            ImageDecodeError::InvalidFormat(format!("decode failed: {d}"))
+        }
+        image::ImageError::Limits(_) => {
+            ImageDecodeError::InvalidFormat("decode exceeded internal limits".into())
+        }
+        other => ImageDecodeError::InvalidFormat(format!("decode failed: {other}")),
+    })?;
+
+    let width = dynimg.width();
+    let height = dynimg.height();
+
+    if width == 0 || height == 0 {
+        return Err(ImageDecodeError::InvalidFormat(
+            "decoded image has a zero dimension".into(),
+        ));
+    }
+    if width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM {
+        return Err(ImageDecodeError::InvalidFormat(format!(
+            "image dimensions {width}x{height} exceed maximum {MAX_IMAGE_DIM}"
+        )));
+    }
+    if (width as u64) * (height as u64) * 4 > MAX_IMAGE_BYTES {
+        return Err(ImageDecodeError::InvalidFormat(
+            "decoded image would exceed 256 MiB".into(),
+        ));
+    }
+
+    // Normalise to row-major RGBA8 — the format every downstream texture/blit
+    // path expects.
+    let rgba = dynimg.to_rgba8();
+    let pixels = rgba.into_raw();
+
+    Ok(DecodedImage {
+        width,
+        height,
+        pixels,
+        // Prefer the magic-detected format; fall back to Unknown only if our
+        // sniffer did not recognise the header (the crate still decoded it).
+        format: detected,
+    })
 }
 
 /// Errors during image decoding.
@@ -624,6 +686,127 @@ mod tests {
         let err = decode_bmp(&bmp).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("exceed maximum"), "unexpected error: {msg}");
+    }
+
+    // ── Full-decode tests (t144): the `image` crate path must decode PNG, JPEG,
+    // GIF, WebP and BMP into correctly-dimensioned RGBA. JPEG/GIF/WebP were
+    // UNSUPPORTED before this task (decode_image returned UnsupportedFormat), so
+    // these are genuinely RED→GREEN. Fixtures are encoded in-test with the same
+    // `image` crate (no committed binaries), so the test is self-contained.
+
+    /// Encode a `w`x`h` RGBA buffer to the requested format in memory.
+    /// `pattern(x, y) -> [r,g,b,a]` fills the source.
+    fn encode_fixture(
+        format: image::ImageFormat,
+        w: u32,
+        h: u32,
+        pattern: impl Fn(u32, u32) -> [u8; 4],
+    ) -> Vec<u8> {
+        let mut img = image::RgbaImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                img.put_pixel(x, y, image::Rgba(pattern(x, y)));
+            }
+        }
+        let dynimg = image::DynamicImage::ImageRgba8(img);
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        // JPEG/GIF want RGB(A) handled by the encoder; write_to picks the codec.
+        dynimg
+            .write_to(&mut bytes, format)
+            .expect("encode fixture");
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn decode_image_decodes_real_jpeg_to_correct_dimensions() {
+        // JPEG was an enum-only stub before t144 → decode_image returned
+        // UnsupportedFormat. A real 16x12 JPEG must now decode to RGBA at the
+        // exact dimensions.
+        let bytes = encode_fixture(image::ImageFormat::Jpeg, 16, 12, |x, _y| {
+            // Smooth horizontal gradient so JPEG's lossy DCT stays well-defined.
+            let v = (x * 255 / 15) as u8;
+            [v, 64, 200, 255]
+        });
+        assert_eq!(
+            ImageFormat::from_magic(&bytes),
+            ImageFormat::Jpeg,
+            "fixture must be a JPEG by magic"
+        );
+        let img = decode_image(&bytes).expect("JPEG must now decode (was UnsupportedFormat)");
+        assert_eq!((img.width, img.height), (16, 12));
+        assert_eq!(img.pixels.len(), 16 * 12 * 4, "RGBA = 4 bytes/pixel");
+        // JPEG is lossy but opaque must survive; alpha column is forced to 255.
+        assert_eq!(img.format, ImageFormat::Jpeg);
+        let p = img.get_pixel(8, 6).unwrap();
+        assert_eq!(p.a, 255, "JPEG decodes opaque");
+    }
+
+    #[test]
+    fn decode_image_decodes_real_gif_to_correct_dimensions() {
+        // GIF was unsupported before t144.
+        let bytes = encode_fixture(image::ImageFormat::Gif, 10, 8, |x, y| {
+            if (x + y) % 2 == 0 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        });
+        assert_eq!(ImageFormat::from_magic(&bytes), ImageFormat::Gif);
+        let img = decode_image(&bytes).expect("GIF must now decode");
+        assert_eq!((img.width, img.height), (10, 8));
+        assert_eq!(img.pixels.len(), 10 * 8 * 4);
+    }
+
+    #[test]
+    fn decode_image_decodes_real_png_via_image_crate() {
+        // PNG already worked, but it must keep working through the new path with
+        // pixel-exact (lossless) colors.
+        let bytes = encode_fixture(image::ImageFormat::Png, 6, 4, |x, _y| {
+            if x == 0 { [12, 34, 56, 255] } else { [200, 100, 50, 128] }
+        });
+        let img = decode_image(&bytes).expect("PNG decodes");
+        assert_eq!((img.width, img.height), (6, 4));
+        let edge = img.get_pixel(0, 0).unwrap();
+        assert_eq!((edge.r, edge.g, edge.b, edge.a), (12, 34, 56, 255));
+        let mid = img.get_pixel(3, 2).unwrap();
+        assert_eq!(
+            (mid.r, mid.g, mid.b, mid.a),
+            (200, 100, 50, 128),
+            "PNG is lossless and preserves alpha"
+        );
+    }
+
+    #[test]
+    fn decode_image_decodes_real_webp_to_correct_dimensions() {
+        // WebP was unsupported before t144. The lossless WebP encoder ships with
+        // the `webp` feature.
+        let bytes = encode_fixture(image::ImageFormat::WebP, 12, 9, |_x, y| {
+            [(y * 28) as u8, 90, 30, 255]
+        });
+        assert_eq!(ImageFormat::from_magic(&bytes), ImageFormat::WebP);
+        let img = decode_image(&bytes).expect("WebP must now decode");
+        assert_eq!((img.width, img.height), (12, 9));
+        assert_eq!(img.pixels.len(), 12 * 9 * 4);
+    }
+
+    #[test]
+    fn decode_image_decodes_real_bmp_to_correct_dimensions() {
+        let bytes = encode_fixture(image::ImageFormat::Bmp, 5, 5, |_x, _y| [10, 20, 30, 255]);
+        assert_eq!(ImageFormat::from_magic(&bytes), ImageFormat::Bmp);
+        let img = decode_image(&bytes).expect("BMP decodes");
+        assert_eq!((img.width, img.height), (5, 5));
+        let p = img.get_pixel(2, 2).unwrap();
+        assert_eq!((p.r, p.g, p.b), (10, 20, 30));
+    }
+
+    #[test]
+    fn decode_image_rejects_empty_and_garbage_without_panic() {
+        assert!(matches!(
+            decode_image(&[]),
+            Err(ImageDecodeError::TruncatedData)
+        ));
+        // Non-image bytes must error (not panic, not decode).
+        assert!(decode_image(b"this is definitely not an image file").is_err());
     }
 
     #[test]

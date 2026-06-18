@@ -294,6 +294,9 @@ impl<'a> Parser<'a> {
                 }
                 // Apply element to parent
                 Self::apply_special_attrs(doc, el);
+                if tag_name.eq_ignore_ascii_case("img") {
+                    doc.convert_element_to_image(el);
+                }
                 doc.append_child(parent, el);
                 return;
             }
@@ -326,6 +329,16 @@ impl<'a> Parser<'a> {
 
         // Apply id/class from attributes
         Self::apply_special_attrs(doc, el);
+
+        // `<img>` is a void replaced element: promote it to a NodeData::Image
+        // content node (so the painter emits an Image display item) and do NOT
+        // parse children — an `<img>` never has any. (The template parser already
+        // treats img as void; mirror that here for parsed documents.)
+        if tag_name.eq_ignore_ascii_case("img") {
+            doc.convert_element_to_image(el);
+            doc.append_child(parent, el);
+            return;
+        }
 
         // Append to parent before parsing children (so children can reference parent)
         doc.append_child(parent, el);
@@ -432,6 +445,49 @@ mod tests {
         let root = doc.root();
         assert_eq!(doc.children(root).len(), 1);
         assert_eq!(doc.tag_name(doc.children(root)[0]).unwrap(), "br");
+    }
+
+    #[test]
+    fn img_element_becomes_image_node_keeping_src_attribute() {
+        use crate::node::NodeData;
+        // An `<img src=...>` must parse into a NodeData::Image content node (so
+        // the painter emits an Image display item) AND keep its `src` attribute
+        // (so the layout replaced-element path can resolve intrinsic size). It is
+        // void: no children.
+        // (html, parent_is_root) — the bare-img cases sit directly under root,
+        // the wrapped case sits under the first <div>.
+        for (html, wrapped) in [
+            (r#"<img src="photo.png" alt="a photo">"#, false),
+            (r#"<img src="photo.png" alt="a photo" />"#, false),
+            (r#"<div><img src="photo.png"></div>"#, true),
+        ] {
+            let doc = parse_html(html);
+            let root = doc.root();
+            let img = if wrapped {
+                let div = doc.children(root)[0];
+                doc.children(div)[0]
+            } else {
+                doc.children(root)[0]
+            };
+            assert_eq!(doc.tag_name(img).as_deref(), Some("img"));
+            match &doc.get(img).unwrap().data {
+                NodeData::Image { src, alt, .. } => {
+                    assert_eq!(src, "photo.png", "src mirrored into NodeData::Image");
+                    if html.contains("alt") {
+                        assert_eq!(alt, "a photo");
+                    }
+                }
+                other => panic!("img must be NodeData::Image, got {other:?}"),
+            }
+            // src attribute preserved for the layout ImageMeasurer.
+            assert_eq!(
+                doc.get_attribute(img, "src"),
+                Some("photo.png".to_string()),
+                "src attribute must survive conversion (layout reads it)"
+            );
+            // Void: no children.
+            assert_eq!(doc.children(img).len(), 0, "img is void");
+        }
     }
 
     #[test]

@@ -15,6 +15,11 @@ liquide-paint.workspace = true
 liquide-renderer-css.workspace = true
 liquide-text-engine.workspace = true
 liquide-theme-css.workspace = true
+# Full image decoding (PNG/JPEG/GIF/WebP/BMP -> RGBA). Curated feature set
+# (no exr/tiff/avif/qoi) to bound compile time per t134 engine plan item 3b;
+# `bmp` is built into the crate. default-features OFF so we do not pull the
+# heavier codec tree (ravif/rav1e, exr, tiff, qoi).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 miniz_oxide.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
