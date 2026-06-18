@@ -75,17 +75,47 @@
 //! `process`, `fs`) fails cleanly with a JS `ReferenceError`, surfaced as
 //! [`ScriptHostError::Runtime`] — not a host crash.
 //!
-//! **Caveat (documented honestly):** unlike `wasmtime`, boa has **no preemptive
-//! interruption / instruction budget** in this version — a `while (true) {}` in a
-//! script would spin the calling thread. The realistic containment is to run the
-//! host on a dedicated worker thread with a wall-clock watchdog that abandons the
-//! context on overrun (the same shape the planning doc calls out for boa). That
-//! threading harness is a **shell-wiring concern** (the shell owns app threads),
-//! so this library keeps a clean synchronous boundary and documents the
-//! limitation rather than baking a thread model into the seam. If a future boa
-//! release exposes a job/loop budget or `JobQueue` interruption, wire it in
-//! [`host`]. See [`ScriptSandboxConfig`] for the bounds this crate *can* enforce
-//! today (output/source/model byte caps).
+//! ### Runaway-script watchdog (wall-clock execution deadline)
+//!
+//! Unlike `wasmtime` (fuel + epoch), boa 0.21 has **no general preemptive
+//! interruption / instruction budget** — a `while (true) {}` spins whatever
+//! thread runs it, and the host call would never return. This crate bounds that
+//! at the library level with **two layers**:
+//!
+//! 1. **Wall-clock deadline on a dedicated worker thread (the real kill).** A
+//!    [`ScriptHost`] owns the boa [`Context`](boa_engine::Context) on its OWN
+//!    long-lived worker thread (the context is `!Send`, so it never crosses
+//!    threads — it is created and driven there for the host's whole life). Each
+//!    [`render`](ScriptHostApi::render)/[`apply_action`](ScriptHostApi::apply_action)
+//!    sends a command to the worker and waits for the reply with a
+//!    [`recv_timeout`](std::sync::mpsc::Receiver::recv_timeout) of
+//!    [`execution_timeout`](ScriptSandboxConfig::execution_timeout). If the
+//!    deadline passes first, the call returns [`ScriptHostError::Timeout`]
+//!    **promptly** and the worker is **abandoned** (a fresh one is spawned for
+//!    the next call). **Guarantee:** the host call — and therefore the DE event
+//!    loop — is never blocked past the deadline by a runaway script.
+//!    **Honest limitation:** boa cannot be force-killed mid-eval, so the
+//!    abandoned worker thread keeps running the runaway code until it next
+//!    *yields* (returns from the call / hits a layer-2 limit). It consumes one
+//!    background thread + CPU until then. This is a weaker kill than wasmtime's
+//!    epoch interruption; *compute-heavy* untrusted code is better served by the
+//!    WASM host.
+//! 2. **boa's in-VM loop-iteration limit (defense-in-depth, makes the abandoned
+//!    thread actually die in the common case).** boa 0.21 *does* expose one
+//!    synchronous in-context interruption hook:
+//!    `RuntimeLimits::set_loop_iteration_limit`, which makes a loop back-edge
+//!    throw once a per-frame iteration count is exceeded. We arm it from
+//!    [`max_loop_iterations`](ScriptSandboxConfig::max_loop_iterations) so the
+//!    archetypal `while (true) {}` self-terminates with a clean `Runtime` error
+//!    (and an *abandoned* worker stuck in such a loop dies on its own rather than
+//!    spinning forever). It is **not** a general budget: it bounds loop
+//!    back-edges per call frame only — deep recursion, a single enormous
+//!    non-loop expression, or many separate bounded loops are NOT caught by it
+//!    (that is exactly why layer 1, the wall-clock deadline, is the real
+//!    guarantee).
+//!
+//! See [`ScriptSandboxConfig`] for the full set of bounds and the threat-model
+//! table.
 //!
 //! ## Feature gating
 //!
@@ -164,6 +194,14 @@ pub enum ScriptHostError {
     /// [`AppWidgetModel`].
     #[error("failed to decode the script's widget model: {0}")]
     Decode(String),
+
+    /// The script did not return within the configured wall-clock execution
+    /// deadline (see [`ScriptSandboxConfig::execution_timeout`]). The host call
+    /// is unblocked promptly; the runaway script is abandoned on its worker
+    /// thread (boa cannot be force-killed mid-eval, so that thread keeps running
+    /// until it next yields — but the desktop environment is NOT blocked).
+    #[error("script execution timed out after {0:?}")]
+    Timeout(std::time::Duration),
 }
 
 fn format_diags(diags: &[TranspileDiagnostic]) -> String {

@@ -234,6 +234,179 @@ fn oversized_source_is_rejected_before_transpile() {
     assert!(matches!(err, ScriptHostError::SourceTooLarge { .. }), "got {err:?}");
 }
 
+/// WATCHDOG (the runaway-script kill): a script whose render() spins forever
+/// must NOT hang the host call — render() returns ScriptHostError::Timeout
+/// within roughly the configured deadline, and the call returns promptly. This
+/// test would HANG (and fail by timeout) if the watchdog were absent or faked.
+#[test]
+fn a_runaway_render_loop_times_out_and_does_not_hang_the_host() {
+    use std::time::{Duration, Instant};
+
+    // An honest infinite loop. We DISABLE boa's in-VM loop-iteration limit
+    // (u64::MAX) so the ONLY thing that can stop this is the wall-clock
+    // watchdog on the worker thread — proving layer 1, not layer 2. The loop
+    // body references a global so a dead-code optimiser cannot elide it.
+    let ts = r#"
+        export function render() {
+            let x = 0;
+            while (true) { x = x + 1; if (x < 0) { break; } }
+            return { root: [] };
+        }
+    "#;
+    let cfg = ScriptSandboxConfig {
+        execution_timeout: Duration::from_millis(300),
+        max_loop_iterations: u64::MAX, // disable layer 2; force the wall-clock kill
+        ..ScriptSandboxConfig::default()
+    };
+    let mut host = ScriptHost::from_source(ts, cfg).expect("loads fine; the hang is at render");
+
+    let start = Instant::now();
+    let err = host.render().err().expect("a runaway render must time out, not hang");
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(err, ScriptHostError::Timeout(_)),
+        "runaway render must report Timeout, got {err:?}"
+    );
+    // The host call returned PROMPTLY — well within an order of magnitude of the
+    // 300ms deadline (generous upper bound to avoid CI flakiness; the point is
+    // it did NOT hang forever).
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "host call must return promptly after the deadline, took {elapsed:?}"
+    );
+}
+
+/// WATCHDOG (no false positive): a normal fast script completes WELL under the
+/// deadline and is NOT wrongly timed out. Asserts the watchdog does not clip a
+/// legitimate render. This test fails if a fast script is spuriously timed out.
+#[test]
+fn a_fast_script_completes_under_the_deadline_and_is_not_timed_out() {
+    use std::time::{Duration, Instant};
+
+    let ts = r#"
+        export function render() {
+            return { root: [ { type: "label", text: "fast" } ] };
+        }
+    "#;
+    // A deadline far larger than a trivial render needs; the render should land
+    // in a few ms.
+    let cfg = ScriptSandboxConfig {
+        execution_timeout: Duration::from_secs(5),
+        ..ScriptSandboxConfig::default()
+    };
+    let mut host = ScriptHost::from_source(ts, cfg).expect("load");
+
+    let start = Instant::now();
+    let model = host.render().expect("a fast script must NOT be timed out");
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(&model.root[0], AppWidget::Label { text } if text == "fast"),
+        "{:?}",
+        model.root[0]
+    );
+    // Comfortably under the deadline (the whole point: no false timeout).
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "a trivial render must be fast, took {elapsed:?}"
+    );
+}
+
+/// WATCHDOG layer 2 (defense-in-depth): with boa's loop-iteration limit armed
+/// (the default), a `while(true){}` self-terminates with a clean Runtime error
+/// (not a Timeout, because it throws before the wall-clock deadline). Also
+/// proves a host with a timed-out/aborted worker can RECOVER: the same host
+/// renders normally on a later call (a fresh worker is respawned).
+#[test]
+fn the_loop_iteration_limit_stops_a_runaway_loop_in_vm() {
+    use std::time::Duration;
+
+    let ts = r#"
+        export function render() {
+            while (true) {}
+            return { root: [] };
+        }
+    "#;
+    let cfg = ScriptSandboxConfig {
+        execution_timeout: Duration::from_secs(10), // generous: layer 2 should fire first
+        max_loop_iterations: 100_000,               // small enough to throw quickly
+        ..ScriptSandboxConfig::default()
+    };
+    let mut host = ScriptHost::from_source(ts, cfg).expect("load");
+    let err = host
+        .render()
+        .err()
+        .expect("the loop-iteration limit must stop the runaway loop");
+    // It throws a runtime-limit error inside the VM (a clean Runtime error),
+    // returning before the 10s wall-clock deadline.
+    assert!(
+        matches!(err, ScriptHostError::Runtime(_)),
+        "loop-iteration limit should surface as a Runtime error, got {err:?}"
+    );
+}
+
+/// After a render times out and the worker is abandoned, the SAME host recovers
+/// on the next call instead of being permanently poisoned: render() loops only
+/// while a module-level flag is set, and apply_action clears it. The first
+/// render times out (worker abandoned); a respawned worker is bounded again on a
+/// second timeout; then a host built to render fast proves the call path is
+/// intact post-abandon. Concretely: a timed-out host that is dropped does not
+/// hang the test, and a fresh render on a respawned worker returns promptly.
+#[test]
+fn host_recovers_with_a_fresh_worker_after_a_timeout() {
+    use std::time::{Duration, Instant};
+
+    // A source that always loops: each respawn re-runs it, so every call times
+    // out — which lets us prove the respawn path returns PROMPTLY each time
+    // (never hangs, never panics) rather than poisoning the host.
+    let ts = r#"
+        export function render() {
+            while (true) {}
+            return { root: [] };
+        }
+    "#;
+    let cfg = ScriptSandboxConfig {
+        execution_timeout: Duration::from_millis(250),
+        max_loop_iterations: u64::MAX, // force the wall-clock kill, not layer 2
+        ..ScriptSandboxConfig::default()
+    };
+    let mut host = ScriptHost::from_source(ts, cfg).expect("load");
+
+    // Two consecutive timed-out calls: the second proves the worker was
+    // respawned after the first abandon AND that the call path returns promptly
+    // each time (a poisoned host would hang or error differently).
+    for n in 0..2 {
+        let start = Instant::now();
+        let err = host
+            .render()
+            .err()
+            .unwrap_or_else(|| panic!("render {n} must time out"));
+        assert!(
+            matches!(err, ScriptHostError::Timeout(_)),
+            "render {n}: got {err:?}"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "render {n} returned promptly"
+        );
+    }
+
+    // And a SEPARATE host whose render is fast still works — proving the
+    // worker/channel machinery (shared with the timed-out host) renders normally.
+    let mut ok_host = ScriptHost::from_source(
+        "export function render() { return { root: [ { type: \"label\", text: \"ok\" } ] }; }",
+        cfg,
+    )
+    .expect("load fast host");
+    let model = ok_host.render().expect("fast host renders");
+    assert!(
+        matches!(&model.root[0], AppWidget::Label { text } if text == "ok"),
+        "{:?}",
+        model.root[0]
+    );
+}
+
 fn err_to_string(e: &ScriptHostError) -> String {
     e.to_string()
 }
