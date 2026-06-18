@@ -504,29 +504,22 @@ fn task_manager_row_then_end_task_button_mutate_the_real_runtime() {
     );
 }
 
-/// E2E (KNOWN-BUG TRIPWIRE, intentionally `#[ignore]`d): clicking a sortable
-/// column HEADER should re-sort the real runtime. It does NOT today — a genuine
-/// end-to-end wiring defect THIS suite surfaced:
+/// E2E: clicking a sortable column HEADER re-sorts the real runtime (t124 FIXED).
+///
+/// This previously failed (and was `#[ignore]`d as a known-bug tripwire) because:
 ///
 ///   * the `liquide-widgets` `Table` emits its `Sorted` action with the payload
-///     `"<col>:<asc|desc>"` (e.g. `"0:asc"`, see `table.rs::sort_by`), and the
-///     shell's `translate_action` forwards that payload verbatim;
-///   * but `liquide-apps-task-manager`'s `apply_action` parses the sort payload
-///     as a BARE `u32` (`action.payload.parse::<u32>()`, app_view.rs), which
-///     fails on `"0:asc"` → `apply_action` returns `false` → no re-sort, no
-///     re-render. The per-app unit tests never caught this because they call
-///     `apply_action(AppWidgetAction::new(TABLE_KEY, "sort", "0"))` with an
-///     already-clean payload, bypassing the toolkit's real `"<col>:<dir>"` form.
+///     `"<col>:<asc|desc>"` (e.g. `"0:asc"`, see `table.rs::sort_by`);
+///   * `liquide-apps-task-manager`'s `apply_action` parses the sort payload as a
+///     BARE `u32`, which failed on `"0:asc"` → no re-sort. The per-app unit tests
+///     missed it because they passed an already-clean `"0"`.
 ///
-/// This test encodes the CORRECT behavior (so it fails today and will PASS once
-/// the seam is fixed — either the app accepts the `"<col>:<dir>"` payload or the
-/// shell normalizes it). It is `#[ignore]`d rather than weakened so the suite is
-/// honestly green while preserving the executable spec. The fix is out of this
-/// test-only task's lock (app source + `app_widgets.rs`).
+/// FIX (canonical contract): the shell's `translate_action` now NORMALIZES a
+/// Table `sorted` payload to the bare column index `"<col>"` at the single
+/// toolkit→interop chokepoint, so every Table-consuming app receives one stable
+/// form (apps own the direction toggle on re-click). This test is the end-to-end
+/// proof, driven through the real shell engine + real runtime.
 #[test]
-#[ignore = "KNOWN BUG: task-manager apply_action parses the sort payload as a bare u32 but the \
-toolkit Table emits '<col>:<dir>' (e.g. '0:asc'); header clicks are dropped. Fix is out of the \
-test-only lock (app source / app_widgets.rs). Un-ignore once the seam is wired."]
 fn task_manager_header_click_should_resort_the_real_runtime() {
     let (mut shell, wid) = shell_with_app(Box::new(task_manager_runtime()));
 

@@ -476,7 +476,29 @@ pub(crate) fn translate_action(
     model_widget: Option<&AppWidget>,
     action: &liquide_widgets::WidgetAction,
 ) -> AppWidgetAction {
-    let payload = action.payload.clone().unwrap_or_default();
+    let mut payload = action.payload.clone().unwrap_or_default();
+
+    // CANONICAL TABLE-SORT CONTRACT (chokepoint normalization).
+    //
+    // The `liquide_widgets::Table` emits its sort action with the payload
+    // `"<col>:<dir>"` (e.g. `"0:asc"`, see `table.rs::sort_by`) — it carries the
+    // direction it just toggled to. But every Table-consuming app (task-manager,
+    // files, …) toggles the direction *itself* on a re-click of the same column
+    // (`ProcessSortColumn` / `DirectoryListing::set_sort`), so the toolkit's
+    // direction suffix is redundant — and an app that parses the payload as a bare
+    // column index silently drops the whole header click (the t124 bug the e2e
+    // harness surfaced). Rather than make each app defensively re-parse
+    // `"col:dir"` (duplicated, easy to regress in a future Table consumer), we
+    // normalize here, at the single shell-side chokepoint that already translates
+    // toolkit → interop: a Table `sorted` payload is reduced to the bare column
+    // index `"<col>"`. So EVERY app — present and future — receives the one
+    // documented, stable sort payload form: the column index, nothing else.
+    if matches!(model_widget, Some(AppWidget::Table { .. })) && action.name == "sorted" {
+        if let Some((col, _dir)) = payload.split_once(':') {
+            payload = col.to_string();
+        }
+    }
+
     // Map the toolkit verb (+ the target widget family) to the interop verb the
     // app understands. The toolkit emits a small set of names: "click",
     // "changed", "navigate", "toggled", "sorted", "remove".
@@ -625,6 +647,60 @@ mod tests {
             },
         );
         assert_eq!(a, AppWidgetAction::new("document", "change", "new\nbody"));
+    }
+
+    #[test]
+    fn translate_action_table_sorted_normalizes_to_bare_column_index() {
+        // The toolkit Table emits the REAL payload "<col>:<dir>" (here "0:asc",
+        // exactly as `table.rs::sort_by` produces). The chokepoint must normalize
+        // it to the bare column index "0" so every consuming app's bare-u32 parse
+        // succeeds — this is the t124 wiring fix. Asserting on the realistic
+        // "<col>:<dir>" form (NOT a hand-cleaned "0") is the no-fake-green teeth:
+        // before the fix this produced AppWidgetAction(.., "sort", "0:asc").
+        let table = AppWidget::Table {
+            key: "process_table".into(),
+            columns: vec![TableColumn::new("Name"), TableColumn::new("PID")],
+            rows: vec![vec!["a".into(), "1".into()]],
+            sort: None,
+            selection_mode: SelectionMode::Single,
+            selected: vec![],
+        };
+        // Ascending.
+        let a = translate_action(
+            "process_table",
+            Some(&table),
+            &liquide_widgets::WidgetAction {
+                widget: "aw-1-process_table".into(),
+                name: "sorted".into(),
+                payload: Some("0:asc".into()),
+            },
+        );
+        assert_eq!(a, AppWidgetAction::new("process_table", "sort", "0"));
+
+        // Descending (re-click) — the direction suffix is also stripped; the app
+        // owns the toggle, so it only needs the column.
+        let a = translate_action(
+            "process_table",
+            Some(&table),
+            &liquide_widgets::WidgetAction {
+                widget: "aw-1-process_table".into(),
+                name: "sorted".into(),
+                payload: Some("1:desc".into()),
+            },
+        );
+        assert_eq!(a, AppWidgetAction::new("process_table", "sort", "1"));
+
+        // A bare column index (no suffix) passes through unchanged — idempotent.
+        let a = translate_action(
+            "process_table",
+            Some(&table),
+            &liquide_widgets::WidgetAction {
+                widget: "aw-1-process_table".into(),
+                name: "sorted".into(),
+                payload: Some("0".into()),
+            },
+        );
+        assert_eq!(a, AppWidgetAction::new("process_table", "sort", "0"));
     }
 
     #[test]

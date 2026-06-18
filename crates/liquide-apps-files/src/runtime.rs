@@ -82,6 +82,12 @@ impl FilesRuntime {
         &self.current_listing
     }
 
+    /// Mutable access to the current directory listing (e.g. to re-sort it in
+    /// place when a listing-table header is clicked).
+    pub fn current_listing_mut(&mut self) -> &mut DirectoryListing {
+        &mut self.current_listing
+    }
+
     /// Navigate to a directory.
     pub fn navigate(&mut self, path: String, entries: Vec<FileEntry>) {
         // Push to history.

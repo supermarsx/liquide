@@ -6,9 +6,10 @@
 
 use liquide_interop::{
     AppContentProvider, AppContentView, AppKey, AppTextInput, AppView, AppWidget, AppWidgetAction,
-    AppWidgetModel, ContentKind, ContentRow, SelectionMode, TableColumn,
+    AppWidgetModel, ContentKind, ContentRow, SelectionMode, SortDirection, TableColumn, TableSort,
 };
 
+use crate::config::SortField;
 use crate::runtime::FilesRuntime;
 
 // ---- stable widget keys ----------------------------------------------------
@@ -132,6 +133,30 @@ fn format_modified(modified: u64) -> String {
     format!("{days}d")
 }
 
+/// The listing-table column index for a [`SortField`], matching the column order
+/// emitted by `build_widget_model` (`[Name, Size, Modified]`). `Type` is not a
+/// visible column here, so it maps to `None`.
+fn column_index_for_field(field: SortField) -> Option<u32> {
+    match field {
+        SortField::Name => Some(0),
+        SortField::Size => Some(1),
+        SortField::Modified => Some(2),
+        SortField::Type => None,
+    }
+}
+
+/// The [`SortField`] for a clicked listing-table column index (inverse of
+/// [`column_index_for_field`]). Out-of-range / non-sortable indices map to
+/// `None` so an unknown header click is a no-op rather than a wrong sort.
+fn field_for_column_index(col: u32) -> Option<SortField> {
+    match col {
+        0 => Some(SortField::Name),
+        1 => Some(SortField::Size),
+        2 => Some(SortField::Modified),
+        _ => None,
+    }
+}
+
 impl FilesRuntime {
     /// Build the toolkit-free widget model from the live runtime state.
     fn build_widget_model(&self) -> AppWidgetModel {
@@ -220,7 +245,18 @@ impl FilesRuntime {
                 },
             ],
             rows,
-            sort: None,
+            // Reflect the listing's active sort so the header shows the sorted
+            // column + direction (and the column index is the canonical contract
+            // the shell normalizes a header-click sort payload to — see
+            // `apply_listing_action`).
+            sort: column_index_for_field(listing.sort_field).map(|column| TableSort {
+                column,
+                direction: if listing.sort_ascending {
+                    SortDirection::Ascending
+                } else {
+                    SortDirection::Descending
+                },
+            }),
             selection_mode: SelectionMode::Multiple,
             selected,
         };
@@ -283,8 +319,17 @@ impl FilesRuntime {
         }
     }
 
-    /// Handle a `select` / `activate` action targeting the listing table.
+    /// Handle a `select` / `activate` / `sort` action targeting the listing
+    /// table.
     fn apply_listing_action(&mut self, action: &AppWidgetAction) -> bool {
+        // A header-click sort: the payload is the bare clicked column index (the
+        // shell's `translate_action` normalizes the toolkit's `"<col>:<dir>"` form
+        // down to `"<col>"`, so this app sees one stable contract). The app owns
+        // the direction: re-clicking the active column toggles ascending/desc.
+        if action.name == "sort" {
+            return self.apply_listing_sort(&action.payload);
+        }
+
         let count = self.current_listing().visible_count();
         // The payload is the row index, optionally suffixed with a modifier
         // verb so Ctrl/Shift multi-select flows through the plain-string seam:
@@ -325,6 +370,30 @@ impl FilesRuntime {
             },
             _ => false,
         }
+    }
+
+    /// Re-sort the directory listing by the clicked column index. Re-clicking the
+    /// already-active column toggles the direction; clicking a new column sorts it
+    /// ascending. Returns `true` when the sort actually changed.
+    fn apply_listing_sort(&mut self, payload: &str) -> bool {
+        let Ok(col) = payload.parse::<u32>() else {
+            return false;
+        };
+        let Some(field) = field_for_column_index(col) else {
+            return false;
+        };
+        let listing = self.current_listing();
+        let ascending = if listing.sort_field == field {
+            // Toggle direction on a re-click of the active column.
+            !listing.sort_ascending
+        } else {
+            // A new column starts ascending.
+            true
+        };
+        // Selection points at display positions that move when rows re-sort.
+        self.clear_selection();
+        self.current_listing_mut().set_sort(field, ascending);
+        true
     }
 
     /// Replace the selection with a single row, reporting whether it changed.
@@ -545,6 +614,76 @@ mod tests {
             AppWidget::Table { selected, .. } => assert_eq!(selected, &vec![0u32, 2u32]),
             other => panic!("expected Table, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn listing_header_sort_uses_the_bare_column_index_contract() {
+        // CANONICAL CONTRACT (t124): the files listing table receives the sort
+        // payload as a BARE column index ("1"), because the shell normalizes the
+        // toolkit Table's raw "<col>:<dir>" form at the chokepoint. Clicking the
+        // Size column (index 1) sorts by size ascending and reflects it in the
+        // model's TableSort.
+        let mut rt = runtime_in_home();
+        // Default sort is name-ascending (dirs first): docs/, a.txt, b.txt.
+        let names0: Vec<String> = match find(&rt.widget_model().unwrap(), LISTING_KEY).unwrap() {
+            AppWidget::Table { rows, sort, .. } => {
+                assert_eq!(
+                    sort,
+                    &Some(TableSort { column: 0, direction: SortDirection::Ascending }),
+                    "default model sort must reflect name-ascending"
+                );
+                rows.iter().map(|r| r[0].clone()).collect()
+            }
+            other => panic!("expected Table, got {other:?}"),
+        };
+        assert_eq!(names0, ["docs/", "a.txt", "b.txt"]);
+
+        // Sort by Size ascending via the bare-index payload.
+        assert!(
+            rt.apply_action(&AppWidgetAction::new(LISTING_KEY, "sort", "1")),
+            "a header-click sort on the Size column must change the listing"
+        );
+        match find(&rt.widget_model().unwrap(), LISTING_KEY).unwrap() {
+            AppWidget::Table { rows, sort, .. } => {
+                assert_eq!(
+                    sort,
+                    &Some(TableSort { column: 1, direction: SortDirection::Ascending }),
+                    "the model must reflect the new sort column/direction"
+                );
+                // Dirs first (size 0), then files by ascending size: a.txt(10) < b.txt(20).
+                let names: Vec<&str> = rows.iter().map(|r| r[0].as_str()).collect();
+                assert_eq!(names, ["docs/", "a.txt", "b.txt"]);
+            }
+            other => panic!("expected Table, got {other:?}"),
+        }
+
+        // Re-clicking the active column toggles to descending.
+        assert!(rt.apply_action(&AppWidgetAction::new(LISTING_KEY, "sort", "1")));
+        match find(&rt.widget_model().unwrap(), LISTING_KEY).unwrap() {
+            AppWidget::Table { rows, sort, .. } => {
+                assert_eq!(
+                    sort.as_ref().expect("sorted").direction,
+                    SortDirection::Descending,
+                    "re-clicking the active column toggles direction"
+                );
+                // Dirs still first; files by descending size: b.txt(20) > a.txt(10).
+                let names: Vec<&str> = rows.iter().map(|r| r[0].as_str()).collect();
+                assert_eq!(names, ["docs/", "b.txt", "a.txt"]);
+            }
+            other => panic!("expected Table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn listing_header_sort_rejects_the_raw_toolkit_payload() {
+        // The app's contract is the bare index; the raw toolkit "<col>:<dir>" form
+        // must NOT be parsed here (the shell normalizes it first). This documents
+        // why the chokepoint normalization is required (the t124 bug surface).
+        let mut rt = runtime_in_home();
+        assert!(
+            !rt.apply_action(&AppWidgetAction::new(LISTING_KEY, "sort", "1:asc")),
+            "a raw '<col>:<dir>' payload must be a no-op; the shell normalizes it first"
+        );
     }
 
     #[test]

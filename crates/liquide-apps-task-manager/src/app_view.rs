@@ -440,6 +440,33 @@ mod tests {
     }
 
     #[test]
+    fn sort_payload_contract_is_the_bare_column_index() {
+        // CANONICAL CONTRACT (t124): this app receives the sort payload as a BARE
+        // column index ("0"), because the shell's `translate_action` normalizes the
+        // toolkit Table's raw "<col>:<dir>" form down to "<col>" at the chokepoint.
+        // The bare index is accepted ...
+        let mut rt = frozen_runtime();
+        assert!(
+            rt.apply_action(&AppWidgetAction::new(TABLE_KEY, "sort", "0")),
+            "the canonical bare-index payload must sort"
+        );
+
+        // ... and the RAW toolkit form is (correctly) NOT accepted here — this is
+        // exactly the t124 bug surface: without the shell-side normalization a raw
+        // "0:asc" silently drops the header click. This test documents WHY the
+        // chokepoint normalization exists (and pins the app's contract): if the
+        // app were ever fed the raw form it would be a no-op, so the shell MUST
+        // normalize. (The end-to-end proof that it does live in
+        // liquide-session's e2e_app_widget_pipeline.)
+        let mut rt = frozen_runtime();
+        assert!(
+            !rt.apply_action(&AppWidgetAction::new(TABLE_KEY, "sort", "0:asc")),
+            "the raw toolkit '<col>:<dir>' payload must NOT be parsed here; the shell \
+             normalizes it to the bare index before this app sees it"
+        );
+    }
+
+    #[test]
     fn sort_by_pid_orders_by_pid() {
         let mut rt = frozen_runtime();
         // PID column is index 1.
