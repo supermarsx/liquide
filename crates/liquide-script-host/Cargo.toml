@@ -1,0 +1,91 @@
+[package]
+name = "liquide-script-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# The AppWidgetModel / AppWidgetAction seam the host emits/consumes. Always on:
+# the model + the host's public API are toolkit-free plain data, so the crate
+# (and its NullScriptHost stub) compiles without boa or swc.
+liquide-interop.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# The real script engine is FEATURE-GATED behind `script` and OFF BY DEFAULT,
+# because boa (a full JS engine) + swc (a full TS/JS toolchain) are a heavy
+# build-time / binary-size cost we must not inflict on the default workspace
+# build or CI. With the feature off the crate exposes a NullScriptHost stub with
+# the same API that returns `Unavailable` (the same pattern as the platform
+# `Null*` hosts and the sibling `liquide-wasm-host`).
+
+# boa: a pure-Rust JavaScript engine. No C deps, no ambient IO by default — the
+# sandbox posture we want. Executes the JS that swc transpiles from TS.
+[dependencies.boa_engine]
+version = "0.21"
+optional = true
+
+# boa's GC, used directly so the `#[derive(Trace, Finalize)]` macros (which
+# expand to `::boa_gc` paths) resolve. Lets the bounded `console.log` capture its
+# host-side log ring as GC-traceable state via the SAFE
+# `NativeFunction::from_copy_closure_with_captures`, keeping the crate's
+# `#![forbid(unsafe_code)]`. Pinned to boa's own version.
+[dependencies.boa_gc]
+version = "0.21"
+optional = true
+
+# swc: transpiles TypeScript source to JavaScript in-process (no external
+# binary, no esbuild). We use the lower-level transform crates so the pipeline
+# is exactly: parse TS -> strip types -> emit JS.
+#
+# The swc crates version INDEPENDENTLY and each release wave hangs off a single
+# `swc_common`. They MUST be pinned together as one coherent wave. We pin the
+# wave built on `swc_common` 14, because that `swc_common` requires
+# `unicode-width ^0.1`, whereas newer waves (swc_common >= 17) hard-require
+# `unicode-width ^0.2.1` — which CONFLICTS with `ratatui`'s exact `=0.2.0` pin
+# elsewhere in this workspace (ratatui -> liquide-telemetry-viewer). The 0.1.x
+# requirement is a different semver major and coexists cleanly with 0.2.0.
+# Bumping these versions without re-checking that constraint will break the
+# workspace resolve. (`=` pins keep the whole wave locked together.)
+[dependencies.swc_common]
+version = "=14.0.4"
+optional = true
+features = ["tty-emitter"]
+
+[dependencies.swc_ecma_parser]
+version = "=24.0.3"
+optional = true
+
+[dependencies.swc_ecma_ast]
+version = "=15.0.0"
+optional = true
+
+[dependencies.swc_ecma_codegen]
+version = "=17.0.2"
+optional = true
+
+[dependencies.swc_ecma_transforms_typescript]
+version = "=29.0.0"
+optional = true
+
+[dependencies.swc_ecma_visit]
+version = "=15.0.0"
+optional = true
+
+[features]
+default = []
+# Pull in the real boa + swc backed script host.
+script = [
+    "dep:boa_engine",
+    "dep:boa_gc",
+    "dep:swc_common",
+    "dep:swc_ecma_parser",
+    "dep:swc_ecma_ast",
+    "dep:swc_ecma_codegen",
+    "dep:swc_ecma_transforms_typescript",
+    "dep:swc_ecma_visit",
+]
