@@ -665,6 +665,44 @@ fn flat_node_samples_backdrop(node: &FlatNode) -> bool {
     )
 }
 
+/// The blur SAMPLE RADIUS (in pixels) of a backdrop-sampling node — how far a
+/// changed pixel under the node can bleed into the node's blurred output. Used to
+/// expand the changed region by the halo before intersecting it with the node's
+/// bounds (t119 #2), so the damage added for the node is a true SUPERSET of every
+/// output pixel the change can affect, never the whole node footprint.
+///
+/// Mirrors the renderer's own caps so the damage matches what the renderer will
+/// actually re-sample: the CPU glass path caps the blur radius at 30
+/// (`renderer/effects.rs::render_glass_node`). For structural BlurBackdrop /
+/// Filter / BackdropFilter nodes we read the largest blur radius in their spec
+/// (Filter/BackdropFilter), or fall back to the conservative cap when the radius
+/// is not locally known (BlurBackdrop is a bare marker).
+fn flat_node_blur_radius(node: &FlatNode) -> f32 {
+    /// Matches the renderer's `params.blur_radius.min(30)` glass cap.
+    const MAX_GLASS_BLUR: f32 = 30.0;
+    match node.kind_ref() {
+        SceneNodeKind::Glass(params) => (params.blur_radius as f32).min(MAX_GLASS_BLUR),
+        SceneNodeKind::BackdropFilter { filters } => filters
+            .iter()
+            .filter_map(|f| match f {
+                liquide_compositor::scene::BackdropFilterSpec::Blur { radius } => Some(*radius),
+                _ => None,
+            })
+            .fold(0.0_f32, f32::max)
+            .min(MAX_GLASS_BLUR),
+        SceneNodeKind::Filter { filters } => filters
+            .iter()
+            .filter_map(|f| match f {
+                liquide_compositor::scene::FilterSpec::Blur { radius } => Some(*radius),
+                _ => None,
+            })
+            .fold(0.0_f32, f32::max)
+            .min(MAX_GLASS_BLUR),
+        // Bare backdrop marker carries no local radius — use the conservative cap.
+        _ => MAX_GLASS_BLUR,
+    }
+}
+
 /// Whether a node kind paints PIXELS OF ITS OWN (as opposed to a purely
 /// structural container whose footprint is painted only by its descendants).
 ///
@@ -786,6 +824,19 @@ fn scene_diff_damage(
 
     // Expand damage to cover backdrop-sampling nodes overlapping any change.
     // Iterate to a fixpoint (bounded) so stacked glass layers all settle.
+    //
+    // CONFINED EXPANSION (t119 #2): a backdrop-sampling node does NOT need its
+    // WHOLE footprint re-rastered when something under it changed — only the
+    // OUTPUT pixels the change can reach. A glass output pixel at p depends on
+    // source pixels within ±radius of p, so a changed source pixel s affects only
+    // output pixels within ±radius of s. The affected output region is therefore
+    // `(changed region under the node) EXPANDED by the blur radius`, intersected
+    // with the node's own bounds. That intersection is a true SUPERSET of the
+    // node's output pixels that must be re-rastered (never under-damages — the
+    // renderer's blur-confine re-samples that whole window), but for a thin/wide
+    // glass surface (the status bar) hit by a 1-cell change it is far smaller than
+    // the full node rect, so `glass ∩ damage` finally shrinks and the confine
+    // engages. (The full node rect is the limiting case when the change spans it.)
     let mut backdrop_added = vec![false; curr.len()];
     for _pass in 0..4 {
         let mut grew = false;
@@ -807,13 +858,27 @@ fn scene_diff_damage(
                 },
                 None => node.absolute_bounds,
             };
-            if changed_rects
-                .iter()
-                .any(|r| r.intersection(&node_rect).is_some())
-            {
-                changed_rects.push(node_rect);
-                backdrop_added[i] = true;
-                grew = true;
+            // Union ALL currently-changed rects that overlap this node, EXPANDED
+            // by the node's blur sample radius (the halo a changed pixel reaches),
+            // then intersect with the node's bounds. Only the changes that touch
+            // the node contribute, so an off-node change never widens it.
+            let radius = flat_node_blur_radius(node);
+            let mut affected: Option<Rect> = None;
+            for r in &changed_rects {
+                let halo = r.expand(radius);
+                if let Some(hit) = halo.intersection(&node_rect) {
+                    affected = Some(match affected {
+                        Some(acc) => acc.union(&hit),
+                        None => hit,
+                    });
+                }
+            }
+            if let Some(add) = affected {
+                if add.width > 0.0 && add.height > 0.0 {
+                    changed_rects.push(add);
+                    backdrop_added[i] = true;
+                    grew = true;
+                }
             }
         }
         if !grew {
@@ -4951,14 +5016,18 @@ mod scene_diff_tests {
     #[test]
     fn backdrop_node_over_change_is_re_damaged() {
         // A glass/backdrop panel sits over a region where an underlying node
-        // changes. The backdrop samples behind it, so its own footprint MUST be
-        // damaged too — otherwise it shows a stale blurred backdrop.
+        // changes. The backdrop samples behind it, so the part of its footprint
+        // whose blurred output the change can reach (change ∩ glass, expanded by
+        // the blur radius) MUST be damaged too — otherwise it shows a stale
+        // blurred backdrop. (t119 #2 confines this to the change+radius halo
+        // rather than the WHOLE panel; see the dedicated confine/superset tests.)
         let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
         let under = glass_node(2, 10.0, 10.0, 20.0, 20.0); // tile (0,0) changes
-        let glass = backdrop_node(3, 64.0, 0.0, 64.0, 64.0); // tile (1,0), overlaps nothing changed
-        // Make the backdrop overlap the changed tile by spanning x 0..128.
+        // BlurBackdrop spanning x 0..128 (tiles (0,0),(1,0)). Its radius cap is
+        // 30; the change at x 10..30 reaches at most x 60 of blurred output, which
+        // is inside tile (0,0) — so the change's halo re-damages tile (0,0) only.
         let glass = {
-            let mut g = glass;
+            let mut g = backdrop_node(3, 0.0, 0.0, 128.0, 64.0);
             g.absolute_bounds = Rect::new(0.0, 0.0, 128.0, 64.0); // tiles (0,0),(1,0)
             g
         };
@@ -4967,12 +5036,101 @@ mod scene_diff_tests {
 
         let damage = scene_diff_damage(&prev, &curr, TILE, W, H).expect("diff");
         let tiles = tiles_set(&damage);
-        assert!(tiles.contains(&(0, 0)), "the changed under-node tile");
+        // SUPERSET: the changed under-node tile (whose blurred backdrop changed)
+        // must be re-damaged — no stale blurred backdrop there.
         assert!(
-            tiles.contains(&(1, 0)),
-            "the backdrop panel extends into tile (1,0) and overlaps the change, \
-             so its whole footprint must be re-damaged (no stale backdrop)"
+            tiles.contains(&(0, 0)),
+            "the changed under-node tile (whose blurred backdrop changed) must be \
+             re-damaged"
         );
+        // CONFINE: the change (x 10..30) + radius 30 halo reaches only ~x 60, well
+        // inside tile (0,0); tile (1,0) (x 64..128) is NOT reachable from the
+        // change, so re-damaging it would be the t119 over-expansion.
+        assert!(
+            !tiles.contains(&(1, 0)),
+            "tile (1,0) is outside the change+radius halo, so re-damaging it would \
+             be the t119 over-expansion; tiles={tiles:?}"
+        );
+    }
+
+    /// A `Glass` backdrop node with an explicit small blur radius.
+    fn glass_blur_node(id: NodeId, x: f32, y: f32, w: f32, h: f32, radius: u32) -> FlatNode {
+        let mut n = glass_node(id, x, y, w, h);
+        n.kind = SceneNodeKind::Glass(liquide_compositor::scene::GlassParams {
+            blur_radius: radius,
+            tint_color: Color::new(255, 255, 255, 0),
+            inner_glow: false,
+            parallax: false,
+        })
+        .into();
+        n
+    }
+
+    /// t119 #2 — a WIDE backdrop-sampling glass (the status bar) over a SMALL
+    /// change must have only `glass ∩ (change + blur radius)` re-damaged, NOT its
+    /// full footprint. Before t119 the whole glass node rect was added, so a
+    /// 1-cell change spanned the entire bar and `glass ∩ damage` could never
+    /// shrink. The added damage must still be a true SUPERSET of the change halo.
+    #[test]
+    fn backdrop_expansion_is_confined_to_change_plus_radius_not_full_glass() {
+        // A 256-px-wide, 64-px-tall glass bar across the top (tiles row 0). Small
+        // blur radius (8) so the halo is tight.
+        const RADIUS: u32 = 8;
+        let bar = glass_blur_node(3, 0.0, 0.0, 256.0, 64.0, RADIUS);
+        // A tiny change on the LEFT end of the bar (tile (0,0)).
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        let cell = glass_node(2, 8.0, 20.0, 16.0, 16.0); // small, far-left
+        let prev = vec![reused(&bg), cell.clone(), reused(&bar)];
+        let curr = vec![reused(&bg), with_new_kind(&cell), reused(&bar)];
+
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H).expect("diff");
+        let tiles = tiles_set(&damage);
+
+        // SUPERSET: the changed cell's tile (0,0) must be damaged (the halo of the
+        // change under the bar is re-rastered).
+        assert!(
+            tiles.contains(&(0, 0)),
+            "the changed cell tile (0,0) under the bar must be re-damaged"
+        );
+
+        // CONFINE (the point): the FAR end of the bar (tile (3,0), x 192..256) is
+        // ~170 px from the 16-px change + 8-px radius halo, so it must NOT be
+        // damaged. Before t119 the full bar rect was added → tile (3,0) damaged.
+        assert!(
+            !tiles.contains(&(3, 0)),
+            "the far end of the status-bar glass (tile (3,0)) is well outside the \
+             change+radius halo and must NOT be re-damaged; tiles={tiles:?}"
+        );
+        // And tile (2,0) (x 128..192) is likewise far from the left-end change.
+        assert!(
+            !tiles.contains(&(2, 0)),
+            "tile (2,0) is outside the change+radius halo and must NOT be damaged; \
+             tiles={tiles:?}"
+        );
+    }
+
+    /// t119 #2 — superset safety: a change that spans the WHOLE glass still
+    /// re-damages the whole glass (the confined intersection equals the full node
+    /// when the change covers it), so a wide change is never under-damaged.
+    #[test]
+    fn backdrop_expansion_still_covers_full_glass_when_change_spans_it() {
+        const RADIUS: u32 = 8;
+        let bar = glass_blur_node(3, 0.0, 0.0, 256.0, 64.0, RADIUS);
+        let bg = glass_node(1, 0.0, 0.0, 256.0, 256.0);
+        // A change spanning the full width under the bar.
+        let wide = glass_node(2, 0.0, 16.0, 256.0, 16.0);
+        let prev = vec![reused(&bg), wide.clone(), reused(&bar)];
+        let curr = vec![reused(&bg), with_new_kind(&wide), reused(&bar)];
+
+        let damage = scene_diff_damage(&prev, &curr, TILE, W, H).expect("diff");
+        let tiles = tiles_set(&damage);
+        for col in 0..4 {
+            assert!(
+                tiles.contains(&(col, 0)),
+                "a full-width change under the bar must re-damage the whole bar \
+                 row; tile ({col},0) missing; tiles={tiles:?}"
+            );
+        }
     }
 
     #[test]

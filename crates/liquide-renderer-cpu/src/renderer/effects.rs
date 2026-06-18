@@ -58,14 +58,20 @@ impl SoftwareRenderer {
                 rasterizer::fill_rect(fb, tint_rect, tint, BlendMode::SrcOver);
             }
 
-            // Inner glow (skip for low LOD)
+            // Inner glow (skip for low LOD). Confine its WRITES to the active
+            // damage clip + write-scissor (t119 #2) so a partial-damage on-glass
+            // frame does not re-run the glow over the FULL glass bounds. The glow
+            // is positional (each pixel computed independently from its position vs
+            // `bounds`), so a clipped iteration window is byte-identical to the
+            // full pass inside the damage rect — and untouched outside it.
             if params.inner_glow && lod_level != LodLevel::Low {
-                crate::effects::InnerGlow::render_glow(
+                crate::effects::InnerGlow::render_glow_clipped(
                     fb,
                     bounds,
                     8.0 * quality_factor,
                     3.0 * quality_factor,
                     Color::new(255, 255, 255, 30),
+                    self.raster_clip,
                 );
             }
         }
@@ -1120,6 +1126,126 @@ mod tests {
             clip_px * 10 < full_px,
             "clipped blur source {clip_px} px is not a small fraction of the full \
              {full_px} px — damage confinement regressed to full-area blur"
+        );
+    }
+
+    /// Render JUST the glass inner-glow (blur radius 0 → no blur; tint alpha 0 →
+    /// no tint) over a non-flat backdrop, optionally clipped to `clip`, returning
+    /// the framebuffer. Mirrors the production wiring (raster_clip + write-scissor).
+    fn run_inner_glow(clip: Option<Rect>, fb_w: u32, fb_h: u32, bounds: Rect) -> FrameBuffer {
+        let mut renderer = SoftwareRenderer::new();
+        renderer.raster_clip = clip;
+        let node = FlatNode {
+            id: 1,
+            kind: SceneNodeKind::Glass(GlassParams {
+                blur_radius: 0,                            // isolate: no blur
+                tint_color: Color::new(0, 0, 0, 0),        // isolate: no tint
+                inner_glow: true,
+                parallax: false,
+            })
+            .into(),
+            absolute_bounds: bounds,
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        };
+        let mut fb = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        let prev = crate::rasterizer::set_write_scissor(clip);
+        renderer.render_glass_node(&node, &mut fb, LodLevel::High, 1.0);
+        crate::rasterizer::set_write_scissor(prev);
+        fb
+    }
+
+    /// t119 #2 — the glass INNER GLOW must respect the damage clip: a partial
+    /// frame must NOT re-run the glow over the FULL glass bounds. The clipped run
+    /// (a) writes NOTHING outside the damage rect, and (b) is BYTE-IDENTICAL to the
+    /// full (unclipped) glow INSIDE the damage rect (the glow is positional, each
+    /// pixel independent of the iteration window). Before t119 the glow ignored
+    /// `raster_clip` and ran the full bounds every frame.
+    #[test]
+    fn inner_glow_respects_damage_clip_and_is_byte_identical_inside() {
+        let fb_w = 220u32;
+        let fb_h = 200u32;
+        // Big glass surface; the glow rides its edges (the inset border band).
+        let bounds = Rect::new(10.0, 10.0, 200.0, 180.0);
+
+        let full = run_inner_glow(None, fb_w, fb_h, bounds);
+        let full_iter = crate::effects::LAST_GLOW_ITER_PX.with(std::cell::Cell::get);
+
+        // A damage rect over the glass's TOP-LEFT corner band (where the glow is
+        // strongest) — small relative to the full glass.
+        let dmg = Rect::new(10.0, 10.0, 40.0, 40.0);
+        let clipped = run_inner_glow(Some(dmg), fb_w, fb_h, bounds);
+        let clipped_iter = crate::effects::LAST_GLOW_ITER_PX.with(std::cell::Cell::get);
+
+        // COST (the t119 #2 point): the clipped run must ITERATE only ~O(damage)
+        // pixels, not the full glass bounds. Catches a regression that reverts the
+        // iteration-window confinement (the compositor scissor would keep the
+        // OUTPUT correct but pay full per-pixel SDF cost). 40×40 damage = 1600 px;
+        // full glass = 200×180 = 36 000 px.
+        assert!(
+            clipped_iter <= (dmg.width * dmg.height) as usize + 16,
+            "clipped inner-glow iterated {clipped_iter} px, expected ~O(damage) (<= {} px)",
+            (dmg.width * dmg.height) as usize + 16
+        );
+        assert!(
+            clipped_iter * 4 < full_iter,
+            "clipped inner-glow iteration {clipped_iter} px must be a small fraction \
+             of the full {full_iter} px — the iteration-window confine regressed"
+        );
+
+        let dx0 = dmg.x as u32;
+        let dy0 = dmg.y as u32;
+        let dx1 = dmg.right().ceil() as u32;
+        let dy1 = dmg.bottom().ceil() as u32;
+
+        // Baseline: the sharp (glow-free) backdrop, to detect writes.
+        let mut sharp = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+        paint_backdrop(&mut sharp);
+
+        // (a) clipped glow wrote NOTHING outside the damage rect, AND
+        // (b) byte-identical to the full glow INSIDE the damage rect.
+        let mut glow_pixels_inside = 0u32;
+        let mut full_glowed_outside = 0u32;
+        for y in 0..fb_h {
+            for x in 0..fb_w {
+                let inside = x >= dx0 && x < dx1 && y >= dy0 && y < dy1;
+                if inside {
+                    assert_eq!(
+                        clipped.get_pixel(x, y),
+                        full.get_pixel(x, y),
+                        "clipped inner-glow differs from full glow INSIDE damage at ({x},{y})"
+                    );
+                    if clipped.get_pixel(x, y) != sharp.get_pixel(x, y) {
+                        glow_pixels_inside += 1;
+                    }
+                } else {
+                    assert_eq!(
+                        clipped.get_pixel(x, y),
+                        sharp.get_pixel(x, y),
+                        "clipped inner-glow wrote OUTSIDE the damage rect at ({x},{y})"
+                    );
+                    if full.get_pixel(x, y) != sharp.get_pixel(x, y) {
+                        full_glowed_outside += 1;
+                    }
+                }
+            }
+        }
+        // The glow must actually paint inside the damage rect (not an all-no-op),
+        // and the FULL glow must paint OUTSIDE it (proving the clip is what
+        // suppressed those writes — the confinement is real, not vacuous).
+        assert!(
+            glow_pixels_inside > 0,
+            "the inner glow must paint pixels inside the damage rect (got 0)"
+        );
+        assert!(
+            full_glowed_outside > 50,
+            "the full inner glow must paint many pixels outside the damage rect \
+             (only {full_glowed_outside}); otherwise the clip test is vacuous"
         );
     }
 

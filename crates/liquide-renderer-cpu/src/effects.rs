@@ -312,8 +312,17 @@ impl Effect for BoxShadow {
 /// rect edges. Uses Screen blend mode for a light highlight effect.
 pub struct InnerGlow;
 
+#[cfg(test)]
+thread_local! {
+    /// Area (px) of the LAST inner-glow iteration window. Lets a test prove the
+    /// clip-confinement actually shrinks the per-pixel SDF work (t119 #2), which a
+    /// pure output check cannot, since the compositor scissor already keeps the
+    /// OUTPUT correct even when iterating the full bounds.
+    pub(crate) static LAST_GLOW_ITER_PX: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl InnerGlow {
-    /// Render an inner glow with specific parameters.
+    /// Render an inner glow with specific parameters (no damage clip).
     pub fn render_glow(
         fb: &mut FrameBuffer,
         region: Rect,
@@ -321,14 +330,58 @@ impl InnerGlow {
         glow_width: f32,
         glow_color: Color,
     ) {
+        Self::render_glow_clipped(fb, region, corner_radius, glow_width, glow_color, None);
+    }
+
+    /// Render an inner glow, confining its WRITES to `clip` (the active damage
+    /// rect) AND the per-thread write-scissor (t80), while keeping the rounded-rect
+    /// SDF shape anchored to the full `region` (t119 #2). On a partial-damage frame
+    /// this stops the glow from re-running over the FULL glass bounds every frame
+    /// when only a tiny on-glass region changed — the glow output is identical
+    /// inside the clip and untouched outside it (the glow is positional, each pixel
+    /// independent), so confining the iteration window is byte-identical to the
+    /// full pass within the damage rect. `clip = None` keeps the historic
+    /// full-bounds behaviour.
+    pub fn render_glow_clipped(
+        fb: &mut FrameBuffer,
+        region: Rect,
+        corner_radius: f32,
+        glow_width: f32,
+        glow_color: Color,
+        clip: Option<Rect>,
+    ) {
         if glow_width <= 0.0 || glow_color.is_transparent() {
             return;
         }
 
-        let x0 = (region.x.max(0.0) as u32).min(fb.width);
-        let y0 = (region.y.max(0.0) as u32).min(fb.height);
-        let x1 = (region.right().ceil() as u32).min(fb.width);
-        let y1 = (region.bottom().ceil() as u32).min(fb.height);
+        let mut x0 = (region.x.max(0.0) as u32).min(fb.width);
+        let mut y0 = (region.y.max(0.0) as u32).min(fb.height);
+        let mut x1 = (region.right().ceil() as u32).min(fb.width);
+        let mut y1 = (region.bottom().ceil() as u32).min(fb.height);
+
+        // Confine the ITERATION window (not the SDF shape) to the damage clip and
+        // the hard write-scissor, so a partial-damage frame touches O(clip) pixels
+        // instead of the full glass bounds. Each glow pixel is computed solely from
+        // its (fx,fy) vs `region`, so a clipped window is byte-identical to the
+        // full pass for every pixel it does emit.
+        if let Some(c) = clip {
+            x0 = x0.max((c.x.max(0.0) as u32).min(fb.width));
+            y0 = y0.max((c.y.max(0.0) as u32).min(fb.height));
+            x1 = x1.min((c.right().ceil().max(0.0) as u32).min(fb.width));
+            y1 = y1.min((c.bottom().ceil().max(0.0) as u32).min(fb.height));
+        }
+        let (x0, y0, x1, y1) = crate::rasterizer::scissor_clamp_window(x0, y0, x1, y1);
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+
+        // Test-only: record the iteration-window area so a regression that reverts
+        // the clip-confinement (iterating the FULL glass bounds) is caught by a
+        // cost assertion, not only by the compositor scissor (which would still
+        // make the OUTPUT correct while paying full per-pixel SDF cost — the t119
+        // #2 cost regression).
+        #[cfg(test)]
+        LAST_GLOW_ITER_PX.with(|c| c.set(((x1 - x0) * (y1 - y0)) as usize));
 
         let r = corner_radius
             .min(region.width / 2.0)

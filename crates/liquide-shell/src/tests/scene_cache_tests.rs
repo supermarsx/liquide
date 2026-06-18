@@ -490,6 +490,144 @@ fn t82_precomputed_damage_is_bounded_superset_for_menu_hover() {
     // above already proves the scene itself is never stale.
 }
 
+/// t125 #1 — PAINT-ONLY confine. A genuine paint-only inline recolour of the
+/// status-bar logo (a child INSIDE the `position:fixed`, full-width status-bar
+/// glass) must emit precomputed damage that covers ONLY the changed child rect
+/// (expanded by the blur halo margin), NOT the full positioned-ancestor (the
+/// 1280-px-wide status bar). Before t125 the ancestor-walk unioned the whole
+/// status-bar rect, so `glass ∩ damage` was the full bar and the renderer's
+/// blur-confine had nothing to shrink (~22 ms on-glass clock tick). The emitted
+/// damage must remain a true SUPERSET of the changed logo box (no stale pixels).
+#[test]
+fn t125_paint_only_recolor_confines_damage_to_child_not_full_statusbar() {
+    let mut shell = test_shell();
+    for _ in 0..5 {
+        let _ = build_scene(&mut shell);
+    }
+
+    // Resolve the logo + status-bar laid-out boxes for the superset / width
+    // assertions BEFORE mutating.
+    let logo = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("logo")
+        .expect("status-bar logo node");
+    let logo_box = shell
+        .hit_test_engine()
+        .expect("hit-test engine")
+        .bounds_for_node(logo)
+        .expect("logo laid-out box");
+
+    // PAINT-ONLY change: recolour the logo's background. `background-color` is a
+    // known paint-only property, so the DOM classifier keeps it OUT of the layout
+    // dirty set (the t91 fast-path contract) → t125 emits the tight child rect.
+    shell
+        .desktop_dom
+        .doc
+        .set_inline_style(logo, "background-color", "rgb(200, 0, 0)");
+    assert!(
+        !shell.desktop_dom.doc.dirty.layout.contains(&logo),
+        "a background-color recolour must be classified paint-only (not layout)"
+    );
+
+    let _ = build_scene(&mut shell);
+    let hints = shell
+        .take_precomputed_damage()
+        .expect("a paint-only chrome recolour must emit bounded precomputed damage");
+    assert!(!hints.is_empty(), "bounded damage must have at least one rect");
+
+    // SUPERSET: at least one damage rect must fully contain the changed logo box.
+    let covers_logo = hints.iter().any(|r| {
+        r.x <= logo_box.x
+            && r.y <= logo_box.y
+            && r.x + r.width >= logo_box.x + logo_box.width
+            && r.y + r.height >= logo_box.y + logo_box.height
+    });
+    assert!(
+        covers_logo,
+        "damage must be a SUPERSET of the changed logo box {logo_box:?}; hints={hints:?}"
+    );
+
+    // CONFINE (the whole point): NO damage rect may span the full status-bar
+    // width. The bar is ~1280 px wide; the logo region + 2·48 px margin is well
+    // under ~300 px. If the ancestor-walk had re-expanded to the full bar this
+    // would be ~1280+ and the assertion fails (proves the climb was skipped).
+    const MAX_CONFINED_WIDTH: f32 = 400.0;
+    for r in &hints {
+        assert!(
+            r.width < MAX_CONFINED_WIDTH,
+            "a paint-only logo recolour must NOT re-expand to the full status-bar \
+             width; damage rect {r:?} is {:.0}px wide (>= {MAX_CONFINED_WIDTH}) — the \
+             confine is defeated",
+            r.width
+        );
+    }
+}
+
+/// t125 #1 — LAYOUT-AFFECTING fallback (anti-fake-green pair). A change that the
+/// DOM classifies as potentially reflowing (here a `width` inline change, which
+/// IS marked layout-dirty) must KEEP the full ancestor-climb: the emitted damage
+/// must climb to the full `position:fixed` status-bar rect (so a sibling shifted
+/// by the reflow is never left stale). This proves the confine engages ONLY for
+/// provably-paint-only changes and never under-damages a reflow.
+#[test]
+fn t125_layout_affecting_change_still_full_expands_to_positioned_ancestor() {
+    let mut shell = test_shell();
+    for _ in 0..5 {
+        let _ = build_scene(&mut shell);
+    }
+
+    let logo = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("logo")
+        .expect("status-bar logo node");
+    // Resolve the full status-bar box (the positioned ancestor the climb targets).
+    let statusbar = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("statusbar-slot-left")
+        .and_then(|n| shell.desktop_dom.doc.parent(n))
+        .expect("status-bar root node");
+    let bar_box = shell
+        .hit_test_engine()
+        .expect("hit-test engine")
+        .bounds_for_node(statusbar)
+        .expect("status-bar laid-out box");
+
+    // LAYOUT-AFFECTING change: a `width` inline change can resize the logo and
+    // reflow its siblings within the bar → the DOM marks it LAYOUT dirty.
+    shell
+        .desktop_dom
+        .doc
+        .set_inline_style(logo, "width", "200");
+    assert!(
+        shell.desktop_dom.doc.dirty.layout.contains(&logo),
+        "a width change must be classified layout-affecting (in the layout dirty set)"
+    );
+
+    let _ = build_scene(&mut shell);
+    let hints = shell.take_precomputed_damage();
+    // The conservative full climb either emits a rect covering the WHOLE bar
+    // (superset of any reflowed sibling) or falls back to None (full frame). It
+    // must NEVER emit only the tight child rect — that would under-damage a
+    // sibling the reflow moved.
+    if let Some(hints) = hints {
+        let spans_bar = hints.iter().any(|r| {
+            r.x <= bar_box.x
+                && r.x + r.width >= bar_box.x + bar_box.width
+                && r.y <= bar_box.y
+                && r.y + r.height >= bar_box.y + bar_box.height
+        });
+        assert!(
+            spans_bar,
+            "a layout-affecting status-bar change must full-expand to the whole \
+             status-bar rect {bar_box:?} (the ancestor climb); hints={hints:?}"
+        );
+    }
+    // None (full-frame fallback) is also acceptable — strictly a superset.
+}
+
 /// Manual perf probe (run with `--ignored --nocapture`). Reports the idle
 /// cache-hit cost, the correct (non-stale) menu-hover rebuild cost, and whether
 /// the hover frame emits precomputed damage. Drives the REAL event path so the

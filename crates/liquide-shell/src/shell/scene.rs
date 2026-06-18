@@ -556,6 +556,7 @@ impl Shell {
         dirty_chrome_nodes: &[liquide_dom::NodeId],
         pipeline_output: &crate::pipeline::PipelineOutput,
         blink_toggled: bool,
+        chrome_change_is_paint_only: bool,
     ) {
         /// Margin (logical px) added around each changed chrome rect to cover the
         /// `backdrop-filter` blur halo that samples neighbouring pixels — matches
@@ -622,6 +623,34 @@ impl Shell {
                     rects.push(d);
                     pushed_any = true;
                 }
+            }
+            // ── Paint-only tightening (t119 #1) ──────────────────────────────
+            //
+            // When this frame's chrome change is PROVABLY paint-only (no node
+            // landed in the DOM LAYOUT dirty set — see the caller), the change
+            // cannot reflow ANY sibling or ancestor: it only recolours pixels
+            // inside the changed node's own border box (a `:hover`/recolour,
+            // hover-highlight, opacity/border-color flip). The changed-child
+            // border rect EXPANDED by `BACKDROP_MARGIN` (the blur sample radius
+            // halo, already applied by `to_damage`) is therefore a true SUPERSET
+            // of every pixel that changed — including the blurred backdrop halo
+            // that any glass surface OVER this rect must re-sample.
+            //
+            // Emitting just that rect (instead of climbing to the full
+            // `position: fixed` positioned-ancestor, e.g. the whole 1920-px-wide
+            // status-bar glass) is what lets the renderer's blur-confine actually
+            // SHRINK `glass ∩ damage` from the full bar to ~(cell + 2·radius).
+            // We still REQUIRE the changed node to have a laid-out box (proved
+            // above via `pushed_any`); without one we fall through to the full
+            // climb / full-fallback. We do NOT need the positioned-ancestor
+            // boundary here because a paint-only change provably stays inside its
+            // own box, so the in-flow-could-reflow-the-page concern does not apply.
+            if chrome_change_is_paint_only {
+                if !pushed_any {
+                    // No layout box for a changed node → cannot bound it tightly.
+                    return;
+                }
+                continue;
             }
             // Walk UP the ancestor chain, unioning each ancestor's rect, and STOP
             // at (inclusive) the nearest out-of-flow positioned ancestor
@@ -802,6 +831,18 @@ impl Shell {
             let d = &self.desktop_dom.doc.dirty;
             d.paint.iter().chain(d.layout.iter()).copied().collect()
         };
+        // Capture whether ANY node landed in the LAYOUT dirty set this frame
+        // BEFORE we clear it. The DOM's per-property classifier
+        // (`liquide_dom::dirty::classify_property`) only records a node in
+        // `doc.dirty.layout` when the changed property can affect geometry /
+        // intrinsic size (see the t91 paint-only fast path in pipeline/stages.rs);
+        // a provably paint-only change (a `:hover`/recolour, hover-highlight,
+        // opacity, border-color) lands in `.style` + `.paint` but NOT `.layout`.
+        // So an EMPTY layout dirty set is a sound, conservative proof that this
+        // frame's chrome change is paint-only and cannot reflow — which lets
+        // `compute_precomputed_damage` emit the tight changed-child rect (+ blur
+        // radius) instead of climbing to the full positioned-ancestor rect.
+        let chrome_change_is_paint_only = self.desktop_dom.doc.dirty.layout.is_empty();
         self.desktop_dom.doc.dirty.clear_all();
 
         // ── Precomputed (authoritative) damage for a CONTAINED chrome change ──
@@ -828,6 +869,7 @@ impl Shell {
             &dirty_chrome_nodes,
             &pipeline_output,
             blink_toggled,
+            chrome_change_is_paint_only,
         );
 
         // ── Update hit-test engine with latest layout + styles ──
