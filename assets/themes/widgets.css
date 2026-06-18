@@ -237,6 +237,44 @@
   lq-toggle-group,
   lq-toggle-opt,
   lq-caret,
+  lq-data-grid,
+  lq-grid-head,
+  lq-grid-th,
+  lq-grid-th-label,
+  lq-grid-sep,
+  lq-grid-body,
+  lq-grid-viewport,
+  lq-grid-canvas,
+  lq-grid-row,
+  lq-grid-cell,
+  lq-grid-track,
+  lq-grid-thumb,
+  lq-listbox,
+  lq-listitem,
+  lq-listview,
+  lq-listview-head,
+  lq-listview-th,
+  lq-listview-body,
+  lq-listview-item,
+  lq-listview-icon,
+  lq-listview-label,
+  lq-listview-sub,
+  lq-listview-col,
+  lq-ip-input,
+  lq-ip-octet,
+  lq-ip-dot,
+  lq-hotkey-input,
+  lq-hotkey-field,
+  lq-month-calendar,
+  lq-cal-nav,
+  lq-cal-prev,
+  lq-cal-next,
+  lq-cal-title,
+  lq-cal-weekdays,
+  lq-cal-weekday,
+  lq-cal-grid,
+  lq-cal-blank,
+  lq-cal-day,
   lq-textarea,
   lq-textarea-body,
   lq-textarea-gutter,
@@ -2410,6 +2448,446 @@
     color: #ffffff;
   }
   lq-toggle-group:disabled {
+    opacity: 0.5;
+  }
+
+  /* ════════════════════════════════════════════════════════════
+     GROUP GRID — grid / listbox / classic GDI controls
+     ════════════════════════════════════════════════════════════ */
+
+  /* ── G1: data grid (virtualized) ─────────────────────────────
+     A header row (CSS grid columns from inline grid-template-columns) over a
+     scrollable viewport. The viewport clips; an inner canvas is the FULL virtual
+     height (so the scrollbar thumb reflects all rows) and each visible row is
+     position:absolute at its virtual top (the windowing). The hit-test reads each
+     cell box from layout, so resizing the viewport / row height re-windows. */
+  lq-data-grid {
+    display: block;
+    width: 460px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    overflow: hidden;
+  }
+  lq-data-grid > lq-grid-head {
+    display: grid;
+    border-bottom: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.06));
+  }
+  lq-grid-th {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    position: relative;
+    padding: 8px 10px;
+    font-weight: 600;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-grid-th-label {
+    display: inline-block;
+    flex-grow: 1;
+  }
+  lq-grid-th:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-grid-th.sorted-asc > lq-grid-th-label::after {
+    content: " \25B2"; /* ▲ */
+    color: var(--widget-accent, #3b82f6);
+  }
+  lq-grid-th.sorted-desc > lq-grid-th-label::after {
+    content: " \25BC"; /* ▼ */
+    color: var(--widget-accent, #3b82f6);
+  }
+  /* The resize grip on each column's trailing edge. */
+  lq-grid-sep {
+    display: inline-block;
+    width: 6px;
+    height: 18px;
+    margin-left: 2px;
+    background-color: var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 2px;
+  }
+  lq-grid-sep:hover {
+    background-color: var(--widget-accent, #3b82f6);
+  }
+  lq-data-grid > lq-grid-body {
+    display: flex;
+    flex-direction: row;
+  }
+  /* The scrolling viewport: fixed height, clips its overflowing canvas. */
+  lq-grid-viewport {
+    display: block;
+    position: relative;
+    flex-grow: 1;
+    height: 220px;
+    overflow: hidden;
+  }
+  lq-grid-canvas {
+    display: block;
+    position: relative;
+    width: 100%;
+  }
+  lq-grid-row {
+    display: grid;
+    align-items: center;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  lq-grid-row:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-grid-cell {
+    display: block;
+    padding: 0 10px;
+    overflow: hidden;
+  }
+  lq-grid-cell:checked,
+  lq-grid-cell.selected {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+    box-shadow: inset 0 0 0 1px var(--widget-accent, #3b82f6);
+  }
+  /* Vertical scrollbar track + thumb (sized/positioned in px off layout). */
+  lq-grid-track {
+    display: block;
+    width: 12px;
+    background-color: rgba(0, 0, 0, 0.18);
+  }
+  lq-grid-thumb {
+    display: block;
+    width: 8px;
+    margin-left: 2px;
+    margin-right: 2px;
+    min-height: 8px;
+    border-radius: 4px;
+    background-color: var(--widget-border-strong, rgba(255, 255, 255, 0.28));
+  }
+
+  /* ── G2: listbox + listitem (classic form control) ───────────
+     Single/multi-select form listbox with explicit <lq-listitem> children. Each
+     item's box is the laid-out hit target. :checked = selected, :focus = cursor,
+     :hover = hover, :disabled = a disabled item. */
+  lq-listbox {
+    display: block;
+    width: 220px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 4px;
+    background-color: var(--widget-bg, #1f1f23);
+    padding: 2px;
+  }
+  lq-listbox > lq-listitem {
+    display: block;
+    padding: 5px 10px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-listbox > lq-listitem:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-listbox > lq-listitem:checked,
+  lq-listbox > lq-listitem.selected {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-listbox > lq-listitem:focus {
+    box-shadow: inset 0 0 0 1px var(--widget-focus-ring, #3b82f6);
+  }
+  lq-listbox > lq-listitem:disabled,
+  lq-listbox > lq-listitem.disabled {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-listbox:disabled > lq-listitem {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+
+  /* ── G3: listview (multi-mode) ───────────────────────────────
+     The same item set, four layout modes via a root class. The item box is the
+     hit target in EVERY mode (no per-mode pitch constant). */
+  lq-listview {
+    display: block;
+    width: 380px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #27272a);
+    padding: 6px;
+  }
+  lq-listview-body {
+    display: block;
+  }
+  lq-listview-item {
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+    border-radius: 4px;
+  }
+  lq-listview-icon {
+    display: block;
+  }
+  lq-listview-label {
+    display: block;
+  }
+  lq-listview-sub {
+    display: block;
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.70));
+  }
+  lq-listview-item:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-listview-item:checked,
+  lq-listview-item.selected {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+    box-shadow: inset 0 0 0 1px var(--widget-accent, #3b82f6);
+  }
+  lq-listview-item:focus {
+    box-shadow: inset 0 0 0 1px var(--widget-focus-ring, #3b82f6);
+  }
+
+  /* Icons mode: a wrapping grid of large tiles (icon over label, centered). */
+  lq-listview.mode-icons > lq-listview-body {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  lq-listview.mode-icons lq-listview-item {
+    display: block;
+    width: 84px;
+    height: 84px;
+    padding: 8px;
+    text-align: center;
+  }
+  lq-listview.mode-icons lq-listview-icon {
+    font-size: 28px;
+  }
+
+  /* List mode: a compact single column (icon + label inline). */
+  lq-listview.mode-list > lq-listview-body {
+    display: block;
+  }
+  lq-listview.mode-list lq-listview-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 8px;
+  }
+  lq-listview.mode-list lq-listview-icon {
+    display: inline-block;
+    width: 20px;
+    margin-right: 6px;
+  }
+  lq-listview.mode-list lq-listview-label {
+    display: inline-block;
+  }
+
+  /* Details mode: header row + columnar rows. */
+  lq-listview.mode-details > lq-listview-head {
+    display: flex;
+    flex-direction: row;
+    border-bottom: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    font-weight: 600;
+    padding: 4px 8px;
+  }
+  lq-listview.mode-details lq-listview-th {
+    display: inline-block;
+    width: 110px;
+  }
+  lq-listview.mode-details > lq-listview-body {
+    display: block;
+  }
+  lq-listview.mode-details lq-listview-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 5px 8px;
+  }
+  lq-listview.mode-details lq-listview-icon {
+    display: inline-block;
+    width: 20px;
+    margin-right: 6px;
+  }
+  lq-listview.mode-details lq-listview-label {
+    display: inline-block;
+    width: 110px;
+  }
+  lq-listview.mode-details lq-listview-col {
+    display: inline-block;
+    width: 110px;
+    color: var(--widget-fg-disabled, rgba(190, 190, 200, 0.85));
+  }
+
+  /* Tiles mode: a wrapping grid of wide tiles (icon beside label + subline). */
+  lq-listview.mode-tiles > lq-listview-body {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  lq-listview.mode-tiles lq-listview-item {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    width: 170px;
+    height: 52px;
+    padding: 8px;
+    margin: 3px;
+  }
+  lq-listview.mode-tiles lq-listview-icon {
+    display: inline-block;
+    width: 32px;
+    font-size: 24px;
+    margin-right: 8px;
+  }
+
+  /* ── G4: IP-address input ─────────────────────────────────────
+     Four octet fields separated by literal dots. Each octet box is the laid-out
+     hit target; the active octet carries :focus / .active. */
+  lq-ip-input {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 6px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #1f1f23);
+  }
+  lq-ip-input:focus {
+    border-color: var(--widget-accent, #3b82f6);
+  }
+  lq-ip-octet {
+    display: inline-block;
+    width: 34px;
+    text-align: center;
+    padding: 3px 2px;
+    border-radius: 4px;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-ip-octet.active,
+  lq-ip-octet:focus {
+    background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
+    box-shadow: inset 0 0 0 1px var(--widget-accent, #3b82f6);
+  }
+  lq-ip-dot {
+    display: inline-block;
+    width: 8px;
+    text-align: center;
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.70));
+  }
+  lq-ip-input:disabled {
+    opacity: 0.5;
+  }
+
+  /* ── G5: hotkey input ─────────────────────────────────────────
+     A single capture field; the laid-out field box is the hit target for the
+     focus click. The captured chord renders as text inside it. */
+  lq-hotkey-input {
+    display: inline-block;
+  }
+  lq-hotkey-field {
+    display: inline-block;
+    min-width: 160px;
+    padding: 7px 12px;
+    border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
+    border-radius: 6px;
+    background-color: var(--widget-bg, #1f1f23);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    text-align: center;
+  }
+  lq-hotkey-field.placeholder {
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.55));
+  }
+  lq-hotkey-field.capturing,
+  lq-hotkey-field:focus {
+    border-color: var(--widget-accent, #3b82f6);
+    box-shadow: 0 0 0 1px var(--widget-accent, #3b82f6);
+  }
+  lq-hotkey-input:disabled lq-hotkey-field {
+    opacity: 0.5;
+  }
+
+  /* ── G6: month calendar (standalone) ──────────────────────────
+     Always-visible month grid: nav header, weekday row, day cells. Each day
+     box is the laid-out hit target. :checked = selected, :focus = focused day,
+     :active = the today marker, :hover = hover. */
+  lq-month-calendar {
+    display: inline-block;
+    width: 252px;
+    padding: 8px;
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 8px;
+    background-color: var(--widget-bg, #27272a);
+  }
+  lq-cal-nav {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  lq-cal-title {
+    display: inline-block;
+    flex-grow: 1;
+    text-align: center;
+    font-weight: 600;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-cal-prev,
+  lq-cal-next {
+    display: inline-block;
+    width: 28px;
+    height: 28px;
+    text-align: center;
+    border-radius: 4px;
+    background-color: var(--widget-bg, #1f1f23);
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-cal-prev:hover,
+  lq-cal-next:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-cal-weekdays {
+    display: flex;
+    flex-direction: row;
+    margin-bottom: 2px;
+  }
+  lq-cal-weekday {
+    display: inline-block;
+    width: 32px;
+    height: 22px;
+    text-align: center;
+    font-weight: 600;
+    color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.70));
+  }
+  lq-cal-grid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 224px;
+  }
+  lq-cal-blank,
+  lq-cal-day {
+    display: inline-block;
+    width: 32px;
+    height: 30px;
+    text-align: center;
+    border-radius: 4px;
+  }
+  lq-cal-day {
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-cal-day:hover {
+    background-color: var(--widget-bg-hover-solid, #3f3f46);
+  }
+  lq-cal-day.today,
+  lq-cal-day:active {
+    box-shadow: inset 0 0 0 1px var(--widget-accent, #3b82f6);
+  }
+  lq-cal-day:focus {
+    border: 1px solid var(--widget-focus-ring, #3b82f6);
+  }
+  lq-cal-day:checked,
+  lq-cal-day.selected {
+    background-color: var(--widget-accent, #3b82f6);
+    color: #ffffff;
+  }
+  lq-month-calendar:disabled {
     opacity: 0.5;
   }
 }

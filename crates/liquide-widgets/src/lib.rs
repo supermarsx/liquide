@@ -96,6 +96,14 @@ pub mod split_button;
 pub mod tag_input;
 pub mod toggle_group;
 
+// ── Group GRID — grid / listbox / classic GDI controls ──────────────────────
+pub mod data_grid;
+pub mod hotkey_input;
+pub mod ip_input;
+pub mod listbox;
+pub mod listview;
+pub mod month_calendar;
+
 // The real-pipeline gallery test harness (depends on dev-deps; test-only).
 #[cfg(test)]
 mod gallery;
@@ -198,6 +206,20 @@ mod tag_input_tests;
 #[cfg(test)]
 mod toggle_group_tests;
 
+// Per-widget real-pipeline gallery tests (Group GRID).
+#[cfg(test)]
+mod data_grid_tests;
+#[cfg(test)]
+mod hotkey_input_tests;
+#[cfg(test)]
+mod ip_input_tests;
+#[cfg(test)]
+mod listbox_tests;
+#[cfg(test)]
+mod listview_tests;
+#[cfg(test)]
+mod month_calendar_tests;
+
 // ── Public API surface ────────────────────────────────────────────────────
 
 pub use behavior::{KeyInput, WidgetBehavior, WidgetId, WidgetKind, WidgetOutcome};
@@ -260,6 +282,14 @@ pub use spinbox::Spinbox;
 pub use split_button::SplitButton;
 pub use tag_input::TagInput;
 pub use toggle_group::{ToggleGroup, ToggleMode};
+
+// Group GRID widgets (grid / listbox / classic GDI controls).
+pub use data_grid::DataGrid;
+pub use hotkey_input::{Chord, HotkeyInput};
+pub use ip_input::IpInput;
+pub use listbox::{ListBox, ListItem};
+pub use listview::{ListView, ViewItem, ViewMode};
+pub use month_calendar::MonthCalendar;
 
 // Re-export the generalized authoring substrate so widget authors use ONE path:
 // the same Component / TemplateNode / TemplateRenderer the chrome uses.
