@@ -153,6 +153,9 @@ members = [
     # Network management
     "crates/liquide-network",
 
+    # Async HTTP fetch capability (remote resources: map tiles, images)
+    "crates/liquide-http",
+
     # Firewall & network security
     "crates/liquide-firewall",
 
@@ -498,6 +501,7 @@ liquide-shortcut-manager = { path = "crates/liquide-shortcut-manager" }
 liquide-telemetry-viewer = { path = "crates/liquide-telemetry-viewer" }
 liquide-xdg = { path = "crates/liquide-xdg" }
 liquide-visual-test = { path = "crates/liquide-visual-test" }
+liquide-http = { path = "crates/liquide-http" }
 
 [dev-dependencies]
 bytes.workspace = true

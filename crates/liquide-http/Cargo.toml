@@ -1,0 +1,51 @@
+[package]
+name = "liquide-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# `bytes::Bytes` is the response payload type. It is cheap to clone (refcounted)
+# so the in-memory cache can hand out copies without re-allocating tile bytes.
+# Always on: it is part of the public API and the cache, both of which exist
+# even when the `net` feature is off (the cache is just never populated).
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+# The actual networking stack is FEATURE-GATED behind `net` and OFF BY DEFAULT.
+# reqwest pulls in a large transitive tree (hyper, http, tower, h2, ...) and
+# tokio's multi-thread runtime; the default workspace build / CI must not pay
+# for that. With the feature off the crate exposes `NullHttpClient`, which has
+# the identical API and returns `Unavailable` (mirrors the platform `Null*`
+# pattern and liquide-wasm-host's `NullWasmHost`).
+#
+# reqwest uses `default-features = false` + `rustls-tls` so we get TLS WITHOUT a
+# native OpenSSL/system dependency (clean cross-builds, no C toolchain for TLS).
+[dependencies.reqwest]
+version = "0.12"
+optional = true
+default-features = false
+features = ["rustls-tls"]
+
+# tokio drives the background runtime that owns the connection pool and runs the
+# concurrent fetch tasks. `rt-multi-thread` so blocking on one slow/hung request
+# never starves the others; `macros` is unused at runtime but harmless. Gated.
+[dependencies.tokio]
+version = "1"
+optional = true
+default-features = false
+features = ["rt-multi-thread", "sync", "time", "macros"]
+
+[features]
+default = []
+# Pull in the real reqwest + tokio backed fetch service.
+net = ["dep:reqwest", "dep:tokio"]
+
+[dev-dependencies]
+# The localhost integration test stands up its own server on 127.0.0.1:0 using
+# only std::net (TcpListener) on a scratch thread, so the real reqwest path is
+# exercised against a loopback endpoint with NO external network and no extra
+# heavy dev-dependency / async test harness.

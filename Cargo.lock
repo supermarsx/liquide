@@ -3654,6 +3654,17 @@ name = "liquide-hotkeys"
 version = "0.1.0"
 
 [[package]]
+name = "liquide-http"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "reqwest",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "liquide-icons"
 version = "0.1.0"
 dependencies = [
