@@ -91,6 +91,15 @@ impl WidgetHost {
         self.widgets.get(id).map(|b| b.as_ref())
     }
 
+    /// Mutably borrow a mounted behavior, for owners that drive typed widget
+    /// state directly (followed by [`rerender`](Self::rerender) to reconcile).
+    pub fn behavior_mut(&mut self, id: &str) -> Option<&mut dyn WidgetBehavior> {
+        match self.widgets.get_mut(id) {
+            Some(b) => Some(&mut **b),
+            None => None,
+        }
+    }
+
     /// The DOM root node of a mounted widget.
     pub fn root_of(&self, id: &str) -> Option<NodeId> {
         self.roots.get(id).copied()

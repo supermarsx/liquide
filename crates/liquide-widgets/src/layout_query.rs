@@ -74,6 +74,15 @@ impl<'a> LayoutQuery<'a> {
         self.box_of(node)
     }
 
+    /// The absolute **content** rect of a named sub-part under `widget_root`
+    /// (`data-part="<part>"`), inside its padding/border. The content-box analog
+    /// of [`box_of_part`](Self::box_of_part) — used where the glyph run extent
+    /// (not the padded border box) is what maps a click to a text column.
+    pub fn content_of_part(&self, widget_root: NodeId, part: &str) -> Option<Rect> {
+        let node = self.find_part(widget_root, part)?;
+        self.content_of(node)
+    }
+
     /// Resolve the [`NodeId`] of a named sub-part under `widget_root`
     /// (`data-part="<part>"`), depth-first in document order. Includes the root
     /// itself if it carries the attribute.
@@ -124,6 +133,12 @@ impl<'a> LayoutQuery<'a> {
     /// Borrow the underlying hit-test engine (e.g. to run a raw point hit-test).
     pub fn hit_test(&self) -> &HitTestEngine {
         self.hit_test
+    }
+
+    /// Borrow the document this query resolves `data-part` sub-elements against
+    /// (e.g. to walk a widget subtree by tag while reading laid-out boxes).
+    pub fn doc(&self) -> &Document {
+        self.doc
     }
 }
 

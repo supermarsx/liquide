@@ -150,7 +150,16 @@
   lq-color-grid,
   lq-swatch,
   lq-color-channels,
-  lq-channel {
+  lq-channel,
+  lq-textarea,
+  lq-textarea-body,
+  lq-textarea-gutter,
+  lq-textarea-gutter-inner,
+  lq-textarea-lineno,
+  lq-textarea-viewport,
+  lq-textarea-content,
+  lq-textarea-row,
+  lq-textarea-text {
     display: block;
     box-sizing: border-box;
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
@@ -299,6 +308,91 @@
     color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
   }
   lq-input:disabled {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    background-color: var(--widget-bg, #27272a);
+  }
+
+  /* ── A3b multi-line text area ─────────────────────────────────
+     A multi-line editor body: line rows are real in-flow elements (layout —
+     not a constant — positions each row's y), the caret is a real in-flow
+     element so layout positions it at (line, column), an optional line-number
+     gutter, and a clipped viewport whose content translates by a state-driven
+     negative top-margin (the in-lock scroll — see textarea.rs / scroll_area.rs). */
+  lq-textarea {
+    display: block;
+    width: 360px;
+    height: 160px;
+    background-color: var(--widget-bg, #27272a);
+    border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+    border-radius: 6px;
+    padding: 0;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-textarea > lq-textarea-body {
+    display: flex;
+    flex-direction: row;
+    width: 360px;
+    height: 160px;
+    overflow: hidden;
+  }
+  lq-textarea-gutter {
+    display: block;
+    width: 40px;
+    height: 160px;
+    overflow: hidden;
+    padding: 6px 0;
+    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.05));
+    border-right: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
+  }
+  lq-textarea-gutter-inner {
+    display: block;
+  }
+  lq-textarea-lineno {
+    display: block;
+    height: 20px;
+    padding: 0 8px 0 0;
+    text-align: right;
+    color: var(--widget-fg-disabled, rgba(140, 140, 150, 0.6));
+  }
+  lq-textarea-lineno.current {
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-textarea-viewport {
+    display: block;
+    flex-grow: 1;
+    height: 160px;
+    overflow: hidden;
+    padding: 6px 8px;
+  }
+  lq-textarea-content {
+    display: block;
+  }
+  lq-textarea-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    height: 20px;
+  }
+  lq-textarea-text {
+    display: inline-block;
+    white-space: pre;
+  }
+  lq-textarea lq-caret {
+    display: inline-block;
+    width: 2px;
+    height: 16px;
+    background-color: rgba(0, 0, 0, 0);
+  }
+  lq-textarea:focus {
+    border-color: var(--widget-focus-ring, #3b82f6);
+  }
+  lq-textarea:focus lq-caret {
+    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
+  lq-textarea-text.placeholder {
+    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+  }
+  lq-textarea:disabled {
     color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
     background-color: var(--widget-bg, #27272a);
   }

@@ -178,6 +178,13 @@ pub trait WidgetBehavior: Send {
     /// trait objects). Implementors return `self`; the default suffices for
     /// concrete types via the blanket impl note below.
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Mutable downcast hook, for owners that drive typed widget state directly
+    /// (e.g. toggling a textarea's gutter at runtime). Default returns `None`;
+    /// implementors that support direct mutation return `Some(self)`.
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        None
+    }
 }
 
 #[cfg(test)]

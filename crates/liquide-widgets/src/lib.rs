@@ -46,6 +46,7 @@ pub mod button;
 pub mod input;
 pub mod label;
 pub mod slider;
+pub mod textarea;
 pub mod toggle;
 
 // ── Group B — containers ────────────────────────────────────────────────────
@@ -88,6 +89,8 @@ mod input_tests;
 mod label_tests;
 #[cfg(test)]
 mod slider_tests;
+#[cfg(test)]
+mod textarea_tests;
 #[cfg(test)]
 mod toggle_tests;
 
@@ -144,6 +147,7 @@ pub use button::Button;
 pub use input::TextInput;
 pub use label::{Label, Link};
 pub use slider::Slider;
+pub use textarea::TextArea;
 pub use toggle::{RadioGroup, Toggle, ToggleStyle};
 
 // Group B widgets (containers).
