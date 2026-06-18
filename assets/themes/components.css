@@ -1129,6 +1129,12 @@ window.focused {
 window-titlebar {
   display: flex;
   align-items: center;
+  /* border-box: `width: 100%` (set on `window-frame > window-titlebar`) then
+     INCLUDES the horizontal padding, so the titlebar matches the window frame
+     width instead of growing `100% + padding-left + padding-right` wider and
+     shoving the right-aligned button cluster past the frame's right edge
+     (t123-button-overflow). */
+  box-sizing: border-box;
   height: var(--titlebar-height);
   padding-left: var(--spacing-md);
   padding-right: var(--spacing-sm);
@@ -1140,6 +1146,9 @@ window-titlebar {
 
 window-title {
   flex-grow: 1;
+  /* Allow the centered title to shrink below its content width so a long title
+     can never push the button cluster out of the titlebar. */
+  min-width: 0;
   text-align: center;
   color: var(--titlebar-text);
   overflow: hidden;
@@ -1150,6 +1159,9 @@ window-title {
 titlebar-buttons {
   display: flex;
   align-items: center;
+  /* Never shrink or wrap the capability cluster; keep it intact and inside the
+     titlebar's padding box. */
+  flex-shrink: 0;
   gap: 6;
 }
 

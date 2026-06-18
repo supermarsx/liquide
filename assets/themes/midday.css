@@ -206,6 +206,11 @@ pin-button.active {
 window-titlebar {
     display: flex;
     align-items: center;
+    /* border-box so `width: 100%` (from `window-frame > window-titlebar`)
+       includes the padding and the titlebar matches the window frame width
+       instead of overflowing it and pushing the buttons past the right edge
+       (t123-button-overflow). */
+    box-sizing: border-box;
     height: 36;
     padding-left: 12;
     padding-right: 8;
@@ -217,6 +222,7 @@ window-titlebar {
 
 window-title {
     flex-grow: 1;
+    min-width: 0;
     text-align: center;
     color: rgba(28, 27, 24, 1.0);
     overflow: hidden;
@@ -227,6 +233,7 @@ window-title {
 titlebar-buttons {
     display: flex;
     align-items: center;
+    flex-shrink: 0;
     gap: 6;
 }
 
