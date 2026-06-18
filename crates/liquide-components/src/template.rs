@@ -73,6 +73,15 @@ pub struct TemplateNode {
     pub children: Vec<TemplateNode>,
     /// If this is a text node, the text content.
     pub text: Option<String>,
+    /// Opt-in: the author guarantees this text node lives in a fixed/constrained
+    /// box, so a content-only update provably cannot change the node's geometry.
+    ///
+    /// When set, a same-content-shape text patch is marked **paint-only** (PAINT,
+    /// not LAYOUT) so per-frame live text (clock, FPS counter, …) repaints without
+    /// forcing a relayout. This is CONSERVATIVE: a text change can normally alter
+    /// intrinsic width, so the fast path is ONLY taken when the author asserts the
+    /// box is size-stable. If unset, every text change marks LAYOUT (no regression).
+    pub size_stable: bool,
 }
 
 impl TemplateNode {
@@ -90,6 +99,7 @@ impl TemplateNode {
             key: None,
             children: Vec::new(),
             text: None,
+            size_stable: false,
         }
     }
 
@@ -105,6 +115,7 @@ impl TemplateNode {
             key: None,
             children: Vec::new(),
             text: Some(content.to_string()),
+            size_stable: false,
         }
     }
 
@@ -179,6 +190,23 @@ impl TemplateNode {
     /// Check if this is a text node.
     pub fn is_text(&self) -> bool {
         self.text.is_some()
+    }
+
+    /// Mark this text node as living in a fixed/constrained box, so a
+    /// content-only update can be applied **paint-only** (no relayout).
+    ///
+    /// Use this for per-frame live text whose container size never changes with
+    /// the content — e.g. a clock (`12:34`) or an FPS counter in a fixed-width
+    /// cell. The renderer takes the paint-only fast path ONLY when the change is
+    /// a pure text-content swap on an existing text node; any structural change
+    /// (text→element, new node) still goes through the normal layout path.
+    ///
+    /// CONSERVATIVE CONTRACT: this is an opt-in assertion by the author that the
+    /// box is size-stable. If you are unsure whether the new text changes the
+    /// box, do NOT call this — the default (LAYOUT) path is always correct.
+    pub fn paint_only(mut self) -> Self {
+        self.size_stable = true;
+        self
     }
 }
 
@@ -299,7 +327,7 @@ impl TemplateRenderer {
             // If the existing node is a text node, just update content
             if doc.get(node_id).map_or(false, |n| n.is_text()) {
                 if doc.get(node_id).and_then(|n| n.text_content()) != Some(text.as_str()) {
-                    doc.set_text_content(node_id, text);
+                    Self::patch_text(doc, node_id, text, template.size_stable);
                 }
             }
             return;
@@ -339,6 +367,38 @@ impl TemplateRenderer {
 
         // ── Reconcile children ──────────────────────────────
         Self::reconcile_children(doc, node_id, &template.children);
+    }
+
+    /// Apply a text-content change to an existing text node, choosing the
+    /// minimal dirty scope.
+    ///
+    /// `set_text_content` always marks the node LAYOUT-dirty (a text change can
+    /// alter intrinsic width), and that is the safe default. When the author has
+    /// asserted the box is size-stable (`size_stable`), the change provably
+    /// cannot move the box, so we downgrade to **paint-only**: the node still
+    /// gets its new content (and mutation observers still fire, so scene/hit-test
+    /// stay in sync), but it is removed from the LAYOUT dirty scope and left in
+    /// the PAINT scope only. The pipeline then skips layout and just repaints —
+    /// composing with the t91 paint-only fast path.
+    fn patch_text(doc: &mut Document, node_id: NodeId, text: &str, size_stable: bool) {
+        // Always go through the canonical mutator so the node data is updated
+        // and mutation observers (scene sync, hit-test) are notified. This marks
+        // the node LAYOUT-dirty.
+        doc.set_text_content(node_id, text);
+
+        if !size_stable {
+            return;
+        }
+
+        // Size-stable opt-in: the box cannot change, so demote LAYOUT → PAINT.
+        // Remove the node from the document-level LAYOUT scope (PAINT stays) and
+        // clear the node's own LAYOUT flag while keeping its PAINT flag set.
+        doc.dirty.layout.remove(&node_id);
+        doc.dirty.paint.insert(node_id);
+        if let Some(node) = doc.get_mut(node_id) {
+            node.dirty.clear_layout();
+            node.dirty.mark_paint_dirty();
+        }
     }
 
     /// Patch CSS classes: add missing, remove extra.
@@ -509,9 +569,17 @@ impl TemplateRenderer {
             if let Some(existing) = matched {
                 // Patch existing node
                 Self::patch_node(doc, existing, desired);
-                // Set the key attribute if it has one
+                // Set the key attribute if it has one — but only when it actually
+                // changed. `set_attribute` unconditionally marks the node
+                // style-dirty, so re-setting an identical data-key on every patch
+                // would needlessly reflow/restyle the matched child each frame.
                 if let Some(ref key) = desired.key {
-                    doc.set_attribute(existing, "data-key", key);
+                    let needs_set = doc
+                        .get_attribute(existing, "data-key")
+                        .map_or(true, |v| v != *key);
+                    if needs_set {
+                        doc.set_attribute(existing, "data-key", key);
+                    }
                 }
                 used_old.insert(existing);
                 new_children.push(existing);
@@ -996,5 +1064,193 @@ mod tests {
             .get(terminal)
             .unwrap()
             .has_pseudo_state(PseudoStateFlags::HOVER));
+    }
+
+    // ── Paint-only text fast path (t136) ─────────────────────────
+
+    /// Build a `<clock>12:00</clock>` element with a single text child. Returns
+    /// (mount, text_node_id).
+    fn setup_text_node(doc: &mut Document) -> (NodeId, NodeId) {
+        let root = doc.root();
+        let clock = doc.create_element("clock");
+        doc.set_id(clock, "clock");
+        doc.append_child(root, clock);
+        let txt = doc.create_text("12:00");
+        doc.append_child(clock, txt);
+        (clock, txt)
+    }
+
+    fn clock_template(time: &str, paint_only: bool) -> TemplateNode {
+        let mut text = TemplateNode::text(time);
+        if paint_only {
+            text = text.paint_only();
+        }
+        TemplateNode::el("clock").id("clock").child(text)
+    }
+
+    #[test]
+    fn size_stable_text_update_marks_paint_not_layout() {
+        let mut doc = Document::new();
+        let (clock, txt) = setup_text_node(&mut doc);
+
+        // Clear all dirty state from the initial construction.
+        doc.dirty.clear_all();
+        if let Some(n) = doc.get_mut(txt) {
+            n.dirty.clear_all();
+        }
+
+        // Same-size text update on a paint_only() text node.
+        let template = clock_template("12:01", true);
+        TemplateRenderer::patch_node(&mut doc, clock, &template);
+
+        // Content updated (rendered output reflects the new text).
+        assert_eq!(doc.get(txt).and_then(|n| n.text_content()), Some("12:01"));
+
+        // The text node must NOT be in the LAYOUT scope...
+        assert!(
+            !doc.dirty.layout.contains(&txt),
+            "size-stable text update must not mark LAYOUT-dirty"
+        );
+        assert!(
+            !doc.get(txt).unwrap().dirty.needs_layout(),
+            "size-stable text node must not carry the LAYOUT flag"
+        );
+        // ...but MUST be in the PAINT scope so it repaints.
+        assert!(
+            doc.dirty.paint.contains(&txt),
+            "size-stable text update must still mark PAINT-dirty"
+        );
+        assert!(
+            doc.get(txt).unwrap().dirty.needs_paint(),
+            "size-stable text node must carry the PAINT flag"
+        );
+    }
+
+    #[test]
+    fn non_opt_in_text_update_still_marks_layout() {
+        let mut doc = Document::new();
+        let (clock, txt) = setup_text_node(&mut doc);
+
+        doc.dirty.clear_all();
+        if let Some(n) = doc.get_mut(txt) {
+            n.dirty.clear_all();
+        }
+
+        // Default text node (no paint_only) — a text change CAN alter the box,
+        // so it must take the conservative LAYOUT path (no false fast path).
+        let template = clock_template("12:01", false);
+        TemplateRenderer::patch_node(&mut doc, clock, &template);
+
+        assert_eq!(doc.get(txt).and_then(|n| n.text_content()), Some("12:01"));
+        assert!(
+            doc.dirty.layout.contains(&txt),
+            "a non-opt-in text update must mark LAYOUT-dirty (no false paint-only)"
+        );
+        assert!(
+            doc.get(txt).unwrap().dirty.needs_layout(),
+            "a non-opt-in text node must carry the LAYOUT flag"
+        );
+    }
+
+    #[test]
+    fn paint_only_and_layout_paths_produce_identical_output() {
+        // Drive the SAME text change down both paths and assert the rendered
+        // text content (the observable output) is byte-identical either way.
+        let mut paint_doc = Document::new();
+        let (clock_p, txt_p) = setup_text_node(&mut paint_doc);
+        TemplateRenderer::patch_node(&mut paint_doc, clock_p, &clock_template("23:59", true));
+
+        let mut layout_doc = Document::new();
+        let (clock_l, txt_l) = setup_text_node(&mut layout_doc);
+        TemplateRenderer::patch_node(&mut layout_doc, clock_l, &clock_template("23:59", false));
+
+        assert_eq!(
+            paint_doc.get(txt_p).and_then(|n| n.text_content()),
+            layout_doc.get(txt_l).and_then(|n| n.text_content()),
+        );
+        assert_eq!(
+            paint_doc.get(txt_p).and_then(|n| n.text_content()),
+            Some("23:59")
+        );
+    }
+
+    #[test]
+    fn identical_text_does_not_dirty_anything() {
+        // Re-patching the SAME content must be a no-op (no observer, no dirty).
+        let mut doc = Document::new();
+        let (clock, txt) = setup_text_node(&mut doc);
+        doc.dirty.clear_all();
+        if let Some(n) = doc.get_mut(txt) {
+            n.dirty.clear_all();
+        }
+
+        TemplateRenderer::patch_node(&mut doc, clock, &clock_template("12:00", true));
+
+        assert!(!doc.dirty.layout.contains(&txt));
+        assert!(!doc.dirty.paint.contains(&txt));
+    }
+
+    #[test]
+    fn unchanged_data_key_does_not_mark_style_dirty() {
+        // A keyed child re-patched with the SAME key must NOT re-set data-key
+        // (which would mark the child style-dirty every frame).
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent = doc.create_element("dock");
+        doc.append_child(root, parent);
+
+        // First render: one keyed child carrying a live-text label.
+        let template = TemplateNode::el("dock").children(vec![TemplateNode::el("dock-item")
+            .key("clock")
+            .child(TemplateNode::text("12:00").paint_only())]);
+        TemplateRenderer::patch_node(&mut doc, parent, &template);
+
+        let item = doc.children(parent)[0];
+        assert_eq!(doc.get_attribute(item, "data-key").as_deref(), Some("clock"));
+
+        // Clear dirty after the initial mount.
+        doc.dirty.clear_all();
+        if let Some(n) = doc.get_mut(item) {
+            n.dirty.clear_all();
+        }
+
+        // Second render: same key, only the text content changes (size-stable).
+        let template2 = TemplateNode::el("dock").children(vec![TemplateNode::el("dock-item")
+            .key("clock")
+            .child(TemplateNode::text("12:01").paint_only())]);
+        TemplateRenderer::patch_node(&mut doc, parent, &template2);
+
+        // The keyed element itself must NOT be style/layout dirty — re-setting an
+        // identical data-key was the offending source.
+        assert!(
+            !doc.dirty.style.contains(&item),
+            "unchanged data-key must not mark the keyed element style-dirty"
+        );
+        assert!(
+            !doc.dirty.layout.contains(&item),
+            "unchanged data-key must not mark the keyed element layout-dirty"
+        );
+    }
+
+    #[test]
+    fn changed_data_key_still_sets_attribute() {
+        // Guard against over-suppression: a genuinely different key MUST update.
+        let mut doc = Document::new();
+        let root = doc.root();
+        let parent = doc.create_element("list");
+        doc.append_child(root, parent);
+
+        let template = TemplateNode::el("list").children(vec![TemplateNode::el("row").key("a")]);
+        TemplateRenderer::patch_node(&mut doc, parent, &template);
+        let row = doc.children(parent)[0];
+        assert_eq!(doc.get_attribute(row, "data-key").as_deref(), Some("a"));
+
+        // Re-render with a different key. Keyed reconciliation matches by key, so
+        // "b" creates a new node and "a" is removed. Assert the live node carries
+        // the new key (the change is not suppressed).
+        let template2 = TemplateNode::el("list").children(vec![TemplateNode::el("row").key("b")]);
+        TemplateRenderer::patch_node(&mut doc, parent, &template2);
+        let row2 = doc.children(parent)[0];
+        assert_eq!(doc.get_attribute(row2, "data-key").as_deref(), Some("b"));
     }
 }
