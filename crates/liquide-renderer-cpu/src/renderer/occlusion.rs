@@ -98,6 +98,13 @@ pub(super) fn occluder_rects(nodes: &[FlatNode]) -> Vec<Option<Rect>> {
     // Mirrors `render_with_mode`, which resets the active blend mode to SrcOver
     // at the start of every frame before walking the nodes.
     let mut active_blend = BlendMode::SrcOver;
+    // t149: stack of OPEN clip-path scopes (paired begin/apply `ClipPath`
+    // markers, identified by shape + bounds). A node painted while a clip-path
+    // scope is open is the clipped element's OWN content: its painted region is
+    // the clip SHAPE, not its full bounds, so it is NOT a safe full-bounds opaque
+    // occluder — culling a sibling beneath it by its bounds would wrongly drop
+    // pixels the shape leaves visible (the clip-scope snapshot must see them).
+    let mut clip_scopes: Vec<(u8, [u32; 4])> = Vec::new();
     for node in nodes {
         // A RenderLayer node sets the blend mode for SUBSEQUENT nodes (it paints
         // nothing itself), so update state AFTER deciding it is not an occluder.
@@ -106,9 +113,53 @@ pub(super) fn occluder_rects(nodes: &[FlatNode]) -> Vec<Option<Rect>> {
             out.push(None);
             continue;
         }
-        out.push(opaque_occluder_rect(node, active_blend));
+        if let SceneNodeKind::ClipPath { clip_kind } = node.kind_ref() {
+            // Pair begin↔apply by (discriminant, bounds) — sufficient to bracket
+            // the scope (the bridge always emits begin/apply with equal bounds).
+            let id = clip_marker_identity(clip_kind, &node.absolute_bounds);
+            match clip_scopes.last() {
+                Some(top) if *top == id => {
+                    clip_scopes.pop();
+                }
+                _ => clip_scopes.push(id),
+            }
+            out.push(None); // a ClipPath marker paints no opaque rect itself
+            continue;
+        }
+        if clip_scopes.is_empty() {
+            out.push(opaque_occluder_rect(node, active_blend));
+        } else {
+            // Inside a clip-path scope — not a full-bounds occluder.
+            out.push(None);
+        }
     }
     out
+}
+
+/// Begin/apply pairing identity for a `ClipPath` marker: discriminant + bounds
+/// bits. Bounds equality is what brackets a scope (the bridge emits the paired
+/// markers with identical bounds), and the discriminant disambiguates two
+/// differently-shaped clips that happen to share a bounds rect.
+fn clip_marker_identity(
+    kind: &liquide_compositor::scene::ClipPathKind,
+    bounds: &Rect,
+) -> (u8, [u32; 4]) {
+    use liquide_compositor::scene::ClipPathKind;
+    let disc = match kind {
+        ClipPathKind::Circle { .. } => 0,
+        ClipPathKind::RoundedRect { .. } => 1,
+        ClipPathKind::Ellipse { .. } => 2,
+        ClipPathKind::Polygon { .. } => 3,
+    };
+    (
+        disc,
+        [
+            bounds.x.to_bits(),
+            bounds.y.to_bits(),
+            bounds.width.to_bits(),
+            bounds.height.to_bits(),
+        ],
+    )
 }
 
 /// The rect a node would actually paint this frame, confined to the active

@@ -41,6 +41,13 @@ impl DesktopPipeline {
             clip_path: Option<Arc<PaintClipPath>>,
             /// Bounds captured from the inner PushClip for the clip-path node.
             clip_path_bounds: Option<CRect>,
+            /// Index in `nodes` where this clip-path scope opened (t149). The
+            /// paired BEGIN marker is INSERTED here at PopClip so it brackets
+            /// only the clipped element's OWN draws. `None` outside a clip-path.
+            clip_path_start_idx: Option<usize>,
+            /// Z-order to give the BEGIN marker so it sorts BEFORE the element's
+            /// own draws (which were assigned higher z as they were appended).
+            clip_path_start_z: Option<u32>,
         }
 
         impl Default for PipelineState {
@@ -52,6 +59,8 @@ impl DesktopPipeline {
                     transform: Affine2D::identity(),
                     clip_path: None,
                     clip_path_bounds: None,
+                    clip_path_start_idx: None,
+                    clip_path_start_z: None,
                 }
             }
         }
@@ -87,21 +96,55 @@ impl DesktopPipeline {
                     // Don't inherit clip-path into the overflow clip scope
                     current.clip_path = None;
                     current.clip_path_bounds = None;
+                    // The overflow-clip scope is not itself a clip-path scope, so
+                    // it owns no BEGIN-marker insertion point (t149). The outer
+                    // clip-path's start idx/z were saved on the pushed parent and
+                    // are restored when this overflow PopClip pops.
+                    current.clip_path_start_idx = None;
+                    current.clip_path_start_z = None;
                 }
                 DisplayItem::PopClip => {
                     // Save clip-path info before restoring parent state
                     let had_clip_path = current.clip_path.take();
                     let clip_path_bounds = current.clip_path_bounds.take().or(current.clip);
+                    let start_idx = current.clip_path_start_idx.take();
+                    let start_z = current.clip_path_start_z.take();
                     if let Some(prev) = stack.pop() {
                         current = prev;
                     }
-                    // If we just left a clip-path scope, emit the ClipPath scene node
+                    // If we just left a clip-path scope, emit the ClipPath scene node.
                     if let Some(paint_path) = had_clip_path {
                         let bounds =
                             clip_path_bounds.unwrap_or(CRect::new(0.0, 0.0, 99999.0, 99999.0));
                         if let Some((clip_kind, node_bounds)) =
                             convert_paint_clip_path(&paint_path, &bounds)
                         {
+                            // t149: emit a PAIRED begin/apply ClipPath pair that
+                            // brackets ONLY this element's own draws. The renderer
+                            // snapshots the framebuffer at BEGIN and, at APPLY,
+                            // restores it for pixels outside the shape — so the
+                            // clip never destroys siblings painted underneath.
+                            //
+                            // The BEGIN marker is INSERTED at the recorded scope
+                            // start (before the element's draws) with the scope's
+                            // start z, so it sorts ahead of the subtree. The APPLY
+                            // marker is appended after the subtree with the current
+                            // z. Both carry identical kind + bounds so the renderer
+                            // pairs them by structural identity.
+                            if let (Some(idx), Some(begin_z)) = (start_idx, start_z) {
+                                let begin_id = self.alloc_id();
+                                let begin_node = SceneNode::new(
+                                    begin_id,
+                                    SceneNodeKind::ClipPath {
+                                        clip_kind: clip_kind.clone(),
+                                    },
+                                    NodeProperties::new(node_bounds).with_z_order(begin_z),
+                                );
+                                // `idx` was captured before any subtree node was
+                                // pushed, so it is a valid insertion point.
+                                let idx = idx.min(nodes.len());
+                                nodes.insert(idx, begin_node);
+                            }
                             let id = self.alloc_id();
                             let node = SceneNode::new(
                                 id,
@@ -280,6 +323,18 @@ impl DesktopPipeline {
                     stack.push(current.clone());
                     current.clip_path = Some(Arc::new(path.clone()));
                     current.clip_path_bounds = None;
+                    // t149: remember where the clipped element's draws begin and
+                    // RESERVE a z for the paired BEGIN marker, so PopClip can
+                    // insert it just before this subtree (bracketing only the
+                    // element's own content — not earlier siblings). Reserving the
+                    // z by bumping `z` here guarantees the BEGIN marker's z is
+                    // strictly LESS than every child's z, so it sorts ahead of the
+                    // subtree even though flatten's tiebreak is by node id (and the
+                    // marker's id, allocated at PopClip, is larger than the
+                    // children's).
+                    current.clip_path_start_idx = Some(nodes.len());
+                    current.clip_path_start_z = Some(z);
+                    z += 1;
                 }
 
                 DisplayItem::SaveLayer { rect, opacity } => {

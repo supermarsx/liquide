@@ -2163,3 +2163,231 @@ fn decoration_without_frame_colors_uses_node_background() {
         px
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// t149 — clip-path must be scoped to the element it is set on (and its
+// descendants), NOT leak onto siblings painted into the same bounds.
+//
+// The scene bridge now emits a clip-path as a PAIRED begin/apply `ClipPath`
+// marker bracketing the clipped element's OWN draws (identical kind + bounds).
+// The renderer snapshots the framebuffer at the BEGIN marker and, at the APPLY
+// marker, masks the element's content to the shape AND restores the snapshot for
+// every pixel outside the shape — so the clip attenuates only the element's own
+// subtree, never the earlier-painted siblings underneath.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// A ClipPath FlatNode over `bounds` carrying `kind`.
+fn clip_path_node(id: u64, bounds: Rect, kind: liquide_compositor::scene::ClipPathKind, z: u32) -> FlatNode {
+    FlatNode {
+        id,
+        kind: SceneNodeKind::ClipPath { clip_kind: kind }.into(),
+        absolute_bounds: bounds,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: z,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+/// Render a flat node list full-frame (clip = None, byte-identical path).
+fn render_full(nodes: &[FlatNode], w: u32, h: u32) -> FrameBuffer {
+    let damage = DamageSet::full(64, w.div_ceil(64), h.div_ceil(64), DamageClass::UiPrimitive);
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    let mut r = SoftwareRenderer::new();
+    r.render_live(nodes, &mut fb, &damage, RenderMode::LiveFull)
+        .unwrap();
+    fb
+}
+
+/// (a) A clip-path on sibling B must NOT mask sibling A painted in the same
+/// bounds: A's pixels outside B's clip shape must SURVIVE. RED before t149 — the
+/// flat clip mask zeroed/attenuated the shared framebuffer region (incl. A).
+#[test]
+fn t149_clip_path_on_sibling_b_does_not_eat_sibling_a() {
+    use liquide_compositor::scene::ClipPathKind;
+    let (w, h) = (128u32, 128u32);
+    let region = Rect::new(0.0, 0.0, 128.0, 128.0);
+
+    // A: solid GREEN filling the whole region (z=0).
+    let a = bg_node(1, region, Color::new(0, 200, 0, 255));
+    // B: solid RED over the SAME region, clipped to a triangle whose interior is
+    // the LEFT side; the bottom-right corner is OUTSIDE the triangle.
+    let mut b = bg_node(2, region, Color::new(220, 0, 0, 255));
+    b.z_order = 2;
+    let tri = ClipPathKind::Polygon {
+        points: vec![(0.0, 0.0), (0.0, 1.0), (1.0, 1.0)], // lower-left triangle
+    };
+    // Paired begin (z=1, before B) / apply (z=3, after B) — same kind+bounds.
+    let begin = clip_path_node(10, region, tri.clone(), 1);
+    let apply = clip_path_node(11, region, tri, 3);
+
+    let fb = render_full(&[a, begin, b, apply], w, h);
+
+    // Top-right corner (x large, y small) is OUTSIDE the lower-left triangle, so
+    // B is clipped away there and the GREEN sibling A must show through.
+    let corner = fb.get_pixel(w - 4, 4);
+    assert!(
+        corner.g > 150 && corner.r < 80,
+        "t149: sibling A (green) must survive where sibling B's clip-path excludes \
+         it — got {corner:?} (RED before the fix: the clip zeroed A's pixels)"
+    );
+
+    // Deep inside the triangle (lower-left) B's own RED content is kept.
+    let inside = fb.get_pixel(8, h - 8);
+    assert!(
+        inside.r > 150 && inside.g < 80,
+        "t149: B's own content must be correctly clipped-in (red) inside its \
+         clip shape — got {inside:?}"
+    );
+}
+
+/// (b) B's OWN content IS correctly clipped to its clip-path: pixels of B
+/// outside its shape do NOT show B (they show whatever was underneath). No
+/// regression of the element's own clipping.
+#[test]
+fn t149_clipped_element_own_content_is_masked_to_shape() {
+    use liquide_compositor::scene::ClipPathKind;
+    let (w, h) = (128u32, 128u32);
+    let region = Rect::new(0.0, 0.0, 128.0, 128.0);
+
+    // Transparent-black background under B (nothing painted): outside B's circle
+    // must be the background (transparent), proving B did not bleed past its clip.
+    let mut b = bg_node(2, region, Color::new(0, 0, 255, 255)); // BLUE
+    b.z_order = 2;
+    let circle = ClipPathKind::Circle {
+        center_x: 0.5,
+        center_y: 0.5,
+        radius: 0.3,
+    };
+    let begin = clip_path_node(10, region, circle.clone(), 1);
+    let apply = clip_path_node(11, region, circle, 3);
+
+    let fb = render_full(&[begin, b, apply], w, h);
+
+    // Center is inside the circle -> B's blue survives.
+    let center = fb.get_pixel(w / 2, h / 2);
+    assert!(
+        center.b > 150,
+        "t149: B's own content (blue) must survive inside its circle clip — got {center:?}"
+    );
+    // Far corner is outside the circle -> B masked away; with nothing underneath
+    // the snapshot is transparent.
+    let corner = fb.get_pixel(2, 2);
+    assert!(
+        corner.a < 40,
+        "t149: B must NOT paint outside its circle clip — corner should be the \
+         (transparent) background, got {corner:?}"
+    );
+}
+
+/// (c) Byte-identity guard: a SINGLE clip-path element over an EMPTY (transparent)
+/// background is byte-identical INSIDE the shape to the legacy single-flat-mask
+/// output. The interior (coverage>=1) is left verbatim by both code paths, and
+/// outside the shape with no sibling underneath the snapshot is the same
+/// transparent background the old code produced — so the whole frame matches.
+#[test]
+fn t149_single_clip_path_element_is_byte_identical() {
+    use liquide_compositor::scene::ClipPathKind;
+    let (w, h) = (96u32, 96u32);
+    let region = Rect::new(0.0, 0.0, 96.0, 96.0);
+    let poly = ClipPathKind::Polygon {
+        points: vec![(0.5, 0.05), (0.95, 0.95), (0.05, 0.95)],
+    };
+
+    // NEW path: paired begin/apply over an empty (transparent) framebuffer.
+    let mut b_new = bg_node(2, region, Color::new(180, 90, 30, 255));
+    b_new.z_order = 2;
+    let begin = clip_path_node(10, region, poly.clone(), 1);
+    let apply = clip_path_node(11, region, poly.clone(), 3);
+    let fb_new = render_full(&[begin, b_new, apply], w, h);
+
+    // LEGACY path emulation: the element painted then a SINGLE flat ClipPath mask
+    // (no begin marker) over a fresh transparent fb. This reproduces the exact
+    // pre-t149 destructive-mask output (the renderer treats an unpaired ClipPath
+    // node as a BEGIN that snapshots-and-pushes — so to get the legacy result we
+    // compute it directly here): inside shape = element, outside = transparent.
+    let mut b_leg = bg_node(2, region, Color::new(180, 90, 30, 255));
+    b_leg.z_order = 2;
+    // Render JUST the element (no clip) to a transparent fb, then apply the legacy
+    // destructive mask analytically using the same SDF the renderer uses.
+    let mut fb_leg = {
+        let damage = DamageSet::full(64, w.div_ceil(64), h.div_ceil(64), DamageClass::UiPrimitive);
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        let mut r = SoftwareRenderer::new();
+        r.render_live(&[b_leg.clone()], &mut fb, &damage, RenderMode::LiveFull)
+            .unwrap();
+        fb
+    };
+    legacy_flat_polygon_mask(&mut fb_leg, &region, &[(0.5, 0.05), (0.95, 0.95), (0.05, 0.95)]);
+
+    assert_eq!(
+        fb_new.pixels(),
+        fb_leg.pixels(),
+        "t149: a single clip-path element over an empty background must be \
+         byte-identical to the legacy single-flat-mask output"
+    );
+}
+
+/// Reproduce the pre-t149 destructive flat polygon mask over `bounds` exactly as
+/// the old renderer ClipPath::Polygon arm did (used only by the byte-identity
+/// guard above).
+fn legacy_flat_polygon_mask(fb: &mut FrameBuffer, bounds: &Rect, points: &[(f32, f32)]) {
+    let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
+    let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
+    let bx1 = (bounds.right().ceil() as u32).min(fb.width);
+    let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+    let pts: Vec<(f32, f32)> = points
+        .iter()
+        .map(|p| (bounds.x + p.0 * bounds.width, bounds.y + p.1 * bounds.height))
+        .collect();
+    for y in by0..by1 {
+        let fy = y as f32 + 0.5;
+        for x in bx0..bx1 {
+            let fx = x as f32 + 0.5;
+            let mut winding = 0i32;
+            let mut min_dist_sq = f32::MAX;
+            for i in 0..pts.len() {
+                let j = (i + 1) % pts.len();
+                let (x0, y0) = pts[i];
+                let (x1, y1) = pts[j];
+                if y0 <= fy {
+                    if y1 > fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) > 0.0 {
+                        winding += 1;
+                    }
+                } else if y1 <= fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) < 0.0 {
+                    winding -= 1;
+                }
+                let ex = x1 - x0;
+                let ey = y1 - y0;
+                let len_sq = ex * ex + ey * ey;
+                let t = if len_sq > 0.0 {
+                    ((fx - x0) * ex + (fy - y0) * ey) / len_sq
+                } else {
+                    0.0
+                }
+                .clamp(0.0, 1.0);
+                let px = x0 + t * ex - fx;
+                let py = y0 + t * ey - fy;
+                min_dist_sq = min_dist_sq.min(px * px + py * py);
+            }
+            let dist = min_dist_sq.sqrt();
+            let signed_dist = if winding != 0 { dist } else { -dist };
+            let coverage = (signed_dist + 0.5).clamp(0.0, 1.0);
+            if coverage >= 1.0 {
+                continue;
+            }
+            let mut px = fb.get_pixel(x, y);
+            if coverage <= 0.0 {
+                px = Color { r: 0, g: 0, b: 0, a: 0 };
+            } else {
+                px.r = (px.r as f32 * coverage + 0.5) as u8;
+                px.g = (px.g as f32 * coverage + 0.5) as u8;
+                px.b = (px.b as f32 * coverage + 0.5) as u8;
+                px.a = (px.a as f32 * coverage + 0.5) as u8;
+            }
+            fb.set_pixel(x, y, px);
+        }
+    }
+}

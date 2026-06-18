@@ -57,6 +57,81 @@ pub(crate) struct CachedShadow {
 /// Maximum number of entries in the shadow mask cache before eviction.
 const MAX_SHADOW_CACHE: usize = 256;
 
+/// An OPEN `clip-path` scope (t149).
+///
+/// The scene bridge brackets a clipped element's OWN draws between a paired
+/// BEGIN and APPLY `ClipPath` marker (both carrying the same shape + bounds). On
+/// BEGIN the renderer snapshots the pixels under the scope's bounds window
+/// (already-painted siblings / background); on the matching APPLY it masks the
+/// element's content to the shape and restores this snapshot for every pixel the
+/// shape excludes — confining the clip to the element's own subtree instead of
+/// destroying earlier siblings' pixels (the pre-t149 single-flat-mask bug).
+struct ClipScope {
+    /// Structural identity of the scope's shape + bounds, used to pair the BEGIN
+    /// marker with its matching APPLY marker.
+    identity: (u8, Vec<u32>, [u32; 4]),
+    /// Pixel window the snapshot covers: (x0, y0, x1, y1) in framebuffer coords,
+    /// already clamped to the framebuffer and the active write-scissor.
+    window: (u32, u32, u32, u32),
+    /// Snapshot of `window` as a row-major BGRA8 `Color` grid (width = x1-x0).
+    snapshot: Vec<Color>,
+}
+
+/// A renderer-local structural identity for a `ClipPathKind` + bounds, used to
+/// pair a BEGIN marker with its matching APPLY marker. `ClipPathKind` does not
+/// derive `PartialEq` (and lives in `liquide-compositor`, out of this crate's
+/// edit scope), so equality is computed here from the discriminant + fields +
+/// the node bounds. Bit-equality of the `f32` fields is exactly what we want:
+/// the bridge emits the begin/apply pair from the SAME values, so they compare
+/// equal, while two distinct scopes essentially never collide.
+fn clip_scope_identity(
+    kind: &liquide_compositor::scene::ClipPathKind,
+    bounds: &Rect,
+) -> (u8, Vec<u32>, [u32; 4]) {
+    use liquide_compositor::scene::ClipPathKind;
+    let b = [
+        bounds.x.to_bits(),
+        bounds.y.to_bits(),
+        bounds.width.to_bits(),
+        bounds.height.to_bits(),
+    ];
+    match kind {
+        ClipPathKind::Circle {
+            center_x,
+            center_y,
+            radius,
+        } => (
+            0,
+            vec![center_x.to_bits(), center_y.to_bits(), radius.to_bits()],
+            b,
+        ),
+        ClipPathKind::RoundedRect { corner_radius } => (1, vec![corner_radius.to_bits()], b),
+        ClipPathKind::Ellipse {
+            center_x,
+            center_y,
+            rx,
+            ry,
+        } => (
+            2,
+            vec![
+                center_x.to_bits(),
+                center_y.to_bits(),
+                rx.to_bits(),
+                ry.to_bits(),
+            ],
+            b,
+        ),
+        ClipPathKind::Polygon { points } => {
+            let mut v = Vec::with_capacity(points.len() * 2);
+            for (px, py) in points {
+                v.push(px.to_bits());
+                v.push(py.to_bits());
+            }
+            (3, v, b)
+        }
+    }
+}
+
 /// Upper bound (milliseconds) on how long the deterministic capture render
 /// ([`SoftwareRenderer::render`]) will block waiting for already-in-flight glyph
 /// rasterizations to complete before painting text. This makes glyph presence
@@ -184,6 +259,15 @@ pub struct SoftwareRenderer {
     /// Active blend mode set by the most recent `RenderLayer` node.
     /// Subsequent content nodes use this instead of the default `SrcOver`.
     active_blend_mode: BlendMode,
+    /// Stack of OPEN clip-path scopes (t149). A `clip-path` is now emitted by the
+    /// scene bridge as a PAIRED begin/apply marker bracketing the clipped element's
+    /// OWN draws. On the BEGIN marker the renderer snapshots the framebuffer region
+    /// the scope covers; on the matching APPLY marker it masks the element's content
+    /// to the shape AND restores the snapshot for pixels outside the shape — so the
+    /// clip attenuates ONLY the element's own subtree, never the siblings painted
+    /// underneath it (the pre-t149 flat mask zeroed those too). Each entry holds the
+    /// scope identity (to pair begin↔apply) plus the snapshot window + pixels.
+    clip_scopes: Vec<ClipScope>,
     /// Resolved cursor appearance (CSS seam). Defaults to the historic
     /// black-outline / white-fill, node-driven shape.
     cursor_theme: cursors::CursorTheme,
@@ -262,6 +346,7 @@ impl SoftwareRenderer {
             has_pending_glyphs: false,
             prewarmed_fonts: std::collections::HashSet::new(),
             active_blend_mode: BlendMode::SrcOver,
+            clip_scopes: Vec::new(),
             cursor_theme: cursors::CursorTheme::default(),
             raster_clip: None,
             deterministic_blur: false,
@@ -1078,6 +1163,11 @@ impl SoftwareRenderer {
         // or `None` if the node is not a safe opaque occluder.
         let occluders = occlusion::occluder_rects(nodes);
 
+        // Start each walk with no open clip-path scopes (t149). The begin/apply
+        // markers are balanced within a frame; clearing here also guards against
+        // an unbalanced list leaking a snapshot into the next frame.
+        self.clip_scopes.clear();
+
         for (i, node) in nodes.iter().enumerate() {
             // Skip nodes completely outside the damage bounding box.
             if let Some((dx0, dy0, dx1, dy1)) = damage_bbox {
@@ -1465,220 +1555,7 @@ impl SoftwareRenderer {
             }
 
             SceneNodeKind::ClipPath { clip_kind } => {
-                use liquide_compositor::scene::ClipPathKind;
-                match clip_kind {
-                    ClipPathKind::RoundedRect { corner_radius } => {
-                        let r = *corner_radius;
-                        let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
-                        let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
-                        let bx1 = (bounds.right().ceil() as u32).min(fb.width);
-                        let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
-                        // Confine clip feathering to the damage write-scissor (t84).
-                        let (bx0, by0, bx1, by1) =
-                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
-                        for y in by0..by1 {
-                            let fy = y as f32 + 0.5;
-                            for x in bx0..bx1 {
-                                let fx = x as f32 + 0.5;
-                                let d = rasterizer::sdf_rounded_rect_per_corner(
-                                    fx, fy, &bounds, r, r, r, r,
-                                );
-                                let coverage = (-d + 0.5).clamp(0.0, 1.0);
-                                if coverage >= 1.0 {
-                                    continue;
-                                }
-                                let mut px = fb.get_pixel(x, y);
-                                if coverage <= 0.0 {
-                                    px = Color {
-                                        r: 0,
-                                        g: 0,
-                                        b: 0,
-                                        a: 0,
-                                    };
-                                } else {
-                                    // Premultiplied alpha: scale all channels by coverage
-                                    // to avoid dark halos at anti-aliased edges.
-                                    px.r = (px.r as f32 * coverage + 0.5) as u8;
-                                    px.g = (px.g as f32 * coverage + 0.5) as u8;
-                                    px.b = (px.b as f32 * coverage + 0.5) as u8;
-                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
-                                }
-                                fb.set_pixel(x, y, px);
-                            }
-                        }
-                    }
-                    ClipPathKind::Circle {
-                        center_x,
-                        center_y,
-                        radius,
-                    } => {
-                        let cx = bounds.x + center_x * bounds.width;
-                        let cy = bounds.y + center_y * bounds.height;
-                        let r = radius * bounds.width.min(bounds.height);
-                        let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
-                        let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
-                        let bx1 = (bounds.right().ceil() as u32).min(fb.width);
-                        let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
-                        // Confine clip feathering to the damage write-scissor (t84).
-                        let (bx0, by0, bx1, by1) =
-                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
-                        for y in by0..by1 {
-                            let fy = y as f32 + 0.5;
-                            for x in bx0..bx1 {
-                                let fx = x as f32 + 0.5;
-                                let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() - r;
-                                let coverage = (-d + 0.5).clamp(0.0, 1.0);
-                                if coverage >= 1.0 {
-                                    continue;
-                                }
-                                let mut px = fb.get_pixel(x, y);
-                                if coverage <= 0.0 {
-                                    px = Color {
-                                        r: 0,
-                                        g: 0,
-                                        b: 0,
-                                        a: 0,
-                                    };
-                                } else {
-                                    px.r = (px.r as f32 * coverage + 0.5) as u8;
-                                    px.g = (px.g as f32 * coverage + 0.5) as u8;
-                                    px.b = (px.b as f32 * coverage + 0.5) as u8;
-                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
-                                }
-                                fb.set_pixel(x, y, px);
-                            }
-                        }
-                    }
-                    ClipPathKind::Ellipse {
-                        center_x,
-                        center_y,
-                        rx,
-                        ry,
-                    } => {
-                        let cx = bounds.x + center_x * bounds.width;
-                        let cy = bounds.y + center_y * bounds.height;
-                        let erx = rx * bounds.width;
-                        let ery = ry * bounds.height;
-                        let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
-                        let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
-                        let bx1 = (bounds.right().ceil() as u32).min(fb.width);
-                        let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
-                        // Confine clip feathering to the damage write-scissor (t84).
-                        let (bx0, by0, bx1, by1) =
-                            rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
-                        for y in by0..by1 {
-                            let fy = y as f32 + 0.5;
-                            for x in bx0..bx1 {
-                                let fx = x as f32 + 0.5;
-                                let nx = (fx - cx) / erx;
-                                let ny = (fy - cy) / ery;
-                                let d = (nx * nx + ny * ny).sqrt() - 1.0;
-                                let coverage = (-d * erx.min(ery) + 0.5).clamp(0.0, 1.0);
-                                if coverage >= 1.0 {
-                                    continue;
-                                }
-                                let mut px = fb.get_pixel(x, y);
-                                if coverage <= 0.0 {
-                                    px = Color {
-                                        r: 0,
-                                        g: 0,
-                                        b: 0,
-                                        a: 0,
-                                    };
-                                } else {
-                                    px.r = (px.r as f32 * coverage + 0.5) as u8;
-                                    px.g = (px.g as f32 * coverage + 0.5) as u8;
-                                    px.b = (px.b as f32 * coverage + 0.5) as u8;
-                                    px.a = (px.a as f32 * coverage + 0.5) as u8;
-                                }
-                                fb.set_pixel(x, y, px);
-                            }
-                        }
-                    }
-                    ClipPathKind::Polygon { points } => {
-                        if points.len() < 3 { /* skip degenerate polygon */
-                        } else {
-                            let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
-                            let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
-                            let bx1 = (bounds.right().ceil() as u32).min(fb.width);
-                            let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
-                            // Confine clip feathering to the damage write-scissor (t84).
-                            let (bx0, by0, bx1, by1) =
-                                rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
-                            let pts: Vec<(f32, f32)> = points
-                                .iter()
-                                .map(|p| {
-                                    (
-                                        bounds.x + p.0 * bounds.width,
-                                        bounds.y + p.1 * bounds.height,
-                                    )
-                                })
-                                .collect();
-                            for y in by0..by1 {
-                                let fy = y as f32 + 0.5;
-                                for x in bx0..bx1 {
-                                    let fx = x as f32 + 0.5;
-                                    // Winding number test
-                                    let mut winding = 0i32;
-                                    // Minimum signed distance to nearest edge (for AA)
-                                    let mut min_dist_sq = f32::MAX;
-                                    for i in 0..pts.len() {
-                                        let j = (i + 1) % pts.len();
-                                        let (x0, y0) = pts[i];
-                                        let (x1, y1) = pts[j];
-                                        if y0 <= fy {
-                                            if y1 > fy
-                                                && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0))
-                                                    > 0.0
-                                            {
-                                                winding += 1;
-                                            }
-                                        } else if y1 <= fy
-                                            && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) < 0.0
-                                        {
-                                            winding -= 1;
-                                        }
-                                        // Point-to-segment distance squared
-                                        let ex = x1 - x0;
-                                        let ey = y1 - y0;
-                                        let len_sq = ex * ex + ey * ey;
-                                        let t = if len_sq > 0.0 {
-                                            ((fx - x0) * ex + (fy - y0) * ey) / len_sq
-                                        } else {
-                                            0.0
-                                        }
-                                        .clamp(0.0, 1.0);
-                                        let px = x0 + t * ex - fx;
-                                        let py = y0 + t * ey - fy;
-                                        min_dist_sq = min_dist_sq.min(px * px + py * py);
-                                    }
-                                    let dist = min_dist_sq.sqrt();
-                                    let inside = winding != 0;
-                                    let signed_dist = if inside { dist } else { -dist };
-                                    let coverage = (signed_dist + 0.5).clamp(0.0, 1.0);
-                                    if coverage >= 1.0 {
-                                        continue;
-                                    }
-                                    let mut px = fb.get_pixel(x, y);
-                                    if coverage <= 0.0 {
-                                        px = Color {
-                                            r: 0,
-                                            g: 0,
-                                            b: 0,
-                                            a: 0,
-                                        };
-                                    } else {
-                                        px.r = (px.r as f32 * coverage + 0.5) as u8;
-                                        px.g = (px.g as f32 * coverage + 0.5) as u8;
-                                        px.b = (px.b as f32 * coverage + 0.5) as u8;
-                                        px.a = (px.a as f32 * coverage + 0.5) as u8;
-                                    }
-                                    fb.set_pixel(x, y, px);
-                                }
-                            }
-                        }
-                    }
-                }
+                self.render_clip_path_node(clip_kind, &bounds, fb);
             }
 
             SceneNodeKind::BorderImage { .. } => {
@@ -1832,6 +1709,222 @@ impl SoftwareRenderer {
                         rasterizer::stroke_rect(fb, bounds, *border_width, bc, BlendMode::SrcOver);
                     }
                 }
+            }
+        }
+    }
+
+    /// Render a `ClipPath` marker node (t149 — sibling-scoped clip-path).
+    ///
+    /// The scene bridge emits a clip-path as a PAIRED begin/apply marker that
+    /// brackets the clipped element's OWN draws. The two markers carry identical
+    /// shape + bounds. We pair them with a renderer-local stack:
+    ///
+    /// * **BEGIN** (identity does NOT match the open scope on top of the stack):
+    ///   snapshot the pixels under the scope window (already-painted siblings /
+    ///   background) and push the scope. Nothing is masked yet.
+    /// * **APPLY** (identity matches the top of the stack): the element's content
+    ///   is now in the framebuffer over the snapshot. For each pixel in the window
+    ///   compute the shape coverage `c` and composite `c·element + (1−c)·snapshot`
+    ///   — so inside the shape the element survives (c≈1, byte-identical to the old
+    ///   flat mask), outside the shape the snapshot is restored (c≈0; the OLD code
+    ///   destroyed those pixels to transparent — the sibling-leak bug), and edges
+    ///   anti-alias against the actual content behind the element. Pop the scope.
+    ///
+    /// Both the snapshot and the composite write through the framebuffer (which
+    /// enforces the damage write-scissor), so the clip stays confined to the
+    /// damage rect exactly as before (t84).
+    fn render_clip_path_node(
+        &mut self,
+        clip_kind: &liquide_compositor::scene::ClipPathKind,
+        bounds: &Rect,
+        fb: &mut FrameBuffer,
+    ) {
+        use liquide_compositor::scene::ClipPathKind;
+
+        // A degenerate polygon clips nothing — skip it entirely (matches the
+        // pre-t149 behaviour and avoids opening an unbalanced scope).
+        if let ClipPathKind::Polygon { points } = clip_kind {
+            if points.len() < 3 {
+                return;
+            }
+        }
+
+        // Compute the window the shape can touch, clamped to the framebuffer and
+        // the active write-scissor (t84) — identical to the pre-t149 per-arm
+        // bounds so the snapshot covers exactly the pixels the mask may alter.
+        let bx0 = (bounds.x.max(0.0) as u32).min(fb.width);
+        let by0 = (bounds.y.max(0.0) as u32).min(fb.height);
+        let bx1 = (bounds.right().ceil() as u32).min(fb.width);
+        let by1 = (bounds.bottom().ceil() as u32).min(fb.height);
+        let (bx0, by0, bx1, by1) = rasterizer::scissor_clamp_window(bx0, by0, bx1, by1);
+        if bx0 >= bx1 || by0 >= by1 {
+            // Empty window. Still pair begin/apply so the stack stays balanced:
+            // a begin with an empty window pushes an empty snapshot; the matching
+            // apply pops it. (Both markers carry the same bounds, so both reach
+            // this branch together.)
+            let identity = clip_scope_identity(clip_kind, bounds);
+            match self.clip_scopes.last() {
+                Some(top) if top.identity == identity => {
+                    self.clip_scopes.pop();
+                }
+                _ => self.clip_scopes.push(ClipScope {
+                    identity,
+                    window: (bx0, by0, bx0, by0),
+                    snapshot: Vec::new(),
+                }),
+            }
+            return;
+        }
+
+        let identity = clip_scope_identity(clip_kind, bounds);
+        let is_apply = matches!(self.clip_scopes.last(), Some(top) if top.identity == identity);
+
+        if !is_apply {
+            // BEGIN: snapshot the window before the element paints over it.
+            let w = (bx1 - bx0) as usize;
+            let h = (by1 - by0) as usize;
+            let mut snapshot = Vec::with_capacity(w * h);
+            for y in by0..by1 {
+                for x in bx0..bx1 {
+                    snapshot.push(fb.get_pixel(x, y));
+                }
+            }
+            self.clip_scopes.push(ClipScope {
+                identity,
+                window: (bx0, by0, bx1, by1),
+                snapshot,
+            });
+            return;
+        }
+
+        // APPLY: pop the snapshot taken at BEGIN and composite the element's
+        // content against it per the shape coverage.
+        let scope = self
+            .clip_scopes
+            .pop()
+            .expect("is_apply implies a scope on the stack");
+        let (sx0, sy0, sx1, _sy1) = scope.window;
+        let snap_w = (sx1 - sx0) as usize;
+
+        // A coverage function for the active shape: 1.0 fully inside, 0.0 fully
+        // outside, anti-aliased across the 1px edge. Geometry matches the
+        // pre-t149 per-arm SDF/winding tests exactly (byte-identical interior).
+        let coverage_at = |fx: f32, fy: f32| -> f32 {
+            match clip_kind {
+                ClipPathKind::RoundedRect { corner_radius } => {
+                    let r = *corner_radius;
+                    let d = rasterizer::sdf_rounded_rect_per_corner(fx, fy, bounds, r, r, r, r);
+                    (-d + 0.5).clamp(0.0, 1.0)
+                }
+                ClipPathKind::Circle {
+                    center_x,
+                    center_y,
+                    radius,
+                } => {
+                    let cx = bounds.x + center_x * bounds.width;
+                    let cy = bounds.y + center_y * bounds.height;
+                    let r = radius * bounds.width.min(bounds.height);
+                    let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt() - r;
+                    (-d + 0.5).clamp(0.0, 1.0)
+                }
+                ClipPathKind::Ellipse {
+                    center_x,
+                    center_y,
+                    rx,
+                    ry,
+                } => {
+                    let cx = bounds.x + center_x * bounds.width;
+                    let cy = bounds.y + center_y * bounds.height;
+                    let erx = rx * bounds.width;
+                    let ery = ry * bounds.height;
+                    let nx = (fx - cx) / erx;
+                    let ny = (fy - cy) / ery;
+                    let d = (nx * nx + ny * ny).sqrt() - 1.0;
+                    (-d * erx.min(ery) + 0.5).clamp(0.0, 1.0)
+                }
+                ClipPathKind::Polygon { points } => {
+                    let mut winding = 0i32;
+                    let mut min_dist_sq = f32::MAX;
+                    let n = points.len();
+                    for i in 0..n {
+                        let j = (i + 1) % n;
+                        let x0 = bounds.x + points[i].0 * bounds.width;
+                        let y0 = bounds.y + points[i].1 * bounds.height;
+                        let x1 = bounds.x + points[j].0 * bounds.width;
+                        let y1 = bounds.y + points[j].1 * bounds.height;
+                        if y0 <= fy {
+                            if y1 > fy && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) > 0.0 {
+                                winding += 1;
+                            }
+                        } else if y1 <= fy
+                            && ((x1 - x0) * (fy - y0) - (fx - x0) * (y1 - y0)) < 0.0
+                        {
+                            winding -= 1;
+                        }
+                        let ex = x1 - x0;
+                        let ey = y1 - y0;
+                        let len_sq = ex * ex + ey * ey;
+                        let t = if len_sq > 0.0 {
+                            ((fx - x0) * ex + (fy - y0) * ey) / len_sq
+                        } else {
+                            0.0
+                        }
+                        .clamp(0.0, 1.0);
+                        let px = x0 + t * ex - fx;
+                        let py = y0 + t * ey - fy;
+                        min_dist_sq = min_dist_sq.min(px * px + py * py);
+                    }
+                    let dist = min_dist_sq.sqrt();
+                    let signed_dist = if winding != 0 { dist } else { -dist };
+                    (signed_dist + 0.5).clamp(0.0, 1.0)
+                }
+            }
+        };
+
+        for y in by0..by1 {
+            let fy = y as f32 + 0.5;
+            for x in bx0..bx1 {
+                let fx = x as f32 + 0.5;
+                let coverage = coverage_at(fx, fy);
+                // Fully inside the shape: the element's content is kept verbatim
+                // (byte-identical to the old flat mask for a single element).
+                if coverage >= 1.0 {
+                    continue;
+                }
+                // The snapshot pixel captured under this position at BEGIN. The
+                // window the snapshot covers is identical to the apply window
+                // (same bounds → same clamp), so the index maps 1:1.
+                let snap = {
+                    let sx = (x - sx0) as usize;
+                    let sy = (y - sy0) as usize;
+                    scope
+                        .snapshot
+                        .get(sy * snap_w + sx)
+                        .copied()
+                        .unwrap_or(Color {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 0,
+                        })
+                };
+                let elem = fb.get_pixel(x, y);
+                // Composite element OVER the pre-element snapshot weighted by the
+                // shape coverage (premultiplied — channels and alpha scale
+                // together to avoid dark fringes). coverage 0 ⇒ snapshot restored
+                // verbatim (siblings/background survive — the t149 fix); coverage
+                // 1 was handled above.
+                let inv = 1.0 - coverage;
+                let mix = |e: u8, s: u8| -> u8 {
+                    (e as f32 * coverage + s as f32 * inv + 0.5).clamp(0.0, 255.0) as u8
+                };
+                let out = Color {
+                    r: mix(elem.r, snap.r),
+                    g: mix(elem.g, snap.g),
+                    b: mix(elem.b, snap.b),
+                    a: mix(elem.a, snap.a),
+                };
+                fb.set_pixel(x, y, out);
             }
         }
     }

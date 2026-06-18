@@ -1157,6 +1157,93 @@ fn text_bounds_remain_subpixel() {
     );
 }
 
+/// t149: a clip-path scope must emit a PAIRED begin/apply `ClipPath` marker that
+/// BRACKETS the clipped element's own draws. The begin marker sorts (by z) before
+/// the element's content; the apply marker after it. The renderer relies on this
+/// pairing to snapshot-and-restore so the clip does not eat earlier siblings.
+#[test]
+fn t149_clip_path_emits_paired_begin_and_apply_markers() {
+    use liquide_compositor::scene::SceneNode;
+    use liquide_paint::display_list::ClipPath as PaintClipPath;
+    use liquide_style_engine::dimension::{Corners, EllipticalRadius};
+
+    let config = PipelineConfig::default();
+    let mut pipeline = DesktopPipeline::new(&config);
+
+    let zero: Corners<EllipticalRadius> = Corners::all(0.0_f32.into());
+    let rect = liquide_layout::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 100.0,
+        height: 100.0,
+    };
+
+    // Painter emission order for a clip-path element with an overflow clip:
+    //   PushClipPath, PushClip, <content>, PopClip (overflow), PopClip (clip-path)
+    let mut list = DisplayList::new();
+    list.push(DisplayItem::PushClipPath {
+        path: PaintClipPath::Polygon(vec![(0.0, 0.0), (1.0, 0.0), (0.5, 1.0)]),
+    });
+    list.push(DisplayItem::PushClip {
+        rect,
+        radius: zero.clone(),
+    });
+    // The clipped element's OWN content.
+    list.push(DisplayItem::SolidColor {
+        rect,
+        color: Color::new(10, 20, 30, 255),
+        radius: zero,
+    });
+    list.push(DisplayItem::PopClip); // overflow
+    list.push(DisplayItem::PopClip); // clip-path
+
+    let nodes = pipeline.display_list_to_scene(&list, 0);
+
+    // Exactly TWO ClipPath markers (begin + apply).
+    let clip_markers: Vec<&SceneNode> = nodes
+        .iter()
+        .filter(|n| matches!(n.kind, SceneNodeKind::ClipPath { .. }))
+        .collect();
+    assert_eq!(
+        clip_markers.len(),
+        2,
+        "a clip-path scope must emit a paired begin+apply marker, got {}",
+        clip_markers.len()
+    );
+
+    let content = nodes
+        .iter()
+        .find(|n| matches!(n.kind, SceneNodeKind::Background { .. }))
+        .expect("the clipped element's own Background content must be emitted");
+
+    let z_begin = clip_markers
+        .iter()
+        .map(|n| n.properties.z_order)
+        .min()
+        .unwrap();
+    let z_apply = clip_markers
+        .iter()
+        .map(|n| n.properties.z_order)
+        .max()
+        .unwrap();
+    let z_content = content.properties.z_order;
+
+    assert!(
+        z_begin < z_content,
+        "begin marker (z={z_begin}) must sort BEFORE the clipped content (z={z_content})"
+    );
+    assert!(
+        z_content < z_apply,
+        "apply marker (z={z_apply}) must sort AFTER the clipped content (z={z_content})"
+    );
+
+    // Both markers must carry the SAME bounds (so the renderer pairs them).
+    assert_eq!(
+        clip_markers[0].properties.bounds, clip_markers[1].properties.bounds,
+        "begin/apply markers must share identical bounds for pairing"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // LEVER t91 — PAINT-ONLY DIRTY GRANULARITY.
 //
