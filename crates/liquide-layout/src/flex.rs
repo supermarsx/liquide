@@ -860,6 +860,44 @@ pub fn layout_flex<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
         };
     }
 
+    // ── Step 4c: Enforce the resolved flex main size on each item's box ──
+    // CSS Flexbox §9.9: the USED main size of a flex item is the resolved flex
+    // length (`item.main_size`), not its content/intrinsic size. Re-laying out a
+    // block item at `child_h = resolved_main` (Step 4b) only seeds it as a
+    // *containing-block* height; a block with `height:auto` still computes its
+    // own height from content and ignores that seed. So a COLUMN flex-grow item
+    // with no intrinsic content keeps a 0 border-box height even though it was
+    // assigned a non-zero main size — the documented "vertical flex-grow → 0"
+    // gap. Stretch the box's main-axis extent to the resolved main size here
+    // (mirrors the cross-axis Stretch handling below). Skip collapsed items
+    // (their main size is forced to 0) and no-op when the box already matches
+    // (e.g. ROW items, whose block width already fills the assigned main size).
+    for item in &items {
+        if item.collapsed {
+            continue;
+        }
+        if let Some(b) = tree.get_mut(item.box_id) {
+            let current_main = if is_row {
+                b.border_rect.width
+            } else {
+                b.border_rect.height
+            };
+            let delta = item.main_size - current_main;
+            if delta.abs() > 0.5 {
+                let dw = if is_row { delta } else { 0.0 };
+                let dh = if is_row { 0.0 } else { delta };
+                b.content_rect.width += dw;
+                b.content_rect.height += dh;
+                b.padding_rect.width += dw;
+                b.padding_rect.height += dh;
+                b.border_rect.width += dw;
+                b.border_rect.height += dh;
+                b.margin_rect.width += dw;
+                b.margin_rect.height += dh;
+            }
+        }
+    }
+
     // ── Step 5: Position items per line ──
     let mut cross_offset = 0.0f32;
     let mut line_cross_sizes: Vec<f32> = Vec::new();
@@ -1592,6 +1630,275 @@ mod tests {
             (child_abs.y - 600.0).abs() < 1.0,
             "child y = {} (expected 600, bottom-anchored via align-items:flex-end)",
             child_abs.y
+        );
+    }
+
+    // ── t148: definite containing-block HEIGHT propagation (engine gap #3) ──
+    //
+    // ROOT CAUSE (t146): a block with a DEFINITE resolved height forwarded the
+    // INCOMING container_height to its children instead of its OWN height, so a
+    // child column flex container (height:auto) had no definite containing-block
+    // height to distribute, and `flex-grow` children collapsed to 0.
+
+    /// (a) A definite-height block whose child is an `height:auto` COLUMN flex
+    /// container with two `flex-grow` children: the children must split the
+    /// block's definite height proportionally (non-zero). RED before the fix:
+    /// the column had no definite main size → free space 0 → both children 0px.
+    #[test]
+    fn column_flex_grow_distributes_definite_ancestor_height() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        // Definite-height outer block (NOT a flex container itself).
+        let outer = doc.create_element("outer");
+        // Auto-height column flex container.
+        let col = doc.create_element("col");
+        let top = doc.create_element("top");
+        let bot = doc.create_element("bot");
+        doc.append_child(root, outer);
+        doc.append_child(outer, col);
+        doc.append_child(col, top);
+        doc.append_child(col, bot);
+
+        let mut sm = StyleMap::new();
+
+        let mut outer_s = ComputedStyle::default();
+        outer_s.display = Display::Block;
+        outer_s.width = Dimension::Px(300.0);
+        outer_s.height = Dimension::Px(400.0); // DEFINITE
+        sm.insert(outer, outer_s);
+
+        let mut col_s = ComputedStyle::default();
+        col_s.display = Display::Flex;
+        col_s.flex_direction = FlexDirection::Column;
+        col_s.width = Dimension::Px(300.0);
+        // height: AUTO — must inherit the outer block's 400px as its definite CB.
+        sm.insert(col, col_s);
+
+        let mut top_s = ComputedStyle::default();
+        top_s.flex_grow = 1.0;
+        top_s.flex_basis = Dimension::Px(0.0);
+        sm.insert(top, top_s);
+
+        let mut bot_s = ComputedStyle::default();
+        bot_s.flex_grow = 3.0;
+        bot_s.flex_basis = Dimension::Px(0.0);
+        sm.insert(bot, bot_s);
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let top_abs = tree.absolute_content_rect(tree.find_box_id_by_node(top).unwrap());
+        let bot_abs = tree.absolute_content_rect(tree.find_box_id_by_node(bot).unwrap());
+
+        // grow 1 : 3 over 400px → 100px / 300px (non-zero is the whole point).
+        assert!(
+            top_abs.height > 1.0 && bot_abs.height > 1.0,
+            "flex-grow children collapsed to 0 (top={}, bot={}) — definite \
+             ancestor height NOT propagated",
+            top_abs.height,
+            bot_abs.height
+        );
+        assert!(
+            (top_abs.height - 100.0).abs() < 1.0,
+            "top height = {} (expected ~100 = 1/4 of 400)",
+            top_abs.height
+        );
+        assert!(
+            (bot_abs.height - 300.0).abs() < 1.0,
+            "bot height = {} (expected ~300 = 3/4 of 400)",
+            bot_abs.height
+        );
+    }
+
+    /// (a') A definite border-box height: the propagated child CB height must be
+    /// the CONTENT box (minus padding+border), so flex-grow fills only the inner
+    /// region — proving the propagation respects box-sizing, not a raw forward.
+    #[test]
+    fn column_flex_grow_uses_inner_content_height_under_border_box() {
+        use liquide_style_engine::computed::BoxSizing;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let outer = doc.create_element("outer");
+        let col = doc.create_element("col");
+        let child = doc.create_element("child");
+        doc.append_child(root, outer);
+        doc.append_child(outer, col);
+        doc.append_child(col, child);
+
+        let mut sm = StyleMap::new();
+
+        let mut outer_s = ComputedStyle::default();
+        outer_s.display = Display::Block;
+        outer_s.box_sizing = BoxSizing::BorderBox;
+        outer_s.width = Dimension::Px(300.0);
+        outer_s.height = Dimension::Px(400.0); // border-box: includes padding
+        outer_s.padding.top = Dimension::Px(30.0);
+        outer_s.padding.bottom = Dimension::Px(20.0);
+        sm.insert(outer, outer_s);
+
+        let mut col_s = ComputedStyle::default();
+        col_s.display = Display::Flex;
+        col_s.flex_direction = FlexDirection::Column;
+        sm.insert(col, col_s);
+
+        let mut child_s = ComputedStyle::default();
+        child_s.flex_grow = 1.0;
+        child_s.flex_basis = Dimension::Px(0.0);
+        sm.insert(child, child_s);
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let child_abs = tree.absolute_content_rect(tree.find_box_id_by_node(child).unwrap());
+
+        // inner content height = 400 - 30 - 20 = 350.
+        assert!(
+            (child_abs.height - 350.0).abs() < 1.0,
+            "child height = {} (expected ~350 = 400 border-box minus 30+20 padding)",
+            child_abs.height
+        );
+    }
+
+    /// (c) The DEFINITE-height fix must change the containing block ONLY for a
+    /// definite ancestor — it must NOT alter the AUTO-height path. With an
+    /// AUTO-height ancestor, block.rs forwards the INCOMING `container_height`
+    /// unchanged (the existing behaviour: the viewport height flows down through
+    /// auto blocks), so a `height:50%` child resolves against that forwarded
+    /// value (720 viewport → 360), NOT against any fabricated definite height.
+    /// With a DEFINITE ancestor, the SAME child resolves against the ancestor's
+    /// OWN height (400 → 200). The two values differing is the whole point: the
+    /// fix substitutes the definite height ONLY where one exists.
+    #[test]
+    fn percent_height_child_uses_own_definite_height_not_forwarded() {
+        // ── auto-height ancestor: 50% resolves against the FORWARDED height ──
+        // (unchanged by the fix — proves we don't disturb the auto path).
+        let mut doc = Document::new();
+        let root = doc.root();
+        let outer = doc.create_element("outer"); // AUTO height
+        let inner = doc.create_element("inner"); // height: 50%
+        doc.append_child(root, outer);
+        doc.append_child(outer, inner);
+
+        let mut sm = StyleMap::new();
+        let mut outer_s = ComputedStyle::default();
+        outer_s.display = Display::Block;
+        outer_s.width = Dimension::Px(300.0);
+        // height: AUTO
+        sm.insert(outer, outer_s);
+
+        let mut inner_s = ComputedStyle::default();
+        inner_s.display = Display::Block;
+        inner_s.width = Dimension::Px(300.0);
+        inner_s.height = Dimension::Percent(50.0);
+        sm.insert(inner, inner_s);
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let inner_abs = tree.absolute_content_rect(tree.find_box_id_by_node(inner).unwrap());
+        // Auto ancestor forwards the viewport height (720) unchanged → 50% = 360.
+        // The fix did NOT fabricate a different definite CB here.
+        assert!(
+            (inner_abs.height - 360.0).abs() < 1.0,
+            "inner height = {} (expected ~360 = 50% of forwarded 720 viewport; \
+             auto-height path must be unchanged)",
+            inner_abs.height
+        );
+
+        // ── definite-height ancestor: same 50% child uses the ANCESTOR'S OWN
+        // 400px (→200), NOT the forwarded 720 (→360). This is the fix.
+        let mut doc2 = Document::new();
+        let root2 = doc2.root();
+        let outer2 = doc2.create_element("outer");
+        let inner2 = doc2.create_element("inner");
+        doc2.append_child(root2, outer2);
+        doc2.append_child(outer2, inner2);
+
+        let mut sm2 = StyleMap::new();
+        let mut outer2_s = ComputedStyle::default();
+        outer2_s.display = Display::Block;
+        outer2_s.width = Dimension::Px(300.0);
+        outer2_s.height = Dimension::Px(400.0); // DEFINITE
+        sm2.insert(outer2, outer2_s);
+
+        let mut inner2_s = ComputedStyle::default();
+        inner2_s.display = Display::Block;
+        inner2_s.width = Dimension::Px(300.0);
+        inner2_s.height = Dimension::Percent(50.0);
+        sm2.insert(inner2, inner2_s);
+
+        let mut layout2 = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree2 = layout2.layout(&doc2, &sm2, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let inner2_abs =
+            tree2.absolute_content_rect(tree2.find_box_id_by_node(inner2).unwrap());
+        // 50% of the definite 400px ancestor = 200px.
+        assert!(
+            (inner2_abs.height - 200.0).abs() < 1.0,
+            "inner height = {} (expected ~200 = 50% of definite 400 ancestor)",
+            inner2_abs.height
+        );
+    }
+
+    /// (d) HORIZONTAL (row) flex must be unaffected by the height-propagation
+    /// fix: a definite-height block with a row flex child whose items flex-grow
+    /// still splits the WIDTH, and the height fix changes nothing on the main
+    /// (horizontal) axis.
+    #[test]
+    fn row_flex_grow_unaffected_by_height_propagation() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let outer = doc.create_element("outer");
+        let row = doc.create_element("row");
+        let a = doc.create_element("a");
+        let b = doc.create_element("b");
+        doc.append_child(root, outer);
+        doc.append_child(outer, row);
+        doc.append_child(row, a);
+        doc.append_child(row, b);
+
+        let mut sm = StyleMap::new();
+
+        let mut outer_s = ComputedStyle::default();
+        outer_s.display = Display::Block;
+        outer_s.width = Dimension::Px(400.0);
+        outer_s.height = Dimension::Px(200.0); // DEFINITE (exercises propagation)
+        sm.insert(outer, outer_s);
+
+        let mut row_s = ComputedStyle::default();
+        row_s.display = Display::Flex;
+        row_s.flex_direction = FlexDirection::Row;
+        row_s.width = Dimension::Px(400.0);
+        row_s.height = Dimension::Px(50.0);
+        sm.insert(row, row_s);
+
+        let mut a_s = ComputedStyle::default();
+        a_s.flex_grow = 1.0;
+        a_s.flex_basis = Dimension::Px(0.0);
+        a_s.height = Dimension::Px(50.0);
+        sm.insert(a, a_s);
+
+        let mut b_s = ComputedStyle::default();
+        b_s.flex_grow = 1.0;
+        b_s.flex_basis = Dimension::Px(0.0);
+        b_s.height = Dimension::Px(50.0);
+        sm.insert(b, b_s);
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let a_abs = tree.absolute_content_rect(tree.find_box_id_by_node(a).unwrap());
+        let b_abs = tree.absolute_content_rect(tree.find_box_id_by_node(b).unwrap());
+
+        // Equal grow over 400px → 200 each (horizontal split intact).
+        assert!(
+            (a_abs.width - 200.0).abs() < 1.0,
+            "a width = {} (expected ~200; row flex-grow broke)",
+            a_abs.width
+        );
+        assert!(
+            (b_abs.width - 200.0).abs() < 1.0,
+            "b width = {} (expected ~200; row flex-grow broke)",
+            b_abs.width
         );
     }
 }

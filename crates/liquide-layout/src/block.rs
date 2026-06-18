@@ -188,6 +188,59 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
     let border_bottom = style.border_width.bottom;
     let border_left = style.border_width.left;
 
+    // Definite containing-block height for children (CSS "definite containing
+    // block height" propagation). When this block has a DEFINITE resolved height
+    // (`height` set, optionally clamped by min/max-height), its inner content
+    // box becomes a definite containing block, so descendants resolving
+    // percentage heights — and a column flex container's `flex-grow` distribution
+    // / grid `fr`/`%` row tracks — size against THIS block's height rather than
+    // the (possibly indefinite) height that was forwarded into this block.
+    //
+    // When `height` is auto we must NOT fabricate a height: fall through to the
+    // incoming `container_height` so content-sized boxes keep their current
+    // (auto) behaviour. The resolved height is converted to the content box
+    // (subtract padding+border) under either box-sizing, mirroring how
+    // `content_height` is derived for border-box later.
+    let child_cb_height = match resolved_explicit_height {
+        Some(h) => {
+            // Clamp the definite height by min/max-height (resolved against the
+            // incoming containing-block height, same as the later content_height
+            // clamp). This keeps the propagated value consistent with the box's
+            // own final used height.
+            let min_h = style
+                .min_height
+                .resolve_px(
+                    container_height,
+                    base_font_size,
+                    font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(0.0);
+            let max_h = style
+                .max_height
+                .resolve_px(
+                    container_height,
+                    base_font_size,
+                    font_size,
+                    viewport_w,
+                    viewport_h,
+                )
+                .unwrap_or(f32::INFINITY);
+            let used_h = h.max(min_h).min(max_h);
+            // Convert the used border-box-or-content height into the children's
+            // content-box height. For content-box, `height` already IS the
+            // content height; for border-box, subtract padding+border.
+            let inner = match style.box_sizing {
+                BoxSizing::BorderBox => {
+                    used_h - pad_top - pad_bottom - border_top - border_bottom
+                }
+                BoxSizing::ContentBox => used_h,
+            };
+            inner.max(0.0)
+        }
+        None => container_height,
+    };
     // box-sizing: content-box (default) — `width` is the content width
     // box-sizing: border-box — `width` includes padding + border
     // width: auto — fills container, subtract padding + border regardless
@@ -794,7 +847,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 text_measurer,
                 image_measurer,
                 child_avail_w,
-                container_height,
+                child_cb_height,
                 child_float_offset_x,
                 child_y,
                 viewport_w,
@@ -810,7 +863,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 text_measurer,
                 image_measurer,
                 child_avail_w,
-                container_height,
+                child_cb_height,
                 child_float_offset_x,
                 child_y,
                 viewport_w,
@@ -826,7 +879,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 text_measurer,
                 image_measurer,
                 child_avail_w,
-                container_height,
+                child_cb_height,
                 child_float_offset_x,
                 child_y,
                 viewport_w,
@@ -842,7 +895,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 text_measurer,
                 image_measurer,
                 child_avail_w,
-                container_height,
+                child_cb_height,
                 child_float_offset_x,
                 child_y,
                 viewport_w,
@@ -897,7 +950,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 text_measurer,
                 image_measurer,
                 ib_width.min(child_avail_w),
-                container_height,
+                child_cb_height,
                 child_float_offset_x,
                 child_y,
                 viewport_w,
@@ -962,7 +1015,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                         text_measurer,
                         image_measurer,
                         child_avail_w,
-                        container_height,
+                        child_cb_height,
                         child_float_offset_x,
                         child_y,
                         viewport_w,
@@ -978,7 +1031,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                         text_measurer,
                         image_measurer,
                         child_avail_w,
-                        container_height,
+                        child_cb_height,
                         child_float_offset_x,
                         child_y,
                         viewport_w,
@@ -1005,7 +1058,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                         text_measurer,
                         image_measurer,
                         child_avail_w,
-                        container_height,
+                        child_cb_height,
                         child_float_offset_x,
                         child_y,
                         viewport_w,
@@ -1045,7 +1098,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 text_measurer,
                 image_measurer,
                 child_avail_w,
-                container_height,
+                child_cb_height,
                 child_float_offset_x,
                 child_y,
                 viewport_w,
@@ -1093,7 +1146,7 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 text_measurer,
                 image_measurer,
                 child_avail_w,
-                container_height,
+                child_cb_height,
                 child_float_offset_x,
                 child_y,
                 viewport_w,

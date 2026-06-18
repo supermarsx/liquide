@@ -822,7 +822,6 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             };
 
             // Apply align-items / align-self alignment within the grid cell (vertical)
-            let child_h = b.margin_rect.height.min(cell_h);
             let v_alignment = match child_style.align_self {
                 AlignSelf::Auto => style.align_items,
                 AlignSelf::Stretch => AlignItems::Stretch,
@@ -831,6 +830,28 @@ fn layout_grid_inner<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
                 AlignSelf::FlexEnd => AlignItems::FlexEnd,
                 AlignSelf::Baseline => AlignItems::Baseline,
             };
+
+            // CSS Grid §11.1: a grid item with `align-self: stretch` (the
+            // default) and an `auto` block size is stretched to fill its row
+            // track. Without this, a `height:auto` item that resolved to its
+            // (0) content height keeps that 0 height even though its row track
+            // (now correctly sized via the definite-CB-height fix) is non-zero —
+            // the documented "grid items get 0 height" gap. Only stretch when
+            // the item's own `height` is auto (an explicit height is honoured)
+            // and the cell is taller than the current margin box.
+            if matches!(v_alignment, AlignItems::Stretch)
+                && matches!(child_style.height, Dimension::Auto)
+            {
+                let stretch = (cell_h - b.margin_rect.height).max(0.0);
+                if stretch > 0.5 {
+                    b.content_rect.height += stretch;
+                    b.padding_rect.height += stretch;
+                    b.border_rect.height += stretch;
+                    b.margin_rect.height += stretch;
+                }
+            }
+
+            let child_h = b.margin_rect.height.min(cell_h);
             let y_offset = match v_alignment {
                 AlignItems::Center => (cell_h - child_h) / 2.0,
                 AlignItems::FlexEnd => cell_h - child_h,
@@ -1503,5 +1524,146 @@ mod tests {
         // Parent should have its own tracks
         assert_eq!(pb.grid_col_tracks.len(), 2);
         assert!((pb.grid_col_tracks[0] - 100.0).abs() < 0.1);
+    }
+
+    // ── t148: definite containing-block HEIGHT propagation (engine gap #3) ──
+
+    /// (b) A definite-height BLOCK with an `height:auto` GRID child whose
+    /// `grid-template-rows` are `fr` units: the rows must resolve against the
+    /// block's definite height (propagated through block layout), not collapse
+    /// to 0. RED before the fix: the grid had no definite container_height →
+    /// `available_h_for_rows` indefinite → `fr` rows distribute 0.
+    ///
+    /// Routed through the full LayoutEngine so the BLOCK→GRID containing-block
+    /// height propagation in block.rs is exercised (NOT a direct layout_grid
+    /// call, which would bypass the bug by seeding a definite height itself).
+    #[test]
+    fn grid_fr_rows_resolve_against_definite_ancestor_height() {
+        use crate::engine::LayoutEngine;
+        use crate::geometry::Size;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let outer = doc.create_element("outer"); // definite-height BLOCK
+        let grid = doc.create_element("grid"); // auto-height GRID
+        // Two items so both explicit fr rows are occupied/materialised.
+        let a = doc.create_element("a");
+        let b = doc.create_element("b");
+        doc.append_child(root, outer);
+        doc.append_child(outer, grid);
+        doc.append_child(grid, a);
+        doc.append_child(grid, b);
+
+        let mut sm = StyleMap::new();
+
+        let mut outer_s = ComputedStyle::default();
+        outer_s.display = Display::Block;
+        outer_s.width = Dimension::Px(300.0);
+        outer_s.height = Dimension::Px(400.0); // DEFINITE
+        sm.insert(outer, outer_s);
+
+        let mut grid_s = ComputedStyle::default();
+        grid_s.display = Display::Grid;
+        grid_s.width = Dimension::Px(300.0);
+        // height: AUTO — must inherit outer's 400px to size fr rows.
+        grid_s.grid_template_rows = vec![TrackSize::Fr(1.0), TrackSize::Fr(3.0)];
+        grid_s.grid_template_columns = vec![TrackSize::Px(300.0)];
+        sm.insert(grid, grid_s);
+        sm.insert(a, ComputedStyle::default());
+        sm.insert(b, ComputedStyle::default());
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let grid_box = tree.find_box_id_by_node(grid).unwrap();
+        let gb = tree.get(grid_box).unwrap();
+        assert_eq!(
+            gb.grid_row_tracks.len(),
+            2,
+            "expected 2 row tracks, got {:?}",
+            gb.grid_row_tracks
+        );
+        // fr 1:3 over 400px → 100 / 300 (non-zero is the whole point).
+        assert!(
+            gb.grid_row_tracks[0] > 1.0 && gb.grid_row_tracks[1] > 1.0,
+            "fr rows collapsed to 0 ({:?}) — definite ancestor height NOT propagated",
+            gb.grid_row_tracks
+        );
+        assert!(
+            (gb.grid_row_tracks[0] - 100.0).abs() < 1.0,
+            "row 0 = {} (expected ~100 = 1/4 of 400)",
+            gb.grid_row_tracks[0]
+        );
+        assert!(
+            (gb.grid_row_tracks[1] - 300.0).abs() < 1.0,
+            "row 1 = {} (expected ~300 = 3/4 of 400)",
+            gb.grid_row_tracks[1]
+        );
+
+        // And the laid-out grid ITEM in row 1 must actually have that height
+        // (proves the resolved track sizes the item box, end to end).
+        let b_abs = tree.absolute_content_rect(tree.find_box_id_by_node(b).unwrap());
+        assert!(
+            (b_abs.height - 300.0).abs() < 1.5,
+            "row-1 item height = {} (expected ~300; track resolved but not applied)",
+            b_abs.height
+        );
+    }
+
+    /// (c-grid) The fix must NOT disturb the AUTO-height grid path. With an
+    /// auto-height block ancestor AND an auto-height grid, block.rs forwards the
+    /// incoming `container_height` (the viewport, 720) unchanged — exactly the
+    /// pre-fix "fr rows resolve against the viewport height" behaviour the gap
+    /// report documents as already working. So auto-ancestor fr rows still split
+    /// the forwarded 720 (no fabricated definite height is introduced); only a
+    /// DEFINITE ancestor (the fr test above) substitutes its OWN height.
+    #[test]
+    fn grid_fr_rows_unchanged_under_auto_height_ancestor() {
+        use crate::engine::LayoutEngine;
+        use crate::geometry::Size;
+
+        let mut doc = Document::new();
+        let root = doc.root();
+        let outer = doc.create_element("outer"); // AUTO height
+        let grid = doc.create_element("grid"); // AUTO height
+        let a = doc.create_element("a");
+        let b = doc.create_element("b");
+        doc.append_child(root, outer);
+        doc.append_child(outer, grid);
+        doc.append_child(grid, a);
+        doc.append_child(grid, b);
+
+        let mut sm = StyleMap::new();
+
+        let mut outer_s = ComputedStyle::default();
+        outer_s.display = Display::Block;
+        outer_s.width = Dimension::Px(300.0);
+        // height: AUTO — block.rs forwards the incoming container_height (720).
+        sm.insert(outer, outer_s);
+
+        let mut grid_s = ComputedStyle::default();
+        grid_s.display = Display::Grid;
+        grid_s.width = Dimension::Px(300.0);
+        grid_s.grid_template_rows = vec![TrackSize::Fr(1.0), TrackSize::Fr(1.0)];
+        grid_s.grid_template_columns = vec![TrackSize::Px(300.0)];
+        sm.insert(grid, grid_s);
+        sm.insert(a, ComputedStyle::default());
+        sm.insert(b, ComputedStyle::default());
+
+        let mut layout = LayoutEngine::new(Size::new(1280.0, 720.0), 16.0);
+        let tree = layout.layout(&doc, &sm, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let grid_box = tree.find_box_id_by_node(grid).unwrap();
+        let gb = tree.get(grid_box).unwrap();
+        // 1fr:1fr over the FORWARDED 720 → 360 each (unchanged auto-path
+        // behaviour; the fix did not fabricate a different definite height).
+        assert_eq!(gb.grid_row_tracks.len(), 2, "got {:?}", gb.grid_row_tracks);
+        assert!(
+            (gb.grid_row_tracks[0] - 360.0).abs() < 1.0
+                && (gb.grid_row_tracks[1] - 360.0).abs() < 1.0,
+            "auto-ancestor fr rows = {:?} (expected ~360 each = 1fr of forwarded \
+             720; auto path must be unchanged)",
+            gb.grid_row_tracks
+        );
     }
 }
