@@ -457,6 +457,38 @@ impl DevToolsPanel {
         self.inspector.build_snapshot(doc);
     }
 
+    /// A cheap, allocation-free fingerprint of every piece of panel state that
+    /// changes WHAT the devtools panel should re-serialize / re-render.
+    ///
+    /// The host throttles the (expensive) devtools refresh — the full DOM-tree
+    /// snapshot, the scene-graph snapshot, and the panel `render_template` —
+    /// to a low rate instead of every main frame. But a refresh must ALSO fire
+    /// promptly on any explicit interaction (tab switch, expand/collapse, scroll,
+    /// selection, picker toggle) and on real DOM churn (a new mutation observed),
+    /// so the tools stay responsive between the periodic ticks. This signature is
+    /// compared frame-to-frame: when it changes the host forces an immediate
+    /// refresh; otherwise it waits for the next periodic tick. Computing it is
+    /// O(1) (no DOM/scene walk), so it is safe to call every frame.
+    pub fn refresh_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.visible.hash(&mut h);
+        (self.active_tab as u8).hash(&mut h);
+        (self.side_tab as u8).hash(&mut h);
+        (self.config.dock_position as u8).hash(&mut h);
+        // Quantise the scroll offset so sub-pixel jitter does not force a refresh
+        // but a real scroll (which reveals different virtual rows) does.
+        (self.scroll_offset as i64).hash(&mut h);
+        self.selected_node.hash(&mut h);
+        self.inspector.hovered().hash(&mut h);
+        self.element_picker.is_active().hash(&mut h);
+        // DOM churn: the running total of observed mutations only advances when
+        // the live document actually changed, so a bump means the inspector /
+        // mutations tab content is stale and must be rebuilt.
+        self.mutation_log.total_count().hash(&mut h);
+        h.finish()
+    }
+
     /// Get the dock position.
     pub fn dock_position(&self) -> DockPosition {
         self.config.dock_position

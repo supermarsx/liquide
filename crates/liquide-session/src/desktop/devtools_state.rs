@@ -30,6 +30,20 @@ pub(super) static VARIABLES_CSS: &str =
 pub(super) static COMPONENTS_CSS: &str =
     include_str!("../../../../assets/themes/components.css");
 
+/// How many main frames may elapse between two PERIODIC devtools refreshes.
+///
+/// The expensive devtools work — the full DOM-tree snapshot, the scene-graph
+/// snapshot, and the panel `render_template` (which rebuilds the entire inspector
+/// tree / console / mutation log / scene tab) — used to run EVERY main frame,
+/// effectively rendering + serialising a second large UI on top of every DE
+/// frame. The inspector does not need to update at 60 Hz: refreshing it every
+/// `REFRESH_INTERVAL_FRAMES` frames yields ~10-15 Hz at a 60 fps cap, which keeps
+/// the tools live-ish while removing the per-frame cost. An explicit interaction
+/// (tab switch, expand, scroll, selection, picker) or real DOM churn forces an
+/// immediate refresh via the panel's `refresh_signature`, so it stays responsive
+/// between ticks. At 60 fps, 5 frames ≈ 12 Hz.
+const REFRESH_INTERVAL_FRAMES: u64 = 5;
+
 /// DevTools panel lifecycle and integration state.
 pub(super) struct DevToolsState {
     pub(super) dev_mode: bool,
@@ -37,6 +51,118 @@ pub(super) struct DevToolsState {
     /// The separate native devtools window, when the panel is detached
     /// (dev-mode only). `None` while the panel renders as the in-DE overlay.
     pub(super) window: Option<DevToolsWindow>,
+    /// THROTTLE state. The devtools refresh (DOM/scene serialize + template
+    /// rebuild + separate-window render) is rate-limited to roughly every
+    /// `REFRESH_INTERVAL_FRAMES` frames instead of every main frame, plus an
+    /// immediate refresh whenever the panel's `refresh_signature` changes.
+    refresh: RefreshThrottle,
+}
+
+/// Tracks when the next devtools refresh is due. Decoupled from the main DE
+/// frame rate: the DE keeps full rate, only the devtools re-serialize/re-render
+/// is throttled.
+struct RefreshThrottle {
+    /// Frames elapsed since the last refresh that actually re-serialised state.
+    frames_since: u64,
+    /// The panel `refresh_signature` at the last refresh — a change forces an
+    /// immediate (out-of-cadence) refresh so interactions feel instant.
+    last_signature: u64,
+    /// Whether ANY refresh has happened yet (the very first frame must refresh
+    /// so the panel is never empty).
+    primed: bool,
+    /// The decision computed for the CURRENT main frame by `begin_frame`. Both
+    /// `sync_template` (pre-build) and `overlay_scene` (post-build) read this so
+    /// they stay consistent within a frame.
+    refresh_this_frame: bool,
+    /// The last template produced by a refresh, re-mounted verbatim on the
+    /// throttled (non-refresh) frames so the panel stays on screen without a
+    /// rebuild. `None` until the first refresh.
+    cached_template: Option<TemplateNode>,
+    /// Set when the separate devtools window must re-render (a refresh frame, a
+    /// resize, or a routed interaction). Consumed by the host's window-render
+    /// drive so the second pipeline+raster does not run every loop iteration.
+    window_dirty: bool,
+    /// When the separate devtools window last actually rendered. The window-render
+    /// drive runs on the event loop (not the per-frame path), so it is throttled
+    /// by wall-clock time rather than frame count.
+    last_window_render: Option<std::time::Instant>,
+    /// Test-only: number of frames on which the expensive refresh (DOM/scene
+    /// serialize + template rebuild) actually ran. Proves the throttle gates the
+    /// per-frame cost.
+    #[cfg(test)]
+    refresh_count: u64,
+    /// Test-only: number of frames on which the separate window actually
+    /// re-rendered (second pipeline + raster).
+    #[cfg(test)]
+    window_render_count: u64,
+}
+
+/// Minimum wall-clock interval between separate-window repaints when nothing has
+/// explicitly marked it dirty (~12.5 Hz). Keeps the detached window live without
+/// the per-iteration second-pipeline cost.
+const WINDOW_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(80);
+
+impl RefreshThrottle {
+    fn new() -> Self {
+        Self {
+            frames_since: u64::MAX, // force a refresh on the first frame
+            last_signature: 0,
+            primed: false,
+            refresh_this_frame: false,
+            cached_template: None,
+            window_dirty: true,
+            last_window_render: None,
+            #[cfg(test)]
+            refresh_count: 0,
+            #[cfg(test)]
+            window_render_count: 0,
+        }
+    }
+
+    /// Whether the separate devtools window should repaint NOW. True when it has
+    /// been explicitly marked dirty (refresh frame / interaction / resize) or the
+    /// time-based interval has elapsed. Resets the dirty flag + timer when it
+    /// fires so a burst of dirties coalesces into one repaint per interval.
+    fn should_render_window(&mut self) -> bool {
+        let due = match self.last_window_render {
+            None => true,
+            Some(t) => t.elapsed() >= WINDOW_REFRESH_INTERVAL,
+        };
+        if self.window_dirty || due {
+            self.window_dirty = false;
+            self.last_window_render = Some(std::time::Instant::now());
+            #[cfg(test)]
+            {
+                self.window_render_count += 1;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Decide whether THIS frame should run the expensive refresh, given the
+    /// panel's current cheap `signature`. Advances the frame counter. Called once
+    /// per frame from `sync_template` (the first devtools touch of the frame).
+    fn begin_frame(&mut self, signature: u64) -> bool {
+        let signature_changed = !self.primed || signature != self.last_signature;
+        let interval_elapsed = self.frames_since >= REFRESH_INTERVAL_FRAMES;
+        let refresh = signature_changed || interval_elapsed;
+        if refresh {
+            self.frames_since = 0;
+            self.last_signature = signature;
+            self.primed = true;
+            self.window_dirty = true;
+            #[cfg(test)]
+            {
+                self.refresh_count += 1;
+            }
+        } else {
+            self.frames_since = self.frames_since.saturating_add(1);
+        }
+        self.refresh_this_frame = refresh;
+        refresh
+    }
 }
 
 impl DevToolsState {
@@ -45,6 +171,7 @@ impl DevToolsState {
             dev_mode: false,
             devtools: None,
             window: None,
+            refresh: RefreshThrottle::new(),
         }
     }
 
@@ -171,7 +298,27 @@ impl DevToolsState {
     /// Render + present the separate devtools window from the LIVE shell state.
     /// No-op when no window is open. Reads the shell document/layout/styles
     /// directly (same process, same thread — no synchronization).
+    ///
+    /// THROTTLED: this runs a SECOND full `DesktopPipeline` (style → layout →
+    /// paint) plus a full-surface raster of the window — it used to fire EVERY
+    /// event-loop iteration (often hundreds of Hz), serialised on the MAIN thread
+    /// with the DE. It now renders only when the window is marked dirty (a refresh
+    /// frame / interaction / resize) or once the refresh interval has elapsed
+    /// (~12 Hz), so an idle devtools window costs almost nothing per iteration.
+    /// The decision is taken with `should_render_window`; when it fires we refresh
+    /// the inspector snapshot from the live doc first so the detached window's
+    /// Elements tab stays current even while the main DE is idle.
     pub(super) fn render_window(&mut self, shell: &Shell, platform: &mut dyn PlatformBackend) {
+        if !self.refresh.should_render_window() {
+            return;
+        }
+        // Refresh the panel's DOM snapshot from the live document so the detached
+        // window shows current state independent of main-DE dirtiness. (The
+        // scene-graph snapshot for the Scene tab is refreshed by the main-DE
+        // `overlay_scene` path, which inspects the live desktop scene.)
+        if let Some(panel) = self.devtools.as_mut() {
+            panel.refresh_inspector(shell.document());
+        }
         let (Some(win), Some(panel)) = (self.window.as_mut(), self.devtools.as_ref()) else {
             return;
         };
@@ -204,17 +351,27 @@ impl DevToolsState {
             return false;
         };
         let doc = win.doc();
-        if right {
+        let consumed = if right {
             panel.on_right_click(x, y, styles)
         } else {
             panel.on_panel_click(x, y, styles, doc, hit_test)
+        };
+        if consumed {
+            // Repaint the window immediately on an interaction rather than waiting
+            // for the next periodic tick.
+            self.refresh.window_dirty = true;
         }
+        consumed
     }
 
     /// Route a scroll on the separate devtools window to the panel.
     pub(super) fn route_window_scroll(&mut self, x: f32, y: f32, delta_px: f32) -> bool {
         if let Some(panel) = self.devtools.as_mut() {
-            panel.on_scroll(x, y, delta_px)
+            let consumed = panel.on_scroll(x, y, delta_px);
+            if consumed {
+                self.refresh.window_dirty = true;
+            }
+            consumed
         } else {
             false
         }
@@ -231,7 +388,11 @@ impl DevToolsState {
         alt: bool,
     ) -> bool {
         if let Some(panel) = self.devtools.as_mut() {
-            panel.handle_key(key, ctrl, shift, alt)
+            let consumed = panel.handle_key(key, ctrl, shift, alt);
+            if consumed {
+                self.refresh.window_dirty = true;
+            }
+            consumed
         } else {
             false
         }
@@ -246,6 +407,8 @@ impl DevToolsState {
         if let Some(d) = self.devtools.as_mut() {
             d.set_screen_size(width as f32, height as f32);
         }
+        // A resize changes the surface — force an immediate repaint.
+        self.refresh.window_dirty = true;
     }
 
     /// Synchronise the devtools template into the shell DOM.
@@ -260,17 +423,40 @@ impl DevToolsState {
     /// stale in-DE mount paints a full-window devtools overlay (toolbar / borders
     /// / status strip) on top of the desktop — the main-DE artifact. The separate
     /// window owns the panel exclusively, so we UNMOUNT it from the shell here.
-    pub(super) fn sync_template(&self, shell: &mut Shell) {
+    pub(super) fn sync_template(&mut self, shell: &mut Shell) {
         if !self.dev_mode {
             return;
         }
 
-        if let Some(devtools) = self
+        // First devtools touch of the frame: advance the throttle and decide
+        // whether the expensive serialize/rebuild runs this frame. The decision
+        // is stored so `overlay_scene` (post-build) makes the same choice.
+        let signature = self
             .devtools
             .as_ref()
-            .filter(|d| d.is_visible() && !d.is_detached())
-        {
+            .map(|d| d.refresh_signature())
+            .unwrap_or(0);
+        let refresh = self.refresh.begin_frame(signature);
+
+        let in_de = self
+            .devtools
+            .as_ref()
+            .is_some_and(|d| d.is_visible() && !d.is_detached());
+
+        if !in_de {
+            // Detached / hidden → the panel is not mounted in the main DE. Drop
+            // the cached template so re-attaching forces a fresh build.
+            shell.unmount_template("devtools-panel");
+            self.refresh.cached_template = None;
+            return;
+        }
+
+        if refresh || self.refresh.cached_template.is_none() {
+            // REFRESH FRAME: rebuild the panel template from live state and cache
+            // it. This is the expensive path (full inspector/console/scene tree)
+            // and now runs only ~every Nth frame instead of every frame.
             let template = {
+                let devtools = self.devtools.as_ref().expect("in_de implies devtools");
                 let doc = shell.document();
                 match (shell.layout_tree(), shell.style_map()) {
                     (Some(layout), Some(styles)) => devtools.render_template(doc, layout, styles),
@@ -278,8 +464,15 @@ impl DevToolsState {
                 }
             };
             shell.mount_template("devtools-panel", &template);
+            self.refresh.cached_template = Some(template);
         } else {
-            shell.unmount_template("devtools-panel");
+            // THROTTLED FRAME: re-mount the previously-built template verbatim so
+            // the panel stays on screen without re-serialising the DOM/scene. The
+            // reconciler diffs it against the existing mount (no-op when
+            // unchanged), so this is cheap and keeps the DE at full rate.
+            if let Some(template) = self.refresh.cached_template.as_ref() {
+                shell.mount_template("devtools-panel", template);
+            }
         }
     }
 
@@ -298,13 +491,23 @@ impl DevToolsState {
             return;
         }
 
+        // Same throttle decision the pre-build `sync_template` made for this
+        // frame: only re-serialise the (expensive) DOM-tree + scene-graph
+        // snapshots on a refresh frame. `push_frame_snapshot` is O(1) and stays
+        // every-frame so the FPS/frame numbers keep ticking live.
+        let refresh = self.refresh.refresh_this_frame;
+
         let devtools = match self.devtools.as_mut() {
             Some(d) => d,
             None => return,
         };
 
         let doc = shell.document();
-        devtools.refresh_inspector(doc);
+        if refresh {
+            // EXPENSIVE: full recursive DOM walk allocating a fresh InspectorNode
+            // tree. Throttled to refresh frames (was every frame).
+            devtools.refresh_inspector(doc);
+        }
 
         if let Ok(tel) = telemetry.read() {
             let fm = tel.frame_metrics();
@@ -323,7 +526,11 @@ impl DevToolsState {
         if let (Some(layout), Some(styles)) = (shell.layout_tree(), shell.style_map()) {
             // Keep the Scene-tab debugger snapshot fresh from the MAIN scene even
             // when detached — the window's Scene tab inspects the live desktop.
-            devtools.scene_debugger.snapshot(scene);
+            // EXPENSIVE: full recursive scene-graph walk; throttled to refresh
+            // frames (was every frame).
+            if refresh {
+                devtools.scene_debugger.snapshot(scene);
+            }
             // But the direct overlay scene nodes (element-picker / layout-overlay
             // / hover+selection highlights) belong to whichever surface hosts the
             // panel. When DETACHED they are emitted by the separate window's
@@ -371,6 +578,32 @@ impl DevToolsState {
         };
         let (layout, styles) = (shell.layout_tree()?, shell.style_map()?);
         Some(win.render_to_pixels_for_test(panel, shell.document(), layout, styles))
+    }
+
+    /// Test-only: how many frames ran the expensive devtools refresh (DOM/scene
+    /// serialize + template rebuild). Proves the per-frame cost is throttled.
+    #[cfg(test)]
+    pub(super) fn refresh_count_for_test(&self) -> u64 {
+        self.refresh.refresh_count
+    }
+
+    /// Test-only: how many times the separate window actually re-rendered.
+    #[cfg(test)]
+    pub(super) fn window_render_count_for_test(&self) -> u64 {
+        self.refresh.window_render_count
+    }
+
+    /// Test-only: drive the per-frame devtools refresh decision exactly as the
+    /// render path does (`sync_template` pre-build + `overlay_scene` post-build)
+    /// for one frame, against a built shell scene. Counts a refresh iff the
+    /// throttle let the expensive serialize run this frame.
+    #[cfg(test)]
+    pub(super) fn drive_one_frame_for_test(&mut self, shell: &mut Shell) {
+        use crate::telemetry::create_telemetry;
+        let telemetry = create_telemetry(60);
+        self.sync_template(shell);
+        let mut scene = shell.build_scene();
+        self.overlay_scene(&mut scene, shell, 0, &telemetry, 1280, 800);
     }
 }
 
@@ -660,6 +893,133 @@ mod tests {
             liquide_devtools::DevToolsTab::Console,
             "clicking the Console tab in the devtools window must switch the \
              panel to Console — proving the window's events drive devtools state"
+        );
+    }
+
+    /// THROTTLE PROOF (no-fake-green): with the devtools panel open and NOTHING
+    /// interacting, the expensive per-frame refresh (full DOM-tree snapshot +
+    /// scene-graph snapshot + panel template rebuild) must run only ~once per
+    /// `REFRESH_INTERVAL_FRAMES`, NOT every frame. If the throttle is removed (the
+    /// pre-stabilisation behaviour) this asserts RED — the count would equal the
+    /// frame count.
+    #[test]
+    fn devtools_refresh_is_throttled_not_every_frame() {
+        let (mut dt, mut shell) = dev_state_with_visible_panel();
+        // Panel is visible + docked (in-DE), no interactions between frames.
+
+        const FRAMES: u64 = 60;
+        for _ in 0..FRAMES {
+            dt.drive_one_frame_for_test(&mut shell);
+        }
+
+        let refreshes = dt.refresh_count_for_test();
+        // First frame always refreshes (priming), then ~every Nth frame.
+        let expected_max = FRAMES / REFRESH_INTERVAL_FRAMES + 2;
+        assert!(
+            refreshes <= expected_max,
+            "devtools refresh must be throttled: {refreshes} refreshes over {FRAMES} \
+             idle frames (expected ≲ {expected_max}, i.e. ~every {REFRESH_INTERVAL_FRAMES} \
+             frames). Refreshing every frame ({FRAMES}) is the regression."
+        );
+        // It must still refresh SOME — a dead panel (0 refreshes) is also wrong.
+        assert!(
+            refreshes >= 2,
+            "the panel must still refresh periodically to stay live; got {refreshes}"
+        );
+        // The teeth: it must be DRAMATICALLY fewer than one-per-frame.
+        assert!(
+            refreshes * 2 < FRAMES,
+            "throttle must cut per-frame cost by well over half: {refreshes} of {FRAMES}"
+        );
+    }
+
+    /// An explicit interaction (tab switch) between frames must force an
+    /// out-of-cadence refresh on the very next frame, so the tools stay responsive
+    /// despite the throttle. Proves the on-change path.
+    #[test]
+    fn interaction_forces_immediate_refresh_between_ticks() {
+        let (mut dt, mut shell) = dev_state_with_visible_panel();
+
+        // Prime + settle into the throttled cadence (consume the refresh budget so
+        // the NEXT frame would normally be a throttled no-refresh frame).
+        dt.drive_one_frame_for_test(&mut shell); // frame 0: priming refresh
+        dt.drive_one_frame_for_test(&mut shell); // frame 1: throttled (no refresh)
+        let before = dt.refresh_count_for_test();
+
+        // Interact: switch the active tab. This changes the cheap refresh
+        // signature, which must force a refresh on the next frame even though the
+        // interval has not elapsed.
+        dt.devtools
+            .as_mut()
+            .unwrap()
+            .set_tab(liquide_devtools::DevToolsTab::Mutations);
+        dt.drive_one_frame_for_test(&mut shell);
+
+        assert_eq!(
+            dt.refresh_count_for_test(),
+            before + 1,
+            "a tab switch must force an immediate (out-of-cadence) refresh so the \
+             panel reflects the interaction without waiting for the periodic tick"
+        );
+    }
+
+    /// MAIN-DE COST PARITY (no-fake-green): the main DE frame cost with devtools
+    /// open must be close to without. We approximate cost by the number of
+    /// expensive devtools serializations performed over a run of idle frames:
+    /// with the throttle it is a small fraction of the frame count, so an
+    /// open-devtools idle frame is, on average, nearly as cheap as a no-devtools
+    /// frame (which performs ZERO devtools work).
+    #[test]
+    fn open_devtools_idle_frame_cost_is_close_to_closed() {
+        let (mut dt, mut shell) = dev_state_with_visible_panel();
+
+        const FRAMES: u64 = 60;
+        for _ in 0..FRAMES {
+            dt.drive_one_frame_for_test(&mut shell);
+        }
+        let devtools_serializations = dt.refresh_count_for_test();
+
+        // A closed-devtools run does ZERO devtools serializations per frame. The
+        // open-but-throttled run must amortise to well under one serialization per
+        // frame (here: at most ~1/REFRESH_INTERVAL_FRAMES of the frames), i.e. the
+        // average extra per-frame cost is a small fraction — not a full second
+        // render+serialize every frame.
+        assert!(
+            devtools_serializations * REFRESH_INTERVAL_FRAMES <= FRAMES + REFRESH_INTERVAL_FRAMES * 2,
+            "open-devtools per-frame serialize cost must amortise close to the \
+             closed-devtools (zero) cost: {devtools_serializations} serializations over \
+             {FRAMES} frames is too many (≈ every frame = the regression)"
+        );
+    }
+
+    /// The separate devtools WINDOW render (a second full pipeline + raster) must
+    /// be throttled too: called repeatedly within one refresh interval it renders
+    /// at most once. Proves the window render no longer fires every event-loop
+    /// iteration.
+    #[test]
+    fn separate_window_render_is_throttled_within_an_interval() {
+        let (mut dt, shell) = dev_state_with_visible_panel();
+        let mut platform = NullPlatform::default();
+        dt.dev_mode_follow_visibility();
+        dt.sync_window(&mut platform);
+        assert!(dt.has_window());
+
+        // Hammer the window-render drive many times in a tight loop (no time for
+        // the 80ms interval to elapse, no interaction marking it dirty).
+        for _ in 0..50 {
+            dt.render_window(&shell, &mut platform);
+        }
+
+        let renders = dt.window_render_count_for_test();
+        assert!(
+            renders <= 2,
+            "the separate devtools window must NOT re-render every loop iteration; \
+             it rendered {renders} times in a tight 50-iteration burst (expected ≤ 2: \
+             one initial + at most one interval boundary)"
+        );
+        assert!(
+            renders >= 1,
+            "the window must render at least once when first opened; got {renders}"
         );
     }
 }
