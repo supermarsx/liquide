@@ -72,6 +72,19 @@ const MAX_SHADOW_CACHE: usize = 256;
 pub(crate) struct CachedBoxShadow {
     /// Signature of all mask inputs (see [`box_shadow_mask_key`]).
     key: u64,
+    /// Position-INDEPENDENT signature of the mask's SHAPE (every keyed input
+    /// EXCEPT `surface_rect.x`/`.y`: width, height, corner radius, spread, blur,
+    /// colour, offset, fb dims). Two cache entries with the same `shape_key`
+    /// differ only in where the surface sits — so a moving window's identical
+    /// shadow shape can be REUSED by translating the cached mask (t179) instead
+    /// of regenerating the SDF + blur every drag frame.
+    shape_key: u64,
+    /// Whether the mask rect was fully inside `[0,fb)` when generated — i.e. no
+    /// edge pixel was clamped by `generate_shadow_mask`'s `.max(0)`/`.min(fb)`.
+    /// A translate is only byte-identical to a fresh compute when BOTH the cached
+    /// generation AND the new position are unclamped (no edge truncation at
+    /// either spot); otherwise the dimensions/edges differ and we must regenerate.
+    unclamped: bool,
     /// The pre-computed mask.
     mask: ShadowMask,
 }
@@ -554,15 +567,88 @@ impl SoftwareRenderer {
 
     /// Insert a freshly-computed chrome box-shadow mask, evicting the oldest
     /// entry when at capacity (simple FIFO — chrome shadows are few + long-lived).
-    pub(crate) fn box_shadow_cache_insert(&mut self, key: u64, mask: ShadowMask) {
+    ///
+    /// `shape_key` is the position-independent shape signature and `unclamped`
+    /// records whether the mask rect was fully inside the framebuffer when
+    /// generated; both feed the t179 translate fast path.
+    pub(crate) fn box_shadow_cache_insert(
+        &mut self,
+        key: u64,
+        shape_key: u64,
+        unclamped: bool,
+        mask: ShadowMask,
+    ) {
         if let Some(slot) = self.box_shadow_cache.iter_mut().find(|c| c.key == key) {
+            slot.shape_key = shape_key;
+            slot.unclamped = unclamped;
             slot.mask = mask;
             return;
         }
         if self.box_shadow_cache.len() >= MAX_BOX_SHADOW_CACHE {
             self.box_shadow_cache.remove(0);
         }
-        self.box_shadow_cache.push(CachedBoxShadow { key, mask });
+        self.box_shadow_cache.push(CachedBoxShadow {
+            key,
+            shape_key,
+            unclamped,
+            mask,
+        });
+    }
+
+    /// t179 position-translate fast path for a MOVING window's drop-shadow.
+    ///
+    /// On an exact-key MISS, look for an UNCLAMPED cache entry with the same
+    /// SHAPE (`shape_key`) — i.e. the identical shadow shape rendered at some
+    /// other position. If the move delta from the cached mask's origin to the
+    /// requested `(dst_x0, dst_y0)` is integral (always true for pixel positions)
+    /// and the requested position is itself unclamped (the mask rect at the new
+    /// spot is fully inside `[0,fb)`), TRANSLATE the cached mask's pixels to the
+    /// new origin and store it under the exact `key` — making subsequent identical
+    /// frames plain exact-key hits. Returns `true` when a translate was performed.
+    ///
+    /// Byte-identical basis (t178): `generate_shadow_mask` samples the SDF at
+    /// `(x0+mx)+0.5` against an `expanded_surface` anchored at `surface_rect - …`;
+    /// the coverage depends only on `(sample - centre)`. An integer move shifts
+    /// BOTH the sample grid and the surface centre by the same amount, so every
+    /// mask pixel is unchanged — only the origin moves. This holds ONLY when no
+    /// edge clamps at EITHER position (same `width`/`height`, no truncated edge),
+    /// hence the `unclamped` guard on both the source entry and the destination.
+    pub(crate) fn box_shadow_cache_translate(
+        &mut self,
+        key: u64,
+        shape_key: u64,
+        dst_unclamped: bool,
+        dst_x0: u32,
+        dst_y0: u32,
+    ) -> bool {
+        // The destination position must itself be unclamped: a clamped new spot
+        // would have a DIFFERENT (truncated) mask rect than the cached shape, so
+        // translating would paint a wrong/stale shape. Regenerate instead.
+        if !dst_unclamped {
+            return false;
+        }
+        // Find a same-shape, unclamped source entry (any position). The shape key
+        // already encodes width/height/radius/spread/blur/colour/offset/fb-dims,
+        // so a match guarantees the cached mask's pixels ARE this shape — only the
+        // origin differs. (The delta is integral by construction: both origins are
+        // `u32` framebuffer pixel coordinates.)
+        let src = self
+            .box_shadow_cache
+            .iter()
+            .find(|c| c.unclamped && c.shape_key == shape_key)
+            .map(|c| (c.mask.width, c.mask.height, c.mask.pixels.clone()));
+        let Some((width, height, pixels)) = src else {
+            return false;
+        };
+        let translated = ShadowMask {
+            pixels,
+            x0: dst_x0,
+            y0: dst_y0,
+            width,
+            height,
+        };
+        self.box_shadow_cache_insert(key, shape_key, dst_unclamped, translated);
+        true
     }
 
     /// Insert a shadow into the cache, evicting the oldest half when at capacity.

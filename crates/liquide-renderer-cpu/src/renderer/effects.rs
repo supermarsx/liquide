@@ -11,6 +11,17 @@ use crate::rasterizer;
 
 use super::{CachedShadow, SoftwareRenderer};
 
+#[cfg(test)]
+thread_local! {
+    /// Number of times `render_box_shadows_node` actually REGENERATED a chrome
+    /// box-shadow mask via `generate_shadow_mask` (full-frame path). A translate
+    /// (t179) or an exact-key hit does NOT increment this — so a drag of N move
+    /// frames over an identical shape should bump it exactly once. Tests reset it
+    /// and assert it to prove reuse vs regeneration.
+    pub(crate) static BOX_SHADOW_GENERATE_COUNT: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 impl SoftwareRenderer {
     /// Render a Glass scene node.
     pub(crate) fn render_glass_node(
@@ -282,13 +293,48 @@ impl SoftwareRenderer {
                     }
 
                     let key = box_shadow_mask_key(fb.width, fb.height, &params);
-                    if let Some(mask) = self.box_shadow_cache_get(key) {
+                    if self.box_shadow_cache_get(key).is_some() {
+                        // Exact-key HIT: same shape AND same position — reuse as-is
+                        // (the steady-chrome / identical-frame path, unchanged). The
+                        // re-get is needed because the `.is_some()` borrow above ends
+                        // before the mutable `fb` borrow in `composite`.
+                        let mask = self.box_shadow_cache_get(key).expect("just checked");
                         BoxShadow::composite_shadow_mask(fb, mask);
-                    } else if let Some(mask) =
-                        BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
-                    {
-                        BoxShadow::composite_shadow_mask(fb, &mask);
-                        self.box_shadow_cache_insert(key, mask);
+                    } else {
+                        // Exact-key MISS. A MOVING window keeps the same shadow
+                        // SHAPE but a new position, so the position-bearing `key`
+                        // changes every drag frame while the SHAPE is identical
+                        // (t175 culprit). Compute the shape signature + the mask's
+                        // would-be origin/unclamped state, and try to TRANSLATE a
+                        // cached same-shape mask to the new spot instead of
+                        // regenerating the SDF + blur (t179 fast path).
+                        let shape_key = box_shadow_shape_key(fb.width, fb.height, &params);
+                        let (dst_x0, dst_y0, dst_unclamped) =
+                            box_shadow_mask_origin(fb.width, fb.height, &params);
+                        if dst_unclamped
+                            && self.box_shadow_cache_translate(
+                                key,
+                                shape_key,
+                                dst_unclamped,
+                                dst_x0,
+                                dst_y0,
+                            )
+                        {
+                            // Translated into the cache under `key`; composite it.
+                            let mask = self.box_shadow_cache_get(key).unwrap();
+                            BoxShadow::composite_shadow_mask(fb, mask);
+                        } else if let Some(mask) =
+                            BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
+                        {
+                            // No same-shape entry to translate (or this position
+                            // clamps at an fb edge): regenerate fresh, exactly as
+                            // t175 did, and cache it under both the exact `key` and
+                            // its shape signature for future translates.
+                            #[cfg(test)]
+                            BOX_SHADOW_GENERATE_COUNT.with(|c| c.set(c.get() + 1));
+                            BoxShadow::composite_shadow_mask(fb, &mask);
+                            self.box_shadow_cache_insert(key, shape_key, dst_unclamped, mask);
+                        }
                     }
                 }
             }
@@ -781,6 +827,89 @@ fn box_shadow_mask_key(fb_width: u32, fb_height: u32, params: &ShadowParams) -> 
     params.shadow_color.b.hash(&mut h);
     params.shadow_color.a.hash(&mut h);
     h.finish()
+}
+
+/// Derive a POSITION-INDEPENDENT signature of a chrome box-shadow mask's SHAPE:
+/// every input [`box_shadow_mask_key`] hashes EXCEPT `surface_rect.x`/`.y`. Two
+/// shadows of the same width/height/corner-radius/spread/blur/colour/offset (at
+/// the same fb dims) share this key regardless of where the surface sits.
+///
+/// A moving window keeps an identical shadow shape while its position — and hence
+/// the position-bearing exact `box_shadow_mask_key` — changes every drag frame.
+/// Matching on this shape key lets the renderer REUSE the cached mask by an
+/// integer translate (t179) rather than regenerating the SDF + blur. Because the
+/// translate is only ever applied between two UNCLAMPED positions (mask rect
+/// fully inside the fb at both), and the SDF coverage depends only on
+/// `(sample − surface_centre)` — both of which shift by the same integer on a
+/// move — the translated mask is BYTE-IDENTICAL to a fresh compute. Any
+/// shape-affecting change yields a different shape key → no translate → a fresh
+/// compute, so a stale shape can never paint. `f32` fields hash by exact bits,
+/// matching `box_shadow_mask_key`.
+fn box_shadow_shape_key(fb_width: u32, fb_height: u32, params: &ShadowParams) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    fb_width.hash(&mut h);
+    fb_height.hash(&mut h);
+    // NOTE: surface_rect.x / .y are DELIBERATELY excluded — they are the only
+    // position-bearing inputs, and the whole point of this key is to be invariant
+    // to them so a move reuses the shape.
+    params.surface_rect.width.to_bits().hash(&mut h);
+    params.surface_rect.height.to_bits().hash(&mut h);
+    params.corner_radius.to_bits().hash(&mut h);
+    params.spread.to_bits().hash(&mut h);
+    params.blur_radius.hash(&mut h);
+    params.offset_x.to_bits().hash(&mut h);
+    params.offset_y.to_bits().hash(&mut h);
+    params.shadow_color.r.hash(&mut h);
+    params.shadow_color.g.hash(&mut h);
+    params.shadow_color.b.hash(&mut h);
+    params.shadow_color.a.hash(&mut h);
+    h.finish()
+}
+
+/// Compute the framebuffer origin `(x0, y0)` a freshly-generated mask WOULD have,
+/// and whether that mask rect is fully inside `[0,fb)` (UNCLAMPED).
+///
+/// This mirrors EXACTLY the geometry `BoxShadow::generate_shadow_mask` derives on
+/// the FULL-frame (no write-scissor) path: `shadow_rect` = surface expanded by
+/// `spread + blur_radius` and shifted by the offset, then clamped to the
+/// framebuffer. The mask is "unclamped" when every edge of `shadow_rect` lies
+/// within `[0,fb)` so none of the `.max(0)`/`.min(fb)` clamps truncated it — the
+/// precondition for a byte-identical integer translate (t178/t179). `x0`/`y0`
+/// match `generate_shadow_mask`'s `(shadow_rect.x.max(0) as u32).min(fb)` exactly
+/// (an unclamped value rounds toward zero identically to the floor of a
+/// non-negative coordinate).
+fn box_shadow_mask_origin(fb_width: u32, fb_height: u32, params: &ShadowParams) -> (u32, u32, bool) {
+    let expand = params.spread + params.blur_radius as f32;
+    let sr = params.surface_rect;
+    let rx = sr.x - expand + params.offset_x;
+    let ry = sr.y - expand + params.offset_y;
+    let rw = sr.width + expand * 2.0;
+    let rh = sr.height + expand * 2.0;
+    let right = rx + rw;
+    let bottom = ry + rh;
+
+    let x0 = (rx.max(0.0) as u32).min(fb_width);
+    let y0 = (ry.max(0.0) as u32).min(fb_height);
+    let x1 = (right.ceil() as u32).min(fb_width);
+    let y1 = (bottom.ceil() as u32).min(fb_height);
+
+    // Unclamped: no edge was truncated by a clamp. The low edges must be >= 0 (so
+    // `.max(0)` was a no-op) AND <= fb (so `.min(fb)` was a no-op); the high edges'
+    // ceil must be <= fb (so `.min(fb)` was a no-op). Equivalent to "the computed
+    // [x0,x1)×[y0,y1) rect equals the unclamped rect".
+    let unclamped = rx >= 0.0
+        && ry >= 0.0
+        && (rx as u32) == x0
+        && (ry as u32) == y0
+        && right.ceil() <= fb_width as f32
+        && bottom.ceil() <= fb_height as f32
+        && right.ceil() as u32 == x1
+        && bottom.ceil() as u32 == y1
+        && x1 > x0
+        && y1 > y0;
+
+    (x0, y0, unclamped)
 }
 
 /// Build a 5×4 color matrix for partial sepia (amount 0..1).
@@ -1675,5 +1804,456 @@ mod tests {
             fresh.pixels().to_vec(),
             "full frame after a scissored frame must equal a fresh full compute"
         );
+    }
+
+    // ── t179: position-translate fast path for a MOVING window's drop-shadow ───
+
+    /// Build the `ShadowParams` EXACTLY as `render_box_shadows_node` does for a
+    /// `(bounds, spec)` pair on the full-frame path (surface_rect folds in
+    /// offset/spread; offset/spread carried separately). Tests that probe the
+    /// cache helpers (`box_shadow_mask_origin`, the two keys, `cache_translate`)
+    /// MUST use this so they match the real path's params byte-for-byte.
+    fn params_for(bounds: Rect, s: &BoxShadowSpec) -> ShadowParams {
+        let shadow_bounds = Rect::new(
+            bounds.x + s.offset_x - s.spread_radius,
+            bounds.y + s.offset_y - s.spread_radius,
+            bounds.width + s.spread_radius * 2.0,
+            bounds.height + s.spread_radius * 2.0,
+        );
+        ShadowParams {
+            surface_rect: shadow_bounds,
+            corner_radius: 0.0,
+            spread: s.spread_radius,
+            blur_radius: s.blur_radius as u32,
+            offset_x: s.offset_x,
+            offset_y: s.offset_y,
+            shadow_color: s.color,
+        }
+    }
+
+    /// Render a chrome BoxShadows node on the given (possibly warm) renderer and
+    /// return the framebuffer; the generate-counter reflects whether a fresh SDF +
+    /// blur compute happened on this call (callers reset it as needed).
+    fn render_box_shadows_on(
+        renderer: &mut SoftwareRenderer,
+        id: NodeId,
+        bounds: Rect,
+        shadow: BoxShadowSpec,
+        w: u32,
+        h: u32,
+    ) -> FrameBuffer {
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        renderer.render_box_shadows_node(
+            &box_shadows_node(id, bounds, shadow),
+            &mut fb,
+            LodLevel::High,
+            1.0,
+        );
+        fb
+    }
+
+    /// (a) The TRANSLATE path must produce output BYTE-IDENTICAL to a fresh full
+    /// compute at the new position, across several integer deltas AND shapes, for
+    /// the unclamped interior case. This is the whole correctness basis (t178): an
+    /// integer move of an unclamped mask reuses the same pixels at a new origin.
+    #[test]
+    fn translate_path_is_byte_identical_to_fresh_at_new_position() {
+        let w = 320u32;
+        let h = 200u32;
+        // A few shapes (vary size / blur / spread / radius / colour / offset).
+        let shapes: &[(Rect, BoxShadowSpec)] = &[
+            (Rect::new(60.0, 60.0, 120.0, 40.0), default_shadow()),
+            (
+                Rect::new(80.0, 50.0, 90.0, 60.0),
+                BoxShadowSpec {
+                    offset_x: 3.0,
+                    offset_y: -2.0,
+                    blur_radius: 6.0,
+                    spread_radius: 0.0,
+                    color: Color::new(10, 40, 90, 200),
+                    inset: false,
+                },
+            ),
+            (
+                Rect::new(70.0, 70.0, 100.0, 50.0),
+                BoxShadowSpec {
+                    offset_x: 0.0,
+                    offset_y: 5.0,
+                    blur_radius: 16.0,
+                    spread_radius: 4.0,
+                    color: Color::new(0, 0, 0, 120),
+                    inset: false,
+                },
+            ),
+        ];
+        // Integer deltas (incl. negative + diagonal); all stay interior/unclamped.
+        let deltas: &[(f32, f32)] = &[(1.0, 0.0), (0.0, 1.0), (7.0, -3.0), (-5.0, 9.0), (12.0, 12.0)];
+
+        for (base_bounds, shadow) in shapes {
+            for &(dx, dy) in deltas {
+                // Warm a renderer at the BASE position (caches the shape).
+                let mut renderer = SoftwareRenderer::new();
+                let _ = render_box_shadows_on(&mut renderer, 1, *base_bounds, shadow.clone(), w, h);
+
+                // Move by an integer delta (different node id, as the shell churns ids).
+                let moved = Rect::new(
+                    base_bounds.x + dx,
+                    base_bounds.y + dy,
+                    base_bounds.width,
+                    base_bounds.height,
+                );
+                // Both positions must be unclamped for this case to apply.
+                let mp = params_for(moved, shadow);
+                let (_, _, moved_unclamped) = box_shadow_mask_origin(w, h, &mp);
+                assert!(moved_unclamped, "test setup: moved position must be unclamped");
+
+                BOX_SHADOW_GENERATE_COUNT.with(|c| c.set(0));
+                let got = render_box_shadows_on(&mut renderer, 2, moved, shadow.clone(), w, h);
+                assert_eq!(
+                    BOX_SHADOW_GENERATE_COUNT.with(|c| c.get()),
+                    0,
+                    "an unclamped integer move must TRANSLATE (no fresh generate), \
+                     delta=({dx},{dy})"
+                );
+
+                let fresh = render_box_shadows_fresh(moved, shadow.clone(), w, h);
+                assert_eq!(
+                    got.pixels().to_vec(),
+                    fresh.pixels().to_vec(),
+                    "translated mask must be BYTE-IDENTICAL to a fresh compute at the \
+                     new position (delta=({dx},{dy}))"
+                );
+            }
+        }
+    }
+
+    /// (b) A SEQUENCE of move frames must reuse the cached shape via translate: the
+    /// fresh-generate counter increments ONCE (the first frame) then stays put as
+    /// the window slides — not once per frame (the t175 regression this fixes).
+    #[test]
+    fn move_sequence_reuses_via_translate_generates_once() {
+        let w = 400u32;
+        let h = 240u32;
+        let shadow = default_shadow();
+        let start = Rect::new(40.0, 50.0, 140.0, 44.0);
+
+        let mut renderer = SoftwareRenderer::new();
+        BOX_SHADOW_GENERATE_COUNT.with(|c| c.set(0));
+
+        // Frame 0: cold → one fresh generate.
+        let _ = render_box_shadows_on(&mut renderer, 1, start, shadow.clone(), w, h);
+        assert_eq!(
+            BOX_SHADOW_GENERATE_COUNT.with(|c| c.get()),
+            1,
+            "the first (cold) frame must generate exactly once"
+        );
+
+        // Slide the window one pixel/frame for many frames — each must translate.
+        for i in 1..=30u32 {
+            let b = Rect::new(start.x + i as f32, start.y + (i / 2) as f32, start.width, start.height);
+            // Count ONLY the generates attributable to this move frame (a fresh
+            // compute on the cold ground-truth renderer below also bumps the shared
+            // counter, so measure the delta around the move render specifically).
+            let before = BOX_SHADOW_GENERATE_COUNT.with(|c| c.get());
+            let got = render_box_shadows_on(&mut renderer, 100 + i as u64, b, shadow.clone(), w, h);
+            assert_eq!(
+                BOX_SHADOW_GENERATE_COUNT.with(|c| c.get()),
+                before,
+                "move frame {i} regenerated instead of translating"
+            );
+            // ...and still correct vs a fresh compute at that spot.
+            let fresh = render_box_shadows_fresh(b, shadow.clone(), w, h);
+            assert_eq!(
+                got.pixels().to_vec(),
+                fresh.pixels().to_vec(),
+                "move frame {i} (translate) diverged from a fresh compute"
+            );
+        }
+    }
+
+    /// (c) A SHAPE change (resize / blur / colour) must NOT translate — it must
+    /// regenerate and match a fresh compute (no stale shape). Each shape mutation
+    /// yields a new shape key, so the translate lookup misses and a fresh generate
+    /// runs.
+    #[test]
+    fn shape_change_regenerates_never_translates_a_stale_shape() {
+        let w = 320u32;
+        let h = 200u32;
+        let base_bounds = Rect::new(60.0, 60.0, 120.0, 44.0);
+        let base = default_shadow();
+
+        type Mut = (&'static str, fn(Rect, BoxShadowSpec) -> (Rect, BoxShadowSpec));
+        let mutators: &[Mut] = &[
+            ("resize_w", |b, s| (Rect::new(b.x, b.y, b.width + 10.0, b.height), s)),
+            ("resize_h", |b, s| (Rect::new(b.x, b.y, b.width, b.height + 10.0), s)),
+            ("blur", |b, mut s| { s.blur_radius += 5.0; (b, s) }),
+            ("spread", |b, mut s| { s.spread_radius += 3.0; (b, s) }),
+            ("color", |b, mut s| { s.color = Color::new(30, 120, 60, 210); (b, s) }),
+            ("offset_x", |b, mut s| { s.offset_x += 6.0; (b, s) }),
+        ];
+
+        for (name, mutate) in mutators {
+            let mut renderer = SoftwareRenderer::new();
+            // Warm with the base shape.
+            let _ = render_box_shadows_on(&mut renderer, 1, base_bounds, base.clone(), w, h);
+
+            // Mutate the SHAPE (also move it, so a buggy translate would have a
+            // same-position fallback to fall into — it must NOT).
+            let (mb0, ms) = mutate(base_bounds, base.clone());
+            let mb = Rect::new(mb0.x + 8.0, mb0.y + 4.0, mb0.width, mb0.height);
+
+            BOX_SHADOW_GENERATE_COUNT.with(|c| c.set(0));
+            let got = render_box_shadows_on(&mut renderer, 2, mb, ms.clone(), w, h);
+            assert_eq!(
+                BOX_SHADOW_GENERATE_COUNT.with(|c| c.get()),
+                1,
+                "shape change `{name}` must REGENERATE (a translate would paint a stale shape)"
+            );
+
+            let fresh = render_box_shadows_fresh(mb, ms.clone(), w, h);
+            assert_eq!(
+                got.pixels().to_vec(),
+                fresh.pixels().to_vec(),
+                "shape change `{name}` did not match a fresh compute (stale shape served?)"
+            );
+        }
+    }
+
+    /// (d) A position whose mask rect CLAMPS at an fb edge must regenerate (never
+    /// translate a cached interior shape onto a clamped spot — the dimensions
+    /// differ, translation would be wrong).
+    #[test]
+    fn clamped_position_regenerates_does_not_translate() {
+        let w = 200u32;
+        let h = 140u32;
+        let shadow = default_shadow();
+
+        let mut renderer = SoftwareRenderer::new();
+        // Warm with an interior (unclamped) shape.
+        let interior = Rect::new(70.0, 60.0, 60.0, 30.0);
+        let ip = params_for(interior, &shadow);
+        assert!(box_shadow_mask_origin(w, h, &ip).2, "warm shape must be unclamped");
+        let _ = render_box_shadows_on(&mut renderer, 1, interior, shadow.clone(), w, h);
+
+        // Move SAME shape hard against the top-left so its expanded shadow rect
+        // crosses x<0 / y<0 → clamped.
+        let clamped = Rect::new(2.0, 2.0, 60.0, 30.0);
+        let cp = params_for(clamped, &shadow);
+        assert!(
+            !box_shadow_mask_origin(w, h, &cp).2,
+            "test setup: clamped position must report clamped"
+        );
+
+        BOX_SHADOW_GENERATE_COUNT.with(|c| c.set(0));
+        let got = render_box_shadows_on(&mut renderer, 2, clamped, shadow.clone(), w, h);
+        assert_eq!(
+            BOX_SHADOW_GENERATE_COUNT.with(|c| c.get()),
+            1,
+            "a clamped position must REGENERATE (translation across a clamp is wrong)"
+        );
+        let fresh = render_box_shadows_fresh(clamped, shadow.clone(), w, h);
+        assert_eq!(
+            got.pixels().to_vec(),
+            fresh.pixels().to_vec(),
+            "clamped-position render must equal a fresh compute"
+        );
+    }
+
+    /// TEETH 1: forcing a translate of a SHAPE-CHANGED entry paints the WRONG mask.
+    /// We mimic the bug by translating the cached (base-shape) mask to a position
+    /// computed for a DIFFERENT shape, and assert it DIVERGES from the correct
+    /// fresh compute — proving the shape-key guard is load-bearing. (If translate
+    /// ignored the shape, the real path would do exactly this and be RED.)
+    #[test]
+    fn teeth_translate_across_shape_change_is_wrong() {
+        let w = 320u32;
+        let h = 200u32;
+        let base_bounds = Rect::new(60.0, 60.0, 120.0, 44.0);
+        let base = default_shadow();
+
+        // Cache the base shape.
+        let mut renderer = SoftwareRenderer::new();
+        let _ = render_box_shadows_on(&mut renderer, 1, base_bounds, base.clone(), w, h);
+
+        // A bigger shape at a moved position. Compute ITS key/shape/origin.
+        let big = BoxShadowSpec { blur_radius: base.blur_radius + 8.0, ..base.clone() };
+        let moved = Rect::new(base_bounds.x + 6.0, base_bounds.y + 4.0, base_bounds.width, base_bounds.height);
+        let mp = params_for(moved, &big);
+        let key = box_shadow_mask_key(w, h, &mp);
+        let (ox, oy, unclamped) = box_shadow_mask_origin(w, h, &mp);
+        assert!(unclamped);
+
+        // Force a translate keyed by the BASE shape (the bug): reuse the cached
+        // base mask under the big-shape's exact key. The base shape key must use
+        // the BASE shadow's inputs (the cached entry's shape), not the big one.
+        let base_shape_key = box_shadow_shape_key(w, h, &params_for(base_bounds, &base));
+        assert!(
+            renderer.box_shadow_cache_translate(key, base_shape_key, unclamped, ox, oy),
+            "forced translate of the base shape should succeed (bug simulation)"
+        );
+        let mut wrong = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut wrong);
+        BoxShadow::composite_shadow_mask(&mut wrong, renderer.box_shadow_cache_get(key).unwrap());
+
+        // The correct render for the BIG shape at `moved`.
+        let fresh = render_box_shadows_fresh(moved, big.clone(), w, h);
+        assert_ne!(
+            wrong.pixels().to_vec(),
+            fresh.pixels().to_vec(),
+            "translating a base-shape mask under a big-shape key must be WRONG — \
+             this is why the shape-key guard exists"
+        );
+    }
+
+    /// TEETH 2: forcing a translate ACROSS a clamp boundary diverges from a fresh
+    /// compute — proving the unclamped guard is load-bearing. We translate an
+    /// interior cached mask onto a clamped spot and show it differs from the (true)
+    /// clamped fresh compute.
+    #[test]
+    fn teeth_translate_across_clamp_is_wrong() {
+        let w = 200u32;
+        let h = 140u32;
+        let shadow = default_shadow();
+
+        let mut renderer = SoftwareRenderer::new();
+        let interior = Rect::new(70.0, 60.0, 60.0, 30.0);
+        let _ = render_box_shadows_on(&mut renderer, 1, interior, shadow.clone(), w, h);
+
+        // Clamped destination (same shape, hard against the corner).
+        let clamped = Rect::new(2.0, 2.0, 60.0, 30.0);
+        let cp = params_for(clamped, &shadow);
+        let shape_key = box_shadow_shape_key(w, h, &cp);
+        let key = box_shadow_mask_key(w, h, &cp);
+        // The clamped origin (where a fresh clamped mask would START).
+        let (ox, oy, dst_unclamped) = box_shadow_mask_origin(w, h, &cp);
+        assert!(!dst_unclamped, "destination must be clamped");
+
+        // Force the bug: translate the interior mask to the clamped origin under
+        // the clamped key, BYPASSING the dst_unclamped guard (passing `true`).
+        assert!(
+            renderer.box_shadow_cache_translate(key, shape_key, true, ox, oy),
+            "forced translate onto a clamped spot should succeed (bug simulation)"
+        );
+        let mut wrong = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut wrong);
+        BoxShadow::composite_shadow_mask(&mut wrong, renderer.box_shadow_cache_get(key).unwrap());
+
+        let fresh = render_box_shadows_fresh(clamped, shadow.clone(), w, h);
+        assert_ne!(
+            wrong.pixels().to_vec(),
+            fresh.pixels().to_vec(),
+            "translating an interior mask onto a clamped spot must DIVERGE from a \
+             fresh clamped compute — this is why the unclamped guard exists"
+        );
+    }
+
+    /// Drag-frame box-shadow cost: regenerate (t175 path, position keyed) vs the
+    /// t179 translate fast path, over a realistic large window shadow. Prints both
+    /// per-frame times. Not an assertion of a hard threshold (CI timing is noisy),
+    /// but the translate path is structurally O(copy) vs O(SDF + Gaussian blur) and
+    /// is expected to save ~5-10 ms/drag frame (t173). `#[ignore]` so it never gates
+    /// CI; run with `--ignored --nocapture` to see the numbers.
+    #[test]
+    #[ignore]
+    fn bench_drag_frame_translate_vs_regenerate() {
+        use std::time::Instant;
+        let w = 1920u32;
+        let h = 1080u32;
+        // A large window-sized drop shadow (the t173 culprit shape).
+        let shadow = BoxShadowSpec {
+            offset_x: 0.0,
+            offset_y: 8.0,
+            blur_radius: 24.0,
+            spread_radius: 2.0,
+            color: Color::new(0, 0, 0, 140),
+            inset: false,
+        };
+        let bounds = Rect::new(400.0, 300.0, 900.0, 600.0);
+        let frames = 60u32;
+
+        // BEFORE (t175): every drag frame is an exact-key MISS that REGENERATES,
+        // because position is in the key. Emulate by clearing the cache each frame
+        // (so the translate path can never find a same-shape entry).
+        let mut renderer = SoftwareRenderer::new();
+        let t0 = Instant::now();
+        for i in 0..frames {
+            renderer.clear_shadow_cache();
+            let b = Rect::new(bounds.x + i as f32, bounds.y, bounds.width, bounds.height);
+            let _ = render_box_shadows_on(&mut renderer, 1, b, shadow.clone(), w, h);
+        }
+        let regen = t0.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+
+        // AFTER (t179): the cache persists, so frame 0 generates and every
+        // subsequent move frame TRANSLATES.
+        let mut renderer = SoftwareRenderer::new();
+        let _ = render_box_shadows_on(&mut renderer, 0, bounds, shadow.clone(), w, h); // warm
+        let t1 = Instant::now();
+        for i in 1..=frames {
+            let b = Rect::new(bounds.x + i as f32, bounds.y, bounds.width, bounds.height);
+            let _ = render_box_shadows_on(&mut renderer, 100 + i as u64, b, shadow.clone(), w, h);
+        }
+        let translate = t1.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+
+        println!(
+            "drag-frame box-shadow: regenerate (t175) = {regen:.3} ms/frame, \
+             translate (t179) = {translate:.3} ms/frame, saved ~{:.3} ms/frame",
+            regen - translate
+        );
+        assert!(
+            translate < regen,
+            "translate path must be faster than regenerate (got translate={translate:.3} \
+             >= regen={regen:.3})"
+        );
+    }
+
+    /// The shape key must be invariant to position (x/y) and sensitive to every
+    /// OTHER mask input — the dual of `box_shadow_mask_key_covers_every_input`.
+    #[test]
+    fn box_shadow_shape_key_is_position_invariant_and_shape_sensitive() {
+        let base = || ShadowParams {
+            surface_rect: Rect::new(10.0, 20.0, 200.0, 30.0),
+            corner_radius: 0.0,
+            spread: 2.0,
+            blur_radius: 12,
+            offset_x: 0.0,
+            offset_y: 4.0,
+            shadow_color: Color::new(0, 0, 0, 160),
+        };
+        let k0 = box_shadow_shape_key(1920, 1080, &base());
+        // Position must NOT affect the shape key.
+        let mut p = base();
+        p.surface_rect.x += 37.0;
+        assert_eq!(k0, box_shadow_shape_key(1920, 1080, &p), "x must NOT affect shape key");
+        let mut p = base();
+        p.surface_rect.y -= 11.0;
+        assert_eq!(k0, box_shadow_shape_key(1920, 1080, &p), "y must NOT affect shape key");
+        // Every other field must.
+        let mut p = base();
+        p.surface_rect.width += 1.0;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "width");
+        let mut p = base();
+        p.surface_rect.height += 1.0;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "height");
+        let mut p = base();
+        p.corner_radius += 1.0;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "corner");
+        let mut p = base();
+        p.spread += 1.0;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "spread");
+        let mut p = base();
+        p.blur_radius += 1;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "blur");
+        let mut p = base();
+        p.offset_x += 1.0;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "offset_x");
+        let mut p = base();
+        p.offset_y += 1.0;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "offset_y");
+        let mut p = base();
+        p.shadow_color.a ^= 0xFF;
+        assert_ne!(k0, box_shadow_shape_key(1920, 1080, &p), "color");
+        assert_ne!(k0, box_shadow_shape_key(1921, 1080, &base()), "fb_w");
+        assert_ne!(k0, box_shadow_shape_key(1920, 1081, &base()), "fb_h");
     }
 }
