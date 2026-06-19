@@ -41,6 +41,10 @@ impl DesktopPipeline {
 
         Self {
             style_engine,
+            base_layers: Vec::new(),
+            custom_layers: Vec::new(),
+            theme_css: None,
+            preferred_color_scheme: "light".to_string(),
             layout_engine,
             painter: liquide_paint::Painter::new(),
             next_scene_id: 1_000_000,
@@ -65,9 +69,32 @@ impl DesktopPipeline {
         &self.pending_images
     }
 
-    /// Load an additional stylesheet (e.g. a user theme override).
+    /// Load an additional override stylesheet (e.g. user `custom.css`).
+    ///
+    /// This is the CUSTOM / override layer: it is appended to the engine now AND
+    /// retained so that a later [`set_theme`] rebuild re-applies it LAST (after
+    /// the base layers and the new theme), preserving user-override priority
+    /// across a theme switch.
     pub fn add_stylesheet(&mut self, css: &str) {
         self.style_engine.add_stylesheet(css);
+        self.custom_layers.push(css.to_string());
+        self.invalidate_cached_output();
+    }
+
+    /// Load a BASE-LAYER stylesheet (design tokens / shared component defaults /
+    /// the widget toolkit / split component fragments).
+    ///
+    /// Base layers are the foundation of the cascade and MUST survive a theme
+    /// load/switch. Unlike [`add_stylesheet`] (the custom/override layer), these
+    /// are retained as the base set so that [`set_theme`]'s engine rebuild
+    /// re-applies them FIRST — before the active theme — guaranteeing the
+    /// intended cascade (base → theme → custom) on both first load and a runtime
+    /// theme switch. Without this, a theme swap would orphan
+    /// widgets.css/components.css and style the desktop from the theme file alone
+    /// (the t180-proven CSS-cascade bug).
+    pub fn add_base_layer(&mut self, css: &str) {
+        self.style_engine.add_stylesheet(css);
+        self.base_layers.push(css.to_string());
         self.invalidate_cached_output();
     }
 
@@ -78,15 +105,45 @@ impl DesktopPipeline {
         self.style_engine.font_faces()
     }
 
-    /// Replace styles with a named theme preset.
+    /// Switch the active theme, REBUILDING the engine as the full intended
+    /// cascade: base layers → active theme → custom overrides.
+    ///
+    /// The engine is rebuilt from scratch (so a theme *switch* replaces the old
+    /// theme rather than stacking it), but the retained base layers
+    /// ([`add_base_layer`]) and custom overrides ([`add_stylesheet`]) are
+    /// re-applied around the new theme. This guarantees on BOTH the initial
+    /// theme load AND a runtime switch that the live engine =
+    /// base + theme + custom — never theme-only (the t180-proven cascade bug
+    /// where base layers like widgets.css/components.css were wiped) and never
+    /// old-theme + new-theme stacked.
     pub fn set_theme(&mut self, preset_css: &str) {
-        self.style_engine =
-            StyleEngine::new(self.style_engine.viewport, self.style_engine.base_font_size);
-        self.style_engine.add_stylesheet(preset_css);
+        self.theme_css = Some(preset_css.to_string());
+        self.rebuild_style_engine();
         self.prev_styles.clear();
         self.transition_engine = TransitionEngine::new();
         self.animation_scheduler = AnimationScheduler::new();
         self.invalidate_cached_output();
+    }
+
+    /// Rebuild the style engine from the retained layers in the intended cascade
+    /// order: base layers → active theme → custom overrides. Used by
+    /// [`set_theme`] so a theme load/switch preserves the base cascade. The
+    /// preferred color scheme is re-applied because a fresh `StyleEngine`
+    /// defaults it.
+    fn rebuild_style_engine(&mut self) {
+        let mut engine =
+            StyleEngine::new(self.style_engine.viewport, self.style_engine.base_font_size);
+        for base in &self.base_layers {
+            engine.add_stylesheet(base);
+        }
+        if let Some(theme) = &self.theme_css {
+            engine.add_stylesheet(theme);
+        }
+        for custom in &self.custom_layers {
+            engine.add_stylesheet(custom);
+        }
+        engine.set_preferred_color_scheme(&self.preferred_color_scheme);
+        self.style_engine = engine;
     }
 
     /// Update viewport dimensions (e.g. on monitor resolution change).
@@ -107,6 +164,7 @@ impl DesktopPipeline {
 
     /// Set preferred color scheme used by style media queries.
     pub fn set_preferred_color_scheme(&mut self, scheme: &str) {
+        self.preferred_color_scheme = scheme.to_string();
         self.style_engine.set_preferred_color_scheme(scheme);
         self.invalidate_cached_output();
     }

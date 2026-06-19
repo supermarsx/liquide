@@ -1496,3 +1496,119 @@ fn pseudo_state_change_is_conservatively_layout_dirty() {
         "a pseudo-state change must be conservatively layout-dirty (unknown rule properties)"
     );
 }
+
+/// t181: base layers MUST survive a theme load AND a theme SWITCH into the LIVE
+/// RENDERED engine — the keystone no-fake-green test for the t180 CSS-cascade
+/// bug.
+///
+/// t180 flagged the byte-counting base-layer tests as latent fake-green: they
+/// only proved bytes were appended, NOT that the base layers survive into the
+/// rendered engine after `set_theme` (which used to rebuild the engine from the
+/// theme ALONE, wiping base layers). This test proves SURVIVAL by RENDERING: a
+/// base-layer-only rule must still resolve to its painted background color after
+/// the theme is loaded and after a subsequent theme switch. It exercises the
+/// real startup shape (base layers added FIRST, then `set_theme`).
+///
+/// TEETH: revert the loader fix (make `set_theme` rebuild from the theme alone)
+/// and this test goes RED — the base probe renders the theme/UA color (or
+/// nothing), not its own base color, after the theme load.
+#[test]
+fn base_layers_survive_theme_load_and_switch_in_rendered_engine() {
+    let config = PipelineConfig {
+        width: 200.0,
+        height: 200.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+
+    // A base-layer-only rule (stands in for a components.css / widgets.css rule).
+    // It paints an unmistakable background color that NO theme below redefines.
+    const BASE_PROBE: u8 = 77;
+    pipeline.add_base_layer(
+        r#"
+        base-probe {
+            position: absolute; left: 0; top: 0; width: 40; height: 40;
+            background: rgb(77, 77, 77);
+        }
+        "#,
+    );
+
+    let desktop = DesktopDocument::from_html(r#"<base-probe id="bp" />"#);
+
+    // 1) THEME LOAD (mirrors startup: base layers already added, then set_theme).
+    //    The theme styles an unrelated element and must NOT wipe the base probe.
+    pipeline.set_theme(
+        r#"
+        desktop-background { background: rgb(10, 20, 30); }
+        "#,
+    );
+    let after_load = pipeline.render_to_scene(&desktop.doc, 0, 16.0).0;
+    assert!(
+        background_colors(&after_load).contains(&Color::new(BASE_PROBE, BASE_PROBE, BASE_PROBE, 255)),
+        "base-layer rule must SURVIVE the theme LOAD into the rendered engine \
+         (theme-only rebuild would drop it — the t180 bug); got {:?}",
+        background_colors(&after_load)
+    );
+
+    // 2) THEME SWITCH to a *different* theme. The switch must (a) keep base, and
+    //    (b) NOT stack the old theme. We verify base survives and the new theme's
+    //    own rule renders (proving the engine was actually rebuilt with it).
+    pipeline.set_theme(
+        r#"
+        desktop-background { background: rgb(90, 100, 110); }
+        switch-probe {
+            position: absolute; left: 0; top: 0; width: 30; height: 30;
+            background: rgb(11, 22, 33);
+        }
+        "#,
+    );
+    let desktop2 =
+        DesktopDocument::from_html(r#"<base-probe id="bp" /><switch-probe id="sp" />"#);
+    let after_switch = pipeline.render_to_scene(&desktop2.doc, 1, 16.0).0;
+    let switch_colors = background_colors(&after_switch);
+    assert!(
+        switch_colors.contains(&Color::new(BASE_PROBE, BASE_PROBE, BASE_PROBE, 255)),
+        "base-layer rule must SURVIVE a theme SWITCH into the rendered engine; \
+         got {switch_colors:?}"
+    );
+    assert!(
+        switch_colors.contains(&Color::new(11, 22, 33, 255)),
+        "the switched-in theme's own rule must render (engine actually rebuilt \
+         with the new theme, not the old one); got {switch_colors:?}"
+    );
+
+    // 3) CUSTOM override priority survives a switch: a custom rule added AFTER the
+    //    theme must keep winning over a later theme switch (cascade ends with
+    //    base -> theme -> custom on every rebuild).
+    pipeline.add_stylesheet(r#"base-probe { background: rgb(1, 2, 3); }"#);
+    pipeline.set_theme(
+        r#"
+        base-probe { background: rgb(200, 200, 200); }
+        "#,
+    );
+    // `desktop` has only `base-probe`, so its single background must be the
+    // custom color — and must NOT be the base (77) or theme (200) color.
+    let custom_colors = background_colors(&pipeline.render_to_scene(&desktop.doc, 2, 16.0).0);
+    assert!(
+        custom_colors.contains(&Color::new(1, 2, 3, 255)),
+        "user custom override must win over a theme switched in afterwards \
+         (custom is re-applied LAST on every rebuild); got {custom_colors:?}"
+    );
+    assert!(
+        !custom_colors.contains(&Color::new(200, 200, 200, 255)),
+        "the switched-in theme must NOT override the user custom rule; got {custom_colors:?}"
+    );
+}
+
+/// Collect every painted `Background` color in a scene node list. The t181
+/// survival test paints each probe with a unique color and asserts presence /
+/// absence of those colors, which is robust to scene-node ordering.
+fn background_colors(nodes: &[liquide_compositor::scene::SceneNode]) -> Vec<Color> {
+    nodes
+        .iter()
+        .filter_map(|node| match node.kind {
+            SceneNodeKind::Background { color } => Some(color),
+            _ => None,
+        })
+        .collect()
+}

@@ -99,7 +99,8 @@ impl Shell {
         Ok(())
     }
 
-    /// Dynamically load an additional stylesheet into the CSS pipeline.
+    /// Dynamically load an additional override stylesheet (the custom/override
+    /// layer) into the CSS pipeline.
     pub fn add_stylesheet(&mut self, css: &str) -> bool {
         self.css_pipeline.add_stylesheet(css);
         // The window decoration geometry is now anchored to the laid-out CSS
@@ -107,6 +108,22 @@ impl Shell {
         // must invalidate the window-scene + full-scene caches — otherwise a
         // steady-state hit could serve a window subtree painted against the old
         // decoration layout.
+        self.mark_window_scene_dirty();
+        true
+    }
+
+    /// Load a BASE-LAYER stylesheet (design tokens / shared component defaults /
+    /// the widget toolkit / split component fragments) into the CSS pipeline.
+    ///
+    /// Distinct from [`add_stylesheet`]: base layers are retained as the
+    /// foundation of the cascade so they SURVIVE a theme load/switch (which
+    /// rebuilds the engine). The startup loader uses this for the
+    /// `variables.css → components.css → widgets.css → components/*.css` set so a
+    /// runtime theme swap keeps them styling the desktop instead of orphaning
+    /// them (the t180-proven CSS-cascade bug). See
+    /// [`DesktopPipeline::add_base_layer`].
+    pub fn add_base_layer_stylesheet(&mut self, css: &str) -> bool {
+        self.css_pipeline.add_base_layer(css);
         self.mark_window_scene_dirty();
         true
     }

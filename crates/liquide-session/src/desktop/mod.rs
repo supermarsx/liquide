@@ -650,7 +650,7 @@ impl DesktopCompositor {
         match std::fs::read_to_string(&candidate) {
             Ok(css) => {
                 info!("loaded base-layer CSS from {:?}", candidate);
-                shell.add_stylesheet(&css);
+                shell.add_base_layer_stylesheet(&css);
             }
             Err(err) => match Self::embedded_base_layer_css(file_name) {
                 Some(css) => {
@@ -659,7 +659,7 @@ impl DesktopCompositor {
                         error = %err,
                         "base-layer CSS not found on disk; using embedded in-binary fallback"
                     );
-                    shell.add_stylesheet(css);
+                    shell.add_base_layer_stylesheet(css);
                 }
                 None => {
                     tracing::warn!(
@@ -726,7 +726,7 @@ impl DesktopCompositor {
             match std::fs::read_to_string(&path) {
                 Ok(css) => {
                     info!("loaded split component CSS from {:?}", path);
-                    shell.add_stylesheet(&css);
+                    shell.add_base_layer_stylesheet(&css);
                 }
                 Err(err) => {
                     tracing::warn!(

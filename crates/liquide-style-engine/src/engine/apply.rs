@@ -239,7 +239,25 @@ impl StyleEngine {
                     if let Some(props) =
                         liquide_theme_css::ThemeParser::new().parse_declaration(key, &resolved_str)
                     {
-                        for (prop_key, prop_val) in props.iter() {
+                        // The re-parsed shorthand `PropertySet` carries BOTH the
+                        // expanded physical longhands (e.g. `padding-top/right/
+                        // bottom/left`) AND the shorthand key itself (`padding`,
+                        // value = a multi-value `List`). `PropertySet::iter()`
+                        // yields these in arbitrary HashMap order, and the
+                        // shorthand's `List` value resolves to `Auto` for box
+                        // properties — so if it is applied AFTER the longhands it
+                        // CLOBBERS them with `Auto` (and the outcome flips
+                        // run-to-run with hash order — a real render
+                        // nondeterminism surfaced once `var()`-based box
+                        // shorthands like `padding: var(--x) var(--y)` reach the
+                        // live cascade). Apply in property-NAME order so a
+                        // shorthand (`padding`) is always applied BEFORE its
+                        // longhands (`padding-*`) — lexicographically the bare
+                        // shorthand sorts first since "" < "-…" — making the
+                        // authoritative longhands deterministically win.
+                        let mut entries: Vec<_> = props.iter().collect();
+                        entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        for (prop_key, prop_val) in entries {
                             // Avoid infinite recursion: the parsed value is concrete
                             // (no var()), so apply directly.
                             self.apply_single_property(prop_key, prop_val, style, scope_vars);

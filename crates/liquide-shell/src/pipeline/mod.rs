@@ -36,6 +36,29 @@ use liquide_style_engine::{StyleEngine, StyleMap};
 pub struct DesktopPipeline {
     /// CSS style engine with loaded stylesheets.
     pub style_engine: StyleEngine,
+    /// Retained base-layer CSS (variables → components → widgets → split
+    /// component fragments), in load order, added via [`add_base_layer`]. These
+    /// are the foundation of the cascade and MUST survive a theme load/switch.
+    /// Because [`set_theme`] rebuilds the engine from scratch, it re-applies
+    /// this set FIRST (before the theme) so the intended cascade
+    ///   base layers → active theme → custom
+    /// holds on both the initial theme load AND a runtime theme switch. Without
+    /// retaining them here a theme swap would orphan widgets.css/components.css
+    /// and leave the running desktop styled by the theme file alone
+    /// (the t180-proven CSS-cascade bug).
+    base_layers: Vec<String>,
+    /// Retained custom/override CSS (e.g. user `custom.css`), added via
+    /// [`add_stylesheet`] AFTER the active theme. Re-applied LAST on a theme
+    /// rebuild so user overrides keep winning over the new theme.
+    custom_layers: Vec<String>,
+    /// The active theme CSS, set by [`set_theme`]. Retained so a base-layer
+    /// rebuild keeps the same theme on top, and so a theme switch replaces
+    /// (not stacks) it.
+    theme_css: Option<String>,
+    /// The preferred `color-scheme` for media queries, retained across engine
+    /// rebuilds (a fresh `StyleEngine` defaults it, so [`set_theme`] must
+    /// re-apply it or a theme swap would silently reset light/dark matching).
+    preferred_color_scheme: String,
     /// Layout engine with viewport and base font.
     pub layout_engine: LayoutEngine,
     /// The painter (stateless).
