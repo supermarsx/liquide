@@ -3429,6 +3429,34 @@ mod snapshot_recycler_tests {
 mod tests {
     use super::*;
 
+    /// Serializes the `LIQUIDE_THEME` env writes used by the wallpaper-seam
+    /// tests so they cannot race other tests that build a `DesktopCompositor`.
+    static THEME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Build a dev-mode `DesktopCompositor` under an explicit theme.
+    ///
+    /// The wallpaper image-loading seam (decode/cache/upload) needs a theme
+    /// whose `desktop-background` references an image. The shipped DEFAULT theme
+    /// (macOS Dark, t172) is a tokened gradient with NO image, so these seam
+    /// tests pin `liquid-glass` (which references `../wallpapers/aurora.png`).
+    /// The theme is read from `LIQUIDE_THEME` only at construction, so the env
+    /// is restored immediately after the compositor is built, under a lock.
+    fn dev_compositor_with_theme(theme: &str, w: u32, h: u32) -> DesktopCompositor {
+        let _guard = THEME_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var_os("LIQUIDE_THEME");
+        // SAFETY: serialized by THEME_ENV_LOCK; restored before the guard drops.
+        unsafe { std::env::set_var("LIQUIDE_THEME", theme) };
+        let mut desktop = DesktopCompositor::new(w, h);
+        // SAFETY: same serialized section.
+        match prev {
+            Some(v) => unsafe { std::env::set_var("LIQUIDE_THEME", v) },
+            None => unsafe { std::env::remove_var("LIQUIDE_THEME") },
+        }
+        desktop.set_dev_mode(true);
+        desktop.loading = false;
+        desktop
+    }
+
     #[test]
     fn strip_css_url_unwraps_url_function_and_quotes() {
         assert_eq!(
@@ -3468,16 +3496,14 @@ mod tests {
         // `../wallpapers/aurora.png`), build a scene so the CSS pipeline queues
         // the wallpaper url, then confirm the loader reads + decodes it once and
         // does not re-decode on the next call (cache hit).
-        let mut desktop = DesktopCompositor::new(320, 240);
-        desktop.set_dev_mode(true);
-        desktop.loading = false;
+        let mut desktop = dev_compositor_with_theme("liquid-glass", 320, 240);
         // Build a scene so `shell.pending_images()` is populated.
         let _ = desktop.shell.build_scene();
 
         let pending = desktop.shell.pending_images().to_vec();
-        // The default theme must reference the wallpaper; if assets are missing
-        // (no aurora.png on disk) the test environment is broken — assert it is
-        // present so a regression in the theme/asset is caught.
+        // The liquid-glass theme must reference the wallpaper; if assets are
+        // missing (no aurora.png on disk) the test environment is broken —
+        // assert it is present so a regression in the theme/asset is caught.
         assert!(
             pending.iter().any(|(_, url)| url.contains("aurora")),
             "liquid-glass desktop-background must reference the aurora wallpaper; got {pending:?}"
@@ -3504,9 +3530,7 @@ mod tests {
         // now holds the texture keyed by the SAME image_id the scene node carries
         // — i.e. `render_image_node` will find it and rasterise real pixels
         // instead of the unloaded placeholder.
-        let mut desktop = DesktopCompositor::new(320, 240);
-        desktop.set_dev_mode(true);
-        desktop.loading = false;
+        let mut desktop = dev_compositor_with_theme("liquid-glass", 320, 240);
         let _ = desktop.shell.build_scene();
 
         let pending = desktop.shell.pending_images().to_vec();

@@ -761,15 +761,15 @@ impl DesktopCompositor {
         // Load exactly one packaged theme. Appending every theme makes the UI
         // a cascade mashup and forces extra style work on every scene rebuild.
         let theme_name =
-            std::env::var("LIQUIDE_THEME").unwrap_or_else(|_| "liquid-glass".to_string());
+            std::env::var("LIQUIDE_THEME").unwrap_or_else(|_| "macos-dark".to_string());
         let theme_name = match theme_name.as_str() {
-            "liquid-glass" | "night" | "sunset" | "midday" => theme_name,
+            "macos-dark" | "liquid-glass" | "night" | "sunset" | "midday" => theme_name,
             invalid => {
                 tracing::warn!(
                     theme = invalid,
-                    "unknown LIQUIDE_THEME, falling back to liquid-glass"
+                    "unknown LIQUIDE_THEME, falling back to macos-dark"
                 );
-                "liquid-glass".to_string()
+                "macos-dark".to_string()
             }
         };
         let themes_dir = Self::resolve_asset_root().join("themes");

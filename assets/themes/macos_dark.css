@@ -1,0 +1,1134 @@
+/* ═══════════════════════════════════════════════════════
+   LiquiDE Theme: macOS Dark — Graphite
+   Preset: macos-dark   (DEFAULT)
+   Plan:   .orchestration/plans/t172-macos-theme.md (t172-e1)
+
+   Full DARK macOS-style look with a monochrome GRAPHITE accent
+   (selection, focus rings, active controls are graphite — never blue).
+
+   This file is BOTH:
+   1. A `:root` design-token override layer, so every `var(--…)` consumer in
+      the base layers (variables.css → components.css → widgets.css) resolves to
+      the graphite/dark palette without touching those files. This is the LAST
+      non-custom cascade layer, so these `:root` values win over variables.css.
+   2. A set of LITERAL element rules (desktop-background, window, dock, statusbar,
+      cursor, menus, …). The `ShellTheme` resolver (theme_loader::css_to_shell_theme)
+      and the standalone `DesktopPipeline::new` parse THIS FILE ALONE — without
+      variables.css — so `var()` would not resolve there. The literal element
+      rules below feed those renderer-painted surfaces directly (mirrors the
+      night.css pattern). Keep literals and tokens in sync.
+
+   SCOPE (t172-e1 foundation only): tokens + look. Geometry that hit-testing
+   reads (traffic-light order/placement, menu metrics) lives in BASE layers and
+   is owned by peer executors (e2 traffic-lights, e3 menu bar). This file cannot
+   move click zones — it only restyles.
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+  /* ── GRAPHITE accent (monochrome — selection/focus/active all gray) ── */
+  --accent-color:  #8e8e93;   /* graphite (macOS systemGray) */
+  --accent-hover:  #aeaeb2;
+  --accent-active: #636366;
+  --accent-subtle: rgba(142, 142, 147, 0.18);
+  --accent-text:   #c7c7cc;
+  --selection-bg:  rgba(142, 142, 147, 0.35);
+  --selection-text: rgba(255, 255, 255, 1.0);
+  --widget-focus-ring: #8e8e93;   /* widgets.css focus rings follow graphite */
+  --tab-active-bg:     rgba(142, 142, 147, 0.16);
+  --tab-active-border: #8e8e93;
+  --dock-indicator-color: #8e8e93;
+  --info-color:    #8e8e93;       /* keep "info" graphite, not blue */
+
+  /* ── Dark surfaces + vibrancy (layered grays, translucent — not pure black) ── */
+  --bg-primary:   #1e1e1e;
+  --bg-secondary: #252527;
+  --bg-tertiary:  #2c2c2e;
+  --bg-elevated:  #3a3a3c;
+  --bg-overlay:   rgba(0, 0, 0, 0.55);
+  --bg-glass:     rgba(28, 28, 30, 0.72);
+
+  --glass-tint:   rgba(28, 28, 30, 0.62);
+  --glass-blur:   30;
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-shadow: 0px 8px 32px rgba(0, 0, 0, 0.45);
+
+  --statusbar-bg:     rgba(28, 28, 30, 0.55);  /* thin translucent menu bar */
+  --statusbar-text:   rgba(255, 255, 255, 0.88);
+  --statusbar-hover-bg: rgba(142, 142, 147, 0.20);
+  --statusbar-border: rgba(255, 255, 255, 0.08);
+
+  --dock-bg:            rgba(40, 40, 42, 0.45);
+  --dock-border:        rgba(255, 255, 255, 0.12);
+  --dock-item-hover-bg: rgba(255, 255, 255, 0.08);
+
+  --menu-bg:          rgba(40, 40, 42, 0.80);
+  --menu-hover-bg:    rgba(142, 142, 147, 0.28);
+  --menu-text:        rgba(255, 255, 255, 0.92);
+  --menu-disabled-text: rgba(235, 235, 245, 0.30);
+  --menu-separator:   rgba(255, 255, 255, 0.10);
+  --menu-border:      rgba(255, 255, 255, 0.12);
+
+  --popover-bg:     rgba(40, 40, 42, 0.82);
+  --popover-border: rgba(255, 255, 255, 0.12);
+  --tooltip-bg:     rgba(40, 40, 42, 0.92);
+  --tooltip-text:   rgba(255, 255, 255, 0.92);
+  --tooltip-border: rgba(255, 255, 255, 0.12);
+
+  --window-bg:      rgba(30, 30, 30, 0.92);
+  --window-border:  rgba(255, 255, 255, 0.10);
+  --titlebar-bg:    rgba(46, 46, 48, 0.96);
+  --titlebar-text:  rgba(255, 255, 255, 0.85);
+
+  --notification-bg:          rgba(40, 40, 42, 0.88);
+  --notification-border:      rgba(255, 255, 255, 0.10);
+  --notification-title-color: rgba(255, 255, 255, 0.92);
+  --notification-body-color:  rgba(235, 235, 245, 0.60);
+
+  --dialog-bg:          rgba(40, 40, 42, 0.92);
+  --dialog-border:      rgba(255, 255, 255, 0.12);
+  --dialog-title-color: rgba(255, 255, 255, 0.92);
+
+  --launcher-bg:            rgba(40, 40, 42, 0.84);
+  --launcher-border:        rgba(255, 255, 255, 0.12);
+  --launcher-search-bg:     rgba(255, 255, 255, 0.06);
+  --launcher-item-hover-bg: rgba(142, 142, 147, 0.22);
+
+  --sidebar-bg:     rgba(36, 36, 38, 0.92);
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+
+  --search-bg:          rgba(255, 255, 255, 0.06);
+  --search-border:      rgba(255, 255, 255, 0.10);
+  --search-text:        rgba(255, 255, 255, 0.92);
+  --search-placeholder: rgba(235, 235, 245, 0.40);
+
+  /* ── Borders / separators on dark ── */
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-subtle:  rgba(255, 255, 255, 0.06);
+  --border-strong:  rgba(255, 255, 255, 0.18);
+
+  --hover-bg:  rgba(255, 255, 255, 0.06);
+  --active-bg: rgba(255, 255, 255, 0.10);
+
+  /* ── Text (graphite-neutral on dark) ── */
+  --text-primary:   rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(235, 235, 245, 0.60);
+  --text-tertiary:  rgba(235, 235, 245, 0.40);
+  --text-disabled:  rgba(235, 235, 245, 0.25);
+  --text-inverse:   rgba(28, 28, 30, 0.92);
+
+  /* ── Scrollbar (overlay-feel, graphite) ── */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --scrollbar-hover: rgba(255, 255, 255, 0.30);
+  --scrollbar-track: transparent;
+
+  /* ── Traffic-light button colors (macOS reds/yellows/greens) ──
+     close→red, minimize→yellow, maximize→green. The --minimize-button-bg /
+     --maximize-button-bg tokens are NEW; the CSS→button_colors plumbing that
+     consumes them is owned by peer executor e2. Defining them here so e2 has a
+     single source to read. */
+  --close-button-bg:        #ff5f57;
+  --close-button-hover-bg:  #e0443e;
+  --minimize-button-bg:     #febc2e;
+  --minimize-button-hover-bg: #e0a118;
+  --maximize-button-bg:     #28c840;
+  --maximize-button-hover-bg: #1eaa34;
+  --window-btn-bg:          rgba(255, 255, 255, 0.10);
+  --window-btn-hover-bg:    rgba(255, 255, 255, 0.16);
+  --titlebar-btn-size:      12;   /* small round dots */
+  --titlebar-btn-radius:    6;
+
+  /* ── Corner radii (macOS-rounded) ── */
+  --window-radius: 10;
+  --menu-radius:   10;
+  --dialog-radius: 12;
+  --radius-large:  12;
+  --dock-radius:   18;
+  --launcher-radius: 14;
+  --notification-radius: 12;
+
+  /* ── Shadows (soft, deep dark) ── */
+  --window-shadow: 0px 18px 50px rgba(0, 0, 0, 0.55);
+  --shadow-large:  0px 18px 50px rgba(0, 0, 0, 0.55);
+  --shadow-medium: 0px 8px 28px rgba(0, 0, 0, 0.45);
+  --shadow-small:  0px 2px 10px rgba(0, 0, 0, 0.35);
+  --shadow-color:  rgba(0, 0, 0, 0.55);
+
+  /* ── Menu geometry: deliberately NOT overridden here. ──
+     `--menu-item-height` / `--menu-padding` / `--menu-min-width` are read by
+     the menu hit-test ARITHMETIC (accessors.rs → events.rs), so changing them
+     moves click zones. Per the plan (§0.4) those macOS menu metrics belong in a
+     BASE layer landed alongside a menu-geometry hit-test (owned by the menu-bar
+     executor e3 + tests e9), NOT in this tokens-only foundation file. Leaving
+     them at the inherited defaults keeps paint == hit until e3/e9 land. */
+
+  /* ── Typography: SF-like system-UI stack (Inter is the SF substitute).
+     `system-ui` first so a real platform SF wins when present, else Inter.
+     No font binary changes in v1 (t170 dependency). ── */
+  --font-family-ui:      system-ui, "Inter", "SF Pro Text", sans-serif;
+  --font-family-display: system-ui, "Inter", "SF Pro Display", sans-serif;
+}
+
+/* ═══════════════════════════════════════════════════════
+   LITERAL ELEMENT RULES
+   Consumed by the ShellTheme resolver + standalone pipelines that parse this
+   file WITHOUT variables.css. Values mirror the :root tokens above.
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Wallpaper: dark macOS-style desktop background (CSS-driven, no binary). ──
+   A near-black graphite vertical gradient with a faint cool lift at the top,
+   evoking the macOS dark-mode desktop without shipping a wallpaper image. */
+desktop-background {
+    background: linear-gradient(
+        180deg,
+        rgb(44, 44, 48) 0%,
+        rgb(30, 30, 32) 48%,
+        rgb(20, 20, 22) 100%
+    );
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+}
+
+/* ── Status bar (macOS menu bar surface; e3 owns the detailed restyle) ── */
+
+statusbar {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 34;
+    padding-left: 10;
+    padding-right: 10;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 10;
+    background: rgba(28, 28, 30, 0.55);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    border-bottom-width: 1;
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 13;
+    font-weight: 500;
+    blur-radius: 30;
+    glass-tint: rgba(28, 28, 30, 0.55);
+}
+
+statusbar-slot {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 0;
+    gap: 10;
+}
+
+statusbar-slot.left { justify-content: flex-start; }
+statusbar-slot.center { justify-content: center; flex-grow: 0; flex-shrink: 0; flex-basis: auto; }
+statusbar-slot.right { justify-content: flex-end; }
+
+statusbar-item {
+    display: flex;
+    align-items: center;
+    height: 22;
+    padding-left: 6;
+    padding-right: 6;
+    border-radius: 6;
+    color: rgba(235, 235, 245, 0.78);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+statusbar-item:hover {
+    background: rgba(142, 142, 147, 0.20);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+statusbar-item#clock {
+    padding-left: 12;
+    padding-right: 12;
+    color: rgba(255, 255, 255, 0.92);
+    font-weight: 600;
+    letter-spacing: 0.2;
+}
+
+statusbar-logo {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 8;
+    padding-right: 10;
+    height: 24;
+    border-radius: 6;
+    font-weight: 700;
+    font-size: 13;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+statusbar-logo:hover {
+    background: rgba(142, 142, 147, 0.20);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 4;
+    padding-left: 8;
+    padding-right: 8;
+    height: 22;
+    border-radius: 6;
+    font-size: 12;
+    color: rgba(235, 235, 245, 0.60);
+}
+
+status-indicator:hover {
+    background: rgba(142, 142, 147, 0.20);
+    color: rgba(255, 255, 255, 0.92);
+}
+
+status-indicator.connected { color: rgb(48, 209, 88); }
+status-indicator.degraded { color: rgb(255, 214, 10); }
+status-indicator.disconnected { color: rgba(170, 170, 170, 0.74); }
+
+notification-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22;
+    height: 22;
+    padding-left: 6;
+    padding-right: 6;
+    border-radius: 6;
+    color: rgba(235, 235, 245, 0.60);
+}
+
+notification-indicator:hover {
+    background: rgba(142, 142, 147, 0.20);
+}
+
+notification-indicator.active {
+    background: rgba(142, 142, 147, 0.18);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+notification-indicator.dnd {
+    background: rgba(255, 180, 84, 0.15);
+    color: rgb(255, 180, 84);
+}
+
+session-button {
+    display: flex;
+    align-items: center;
+    gap: 6;
+    padding-left: 8;
+    padding-right: 10;
+    height: 24;
+    border-radius: 6;
+    font-size: 12;
+    font-weight: 500;
+    color: rgba(235, 235, 245, 0.78);
+}
+
+session-button:hover {
+    background: rgba(142, 142, 147, 0.20);
+}
+
+status-tray {
+    display: flex;
+    align-items: center;
+    gap: 4;
+    height: 22;
+    padding-left: 6;
+    padding-right: 6;
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.08);
+    border-width: 1;
+    border-radius: 6;
+}
+
+/* ── Windows ── */
+
+window {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    background: rgba(30, 30, 30, 0.92);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    border-radius: 10;
+    box-shadow: 0px 18px 50px rgba(0, 0, 0, 0.55);
+    glass-tint: rgba(30, 30, 30, 0.90);
+    overflow: hidden;
+}
+
+window.focused {
+    border-color: rgba(255, 255, 255, 0.18);
+    titlebar-background: rgba(46, 46, 48, 0.98);
+}
+
+/* Window frame decoration host (layout-only scaffold; paints nothing). */
+window-frame {
+    position: fixed;
+    opacity: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+window-frame > window-titlebar {
+    flex-grow: 1;
+    width: 100%;
+}
+
+/* Traffic-light style buttons. LEFT placement + glyph-on-hover are e2's job
+   (base-layer geometry); this theme only carries the macOS dot colors + small
+   round radius. Backgrounds map close→red, minimize→yellow, maximize→green. */
+pin-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 12;
+    height: 12;
+    border-radius: 6;
+    background: rgba(255, 255, 255, 0.10);
+    color: rgba(235, 235, 245, 0.70);
+}
+
+pin-button:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+pin-button.active {
+    background: rgba(142, 142, 147, 0.55);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+window-titlebar {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    height: 36;
+    padding-left: 12;
+    padding-right: 8;
+    background: rgba(46, 46, 48, 0.96);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    border-bottom-width: 1;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 13;
+    font-weight: 600;
+}
+
+window-title {
+    flex-grow: 1;
+    min-width: 0;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.85);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+titlebar-buttons {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 8;
+}
+
+/* Traffic-light buttons. macOS shows a glyph only on hover (glyph-on-hover is
+   e2's renderer work). Until e2 lands, hover applies a subtle darker tint of
+   the same dot color so the hover state is still visible (and so the chrome
+   damage-confine invariant — hover must change button pixels — holds). */
+close-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 12;
+    height: 12;
+    border-radius: 6;
+    background: #ff5f57;
+    color: rgba(0, 0, 0, 0.55);
+}
+
+close-button:hover {
+    background: #e0443e;
+    color: rgba(0, 0, 0, 0.80);
+}
+
+minimize-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 12;
+    height: 12;
+    border-radius: 6;
+    background: #febc2e;
+    color: rgba(0, 0, 0, 0.55);
+}
+
+minimize-button:hover {
+    background: #e0a118;
+    color: rgba(0, 0, 0, 0.80);
+}
+
+maximize-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 12;
+    height: 12;
+    border-radius: 6;
+    background: #28c840;
+    color: rgba(0, 0, 0, 0.55);
+}
+
+maximize-button:hover {
+    background: #1eaa34;
+    color: rgba(0, 0, 0, 0.80);
+}
+
+window-content {
+    flex-grow: 1;
+    background: rgba(28, 28, 30, 0.96);
+}
+
+/* ── Dock ── */
+
+dock {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    height: 56;
+    justify-content: center;
+    align-items: center;
+    gap: 6;
+    padding-left: 8;
+    padding-right: 8;
+    padding-top: 6;
+    padding-bottom: 6;
+    transform: translateX(-50%);
+    background: rgba(40, 40, 42, 0.45);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-top-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+    border-radius: 18;
+    blur-radius: 30;
+    glass-tint: rgba(40, 40, 42, 0.45);
+    box-shadow: 0px -2px 24px rgba(0, 0, 0, 0.50);
+}
+
+dock-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44;
+    height: 44;
+    border-radius: 12;
+    border-color: rgba(255, 255, 255, 0.08);
+    border-width: 1;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(235, 235, 245, 0.82);
+}
+
+dock-item.active {
+    color: rgba(255, 255, 255, 1.0);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+dock-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-2px);
+}
+
+dock-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-grow: 1;
+}
+
+dock-item-label {
+    display: none;
+}
+
+dock-indicator {
+    display: flex;
+    position: absolute;
+    bottom: 4;
+    width: 4;
+    height: 4;
+    border-radius: 2;
+    background: rgba(142, 142, 147, 1.0);
+}
+
+/* ── Workspace container ── */
+
+workspace-container {
+    position: fixed;
+    top: 34;
+    left: 0;
+    right: 0;
+    bottom: 56;
+    overflow: hidden;
+}
+
+/* ── Notifications ── */
+
+notification-area {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 44;
+    right: 12;
+    z-index: 20;
+    gap: 8;
+}
+
+notification {
+    display: flex;
+    flex-direction: row;
+    width: 320;
+    padding: 12;
+    border-radius: 12;
+    background: rgba(40, 40, 42, 0.88);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    blur-radius: 30;
+    glass-tint: rgba(40, 40, 42, 0.85);
+    box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.50);
+}
+
+notification.urgency-critical {
+    border-left-width: 2;
+    border-left-color: rgba(255, 95, 87, 0.95);
+}
+
+notification-icon {
+    display: flex;
+    width: 20;
+    height: 20;
+    margin-right: 10;
+    color: rgba(235, 235, 245, 0.55);
+}
+
+notification-content {
+    flex-grow: 1;
+}
+
+notification-title {
+    font-weight: 600;
+    font-size: 12;
+    color: rgba(255, 255, 255, 0.92);
+    margin-bottom: 4;
+}
+
+notification-body {
+    font-size: 12;
+    color: rgba(235, 235, 245, 0.60);
+}
+
+notification-actions {
+    display: flex;
+    gap: 6;
+    margin-top: 8;
+    padding-top: 8;
+    border-top-color: rgba(255, 255, 255, 0.08);
+    border-top-width: 1;
+}
+
+notification-action {
+    display: flex;
+    align-items: center;
+    padding-left: 8;
+    padding-right: 8;
+    height: 24;
+    border-radius: 6;
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    font-size: 12;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.90);
+}
+
+notification-action:hover {
+    background: rgba(142, 142, 147, 0.28);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+/* ── Launcher ── */
+
+launcher-overlay {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    align-items: center;
+    justify-content: center;
+    z-index: 30;
+    background: rgba(0, 0, 0, 0.52);
+    blur-radius: 4;
+}
+
+launcher {
+    display: flex;
+    flex-direction: column;
+    width: 560;
+    max-height: 600;
+    border-radius: 14;
+    background: rgba(40, 40, 42, 0.84);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+    blur-radius: 40;
+    glass-tint: rgba(40, 40, 42, 0.82);
+    box-shadow: 0px 24px 60px rgba(0, 0, 0, 0.60);
+    overflow: hidden;
+}
+
+launcher-search {
+    display: flex;
+    align-items: center;
+    height: 44;
+    padding-left: 14;
+    padding-right: 14;
+    background: rgba(255, 255, 255, 0.06);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+    border-bottom-width: 1;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 14;
+    font-weight: 500;
+}
+
+launcher-results {
+    display: flex;
+    flex-direction: column;
+    gap: 2;
+    padding: 6;
+    overflow: hidden;
+}
+
+launcher-item {
+    display: flex;
+    align-items: center;
+    height: 40;
+    padding-left: 12;
+    padding-right: 12;
+    border-radius: 8;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 13;
+}
+
+launcher-item:hover { background: rgba(255, 255, 255, 0.06); }
+launcher-item.selected { background: rgba(142, 142, 147, 0.28); }
+
+launcher-item-icon {
+    display: flex;
+    width: 18;
+    height: 18;
+    margin-right: 10;
+    color: rgba(235, 235, 245, 0.72);
+}
+
+launcher-item-label {
+    flex-grow: 1;
+}
+
+/* ── Menus ── */
+
+/* NOTE: menu metrics (padding 4, item height 28, min-width 180) deliberately
+   match the inherited defaults / hit-test fallback constants so the painted
+   menu boxes stay aligned with the hit-test arithmetic. The macOS menu-metric
+   restyle is owned by the menu-bar executor (e3) in a base layer, with a
+   paired hit-test (e9). See the `:root` menu-geometry note above. */
+context-menu {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 25;
+    padding: 4;
+    border-radius: 10;
+    background: rgba(40, 40, 42, 0.80);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+    blur-radius: 30;
+    glass-tint: rgba(40, 40, 42, 0.80);
+    box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.55);
+    min-width: 180;
+    max-height: 480;
+    overflow: hidden;
+}
+
+session-menu {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 25;
+    padding: 4;
+    border-radius: 10;
+    background: rgba(40, 40, 42, 0.80);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+    blur-radius: 30;
+    glass-tint: rgba(40, 40, 42, 0.80);
+    box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.55);
+    min-width: 200;
+    max-height: 480;
+    overflow: hidden;
+}
+
+app-menu {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    z-index: 25;
+    padding: 4;
+    border-radius: 10;
+    background: rgba(40, 40, 42, 0.80);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+    blur-radius: 30;
+    glass-tint: rgba(40, 40, 42, 0.80);
+    box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.55);
+    min-width: 180;
+    max-height: 480;
+    overflow: hidden;
+}
+
+menu-item {
+    display: flex;
+    align-items: center;
+    height: 28;
+    padding-left: 12;
+    padding-right: 12;
+    border-radius: 6;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 13;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+menu-item:hover {
+    background: rgba(142, 142, 147, 0.28);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+menu-item.disabled { color: rgba(235, 235, 245, 0.30); }
+
+menu-item-icon {
+    display: flex;
+    width: 16;
+    height: 16;
+    margin-right: 8;
+}
+
+menu-item-label {
+    flex-grow: 1;
+}
+
+menu-item-shortcut {
+    color: rgba(235, 235, 245, 0.40);
+    font-size: 11;
+}
+
+menu-item:hover > menu-item-shortcut {
+    color: rgba(255, 255, 255, 0.70);
+}
+
+menu-separator {
+    height: 1;
+    margin-top: 5;
+    margin-bottom: 5;
+    margin-left: 12;
+    margin-right: 12;
+    background: rgba(255, 255, 255, 0.10);
+}
+
+/* ── Loading ── */
+
+loading-overlay {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.78);
+}
+
+loading-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28;
+    border-radius: 12;
+    background: rgba(40, 40, 42, 0.92);
+    border-color: rgba(255, 255, 255, 0.10);
+    border-width: 1;
+    blur-radius: 30;
+    glass-tint: rgba(40, 40, 42, 0.90);
+    color: rgba(255, 255, 255, 0.92);
+}
+
+cursor { color: rgba(255, 255, 255, 0.96); scale: 1.0; }
+
+/* ── Lock screen ── */
+lockscreen-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 8000;
+    background: rgba(0, 0, 0, 0.85);
+}
+
+lockscreen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16;
+    padding: 24;
+}
+
+lockscreen-clock {
+    display: flex;
+    justify-content: center;
+    font-size: 72;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+lockscreen-date {
+    display: flex;
+    justify-content: center;
+    font-size: 16;
+    color: var(--text-secondary);
+}
+
+lockscreen-user {
+    display: flex;
+    justify-content: center;
+    font-size: 14;
+    color: var(--text-secondary);
+}
+
+lockscreen-prompt {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 280;
+    height: 44;
+    border-radius: 12;
+    background: rgba(255, 255, 255, 0.08);
+    border-width: 1;
+    border-style: solid;
+    border-color: var(--border-default);
+    cursor: text;
+}
+
+lockscreen-prompt.focused {
+    border-color: var(--accent-color);
+}
+
+lockscreen-password-dots {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20;
+    letter-spacing: 4;
+    color: var(--text-primary);
+}
+
+lockscreen-error {
+    display: flex;
+    justify-content: center;
+    font-size: 12;
+    color: var(--error-color);
+}
+
+/* ── Overview / exposé ── */
+overview-overlay {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 7000;
+    background: rgba(0, 0, 0, 0.84);
+}
+
+overview-grid {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 24;
+    padding: 48;
+}
+
+overview-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    width: 320;
+    height: 220;
+    border-radius: 12;
+    background: rgba(255, 255, 255, 0.05);
+    border-width: 1;
+    border-style: solid;
+    border-color: var(--border-default);
+}
+
+overview-tile.focused {
+    border-color: var(--accent-color);
+}
+
+overview-tile-thumb {
+    display: flex;
+    width: 100%;
+    height: 100%;
+}
+
+overview-tile-label {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+    height: 24;
+    font-size: 12;
+    color: var(--text-primary);
+}
+
+/* ── Dialog (modal message / confirm box) ── */
+dialog-overlay {
+    display: flex;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    z-index: 3000;
+    background: rgba(0, 0, 0, 0.55);
+}
+
+dialog {
+    display: flex;
+    flex-direction: column;
+    min-width: 360;
+    max-width: 520;
+    border-radius: 12;
+    background: rgba(40, 40, 42, 0.92);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+    border-style: solid;
+    blur-radius: 30;
+    glass-tint: rgba(40, 40, 42, 0.90);
+    box-shadow: 0px 18px 50px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+dialog-header {
+    display: flex;
+    align-items: center;
+    padding-left: 20;
+    padding-right: 20;
+    padding-top: 18;
+}
+
+dialog-title {
+    flex-grow: 1;
+    font-size: 16;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.92);
+}
+
+dialog-body {
+    display: flex;
+    flex-direction: column;
+    padding-left: 20;
+    padding-right: 20;
+    padding-top: 10;
+    padding-bottom: 16;
+}
+
+dialog-message {
+    font-size: 13;
+    color: rgba(235, 235, 245, 0.60);
+    line-height: 1.4;
+}
+
+dialog-actions {
+    display: flex;
+    flex-direction: row;
+    justify-content: flex-end;
+    gap: 8;
+    padding-left: 16;
+    padding-right: 16;
+    padding-bottom: 16;
+}
+
+dialog-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 32;
+    padding-left: 18;
+    padding-right: 18;
+    border-radius: 7;
+    font-size: 13;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.92);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.12);
+    border-width: 1;
+}
+
+dialog-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+dialog-button.primary {
+    background: rgba(142, 142, 147, 0.55);
+    color: rgba(255, 255, 255, 1.0);
+    border-color: rgba(255, 255, 255, 0.0);
+}
+
+dialog-button.primary:hover {
+    background: rgba(142, 142, 147, 0.75);
+    color: rgba(255, 255, 255, 1.0);
+}
+
+app-settings.sidebar-item { background: rgba(255, 255, 255, 0.05); }
+
+app-terminal {
+    background: rgb(28, 28, 30);
+    color: rgb(234, 234, 234);
+    font-family: monospace;
+}
+
+app-browser.urlbar {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.08);
+    border-width: 1;
+}

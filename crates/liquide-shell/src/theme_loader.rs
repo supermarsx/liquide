@@ -335,12 +335,19 @@ fn average_stops(stops: &[ColorStop]) -> Option<Color> {
     ))
 }
 
-/// Get the default theme CSS (Night theme).
+/// Get the default theme CSS (macOS Dark — Graphite).
 ///
-/// The default theme is Night — OLED-optimized with true black backgrounds
-/// and restrained glass effects for maximum battery efficiency.
+/// The default theme is macOS Dark (t172): a full-dark macOS-style look with a
+/// monochrome graphite accent (selection/focus/active are graphite, not blue).
 pub fn default_theme_css() -> &'static str {
-    themes::night::CSS
+    themes::macos_dark::CSS
+}
+
+/// Create the macOS Dark — Graphite theme CSS (t172, the default theme).
+///
+/// Full dark macOS-style look with a monochrome graphite accent.
+pub fn macos_dark_css() -> &'static str {
+    themes::macos_dark::CSS
 }
 
 /// Create the default Liquid Glass dark theme CSS (spec §2.1 "Standard")
@@ -383,8 +390,9 @@ pub fn midday_css() -> &'static str {
 /// Map a theme preset ID to its external `.css` filename (without path).
 fn theme_id_to_filename(theme_id: &str) -> Option<&'static str> {
     match theme_id {
+        "macos-dark" | "default" => Some("macos_dark.css"),
         "liquid-glass" | "standard" => Some("liquid_glass.css"),
-        "night" | "default" => Some("night.css"),
+        "night" => Some("night.css"),
         "sunset" => Some("sunset.css"),
         "midday" => Some("midday.css"),
         _ => None,
@@ -448,7 +456,7 @@ pub fn load_theme_into_engine(
         engine.add_stylesheet(&css);
     } else {
         warn!(
-            "Theme '{}' not found externally or embedded; using Night fallback",
+            "Theme '{}' not found externally or embedded; using default (macOS Dark) fallback",
             theme_id
         );
         engine.add_stylesheet(default_theme_css());
