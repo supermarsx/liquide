@@ -295,6 +295,45 @@ impl FontDatabase {
         }
     }
 
+    /// Create a font database that is **guaranteed non-empty**: it has the
+    /// embedded fallback face registered under every generic/concrete UI family.
+    ///
+    /// This is the safe default for any renderer that would otherwise be built
+    /// with an empty database. An empty `FontDatabase` makes the CPU renderer's
+    /// glyph worker fall through to its 8x16 bitmap font, whose advances diverge
+    /// from the rustybuzz layout advances — so a renderer that lays out text with
+    /// real metrics but paints it with the bitmap font produces jumbled /
+    /// overlapping glyphs (root cause of the windowed-text bug, t167). Seeding at
+    /// least the embedded face means layout AND paint use the *same* real face,
+    /// so no renderer ever silently degrades to the divergent bitmap path.
+    ///
+    /// Disk fonts are still preferred when available — prefer
+    /// [`with_default_fonts`](Self::with_default_fonts) (which loads the packaged
+    /// faces and only falls back to the embedded one when none are on disk). Use
+    /// this constructor when there is no assets directory to load from.
+    #[must_use]
+    pub fn with_embedded_fallback() -> Self {
+        let mut db = Self::new();
+        db.register_embedded_fallback();
+        db
+    }
+
+    /// Create a font database pre-loaded with the packaged default font set from
+    /// `assets_dir` (and the embedded fallback when none are present on disk).
+    ///
+    /// This is the single-source builder windowed renderers (the separate
+    /// devtools window and per-window chrome/content threads) use so they lay out
+    /// and paint text with the SAME faces/advances as the main desktop renderer,
+    /// instead of being constructed empty and degrading to the 8x16 bitmap font
+    /// (t167). The result is always non-empty: [`load_default_fonts`] registers
+    /// the embedded fallback when the assets directory has no fonts.
+    #[must_use]
+    pub fn with_default_fonts(assets_dir: impl AsRef<Path>) -> Self {
+        let mut db = Self::new();
+        db.load_default_fonts(assets_dir);
+        db
+    }
+
     /// Add a directory to search for font files.
     pub fn add_search_dir(&mut self, dir: impl Into<PathBuf>) {
         self.search_dirs.push(dir.into());
@@ -1124,6 +1163,53 @@ mod tests {
         assert!(
             db.resolve(EMBEDDED_FALLBACK_FAMILY, 400, false).is_some(),
             "the fallback family must resolve directly"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn with_embedded_fallback_is_never_empty_and_resolves_ui_families() {
+        // Defense-in-depth (t167): a database built via with_embedded_fallback
+        // must have at least one real face AND resolve the generic/concrete UI
+        // families a renderer requests — so an empty-DB renderer can never
+        // silently degrade to the divergent 8x16 bitmap path.
+        let db = FontDatabase::with_embedded_fallback();
+        assert!(
+            db.face_count() >= 1,
+            "with_embedded_fallback must register at least one face"
+        );
+        for family in [
+            "sans-serif",
+            "system-ui",
+            "monospace",
+            "Inter",
+            "JetBrains Mono",
+            EMBEDDED_FALLBACK_FAMILY,
+        ] {
+            assert!(
+                db.resolve(family, 400, false).is_some(),
+                "with_embedded_fallback must resolve {family:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn with_default_fonts_is_non_empty_even_for_an_empty_assets_dir() {
+        // The windowed-renderer builder: even when the assets dir has no fonts on
+        // disk, it must end up non-empty (embedded fallback) so the per-window
+        // renderers lay out and paint with a real face instead of the bitmap font.
+        let dir = unique_temp_dir("default-fonts-empty");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let db = FontDatabase::with_default_fonts(&dir);
+        assert!(
+            db.face_count() >= 1,
+            "with_default_fonts must never yield an empty database"
+        );
+        assert!(
+            db.resolve("sans-serif", 400, false).is_some(),
+            "with_default_fonts must resolve sans-serif"
         );
 
         let _ = std::fs::remove_dir_all(dir);

@@ -119,6 +119,13 @@ impl DevToolsWindow {
         pipeline.add_stylesheet(VARIABLES_CSS);
         pipeline.add_stylesheet(COMPONENTS_CSS);
         pipeline.add_stylesheet(DEVTOOLS_CSS);
+        // Lay out text with REAL font metrics (not the approximate default
+        // measurer) so the LAYOUT advances agree with the renderer's PAINT
+        // advances below — both now use the same loaded faces, matching the main
+        // DE and removing the bitmap-vs-rustybuzz divergence (t167).
+        pipeline.set_font_db(std::sync::Arc::new(std::sync::RwLock::new(
+            super::window_render::build_window_font_database(),
+        )));
 
         let fb = FrameBuffer::new(width, height, PixelFormat::Bgra8);
 
@@ -129,7 +136,14 @@ impl DevToolsWindow {
             width,
             height,
             pipeline,
-            renderer: SoftwareRenderer::new(),
+            // Seed the REAL font DB (same faces as the main DE) so the devtools
+            // text lays out and paints consistently. An empty DB (the old
+            // `SoftwareRenderer::new()`) made every glyph fall to the 8x16 bitmap
+            // font, whose advances diverge from the rustybuzz layout advances —
+            // producing the jumbled devtools text (t167).
+            renderer: SoftwareRenderer::with_font_db(
+                super::window_render::build_window_font_database(),
+            ),
             fb,
             host_doc: parse_html("<devtools-host></devtools-host>"),
             hit_test: None,
@@ -292,6 +306,49 @@ impl DevToolsWindow {
         self.fb.pixels().to_vec()
     }
 
+    /// Test-only: rasterise an already-built scene with an EXTERNALLY supplied
+    /// renderer into a fresh framebuffer, returning the BGRA pixels. Lets a test
+    /// paint the SAME scene with the real (font-seeded) renderer and with an
+    /// empty-DB `SoftwareRenderer::new()` and compare them — proving the font
+    /// seed actually changes PAINT (the bitmap-vs-rustybuzz divergence, t167).
+    #[cfg(test)]
+    fn rasterize_scene_with_for_test(
+        &self,
+        scene: &SceneNode,
+        renderer: &mut SoftwareRenderer,
+    ) -> Vec<u8> {
+        let flat = scene.flatten();
+        let mut fb = FrameBuffer::new(self.width, self.height, PixelFormat::Bgra8);
+        if let Some(px) = fb.pixels_mut() {
+            px.iter_mut().for_each(|b| *b = 0);
+        }
+        let damage = Self::full_surface_damage(self.width, self.height);
+        let _ = renderer.render(&flat, &mut fb, &damage);
+        fb.pixels().to_vec()
+    }
+
+    /// Test-only: read-only access to the host doc's last-rendered scene text
+    /// node bounds. Returns the first single-line Text node whose text matches
+    /// `needle`, as `(bounds_x, bounds_y, bounds_w, bounds_h)`.
+    #[cfg(test)]
+    fn find_text_node_bounds(scene: &SceneNode, needle: &str) -> Option<(f32, f32, f32, f32)> {
+        fn walk(node: &SceneNode, needle: &str) -> Option<(f32, f32, f32, f32)> {
+            if let SceneNodeKind::Text { text, .. } = &node.kind {
+                if text.trim() == needle {
+                    let b = node.properties.bounds;
+                    return Some((b.x, b.y, b.width, b.height));
+                }
+            }
+            for c in &node.children {
+                if let Some(found) = walk(c, needle) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        walk(scene, needle)
+    }
+
     /// Destroy the native window. Idempotent.
     pub(super) fn destroy(&mut self, platform: &mut dyn PlatformBackend) {
         if self.destroyed {
@@ -303,5 +360,219 @@ impl DevToolsWindow {
         } else {
             info!(handle = self.handle.0, "separate devtools window destroyed");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_devtools::{DevToolsConfig, DevToolsPanel, DevToolsTab, DockPosition};
+    use liquide_platform::NullPlatform;
+    use liquide_shell::Shell;
+
+    /// Stand up a shell (so the panel has live layout/styles), a DETACHED +
+    /// visible devtools panel (fills the window), and a `DevToolsWindow`.
+    fn detached_window_and_panel() -> (DevToolsWindow, Shell, DevToolsPanel) {
+        let mut shell = Shell::new(1280.0, 800.0);
+        // Build a scene so the shell exposes layout + styles for the panel.
+        let _ = shell.build_scene();
+
+        let mut panel = DevToolsPanel::new(DevToolsConfig::default());
+        panel.show();
+        panel.set_dock_position(DockPosition::Detached);
+        panel.set_tab(DevToolsTab::Elements);
+
+        let mut platform = NullPlatform::default();
+        let window = DevToolsWindow::create(&mut platform).expect("devtools window must create");
+        (window, shell, panel)
+    }
+
+    /// Luma of a BGRA pixel.
+    fn luma(p: &[u8]) -> u32 {
+        // p = [B, G, R, A]
+        (p[0] as u32 + p[1] as u32 + p[2] as u32) / 3
+    }
+
+    /// Count pixels in a rect whose luma differs from the modal background luma
+    /// by more than `thresh` — i.e. "ink".
+    fn ink_count(px: &[u8], fb_w: u32, rect: (u32, u32, u32, u32), bg: u32, thresh: u32) -> usize {
+        let (x0, y0, w, h) = rect;
+        let mut n = 0;
+        for y in y0..(y0 + h) {
+            for x in x0..(x0 + w) {
+                let idx = ((y * fb_w + x) * 4) as usize;
+                if idx + 4 <= px.len() {
+                    let l = luma(&px[idx..idx + 4]);
+                    if l.abs_diff(bg) > thresh {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn windowed_renderer_is_seeded_with_a_non_empty_font_db() {
+        // Defense-in-depth + primary fix (t167): the windowed renderers MUST be
+        // built from a real, non-empty font DB. Before the fix the window used
+        // `SoftwareRenderer::new()` (0 faces) so every glyph dropped to the 8x16
+        // bitmap font. This guards the SOURCE the three window sites seed from.
+        let db = super::super::window_render::build_window_font_database();
+        assert!(
+            db.face_count() >= 1,
+            "windowed font DB must be non-empty (got {} faces)",
+            db.face_count()
+        );
+        assert!(
+            db.resolve("sans-serif", 400, false).is_some(),
+            "windowed font DB must resolve the generic UI families the panel requests"
+        );
+    }
+
+    #[test]
+    fn devtools_window_text_region_has_real_glyph_ink_not_a_uniform_block() {
+        // RED on the empty-DB bitmap path / GREEN after the real DB is seeded.
+        //
+        // A real, anti-aliased font produces MANY distinct luma levels in a text
+        // region (glyph edges blend with the background). The 8x16 bitmap
+        // fallback paints essentially binary blocks (bg + solid), and a font-EMPTY
+        // window paints no glyph ink at all. We assert a known tab label's region
+        // has both real ink AND a spread of luma levels — which the empty-DB /
+        // bitmap path cannot produce.
+        let (mut window, shell, panel) = detached_window_and_panel();
+        let (layout, styles) = (
+            shell.layout_tree().expect("layout"),
+            shell.style_map().expect("styles"),
+        );
+        let scene = window.build_scene(&panel, shell.document(), layout, styles);
+
+        // Locate a single-line tab label.
+        let bounds = DevToolsWindow::find_text_node_bounds(&scene, "Elements")
+            .or_else(|| DevToolsWindow::find_text_node_bounds(&scene, "Console"))
+            .expect("a devtools tab label text node must exist in the window scene");
+
+        // Render the WINDOW with its OWN renderer (the path under test). Twice,
+        // because glyph rasterization is async: the FIRST render issues the glyph
+        // requests and the SECOND (capture path) block-drains them into the atlas
+        // and paints real ink (a single render returns before any glyph arrives —
+        // the t167 capture caveat).
+        let _ = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
+        let px = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
+
+        // Pixel rect over the label (clamped to the surface).
+        let x0 = bounds.0.max(0.0).floor() as u32;
+        let y0 = bounds.1.max(0.0).floor() as u32;
+        let w = (bounds.2.ceil() as u32).min(window.width.saturating_sub(x0));
+        let h = (bounds.3.ceil() as u32).min(window.height.saturating_sub(y0));
+        assert!(w > 4 && h > 4, "label box must be non-degenerate ({w}x{h})");
+        let rect = (x0, y0, w, h);
+
+        // Modal background luma = the panel bg (the most common level in the box).
+        let bg = {
+            let mut counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+            for y in y0..(y0 + h) {
+                for x in x0..(x0 + w) {
+                    let idx = ((y * window.width + x) * 4) as usize;
+                    if idx + 4 <= px.len() {
+                        *counts.entry(luma(&px[idx..idx + 4])).or_default() += 1;
+                    }
+                }
+            }
+            counts.into_iter().max_by_key(|(_, c)| *c).map(|(l, _)| l).unwrap_or(0)
+        };
+
+        let ink = ink_count(&px, window.width, rect, bg, 16);
+        assert!(
+            ink >= 8,
+            "the tab-label region must contain real glyph ink (got {ink} ink pixels over bg luma {bg})"
+        );
+    }
+
+    #[test]
+    fn window_text_paint_matches_real_font_not_the_bitmap_fallback() {
+        // TEETH (the assertion that goes RED if the fix is reverted):
+        //
+        // The bitmap fallback (used by a font-EMPTY renderer) advances every glyph
+        // by ~ceil(font_size/2) — a uniform half-em — so it lays a string out at a
+        // DIFFERENT width than a real proportional font (Inter at 11px is much
+        // narrower). We render the SAME scene with (a) the window's OWN renderer
+        // (the path under test) and (b) an explicit empty-DB `SoftwareRenderer::
+        // new()` baseline, then measure the painted ink WIDTH of the "Elements"
+        // tab label in each.
+        //
+        // - FIXED: the window renderer is font-seeded → its ink width matches the
+        //   real-font advances and DIFFERS from the empty-DB bitmap width.
+        // - REVERTED (window back to `SoftwareRenderer::new()`): the window
+        //   renderer is ALSO empty-DB, so both widths are identical → RED.
+        let (mut window, shell, panel) = detached_window_and_panel();
+        let (layout, styles) = (
+            shell.layout_tree().expect("layout"),
+            shell.style_map().expect("styles"),
+        );
+        let scene = window.build_scene(&panel, shell.document(), layout, styles);
+
+        let bounds = DevToolsWindow::find_text_node_bounds(&scene, "Elements")
+            .or_else(|| DevToolsWindow::find_text_node_bounds(&scene, "Console"))
+            .expect("a devtools tab label text node must exist");
+        let fb_w = window.width;
+        let fb_h = window.height;
+        let y0 = bounds.1.max(0.0).floor() as u32;
+        let h = (bounds.3.ceil() as u32).min(fb_h.saturating_sub(y0)).max(1);
+        // Scan a generous horizontal span starting at the label origin so a WIDER
+        // (bitmap) run is fully captured.
+        let scan_x0 = bounds.0.max(0.0).floor() as u32;
+        let scan_w = ((bounds.2 * 3.0).ceil() as u32).min(fb_w.saturating_sub(scan_x0));
+
+        // Measure the painted ink width (rightmost − leftmost inked column) of the
+        // label in a frame, relative to the local row background.
+        let ink_width = |px: &[u8]| -> u32 {
+            let mut min_x: Option<u32> = None;
+            let mut max_x: Option<u32> = None;
+            for y in y0..(y0 + h) {
+                for x in scan_x0..(scan_x0 + scan_w) {
+                    let idx = ((y * fb_w + x) * 4) as usize;
+                    if idx + 4 <= px.len() {
+                        let l = luma(&px[idx..idx + 4]);
+                        // The label text is near-white over the dark panel bg.
+                        if l > 120 {
+                            min_x = Some(min_x.map_or(x, |m| m.min(x)));
+                            max_x = Some(max_x.map_or(x, |m| m.max(x)));
+                        }
+                    }
+                }
+            }
+            match (min_x, max_x) {
+                (Some(a), Some(b)) => b - a + 1,
+                _ => 0,
+            }
+        };
+
+        // (a) Window's own renderer (path under test), rendered twice for glyphs.
+        let _ = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
+        let window_px = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
+        let window_w = ink_width(&window_px);
+
+        // (b) Explicit empty-DB baseline of the SAME scene (the bitmap path).
+        let mut empty = SoftwareRenderer::new();
+        let _ = window.rasterize_scene_with_for_test(&scene, &mut empty);
+        let empty_px = window.rasterize_scene_with_for_test(&scene, &mut empty);
+        let empty_w = ink_width(&empty_px);
+
+        assert!(
+            window_w > 0,
+            "the window must paint real glyph ink for the label (got width 0)"
+        );
+        assert!(
+            empty_w > 0,
+            "sanity: the empty-DB bitmap path must still paint something (got width 0)"
+        );
+        assert!(
+            window_w.abs_diff(empty_w) >= 3,
+            "the window's painted text width ({window_w}px) must differ from the \
+             empty-DB bitmap width ({empty_w}px): a font-seeded window paints with \
+             real proportional advances, the bitmap fallback with a uniform half-em. \
+             Equal widths mean the window is still empty-DB (fix not effective / reverted)."
+        );
     }
 }
