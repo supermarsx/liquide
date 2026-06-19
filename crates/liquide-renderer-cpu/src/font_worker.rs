@@ -724,4 +724,70 @@ mod tests {
             "synthetic oblique should not narrow the glyph"
         );
     }
+
+    fn bitmap_req(codepoint: char, target_height: u32) -> GlyphRequest {
+        GlyphRequest {
+            key: GlyphKey {
+                font_id: 0,
+                glyph_id: codepoint as u32,
+                size_px: target_height as u16,
+                subpixel: false,
+            },
+            generation: 0,
+            codepoint,
+            target_height,
+            // Empty family forces the bitmap-fallback path directly.
+            font_family: String::new(),
+            font_weight: 400,
+            italic: false,
+        }
+    }
+
+    /// t167 bug-3, rasterized end-to-end: a devtools icon codepoint that the UI
+    /// fonts don't cover must rasterize (through the real supersample/box-filter
+    /// bitmap path) to a glyph with INTERNAL VARIATION — not a uniform block.
+    ///
+    /// Before the fix the codepoint hit `FALLBACK_GLYPH = [0xFF; 16]` and
+    /// rasterized to an all-`255` alpha buffer (a solid filled rectangle); this
+    /// test would have been RED on that path.
+    #[test]
+    fn devtools_icon_glyph_rasterizes_to_a_non_uniform_shape() {
+        let font = BitmapFont::new();
+        // ⊕ picker, ▶ tree-collapsed, ⊥ dock-bottom: representatives of the set.
+        for ch in ['\u{2295}', '\u{25B6}', '\u{22A5}', '\u{25BC}'] {
+            let g = FontWorker::rasterize_glyph_bitmap(&font, &bitmap_req(ch, 16));
+            assert!(!g.bitmap.is_empty(), "icon glyph produced no pixels");
+            let inked = g.bitmap.iter().filter(|&&a| a > 32).count();
+            let blank = g.bitmap.iter().filter(|&&a| a < 224).count();
+            assert!(inked > 0, "U+{:04X} must have visible ink", ch as u32);
+            // The whole point: NOT every pixel is fully inked. A solid block
+            // (the old fallback) would make `blank == 0`.
+            assert!(
+                blank > 0,
+                "U+{:04X} rasterized to a uniform solid block (all pixels inked) — \
+                 this is the t167 'icon is a block' regression",
+                ch as u32
+            );
+        }
+    }
+
+    /// Defense-in-depth: even a truly-unknown codepoint (no icon mapping) must
+    /// rasterize to the hollow `.notdef` box, never a solid block.
+    #[test]
+    fn unknown_codepoint_rasterizes_to_hollow_notdef_not_solid_block() {
+        let font = BitmapFont::new();
+        let g = FontWorker::rasterize_glyph_bitmap(&font, &bitmap_req('\u{FFFF}', 16));
+        let fully_inked = g.bitmap.iter().filter(|&&a| a == 255).count();
+        let total = g.bitmap.len();
+        assert!(total > 0);
+        assert!(
+            fully_inked < total,
+            "unknown-codepoint fallback must not be a fully-inked solid block \
+             ({fully_inked}/{total} pixels at full alpha)"
+        );
+        assert!(
+            g.bitmap.iter().any(|&a| a > 32),
+            "fallback box must still be a visible glyph"
+        );
+    }
 }

@@ -26,11 +26,26 @@ fn space_is_blank() {
 }
 
 #[test]
-fn fallback_is_filled() {
+fn fallback_is_not_a_solid_block() {
     let font = BitmapFont::new();
-    // Non-ASCII character should return the filled-block fallback.
+    // A genuinely-unknown, non-icon codepoint returns the `.notdef` fallback.
+    // It MUST NOT be a fully-inked solid block (`[0xFF; 16]`) — that is the
+    // worst possible notdef and is exactly the t167 "solid block" symptom.
     let g = font.glyph('\u{FFFF}');
-    assert!(g.iter().all(|&b| b == 0xFF));
+    assert!(
+        !g.iter().all(|&b| b == 0xFF),
+        "fallback glyph must not be a fully-inked solid block"
+    );
+    // It must still be a *visible* glyph (the classic tofu box), so it has
+    // both inked and non-inked rows — internal structure, not uniform.
+    assert!(
+        g.iter().any(|&b| b != 0x00),
+        "fallback glyph must have visible ink (an outline box)"
+    );
+    assert!(
+        g.iter().any(|&b| b == 0x00),
+        "fallback glyph must have empty pixels (hollow, not solid)"
+    );
 }
 
 #[test]
@@ -82,18 +97,64 @@ fn glyph_lookup_boundaries() {
     let _ = font.glyph(' ');
     // Last printable ASCII
     let _ = font.glyph('~');
-    // Just below range
+    // Just below range — falls to the hollow `.notdef` box (not a solid block).
     let g = font.glyph('\x1F');
+    assert_eq!(g, &FALLBACK_GLYPH, "below-range should be fallback");
     assert!(
-        g.iter().all(|&b| b == 0xFF),
-        "below-range should be fallback"
+        !g.iter().all(|&b| b == 0xFF),
+        "below-range fallback must not be solid"
     );
-    // Just above range
+    // Just above range — same.
     let g = font.glyph('\x7F');
+    assert_eq!(g, &FALLBACK_GLYPH, "above-range should be fallback");
     assert!(
-        g.iter().all(|&b| b == 0xFF),
-        "above-range should be fallback"
+        !g.iter().all(|&b| b == 0xFF),
+        "above-range fallback must not be solid"
     );
+}
+
+/// The devtools dingbat codepoints must resolve to recognizable icon glyphs —
+/// NOT the `.notdef` fallback and, critically, NOT a uniform solid block.
+///
+/// This is the t167 bug-3 regression guard. Before the fix every one of these
+/// codepoints fell through to `FALLBACK_GLYPH = [0xFF; 16]` (a solid filled
+/// rectangle), so each devtools toolbar button / tree arrow painted as an
+/// opaque block instead of an icon.
+#[test]
+fn devtools_icon_codepoints_render_as_structured_icons_not_blocks() {
+    let font = BitmapFont::new();
+    let icons = [
+        ('\u{25B6}', "▶ tree-collapsed"),
+        ('\u{25BC}', "▼ tree-expanded"),
+        ('\u{2295}', "⊕ picker"),
+        ('\u{25EB}', "◫ detach"),
+        ('\u{22A5}', "⊥ dock-bottom"),
+        ('\u{22A2}', "⊢ dock-right"),
+        ('\u{2713}', "✓ applied"),
+        ('\u{25CB}', "○ pending"),
+    ];
+    for (ch, label) in icons {
+        let g = font.glyph(ch);
+        // Not the notdef fallback.
+        assert_ne!(
+            g, &FALLBACK_GLYPH,
+            "{label} must have a real icon glyph, not the .notdef fallback"
+        );
+        // Not a solid block (this is the teeth: the old [0xFF;16] path).
+        assert!(
+            !g.iter().all(|&b| b == 0xFF),
+            "{label} must not be a solid filled block"
+        );
+        // Has real internal structure: a mix of inked and non-inked pixels.
+        assert!(
+            g.iter().any(|&b| b != 0x00),
+            "{label} must have visible ink"
+        );
+        assert!(
+            g.iter().any(|&b| b != 0xFF),
+            "{label} must have non-inked (background) pixels for internal shape"
+        );
+    }
 }
 
 #[test]

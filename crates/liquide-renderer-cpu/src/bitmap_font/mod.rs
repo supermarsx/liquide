@@ -12,6 +12,7 @@
 //! 8x16 alpha values.  The cache is computed once on first use.
 
 mod data;
+mod icon_glyphs;
 mod render;
 
 #[cfg(test)]
@@ -48,13 +49,17 @@ impl BitmapFont {
     /// Return the 16 row-bytes for `ch`.
     ///
     /// Each byte encodes one row of 8 pixels (MSB = leftmost).
-    /// Characters outside printable ASCII (32..=126) return a
-    /// solid filled-block glyph (all `0xFF` bytes).
+    /// Printable ASCII (32..=126) maps to its glyph; a handful of devtools
+    /// "dingbat" codepoints (arrows, picker, dock/detach tacks, check/ring)
+    /// map to recognizable icon shapes (see [`icon_glyphs`]); anything else
+    /// returns the [`FALLBACK_GLYPH`] `.notdef` outline.
     #[must_use]
     pub fn glyph(&self, ch: char) -> &[u8; 16] {
         let code = ch as u32;
         if code >= 32 && code <= 126 {
             &FONT_DATA[(code - 32) as usize]
+        } else if let Some(icon) = icon_glyphs::icon_glyph(ch) {
+            icon
         } else {
             &FALLBACK_GLYPH
         }

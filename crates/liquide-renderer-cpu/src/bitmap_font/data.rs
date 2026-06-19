@@ -3,8 +3,33 @@
 //! Contains the static lookup table for printable ASCII (32..=126)
 //! and the fallback glyph used for out-of-range characters.
 
-/// Fallback glyph: solid filled block (all pixels set).
-pub(super) static FALLBACK_GLYPH: [u8; 16] = [0xFF; 16];
+/// Fallback (`.notdef`) glyph for any codepoint with no real or bitmap glyph.
+///
+/// This is a thin **hollow box outline**, NOT a solid filled block. A fully
+/// inked block (`[0xFF; 16]`, the previous value) is the worst possible
+/// `.notdef`: an uncovered codepoint paints an alarming opaque rectangle that
+/// looks like a rendering bug (t167). A hollow outline degrades gracefully —
+/// it reads as "missing glyph" (the classic tofu box) and, by having internal
+/// non-inked pixels, never masquerades as a solid UI element.
+#[rustfmt::skip]
+pub(super) static FALLBACK_GLYPH: [u8; 16] = [
+    0x00, // ........
+    0x00, // ........
+    0x7E, // .######.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x42, // .#....#.
+    0x7E, // .######.
+    0x00, // ........
+    0x00, // ........
+];
 
 /// Glyph data for printable ASCII 32..=126 (95 glyphs).
 ///
