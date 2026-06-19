@@ -166,6 +166,90 @@ fn focused_thumb_restyles_pixels() {
     );
 }
 
+/// The :focus ring MOVES with selection: focusing the high thumb both lights the
+/// high thumb AND reverts the low thumb to its unfocused look. Two pixel deltas at
+/// two boxes prove the restyle tracks the focused thumb, not a constant.
+#[test]
+fn focus_ring_moves_between_thumbs() {
+    let mut g = gallery_with(RangeSlider::new(0.0, 100.0, 20.0, 80.0));
+    let root = g.host.root_of("rs").unwrap();
+    let (lo, hi) = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        (
+            q.box_of_part(root, "thumb-low").expect("low thumb"),
+            q.box_of_part(root, "thumb-high").expect("high thumb"),
+        )
+    };
+    let lo_pt = ((lo.x + lo.width / 2.0) as u32, (lo.y + lo.height / 2.0) as u32);
+    let hi_pt = ((hi.x + hi.width / 2.0) as u32, (hi.y + hi.height / 2.0) as u32);
+
+    // Default focus = Low. Capture both thumb centers in this state.
+    g.host.set_focus(Some("rs"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let lo_focused = Gallery::pixel(&g.rasterize(), lo_pt.0, lo_pt.1);
+    let hi_unfocused = Gallery::pixel(&g.rasterize(), hi_pt.0, hi_pt.1);
+
+    // Toggle focus to High; both thumbs must change appearance.
+    g.key(KeyInput::new(keys::SPACE, 0));
+    assert_eq!(as_range(&g).focused_thumb(), Thumb::High);
+    g.relayout();
+    let lo_now = Gallery::pixel(&g.rasterize(), lo_pt.0, lo_pt.1);
+    let hi_now = Gallery::pixel(&g.rasterize(), hi_pt.0, hi_pt.1);
+
+    assert!(
+        lo_focused != lo_now,
+        "the low thumb must LOSE the focus ring (was {lo_focused:?}, now {lo_now:?})"
+    );
+    assert!(
+        hi_unfocused != hi_now,
+        "the high thumb must GAIN the focus ring (was {hi_unfocused:?}, now {hi_now:?})"
+    );
+}
+
+/// The selected-range FILL (the tinted middle spacer) paints the accent BETWEEN
+/// the thumbs and tracks the values: a narrow range leaves a midpoint sample bare,
+/// a wide range fills it. The fill geometry is value-driven, so the midpoint pixel
+/// flips between the two.
+#[test]
+fn range_fill_paints_between_thumbs() {
+    // Narrow range hugging the LEFT: the track midpoint is OUTSIDE the fill.
+    let mut narrow = gallery_with(RangeSlider::new(0.0, 100.0, 5.0, 20.0));
+    let t = track(&narrow);
+    // Sample at the track's vertical center, horizontal midpoint.
+    let mx = (t.x + t.width * 0.5) as u32;
+    let my = (t.y + t.height / 2.0) as u32;
+    let outside = Gallery::pixel(&narrow.rasterize(), mx, my);
+
+    // Wide range spanning the midpoint: the same point is now inside the fill.
+    let mut wide = gallery_with(RangeSlider::new(0.0, 100.0, 10.0, 90.0));
+    let inside = Gallery::pixel(&wide.rasterize(), mx, my);
+
+    assert!(
+        outside != inside,
+        "the range fill must paint between the thumbs (outside={outside:?}, inside={inside:?})"
+    );
+}
+
+/// :disabled restyles the range-FILL pixels (CSS `lq-range-slider:disabled
+/// lq-range-spacer[data-part=range]` mutes the fill to the border colour). Sample
+/// a point that is inside the fill for both states (between the thumbs).
+#[test]
+fn disabled_mutes_range_fill_pixels() {
+    let mut normal = gallery_with(RangeSlider::new(0.0, 100.0, 10.0, 90.0));
+    let t = track(&normal);
+    let mx = (t.x + t.width * 0.5) as u32;
+    let my = (t.y + t.height / 2.0) as u32;
+    let p_normal = Gallery::pixel(&normal.rasterize(), mx, my);
+
+    let mut dis = gallery_with(RangeSlider::new(0.0, 100.0, 10.0, 90.0).disabled(true));
+    let p_dis = Gallery::pixel(&dis.rasterize(), mx, my);
+
+    assert!(
+        p_normal != p_dis,
+        ":disabled must mute the range fill (normal={p_normal:?}, disabled={p_dis:?})"
+    );
+}
+
 /// Disabled range ignores input.
 #[test]
 fn disabled_range_ignores_input() {

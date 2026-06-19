@@ -97,6 +97,112 @@ fn toolbar_child_button_click_fires_action() {
     assert_eq!(actions[0].name, "save");
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// STATE × STYLING coverage (no-fake-green).
+//
+// NOTE: a Toolbar is a STATIC container — it wants no events and is not focusable
+// (interaction is delegated to the child buttons, mounted separately). It has NO
+// toolbar-specific interactive states (:hover / :active / :focus / :disabled) in
+// the theme; those belong to the slotted buttons. The teeth below prove the
+// toolbar's BASE surface paints and its flex structure (spacer / vertical
+// separator) is layout-derived.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// `normal` render: the toolbar's own SURFACE (background + border) paints. Sample
+/// a point on the toolbar padding strip (left of the first item) — it must paint
+/// the toolbar background, proving the base `lq-toolbar { background-color }` style
+/// is on the box (not just the child buttons).
+#[test]
+fn toolbar_surface_paints_background() {
+    let bar = Toolbar::new()
+        .item(Button::new("A", "a").render())
+        .item(Button::new("B", "b").render());
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("tb", Box::new(bar));
+    g.relayout();
+    let root = g.host.root_of("tb").unwrap();
+    let r = g.box_of(root).expect("toolbar laid out");
+    let fb = g.rasterize();
+    // The toolbar has 6px padding -> a 1px-in point is on the toolbar surface,
+    // clear of the first item.
+    let px = Gallery::pixel(&fb, (r.x + 2.0) as u32, (r.y + r.height / 2.0) as u32);
+    assert!(px.a > 0, "toolbar surface must paint its background (alpha {})", px.a);
+}
+
+/// A spacer (flex-grow) pushes the following items to the far end: the item after
+/// the spacer is separated from the item before it by a gap much larger than the
+/// normal inter-item gap — proving the spacer's flex-grow stretches in the real
+/// layout (not a fixed-width gap constant).
+#[test]
+fn spacer_pushes_following_items_to_far_end() {
+    // Without a spacer: items pack at the start with a small gap.
+    let packed = Toolbar::new()
+        .item(Button::new("A", "a").render())
+        .item(Button::new("B", "b").render());
+    let mut gp = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-toolbar { width: 400px; }");
+    gp.mount("tb", Box::new(packed));
+    gp.relayout();
+    let packed_gap = {
+        let root = gp.host.root_of("tb").unwrap();
+        let children: Vec<_> = gp.doc().children(root).to_vec();
+        let q = LayoutQuery::new(gp.hit_test_engine(), gp.doc());
+        let b: Vec<_> = children.iter().filter_map(|&c| q.box_of(c)).collect();
+        b[1].x - (b[0].x + b[0].width)
+    };
+
+    // With a spacer between A and B: B is pushed to the far end -> a much bigger gap.
+    let spaced = Toolbar::new()
+        .item(Button::new("A", "a").render())
+        .spacer()
+        .item(Button::new("B", "b").render());
+    let mut gs = Gallery::new(W, H, "lq-gallery { padding: 12px; } lq-toolbar { width: 400px; }");
+    gs.mount("tb", Box::new(spaced));
+    gs.relayout();
+    let (a_box, b_box) = {
+        let root = gs.host.root_of("tb").unwrap();
+        let children: Vec<_> = gs.doc().children(root).to_vec();
+        let q = LayoutQuery::new(gs.hit_test_engine(), gs.doc());
+        // children: [A, spacer, B]
+        let a = q.box_of(children[0]).unwrap();
+        let b = q.box_of(children[2]).unwrap();
+        (a, b)
+    };
+    let spaced_gap = b_box.x - (a_box.x + a_box.width);
+    assert!(
+        spaced_gap > packed_gap + 100.0,
+        "spacer's flex-grow must push B to the far end (packed gap {packed_gap}, spaced gap {spaced_gap})"
+    );
+}
+
+/// A VERTICAL toolbar's separator is a horizontal divider (the orientation class
+/// drives different separator geometry: vertical -> wide+1px-tall vs horizontal ->
+/// 1px-wide+tall). The vertical separator must be wider than it is tall, proving
+/// the `.vertical > lq-toolbar-sep` rule applies (the horizontal one is the
+/// opposite). FAILs if the vertical separator rule were removed.
+#[test]
+fn vertical_separator_is_a_horizontal_divider() {
+    let bar = Toolbar::new()
+        .orientation(ToolbarOrientation::Vertical)
+        .item(Button::new("A", "a").render())
+        .separator()
+        .item(Button::new("B", "b").render());
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("tb", Box::new(bar));
+    g.relayout();
+    let root = g.host.root_of("tb").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    let sep = q.box_of_part(root, "separator").expect("separator box");
+    assert!(
+        sep.width > sep.height,
+        "vertical toolbar separator must be a horizontal divider (wider than tall): got {}x{}",
+        sep.width,
+        sep.height
+    );
+    let fb = g.rasterize();
+    let px = Gallery::pixel(&fb, (sep.x + sep.width / 2.0) as u32, (sep.y + sep.height / 2.0) as u32);
+    assert!(px.a > 0, "vertical separator must paint a divider (alpha {})", px.a);
+}
+
 /// Bookkeeping: item/separator counts.
 #[test]
 fn toolbar_counts() {

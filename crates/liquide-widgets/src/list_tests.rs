@@ -211,6 +211,139 @@ fn single_mode_replaces_selection() {
     );
 }
 
+/// True if ANY pixel in row `i`'s laid-out box differs between two framebuffers.
+/// Scans the whole row rect (a robust structural diff that does not depend on the
+/// weak glyph rasterizer hitting a specific ink pixel).
+fn row_region_differs(
+    g: &Gallery,
+    id: &str,
+    i: usize,
+    a: &liquide_compositor::framebuffer::FrameBuffer,
+    b: &liquide_compositor::framebuffer::FrameBuffer,
+) -> bool {
+    let r = row_box(g, id, i);
+    let x0 = r.x.max(0.0) as u32;
+    let y0 = r.y.max(0.0) as u32;
+    let x1 = ((r.x + r.width).min(W as f32)) as u32;
+    let y1 = ((r.y + r.height).min(H as f32)) as u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if Gallery::pixel(a, x, y) != Gallery::pixel(b, x, y) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Normal render: every row paints an opaque cell (the list + items are visible).
+#[test]
+fn normal_render_paints_rows() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("l", Box::new(List::new(items(5))));
+    g.relayout();
+    let fb = g.rasterize();
+    for i in 0..5 {
+        let r = row_box(&g, "l", i);
+        let px = Gallery::pixel(&fb, (r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32);
+        assert!(px.a > 0, "row {i} must paint (alpha {})", px.a);
+    }
+}
+
+/// :hover restyles the hovered row's pixels AND leaves a non-hovered row alone —
+/// proving the hover background (#3f3f46) lands only on the row under the pointer.
+#[test]
+fn hover_restyles_only_hovered_row() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("l", Box::new(List::new(items(5))));
+    g.relayout();
+    let before = g.rasterize();
+
+    let r2 = row_box(&g, "l", 2);
+    g.pointer_move(r2.x + r2.width / 2.0, r2.y + r2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = g.rasterize();
+
+    assert!(
+        row_region_differs(&g, "l", 2, &before, &after),
+        "hovered row 2 must restyle"
+    );
+    assert!(
+        !row_region_differs(&g, "l", 0, &before, &after),
+        "non-hovered row 0 must be unchanged"
+    );
+}
+
+// NOTE (CSS gap, reported to coordinator): the list cursor :focus ring is
+// `lq-list > lq-list-item:focus { box-shadow: inset 0 0 0 1px ... }`. A
+// whole-framebuffer diff between cursor-on-row-0 and cursor-on-row-2 produced
+// ZERO differing pixels — the inset box-shadow focus ring does not rasterize
+// through the real pipeline (other widgets express :focus via `border`, which
+// DOES paint). A no-fake-green pixel-delta focus test cannot pass without a CSS
+// change (e.g. switch the row :focus ring to a `border`/`outline`/background
+// the renderer paints), so it is intentionally omitted here.
+
+/// :checked selection fill MOVES with the selection: selecting row 3 then row 1
+/// restyles the newly-selected row and reverts the previously-selected one.
+#[test]
+fn selection_fill_moves_with_selection() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("l", Box::new(List::new(items(5))));
+    g.relayout();
+    let plain = g.rasterize();
+
+    let _ = click_row(&mut g, "l", 3);
+    assert_eq!(as_list(&g, "l").selected_indices(), vec![3]);
+    g.relayout();
+    let sel3 = g.rasterize();
+    assert!(
+        row_region_differs(&g, "l", 3, &plain, &sel3),
+        "row 3 must gain the selection fill"
+    );
+
+    let _ = click_row(&mut g, "l", 1);
+    assert_eq!(as_list(&g, "l").selected_indices(), vec![1]);
+    g.relayout();
+    let sel1 = g.rasterize();
+    assert!(
+        row_region_differs(&g, "l", 1, &sel3, &sel1),
+        "row 1 must gain the fill"
+    );
+    assert!(
+        row_region_differs(&g, "l", 3, &sel3, &sel1),
+        "row 3 must lose the fill when selection moves"
+    );
+}
+
+/// Multi-select paints the selection fill on EVERY row in the range (Shift+range).
+#[test]
+fn multi_select_range_fills_all_rows() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("l", Box::new(List::new(items(6)).multi()));
+    g.relayout();
+    let plain = g.rasterize();
+
+    g.host.set_focus(Some("l"), &mut g.doc, &mut g.dispatcher);
+    let _ = click_row(&mut g, "l", 1); // anchor 1
+    g.key(KeyInput::new(keys::ARROW_DOWN, keys::modifiers::SHIFT));
+    g.key(KeyInput::new(keys::ARROW_DOWN, keys::modifiers::SHIFT));
+    assert_eq!(as_list(&g, "l").selected_indices(), vec![1, 2, 3]);
+    g.relayout();
+    let after = g.rasterize();
+
+    for i in [1usize, 2, 3] {
+        assert!(
+            row_region_differs(&g, "l", i, &plain, &after),
+            "selected row {i} in the multi-range must carry the fill"
+        );
+    }
+    assert!(
+        !row_region_differs(&g, "l", 5, &plain, &after),
+        "row 5 outside the range must be unchanged"
+    );
+}
+
 /// Disabled list swallows clicks and keys.
 #[test]
 fn disabled_list_swallows_input() {

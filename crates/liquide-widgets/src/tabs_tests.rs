@@ -161,3 +161,138 @@ fn disabled_tabs_ignore_input() {
     g.key(KeyInput::new(keys::ARROW_RIGHT, 0));
     assert_eq!(as_tabs(&g, "t").selected_index(), 0, "disabled tabs hold selection");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// STATE × STYLING coverage (pixel-delta, no-fake-green). Each test below would
+// FAIL if the corresponding CSS state rule were removed from widgets.css.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// `normal` render correct: the selected tab paints accent ink along its bottom
+/// border (`:checked { border-bottom-color: accent }`) — the indicator underline.
+/// Sampling the tab-0 bottom edge row proves the base+checked style paints real
+/// ink (not a tautology: an unselected tab there has a transparent bottom border).
+#[test]
+fn selected_tab_indicator_paints_accent_underline() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("t", Box::new(three_tabs()));
+    g.relayout();
+
+    // tab-0 is selected initially. Sample its bottom border row (the 2px accent
+    // underline) vs the SAME row under an UNSELECTED tab (tab-1, transparent
+    // bottom border). The selected underline must differ — proving the indicator
+    // border-bottom-color paints.
+    let t0 = tab_box(&g, "t", 0);
+    let t1 = tab_box(&g, "t", 1);
+    let row = (t0.y + t0.height - 1.0) as u32;
+    let fb = g.rasterize();
+    let sel_underline = Gallery::pixel(&fb, (t0.x + t0.width / 2.0) as u32, row);
+    let unsel_underline = Gallery::pixel(&fb, (t1.x + t1.width / 2.0) as u32, row);
+    assert!(sel_underline.a > 0, "selected tab underline must paint (alpha {})", sel_underline.a);
+    assert!(
+        sel_underline != unsel_underline,
+        "selected tab's accent underline must differ from an unselected tab's bottom edge \
+         (selected {sel_underline:?} vs unselected {unsel_underline:?})"
+    );
+}
+
+/// `:checked` selection MOVES: tab-0 looks selected, then after selecting tab-1,
+/// tab-0 reverts to the unselected look AND tab-1 takes the selected pixels. This
+/// proves the :checked styling tracks the live selection, not a fixed first tab.
+#[test]
+fn checked_styling_follows_selection_movement() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("t", Box::new(three_tabs()));
+    g.relayout();
+
+    let t0 = tab_box(&g, "t", 0);
+    let t1 = tab_box(&g, "t", 1);
+    // Sample the bottom-border underline row for each tab.
+    let row = (t0.y + t0.height - 1.0) as u32;
+    let (x0, x1) = ((t0.x + t0.width / 2.0) as u32, (t1.x + t1.width / 2.0) as u32);
+
+    let fb0 = g.rasterize();
+    let t0_before = Gallery::pixel(&fb0, x0, row);
+    let t1_before = Gallery::pixel(&fb0, x1, row);
+    // Precondition: with tab-0 selected, the two underlines differ.
+    assert!(t0_before != t1_before, "precondition: tab-0 selected underline differs from tab-1");
+
+    // Move selection to tab-1.
+    g.left_click(t1.x + t1.width / 2.0, t1.y + t1.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_tabs(&g, "t").selected_index(), 1);
+
+    let fb1 = g.rasterize();
+    let t0_after = Gallery::pixel(&fb1, x0, row);
+    let t1_after = Gallery::pixel(&fb1, x1, row);
+
+    // tab-0 reverted: its underline changed away from its selected look.
+    assert!(
+        t0_after != t0_before,
+        "tab-0 must revert when selection leaves it (before {t0_before:?} after {t0_after:?})"
+    );
+    // tab-1 took the selected look: it now looks like tab-0's old selected underline.
+    assert!(
+        t1_after != t1_before,
+        "tab-1 must take the selected look when selected (before {t1_before:?} after {t1_after:?})"
+    );
+    // And the two tabs swapped roles: tab-1's NEW look matches tab-0's OLD
+    // selected look; tab-0's NEW look matches tab-1's OLD unselected look.
+    assert_eq!(t1_after, t0_before, "tab-1 now wears the selected-underline pixels tab-0 had");
+    assert_eq!(t0_after, t1_before, "tab-0 now wears the unselected pixels tab-1 had");
+}
+
+/// `:hover` restyles a tab's pixels: hovering an UNSELECTED tab swaps its
+/// background to the hover-solid color (`:hover { background-color }`). Sampling
+/// the tab body center proves the hover restyle paints (FAILs if :hover removed).
+#[test]
+fn hovering_tab_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("t", Box::new(three_tabs()));
+    g.relayout();
+
+    // tab-1 is unselected; sample its body center (above the bottom border, away
+    // from glyph ink) before hover.
+    let t1 = tab_box(&g, "t", 1);
+    let (cx, cy) = ((t1.x + t1.width / 2.0) as u32, (t1.y + 4.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    // Move the pointer onto tab-1: the behavior sets :hover and re-renders.
+    g.pointer_move(t1.x + t1.width / 2.0, t1.y + t1.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_tabs(&g, "t").selected_index(), 0, "hover must not change selection");
+
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert!(
+        before != after,
+        "hovering an unselected tab must restyle its background (before {before:?} after {after:?})"
+    );
+}
+
+/// Moving the pointer OFF a tab (MouseLeave) clears :hover, reverting its pixels —
+/// the hover state is transient, not sticky.
+#[test]
+fn unhovering_tab_reverts_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("t", Box::new(three_tabs()));
+    g.relayout();
+
+    let t1 = tab_box(&g, "t", 1);
+    let (cx, cy) = ((t1.x + t1.width / 2.0) as u32, (t1.y + 4.0) as u32);
+    let resting = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    // Hover tab-1.
+    g.pointer_move(t1.x + t1.width / 2.0, t1.y + t1.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let hovered = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert!(hovered != resting, "precondition: hover restyled tab-1");
+
+    // Move the pointer well outside the tabs widget -> MouseLeave clears hover.
+    g.pointer_move(2.0, 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert_eq!(after, resting, "leaving the tab must revert hover pixels to the resting look");
+}

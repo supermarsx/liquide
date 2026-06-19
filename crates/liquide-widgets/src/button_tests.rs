@@ -148,3 +148,105 @@ fn hover_restyles_pixels() {
     assert!(before != after, "hover must restyle (before {before:?} after {after:?})");
     assert!(as_button(&g).is_hovered());
 }
+
+// ── Added: deeper visual-STATE pixel-delta coverage (no fake-green) ──────────
+
+/// :active (mouse held DOWN, no up) restyles the fill to the accent — the button
+/// root carries the ACTIVE pseudo (via `pressed`) so CSS `lq-button:active` lands
+/// in the rasterized center pixel.
+#[test]
+fn active_restyles_pixels() {
+    let mut g = gallery_with(Button::new("OK", "confirm"));
+    let node = g.host.root_of("btn").unwrap();
+    let r = g.box_of(node).unwrap();
+    let (cx, cy) = ((r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32);
+
+    let before = Gallery::pixel(&g.rasterize(), cx, cy);
+    // Press WITHOUT releasing: drives MouseDown -> pressed=true -> :active.
+    g.mouse_down(r.x + r.width / 2.0, r.y + r.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    assert!(as_button(&g).is_pressed(), "mouse-down must set pressed/:active");
+    assert!(
+        before != after,
+        ":active must restyle the fill (before {before:?} after {after:?})"
+    );
+}
+
+/// :focus restyles the BORDER (focus ring) — sample just inside the border edge
+/// (not the center, which the focus rule does not touch). Focus is applied via the
+/// dispatcher (set_focus sets the FOCUS pseudo on the root); no re-render follows
+/// so it survives into the rasterize.
+#[test]
+fn focus_restyles_border_pixels() {
+    let mut g = gallery_with(Button::new("OK", "confirm"));
+    let node = g.host.root_of("btn").unwrap();
+    let r = g.box_of(node).unwrap();
+    // Sample on the top border line, a couple px in from the corner.
+    let (bx, by) = ((r.x + 6.0) as u32, (r.y + 0.0) as u32);
+
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+    g.host.set_focus(Some("btn"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+
+    assert!(
+        before != after,
+        ":focus must restyle the border ring (before {before:?} after {after:?})"
+    );
+}
+
+/// The `.primary` variant paints a distinct (accent) fill vs the default button —
+/// proving the variant class round-trips through the real style pipeline.
+#[test]
+fn primary_variant_paints_accent_fill() {
+    let mut g_def = gallery_with(Button::new("OK", "go"));
+    let def_px = {
+        let node = g_def.host.root_of("btn").unwrap();
+        let r = g_def.box_of(node).unwrap();
+        Gallery::pixel(&g_def.rasterize(), (r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32)
+    };
+
+    let mut g_pri = gallery_with(Button::new("OK", "go").variant("primary"));
+    let pri_px = {
+        let node = g_pri.host.root_of("btn").unwrap();
+        let r = g_pri.box_of(node).unwrap();
+        Gallery::pixel(&g_pri.rasterize(), (r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32)
+    };
+
+    assert!(
+        def_px != pri_px,
+        ".primary must paint a distinct accent fill (default {def_px:?} primary {pri_px:?})"
+    );
+    // The accent fill is blue-dominant: blue channel clearly exceeds red.
+    assert!(
+        pri_px.b > pri_px.r,
+        "primary fill must be blue-dominant accent (got {pri_px:?})"
+    );
+}
+
+/// The `.danger` variant paints a distinct (red) fill vs the default button.
+#[test]
+fn danger_variant_paints_red_fill() {
+    let mut g_def = gallery_with(Button::new("OK", "go"));
+    let def_px = {
+        let node = g_def.host.root_of("btn").unwrap();
+        let r = g_def.box_of(node).unwrap();
+        Gallery::pixel(&g_def.rasterize(), (r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32)
+    };
+
+    let mut g_dgr = gallery_with(Button::new("OK", "go").variant("danger"));
+    let dgr_px = {
+        let node = g_dgr.host.root_of("btn").unwrap();
+        let r = g_dgr.box_of(node).unwrap();
+        Gallery::pixel(&g_dgr.rasterize(), (r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32)
+    };
+
+    assert!(def_px != dgr_px, ".danger must restyle the fill");
+    assert!(
+        dgr_px.r > dgr_px.b,
+        "danger fill must be red-dominant (got {dgr_px:?})"
+    );
+}

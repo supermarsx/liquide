@@ -127,3 +127,93 @@ fn gauge_is_inert() {
     g.left_click(dial.x + dial.width / 2.0, dial.y + dial.height / 2.0);
     assert!(g.process().is_empty(), "gauge ignores clicks");
 }
+
+// ── Added: display-only styling coverage (no fake-green) ─────────────────────
+//
+// The gauge has NO interactive states (no hover/active/focus/checked/disabled);
+// `gauge_is_inert` confirms it ignores input. The styling proofs below assert the
+// distinct PART styles (arc-fill vs arc-rest vs needle) actually rasterize, and
+// that the value-driven needle moves in pixels (data -> pixel).
+
+/// The arc-FILL paints the accent (blue-dominant) and the arc-REST paints the
+/// distinct dim track — proving the two arc segments carry different CSS, not one
+/// flat bar. Sampled at a value that yields a sizeable fill AND rest (50%).
+#[test]
+fn arc_fill_and_rest_paint_distinct_colors() {
+    let mut g = gallery_with(Gauge::new(0.0, 100.0, 50.0));
+    let fill = part(&g, "arc-fill");
+    let rest = part(&g, "arc-rest");
+    assert!(fill.width > 2.0 && rest.width > 2.0, "both segments lay out");
+    let fb = g.rasterize();
+    let fpx = Gallery::pixel(&fb, (fill.x + fill.width / 2.0) as u32, (fill.y + fill.height / 2.0) as u32);
+    let rpx = Gallery::pixel(&fb, (rest.x + rest.width / 2.0) as u32, (rest.y + rest.height / 2.0) as u32);
+    assert!(fpx.a > 0 && rpx.a > 0, "both arc segments paint");
+    assert!(fpx != rpx, "arc-fill and arc-rest paint different colors ({fpx:?} vs {rpx:?})");
+    assert!(fpx.b > fpx.r, "arc-fill is the blue accent (got {fpx:?})");
+}
+
+/// The needle paints a near-white bar (CSS `lq-gauge-needle` background: fg) —
+/// proving the value pointer is rasterized. The needle is a thin, value-rotated
+/// bar, so scan its laid-out region for a bright (fg) painted pixel rather than a
+/// single point (the rotation transform can shift the painted column off-center).
+#[test]
+fn needle_paints() {
+    let mut g = gallery_with(Gauge::new(0.0, 100.0, 50.0));
+    let needle = part(&g, "needle");
+    assert!(needle.width > 0.0 && needle.height > 0.0, "needle box lays out");
+    let dial = part(&g, "dial");
+    let fb = g.rasterize();
+    // The needle pivots at its bottom; at value 50 it points straight up from the
+    // dial center. Scan the vertical band around the dial center, above the pivot,
+    // for a bright near-white needle pixel.
+    let cx = (dial.x + dial.width / 2.0) as u32;
+    // The dial background (sampled away from the needle/arc, upper area off-center).
+    let bg = Gallery::pixel(&fb, (dial.x + dial.width * 0.20) as u32, (dial.y + dial.height * 0.25) as u32);
+    let mut found = false;
+    for y in (dial.y as u32)..((dial.y + dial.height / 2.0) as u32) {
+        for x in cx.saturating_sub(6)..(cx + 6) {
+            let p = Gallery::pixel(&fb, x, y);
+            // The needle (light fg bar) paints a pixel distinct from the dial bg.
+            if p.a > 0 && p != bg && (p.r as i32 - bg.r as i32).abs() + (p.g as i32 - bg.g as i32).abs() + (p.b as i32 - bg.b as i32).abs() > 30 {
+                found = true;
+                break;
+            }
+        }
+        if found {
+            break;
+        }
+    }
+    assert!(found, "the value needle must paint a bar (distinct from dial bg) above center");
+}
+
+/// The needle ROTATION is value-driven in pixels: at the gauge minimum the needle
+/// points lower-left, at the maximum lower-right — so the painted pixels in the
+/// dial's LEFT half differ from its RIGHT half between the two extremes. (Mirror
+/// of `needle_degrees_track_value`, but proven in rasterized pixels.)
+#[test]
+fn needle_rotation_differs_left_vs_right() {
+    let mut lo = gallery_with(Gauge::new(0.0, 100.0, 0.0)); // needle lower-left
+    let mut hi = gallery_with(Gauge::new(0.0, 100.0, 100.0)); // needle lower-right
+    let dial = part(&lo, "dial");
+    let fb_lo = lo.rasterize();
+    let fb_hi = hi.rasterize();
+    // Count diffs in the LEFT half vs RIGHT half of the dial separately; a real
+    // rotation makes BOTH halves change (needle leaves one, enters the other).
+    let mut left = 0;
+    let mut right = 0;
+    let mid_x = dial.x as u32 + (dial.width as u32) / 2;
+    for dy in 0..(dial.height as u32) {
+        for dx in 0..(dial.width as u32) {
+            let x = dial.x as u32 + dx;
+            let y = dial.y as u32 + dy;
+            if Gallery::pixel(&fb_lo, x, y) != Gallery::pixel(&fb_hi, x, y) {
+                if x < mid_x {
+                    left += 1;
+                } else {
+                    right += 1;
+                }
+            }
+        }
+    }
+    assert!(left > 5 && right > 5, "needle rotation must change both dial halves (left={left} right={right})");
+}

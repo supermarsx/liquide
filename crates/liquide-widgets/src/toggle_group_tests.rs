@@ -183,3 +183,148 @@ fn disabled_swallows() {
     assert!(g.process().is_empty());
     assert!(as_grp(&g, "tg").is_active(0));
 }
+
+// ── Added: visual-STATE pixel-delta coverage (no fake-green) ─────────────────
+
+/// Center pixel of an option box (selection/hover are background-color driven).
+fn opt_px(g: &mut Gallery, id: &str, idx: usize) -> liquide_compositor::pixel::Color {
+    let root = g.host.root_of(id).unwrap();
+    let r = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, &format!("opt-{idx}")).unwrap()
+    };
+    let fb = g.rasterize();
+    Gallery::pixel(&fb, (r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32)
+}
+
+/// :hover restyles a (non-selected) option's background (CSS
+/// `lq-toggle-opt:hover` -> bg-hover-solid). Hover opt-1 in multi mode (initially
+/// none selected) — its bg must change.
+#[test]
+fn hover_restyles_option_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("tg", Box::new(ToggleGroup::multi(opts())));
+    g.relayout();
+    let before = opt_px(&mut g, "tg", 1);
+    let root = g.host.root_of("tg").unwrap();
+    let opt1 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "opt-1").unwrap()
+    };
+    g.pointer_move(opt1.x + opt1.width / 2.0, opt1.y + opt1.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = opt_px(&mut g, "tg", 1);
+    assert!(before != after, ":hover must restyle opt-1 bg ({before:?} -> {after:?})");
+}
+
+/// A selected (:checked) option paints the accent (blue-dominant) bg; the
+/// selection MOVES in pixels when it changes. Single mode: opt-0 selected at
+/// start; clicking opt-2 makes opt-0 plain and opt-2 accent.
+#[test]
+fn checked_selection_moves_in_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("tg", Box::new(ToggleGroup::single(opts())));
+    g.relayout();
+    let sel0_before = opt_px(&mut g, "tg", 0); // selected (accent)
+    let sel2_before = opt_px(&mut g, "tg", 2); // plain
+    assert!(
+        sel0_before.b > sel0_before.r,
+        "the selected opt-0 is blue-accent (got {sel0_before:?})"
+    );
+
+    let root = g.host.root_of("tg").unwrap();
+    let opt2 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "opt-2").unwrap()
+    };
+    g.left_click(opt2.x + opt2.width / 2.0, opt2.y + opt2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let sel0_after = opt_px(&mut g, "tg", 0); // now plain
+    let sel2_after = opt_px(&mut g, "tg", 2); // now accent
+    assert!(sel0_after != sel0_before, "opt-0 lost the accent fill");
+    assert!(sel2_after != sel2_before, "opt-2 gained the accent fill");
+    assert!(sel2_after.b > sel2_after.r, "opt-2 now blue-accent (got {sel2_after:?})");
+}
+
+/// Multi mode: TWO options can be :checked at once, both painting the accent bg
+/// (the checked style is per-option, not exclusive).
+#[test]
+fn multi_two_checked_both_paint_accent() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("tg", Box::new(ToggleGroup::multi(opts())));
+    g.relayout();
+    let root = g.host.root_of("tg").unwrap();
+    let (b0, b2) = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        (q.box_of_part(root, "opt-0").unwrap(), q.box_of_part(root, "opt-2").unwrap())
+    };
+    g.left_click(b0.x + b0.width / 2.0, b0.y + b0.height / 2.0);
+    let _ = g.process();
+    g.left_click(b2.x + b2.width / 2.0, b2.y + b2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert!(as_grp(&g, "tg").is_active(0) && as_grp(&g, "tg").is_active(2));
+    let p0 = opt_px(&mut g, "tg", 0);
+    let p1 = opt_px(&mut g, "tg", 1); // not active
+    let p2 = opt_px(&mut g, "tg", 2);
+    assert!(p0.b > p0.r, "opt-0 accent (got {p0:?})");
+    assert!(p2.b > p2.r, "opt-2 accent (got {p2:?})");
+    assert!(p1 != p0, "the inactive opt-1 differs from an active option");
+}
+
+/// The roving-cursor :focus ring restyles the focused option's border (CSS
+/// `lq-toggle-opt:focus` border). Moving the cursor to opt-1 via keyboard must
+/// restyle opt-1 vs opt-2 (which has no focus).
+#[test]
+fn roving_focus_restyles_option_border() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("tg", Box::new(ToggleGroup::multi(opts())));
+    g.relayout();
+    let before = opt_px(&mut g, "tg", 1);
+    g.host.set_focus(Some("tg"), &mut g.doc, &mut g.dispatcher);
+    // Move the roving cursor from 0 to 1; the rerender applies :focus to opt-1.
+    g.key(KeyInput::new(keys::ARROW_RIGHT, 0));
+    assert_eq!(as_grp(&g, "tg").cursor(), 1);
+    g.relayout();
+    // Sample the option border (top edge), where the focus ring lands.
+    let root = g.host.root_of("tg").unwrap();
+    let opt1 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "opt-1").unwrap()
+    };
+    let fb = g.rasterize();
+    let after_border = Gallery::pixel(&fb, (opt1.x + opt1.width / 2.0) as u32, opt1.y as u32);
+    // Compare to the same option's interior+border BEFORE moving the cursor there.
+    let _ = before;
+    // A cleaner assertion: opt-1's border pixel (focused) differs from opt-2's
+    // border pixel (unfocused) at the same relative position.
+    let opt2 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "opt-2").unwrap()
+    };
+    let unfocused_border = Gallery::pixel(&fb, (opt2.x + opt2.width / 2.0) as u32, opt2.y as u32);
+    assert!(
+        after_border != unfocused_border,
+        "the focused option border must differ from an unfocused one ({after_border:?} vs {unfocused_border:?})"
+    );
+}
+
+/// :disabled dims the group (opacity .5) — the selected option differs enabled vs
+/// disabled.
+#[test]
+fn disabled_dims_pixels() {
+    let mk = |dis: bool| {
+        let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+        g.mount("tg", Box::new(ToggleGroup::single(opts()).disabled(dis)));
+        g.relayout();
+        opt_px(&mut g, "tg", 0) // the selected option (accent fill)
+    };
+    let enabled = mk(false);
+    let disabled = mk(true);
+    assert!(
+        enabled != disabled,
+        ":disabled must dim the selected option (enabled {enabled:?} disabled {disabled:?})"
+    );
+}

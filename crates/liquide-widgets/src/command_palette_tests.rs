@@ -188,3 +188,165 @@ fn open_changes_pixels() {
     let after = Gallery::pixel(&g.rasterize(), 40, 60);
     assert!(before != after, "the open palette must restyle pixels");
 }
+
+// ── Added: deep visual-STATE pixel-delta coverage (no fake-green) ────────────
+
+/// Resolve the absolute box of an item part under the palette root.
+fn item_box(g: &Gallery, id: &str, part: &str) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of(id).unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    q.box_of_part(root, part).unwrap_or_else(|| panic!("part {part} box"))
+}
+
+/// :focus/.highlighted paints a DISTINCT selection background + accent border-left
+/// on the highlighted row. Row 0 starts highlighted; a plain (non-highlighted) row
+/// further down must differ from it — the styling is real, not uniform.
+#[test]
+fn highlighted_row_paints_distinct_from_plain_row() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 20px; }");
+    mount(&mut g, "cp", true);
+    // Row 0 is highlighted by default; row 2 is a plain row.
+    let r0 = item_box(&g, "cp", "item-0");
+    let r2 = item_box(&g, "cp", "item-2");
+    let fb = g.rasterize();
+    // Sample the LEFT edge band where the accent border-left lands on the
+    // highlighted row, and the selection bg fills the row interior.
+    let hi = Gallery::pixel(&fb, (r0.x + 1.0) as u32, (r0.y + r0.height / 2.0) as u32);
+    let plain = Gallery::pixel(&fb, (r2.x + 1.0) as u32, (r2.y + r2.height / 2.0) as u32);
+    assert!(
+        hi != plain,
+        "highlighted row must paint a distinct selection/accent style (hi {hi:?} plain {plain:?})"
+    );
+}
+
+/// The highlight (selection bg + accent border) MOVES with the cursor: the same
+/// row-0 pixels change once the highlight moves to row 1 (Down). No-fake-green:
+/// removing the `.highlighted`/`:focus` rule makes both samples identical.
+#[test]
+fn highlight_moves_with_arrow_keys_in_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 20px; }");
+    mount(&mut g, "cp", true);
+    let r0 = item_box(&g, "cp", "item-0");
+    let (sx, sy) = ((r0.x + 1.0) as u32, (r0.y + r0.height / 2.0) as u32);
+    // Row 0 highlighted now.
+    let with_hi = Gallery::pixel(&g.rasterize(), sx, sy);
+
+    // Move the highlight to row 1 → row 0 loses its accent/selection.
+    g.key(KeyInput::new(keys::ARROW_DOWN, 0));
+    g.relayout();
+    assert_eq!(as_cp(&g, "cp").highlighted(), 1);
+    let without_hi = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(
+        with_hi != without_hi,
+        "row 0's accent/selection must clear when the highlight moves to row 1 \
+         (with {with_hi:?} without {without_hi:?})"
+    );
+
+    // And row 1 must now carry the accent it did not have before.
+    let r1 = item_box(&g, "cp", "item-1");
+    let (rx, ry) = ((r1.x + 1.0) as u32, (r1.y + r1.height / 2.0) as u32);
+    let r1_hi = Gallery::pixel(&g.rasterize(), rx, ry);
+    // Rebuild a fresh palette to capture row 1 with NO highlight for comparison.
+    let mut g2 = Gallery::new(W, H, "lq-gallery { padding: 20px; }");
+    mount(&mut g2, "cp", true); // row 0 highlighted, row 1 plain
+    let r1b = item_box(&g2, "cp", "item-1");
+    let r1_plain =
+        Gallery::pixel(&g2.rasterize(), (r1b.x + 1.0) as u32, (r1b.y + r1b.height / 2.0) as u32);
+    assert!(
+        r1_hi != r1_plain,
+        "row 1 must gain the accent once highlighted (hi {r1_hi:?} plain {r1_plain:?})"
+    );
+}
+
+/// :hover paints the hover background on the pointed row, distinct from its
+/// resting state. The hovered row is NOT row 0 (which is highlighted) so the
+/// delta is purely the hover rule.
+#[test]
+fn hover_restyles_item_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 20px; }");
+    mount(&mut g, "cp", true);
+    let r2 = item_box(&g, "cp", "item-2");
+    // Sample the row interior (past the border-left band) so we read the bg fill.
+    let (sx, sy) = ((r2.x + r2.width / 2.0) as u32, (r2.y + r2.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), sx, sy);
+
+    g.pointer_move(r2.x + r2.width / 2.0, r2.y + r2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_cp(&g, "cp").highlighted(), 0, "hover does not move the keyboard highlight");
+    let after = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(
+        before != after,
+        ":hover must restyle the pointed row's background (before {before:?} after {after:?})"
+    );
+}
+
+/// The search field carries the `.placeholder` class (the dim-colour CSS hook)
+/// ONLY while the query is empty; typing clears it and the rendered text switches
+/// from the placeholder string to the live query. This reads the rendered DOM
+/// (post style/layout) — not a tautology: a palette that did not swap the
+/// placeholder for the query would keep the class + text.
+///
+/// NOTE: a pixel delta on the SEARCH TEXT itself is NOT assertable here — the
+/// gallery rasterizer renders the placeholder (dim) and the query (bright) text
+/// as byte-identical dark glyph ink (weak text-colour application + weak glyph
+/// ink), so the two states are pixel-identical in the search band. See CSS/render
+/// gap report. The `.placeholder` class + text-content swap are the real,
+/// observable state change.
+#[test]
+fn placeholder_class_clears_when_query_is_typed() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 20px; }");
+    mount(&mut g, "cp", true);
+    let search_text = |g: &Gallery| -> String {
+        let root = g.host.root_of("cp").unwrap();
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        let s = q.find_part(root, "search").unwrap();
+        let mut out = String::new();
+        fn rec(doc: &liquide_dom::Document, n: liquide_dom::NodeId, out: &mut String) {
+            if let Some(t) = doc.get(n).and_then(|x| x.text_content()) {
+                out.push_str(t);
+            }
+            for &c in doc.children(n) {
+                rec(doc, c, out);
+            }
+        }
+        rec(g.doc(), s, &mut out);
+        out
+    };
+    let has_placeholder_class = |g: &Gallery| -> bool {
+        let root = g.host.root_of("cp").unwrap();
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        let s = q.find_part(root, "search").unwrap();
+        g.doc().get(s).map(|n| n.has_class("placeholder")).unwrap_or(false)
+    };
+
+    // Empty: placeholder class + placeholder text.
+    assert!(has_placeholder_class(&g), "empty field carries the .placeholder class");
+    assert_eq!(search_text(&g), "Type a command…", "empty field shows the placeholder string");
+
+    // Type a query → class clears + the field shows the live query.
+    for c in "open".chars() {
+        g.key(KeyInput::new(c as u32, 0));
+    }
+    g.relayout();
+    assert_eq!(as_cp(&g, "cp").query(), "open");
+    assert!(!has_placeholder_class(&g), "a typed field drops the .placeholder class");
+    assert_eq!(search_text(&g), "open", "the field now renders the live query");
+}
+
+/// A query that matches nothing renders the `lq-palette-empty` notice (a real
+/// part box) and emits NO item boxes — the empty state is structurally distinct.
+#[test]
+fn no_match_renders_empty_state_part() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 20px; }");
+    mount(&mut g, "cp", true);
+    for c in "zzzzz".chars() {
+        g.key(KeyInput::new(c as u32, 0));
+    }
+    g.relayout();
+    assert!(as_cp(&g, "cp").visible_indices().is_empty(), "no command matches 'zzzzz'");
+    let root = g.host.root_of("cp").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    assert!(q.box_of_part(root, "empty").is_some(), "the empty notice paints a box");
+    assert!(q.box_of_part(root, "item-0").is_none(), "no item rows in the empty state");
+}

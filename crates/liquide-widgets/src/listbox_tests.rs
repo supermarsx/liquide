@@ -175,3 +175,127 @@ fn selection_restyles_pixels() {
     let after = Gallery::pixel(&g.rasterize(), sx, sy);
     assert!(before != after, "selecting an item must restyle its pixels");
 }
+
+/// PIXELS :hover — hovering an item restyles its pixels (the hover fill), and the
+/// delta lands on the HOVERED item only.
+#[test]
+fn hovered_item_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("lb", Box::new(fruits()));
+    g.relayout();
+    let root = g.host.root_of("lb").unwrap();
+    // item-2 is neither selected nor the default cursor (item-0), so its only
+    // restyle source here is :hover.
+    let (it2, it3) = (item_box(&g, root, 2), item_box(&g, root, 3));
+    let (hx, hy) = ((it2.x + 4.0) as u32, (it2.y + it2.height / 2.0) as u32);
+    let (nx, ny) = ((it3.x + 4.0) as u32, (it3.y + it3.height / 2.0) as u32);
+    let before_h = Gallery::pixel(&g.rasterize(), hx, hy);
+    let before_n = Gallery::pixel(&g.rasterize(), nx, ny);
+
+    g.pointer_move(it2.x + it2.width / 2.0, it2.y + it2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after_h = Gallery::pixel(&g.rasterize(), hx, hy);
+    let after_n = Gallery::pixel(&g.rasterize(), nx, ny);
+    assert!(before_h != after_h, "the hovered item must restyle (before {before_h:?} after {after_h:?})");
+    assert_eq!(before_n, after_n, "a non-hovered item must not change");
+}
+
+/// PIXELS :focus — the keyboard cursor paints a focus ring (inset box-shadow) on
+/// the cursor item, and that ring MOVES with the cursor (off the old item, onto
+/// the new one). item-0 is the default cursor, so we drive Down to item 1.
+#[test]
+fn focus_ring_moves_with_cursor() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("lb", Box::new(fruits()));
+    g.relayout();
+    g.host.set_focus(Some("lb"), &mut g.doc, &mut g.dispatcher);
+    let root = g.host.root_of("lb").unwrap();
+    let it1 = item_box(&g, root, 1);
+    // Sample the ring region (left inset edge), away from glyph ink.
+    let (sx, sy) = ((it1.x + 1.0) as u32, (it1.y + it1.height / 2.0) as u32);
+    // Selection would also restyle item 1; keep selection on item 0 by using
+    // Ctrl+Down (moves cursor only). First confirm the unfocused baseline.
+    let baseline = Gallery::pixel(&g.rasterize(), sx, sy);
+    g.key(KeyInput::new(keys::ARROW_DOWN, keys::modifiers::CTRL));
+    assert_eq!(as_lb(&g, "lb").cursor(), Some(1), "cursor moved to item 1");
+    assert!(as_lb(&g, "lb").selected_indices().is_empty(), "Ctrl+Down did not select");
+    g.relayout();
+    let focused = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(
+        baseline != focused,
+        "the focus ring must paint on the cursor item (before {baseline:?} after {focused:?})"
+    );
+
+    // Moving the cursor on to item 2 must clear item 1's ring (returns to baseline).
+    g.key(KeyInput::new(keys::ARROW_DOWN, keys::modifiers::CTRL));
+    assert_eq!(as_lb(&g, "lb").cursor(), Some(2));
+    g.relayout();
+    let after_move = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert_eq!(after_move, baseline, "the ring must leave item 1 when the cursor moves on");
+}
+
+/// PIXELS :checked — selecting a SECOND item (multi-select) restyles its pixels
+/// while the first stays selected; both carry the selection fill.
+#[test]
+fn multi_select_both_items_restyle_pixels() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("lb", Box::new(fruits().multi()));
+    g.relayout();
+    let root = g.host.root_of("lb").unwrap();
+    let (it0, it2) = (item_box(&g, root, 0), item_box(&g, root, 2));
+    let (x0, y0) = ((it0.x + it0.width / 2.0) as u32, (it0.y + it0.height / 2.0) as u32);
+    let (x2, y2) = ((it2.x + 4.0) as u32, (it2.y + it2.height / 2.0) as u32);
+    let base0 = Gallery::pixel(&g.rasterize(), x0, y0);
+    let base2 = Gallery::pixel(&g.rasterize(), x2, y2);
+
+    // Click item 0 then Ctrl+click... clicks coalesce; drive via keyboard instead:
+    g.host.set_focus(Some("lb"), &mut g.doc, &mut g.dispatcher);
+    g.key(KeyInput::new(keys::SPACE, keys::modifiers::CTRL)); // toggle item 0 (cursor)
+    g.key(KeyInput::new(keys::ARROW_DOWN, keys::modifiers::CTRL)); // cursor -> 1
+    g.key(KeyInput::new(keys::ARROW_DOWN, keys::modifiers::CTRL)); // cursor -> 2
+    g.key(KeyInput::new(keys::SPACE, keys::modifiers::CTRL)); // toggle item 2
+    assert_eq!(as_lb(&g, "lb").selected_indices(), vec![0, 2], "both selected");
+    g.relayout();
+    let sel0 = Gallery::pixel(&g.rasterize(), x0, y0);
+    let sel2 = Gallery::pixel(&g.rasterize(), x2, y2);
+    assert!(sel0 != base0, "item 0 selection fill differs from baseline");
+    assert!(sel2 != base2, "item 2 selection fill differs from baseline");
+}
+
+/// PIXELS :disabled — a disabled item renders with the muted disabled colour,
+/// distinct from an enabled sibling's text colour. Sampled over the glyph band.
+#[test]
+fn disabled_item_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "");
+    // Two items with identical labels except one is disabled; compare their ink.
+    g.mount(
+        "lb",
+        Box::new(ListBox::new([
+            ListItem::new("a", "WWWW"),
+            ListItem::new("b", "WWWW").disabled(true),
+        ])),
+    );
+    g.relayout();
+    let root = g.host.root_of("lb").unwrap();
+    let (it0, it1) = (item_box(&g, root, 0), item_box(&g, root, 1));
+    // Sum the ink alpha+luma across each item's glyph band so a colour change is
+    // visible even with the weak glyph rasterizer.
+    let ink = |g: &mut Gallery, r: liquide_layout::geometry::Rect| -> u32 {
+        let fb = g.rasterize();
+        let y = (r.y + r.height / 2.0) as u32;
+        let x0 = (r.x + 6.0) as u32;
+        let x1 = (r.x + r.width - 6.0) as u32;
+        (x0..x1).map(|x| {
+            let p = Gallery::pixel(&fb, x, y);
+            p.r as u32 + p.g as u32 + p.b as u32 + p.a as u32
+        }).sum()
+    };
+    let enabled_ink = ink(&mut g, it0);
+    let disabled_ink = ink(&mut g, it1);
+    assert!(
+        enabled_ink != disabled_ink,
+        "a disabled item must render with a different ink than its enabled twin \
+         (enabled {enabled_ink}, disabled {disabled_ink})"
+    );
+}

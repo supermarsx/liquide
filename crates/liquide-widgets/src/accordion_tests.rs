@@ -160,3 +160,86 @@ fn expansion_restyles_header_pixels() {
     let after = Gallery::pixel(&g.rasterize(), cx, cy);
     assert!(before != after, "expanded header must restyle");
 }
+
+// ── added: per-state styling proofs ───────────────────────────────────────
+
+/// Hovering a header restyles it (`lq-section-header:hover { background:#3f3f46 }`)
+/// vs the resting header background. Driven via the behavior's hover round-trip.
+#[test]
+fn header_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("ac", Box::new(Accordion::new(sections())));
+    g.relayout();
+    let root = g.host.root_of("ac").unwrap();
+    let h0 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "header-0").unwrap()
+    };
+    // Sample the right side of the header (clear of the twisty glyph + title ink).
+    let (cx, cy) = ((h0.x + h0.width - 16.0) as u32, (h0.y + h0.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    g.pointer_move(h0.x + h0.width - 16.0, h0.y + h0.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert_eq!(as_acc(&g, "ac").is_expanded(0), false, "hover does not expand");
+    assert!(before != after, "hovering a header must restyle it (before {before:?} after {after:?})");
+}
+
+/// Expanding reveals a body panel that occupies real laid-out space and PAINTS
+/// an opaque fill. The collapsed accordion has no body box at all; after
+/// expanding, the body box exists, spans the sampled point, and rasterizes to an
+/// opaque pixel — a structure + paint proof of the reveal.
+///
+/// (A body-vs-surroundings COLOUR delta is not asserted: `lq-section-body` and
+/// the header both resolve `var(--widget-bg, …)` to the same #27272a in the
+/// gallery — the body's #1f1f23 fallback is shadowed by the defined token — so a
+/// colour comparison would be a no-op. Reported as a minor CSS gap; the reveal
+/// itself is fully proven structurally.)
+#[test]
+fn expanding_reveals_painted_body() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("ac", Box::new(Accordion::new(sections())));
+    g.relayout();
+    let root = g.host.root_of("ac").unwrap();
+    // Collapsed: no body box.
+    {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        assert!(q.box_of_part(root, "body").is_none(), "collapsed: no body box");
+    }
+    let h0 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "header-0").unwrap()
+    };
+    g.left_click(h0.x + 8.0, h0.y + h0.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    // Expanded: the body box exists and paints an opaque fill at its centre.
+    let body = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "body").expect("body box once expanded")
+    };
+    assert!(body.width > 0.0 && body.height > 0.0, "revealed body has a real box (got {body:?})");
+    let (sx, sy) = ((body.x + body.width / 2.0) as u32, (body.y + body.height / 2.0) as u32);
+    let px = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(px.a > 0, "the revealed body must paint an opaque fill (got {px:?})");
+}
+
+/// The chevron affordance (`data-part="twisty"`, a CSS `::before` ▶/▼ that flips
+/// on expand) reserves a real laid-out box in the header. (The glyph ink is not
+/// asserted — the gallery glyph rasterizer does not reliably paint the dingbat,
+/// so the box presence is the structural proof the affordance exists; the
+/// expand/collapse pixel + body-reveal deltas cover the visible state change.)
+#[test]
+fn twisty_chevron_has_layout_box() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("ac", Box::new(Accordion::new(sections())));
+    g.relayout();
+    let root = g.host.root_of("ac").unwrap();
+    let twisty = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "twisty").expect("twisty box")
+    };
+    assert!(twisty.width > 0.0 && twisty.height > 0.0, "chevron reserves a box (got {twisty:?})");
+}

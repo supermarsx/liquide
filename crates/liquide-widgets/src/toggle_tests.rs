@@ -189,3 +189,128 @@ fn radio_per_option_hit_from_layout() {
         "click in option-1's REAL (tall) box must select option-1"
     );
 }
+
+// ── Added: deeper indicator pixel-delta coverage for switch / radio + the
+//    :hover and :focus indicator ring (no fake-green) ──────────────────────────
+
+use crate::layout_query::LayoutQuery;
+
+fn indicator_center(g: &Gallery, id: &str) -> (u32, u32) {
+    let root = g.host.root_of(id).unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    let ind = q.box_of_part(root, "indicator").expect("indicator box");
+    ((ind.x + ind.width / 2.0) as u32, (ind.y + ind.height / 2.0) as u32)
+}
+
+/// :checked restyles the SWITCH indicator (track) pixels — the accent fill appears
+/// when toggled on (CSS `lq-switch:checked > lq-indicator`).
+#[test]
+fn switch_checked_restyles_indicator_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("sw", Box::new(Toggle::switch("Wifi")));
+    g.relayout();
+    assert!(!as_toggle(&g, "sw").is_checked());
+
+    let (ix, iy) = indicator_center(&g, "sw");
+    let before = Gallery::pixel(&g.rasterize(), ix, iy);
+
+    g.host.set_focus(Some("sw"), &mut g.doc, &mut g.dispatcher);
+    let a = g.key(KeyInput::new(keys::SPACE, 0));
+    assert_eq!(a.len(), 1, "Space toggles the switch on");
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), ix, iy);
+    assert!(
+        before != after,
+        ":checked must restyle the switch track (before {before:?} after {after:?})"
+    );
+    assert!(as_toggle(&g, "sw").is_checked());
+}
+
+/// :checked restyles the RADIO indicator pixels — selecting an option fills its
+/// indicator with the accent (CSS `lq-radio:checked > lq-indicator`). We compare
+/// option-1's indicator before vs after it becomes selected.
+#[test]
+fn radio_checked_restyles_indicator_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    let rg = RadioGroup::new(
+        "size",
+        vec![("a".into(), "A".into()), ("b".into(), "B".into())],
+    );
+    g.mount("rg", Box::new(rg));
+    g.relayout();
+    assert_eq!(as_radio(&g, "rg").selected_index(), 0);
+
+    // option-1's indicator is the second option's indicator (data-part nesting).
+    let root = g.host.root_of("rg").unwrap();
+    let ind1 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        // The per-option box; sample the left side where the indicator sits.
+        q.box_of_part(root, "option-1").expect("option-1 box")
+    };
+    let (ix, iy) = ((ind1.x + 9.0) as u32, (ind1.y + ind1.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), ix, iy);
+
+    g.left_click(ind1.x + 9.0, ind1.y + ind1.height / 2.0);
+    let _ = g.process();
+    assert_eq!(as_radio(&g, "rg").selected_index(), 1);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), ix, iy);
+    assert!(
+        before != after,
+        ":checked must restyle the radio indicator (before {before:?} after {after:?})"
+    );
+}
+
+/// :hover restyles the checkbox indicator BORDER (CSS `lq-checkbox:hover >
+/// lq-indicator` -> focus-ring colour). Sample on the indicator's top border line.
+#[test]
+fn checkbox_hover_restyles_indicator_border() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("cb", Box::new(Toggle::checkbox("Enable")));
+    g.relayout();
+
+    let root = g.host.root_of("cb").unwrap();
+    let ind = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "indicator").expect("indicator box")
+    };
+    // Top border line of the indicator.
+    let (bx, by) = ((ind.x + ind.width / 2.0) as u32, ind.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+
+    g.pointer_move(ind.x + ind.width / 2.0, ind.y + ind.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(as_toggle(&g, "cb").is_checked() == false);
+    assert!(
+        before != after,
+        ":hover must restyle the indicator border (before {before:?} after {after:?})"
+    );
+}
+
+/// :focus restyles the checkbox indicator BORDER (focus ring) — CSS
+/// `lq-checkbox:focus > lq-indicator`. Focus via the dispatcher; no re-render
+/// follows so the FOCUS pseudo survives.
+#[test]
+fn checkbox_focus_restyles_indicator_border() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("cb", Box::new(Toggle::checkbox("Enable")));
+    g.relayout();
+
+    let root = g.host.root_of("cb").unwrap();
+    let ind = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "indicator").expect("indicator box")
+    };
+    let (bx, by) = ((ind.x + ind.width / 2.0) as u32, ind.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+
+    g.host.set_focus(Some("cb"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":focus must restyle the indicator border ring (before {before:?} after {after:?})"
+    );
+}

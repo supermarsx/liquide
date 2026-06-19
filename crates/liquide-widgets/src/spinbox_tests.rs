@@ -175,3 +175,150 @@ fn disabled_swallows() {
     assert!(g.process().is_empty());
     assert_eq!(as_spin(&g, "sp").value(), 5.0);
 }
+
+// ── Added: visual-STATE pixel-delta coverage (no fake-green) ─────────────────
+
+/// Channel-weighted sum over a sub-part box (background/border driven; never
+/// glyph ink, which the gallery font paints too faintly to compare).
+fn part_sum(g: &mut Gallery, id: &str, part: &str) -> u64 {
+    let root = g.host.root_of(id).unwrap();
+    let r = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, part).unwrap_or_else(|| panic!("part {part}"))
+    };
+    let fb = g.rasterize();
+    let mut acc = 0u64;
+    for y in (r.y as u32)..((r.y + r.height) as u32) {
+        for x in (r.x as u32)..((r.x + r.width) as u32) {
+            let p = Gallery::pixel(&fb, x, y);
+            acc += p.r as u64 + p.g as u64 * 3 + p.b as u64 * 7 + p.a as u64 * 11;
+        }
+    }
+    acc
+}
+
+/// :hover restyles the UP button background (CSS `lq-spin-up:hover` ->
+/// bg-hover-solid). Hovering the up box must change its rasterized pixels.
+#[test]
+fn up_button_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("sp", Box::new(Spinbox::new(0.0, 10.0, 5.0)));
+    g.relayout();
+    let before = part_sum(&mut g, "sp", "up");
+    let root = g.host.root_of("sp").unwrap();
+    let up = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "up").unwrap()
+    };
+    g.pointer_move(up.x + up.width / 2.0, up.y + up.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = part_sum(&mut g, "sp", "up");
+    assert!(
+        before != after,
+        ":hover must restyle the up button bg (before {before} after {after})"
+    );
+}
+
+/// :hover restyles the DOWN button background (a different node from up, so no
+/// double-click coalescing concern; pure hover).
+#[test]
+fn down_button_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("sp", Box::new(Spinbox::new(0.0, 10.0, 5.0)));
+    g.relayout();
+    let before = part_sum(&mut g, "sp", "down");
+    let root = g.host.root_of("sp").unwrap();
+    let down = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "down").unwrap()
+    };
+    g.pointer_move(down.x + down.width / 2.0, down.y + down.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = part_sum(&mut g, "sp", "down");
+    assert!(
+        before != after,
+        ":hover must restyle the down button bg (before {before} after {after})"
+    );
+}
+
+/// :focus paints the focus-ring border (CSS `lq-spinbox:focus` border-color).
+#[test]
+fn focus_restyles_border_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("sp", Box::new(Spinbox::new(0.0, 10.0, 5.0)));
+    g.relayout();
+    let root = g.host.root_of("sp").unwrap();
+    let r = g.box_of(root).unwrap();
+    let (bx, by) = ((r.x + 8.0) as u32, r.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+    g.host.set_focus(Some("sp"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":focus must restyle the spinbox border (before {before:?} after {after:?})"
+    );
+}
+
+/// Reaching the MIN value restyles the DOWN button (CSS `lq-spin-down.disabled`
+/// / `:disabled` gains a distinct bg). The value-driven state reaches the laid-out
+/// down box in pixels — the mirror of the up-at-max test.
+#[test]
+fn reaching_min_restyles_down_button() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("sp", Box::new(Spinbox::new(0.0, 3.0, 3.0)));
+    g.relayout();
+    let before = part_sum(&mut g, "sp", "down");
+    g.host.set_focus(Some("sp"), &mut g.doc, &mut g.dispatcher);
+    for _ in 0..3 {
+        g.key(KeyInput::new(keys::ARROW_DOWN, 0));
+    }
+    assert_eq!(as_spin(&g, "sp").value(), 0.0);
+    g.relayout();
+    let after = part_sum(&mut g, "sp", "down");
+    assert!(
+        before != after,
+        "reaching min must restyle the down button (value-driven pixels)"
+    );
+}
+
+/// The up-button-disabled-at-max style is a SOLID, distinct bg vs the normal
+/// (faint) up bg: a spinbox already at max renders the up box differently from a
+/// spinbox in the middle of its range — without any interaction.
+#[test]
+fn up_button_at_max_differs_from_mid_range() {
+    let mk = |value: f32| {
+        let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+        g.mount("sp", Box::new(Spinbox::new(0.0, 10.0, value)));
+        g.relayout();
+        part_sum(&mut g, "sp", "up")
+    };
+    let mid = mk(5.0);
+    let at_max = mk(10.0);
+    assert!(
+        mid != at_max,
+        "up box at max must render distinctly from mid-range (mid {mid} max {at_max})"
+    );
+}
+
+/// :disabled dims the whole spinbox (opacity .5) — the value display center pixel
+/// differs enabled vs disabled.
+#[test]
+fn disabled_dims_pixels() {
+    let mk = |dis: bool| {
+        let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+        g.mount("sp", Box::new(Spinbox::new(0.0, 10.0, 5.0).disabled(dis)));
+        g.relayout();
+        // Sample the up button bg, which is opaque-ish in both states so the .5
+        // opacity multiply is visible.
+        part_sum(&mut g, "sp", "up")
+    };
+    let enabled = mk(false);
+    let disabled = mk(true);
+    assert!(
+        enabled != disabled,
+        ":disabled must dim the spinbox (enabled {enabled} disabled {disabled})"
+    );
+}

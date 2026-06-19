@@ -161,3 +161,106 @@ fn disabled_slider_ignores_input() {
     g.key(KeyInput::new(keys::END, 0));
     assert_eq!(as_slider(&g).value(), 30.0, "disabled slider holds its value");
 }
+
+// ── Added: thumb/track state pixel-delta coverage (no fake-green) ────────────
+
+fn thumb(g: &Gallery) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of("sl").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    q.box_of_part(root, "thumb").expect("thumb box")
+}
+
+/// :hover restyles the THUMB border (CSS `lq-slider:hover lq-thumb` ->
+/// accent-hover). Sample on the thumb's top border line. Use a mid value so the
+/// thumb sits inside the track (a 0% thumb hugs the left edge).
+#[test]
+fn hover_restyles_thumb_border_pixels() {
+    let mut g = gallery_with(Slider::new(0.0, 100.0, 50.0));
+    let th = thumb(&g);
+    let (bx, by) = ((th.x + th.width / 2.0) as u32, th.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+
+    // Hover over the slider body to set :hover.
+    let t = track(&g);
+    g.pointer_move(t.x + t.width / 2.0, t.y + t.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":hover must restyle the thumb border (before {before:?} after {after:?})"
+    );
+}
+
+/// :active (dragging) restyles the THUMB fill (CSS `lq-slider:active lq-thumb` ->
+/// accent background). Press WITHOUT releasing so :active holds.
+#[test]
+fn active_restyles_thumb_fill_pixels() {
+    let mut g = gallery_with(Slider::new(0.0, 100.0, 50.0));
+    let th = thumb(&g);
+    let (cx, cy) = ((th.x + th.width / 2.0) as u32, (th.y + th.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    // Press on the thumb's value position (mid track) and hold.
+    let t = track(&g);
+    g.mouse_down(t.x + t.width / 2.0, t.y + t.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert!(as_slider(&g).is_dragging(), "mouse-down sets :active/dragging");
+    // Re-read the thumb (value may have nudged) and sample its center.
+    let th2 = thumb(&g);
+    let (cx2, cy2) = ((th2.x + th2.width / 2.0) as u32, (th2.y + th2.height / 2.0) as u32);
+    let after = Gallery::pixel(&g.rasterize(), cx2, cy2);
+    assert!(
+        before != after,
+        ":active must restyle the thumb fill (before {before:?} after {after:?})"
+    );
+}
+
+/// :focus restyles the TRACK border (CSS `lq-slider:focus lq-track` adds a focus
+/// ring). Sample on the track's top edge.
+#[test]
+fn focus_restyles_track_border_pixels() {
+    let mut g = gallery_with(Slider::new(0.0, 100.0, 0.0));
+    let t = track(&g);
+    let (bx, by) = ((t.x + t.width / 2.0) as u32, t.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+
+    g.host.set_focus(Some("sl"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":focus must restyle the track border ring (before {before:?} after {after:?})"
+    );
+}
+
+/// :disabled dims the FILL (CSS `lq-slider:disabled lq-fill` -> disabled-fg). A
+/// disabled slider's fill colour differs from an enabled one at the same value.
+#[test]
+fn disabled_dims_fill_pixels() {
+    let mut g_on = gallery_with(Slider::new(0.0, 100.0, 80.0));
+    let fill_px_on = {
+        let root = g_on.host.root_of("sl").unwrap();
+        let f = {
+            let q = LayoutQuery::new(g_on.hit_test_engine(), g_on.doc());
+            q.box_of_part(root, "fill").expect("fill box")
+        };
+        Gallery::pixel(&g_on.rasterize(), (f.x + 4.0) as u32, (f.y + f.height / 2.0) as u32)
+    };
+
+    let mut g_off = gallery_with(Slider::new(0.0, 100.0, 80.0).disabled(true));
+    let fill_px_off = {
+        let root = g_off.host.root_of("sl").unwrap();
+        let f = {
+            let q = LayoutQuery::new(g_off.hit_test_engine(), g_off.doc());
+            q.box_of_part(root, "fill").expect("fill box")
+        };
+        Gallery::pixel(&g_off.rasterize(), (f.x + 4.0) as u32, (f.y + f.height / 2.0) as u32)
+    };
+
+    assert!(
+        fill_px_on != fill_px_off,
+        ":disabled must dim the fill (enabled {fill_px_on:?} disabled {fill_px_off:?})"
+    );
+}

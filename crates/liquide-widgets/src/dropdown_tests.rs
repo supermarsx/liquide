@@ -1,7 +1,7 @@
 //! `<lq-dropdown>` / `<lq-combobox>` real-pipeline gallery tests.
 #![cfg(test)]
 
-use crate::behavior::KeyInput;
+use crate::behavior::{KeyInput, WidgetBehavior};
 use crate::dropdown::{Dropdown, CHANGED_ACTION};
 use crate::gallery::Gallery;
 use crate::keys;
@@ -226,4 +226,164 @@ fn open_changes_pixels() {
     open_via_button(&mut g, "dd");
     let after = Gallery::pixel(&g.rasterize(), sx, sy);
     assert!(before != after, "the popup must restyle pixels below the button");
+}
+
+// ── added: per-state styling proofs (no-fake-green pixel deltas) ───────────
+
+/// An open option restyles to the :hover background when the pointer is over it.
+/// The hovered option's centre changes colour vs its resting (popup-bg) fill —
+/// `lq-popup > lq-option:hover { background: #3f3f46 }`. Remove that rule and the
+/// pixel would not move.
+#[test]
+fn option_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("dd", Box::new(Dropdown::new(opts())));
+    g.relayout();
+    open_via_button(&mut g, "dd");
+    let root = g.host.root_of("dd").unwrap();
+    // option-1 is NOT selected/highlighted by default selection (nothing
+    // selected; highlight is on option-0 after open), so a clean hover delta.
+    let opt1 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "option-1").expect("option-1 box")
+    };
+    let (cx, cy) = ((opt1.x + opt1.width / 2.0) as u32, (opt1.y + opt1.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    g.pointer_move(opt1.x + opt1.width / 2.0, opt1.y + opt1.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert_eq!(as_dd(&g, "dd").is_open(), true, "still open while hovering");
+    assert!(before != after, "hovering an option must restyle it (before {before:?} after {after:?})");
+}
+
+/// The :checked/selected option paints the accent fill, and that fill MOVES with
+/// the selection: selecting option-0 paints option-0 accent (blue-dominant) while
+/// option-2 stays the resting fill; a second dropdown selecting option-2 paints
+/// the accent there instead. Proves `lq-option:checked { background: accent }`.
+#[test]
+fn selected_option_paints_accent_and_moves() {
+    // Dropdown A: option-0 selected.
+    let mut a = Gallery::new(W, 420, "lq-gallery { padding: 16px; }");
+    a.mount("dd", Box::new(Dropdown::new(opts()).select(0)));
+    a.relayout();
+    open_via_button(&mut a, "dd");
+    let aroot = a.host.root_of("dd").unwrap();
+    let (a0, a2) = {
+        let q = LayoutQuery::new(a.hit_test_engine(), a.doc());
+        (
+            q.box_of_part(aroot, "option-0").expect("a option-0"),
+            q.box_of_part(aroot, "option-2").expect("a option-2"),
+        )
+    };
+    let afb = a.rasterize();
+    let a0px = Gallery::pixel(&afb, (a0.x + a0.width / 2.0) as u32, (a0.y + a0.height / 2.0) as u32);
+    let a2px = Gallery::pixel(&afb, (a2.x + a2.width / 2.0) as u32, (a2.y + a2.height / 2.0) as u32);
+    assert!(
+        a0px.b > a0px.r,
+        "selected option-0 must paint the blue-dominant accent (got {a0px:?})"
+    );
+    assert!(a0px != a2px, "the unselected option-2 must differ from selected option-0");
+
+    // Dropdown B: option-2 selected — the accent fill moves to option-2.
+    let mut b = Gallery::new(W, 420, "lq-gallery { padding: 16px; }");
+    b.mount("dd", Box::new(Dropdown::new(opts()).select(2)));
+    b.relayout();
+    open_via_button(&mut b, "dd");
+    let broot = b.host.root_of("dd").unwrap();
+    let b2 = {
+        let q = LayoutQuery::new(b.hit_test_engine(), b.doc());
+        q.box_of_part(broot, "option-2").expect("b option-2")
+    };
+    let b2px = Gallery::pixel(&b.rasterize(), (b2.x + b2.width / 2.0) as u32, (b2.y + b2.height / 2.0) as u32);
+    assert!(b2px.b > b2px.r, "selection moved: option-2 now the accent (got {b2px:?})");
+    assert!(
+        b2px != a2px,
+        "option-2's fill differs once it is the selected one (resting {a2px:?} selected {b2px:?})"
+    );
+}
+
+/// Keyboard highlight (:focus/.highlighted) restyles the highlighted option. The
+/// FIRST visible option is highlighted on open; an additional ArrowDown moves the
+/// highlight to option-1, restyling it to the hover/highlight background.
+#[test]
+fn highlighted_option_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("dd", Box::new(Dropdown::new(opts())));
+    g.relayout();
+    g.host.set_focus(Some("dd"), &mut g.doc, &mut g.dispatcher);
+    g.key(KeyInput::new(keys::ARROW_DOWN, 0)); // open + highlight 0
+    g.relayout();
+    let root = g.host.root_of("dd").unwrap();
+    let opt1 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "option-1").expect("option-1 box")
+    };
+    let (cx, cy) = ((opt1.x + opt1.width / 2.0) as u32, (opt1.y + opt1.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), cx, cy); // option-1 resting
+
+    g.key(KeyInput::new(keys::ARROW_DOWN, 0)); // highlight -> option-1
+    assert_eq!(as_dd(&g, "dd").highlighted(), Some(1));
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert!(before != after, "highlighting option-1 must restyle it (before {before:?} after {after:?})");
+}
+
+/// Opening restyles the TRIGGER border to the accent — `lq-dropdown.open >
+/// lq-dropdown-button { border-color: accent }`. Sample the button's top border
+/// ring (1px in) before/after opening.
+#[test]
+fn open_restyles_trigger_border() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("dd", Box::new(Dropdown::new(opts())));
+    g.relayout();
+    let root = g.host.root_of("dd").unwrap();
+    let btn = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "button").expect("button box")
+    };
+    // A point ON the top border ring of the trigger.
+    let (bx, by) = ((btn.x + btn.width / 2.0) as u32, (btn.y + 0.5) as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+
+    open_via_button(&mut g, "dd");
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(as_dd(&g, "dd").is_open());
+    assert!(before != after, "opening must recolour the trigger border (before {before:?} after {after:?})");
+}
+
+/// A disabled dropdown swallows the trigger click — it never opens and emits
+/// nothing — and drops out of the focus ring.
+#[test]
+fn disabled_dropdown_swallows_click() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("dd", Box::new(Dropdown::new(opts()).disabled(true)));
+    g.relayout();
+    let root = g.host.root_of("dd").unwrap();
+    let btn = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "button").expect("button box")
+    };
+    g.left_click(btn.x + 5.0, btn.y + btn.height / 2.0);
+    assert!(g.process().is_empty(), "disabled trigger emits nothing");
+    assert!(!as_dd(&g, "dd").is_open(), "disabled dropdown must not open");
+    assert!(!as_dd(&g, "dd").focusable(), "disabled dropdown is not focusable");
+}
+
+/// The caret affordance (`data-part="arrow"`, a CSS `::before` ▼) reserves a real
+/// laid-out box in the trigger. (The glyph ink itself is not asserted — the
+/// gallery glyph rasterizer does not reliably paint the dingbat; the box presence
+/// is the structural proof the affordance exists.)
+#[test]
+fn caret_arrow_has_a_layout_box() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("dd", Box::new(Dropdown::new(opts())));
+    g.relayout();
+    let root = g.host.root_of("dd").unwrap();
+    let arrow = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "arrow").expect("arrow box")
+    };
+    assert!(arrow.width > 0.0 && arrow.height > 0.0, "caret reserves a box (got {arrow:?})");
 }

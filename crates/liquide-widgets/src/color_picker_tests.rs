@@ -124,6 +124,133 @@ fn keyboard_navigates_grid() {
     assert_eq!(a[0].payload.as_deref(), Some("#EC4899")); // swatch 7 = pink
 }
 
+/// Resolve a part box for the `cp` widget.
+fn cp_part(g: &Gallery, part: &str) -> Option<liquide_layout::geometry::Rect> {
+    let root = g.host.root_of("cp").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    q.box_of_part(root, part)
+}
+
+/// :checked/.selected restyles the selected swatch's BORDER (accent border). After
+/// selecting swatch-5 the picker closes, so re-open and assert swatch-5's border
+/// differs from an un-selected peer (swatch-4) in the same grid.
+#[test]
+fn selected_swatch_restyles_border() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("cp", Box::new(ColorPicker::new()));
+    g.relayout();
+    open(&mut g, "cp");
+
+    // Baseline: swatch-3 unselected — record its top border band. Swatch-3 is the
+    // green palette entry (34,197,94), DELIBERATELY not swatch-5 (blue 59,130,246):
+    // a swatch whose own fill equals the accent would mask the accent-border delta.
+    let s3 = cp_part(&g, "swatch-3").expect("swatch-3");
+    let s3_pt = ((s3.x + s3.width / 2.0) as u32, (s3.y) as u32);
+    let s3_before = Gallery::pixel(&g.rasterize(), s3_pt.0, s3_pt.1);
+
+    // Select swatch-3, then re-open the popup to inspect the now-:checked swatch.
+    g.left_click(s3.x + s3.width / 2.0, s3.y + s3.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    open(&mut g, "cp");
+    assert_eq!(as_cp(&g, "cp").selected_index(), Some(3));
+    let s3_after = Gallery::pixel(&g.rasterize(), s3_pt.0, s3_pt.1);
+
+    assert!(
+        s3_before != s3_after,
+        ":checked swatch must gain the accent border (before={s3_before:?}, after={s3_after:?})"
+    );
+}
+
+/// A swatch :hover restyles its border (CSS `lq-swatch:hover` -> fg border).
+/// Sample swatch-3's top border band before vs after a hover move onto it.
+#[test]
+fn swatch_hover_restyles_border() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("cp", Box::new(ColorPicker::new()));
+    g.relayout();
+    open(&mut g, "cp");
+
+    let s3 = cp_part(&g, "swatch-3").expect("swatch-3");
+    let bx = (s3.x + s3.width / 2.0) as u32;
+    let by = (s3.y) as u32;
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+
+    g.pointer_move(s3.x + s3.width / 2.0, s3.y + s3.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+
+    assert!(
+        before != after,
+        "swatch :hover must restyle its border (before={before:?}, after={after:?})"
+    );
+}
+
+/// The keyboard :focus ring restyles the focused swatch border AND moves with the
+/// focus: focusing swatch 0 then arrowing to swatch 1 lights 1 and reverts 0.
+#[test]
+fn focus_ring_moves_with_keyboard() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("cp", Box::new(ColorPicker::new()));
+    g.relayout();
+    g.host.set_focus(Some("cp"), &mut g.doc, &mut g.dispatcher);
+    g.key(KeyInput::new(keys::ARROW_DOWN, 0)); // open, focus 0
+    g.relayout();
+    assert_eq!(as_cp(&g, "cp").focus(), 0);
+
+    let s0 = cp_part(&g, "swatch-0").expect("swatch-0");
+    let s1 = cp_part(&g, "swatch-1").expect("swatch-1");
+    let s0_pt = ((s0.x + s0.width / 2.0) as u32, (s0.y) as u32);
+    let s1_pt = ((s1.x + s1.width / 2.0) as u32, (s1.y) as u32);
+    let s0_focused = Gallery::pixel(&g.rasterize(), s0_pt.0, s0_pt.1);
+    let s1_unfocused = Gallery::pixel(&g.rasterize(), s1_pt.0, s1_pt.1);
+
+    g.key(KeyInput::new(keys::ARROW_RIGHT, 0)); // focus -> 1
+    assert_eq!(as_cp(&g, "cp").focus(), 1);
+    g.relayout();
+    let s0_now = Gallery::pixel(&g.rasterize(), s0_pt.0, s0_pt.1);
+    let s1_now = Gallery::pixel(&g.rasterize(), s1_pt.0, s1_pt.1);
+
+    assert!(
+        s0_focused != s0_now,
+        "swatch 0 must LOSE the focus ring (was {s0_focused:?}, now {s0_now:?})"
+    );
+    assert!(
+        s1_unfocused != s1_now,
+        "swatch 1 must GAIN the focus ring (was {s1_unfocused:?}, now {s1_now:?})"
+    );
+}
+
+/// The button PREVIEW swatch carries the selected colour as an inline fill: after
+/// selecting blue (swatch-5) the preview body paints blue-dominant, distinct from
+/// the empty-state preview.
+#[test]
+fn preview_fill_paints_selected_color() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("cp", Box::new(ColorPicker::new()));
+    g.relayout();
+
+    let prev = cp_part(&g, "preview").expect("preview");
+    let px = (prev.x + prev.width / 2.0) as u32;
+    let py = (prev.y + prev.height / 2.0) as u32;
+    let empty = Gallery::pixel(&g.rasterize(), px, py);
+
+    // Select blue swatch-5 = (59,130,246).
+    open(&mut g, "cp");
+    let s5 = cp_part(&g, "swatch-5").expect("swatch-5");
+    g.left_click(s5.x + s5.width / 2.0, s5.y + s5.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let filled = Gallery::pixel(&g.rasterize(), px, py);
+
+    assert!(
+        empty != filled,
+        "the preview must fill with the selected colour (empty={empty:?}, filled={filled:?})"
+    );
+    assert!(filled.b > filled.r, "preview reads blue-dominant (got {filled:?})");
+}
+
 /// Opening restyles pixels (the swatch grid appears).
 #[test]
 fn open_changes_pixels() {

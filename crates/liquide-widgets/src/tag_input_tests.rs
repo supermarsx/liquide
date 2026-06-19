@@ -170,3 +170,124 @@ fn disabled_swallows() {
     assert!(a.is_empty());
     assert!(as_tags(&g, "ti").tags().is_empty());
 }
+
+// ── Added: visual-STATE pixel-delta coverage (no fake-green) ─────────────────
+
+/// Helper: average the channel-weighted sum of a sub-part box (background/border
+/// driven; avoids relying on glyph ink which the gallery font paints faintly).
+fn part_sum(g: &mut Gallery, id: &str, part: &str) -> u64 {
+    let root = g.host.root_of(id).unwrap();
+    let r = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, part).unwrap_or_else(|| panic!("part {part}"))
+    };
+    let fb = g.rasterize();
+    let mut acc = 0u64;
+    for y in (r.y as u32)..((r.y + r.height) as u32) {
+        for x in (r.x as u32)..((r.x + r.width) as u32) {
+            let p = Gallery::pixel(&fb, x, y);
+            acc += p.r as u64 + p.g as u64 * 3 + p.b as u64 * 7 + p.a as u64 * 11;
+        }
+    }
+    acc
+}
+
+/// :focus paints the focus-ring border color (CSS `lq-tag-input:focus`
+/// border-color: focus-ring). Sample the top border line — focus must restyle it.
+#[test]
+fn focus_restyles_border_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("ti", Box::new(TagInput::new("Add…")));
+    g.relayout();
+    let root = g.host.root_of("ti").unwrap();
+    let r = g.box_of(root).unwrap();
+    let (bx, by) = ((r.x + 8.0) as u32, r.y as u32);
+
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+    // set_focus sets the :focus pseudo on the widget root via the dispatcher, which
+    // the CSS `lq-tag-input:focus` border-color rule matches (no rerender needed).
+    g.host.set_focus(Some("ti"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":focus must restyle the tag-input border (before {before:?} after {after:?})"
+    );
+}
+
+/// The chip remove × box PAINTS a distinct background (CSS `lq-token-remove`
+/// background rgba(0,0,0,.18)) — proves the ::after-equivalent × affordance is
+/// rasterized, not just present in the DOM.
+#[test]
+fn chip_remove_x_paints() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("ti", Box::new(TagInput::new("…").with_tags(["rust"])));
+    g.relayout();
+    let root = g.host.root_of("ti").unwrap();
+    let (rm, chip) = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        (
+            q.box_of_part(root, "remove-0").expect("remove-0 box"),
+            q.box_of_part(root, "token-0").expect("token-0 box"),
+        )
+    };
+    assert!(rm.width > 0.0 && rm.height > 0.0, "× box lays out");
+    let fb = g.rasterize();
+    let px = Gallery::pixel(&fb, (rm.x + rm.width / 2.0) as u32, (rm.y + rm.height / 2.0) as u32);
+    assert!(px.a > 0, "the chip × box must paint (alpha {})", px.a);
+    // The chip itself is the accent (blue) fill; the × inset is darker — so the ×
+    // center pixel must differ from the chip's bare label area.
+    let chip_px = Gallery::pixel(&fb, (chip.x + 3.0) as u32, (chip.y + chip.height / 2.0) as u32);
+    assert!(
+        px != chip_px,
+        "the × inset paints distinctly from the chip body (× {px:?} chip {chip_px:?})"
+    );
+}
+
+/// :hover restyles the token's × box background (CSS `lq-token-remove:hover`
+/// darkens to rgba(0,0,0,.40)). Hovering the × must change its rasterized pixels.
+#[test]
+fn remove_x_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("ti", Box::new(TagInput::new("…").with_tags(["alpha"])));
+    g.relayout();
+
+    let before = part_sum(&mut g, "ti", "remove-0");
+    let root = g.host.root_of("ti").unwrap();
+    let rm = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "remove-0").unwrap()
+    };
+    g.pointer_move(rm.x + rm.width / 2.0, rm.y + rm.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = part_sum(&mut g, "ti", "remove-0");
+    assert!(
+        before != after,
+        ":hover must darken the × box bg (before {before} after {after})"
+    );
+}
+
+/// :disabled dims the whole control (CSS `lq-tag-input:disabled` opacity .5) —
+/// the same tags painted disabled differ from enabled at the chip.
+#[test]
+fn disabled_dims_pixels() {
+    let mk = |dis: bool| {
+        let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+        g.mount("ti", Box::new(TagInput::new("…").with_tags(["one"]).disabled(dis)));
+        g.relayout();
+        let root = g.host.root_of("ti").unwrap();
+        let chip = {
+            let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+            q.box_of_part(root, "token-0").unwrap()
+        };
+        let fb = g.rasterize();
+        Gallery::pixel(&fb, (chip.x + chip.width / 2.0) as u32, (chip.y + chip.height / 2.0) as u32)
+    };
+    let enabled = mk(false);
+    let disabled = mk(true);
+    assert!(
+        enabled != disabled,
+        ":disabled must dim the chip fill (enabled {enabled:?} disabled {disabled:?})"
+    );
+}

@@ -201,3 +201,124 @@ fn disabled_swallows() {
     assert!(g.process().is_empty());
     assert_eq!(as_rating(&g, "rt").value(), 2.0);
 }
+
+// ── Added: visual-STATE pixel-delta coverage (no fake-green) ─────────────────
+
+/// Center pixel of a star box (the fill state is encoded as the star box's
+/// background color, which the engine paints reliably — NOT the glyph ink).
+fn star_px(g: &mut Gallery, id: &str, idx: usize) -> liquide_compositor::pixel::Color {
+    let root = g.host.root_of(id).unwrap();
+    let r = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, &format!("star-{idx}")).unwrap()
+    };
+    let fb = g.rasterize();
+    Gallery::pixel(&fb, (r.x + r.width / 2.0) as u32, (r.y + r.height / 2.0) as u32)
+}
+
+/// HOVER previews the fill in PIXELS: hovering star-2 paints stars 0..=2 with the
+/// accent (filled) bg, even though the committed value is still 0. The hovered
+/// star's bg differs from its empty bg.
+#[test]
+fn hover_preview_fills_star_bg_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("rt", Box::new(Rating::new(5, 0.0)));
+    g.relayout();
+    let empty0 = star_px(&mut g, "rt", 0);
+    let empty2 = star_px(&mut g, "rt", 2);
+
+    let root = g.host.root_of("rt").unwrap();
+    let star2 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "star-2").unwrap()
+    };
+    g.pointer_move(star2.x + star2.width / 2.0, star2.y + star2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_rating(&g, "rt").hover_value(), Some(3.0), "preview = 3");
+    let prev0 = star_px(&mut g, "rt", 0);
+    let prev2 = star_px(&mut g, "rt", 2);
+    assert!(prev0 != empty0, "hover-preview must fill star-0 bg ({empty0:?} -> {prev0:?})");
+    assert!(prev2 != empty2, "hover-preview must fill star-2 bg ({empty2:?} -> {prev2:?})");
+    // The committed value is still 0 — preview is pixels-only, no commit.
+    assert_eq!(as_rating(&g, "rt").value(), 0.0);
+}
+
+/// A FILLED star paints the accent fill (the active theme resolves
+/// `--widget-accent` to #3b82f6 — blue-dominant), distinct from an empty star
+/// which is the dim widget bg. Proves the `.filled` bg rule lands.
+#[test]
+fn filled_star_paints_accent_bg() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("rt", Box::new(Rating::new(5, 2.0)));
+    g.relayout();
+    let filled = star_px(&mut g, "rt", 0); // value 2 -> stars 0,1 filled
+    let empty = star_px(&mut g, "rt", 4); // star 4 empty
+    assert!(filled != empty, "filled star differs from empty ({filled:?} vs {empty:?})");
+    assert!(
+        filled.b > filled.r,
+        "filled star bg is the blue accent (blue-dominant, got {filled:?})"
+    );
+}
+
+/// The filled region MOVES with the value: value 1 fills star-0 only; value 3
+/// fills star-2 too. Star-2's bg is empty at value 1 and filled at value 3.
+#[test]
+fn filled_region_moves_with_value() {
+    let mk = |value: f32| {
+        let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+        g.mount("rt", Box::new(Rating::new(5, value)));
+        g.relayout();
+        star_px(&mut g, "rt", 2)
+    };
+    let at1 = mk(1.0); // star-2 empty
+    let at3 = mk(3.0); // star-2 filled
+    assert!(
+        at1 != at3,
+        "star-2 bg must differ between value 1 (empty) and value 3 (filled) ({at1:?} vs {at3:?})"
+    );
+    assert!(at3.b > at3.r, "at value 3 star-2 is accent-filled (blue, got {at3:?})");
+}
+
+/// A HALF star paints a distinct (darker accent — accent-active #2563eb) bg vs a
+/// full star (#3b82f6) and vs empty. The half value is set via a left-half click
+/// (the constructor snaps to whole steps, so the .5 must come through interaction).
+#[test]
+fn half_star_paints_distinct_bg() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("rt", Box::new(Rating::new(5, 0.0).half_steps(true)));
+    g.relayout();
+    let root = g.host.root_of("rt").unwrap();
+    let star2 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "star-2").unwrap()
+    };
+    // Left half of star-2 -> value 2.5: stars 0,1 full; star-2 half.
+    g.left_click(star2.x + star2.width * 0.2, star2.y + star2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_rating(&g, "rt").value(), 2.5, "left-half click set 2.5");
+    let full = star_px(&mut g, "rt", 0); // full
+    let half = star_px(&mut g, "rt", 2); // the .5 -> half
+    let empty = star_px(&mut g, "rt", 4);
+    assert!(half != empty, "half star differs from empty ({half:?} vs {empty:?})");
+    assert!(half != full, "half star differs from full ({half:?} vs {full:?})");
+}
+
+/// :disabled dims the rating (opacity .5) — a filled star differs enabled vs
+/// disabled.
+#[test]
+fn disabled_dims_pixels() {
+    let mk = |dis: bool| {
+        let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+        g.mount("rt", Box::new(Rating::new(5, 3.0).disabled(dis)));
+        g.relayout();
+        star_px(&mut g, "rt", 0)
+    };
+    let enabled = mk(false);
+    let disabled = mk(true);
+    assert!(
+        enabled != disabled,
+        ":disabled must dim a filled star (enabled {enabled:?} disabled {disabled:?})"
+    );
+}

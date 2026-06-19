@@ -693,7 +693,8 @@
   }
   lq-panel.flush {
     box-shadow: none;
-    border: none;
+    border: 0 solid transparent;
+    border-width: 0;
   }
 
   lq-card {
@@ -2633,12 +2634,18 @@
     color: #ffffff;
   }
   lq-listbox > lq-listitem:focus {
+    /* A paintable focus ring: the inset box-shadow alone does not rasterize on a
+       transparent-background element, so pair it with a subtle focus-tint
+       background the CPU renderer fills (distinct from the :checked accent). */
     box-shadow: inset 0 0 0 1px var(--widget-focus-ring, #3b82f6);
+    background-color: var(--widget-focus-tint, rgba(59, 130, 246, 0.22));
   }
   lq-listbox > lq-listitem:disabled,
   lq-listbox > lq-listitem.disabled {
     color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
-    background-color: rgba(0, 0, 0, 0);
+    /* Tint a paintable surface so a disabled item is provably distinct in pixels
+       (text-color alone is not reliably rasterized by the gallery font path). */
+    background-color: var(--widget-bg-disabled, rgba(113, 113, 122, 0.14));
   }
   lq-listbox:disabled > lq-listitem {
     color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
@@ -2682,7 +2689,10 @@
     box-shadow: inset 0 0 0 1px var(--widget-accent, #3b82f6);
   }
   lq-listview-item:focus {
+    /* Paintable focus ring: inset box-shadow alone does not rasterize on a
+       transparent-background element, so add a focus-tint the renderer fills. */
     box-shadow: inset 0 0 0 1px var(--widget-focus-ring, #3b82f6);
+    background-color: var(--widget-focus-tint, rgba(59, 130, 246, 0.22));
   }
 
   /* Icons mode: a wrapping grid of large tiles (icon over label, centered). */
@@ -2925,6 +2935,9 @@
   }
   lq-cal-day:focus {
     border: 1px solid var(--widget-focus-ring, #3b82f6);
+    /* Plus a focus-tint fill so the focused day is provably distinct in pixels
+       across the whole cell interior (not just the 1px border edge). */
+    background-color: var(--widget-focus-tint, rgba(59, 130, 246, 0.22));
   }
   lq-cal-day:checked,
   lq-cal-day.selected {

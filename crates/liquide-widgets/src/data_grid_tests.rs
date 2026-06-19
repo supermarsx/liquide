@@ -6,7 +6,7 @@
 //! constant-based grid cannot pass (the anti-constant tooth).
 #![cfg(test)]
 
-use crate::behavior::KeyInput;
+use crate::behavior::{KeyInput, WidgetBehavior};
 use crate::data_grid::{
     clamp_range, DataGrid, RESIZED_ACTION, SCROLLED_ACTION, SELECTED_ACTION, SORTED_ACTION,
 };
@@ -325,4 +325,195 @@ fn selected_cell_restyles_pixels() {
     g.relayout();
     let after = Gallery::pixel(&g.rasterize(), sx, sy);
     assert!(before != after, "selecting a cell must restyle its pixels");
+}
+
+/// PIXELS :hover — hovering a body row restyles its pixels (the row hover fill),
+/// and the delta is on the HOVERED row only, not its neighbour.
+#[test]
+fn hovered_row_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("dg", Box::new(big_grid(20).row_height(34.0)));
+    g.relayout();
+    g.relayout();
+    let root = g.host.root_of("dg").unwrap();
+    let (r2, r3) = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        (
+            q.box_of_part(root, "row-2").expect("row-2 box"),
+            q.box_of_part(root, "row-3").expect("row-3 box"),
+        )
+    };
+    // Sample a gap area of each row (left edge, away from glyph ink) so the hover
+    // background fill — not text — drives the delta.
+    let (hx, hy) = ((r2.x + 4.0) as u32, (r2.y + r2.height / 2.0) as u32);
+    let (nx, ny) = ((r3.x + 4.0) as u32, (r3.y + r3.height / 2.0) as u32);
+    let before_hovered = Gallery::pixel(&g.rasterize(), hx, hy);
+    let before_other = Gallery::pixel(&g.rasterize(), nx, ny);
+
+    g.pointer_move(r2.x + r2.width / 2.0, r2.y + r2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+
+    let after_hovered = Gallery::pixel(&g.rasterize(), hx, hy);
+    let after_other = Gallery::pixel(&g.rasterize(), nx, ny);
+    assert!(
+        before_hovered != after_hovered,
+        "the hovered row must restyle (before {before_hovered:?} after {after_hovered:?})"
+    );
+    assert_eq!(
+        before_other, after_other,
+        "a non-hovered row must NOT change (no global restyle)"
+    );
+}
+
+/// PIXELS :hover — a header cell restyles on hover (the column-header hover fill).
+#[test]
+fn hovered_header_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("dg", Box::new(big_grid(8)));
+    g.relayout();
+    let root = g.host.root_of("dg").unwrap();
+    let head1 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "head-1").expect("head-1 box")
+    };
+    // Sample near the trailing edge of the header (away from the label glyphs).
+    let (sx, sy) = ((head1.x + head1.width - 16.0) as u32, (head1.y + head1.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), sx, sy);
+    g.pointer_move(head1.x + head1.width - 16.0, head1.y + head1.height / 2.0);
+    // NB: header hover is a pure CSS :hover (the widget does not track header
+    // hover in state) — it rides the dispatcher's hover-chain pseudo flags, which
+    // the pipeline reads at render time. We deliberately do NOT call process()/
+    // relayout() here: the data-grid rerenders on mouse-move (it tracks a body
+    // hover index), and that reconcile would wipe the dispatcher-set :hover flag
+    // on the header cell. Rasterizing straight after the move proves the CSS
+    // :hover fill lands in pixels.
+    let after = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(
+        before != after,
+        "hovering a header cell must restyle its pixels (before {before:?} after {after:?})"
+    );
+}
+
+/// PIXELS ::after — sorting a column paints the sort indicator glyph (▲/▼) that
+/// the `.sorted-asc/.sorted-desc > label::after` rule injects. Asserted as a
+/// pixel delta in the header's trailing region where the indicator lands.
+#[test]
+fn sort_indicator_paints_after_glyph() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount(
+        "dg",
+        Box::new(
+            DataGrid::new()
+                .column("Id", 160.0)
+                .row(vec!["3".into()])
+                .row(vec!["1".into()])
+                .row(vec!["2".into()]),
+        ),
+    );
+    g.relayout();
+    let root = g.host.root_of("dg").unwrap();
+    let head0 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "head-0").expect("head-0 box")
+    };
+    // Before sorting there is no ::after content. Scan a horizontal band just
+    // right of the label baseline for any accent-coloured ink.
+    let band_y = (head0.y + head0.height / 2.0) as u32;
+    let scan = |g: &mut Gallery| -> bool {
+        let fb = g.rasterize();
+        let x0 = (head0.x + 30.0) as u32;
+        let x1 = (head0.x + head0.width - 8.0) as u32;
+        (x0..x1).any(|x| {
+            let p = Gallery::pixel(&fb, x, band_y);
+            p.a > 0
+        })
+    };
+    let before_ink: Vec<u8> = {
+        let fb = g.rasterize();
+        let x0 = (head0.x + 30.0) as u32;
+        let x1 = (head0.x + head0.width - 8.0) as u32;
+        (x0..x1).flat_map(|x| {
+            let p = Gallery::pixel(&fb, x, band_y);
+            [p.r, p.g, p.b, p.a]
+        }).collect()
+    };
+
+    g.left_click(head0.x + 16.0, head0.y + head0.height / 2.0);
+    let a = g.process();
+    assert!(a.iter().any(|a| a.name == SORTED_ACTION), "header click sorts");
+    g.relayout();
+
+    let after_ink: Vec<u8> = {
+        let fb = g.rasterize();
+        let x0 = (head0.x + 30.0) as u32;
+        let x1 = (head0.x + head0.width - 8.0) as u32;
+        (x0..x1).flat_map(|x| {
+            let p = Gallery::pixel(&fb, x, band_y);
+            [p.r, p.g, p.b, p.a]
+        }).collect()
+    };
+    assert!(scan(&mut g), "the sort indicator must paint SOME ink after the label");
+    assert!(
+        before_ink != after_ink,
+        "the sort-indicator ::after glyph must change the header's trailing pixels"
+    );
+}
+
+/// SELECTION MOVES: selecting cell B after cell A clears A's selection styling
+/// (the selection fill rides the current cell, it does not accumulate).
+#[test]
+fn selection_moves_off_previous_cell() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("dg", Box::new(big_grid(20).row_height(34.0)));
+    g.relayout();
+    g.relayout();
+    let root = g.host.root_of("dg").unwrap();
+    let (c1, c3) = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        (
+            q.box_of_part(root, "cell-1-0").expect("cell-1-0 box"),
+            q.box_of_part(root, "cell-3-0").expect("cell-3-0 box"),
+        )
+    };
+    let (ax, ay) = ((c1.x + c1.width / 2.0) as u32, (c1.y + c1.height / 2.0) as u32);
+    let baseline_a = Gallery::pixel(&g.rasterize(), ax, ay);
+
+    // Select cell 1,0 — it gains the selection fill.
+    g.left_click(c1.x + c1.width / 2.0, c1.y + c1.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let selected_a = Gallery::pixel(&g.rasterize(), ax, ay);
+    assert!(selected_a != baseline_a, "cell 1,0 selected differs from baseline");
+    assert_eq!(as_grid(&g, "dg").selected(), Some((1, 0)));
+
+    // Now select cell 3,0 — cell 1,0 must return to its unselected pixels.
+    g.left_click(c3.x + c3.width / 2.0, c3.y + c3.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_grid(&g, "dg").selected(), Some((3, 0)));
+    let after_move_a = Gallery::pixel(&g.rasterize(), ax, ay);
+    assert_eq!(
+        after_move_a, baseline_a,
+        "the previously-selected cell must lose the selection fill when selection moves"
+    );
+}
+
+/// DISABLED: a disabled grid swallows a cell click — no selection, no action.
+#[test]
+fn disabled_grid_swallows_click() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("dg", Box::new(big_grid(20).row_height(34.0).disabled(true)));
+    g.relayout();
+    g.relayout();
+    let root = g.host.root_of("dg").unwrap();
+    let cell = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "cell-1-0").expect("cell-1-0 box")
+    };
+    g.left_click(cell.x + cell.width / 2.0, cell.y + cell.height / 2.0);
+    let acts = g.process();
+    assert!(acts.is_empty(), "disabled grid must emit nothing");
+    assert_eq!(as_grid(&g, "dg").selected(), None, "disabled grid selects nothing");
+    assert!(!as_grid(&g, "dg").focusable(), "disabled grid drops out of focus");
 }

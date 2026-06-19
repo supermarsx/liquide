@@ -143,3 +143,88 @@ fn disabled_swallows() {
     assert!(g.process().is_empty());
     assert_eq!(as_seg(&g, "sg").selected_index(), 0);
 }
+
+// ── added: per-state styling proofs ───────────────────────────────────────
+
+/// Hovering an UNSELECTED segment restyles it to the :hover fill
+/// (`lq-segment:hover { background: #3f3f46 }`). seg-1/seg-2 are unselected by
+/// default (seg-0 selected), so the hover delta is not the selection delta.
+#[test]
+fn segment_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("sg", Box::new(Segmented::new(segs())));
+    g.relayout();
+    let root = g.host.root_of("sg").unwrap();
+    let seg1 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "seg-1").expect("seg-1 box")
+    };
+    let (cx, cy) = ((seg1.x + seg1.width / 2.0) as u32, (seg1.y + seg1.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    g.pointer_move(seg1.x + seg1.width / 2.0, seg1.y + seg1.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert!(before != after, "hovering seg-1 must restyle it (before {before:?} after {after:?})");
+}
+
+/// The :checked accent fill MOVES with the selection. seg-1 selected paints
+/// seg-1 the blue accent while seg-2 stays resting; seg-2 selected paints seg-2
+/// the accent and seg-1 goes resting. Proves the selected style is keyed to the
+/// selected segment, not a fixed one.
+#[test]
+fn selected_pixels_move_with_selection() {
+    // seg-1 selected.
+    let mut a = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    a.mount("sg", Box::new(Segmented::new(segs()).select(1)));
+    a.relayout();
+    let aroot = a.host.root_of("sg").unwrap();
+    let (a1, a2) = {
+        let q = LayoutQuery::new(a.hit_test_engine(), a.doc());
+        (q.box_of_part(aroot, "seg-1").unwrap(), q.box_of_part(aroot, "seg-2").unwrap())
+    };
+    let afb = a.rasterize();
+    let a1px = Gallery::pixel(&afb, (a1.x + a1.width / 2.0) as u32, (a1.y + a1.height / 2.0) as u32);
+    let a2px = Gallery::pixel(&afb, (a2.x + a2.width / 2.0) as u32, (a2.y + a2.height / 2.0) as u32);
+    assert!(a1px.b > a1px.r, "selected seg-1 is blue-dominant accent (got {a1px:?})");
+    assert!(a1px != a2px, "unselected seg-2 differs from selected seg-1");
+
+    // seg-2 selected — accent moves.
+    let mut b = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    b.mount("sg", Box::new(Segmented::new(segs()).select(2)));
+    b.relayout();
+    let broot = b.host.root_of("sg").unwrap();
+    let (b1, b2) = {
+        let q = LayoutQuery::new(b.hit_test_engine(), b.doc());
+        (q.box_of_part(broot, "seg-1").unwrap(), q.box_of_part(broot, "seg-2").unwrap())
+    };
+    let bfb = b.rasterize();
+    let b1px = Gallery::pixel(&bfb, (b1.x + b1.width / 2.0) as u32, (b1.y + b1.height / 2.0) as u32);
+    let b2px = Gallery::pixel(&bfb, (b2.x + b2.width / 2.0) as u32, (b2.y + b2.height / 2.0) as u32);
+    assert!(b2px.b > b2px.r, "selection moved: seg-2 now the accent (got {b2px:?})");
+    assert!(b1px != a1px, "seg-1 lost the accent when selection moved away");
+    assert!(b2px != a2px, "seg-2 gained the accent when selection moved to it");
+}
+
+/// A disabled segmented group dims its pixels — `lq-segmented:disabled
+/// { opacity: 0.5 }`. The whole control's centre is rendered at reduced
+/// opacity vs an enabled one (the renderer composites the 0.5 alpha).
+#[test]
+fn disabled_segmented_dims_pixels() {
+    let mut on = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    on.mount("sg", Box::new(Segmented::new(segs())));
+    on.relayout();
+    let onr = on.box_of(on.host.root_of("sg").unwrap()).unwrap();
+    let (cx, cy) = ((onr.x + onr.width / 2.0) as u32, (onr.y + onr.height / 2.0) as u32);
+    let on_px = Gallery::pixel(&on.rasterize(), cx, cy);
+
+    let mut off = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    off.mount("sg", Box::new(Segmented::new(segs()).disabled(true)));
+    off.relayout();
+    let off_px = Gallery::pixel(&off.rasterize(), cx, cy);
+    assert!(
+        on_px != off_px,
+        ":disabled must dim the segmented (enabled {on_px:?} disabled {off_px:?})"
+    );
+}

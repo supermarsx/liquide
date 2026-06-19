@@ -1,7 +1,7 @@
 //! `<lq-month-calendar>` real-pipeline gallery tests.
 #![cfg(test)]
 
-use crate::behavior::KeyInput;
+use crate::behavior::{KeyInput, WidgetBehavior};
 use crate::gallery::Gallery;
 use crate::keys;
 use crate::layout_query::LayoutQuery;
@@ -153,4 +153,155 @@ fn selection_restyles_pixels() {
     g.relayout();
     let after = Gallery::pixel(&g.rasterize(), sx, sy);
     assert!(before != after, "selecting a day must restyle its pixels");
+}
+
+/// PIXELS :hover — hovering a day cell restyles its pixels (the hover fill); the
+/// delta lands on the hovered day only.
+#[test]
+fn hovered_day_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("cal", Box::new(MonthCalendar::new(2026, 6)));
+    g.relayout();
+    let root = g.host.root_of("cal").unwrap();
+    // day-1 is the default focus cell; use days 15 & 16 (no selection/focus/today).
+    let (d15, d16) = (day_box(&g, root, 15), day_box(&g, root, 16));
+    let (hx, hy) = ((d15.x + d15.width / 2.0) as u32, (d15.y + d15.height / 2.0) as u32);
+    let (nx, ny) = ((d16.x + d16.width / 2.0) as u32, (d16.y + d16.height / 2.0) as u32);
+    let before_h = Gallery::pixel(&g.rasterize(), hx, hy);
+    let before_n = Gallery::pixel(&g.rasterize(), nx, ny);
+    g.pointer_move(d15.x + d15.width / 2.0, d15.y + d15.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after_h = Gallery::pixel(&g.rasterize(), hx, hy);
+    let after_n = Gallery::pixel(&g.rasterize(), nx, ny);
+    assert!(before_h != after_h, "hovered day must restyle (before {before_h:?} after {after_h:?})");
+    assert_eq!(before_n, after_n, "a non-hovered day must not change");
+}
+
+/// PIXELS :focus — the keyboard-focused day paints a focus border, and it MOVES
+/// with the focus. day-1 is the default focus; drive Right to day 2.
+#[test]
+fn focus_border_moves_with_focused_day() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("cal", Box::new(MonthCalendar::new(2026, 6)));
+    g.relayout();
+    g.host.set_focus(Some("cal"), &mut g.doc, &mut g.dispatcher);
+    let root = g.host.root_of("cal").unwrap();
+    let d2 = day_box(&g, root, 2);
+    // Sample the top border edge of day 2 (away from glyph ink).
+    let (sx, sy) = ((d2.x + d2.width / 2.0) as u32, (d2.y + 1.0) as u32);
+    let unfocused = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert_eq!(as_cal(&g, "cal").focus_day(), 1, "focus starts on day 1");
+
+    // Move focus onto day 2.
+    g.key(KeyInput::new(keys::ARROW_RIGHT, 0));
+    assert_eq!(as_cal(&g, "cal").focus_day(), 2, "focus moved to day 2");
+    g.relayout();
+    let focused = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(
+        unfocused != focused,
+        "the focus border must paint on day 2 (before {unfocused:?} after {focused:?})"
+    );
+
+    // Move focus off day 2 (Left back to day 1) — day 2 returns to baseline.
+    g.key(KeyInput::new(keys::ARROW_LEFT, 0));
+    assert_eq!(as_cal(&g, "cal").focus_day(), 1);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert_eq!(after, unfocused, "the focus border must leave day 2 when focus moves");
+}
+
+/// PIXELS ::active/today — the today cell paints the today ring (an inset
+/// box-shadow via `.today, :active`). Compare the today cell's border pixels to an
+/// identical non-today cell. The existing today test only asserts the .today class;
+/// this proves the ring lands in PIXELS.
+#[test]
+fn today_ring_paints_pixels() {
+    // Put "today" on a day that is NOT the default focus (1) and NOT selected, so
+    // the today ring is the only restyle on that cell.
+    let mut g = Gallery::new(W, H, "");
+    g.mount("cal", Box::new(MonthCalendar::new(2026, 6).today(2026, 6, 20)));
+    g.relayout();
+    let root = g.host.root_of("cal").unwrap();
+    let (today, plain) = (day_box(&g, root, 20), day_box(&g, root, 21));
+    // Sample the top inset edge (1px in) where the inset ring lands.
+    let ty = (today.y + 1.0) as u32;
+    let tx = (today.x + today.width / 2.0) as u32;
+    let py = (plain.y + 1.0) as u32;
+    let px = (plain.x + plain.width / 2.0) as u32;
+    let fb = g.rasterize();
+    let today_px = Gallery::pixel(&fb, tx, ty);
+    let plain_px = Gallery::pixel(&fb, px, py);
+    assert!(
+        today_px != plain_px,
+        "the today ring must paint on the today cell, distinct from a plain cell \
+         (today {today_px:?}, plain {plain_px:?})"
+    );
+}
+
+/// PIXELS :hover (nav) — hovering the prev/next nav button restyles its pixels.
+#[test]
+fn nav_button_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("cal", Box::new(MonthCalendar::new(2026, 6)));
+    g.relayout();
+    let root = g.host.root_of("cal").unwrap();
+    let next = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "next").expect("next box")
+    };
+    // Sample a corner of the button (away from the chevron glyph centre).
+    let (sx, sy) = ((next.x + 3.0) as u32, (next.y + 3.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), sx, sy);
+    g.pointer_move(next.x + next.width / 2.0, next.y + next.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(
+        before != after,
+        "hovering the next-month button must restyle it (before {before:?} after {after:?})"
+    );
+}
+
+/// SELECTION MOVES: selecting day B after day A clears A's accent fill (selection
+/// rides the current day; it does not accumulate).
+#[test]
+fn selection_moves_off_previous_day() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("cal", Box::new(MonthCalendar::new(2026, 6)));
+    g.relayout();
+    let root = g.host.root_of("cal").unwrap();
+    let (d10, d20) = (day_box(&g, root, 10), day_box(&g, root, 20));
+    let (ax, ay) = ((d10.x + d10.width / 2.0) as u32, (d10.y + d10.height / 2.0) as u32);
+    let baseline = Gallery::pixel(&g.rasterize(), ax, ay);
+
+    g.left_click(d10.x + d10.width / 2.0, d10.y + d10.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_cal(&g, "cal").selected(), Some((2026, 6, 10)));
+    let selected = Gallery::pixel(&g.rasterize(), ax, ay);
+    assert!(selected != baseline, "day 10 selected differs from baseline");
+
+    g.left_click(d20.x + d20.width / 2.0, d20.y + d20.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert_eq!(as_cal(&g, "cal").selected(), Some((2026, 6, 20)));
+    let after = Gallery::pixel(&g.rasterize(), ax, ay);
+    assert_eq!(after, baseline, "day 10 must lose the accent fill when selection moves");
+}
+
+/// DISABLED: a disabled calendar swallows a day click — no selection, no action,
+/// and is not focusable.
+#[test]
+fn disabled_calendar_swallows_click() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("cal", Box::new(MonthCalendar::new(2026, 6).disabled(true)));
+    g.relayout();
+    let root = g.host.root_of("cal").unwrap();
+    let d15 = day_box(&g, root, 15);
+    g.left_click(d15.x + d15.width / 2.0, d15.y + d15.height / 2.0);
+    let acts = g.process();
+    assert!(acts.is_empty(), "disabled calendar must emit nothing");
+    assert_eq!(as_cal(&g, "cal").selected(), None, "disabled calendar selects nothing");
+    assert!(!as_cal(&g, "cal").focusable(), "disabled calendar is not focusable");
 }

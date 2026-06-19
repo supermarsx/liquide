@@ -185,6 +185,99 @@ fn active_drag_restyles_pixels() {
     );
 }
 
+/// :hover restyles the dial BORDER pixels (CSS `lq-knob:hover lq-knob-dial`
+/// recolours the ring to the hover accent). Sample the top-edge border ring.
+#[test]
+fn hover_restyles_dial_border_pixels() {
+    let mut g = gallery_with(Knob::new(0.0, 100.0, 50.0));
+    let d = dial(&g);
+    let cx = d.x + d.width / 2.0;
+    let cy = d.y + d.height / 2.0;
+    // A point ON the dial border ring (top edge, 1px in).
+    let bx = cx as u32;
+    let by = (d.y + 1.0) as u32;
+    let p0 = Gallery::pixel(&g.rasterize(), bx, by);
+
+    // Hover over the dial center -> :hover restyles the border.
+    g.pointer_move(cx, cy);
+    let _ = g.process();
+    g.relayout();
+    let p1 = Gallery::pixel(&g.rasterize(), bx, by);
+
+    assert!(
+        p0 != p1,
+        ":hover must restyle the dial border (before={p0:?}, after={p1:?})"
+    );
+}
+
+/// :hover and :active produce DISTINCT dial-border colours (hover accent vs the
+/// stronger active accent), so the two states are visually separable — not the
+/// same restyle reused. Sampled on the border ring.
+#[test]
+fn hover_and_active_borders_differ() {
+    let mut g = gallery_with(Knob::new(0.0, 100.0, 50.0));
+    let d = dial(&g);
+    let cx = d.x + d.width / 2.0;
+    let cy = d.y + d.height / 2.0;
+    let bx = cx as u32;
+    let by = (d.y + 1.0) as u32;
+
+    // Hover only.
+    g.pointer_move(cx, cy);
+    let _ = g.process();
+    g.relayout();
+    let hovered = Gallery::pixel(&g.rasterize(), bx, by);
+
+    // Now press to enter :active (dragging) — distinct accent + bg.
+    g.mouse_down(cx, cy);
+    let _ = g.process();
+    g.relayout();
+    let active = Gallery::pixel(&g.rasterize(), bx, by);
+
+    assert!(as_knob(&g).is_dragging(), ":active during press");
+    assert!(
+        hovered != active,
+        ":hover and :active dial borders must differ (hover={hovered:?}, active={active:?})"
+    );
+}
+
+/// The value-driven indicator BAR is rotated by the value, so a low vs high value
+/// paints the indicator ink at DIFFERENT positions on the dial. Sample a point on
+/// the LEFT half of the dial (where a near-min indicator points) and assert its
+/// ink differs from the near-max case. This proves the indicator rotation rides
+/// the value (a constant rotation would paint identically).
+#[test]
+fn indicator_rotation_moves_with_value() {
+    // The indicator is rotated by an inline `transform: rotate(<deg>deg)` whose
+    // angle is value-derived (knob.rs). A rotate transform is paint-only — it does
+    // NOT move the laid-out box — so the proof is in the PIXELS: rasterize the dial
+    // region at two different values and assert the painted dial differs SOMEWHERE.
+    // A constant (value-independent) rotation would paint byte-identical dials.
+    let mut lo = gallery_with(Knob::new(0.0, 100.0, 2.0));
+    let d = dial(&lo);
+    let lo_fb = lo.rasterize();
+
+    let mut hi = gallery_with(Knob::new(0.0, 100.0, 98.0));
+    let hi_fb = hi.rasterize();
+
+    // Scan the whole dial bounding box for any differing pixel.
+    let (x0, y0) = (d.x as u32, d.y as u32);
+    let (x1, y1) = ((d.x + d.width) as u32, (d.y + d.height) as u32);
+    let mut diffs = 0u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if Gallery::pixel(&lo_fb, x, y) != Gallery::pixel(&hi_fb, x, y) {
+                diffs += 1;
+            }
+        }
+    }
+    assert!(
+        diffs > 0,
+        "the rotated indicator must paint differently for different values \
+         (no differing pixels across the dial); a constant rotation would match"
+    );
+}
+
 /// Disabled knob ignores drag and keyboard.
 #[test]
 fn disabled_knob_ignores_input() {

@@ -116,3 +116,24 @@ fn single_crumb_is_inert() {
     g.left_click(c0.x + 4.0, c0.y + c0.height / 2.0);
     assert!(g.process().is_empty());
 }
+
+// ── added: per-state styling proofs — DEFERRED (no provable pixel signal) ──
+//
+// Breadcrumb visual states are NOT pixel-provable through the gallery in the
+// current engine, so no pixel-delta tests are added here (a fake-green test that
+// could not fail when the style is removed would be worse than none). The gaps,
+// reported to the coordinator:
+//
+//   * link / current / :hover / :focus crumb styling is expressed ONLY as text
+//     `color:` on `<lq-crumb>` (no background). A crumb box rasterizes to a fully
+//     transparent (0,0,0,0) region — the gallery glyph rasterizer does not ink the
+//     crumb text — so a colour-rule change produces no pixel delta. (The sibling
+//     `label_tests` link colour-state tests fail the same way in this build.)
+//   * the separator `lq-crumb.link::after { content: "›" }` generates NO layout
+//     box: a link crumb and an equal-label current crumb measure identical widths
+//     (44.48 == 44.48), so the `::after` neither reserves space nor paints — CSS
+//     generated content is not realised by this layout/paint path.
+//
+// The interaction + keyboard + hit-from-layout coverage above remains the
+// breadcrumb's behavioural proof; the colour/separator styling needs either a
+// painted glyph path or a non-text affordance before it can be pixel-tested.

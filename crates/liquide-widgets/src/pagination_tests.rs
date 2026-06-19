@@ -159,3 +159,120 @@ fn current_page_restyles_pixels() {
     let after = Gallery::pixel(&g.rasterize(), cx, cy);
     assert!(before != after, "current page button must restyle");
 }
+
+// ── added: per-state styling proofs ───────────────────────────────────────
+
+/// Hovering a non-current page button restyles it to the :hover fill
+/// (`lq-page-btn:hover { background:#3f3f46 }`). page-2 is not current (page 0
+/// is), so the hover delta is not the current/accent delta.
+#[test]
+fn page_hover_restyles_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("pg", Box::new(Pagination::new(5)));
+    g.relayout();
+    let root = g.host.root_of("pg").unwrap();
+    let p2 = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "page-2").expect("page-2 box")
+    };
+    let (cx, cy) = ((p2.x + p2.width / 2.0) as u32, (p2.y + p2.height / 2.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), cx, cy);
+
+    g.pointer_move(p2.x + p2.width / 2.0, p2.y + p2.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), cx, cy);
+    assert_eq!(as_pg(&g, "pg").current_page(), 0, "hover does not change the page");
+    assert!(before != after, "hovering page-2 must restyle it (before {before:?} after {after:?})");
+}
+
+/// The :checked current-page button paints the blue accent, and that fill MOVES
+/// with the current page. page 0 current -> page-0 accent (blue-dominant), page-2
+/// resting; a control on page 2 paints page-2 accent instead.
+#[test]
+fn current_page_paints_accent_and_moves() {
+    let mut a = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    a.mount("pg", Box::new(Pagination::new(5).page(0)));
+    a.relayout();
+    let aroot = a.host.root_of("pg").unwrap();
+    let (a0, a2) = {
+        let q = LayoutQuery::new(a.hit_test_engine(), a.doc());
+        (q.box_of_part(aroot, "page-0").unwrap(), q.box_of_part(aroot, "page-2").unwrap())
+    };
+    let afb = a.rasterize();
+    let a0px = Gallery::pixel(&afb, (a0.x + a0.width / 2.0) as u32, (a0.y + a0.height / 2.0) as u32);
+    let a2px = Gallery::pixel(&afb, (a2.x + a2.width / 2.0) as u32, (a2.y + a2.height / 2.0) as u32);
+    assert!(a0px.b > a0px.r, "current page-0 is the blue accent (got {a0px:?})");
+    assert!(a0px != a2px, "non-current page-2 differs from the current page-0");
+
+    let mut b = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    b.mount("pg", Box::new(Pagination::new(5).page(2)));
+    b.relayout();
+    let broot = b.host.root_of("pg").unwrap();
+    let b2 = {
+        let q = LayoutQuery::new(b.hit_test_engine(), b.doc());
+        q.box_of_part(broot, "page-2").unwrap()
+    };
+    let b2px = Gallery::pixel(&b.rasterize(), (b2.x + b2.width / 2.0) as u32, (b2.y + b2.height / 2.0) as u32);
+    assert!(b2px.b > b2px.r, "current moved: page-2 now the accent (got {b2px:?})");
+    assert!(b2px != a2px, "page-2's fill differs once it is current (resting {a2px:?} current {b2px:?})");
+}
+
+/// A disabled arrow (prev at the start) restyles to the :disabled style
+/// (`lq-page-btn:disabled { background: transparent; color: dimmed }`) — distinct
+/// from the same arrow when enabled — AND swallows the click.
+#[test]
+fn disabled_prev_arrow_restyles_and_swallows() {
+    // Page 0: prev is disabled (transparent bg).
+    let mut at_start = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    at_start.mount("pg", Box::new(Pagination::new(5).page(0)));
+    at_start.relayout();
+    let sr = at_start.host.root_of("pg").unwrap();
+    let sprev = {
+        let q = LayoutQuery::new(at_start.hit_test_engine(), at_start.doc());
+        q.box_of_part(sr, "prev").unwrap()
+    };
+    let (px, py) = ((sprev.x + sprev.width / 2.0) as u32, (sprev.y + sprev.height / 2.0) as u32);
+    let disabled_px = Gallery::pixel(&at_start.rasterize(), px, py);
+
+    // Page 1: prev is enabled (the page-btn fill).
+    let mut mid = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    mid.mount("pg", Box::new(Pagination::new(5).page(1)));
+    mid.relayout();
+    let mr = mid.host.root_of("pg").unwrap();
+    let mprev = {
+        let q = LayoutQuery::new(mid.hit_test_engine(), mid.doc());
+        q.box_of_part(mr, "prev").unwrap()
+    };
+    let enabled_px = Gallery::pixel(
+        &mid.rasterize(),
+        (mprev.x + mprev.width / 2.0) as u32,
+        (mprev.y + mprev.height / 2.0) as u32,
+    );
+    assert!(
+        disabled_px != enabled_px,
+        ":disabled prev must restyle vs enabled (disabled {disabled_px:?} enabled {enabled_px:?})"
+    );
+
+    // And the disabled prev swallows the click.
+    at_start.left_click(sprev.x + 4.0, sprev.y + sprev.height / 2.0);
+    assert!(at_start.process().is_empty(), "disabled prev swallows the click");
+    assert_eq!(as_pg(&at_start, "pg").current_page(), 0);
+}
+
+/// The next arrow goes disabled at the LAST page and swallows the click there
+/// (the symmetric end-clamp, proven against the laid-out next box).
+#[test]
+fn disabled_next_arrow_at_end_swallows() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
+    g.mount("pg", Box::new(Pagination::new(3).page(2)));
+    g.relayout();
+    let root = g.host.root_of("pg").unwrap();
+    let next = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "next").unwrap()
+    };
+    g.left_click(next.x + 4.0, next.y + next.height / 2.0);
+    assert!(g.process().is_empty(), "next at the end is inert");
+    assert_eq!(as_pg(&g, "pg").current_page(), 2);
+}

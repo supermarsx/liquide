@@ -246,3 +246,107 @@ fn keyboard_scrolls() {
     let max = (content(&g, "s").height - viewport(&g, "s").height).max(0.0);
     assert!((as_scroll(&g, "s").scroll_y() - max).abs() < 2.0, "End -> bottom");
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// STATE × STYLING coverage (pixel-delta, no-fake-green). Each test below would
+// FAIL if the corresponding scroll-area CSS state rule were removed.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Read the laid-out thumb box (data-part="vthumb").
+fn vthumb(g: &Gallery, id: &str) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of(id).unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    q.box_of_part(root, "vthumb").expect("vthumb box")
+}
+
+/// `normal` render: the thumb paints its resting color (the track has overflow
+/// content so a real thumb exists). Sampling the thumb center proves the base
+/// thumb style paints ink distinct from the track behind it.
+#[test]
+fn thumb_paints_resting_color() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("s", Box::new(tall_scroll()));
+    g.relayout();
+    g.host.set_focus(Some("s"), &mut g.doc, &mut g.dispatcher);
+    // Prime the thumb size cache so it sizes to the overflow ratio.
+    g.key(KeyInput::new(keys::ARROW_DOWN, 0));
+    g.relayout();
+
+    let thumb = vthumb(&g, "s");
+    let fb = g.rasterize();
+    let on_thumb = Gallery::pixel(&fb, (thumb.x + thumb.width / 2.0) as u32, (thumb.y + 4.0) as u32);
+    assert!(on_thumb.a > 0, "thumb must paint a resting color (alpha {})", on_thumb.a);
+}
+
+/// `:hover` on the scroll-area restyles the THUMB color
+/// (`lq-scroll-area:hover > ... > lq-scroll-thumb { background-color }`). Entering
+/// the area sets :hover and re-renders; the thumb's pixels must change. FAILs if
+/// the hover rule is removed.
+#[test]
+fn area_hover_restyles_thumb_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("s", Box::new(tall_scroll()));
+    g.relayout();
+    g.host.set_focus(Some("s"), &mut g.doc, &mut g.dispatcher);
+    // Prime the thumb size cache (overflow-sized thumb) before sampling.
+    g.key(KeyInput::new(keys::ARROW_DOWN, 0));
+    g.relayout();
+
+    let thumb = vthumb(&g, "s");
+    let (tx, ty) = ((thumb.x + thumb.width / 2.0) as u32, (thumb.y + 4.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), tx, ty);
+
+    // Move the pointer into the area center -> MouseEnter -> hovered -> re-render.
+    let vp = viewport(&g, "s");
+    g.pointer_move(vp.x + vp.width / 2.0, vp.y + vp.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+
+    let after = Gallery::pixel(&g.rasterize(), tx, ty);
+    assert!(
+        before != after,
+        "area :hover must restyle the thumb color (before {before:?} after {after:?})"
+    );
+}
+
+/// The thumb `:active` style applies while DRAGGING the thumb
+/// (`lq-scroll-thumb:active { background-color: accent }`). Pressing the thumb
+/// sets ACTIVE pseudo + dragging; the thumb's pixels must change vs resting. FAILs
+/// if the thumb:active rule is removed.
+#[test]
+fn dragging_thumb_restyles_to_active_color() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("s", Box::new(tall_scroll()));
+    g.relayout();
+    g.host.set_focus(Some("s"), &mut g.doc, &mut g.dispatcher);
+    // Prime the thumb size cache, keep it near the top with room to grab.
+    g.key(KeyInput::new(keys::ARROW_DOWN, 0));
+    g.relayout();
+
+    let thumb = vthumb(&g, "s");
+    let (tx, ty) = ((thumb.x + thumb.width / 2.0) as u32, (thumb.y + 4.0) as u32);
+    let before = Gallery::pixel(&g.rasterize(), tx, ty);
+
+    // Press on the thumb: dragging -> :active pseudo on the thumb -> re-render.
+    g.mouse_down(thumb.x + thumb.width / 2.0, thumb.y + thumb.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    assert!(as_scroll(&g, "s").is_dragging(), "press on thumb begins drag (:active)");
+
+    // Re-read the thumb box (it may have re-sized/moved) and sample its top.
+    let thumb2 = vthumb(&g, "s");
+    let after = Gallery::pixel(
+        &g.rasterize(),
+        (thumb2.x + thumb2.width / 2.0) as u32,
+        (thumb2.y + 4.0) as u32,
+    );
+    assert!(
+        before != after,
+        "thumb :active (dragging) must restyle the thumb color (before {before:?} after {after:?})"
+    );
+
+    // Release: drag ends and the :active color reverts.
+    g.mouse_up(thumb2.x + thumb2.width / 2.0, thumb2.y + thumb2.height / 2.0);
+    let _ = g.process();
+    assert!(!as_scroll(&g, "s").is_dragging(), "release ends the drag");
+}

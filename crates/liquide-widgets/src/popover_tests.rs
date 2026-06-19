@@ -207,3 +207,133 @@ fn open_changes_pixels() {
     let after = Gallery::pixel(&g.rasterize(), sx, sy);
     assert!(before != after, "the panel must paint below the trigger when open");
 }
+
+// ── Added: deep visual-STATE / placement coverage (no fake-green) ────────────
+
+/// A Top popover's panel sits ABOVE the trigger (different geometry from Bottom).
+#[test]
+fn top_placement_sits_above_trigger() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 60px; }");
+    g.mount(
+        "po",
+        Box::new(Popover::new("Menu", Placement::Top).content("Panel body").open(true)),
+    );
+    g.relayout();
+    place(&mut g, "po");
+    let trig = part_box(&g, "po", "trigger");
+    let panel = part_box(&g, "po", "panel");
+    assert!(panel.bottom() <= trig.y + 1.0, "top panel is above the trigger (panel.bottom={}, trig.y={})", panel.bottom(), trig.y);
+    // Horizontally centered on the trigger.
+    let trig_cx = trig.x + trig.width / 2.0;
+    let panel_cx = panel.x + panel.width / 2.0;
+    assert!((trig_cx - panel_cx).abs() < 3.0, "top panel centers on the trigger");
+}
+
+/// A Left popover's panel sits to the LEFT of the trigger.
+#[test]
+fn left_placement_sits_left_of_trigger() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 60px; }");
+    g.mount(
+        "po",
+        Box::new(Popover::new("Menu", Placement::Left).content("Panel body").open(true)),
+    );
+    g.relayout();
+    place(&mut g, "po");
+    let trig = part_box(&g, "po", "trigger");
+    let panel = part_box(&g, "po", "panel");
+    assert!(panel.right() <= trig.x + 1.0, "left panel is left of the trigger (panel.right={}, trig.x={})", panel.right(), trig.x);
+    let trig_cy = trig.y + trig.height / 2.0;
+    let panel_cy = panel.y + panel.height / 2.0;
+    assert!((trig_cy - panel_cy).abs() < 3.0, "left panel vertically centers on trigger");
+}
+
+/// :hover restyles the trigger's BORDER (the dispatcher sets :hover on the
+/// hovered node; the `lq-popover-trigger:hover` rule repaints the border accent).
+#[test]
+fn trigger_hover_restyles_border_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 40px; }");
+    g.mount("po", Box::new(Popover::new("Menu", Placement::Bottom).content("Body")));
+    g.relayout();
+    let trig = part_box(&g, "po", "trigger");
+    // Sample on the top border line of the trigger.
+    let (bx, by) = ((trig.x + trig.width / 2.0) as u32, trig.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+
+    g.pointer_move(trig.x + trig.width / 2.0, trig.y + trig.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":hover must restyle the trigger border (before {before:?} after {after:?})"
+    );
+}
+
+/// An OPEN popover carries the ACTIVE pseudo on its trigger, so `:active` repaints
+/// the trigger background vs the closed (resting) trigger — proving the open-state
+/// styling lands in pixels.
+#[test]
+fn open_trigger_active_restyles_background() {
+    // Closed trigger.
+    let mut g_closed = Gallery::new(W, H, "lq-gallery { padding: 40px; }");
+    g_closed.mount("po", Box::new(Popover::new("Menu", Placement::Bottom).content("Body")));
+    g_closed.relayout();
+    let tc = part_box(&g_closed, "po", "trigger");
+    let fb_closed = g_closed.rasterize();
+
+    // Open trigger (carries :active).
+    let mut g_open = Gallery::new(W, H, "lq-gallery { padding: 40px; }");
+    g_open.mount("po", Box::new(Popover::new("Menu", Placement::Bottom).content("Body").open(true)));
+    g_open.relayout();
+    let to = part_box(&g_open, "po", "trigger");
+    assert!((tc.x - to.x).abs() < 0.5 && (tc.width - to.width).abs() < 0.5, "same trigger geometry");
+    let fb_open = g_open.rasterize();
+
+    // Scan the trigger's interior (its padding band, away from the glyphs) for the
+    // faint :active background overlay; it must differ somewhere from the closed
+    // (resting) trigger.
+    let mut differs = false;
+    for y in (tc.y as u32 + 1)..((tc.y + tc.height) as u32 - 1) {
+        for x in (tc.x as u32 + 1)..((tc.x + tc.width) as u32 - 1) {
+            if Gallery::pixel(&fb_closed, x, y) != Gallery::pixel(&fb_open, x, y) {
+                differs = true;
+                break;
+            }
+        }
+        if differs {
+            break;
+        }
+    }
+    assert!(
+        differs,
+        "the open trigger's :active background must differ from the closed trigger"
+    );
+}
+
+/// The open panel paints a solid bordered surface distinct from the bare gallery
+/// background where the panel floats.
+#[test]
+fn panel_paints_distinct_surface() {
+    // Capture the bare gallery background under the panel region first.
+    let mut g_closed = Gallery::new(W, H, "lq-gallery { padding: 40px; }");
+    g_closed.mount("po", Box::new(Popover::new("Menu", Placement::Bottom).content("Body")));
+    g_closed.relayout();
+    let trig = part_box(&g_closed, "po", "trigger");
+    let (sx, sy) = ((trig.x + trig.width / 2.0) as u32, (trig.bottom() + 30.0) as u32);
+    let bg = Gallery::pixel(&g_closed.rasterize(), sx, sy);
+
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 40px; }");
+    g.mount("po", Box::new(Popover::new("Menu", Placement::Bottom).content("Body").open(true)));
+    g.relayout();
+    place(&mut g, "po");
+    let panel = part_box(&g, "po", "panel");
+    let panel_px = Gallery::pixel(
+        &g.rasterize(),
+        (panel.x + panel.width / 2.0) as u32,
+        (panel.y + panel.height / 2.0) as u32,
+    );
+    assert!(
+        bg != panel_px,
+        "the panel surface must paint over the bare background (bg {bg:?} panel {panel_px:?})"
+    );
+}

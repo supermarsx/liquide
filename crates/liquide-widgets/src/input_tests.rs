@@ -137,3 +137,49 @@ fn disabled_input_swallows_input() {
     assert_eq!(as_input(&g).text(), "");
     assert!(!g.host.behavior("inp").unwrap().focusable());
 }
+
+// ── Added: :focus border + caret-reveal pixel coverage (no fake-green) ───────
+
+/// :focus restyles the field BORDER (focus ring) — sample on the top border line.
+#[test]
+fn focus_restyles_border_pixels() {
+    let mut g = gallery_with(TextInput::new("type here"));
+    let node = g.host.root_of("inp").unwrap();
+    let r = g.box_of(node).unwrap();
+    let (bx, by) = ((r.x + 8.0) as u32, r.y as u32);
+
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+    focus(&mut g); // clicks + sets focus -> FOCUS pseudo + relayout
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":focus must restyle the field border ring (before {before:?} after {after:?})"
+    );
+    assert!(as_input(&g).is_focused());
+}
+
+/// :focus reveals the caret — the caret element is transparent until focus, then
+/// paints with the foreground colour (CSS `lq-input:focus lq-caret`). Assert the
+/// caret box paints an opaque pixel once focused.
+#[test]
+fn focus_reveals_caret_pixels() {
+    let mut g = gallery_with(TextInput::new("x").with_text("WWWWW"));
+    focus(&mut g);
+    g.relayout();
+    let root = g.host.root_of("inp").unwrap();
+    let caret = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "caret").expect("caret box from layout")
+    };
+    let fb = g.rasterize();
+    let px = Gallery::pixel(
+        &fb,
+        (caret.x + caret.width / 2.0) as u32,
+        (caret.y + caret.height / 2.0) as u32,
+    );
+    assert!(
+        px.a > 0,
+        "focused caret must paint a visible pixel (got alpha {})",
+        px.a
+    );
+}

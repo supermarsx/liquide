@@ -173,3 +173,78 @@ fn sparkline_is_inert() {
     g.left_click(p.x + p.width / 2.0, p.y + p.height / 2.0);
     assert!(g.process().is_empty());
 }
+
+// ── Added: display-only styling coverage (no fake-green) ─────────────────────
+//
+// The sparkline has NO interactive states (no hover/active/focus/checked/
+// disabled); `sparkline_is_inert` confirms it ignores input. Below we prove the
+// painted MARK styles (accent bars vs thin line stems) rasterize distinctly and
+// that the mode (bar vs line) changes the painted geometry.
+
+/// A bar paints the accent (blue-dominant) fill (CSS `lq-spark-bar` background:
+/// accent). Sample near the bottom of a tall bar where it is certainly painted.
+#[test]
+fn bar_paints_accent_color() {
+    let mut g = Gallery::new(W, H, "lq-gallery{padding:8px;} lq-sparkline{width:200px;height:80px;}");
+    g.mount("s", Box::new(Sparkline::bars(vec![10.0, 10.0, 10.0])));
+    g.relayout();
+    let p = plot(&g, "s");
+    let c1 = col_box(&g, "s", 1);
+    let fb = g.rasterize();
+    // Just above the plot bottom, inside the bar's 15%..85% horizontal band.
+    let x = (c1.x + c1.width / 2.0) as u32;
+    let y = (p.y + p.height - 3.0) as u32;
+    let px = fb.get_pixel(x, y);
+    assert!(px.a > 0, "the bar must paint (alpha {})", px.a);
+    assert!(px.b > px.r, "the bar fill is the blue accent (got {px:?})");
+}
+
+/// Bar vs line MODE paints a different mark for the SAME data: a bar fills a wide
+/// (70%-width) column band, while a line stem is a thin (30%-width) stem. At the
+/// column's far-left interior (~18% across), a bar paints but a line stem does not.
+#[test]
+fn bar_vs_line_mode_paint_differently() {
+    let probe = |g: &mut Gallery| -> liquide_compositor::pixel::Color {
+        let p = plot(g, "s");
+        let c1 = col_box(g, "s", 1);
+        let fb = g.rasterize();
+        // x at ~18% across the column: inside a bar's 15%-85% band but OUTSIDE a
+        // line stem's 35%-65% band.
+        let x = (c1.x + c1.width * 0.18) as u32;
+        let y = (p.y + p.height - 3.0) as u32;
+        fb.get_pixel(x, y)
+    };
+    let css = "lq-gallery{padding:8px;} lq-sparkline{width:200px;height:80px;}";
+    let mut bar = Gallery::new(W, H, css);
+    bar.mount("s", Box::new(Sparkline::bars(vec![10.0, 10.0, 10.0])));
+    bar.relayout();
+    let bar_px = probe(&mut bar);
+
+    let mut line = Gallery::new(W, H, css);
+    line.mount("s", Box::new(Sparkline::line(vec![10.0, 10.0, 10.0])));
+    line.relayout();
+    let line_px = probe(&mut line);
+
+    assert!(bar_px.a > 0, "the wide bar paints at 18% across (got {bar_px:?})");
+    assert!(
+        bar_px != line_px,
+        "bar and line modes paint different marks at 18% across the column (bar {bar_px:?} line {line_px:?})"
+    );
+}
+
+/// A single data point still renders one full-width column spanning the plot — the
+/// flex layout does not divide by zero or collapse.
+#[test]
+fn single_datum_spans_plot() {
+    let mut g = Gallery::new(W, H, "lq-gallery{padding:8px;} lq-sparkline{width:200px;height:80px;}");
+    g.mount("s", Box::new(Sparkline::bars(vec![5.0])));
+    g.relayout();
+    let p = plot(&g, "s");
+    let c0 = col_box(&g, "s", 0);
+    assert!(
+        (c0.width - p.width).abs() < p.width * 0.1,
+        "a single column spans ~the whole plot ({} vs {})",
+        c0.width,
+        p.width
+    );
+}

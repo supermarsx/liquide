@@ -1,7 +1,7 @@
 //! `<lq-hotkey-input>` real-pipeline gallery tests.
 #![cfg(test)]
 
-use crate::behavior::KeyInput;
+use crate::behavior::{KeyInput, WidgetBehavior};
 use crate::gallery::Gallery;
 use crate::hotkey_input::{Chord, HotkeyInput, CHANGED_ACTION};
 use crate::keys;
@@ -145,4 +145,65 @@ fn capture_restyles_pixels() {
     g.relayout();
     let after = Gallery::pixel(&g.rasterize(), sx, sy);
     assert!(before != after, "capturing must restyle the field border pixels");
+}
+
+/// PIXELS :focus moves — beginning capture lights the field border glow; pressing
+/// Escape (cancels capture, drops the .capturing class) returns the border to its
+/// resting pixels. The glow is a STATE, not a one-way paint.
+#[test]
+fn capture_glow_clears_on_escape() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount("hk", Box::new(HotkeyInput::new()));
+    g.relayout();
+    g.host.set_focus(Some("hk"), &mut g.doc, &mut g.dispatcher);
+    let root = g.host.root_of("hk").unwrap();
+    let field = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "field").expect("field box")
+    };
+    let (sx, sy) = ((field.x + 2.0) as u32, (field.y + 1.0) as u32);
+    let resting = Gallery::pixel(&g.rasterize(), sx, sy);
+
+    // Click to begin capture → border glow.
+    g.left_click(field.x + field.width / 2.0, field.y + field.height / 2.0);
+    let _ = g.process();
+    g.relayout();
+    let glowing = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert!(resting != glowing, "capture must light the border glow");
+
+    // Escape cancels capture (drops .capturing) → border returns to resting.
+    g.key(KeyInput::new(keys::ESCAPE, 0));
+    assert!(!as_hk(&g, "hk").is_focused(), "Escape drops capture");
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), sx, sy);
+    assert_eq!(after, resting, "the glow must clear when capture is cancelled");
+}
+
+/// DISABLED: a disabled hotkey input swallows a field click (no capture) AND a
+/// key press (no chord change), and drops out of the focus ring.
+#[test]
+fn disabled_hotkey_swallows_interaction() {
+    let mut g = Gallery::new(W, H, "");
+    g.mount(
+        "hk",
+        Box::new(HotkeyInput::with_chord(keys::modifiers::CTRL, 's' as u32).disabled(true)),
+    );
+    g.relayout();
+    let root = g.host.root_of("hk").unwrap();
+    let field = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "field").expect("field box")
+    };
+    g.left_click(field.x + field.width / 2.0, field.y + field.height / 2.0);
+    let acts = g.process();
+    assert!(acts.is_empty(), "disabled field click emits nothing");
+    assert!(!as_hk(&g, "hk").is_focused(), "disabled field does not begin capture");
+
+    // A key press is swallowed: the stored chord is unchanged.
+    let before = as_hk(&g, "hk").chord();
+    g.host.set_focus(Some("hk"), &mut g.doc, &mut g.dispatcher);
+    let a = g.key(KeyInput::new('x' as u32, keys::modifiers::ALT));
+    assert!(a.is_empty(), "disabled hotkey ignores keys");
+    assert_eq!(as_hk(&g, "hk").chord(), before, "the chord is unchanged");
+    assert!(!as_hk(&g, "hk").focusable(), "disabled hotkey is not focusable");
 }

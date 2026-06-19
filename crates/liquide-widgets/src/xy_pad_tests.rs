@@ -178,6 +178,99 @@ fn handle_box_sits_at_value_fraction() {
     );
 }
 
+/// :hover restyles the pad BORDER pixels (CSS `lq-xy-pad:hover lq-xy-area`
+/// recolours the area border to the hover accent). Sample the top-edge border.
+#[test]
+fn hover_restyles_pad_border_pixels() {
+    let mut g = gallery_with(XyPad::new(0.5, 0.5));
+    let r = pad(&g);
+    let cx = r.x + r.width / 2.0;
+    let cy = r.y + r.height / 2.0;
+    // A point on the top border of the area.
+    let bx = cx as u32;
+    let by = (r.y) as u32;
+    let p0 = Gallery::pixel(&g.rasterize(), bx, by);
+
+    g.pointer_move(cx, cy);
+    let _ = g.process();
+    g.relayout();
+    let p1 = Gallery::pixel(&g.rasterize(), bx, by);
+
+    assert!(
+        p0 != p1,
+        ":hover must restyle the pad border (before={p0:?}, after={p1:?})"
+    );
+}
+
+/// :active (drag) restyles the pad border, and to a DIFFERENT colour than :hover
+/// (active accent vs hover accent) — the two states are visually distinct.
+#[test]
+fn active_border_differs_from_hover() {
+    let mut g = gallery_with(XyPad::new(0.5, 0.5));
+    let r = pad(&g);
+    let cx = r.x + r.width / 2.0;
+    let cy = r.y + r.height / 2.0;
+    let bx = cx as u32;
+    let by = (r.y) as u32;
+
+    g.pointer_move(cx, cy);
+    let _ = g.process();
+    g.relayout();
+    let hovered = Gallery::pixel(&g.rasterize(), bx, by);
+
+    g.mouse_down(cx, cy);
+    let _ = g.process();
+    g.relayout();
+    let active = Gallery::pixel(&g.rasterize(), bx, by);
+
+    assert!(as_pad(&g).is_dragging(), ":active during press");
+    assert!(
+        hovered != active,
+        ":hover and :active pad borders must differ (hover={hovered:?}, active={active:?})"
+    );
+}
+
+/// The handle is a real painted dot whose box rides the value: the SAME screen
+/// point reads handle ink for one value and bare pad for a far-apart value. This
+/// is the pixel-level counterpart to `handle_box_sits_at_value_fraction`.
+#[test]
+fn handle_paints_at_value_position() {
+    // Handle near the top-left corner.
+    let mut tl = gallery_with(XyPad::new(0.12, 0.12));
+    let h = handle(&tl);
+    let sx = (h.x + h.width / 2.0) as u32;
+    let sy = (h.y + h.height / 2.0) as u32;
+    let at_handle = Gallery::pixel(&tl.rasterize(), sx, sy);
+
+    // Move the value to the opposite corner; the old sample point is now bare pad.
+    let mut br = gallery_with(XyPad::new(0.88, 0.88));
+    let bare = Gallery::pixel(&br.rasterize(), sx, sy);
+
+    assert!(
+        at_handle != bare,
+        "the handle dot must paint at its value position (handle@{at_handle:?} vs bare@{bare:?})"
+    );
+}
+
+/// :disabled restyles the pad border (CSS `lq-xy-pad:disabled lq-xy-area` uses the
+/// muted border colour) — distinct from the normal-state border.
+#[test]
+fn disabled_restyles_pad_border() {
+    let mut normal = gallery_with(XyPad::new(0.5, 0.5));
+    let r = pad(&normal);
+    let bx = (r.x + r.width / 2.0) as u32;
+    let by = (r.y) as u32;
+    let p_normal = Gallery::pixel(&normal.rasterize(), bx, by);
+
+    let mut dis = gallery_with(XyPad::new(0.5, 0.5).disabled(true));
+    let p_dis = Gallery::pixel(&dis.rasterize(), bx, by);
+
+    assert!(
+        p_normal != p_dis,
+        ":disabled must restyle the pad border (normal={p_normal:?}, disabled={p_dis:?})"
+    );
+}
+
 /// Disabled pad ignores input.
 #[test]
 fn disabled_pad_ignores_input() {

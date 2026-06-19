@@ -220,6 +220,101 @@ fn colour_change_restyles_preview_pixels() {
     assert!(p0 != p1, "preview fill must change with the colour (before={p0:?}, after={p1:?})");
 }
 
+/// The sat/val AREA base tint is the pure hue (inline `background-color`), so two
+/// very different hues paint the area body a different colour. Sample the area
+/// center, away from the cursor marker. This proves the inline hue tint paints.
+#[test]
+fn area_tint_changes_with_hue() {
+    // Red hue area (full sat/val so the tint is vivid, cursor in a corner).
+    let mut red = gallery_with(ColorWheel::new(0.0, 1.0, 1.0));
+    let area = part(&red, "area");
+    // Sample slightly off-center to dodge the centred-ish cursor for mid values;
+    // here sat/val=1 puts the cursor at the top-right, so center is clean tint.
+    let sx = (area.x + area.width / 2.0) as u32;
+    let sy = (area.y + area.height / 2.0) as u32;
+    let red_px = Gallery::pixel(&red.rasterize(), sx, sy);
+
+    // Blue-ish hue: the same area-center samples a different tint.
+    let mut blue = gallery_with(ColorWheel::new(220.0, 1.0, 1.0));
+    let blue_px = Gallery::pixel(&blue.rasterize(), sx, sy);
+
+    assert!(
+        red_px != blue_px,
+        "the area base tint must track the hue (red={red_px:?}, blue={blue_px:?})"
+    );
+}
+
+/// The sv-cursor is a real bordered marker whose box rides sat/val: the SAME
+/// screen point reads cursor ink for one (sat,val) and bare area for a far-apart
+/// one. Pixel counterpart to `sv_cursor_box_sits_at_value_fraction`.
+#[test]
+fn sv_cursor_paints_at_value_position() {
+    // The sv-cursor is positioned over the area by its value (sat/val); its
+    // laid-out box moves with the value (see `sv_cursor_box_sits_at_value_fraction`).
+    // Prove the cursor PAINTS at its value position: rasterize the area region at
+    // two opposite sat/val corners and assert the painted area differs SOMEWHERE.
+    // Both wheels use hue 0, so the area tint is identical — only the cursor
+    // position differs; any pixel delta is the cursor ink moving. A constant
+    // cursor position would paint byte-identical areas.
+    let mut tl = gallery_with(ColorWheel::new(0.0, 0.08, 0.92));
+    let area = part(&tl, "area");
+    let tl_fb = tl.rasterize();
+
+    let mut br = gallery_with(ColorWheel::new(0.0, 0.92, 0.08));
+    let br_fb = br.rasterize();
+
+    let (x0, y0) = (area.x as u32, area.y as u32);
+    let (x1, y1) = ((area.x + area.width) as u32, (area.y + area.height) as u32);
+    let mut diffs = 0u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if Gallery::pixel(&tl_fb, x, y) != Gallery::pixel(&br_fb, x, y) {
+                diffs += 1;
+            }
+        }
+    }
+    assert!(
+        diffs > 0,
+        "the sv-cursor must paint at its value position (no differing pixels across \
+         the area for two opposite sat/val corners); a constant position would match"
+    );
+}
+
+/// The hue MARKER on the ring is rotated by the hue, so a hue near 0deg (marker at
+/// 12 o'clock / top) vs near 180deg (marker at the bottom) paints marker ink at
+/// different ring positions. Sample the TOP-center of the ring border band.
+#[test]
+fn hue_marker_rotates_with_hue() {
+    // The hue marker is rotated around the ring by an inline `transform: rotate()`
+    // whose angle is the hue (color_wheel.rs). A rotate is paint-only (the box does
+    // not move), so the proof is in the PIXELS: rasterize the ring region at hue 0
+    // vs hue 180 and assert the painted ring differs SOMEWHERE (the marker ink
+    // lands at a different ring position). A constant rotation would paint
+    // byte-identical rings.
+    let mut top = gallery_with(ColorWheel::new(0.0, 1.0, 1.0));
+    let ring = part(&top, "ring");
+    let top_fb = top.rasterize();
+
+    let mut bottom = gallery_with(ColorWheel::new(180.0, 1.0, 1.0));
+    let bottom_fb = bottom.rasterize();
+
+    let (x0, y0) = (ring.x as u32, ring.y as u32);
+    let (x1, y1) = ((ring.x + ring.width) as u32, (ring.y + ring.height) as u32);
+    let mut diffs = 0u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if Gallery::pixel(&top_fb, x, y) != Gallery::pixel(&bottom_fb, x, y) {
+                diffs += 1;
+            }
+        }
+    }
+    assert!(
+        diffs > 0,
+        "the hue marker must rotate with hue (no differing pixels across the ring \
+         for hue 0 vs 180); a constant rotation would match"
+    );
+}
+
 /// Disabled wheel ignores input.
 #[test]
 fn disabled_wheel_ignores_input() {

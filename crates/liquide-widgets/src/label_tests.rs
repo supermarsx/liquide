@@ -88,3 +88,10 @@ fn link_hover_restyles_pixels() {
     );
     assert!(as_link(&g, "ln").is_hovered());
 }
+
+// NOTE: link :active and :focus are color-ONLY restyles (accent -> accent-active
+// / accent-hover) on text glyph ink — the gallery's Roboto rasterizer paints
+// glyphs too faintly/unreliably for a stable pixel-delta, and the link has no
+// background/border to sample. Those states cannot be proven in pixels here (same
+// limitation the existing link_hover test sidesteps with an `|| is_hovered()`
+// fallback). Reported as a harness/CSS gap rather than shipped as a flaky test.

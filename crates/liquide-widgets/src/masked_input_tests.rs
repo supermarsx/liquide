@@ -172,3 +172,141 @@ fn disabled_swallows() {
     assert!(a.is_empty());
     assert_eq!(as_mask(&g, "mk").raw(), "");
 }
+
+// ── Added: visual-STATE pixel-delta coverage (no fake-green) ─────────────────
+
+/// Channel-weighted sum over a sub-part box.
+fn part_sum(g: &mut Gallery, id: &str, part: &str) -> u64 {
+    let root = g.host.root_of(id).unwrap();
+    let r = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, part).unwrap_or_else(|| panic!("part {part}"))
+    };
+    let fb = g.rasterize();
+    let mut acc = 0u64;
+    for y in (r.y as u32)..((r.y + r.height) as u32) {
+        for x in (r.x as u32)..((r.x + r.width) as u32) {
+            let p = Gallery::pixel(&fb, x, y);
+            acc += p.r as u64 + p.g as u64 * 3 + p.b as u64 * 7 + p.a as u64 * 11;
+        }
+    }
+    acc
+}
+
+/// FOCUS paints the caret: when focused, the caret element renders AND the
+/// `lq-masked-input:focus lq-caret` rule gives it a visible (fg) background. The
+/// caret box must paint a non-transparent pixel.
+#[test]
+fn focus_paints_caret() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("mk", Box::new(MaskedInput::new("##/##")));
+    g.relayout();
+    // Before focus there is NO caret element at all.
+    let root = g.host.root_of("mk").unwrap();
+    {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        assert!(q.box_of_part(root, "caret").is_none(), "unfocused: no caret");
+    }
+    // Click to set the behavior's focused flag (renders the caret), then set the
+    // :focus pseudo so the caret's focus bg rule applies.
+    let fbox = g.box_of(root).unwrap();
+    g.left_click(fbox.x + 4.0, fbox.y + fbox.height / 2.0);
+    let _ = g.process();
+    g.host.set_focus(Some("mk"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let caret = {
+        let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+        q.box_of_part(root, "caret").expect("focused: caret box")
+    };
+    let fb = g.rasterize();
+    let px = Gallery::pixel(&fb, (caret.x + caret.width / 2.0) as u32, (caret.y + caret.height / 2.0) as u32);
+    assert!(px.a > 0, "the focused caret must paint a visible bar (alpha {})", px.a);
+}
+
+/// :focus paints the focus-ring border (CSS `lq-masked-input:focus` border-color).
+#[test]
+fn focus_restyles_border_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("mk", Box::new(MaskedInput::new("###")));
+    g.relayout();
+    let root = g.host.root_of("mk").unwrap();
+    let r = g.box_of(root).unwrap();
+    let (bx, by) = ((r.x + 8.0) as u32, r.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+    g.host.set_focus(Some("mk"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":focus must restyle the masked-input border (before {before:?} after {after:?})"
+    );
+}
+
+/// The `.complete` state restyles the border (CSS `lq-masked-input.complete`
+/// border-color: accent) — a fully-filled field differs at the border from a
+/// partially-filled one. Sample the top border line; fill only changes the border.
+#[test]
+fn complete_restyles_border_pixels() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("mk", Box::new(MaskedInput::new("##")));
+    g.relayout();
+    let root = g.host.root_of("mk").unwrap();
+    let r = g.box_of(root).unwrap();
+    let (bx, by) = ((r.x + 8.0) as u32, r.y as u32);
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+    g.host.set_focus(Some("mk"), &mut g.doc, &mut g.dispatcher);
+    type_str(&mut g, "12");
+    assert!(as_mask(&g, "mk").is_complete());
+    // Drop focus so the focus-ring rule does not mask the .complete delta we want.
+    g.host.set_focus(None, &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ".complete must restyle the border to accent (before {before:?} after {after:?})"
+    );
+}
+
+/// A FILLED editable slot paints differently from an EMPTY one (CSS
+/// `lq-mask-slot.empty` uses the dim placeholder color; a filled slot the fg).
+/// Compare slot-0 (filled) vs slot-1 (empty) after typing one digit.
+#[test]
+fn filled_slot_differs_from_empty_slot() {
+    let mut g = Gallery::new(
+        W,
+        H,
+        "lq-gallery { padding: 16px; } lq-mask-slot { min-width: 16px; }",
+    );
+    g.mount("mk", Box::new(MaskedInput::new("####")));
+    g.relayout();
+    g.host.set_focus(Some("mk"), &mut g.doc, &mut g.dispatcher);
+    type_str(&mut g, "7");
+    g.relayout();
+    let filled = part_sum(&mut g, "mk", "slot-0");
+    let empty = part_sum(&mut g, "mk", "slot-2");
+    assert!(
+        filled != empty,
+        "a filled slot must paint differently from an empty slot (filled {filled} empty {empty})"
+    );
+}
+
+/// :disabled dims the masked input (opacity .5).
+#[test]
+fn disabled_dims_pixels() {
+    let mk = |dis: bool| {
+        let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+        g.mount("mk", Box::new(MaskedInput::new("##/##").disabled(dis)));
+        g.relayout();
+        let root = g.host.root_of("mk").unwrap();
+        let r = g.box_of(root).unwrap();
+        let fb = g.rasterize();
+        // Sample the border (opaque) where the .5 opacity multiply shows.
+        Gallery::pixel(&fb, (r.x + 8.0) as u32, r.y as u32)
+    };
+    let enabled = mk(false);
+    let disabled = mk(true);
+    assert!(
+        enabled != disabled,
+        ":disabled must dim the masked input (enabled {enabled:?} disabled {disabled:?})"
+    );
+}

@@ -415,3 +415,25 @@ fn disabled_swallows_input() {
     assert_eq!(as_ta(&g).text(), "seed");
     assert!(!g.host.behavior("ta").unwrap().focusable());
 }
+
+// ── Added: :focus border-ring pixel delta (no fake-green) ────────────────────
+
+/// :focus restyles the textarea BORDER (focus ring) — sample on the top border
+/// line. (The existing focus test covers the caret reveal; this covers the border
+/// rule `lq-textarea:focus` which the caret test does not touch.)
+#[test]
+fn focus_restyles_border_pixels() {
+    let mut g = gallery_with(TextArea::new("type here"));
+    let node = g.host.root_of("ta").unwrap();
+    let r = g.box_of(node).unwrap();
+    let (bx, by) = ((r.x + 10.0) as u32, r.y as u32);
+
+    let before = Gallery::pixel(&g.rasterize(), bx, by);
+    focus(&mut g);
+    g.relayout();
+    let after = Gallery::pixel(&g.rasterize(), bx, by);
+    assert!(
+        before != after,
+        ":focus must restyle the textarea border ring (before {before:?} after {after:?})"
+    );
+}
