@@ -130,39 +130,48 @@ impl SoftwareRenderer {
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
-                    // X icon
-                    let cx = close_x + btn_w / 2.0;
-                    let cy_btn = btn_y + btn_h / 2.0;
-                    let icon_color = button_colors.close_icon;
-                    let arm = 4.0_f32;
-                    let thickness = 1.5_f32;
-                    for i in 0..((arm * 2.0) as i32) {
-                        let t = i as f32 - arm;
-                        rasterizer::fill_rect(
-                            fb,
-                            Rect::new(
-                                cx + t - thickness / 2.0,
-                                cy_btn + t - thickness / 2.0,
-                                thickness,
-                                thickness,
-                            ),
-                            icon_color,
-                            BlendMode::SrcOver,
-                        );
-                    }
-                    for i in 0..((arm * 2.0) as i32) {
-                        let t = i as f32 - arm;
-                        rasterizer::fill_rect(
-                            fb,
-                            Rect::new(
-                                cx - t - thickness / 2.0,
-                                cy_btn + t - thickness / 2.0,
-                                thickness,
-                                thickness,
-                            ),
-                            icon_color,
-                            BlendMode::SrcOver,
-                        );
+                    // X icon — macOS traffic-light glyph-on-hover (t172-e2): the
+                    // dot reads as a solid colored circle at rest; the ×/−/+
+                    // glyph only appears while the button (group) is hovered. The
+                    // renderer owns the glyph (there is no CSS `::before` seam for
+                    // the decoration node — see the module note / executor
+                    // report), so gating it on the hover state IS the
+                    // glyph-on-hover behavior, and the hovered repaint produces a
+                    // real pixel delta (t176 hover damage tests).
+                    if button_state.close_hovered {
+                        let cx = close_x + btn_w / 2.0;
+                        let cy_btn = btn_y + btn_h / 2.0;
+                        let icon_color = button_colors.close_icon;
+                        let arm = 4.0_f32;
+                        let thickness = 1.5_f32;
+                        for i in 0..((arm * 2.0) as i32) {
+                            let t = i as f32 - arm;
+                            rasterizer::fill_rect(
+                                fb,
+                                Rect::new(
+                                    cx + t - thickness / 2.0,
+                                    cy_btn + t - thickness / 2.0,
+                                    thickness,
+                                    thickness,
+                                ),
+                                icon_color,
+                                BlendMode::SrcOver,
+                            );
+                        }
+                        for i in 0..((arm * 2.0) as i32) {
+                            let t = i as f32 - arm;
+                            rasterizer::fill_rect(
+                                fb,
+                                Rect::new(
+                                    cx - t - thickness / 2.0,
+                                    cy_btn + t - thickness / 2.0,
+                                    thickness,
+                                    thickness,
+                                ),
+                                icon_color,
+                                BlendMode::SrcOver,
+                            );
+                        }
                     }
                 }
 
@@ -186,39 +195,43 @@ impl SoftwareRenderer {
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
-                    let cx = max_x + btn_w / 2.0;
-                    let cy_btn = btn_y + btn_h / 2.0;
-                    let icon_color = button_colors.maximize_icon;
-                    let half = 4.0_f32;
-                    let stroke = 1.5_f32;
-                    // Top edge
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - half, cy_btn - half, half * 2.0, stroke),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
-                    // Bottom edge
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - half, cy_btn + half - stroke, half * 2.0, stroke),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
-                    // Left edge
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - half, cy_btn - half, stroke, half * 2.0),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
-                    // Right edge
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx + half - stroke, cy_btn - half, stroke, half * 2.0),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
+                    // Maximize glyph (square outline) — shown only on hover
+                    // (macOS glyph-on-hover, t172-e2).
+                    if button_state.maximize_hovered {
+                        let cx = max_x + btn_w / 2.0;
+                        let cy_btn = btn_y + btn_h / 2.0;
+                        let icon_color = button_colors.maximize_icon;
+                        let half = 4.0_f32;
+                        let stroke = 1.5_f32;
+                        // Top edge
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - half, cy_btn - half, half * 2.0, stroke),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                        // Bottom edge
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - half, cy_btn + half - stroke, half * 2.0, stroke),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                        // Left edge
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - half, cy_btn - half, stroke, half * 2.0),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                        // Right edge
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx + half - stroke, cy_btn - half, stroke, half * 2.0),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                    }
                 }
 
                 // Minimize button
@@ -241,15 +254,19 @@ impl SoftwareRenderer {
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
-                    let cx = min_x + btn_w / 2.0;
-                    let cy_btn = btn_y + btn_h / 2.0;
-                    let icon_color = button_colors.minimize_icon;
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - 5.0, cy_btn + 2.0, 10.0, 1.5),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
+                    // Minimize glyph (horizontal dash) — shown only on hover
+                    // (macOS glyph-on-hover, t172-e2).
+                    if button_state.minimize_hovered {
+                        let cx = min_x + btn_w / 2.0;
+                        let cy_btn = btn_y + btn_h / 2.0;
+                        let icon_color = button_colors.minimize_icon;
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - 5.0, cy_btn + 2.0, 10.0, 1.5),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                    }
                 }
 
                 // Always-on-top button
@@ -278,34 +295,41 @@ impl SoftwareRenderer {
                         BlendMode::SrcOver,
                         &self.srgb_lut,
                     );
-                    let cx = aot_x + btn_w / 2.0;
-                    let cy_btn = btn_y + btn_h / 2.0;
-                    let icon_color = if button_state.is_topmost {
-                        button_colors.pin_icon_active
-                    } else {
-                        button_colors.pin_icon
-                    };
-                    // Pin head
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - 3.0, cy_btn - 5.0, 6.0, 4.0),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
-                    // Pin shaft
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - 0.75, cy_btn - 1.0, 1.5, 6.0),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
-                    // Pin point
-                    rasterizer::fill_rect(
-                        fb,
-                        Rect::new(cx - 0.5, cy_btn + 5.0, 1.0, 2.0),
-                        icon_color,
-                        BlendMode::SrcOver,
-                    );
+                    // Pin glyph — the pin is not a macOS traffic light; keep its
+                    // glyph visible while the window is pinned (active/topmost) or
+                    // while hovered, so an always-on-top window still shows its
+                    // state at rest, but an idle un-pinned dot stays clean like the
+                    // traffic lights (t172-e2 glyph-on-hover).
+                    if button_state.is_topmost || button_state.always_on_top_hovered {
+                        let cx = aot_x + btn_w / 2.0;
+                        let cy_btn = btn_y + btn_h / 2.0;
+                        let icon_color = if button_state.is_topmost {
+                            button_colors.pin_icon_active
+                        } else {
+                            button_colors.pin_icon
+                        };
+                        // Pin head
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - 3.0, cy_btn - 5.0, 6.0, 4.0),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                        // Pin shaft
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - 0.75, cy_btn - 1.0, 1.5, 6.0),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                        // Pin point
+                        rasterizer::fill_rect(
+                            fb,
+                            Rect::new(cx - 0.5, cy_btn + 5.0, 1.0, 2.0),
+                            icon_color,
+                            BlendMode::SrcOver,
+                        );
+                    }
                 }
 
                 // Title text (centered in title bar)
@@ -324,5 +348,133 @@ impl SoftwareRenderer {
                 }
             } // end else (normal decoration rendering)
         }
+    }
+}
+
+#[cfg(test)]
+mod glyph_on_hover_tests {
+    //! t172-e2: macOS glyph-on-hover. At rest a traffic-light dot is a solid
+    //! colored circle with NO glyph; the ×/−/+ glyph appears only while the
+    //! button is hovered. We render the SAME decoration node twice — once at rest,
+    //! once with the close button hovered — holding the close background IDENTICAL
+    //! across both (so the only possible delta inside the close box is the glyph
+    //! ink) and assert: zero glyph-ink pixels at rest, > 0 on hover.
+
+    use liquide_compositor::framebuffer::FrameBuffer;
+    use liquide_compositor::geometry::{Affine2D, Rect};
+    use liquide_compositor::pixel::{Color, PixelFormat};
+    use liquide_compositor::scene::{
+        DecorationButtonRects, DecorationButtons, DecorationColors, DecorationLayout, FlatNode,
+        SceneNodeKind,
+    };
+
+    use crate::renderer::SoftwareRenderer;
+    use std::sync::Arc;
+
+    const W: u32 = 200;
+    const H: u32 = 60;
+
+    /// The close dot's painted box (small round dot near the left edge).
+    fn close_box() -> Rect {
+        Rect::new(12.0, 22.0, 14.0, 14.0)
+    }
+
+    fn decoration_node(close_hovered: bool) -> FlatNode {
+        // Identical close bg in BOTH states so the ONLY in-box delta is the glyph.
+        let icon = Color::new(255, 255, 255, 255);
+        let flat_red = Color::new(255, 95, 87, 255);
+        let colors = DecorationColors {
+            close_bg: flat_red,
+            close_bg_hover: flat_red,
+            close_icon: icon,
+            ..DecorationColors::default()
+        };
+        let layout = DecorationLayout {
+            title_bar_height: 36.0,
+            button_width: 14.0,
+            button_height: 14.0,
+            button_right_margin: 0.0,
+            button_corner_radius: 7.0,
+            button_rects: DecorationButtonRects {
+                close: Some(close_box()),
+                ..DecorationButtonRects::default()
+            },
+            frame_colors: None,
+        };
+        let buttons = DecorationButtons {
+            close: true,
+            maximize: false,
+            minimize: false,
+            always_on_top: false,
+            is_topmost: false,
+            close_hovered,
+            maximize_hovered: false,
+            minimize_hovered: false,
+            always_on_top_hovered: false,
+        };
+        FlatNode {
+            id: 1,
+            kind: Arc::new(SceneNodeKind::Decoration {
+                title: None,
+                title_color: Color::new(255, 255, 255, 255),
+                background: Color::new(40, 40, 42, 255),
+                border_color: Color::new(0, 0, 0, 0),
+                border_width: 0.0,
+                corner_radius: 8.0,
+                button_state: buttons,
+                button_colors: colors,
+                button_layout: layout,
+            }),
+            absolute_bounds: Rect::new(0.0, 0.0, W as f32, H as f32),
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    /// Count pixels inside the close box that match the glyph ink color (white).
+    fn glyph_ink_pixels(fb: &FrameBuffer) -> usize {
+        let b = close_box();
+        let mut n = 0;
+        for y in (b.y as u32)..((b.y + b.height) as u32) {
+            for x in (b.x as u32)..((b.x + b.width) as u32) {
+                let off = fb.pixel_offset(x, y);
+                let px = &fb.pixels()[off..off + 4];
+                // BGRA8: white ink is high in all of B,G,R; the red dot is low in
+                // B and G. The × glyph is the only white-ish ink in the box.
+                if px[0] > 200 && px[1] > 200 && px[2] > 200 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    fn render(node: &FlatNode) -> FrameBuffer {
+        let mut rnd = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        rnd.render_decoration_node(node, &mut fb);
+        fb
+    }
+
+    #[test]
+    fn glyph_absent_at_rest_present_on_hover() {
+        let rest = render(&decoration_node(false));
+        let hover = render(&decoration_node(true));
+
+        let rest_ink = glyph_ink_pixels(&rest);
+        let hover_ink = glyph_ink_pixels(&hover);
+
+        assert_eq!(
+            rest_ink, 0,
+            "at rest the close dot must be a solid circle with NO glyph ink, got {rest_ink} px"
+        );
+        assert!(
+            hover_ink > 0,
+            "on hover the × glyph must appear inside the close dot (got {hover_ink} px)"
+        );
     }
 }

@@ -18,6 +18,22 @@ use crate::window::{Window, WindowFlags, WindowState};
 
 use super::Shell;
 
+/// Traffic-light button REST colors resolved from the FULL CSS cascade
+/// (t172-e2). See [`Shell::button_colors_from_css`]: the painted decoration
+/// reads its button backgrounds from the active theme resolver, which does NOT
+/// carry the base `components.css` button rules / traffic-light tokens; this
+/// carries the rest-state background + icon colors read from the laid-out button
+/// elements' computed styles (the full cascade) so the dots paint in the exact
+/// red / yellow / green the CSS resolves.
+struct DecorationCssColors {
+    close_bg: Color,
+    close_icon: Color,
+    minimize_bg: Color,
+    minimize_icon: Color,
+    maximize_bg: Color,
+    maximize_icon: Color,
+}
+
 /// Base id for the per-window effect/paint container (t93-e2 / t92 gap #4).
 ///
 /// Each window's nodes are wrapped in one non-visual `Workspace`-kind container
@@ -400,7 +416,7 @@ impl WindowSceneSignature {
     /// frame (no global/geometry change can have escaped `structural_change`).
     fn paint_changed_window_ids(&self, other: &Self) -> std::collections::BTreeSet<u64> {
         let mut ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
-        let mut mark_focus = |ids: &mut std::collections::BTreeSet<u64>| {
+        let mark_focus = |ids: &mut std::collections::BTreeSet<u64>| {
             if let Some(f) = self.focused_id {
                 ids.insert(f);
             }
@@ -1236,11 +1252,33 @@ impl Shell {
         // signature, which needs the decoration colors/layout to detect a GLOBAL
         // decoration change (those fields are part of the signature). Resolving
         // them here is side-effect-free and order-independent of the damage call.
-        let button_colors = self
+        let mut button_colors = self
             .style_resolver
             .as_ref()
             .map(crate::css_integration::resolve_decoration_colors)
             .unwrap_or_default();
+        // Override the REST background + icon colors of the traffic-light buttons
+        // from the LAID-OUT button elements' computed styles (t172-e2). The
+        // `style_resolver` only carries the active THEME stylesheet, so the
+        // `close-button`/`minimize-button`/`maximize-button` rules that live in
+        // the BASE `components.css` (where the macOS left geometry + the
+        // `--{minimize,maximize}-button-bg` traffic-light tokens are consumed)
+        // never reach it. The hit-test engine's `StyleMap`, however, is the FULL
+        // cascade (variables + components + theme), so reading each button's
+        // computed `background`/`color` there is the single source that makes the
+        // painted dot the exact red/yellow/green the CSS resolves — and it tracks
+        // the SAME laid-out element the hit-test boxes come from, so paint==hit
+        // colors as well as geometry. Hover colors stay on the resolver/default
+        // path (the `opacity:0` decoration scaffold is not hover-synced in the
+        // layout tree), which still yields a distinct hover delta.
+        if let Some(over) = self.button_colors_from_css() {
+            button_colors.close_bg = over.close_bg;
+            button_colors.close_icon = over.close_icon;
+            button_colors.minimize_bg = over.minimize_bg;
+            button_colors.minimize_icon = over.minimize_icon;
+            button_colors.maximize_bg = over.maximize_bg;
+            button_colors.maximize_icon = over.maximize_icon;
+        }
         let button_layout = self
             .style_resolver
             .as_ref()
@@ -1730,6 +1768,76 @@ impl Shell {
         })
     }
 
+    /// Resolve the traffic-light buttons' REST background + icon colors from the
+    /// FULL CSS cascade (t172-e2 left-traffic-light retheme).
+    ///
+    /// The painted decoration's button colors normally come from
+    /// `css_integration::resolve_decoration_colors`, which queries
+    /// `self.style_resolver` — but that resolver holds ONLY the active theme
+    /// stylesheet. The `close-button`/`minimize-button`/`maximize-button`
+    /// background rules (and the `--{minimize,maximize}-button-bg` traffic-light
+    /// tokens they consume) live in the BASE `components.css`, which is loaded
+    /// into the layout pipeline but NOT the resolver. This reads each button's
+    /// computed `background`/`color` from the hit-test engine's `StyleMap` (the
+    /// full variables+components+theme cascade), so the painted dot is the exact
+    /// red / yellow / green the CSS resolves and tracks the SAME laid-out element
+    /// the hit-test box comes from (paint==hit colors).
+    ///
+    /// Reads from the FIRST visible decorated window's laid-out buttons (the
+    /// rules are theme-global, identical for every window). Returns `None` when no
+    /// decorated window is laid out yet (first frame) so the caller keeps the
+    /// resolver/default colors — no regression, no panic.
+    fn button_colors_from_css(&self) -> Option<DecorationCssColors> {
+        let hit_test = self.hit_test_engine.as_ref()?;
+        let styles = hit_test.styles();
+
+        // Any laid-out decorated window will do — the button color rules are
+        // theme-global, so the first one is representative.
+        let window_id = self
+            .visible_windows()
+            .into_iter()
+            .find(|w| w.flags.contains(WindowFlags::DECORATED))
+            .map(|w| w.id)?;
+
+        // Read a button's computed (bg, icon) ONLY when the CSS actually paints a
+        // background on it (alpha > 0). When the base `components.css` button
+        // rules are not in the pipeline (e.g. a bare `Shell::new` test pipeline
+        // that loaded only the theme), the element computes a TRANSPARENT
+        // background and we must NOT clobber the resolver/default color with
+        // transparent — return `None` and let the fallback color stand.
+        let defaults = DecorationColors::default();
+        let read = |suffix: &str, def_icon: Color| -> Option<(Color, Color)> {
+            let el_id = format!("window-deco-{}-{suffix}", window_id.0);
+            let node = self.desktop_dom.doc.get_element_by_id(&el_id)?;
+            let style = styles.get(node)?;
+            if style.background_color.a == 0 {
+                return None;
+            }
+            let icon = if style.color.a == 0 { def_icon } else { style.color };
+            Some((style.background_color, icon))
+        };
+
+        // Require at least the close button's background to resolve from CSS — the
+        // load-bearing signal that the base decoration rules are actually in the
+        // cascade this frame. Otherwise keep ALL resolver/default colors.
+        let (close_bg, close_icon) = read("close", defaults.close_icon)?;
+        let (min_bg, min_icon) =
+            read("min", defaults.minimize_icon)
+                .unwrap_or((defaults.minimize_bg, defaults.minimize_icon));
+        let (max_bg, max_icon) =
+            read("max", defaults.maximize_icon)
+                .unwrap_or((defaults.maximize_bg, defaults.maximize_icon));
+
+        Some(DecorationCssColors {
+            close_bg,
+            close_icon,
+            minimize_bg: min_bg,
+            minimize_icon: min_icon,
+            maximize_bg: max_bg,
+            maximize_icon: max_icon,
+        })
+    }
+
     /// Derive a [`DecorationLayout`] for `window_id` from the LAID-OUT CSS boxes
     /// of its `window-frame` decoration (t103-p6 full-CSS migration).
     ///
@@ -1796,13 +1904,19 @@ impl Shell {
         // regression, no panic on the first frame).
         let frame_colors = self.frame_colors_from_css(window_id);
 
-        let defaults = DecorationLayout::default();
+        // Round dots (t172-e2): the buttons are CSS `border-radius: 50%`, i.e. a
+        // full circle for a square box. Derive the painted corner radius from the
+        // laid-out box (half the smaller side) so the painted dot matches the CSS
+        // circle exactly — paint==hit for the rounded shape, not just the rect.
+        // (Every shipped theme already sizes its buttons as ~50%-radius dots, so
+        // this is consistent across themes.)
+        let button_corner_radius = close_box.width.min(close_box.height) / 2.0;
         Some(DecorationLayout {
             title_bar_height: tb_box.height,
             button_width: close_box.width,
             button_height: close_box.height,
             button_right_margin: right_margin,
-            button_corner_radius: defaults.button_corner_radius,
+            button_corner_radius,
             button_rects,
             frame_colors,
         })
@@ -3114,6 +3228,237 @@ mod damage_confine_tests {
         assert!(
             shell.take_precomputed_damage().is_none(),
             "the first frame after a window appears has no old footprint to diff → full"
+        );
+    }
+}
+
+#[cfg(test)]
+mod left_traffic_light_tests {
+    //! t172-e2: the macOS LEFT traffic-light window buttons. These prove the
+    //! geometry moved to the LEFT in the BASE `components.css` (so hit==paint
+    //! holds across themes), that clicking each LEFT dot at its PAINTED box
+    //! dispatches the right action, that the hit zone FOLLOWS the painted box
+    //! (anti-constant — not a hardcoded x), and that the traffic-light COLOR
+    //! tokens (close→red / minimize→yellow / maximize→green) reach the painted
+    //! `Decoration` node's `button_colors` through the CSS cascade.
+
+    use liquide_compositor::geometry::Rect;
+    use liquide_compositor::scene::{SceneNode, SceneNodeKind};
+    use liquide_input::mouse::{ButtonState, MouseButton, MouseEvent};
+    use liquide_platform::event_loop::PlatformEvent;
+    use liquide_platform::window_host::NativeWindowHandle;
+
+    use crate::decoration::HitZone;
+    use crate::shell::Shell;
+    use crate::shortcuts::ShellAction;
+
+    // The REAL shipped base layers (the production source of the LEFT geometry +
+    // traffic-light tokens) so the assertions have teeth against the on-disk CSS.
+    const VARIABLES_CSS: &str = include_str!("../../../../assets/themes/variables.css");
+    const COMPONENTS_CSS: &str = include_str!("../../../../assets/themes/components.css");
+    const MACOS_DARK_CSS: &str = include_str!("../../../../assets/themes/macos_dark.css");
+
+    fn press(x: f32, y: f32) -> PlatformEvent {
+        PlatformEvent::MouseInput {
+            handle: NativeWindowHandle(0),
+            event: MouseEvent::Button {
+                button: MouseButton::Left,
+                state: ButtonState::Pressed,
+                x,
+                y,
+            },
+        }
+    }
+
+    /// A shell with the real base CSS (+ macOS tokens) loaded and one decorated
+    /// window, one scene built so the decoration is laid out.
+    fn shell_with_window() -> Shell {
+        let mut shell = Shell::new(1280.0, 720.0);
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        shell.add_stylesheet(VARIABLES_CSS);
+        shell.add_stylesheet(COMPONENTS_CSS);
+        // The traffic-light bg tokens (`--minimize-button-bg`/`--maximize-button-bg`)
+        // live in the macOS theme; load them into the PIPELINE cascade so the
+        // computed button backgrounds resolve to the macOS reds/yellows/greens
+        // (the resolver alone does not carry the base component rules).
+        shell.add_stylesheet(MACOS_DARK_CSS);
+        shell.open_window("Alpha", Rect::new(200.0, 120.0, 640.0, 420.0));
+        let _ = shell.build_scene();
+        shell
+    }
+
+    fn box_of(shell: &Shell, suffix: &str) -> Rect {
+        let wid = shell.visible_windows()[0].id;
+        let b = shell
+            .window_button_bounds_from_css(wid, suffix)
+            .unwrap_or_else(|| panic!("{suffix} must have a laid-out CSS box"));
+        Rect::new(b.x, b.y, b.width, b.height)
+    }
+
+    /// The traffic lights sit on the LEFT, in macOS order close→minimize→maximize
+    /// left-to-right, and each is well left of the titlebar center.
+    #[test]
+    fn buttons_are_on_the_left_in_macos_order() {
+        let shell = shell_with_window();
+        let wid = shell.visible_windows()[0].id;
+        let tb = shell.window_titlebar_bounds_from_css(wid).expect("titlebar box");
+        let center_x = tb.x + tb.width / 2.0;
+
+        let close = box_of(&shell, "close");
+        let min = box_of(&shell, "min");
+        let max = box_of(&shell, "max");
+
+        // LEFT placement: every traffic light is left of the titlebar center, and
+        // the close dot hugs the left edge (not the right).
+        for (name, b) in [("close", close), ("min", min), ("max", max)] {
+            assert!(
+                b.x < center_x,
+                "{name} dot must be on the LEFT (x={} < center {center_x})",
+                b.x
+            );
+        }
+        assert!(
+            close.x - tb.x < tb.width * 0.25,
+            "close dot must hug the LEFT edge of the titlebar (close.x={}, tb.x={})",
+            close.x, tb.x
+        );
+
+        // macOS left→right order: close, minimize, maximize.
+        assert!(
+            close.x < min.x && min.x < max.x,
+            "macOS order must be close<minimize<maximize left-to-right, got \
+             close.x={} min.x={} max.x={}",
+            close.x, min.x, max.x
+        );
+    }
+
+    /// Clicking the PAINTED box center of each LEFT dot dispatches its action —
+    /// paint==hit at the new left positions (close actually closes, etc.).
+    #[test]
+    fn clicking_each_left_dot_dispatches_its_action() {
+        for (suffix, expected) in [
+            ("close", ShellAction::CloseWindow),
+            ("min", ShellAction::MinimizeWindow),
+            ("max", ShellAction::MaximizeWindow),
+        ] {
+            let mut shell = shell_with_window();
+            let b = box_of(&shell, suffix);
+            let cx = b.x + b.width / 2.0;
+            let cy = b.y + b.height / 2.0;
+            let action = shell.handle_platform_event(&press(cx, cy));
+            assert_eq!(
+                action.as_ref(),
+                Some(&expected),
+                "clicking the LEFT {suffix} dot center ({cx},{cy}) must dispatch {expected:?}, \
+                 got {action:?}"
+            );
+        }
+    }
+
+    /// ANTI-CONSTANT: the close dot's CLICK zone follows its PAINTED box, it is
+    /// not a hardcoded x. Shift+grow the buttons via a runtime stylesheet; the
+    /// click zone must move with the new box — a click at the NEW center closes,
+    /// and a click at the OLD center no longer does.
+    #[test]
+    fn close_hit_zone_follows_the_painted_box_not_a_constant() {
+        let mut shell = shell_with_window();
+        let wid = shell.visible_windows()[0].id;
+        let before = box_of(&shell, "close");
+        let old_cx = before.x + before.width / 2.0;
+        let old_cy = before.y + before.height / 2.0;
+
+        // A point a long way right of the cluster is NOT close at baseline.
+        // Grow + push the buttons so the close box moves to a new location.
+        shell.add_stylesheet(
+            "titlebar-buttons { padding-left: 120; } \
+             close-button, minimize-button, maximize-button, pin-button \
+             { width: 36; height: 28; }",
+        );
+        let _ = shell.build_scene();
+
+        let after = box_of(&shell, "close");
+        assert!(
+            (after.x - before.x).abs() > 8.0 || (after.width - before.width).abs() > 8.0,
+            "the override must MOVE/resize the close box (before {before:?}, after {after:?})"
+        );
+
+        // A click at the NEW painted center closes.
+        let new_cx = after.x + after.width / 2.0;
+        let new_cy = after.y + after.height / 2.0;
+        assert_eq!(
+            shell.window_button_zone_from_css(wid, new_cx, new_cy),
+            Some(HitZone::CloseButton),
+            "the close zone must resolve at the NEW painted box center"
+        );
+        // A click at the OLD center no longer resolves to close — the zone is the
+        // laid-out box, not a constant x. (The old spot is now padding / title.)
+        assert_ne!(
+            shell.window_button_zone_from_css(wid, old_cx, old_cy),
+            Some(HitZone::CloseButton),
+            "the close zone must NOT remain at the OLD center (it would be a \
+             hardcoded x, not the painted box)"
+        );
+    }
+
+    fn emitted_decoration_colors(
+        root: &SceneNode,
+    ) -> Option<liquide_compositor::scene::DecorationColors> {
+        fn walk(
+            node: &SceneNode,
+            out: &mut Option<liquide_compositor::scene::DecorationColors>,
+        ) {
+            if let SceneNodeKind::Decoration { button_colors, .. } = &node.kind {
+                *out = Some(button_colors.clone());
+            }
+            for c in &node.children {
+                if out.is_some() {
+                    return;
+                }
+                walk(c, out);
+            }
+        }
+        let mut out = None;
+        walk(root, &mut out);
+        out
+    }
+
+    /// The painted decoration's button backgrounds resolve to the macOS traffic
+    /// lights: close→red, minimize→yellow, maximize→green — proving the
+    /// `--minimize-button-bg`/`--maximize-button-bg` tokens reach `button_colors`
+    /// through the CSS cascade (not the neutral gray fallback / defaults).
+    #[test]
+    fn button_colors_are_the_traffic_lights() {
+        let mut shell = shell_with_window();
+        let root = shell.build_scene();
+        let colors = emitted_decoration_colors(&root)
+            .expect("a decorated window must emit a Decoration node");
+
+        // macOS tokens: #ff5f57 (red) / #febc2e (yellow) / #28c840 (green).
+        let near = |c: liquide_compositor::pixel::Color, r: u8, g: u8, b: u8| {
+            c.r.abs_diff(r) <= 2 && c.g.abs_diff(g) <= 2 && c.b.abs_diff(b) <= 2 && c.a > 0
+        };
+        assert!(
+            near(colors.close_bg, 0xff, 0x5f, 0x57),
+            "close dot must be macOS red #ff5f57, got {:?}",
+            colors.close_bg
+        );
+        assert!(
+            near(colors.minimize_bg, 0xfe, 0xbc, 0x2e),
+            "minimize dot must be macOS yellow #febc2e, got {:?}",
+            colors.minimize_bg
+        );
+        assert!(
+            near(colors.maximize_bg, 0x28, 0xc8, 0x40),
+            "maximize dot must be macOS green #28c840, got {:?}",
+            colors.maximize_bg
+        );
+        // Anti-fake-green: yellow and green must be DISTINCT (proves min/max are
+        // not both the same gray fallback / the same token).
+        assert_ne!(
+            (colors.minimize_bg.r, colors.minimize_bg.g, colors.minimize_bg.b),
+            (colors.maximize_bg.r, colors.maximize_bg.g, colors.maximize_bg.b),
+            "minimize (yellow) and maximize (green) must be distinct colors"
         );
     }
 }

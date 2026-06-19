@@ -1162,16 +1162,31 @@ titlebar-buttons {
   /* Never shrink or wrap the capability cluster; keep it intact and inside the
      titlebar's padding box. */
   flex-shrink: 0;
-  gap: 6;
+  gap: 8;
+  /* macOS traffic-lights live on the LEFT of the titlebar (t172-e2). The DOM
+     source order is `window-title` then `titlebar-buttons`; a negative flex
+     `order` pulls the whole button cluster BEFORE the title so the dots sit at
+     the left edge. Geometry lives here in the BASE layer (not the theme file)
+     so the laid-out boxes the renderer paints AND the hit-test reads both move
+     left together — paint==hit holds across every theme. */
+  order: -1;
 }
 
+/* macOS traffic-light glyph order, left → right: close, minimize, maximize.
+   The DOM declaration order is pin, minimize, maximize, close, so per-button
+   flex `order` re-sequences the laid-out boxes into the macOS arrangement
+   (the per-button id boxes the hit-test reads are reordered with them). */
 close-button {
   display: flex;
   align-items: center;
   justify-content: center;
+  order: 1;
   width: var(--titlebar-btn-size);
   height: var(--titlebar-btn-size);
-  border-radius: var(--titlebar-btn-radius);
+  /* Round dots. `50%` of a square box is a full circle; the renderer paints the
+     dot with a corner radius derived from the laid-out box size so the painted
+     circle matches this CSS exactly (scene.rs `button_corner_radius`). */
+  border-radius: 50%;
   background: var(--close-button-bg);
   color: var(--text-primary);
   cursor: pointer;
@@ -1182,38 +1197,47 @@ close-button:hover {
   background: var(--close-button-hover-bg);
 }
 
-maximize-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--titlebar-btn-size);
-  height: var(--titlebar-btn-size);
-  border-radius: var(--titlebar-btn-radius);
-  background: var(--window-btn-bg);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-maximize-button:hover {
-  background: var(--window-btn-hover-bg);
-}
-
 minimize-button {
   display: flex;
   align-items: center;
   justify-content: center;
+  order: 2;
   width: var(--titlebar-btn-size);
   height: var(--titlebar-btn-size);
-  border-radius: var(--titlebar-btn-radius);
-  background: var(--window-btn-bg);
+  border-radius: 50%;
+  /* close→red is already a dedicated token; minimize→yellow / maximize→green
+     are the e1 traffic-light tokens. The `var(.., var(--window-btn-bg))`
+     fallback keeps NON-macOS themes (which never define these tokens) on their
+     neutral gray button background, so only the macOS theme turns the dots
+     yellow/green. The painter reads these computed backgrounds from the
+     laid-out button element (scene.rs `button_colors_from_css`), so the dot is
+     painted in the token color the CSS resolves. */
+  background: var(--minimize-button-bg, var(--window-btn-bg));
   color: var(--text-secondary);
   cursor: pointer;
   transition: background var(--transition-fast);
 }
 
 minimize-button:hover {
-  background: var(--window-btn-hover-bg);
+  background: var(--minimize-button-hover-bg, var(--window-btn-hover-bg));
+}
+
+maximize-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  order: 3;
+  width: var(--titlebar-btn-size);
+  height: var(--titlebar-btn-size);
+  border-radius: 50%;
+  background: var(--maximize-button-bg, var(--window-btn-bg));
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+maximize-button:hover {
+  background: var(--maximize-button-hover-bg, var(--window-btn-hover-bg));
 }
 
 window-content {
@@ -1252,9 +1276,12 @@ pin-button {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* The pin (always-on-top) capability is not a macOS traffic light; it trails
+     the close/minimize/maximize cluster as a fourth neutral dot. */
+  order: 4;
   width: var(--titlebar-btn-size);
   height: var(--titlebar-btn-size);
-  border-radius: var(--titlebar-btn-radius);
+  border-radius: 50%;
   background: var(--window-btn-bg);
   color: var(--text-secondary);
   cursor: pointer;

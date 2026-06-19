@@ -605,8 +605,11 @@ fn titlebar_handle_drag_moves_window_by_delta() {
     let start = shell.windows[&wid].bounds;
     let tb = shell.window_titlebar_bounds_from_css(wid).expect("titlebar box");
 
-    // A point on the titlebar, left of the button cluster (the draggable handle).
-    let grab_x = tb.x + 24.0;
+    // A point on the titlebar, RIGHT of the macOS LEFT traffic-light cluster (the
+    // draggable title-region handle). The buttons now sit at the LEFT edge
+    // (t172-e2), so the handle is the wide title area to their right — use the
+    // titlebar center, which is unambiguously in the title region.
+    let grab_x = tb.x + tb.width * 0.5;
     let grab_y = tb.y + tb.height / 2.0;
     // Sanity: this point resolves to the drag zone, not a button.
     assert_eq!(
@@ -680,19 +683,21 @@ fn drag_handle_is_css_titlebar_minus_buttons() {
     let mut shell = windowed_shell();
     let wid = window_id(&shell);
 
-    // Baseline: the gap just LEFT of the leftmost (pin) button is a drag handle.
+    // Baseline: the gap just RIGHT of the rightmost button of the LEFT cluster
+    // (the pin, order 4) is a drag handle. The macOS traffic lights sit at the
+    // LEFT edge (t172-e2), so the draggable title region is to their RIGHT.
     let pin_before = shell.window_button_bounds_from_css(wid, "pin").expect("pin box");
     let probe_y = pin_before.y + pin_before.height / 2.0;
-    let probe_x = pin_before.x - 6.0; // just left of the narrow button cluster
+    let probe_x = pin_before.x + pin_before.width + 6.0; // just right of the narrow cluster
     assert_eq!(
         shell.window_decoration_zone_from_css(wid, probe_x, probe_y),
         Some(HitZone::TitleBar),
-        "left of the narrow button cluster must be a drag handle to start with"
+        "right of the narrow LEFT button cluster must be a drag handle to start with"
     );
 
-    // Grow the buttons substantially. The cluster widens leftward (buttons are
-    // right-aligned), so the SAME probe point is now inside the (now-wide) pin
-    // button box → no longer a drag handle.
+    // Grow the buttons substantially. The LEFT-aligned cluster widens RIGHTWARD,
+    // so the SAME probe point is now inside the (now-wide) cluster → no longer a
+    // drag handle.
     shell.add_stylesheet(
         "close-button, maximize-button, minimize-button, pin-button { width: 60; height: 30; }",
     );
@@ -715,9 +720,9 @@ fn drag_handle_is_css_titlebar_minus_buttons() {
     );
     assert!(
         is_button,
-        "after widening the buttons (cluster grows leftward) the same point is now \
-         inside a button box, not a drag handle — the drag/button split tracks the \
-         CSS layout, not a hardcoded stride (got {zone_after:?})"
+        "after widening the buttons (LEFT cluster grows rightward) the same point is \
+         now inside a button box, not a drag handle — the drag/button split tracks \
+         the CSS layout, not a hardcoded stride (got {zone_after:?})"
     );
 }
 

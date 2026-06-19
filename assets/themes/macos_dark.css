@@ -383,16 +383,16 @@ window-frame > window-titlebar {
     width: 100%;
 }
 
-/* Traffic-light style buttons. LEFT placement + glyph-on-hover are e2's job
-   (base-layer geometry); this theme only carries the macOS dot colors + small
-   round radius. Backgrounds map close→red, minimize→yellow, maximize→green. */
+/* The pin (always-on-top) capability is not a macOS traffic light; it trails the
+   close/minimize/maximize cluster as a fourth neutral round dot (order 4). */
 pin-button {
     display: flex;
     align-items: center;
     justify-content: center;
+    order: 4;
     width: 12;
     height: 12;
-    border-radius: 6;
+    border-radius: 50%;
     background: rgba(255, 255, 255, 0.10);
     color: rgba(235, 235, 245, 0.70);
 }
@@ -431,24 +431,40 @@ window-title {
     white-space: nowrap;
 }
 
+/* macOS LEFT traffic-lights (t172-e2). The window-decoration GEOMETRY also lives
+   in the base `components.css` (so hit==paint holds for the devtools/secondary
+   pipelines and the documented base cascade), BUT the production LAYOUT pipeline
+   resolves a theme via `DesktopPipeline::set_theme`, which REBUILDS the style
+   engine from the theme CSS ALONE — discarding the base layers from the LAYOUT
+   engine (the base layers survive only in the resolver / non-`set_theme`
+   pipelines). So for the active theme to actually lay the dots out on the LEFT,
+   the same `order` geometry must be repeated HERE in the theme file. The buttons
+   are pulled before the centered title via `order: -1` on the cluster, then
+   sequenced close → minimize → maximize left-to-right. The renderer paints each
+   dot's bg/glyph from these laid-out boxes (e2), so paint==hit at the new left
+   positions. */
 titlebar-buttons {
     display: flex;
     align-items: center;
     flex-shrink: 0;
     gap: 8;
+    order: -1;
 }
 
-/* Traffic-light buttons. macOS shows a glyph only on hover (glyph-on-hover is
-   e2's renderer work). Until e2 lands, hover applies a subtle darker tint of
-   the same dot color so the hover state is still visible (and so the chrome
-   damage-confine invariant — hover must change button pixels — holds). */
+/* Traffic-light buttons. macOS shows a glyph only on hover; the glyph-on-hover
+   painting is e2's renderer work (the dot is a solid colored circle at rest and
+   the ×/−/+ glyph appears on hover). The :hover bg tint keeps the hover state a
+   visible pixel change (the chrome damage-confine invariant — hover must change
+   button pixels). `border-radius: 50%` makes each dot a full circle; the painter
+   derives its corner radius from the laid-out box so the painted circle matches. */
 close-button {
     display: flex;
     align-items: center;
     justify-content: center;
+    order: 1;
     width: 12;
     height: 12;
-    border-radius: 6;
+    border-radius: 50%;
     background: #ff5f57;
     color: rgba(0, 0, 0, 0.55);
 }
@@ -462,9 +478,10 @@ minimize-button {
     display: flex;
     align-items: center;
     justify-content: center;
+    order: 2;
     width: 12;
     height: 12;
-    border-radius: 6;
+    border-radius: 50%;
     background: #febc2e;
     color: rgba(0, 0, 0, 0.55);
 }
@@ -478,9 +495,10 @@ maximize-button {
     display: flex;
     align-items: center;
     justify-content: center;
+    order: 3;
     width: 12;
     height: 12;
-    border-radius: 6;
+    border-radius: 50%;
     background: #28c840;
     color: rgba(0, 0, 0, 0.55);
 }
