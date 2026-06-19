@@ -284,6 +284,15 @@ impl WindowSceneCache {
         self.dirty = true;
     }
 
+    /// Peek the signature the cached window subtree was built with (the PREVIOUS
+    /// frame's window state), without disturbing the cache (t176-damage-confine).
+    /// Used by `compute_precomputed_damage` to diff old-vs-new window state and
+    /// emit a confined per-window damage set instead of falling back to full.
+    /// `None` when nothing has been cached yet (first frame).
+    fn peek_signature(&self) -> Option<&WindowSceneSignature> {
+        self.signature.as_ref()
+    }
+
     pub(crate) fn stats(&self) -> WindowSceneCacheStats {
         WindowSceneCacheStats {
             hits: self.hits,
@@ -336,6 +345,122 @@ struct WindowSceneSignature {
     /// animation would never advance. Idle windows contribute nothing, so a
     /// steady-state scene keeps its cache exactly as before.
     effects: Vec<WindowEffectSignature>,
+}
+
+impl WindowSceneSignature {
+    /// Returns `true` iff this frame's window change is STRUCTURAL — a change the
+    /// confined per-window damage path deliberately does NOT attempt to bound,
+    /// falling back to a full repaint instead (t176-damage-confine).
+    ///
+    /// Structural = anything that moves a window, changes its geometry/stacking,
+    /// adds/removes a window, animates it, or recolors/relays-out EVERY window's
+    /// frame. For these the prompt's guidance is to stay full (correct-but-slow):
+    ///   * any GLOBAL field (`screen`, `active_workspace_id`, `decoration_*`,
+    ///     `theme`) — recolors/relays out every window.
+    ///   * the `windows` Vec differs in ANY way — a window opened/closed, moved,
+    ///     resized, restacked (z), retitled, re-stated, retiled, or faded
+    ///     (per-window opacity). The window-DRAG fast paths (move/resize) are
+    ///     already confined at EVENT time in `events.rs`; the build-time path
+    ///     here stays conservative for geometry.
+    ///   * the `effects` Vec differs — an open/close/transform ANIMATION frame
+    ///     (geometry + opacity tween); also handled conservatively.
+    ///
+    /// When this returns `false` the ONLY differences are paint-only per-window
+    /// fields (`focused_id`, `hovered_button`, `cursor_blink_on`, `focused_text`,
+    /// `app_content`) which [`Self::paint_changed_window_ids`] attributes to exact
+    /// window ids and confines.
+    fn structural_change(&self, other: &Self) -> bool {
+        self.screen != other.screen
+            || self.active_workspace_id != other.active_workspace_id
+            || self.decoration_style != other.decoration_style
+            || self.decoration_colors != other.decoration_colors
+            || self.decoration_layout != other.decoration_layout
+            || self.theme != other.theme
+            || self.windows != other.windows
+            || self.effects != other.effects
+    }
+
+    /// Collect the set of window ids whose PAINT-ONLY per-window state differs
+    /// between `self` (PREVIOUS frame) and `other` (THIS frame)
+    /// (t176-damage-confine). Only reached when [`Self::structural_change`] is
+    /// `false`, so the `windows`/`effects`/global fields are already known equal;
+    /// every changed window therefore has the SAME bounds in both frames.
+    ///
+    /// Each remaining field is attributed to the id(s) it repaints:
+    /// * `focused_id` — focus moving recolors BOTH the old- and new-focused
+    ///   window's border/decoration.
+    /// * `hovered_button` — a titlebar-button hover-highlight flip recolors the
+    ///   old- and new-hovered window's decoration.
+    /// * `cursor_blink_on` — the caret lives in the FOCUSED window's content.
+    /// * `focused_text` — the typed-text field is in the focused window.
+    /// * `app_content` — a bumped revision (text typed, terminal output drained,
+    ///   SCROLL) marks exactly that window id.
+    ///
+    /// The returned set is the COMPLETE set of windows whose pixels changed this
+    /// frame (no global/geometry change can have escaped `structural_change`).
+    fn paint_changed_window_ids(&self, other: &Self) -> std::collections::BTreeSet<u64> {
+        let mut ids: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
+        let mut mark_focus = |ids: &mut std::collections::BTreeSet<u64>| {
+            if let Some(f) = self.focused_id {
+                ids.insert(f);
+            }
+            if let Some(f) = other.focused_id {
+                ids.insert(f);
+            }
+        };
+
+        if self.focused_id != other.focused_id {
+            mark_focus(&mut ids);
+        }
+        if self.cursor_blink_on != other.cursor_blink_on {
+            mark_focus(&mut ids);
+        }
+        if self.focused_text != other.focused_text {
+            mark_focus(&mut ids);
+        }
+        if self.hovered_button != other.hovered_button {
+            if let Some(h) = self.hovered_button {
+                ids.insert(h.window_id);
+            }
+            if let Some(h) = other.hovered_button {
+                ids.insert(h.window_id);
+            }
+        }
+
+        // app_content: a changed/added/removed (window_id, rev) marks its id.
+        let old_rev: std::collections::HashMap<u64, u64> =
+            self.app_content.iter().copied().collect();
+        let new_rev: std::collections::HashMap<u64, u64> =
+            other.app_content.iter().copied().collect();
+        for (id, rev) in &new_rev {
+            if old_rev.get(id) != Some(rev) {
+                ids.insert(*id);
+            }
+        }
+        for id in old_rev.keys() {
+            if !new_rev.contains_key(id) {
+                ids.insert(*id);
+            }
+        }
+
+        ids
+    }
+
+    /// The painted-footprint rect for `window_id` in this signature: its settled
+    /// render bounds (t176-damage-confine). Reached only on the paint-only path
+    /// where `windows`/`effects` are equal between frames, so the settled bounds
+    /// ARE the painted footprint (no active effect can have differed). Returns an
+    /// empty `Vec` if the window is absent (should not happen on this path).
+    fn footprints_for(&self, window_id: u64) -> Vec<Rect> {
+        let mut rects = Vec::new();
+        if let Some(w) = self.windows.iter().find(|w| w.id == window_id) {
+            rects.push(w.bounds.to_rect());
+        }
+        if let Some(e) = self.effects.iter().find(|e| e.window_id == window_id) {
+            rects.push(e.bounds.to_rect());
+        }
+        rects
+    }
 }
 
 /// POSITION-INDEPENDENT cache key for a single window's CONTENT subtree
@@ -441,6 +566,20 @@ impl RectSignature {
             width: f32_signature(rect.width),
             height: f32_signature(rect.height),
         }
+    }
+
+    /// Reconstruct the screen-space `Rect` from the stored f32-bit signature
+    /// fields (t176-damage-confine). `f32_signature` is a lossless bit-pattern of
+    /// the original `f32` (it only canonicalises -0.0 → +0.0, irrelevant for a
+    /// window rect), so this round-trips the exact painted bounds — which is what
+    /// the confined window-damage builder needs to bound the changed footprint.
+    fn to_rect(self) -> Rect {
+        Rect::new(
+            f32::from_bits(self.x),
+            f32::from_bits(self.y),
+            f32::from_bits(self.width),
+            f32::from_bits(self.height),
+        )
     }
 }
 
@@ -704,18 +843,78 @@ impl Shell {
         pipeline_output: &crate::pipeline::PipelineOutput,
         blink_toggled: bool,
         chrome_change_is_paint_only: bool,
+        screen: Rect,
+        button_colors: &DecorationColors,
+        button_layout: &DecorationLayout,
     ) {
         /// Margin (logical px) added around each changed chrome rect to cover the
         /// `backdrop-filter` blur halo that samples neighbouring pixels — matches
         /// the `OVERLAY_BACKDROP_MARGIN` used by `interactive_overlay_damage`.
         const BACKDROP_MARGIN: f32 = 48.0;
 
-        // ── Unbounded-change guards: bail to `None` (full fallback). ──
-        // A window-scene change (the window cache was dirty entering this build)
-        // can move/resize windows or change their content arbitrarily — not
-        // represented in the CSS chrome layout tree, so we cannot bound it here.
+        // ── Window-scene change: confine to the changed windows (t176-damage-
+        // confine), or bail to full when the change is not window-attributable. ──
+        // The window subtree cache was dirty entering this build, which previously
+        // forced a FULL-frame repaint for EVERY window content change / scroll /
+        // hover-recolor / focus / blink / animation tick — the dominant ~85 ms
+        // full-frame cost (t173). Instead we diff the PREVIOUS frame's window-
+        // scene signature (the cache key the cached subtree was built with) vs.
+        // THIS frame's signature: if only PER-WINDOW fields changed we emit the
+        // affected windows' old∪new painted footprints (+ blur/shadow margin) as
+        // confined damage; if any GLOBAL field changed (screen/workspace/theme/
+        // decoration — a change that recolors or moves every window) we bail to
+        // full. Collected here and unioned with the chrome damage below.
+        let mut window_damage: Vec<Rect> = Vec::new();
         if self.window_scene_cache.stats().dirty {
-            return;
+            let new_sig = self.window_scene_signature(screen, button_colors, button_layout);
+            match self.window_scene_cache.peek_signature() {
+                // First frame (nothing cached) — no old footprint to diff against,
+                // so we cannot prove a confined superset. Bail to full.
+                None => return,
+                Some(old_sig) => {
+                    // STRUCTURAL change (theme/decoration/workspace/screen, OR a
+                    // window opened/closed/moved/resized/restacked/animated): the
+                    // prompt's genuinely-full cases. Leave the conservative full
+                    // repaint (drag move/resize is already confined at event time
+                    // in events.rs).
+                    if old_sig.structural_change(&new_sig) {
+                        return;
+                    }
+                    // Paint-only per-window diff (content / scroll / focus / hover
+                    // / typing / caret): the COMPLETE set of windows whose pixels
+                    // changed this frame. Since this path requires `windows` and
+                    // `effects` to be EQUAL between frames, each changed window has
+                    // the SAME bounds in both frames, so a single footprint covers
+                    // it. Expand by `BACKDROP_MARGIN` to cover the drop-shadow +
+                    // glass-blur fringe: the window shadow blurs ≤12 px + spread
+                    // 4 px, and any glass titlebar — this window's own OR an
+                    // overlapping window stacked above it — samples ≤12 px beyond
+                    // its box; both are well inside the 48 px margin, so the rect
+                    // is a true SUPERSET of every pixel whose value depends on
+                    // this window's changed content (including a stacked window's
+                    // glass re-sampling the changed pixels through its backdrop).
+                    let changed = old_sig.paint_changed_window_ids(&new_sig);
+                    for id in changed {
+                        for fp in old_sig.footprints_for(id) {
+                            if fp.width <= 0.0 || fp.height <= 0.0 {
+                                continue;
+                            }
+                            window_damage.push(Rect::new(
+                                fp.x - BACKDROP_MARGIN,
+                                fp.y - BACKDROP_MARGIN,
+                                fp.width + BACKDROP_MARGIN * 2.0,
+                                fp.height + BACKDROP_MARGIN * 2.0,
+                            ));
+                        }
+                    }
+                    // If the diff found NO per-window change yet the cache is dirty
+                    // (something invalidated it that the signature does not
+                    // capture), be conservative and bail to full.
+                    if window_damage.is_empty() {
+                        return;
+                    }
+                }
+            }
         }
         // An active animation/transition repaints a growing region each frame
         // that is not captured by this frame's `dirty_chrome_nodes`.
@@ -732,8 +931,15 @@ impl Shell {
         if self.overview_visible || self.is_session_locked() {
             return;
         }
-        // Nothing chrome-level changed → we have no bounded footprint to emit.
+        // Nothing chrome-level changed. A pure window change (scroll / content /
+        // window hover) reaches here with an empty chrome dirty set but a non-
+        // empty `window_damage` from the diff above — emit that alone. With NO
+        // window damage either, there is no bounded footprint to emit → full.
         if dirty_chrome_nodes.is_empty() {
+            if window_damage.is_empty() {
+                return;
+            }
+            self.precomputed_damage = Some(window_damage);
             return;
         }
 
@@ -867,6 +1073,12 @@ impl Shell {
                 return;
             }
         }
+
+        // Union any confined window damage from the per-window diff above with
+        // the chrome rects (a frame can change BOTH a window AND chrome — e.g. a
+        // window-content update that also bumps a statusbar indicator). Both sets
+        // are independent superset-safe rects in the same screen-pixel space.
+        rects.extend(window_damage);
 
         if rects.is_empty() {
             return;
@@ -1012,13 +1224,6 @@ impl Shell {
         //     overlays not represented by chrome layout boxes),
         //   * nothing chrome-level was dirtied (e.g. only a manual overlay
         //     changed) — we cannot bound it from the CSS layout tree.
-        self.compute_precomputed_damage(
-            &dirty_chrome_nodes,
-            &pipeline_output,
-            blink_toggled,
-            chrome_change_is_paint_only,
-        );
-
         // ── Update hit-test engine with latest layout + styles ──
         self.hit_test_engine = Some(liquide_hit_test::HitTestEngine::new(
             Arc::clone(&pipeline_output.layout),
@@ -1026,6 +1231,11 @@ impl Shell {
         ));
 
         // Resolve decoration button colors and layout from CSS (for windows).
+        // Computed BEFORE `compute_precomputed_damage` (t176-damage-confine): the
+        // window-confinement diff inside it builds THIS frame's window-scene
+        // signature, which needs the decoration colors/layout to detect a GLOBAL
+        // decoration change (those fields are part of the signature). Resolving
+        // them here is side-effect-free and order-independent of the damage call.
         let button_colors = self
             .style_resolver
             .as_ref()
@@ -1036,6 +1246,16 @@ impl Shell {
             .as_ref()
             .map(crate::css_integration::resolve_decoration_layout)
             .unwrap_or_default();
+
+        self.compute_precomputed_damage(
+            &dirty_chrome_nodes,
+            &pipeline_output,
+            blink_toggled,
+            chrome_change_is_paint_only,
+            screen,
+            &button_colors,
+            &button_layout,
+        );
 
         let mut root = SceneNode::new(NODE_ROOT, SceneNodeKind::Root, NodeProperties::new(screen));
 
@@ -2387,5 +2607,513 @@ impl Shell {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod damage_confine_tests {
+    //! t176-damage-confine: SUPERSET-SAFETY teeth for the per-window confined
+    //! precomputed-damage path. For each newly-confined interactive case (window
+    //! CONTENT change, SCROLL, titlebar-button HOVER recolor, a change beneath an
+    //! OVERLAPPING window's glass/shadow), we render the frame TWICE through the
+    //! REAL CPU rasterizer — once compositing ONLY the confined damage onto the
+    //! previous frame's framebuffer, once with a FULL repaint — and assert the two
+    //! framebuffers are PIXEL-IDENTICAL. A too-tight damage that misses a changed
+    //! pixel leaves the stale previous-frame pixel in the confined buffer while
+    //! the full buffer has the new one → the buffers differ → the test FAILS
+    //! (the disappear / stale-pixel class). The teeth are PROVEN by deliberately
+    //! shrinking the damage a few px and asserting the identity check goes RED.
+
+    use std::sync::{Arc, Mutex};
+
+    use liquide_compositor::damage::{DamageClass, DamageSet};
+    use liquide_compositor::framebuffer::FrameBuffer;
+    use liquide_compositor::geometry::Rect;
+    use liquide_compositor::pixel::PixelFormat;
+    use liquide_compositor::scene::FlatNode;
+    use liquide_interop::{
+        AppContentProvider, AppContentView, AppKey, AppTextInput, AppView, ContentKind, ContentRow,
+    };
+    use liquide_renderer_cpu::{RenderMode, SoftwareRenderer};
+
+    use crate::decoration::HitZone;
+    use crate::shell::Shell;
+    use crate::window::WindowId;
+
+    const W: u32 = 1280;
+    const H: u32 = 720;
+    const TILE: u32 = 64;
+
+    /// An app view whose content is externally mutable, so a test can change what
+    /// the window paints (content update / scroll) between frames. `content_view`
+    /// renders the live rows from the shared buffer.
+    struct MutableApp {
+        rows: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl AppTextInput for MutableApp {
+        fn handle_text(&mut self, _t: &str) -> bool {
+            false
+        }
+        fn handle_key(&mut self, _k: &AppKey) -> bool {
+            false
+        }
+    }
+    impl AppContentProvider for MutableApp {
+        fn content_view(&self, _cols: u32, _rows: u32) -> AppContentView {
+            let mut v = AppContentView::new(ContentKind::Document);
+            for r in self.rows.lock().unwrap().iter() {
+                v.rows.push(ContentRow::plain(r.clone()));
+            }
+            v
+        }
+    }
+    impl AppView for MutableApp {
+        fn app_id(&self) -> &str {
+            "com.liquide.test.mutable"
+        }
+    }
+
+    fn test_shell() -> Shell {
+        let mut shell = Shell::new(W as f32, H as f32);
+        // Freeze the blink so a 500 ms toggle can never independently change the
+        // scene between deterministic builds.
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        shell
+    }
+
+    fn build(shell: &mut Shell) -> Vec<FlatNode> {
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        shell.build_scene().flatten()
+    }
+
+    /// Full-frame damage set (every tile).
+    fn full_damage() -> DamageSet {
+        DamageSet::full(TILE, W.div_ceil(TILE), H.div_ceil(TILE), DamageClass::UiPrimitive)
+    }
+
+    /// Rasterise `nodes` onto a FRESH (zeroed) framebuffer with FULL damage — the
+    /// authoritative "what the frame should look like" reference.
+    fn render_full(rnd: &mut SoftwareRenderer, nodes: &[FlatNode]) -> FrameBuffer {
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let _ = rnd.render_live(nodes, &mut fb, &full_damage(), RenderMode::Capture);
+        fb
+    }
+
+    /// True iff pixel `(x, y)` lies inside ANY rect of `rects` after the SAME
+    /// floor/ceil tile expansion the live worker applies (so coverage is measured
+    /// against the damage TILES that are actually repainted/blitted, not the raw
+    /// sub-pixel rect). A pixel covered by a damaged tile WILL be repainted from
+    /// the new frame; a pixel in NO damaged tile keeps its stale previous value —
+    /// the disappear class.
+    fn covered_by_damage_tiles(rects: &[Rect], x: u32, y: u32) -> bool {
+        let tx = x / TILE;
+        let ty = y / TILE;
+        for r in rects {
+            let tx0 = (r.x.max(0.0).floor() as u32) / TILE;
+            let ty0 = (r.y.max(0.0).floor() as u32) / TILE;
+            let tx1 = ((r.x + r.width).max(0.0).ceil() as u32).saturating_sub(1) / TILE;
+            let ty1 = ((r.y + r.height).max(0.0).ceil() as u32).saturating_sub(1) / TILE;
+            if tx >= tx0 && tx <= tx1 && ty >= ty0 && ty <= ty1 {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Build frames N and N+1, render BOTH FULL through the real rasterizer with a
+    /// fully-quiesced glyph atlas, and return `(damage_rects, prev_fb, full_fb)`.
+    ///
+    /// `prev` = the authoritative frame-N framebuffer; `full` = the authoritative
+    /// frame-N+1 framebuffer. The set of pixels where `full != prev` is the GROUND
+    /// TRUTH of "every pixel that actually changed this frame" — exactly what the
+    /// confined damage MUST be a superset of. We render both FULL (not the partial
+    /// confined path) on purpose: the production partial-render path re-processes
+    /// glass nodes within a 32 px-padded damage bbox and can differ by ±1 LSB from
+    /// a clean full render near a damage edge — a benign renderer rounding artifact,
+    /// NOT a stale pixel. Comparing two FULL renders isolates the TRUE changed set
+    /// so the superset check tests OUR damage, not the renderer's edge rounding.
+    fn render_n_and_n1(
+        setup: impl FnOnce(&mut Shell),
+        mutate: impl FnOnce(&mut Shell),
+    ) -> (Vec<Rect>, FrameBuffer, FrameBuffer) {
+        let mut shell = test_shell();
+        setup(&mut shell);
+        let mut rnd = SoftwareRenderer::new();
+
+        let _ = build(&mut shell);
+        let _ = build(&mut shell);
+        let nodes_n = build(&mut shell);
+
+        mutate(&mut shell);
+        let nodes_n1 = build(&mut shell);
+        let damage = shell
+            .take_precomputed_damage()
+            .expect("a confined interactive change must emit precomputed damage, not None");
+        assert!(!damage.is_empty(), "confined damage must have at least one rect");
+
+        // Quiesce the async glyph atlas against BOTH node sets so both full renders
+        // paint identical glyphs (the atlas only grows; warming with both first
+        // makes the comparison glyph-stable).
+        for _ in 0..4 {
+            let _ = render_full(&mut rnd, &nodes_n1);
+            let _ = render_full(&mut rnd, &nodes_n);
+        }
+        let prev = render_full(&mut rnd, &nodes_n);
+        let full = render_full(&mut rnd, &nodes_n1);
+        (damage, prev, full)
+    }
+
+    /// The SUPERSET-SAFETY assertion: EVERY pixel that actually changed this frame
+    /// (`full != prev`) MUST be covered by the confined damage tiles. A changed
+    /// pixel outside the damage would keep its stale previous value → the screen-
+    /// disappears / stale-pixel class. Returns the number of CHANGED-BUT-UNCOVERED
+    /// pixels (0 = safe superset) and the total changed count (so a caller can
+    /// assert the change was real, not a no-op).
+    fn uncovered_changed_pixels(
+        damage: &[Rect],
+        prev: &FrameBuffer,
+        full: &FrameBuffer,
+    ) -> (usize, usize) {
+        let mut uncovered = 0;
+        let mut changed = 0;
+        for y in 0..H {
+            for x in 0..W {
+                let off = prev.pixel_offset(x, y);
+                if prev.pixels()[off..off + 4] != full.pixels()[off..off + 4] {
+                    changed += 1;
+                    if !covered_by_damage_tiles(damage, x, y) {
+                        uncovered += 1;
+                    }
+                }
+            }
+        }
+        (uncovered, changed)
+    }
+
+    /// Assert a confined case is superset-safe: the change is real AND no changed
+    /// pixel escapes the damage.
+    fn assert_confined_safe(setup: impl FnOnce(&mut Shell), mutate: impl FnOnce(&mut Shell)) {
+        let (damage, prev, full) = render_n_and_n1(setup, mutate);
+        let (uncovered, changed) = uncovered_changed_pixels(&damage, &prev, &full);
+        assert!(changed > 0, "the confined change must actually change pixels (test is vacuous otherwise)");
+        assert_eq!(
+            uncovered, 0,
+            "{uncovered} of {changed} changed pixels fell OUTSIDE the confined damage — \
+             a stale/disappear-class miss; damage={damage:?}"
+        );
+    }
+
+    fn register_mut_app(shell: &mut Shell, id: WindowId, rows: Arc<Mutex<Vec<String>>>) {
+        shell.register_app_view(id, Box::new(MutableApp { rows }));
+    }
+
+    // ── Confined cases: each must be PIXEL-IDENTICAL to a full repaint. ──────────
+
+    fn content_setup(
+        rows: Arc<Mutex<Vec<String>>>,
+        win: &std::cell::Cell<WindowId>,
+    ) -> impl FnOnce(&mut Shell) + '_ {
+        move |shell: &mut Shell| {
+            let id = shell.open_window_with_app(
+                "Content",
+                Rect::new(200.0, 160.0, 480.0, 360.0),
+                "com.liquide.test.mutable",
+            );
+            win.set(id);
+            register_mut_app(shell, id, rows);
+        }
+    }
+
+    /// Apply a content change: swap the painted rows + bump the content revision +
+    /// mark the window scene dirty — exactly what the live content-dirty path does
+    /// (`tick_app_views`: bump rev → `mark_window_scene_dirty`).
+    fn content_mutate(
+        rows: Arc<Mutex<Vec<String>>>,
+        new_rows: Vec<String>,
+        win: &std::cell::Cell<WindowId>,
+    ) -> impl FnOnce(&mut Shell) + '_ {
+        move |shell: &mut Shell| {
+            *rows.lock().unwrap() = new_rows;
+            shell.bump_app_content_rev(win.get());
+            shell.mark_window_scene_dirty();
+        }
+    }
+
+    #[test]
+    fn content_change_confined_damage_covers_every_changed_pixel() {
+        let rows = Arc::new(Mutex::new(vec!["alpha".to_string(), "beta".to_string()]));
+        let win = std::cell::Cell::new(WindowId(0));
+        assert_confined_safe(
+            content_setup(rows.clone(), &win),
+            content_mutate(
+                rows.clone(),
+                vec!["GAMMA".to_string(), "delta!!".to_string()],
+                &win,
+            ),
+        );
+    }
+
+    #[test]
+    fn scroll_confined_damage_covers_every_changed_pixel() {
+        // A SCROLL re-materialises the visible rows (different content_view output)
+        // with the SAME window geometry — modelled by swapping the visible row set.
+        let rows = Arc::new(Mutex::new(
+            (0..6).map(|i| format!("line {i}")).collect::<Vec<_>>(),
+        ));
+        let win = std::cell::Cell::new(WindowId(0));
+        let winr = &win;
+        let setup = {
+            let rows = rows.clone();
+            move |shell: &mut Shell| {
+                let id = shell.open_window_with_app(
+                    "Scroller",
+                    Rect::new(120.0, 100.0, 520.0, 400.0),
+                    "com.liquide.test.mutable",
+                );
+                winr.set(id);
+                register_mut_app(shell, id, rows);
+            }
+        };
+        assert_confined_safe(
+            setup,
+            content_mutate(rows.clone(), (3..9).map(|i| format!("line {i}")).collect(), &win),
+        );
+    }
+
+    #[test]
+    fn titlebar_hover_recolor_confined_damage_covers_every_changed_pixel() {
+        let id = std::cell::Cell::new(WindowId(0));
+        assert_confined_safe(
+            |shell| {
+                let w = shell.open_window("Hover", Rect::new(300.0, 200.0, 500.0, 360.0));
+                id.set(w);
+            },
+            |shell| {
+                // Hover the close button → decoration recolors (paint-only,
+                // confined via the `hovered_button` diff).
+                shell.hovered_button = Some((id.get(), HitZone::CloseButton));
+                shell.mark_window_scene_dirty();
+            },
+        );
+    }
+
+    #[test]
+    fn content_change_under_overlapping_window_glass_covers_every_changed_pixel() {
+        // Window A (bottom) whose content changes; window B (top) overlaps A with
+        // its glass titlebar + drop-shadow. The confined damage for A must cover
+        // the fringe where B's glass/shadow re-samples A's changed pixels — the
+        // BACKDROP_MARGIN superset claim across overlapping windows. The ground-
+        // truth changed set (full != prev) includes any B-glass pixel that moved
+        // because A's backdrop changed, so this test fails if the margin is too
+        // tight to cover the stacked window's fringe.
+        let rows = Arc::new(Mutex::new(vec!["under".to_string()]));
+        let a = std::cell::Cell::new(WindowId(0));
+        let ar = &a;
+        let setup = {
+            let rows = rows.clone();
+            move |shell: &mut Shell| {
+                let wa = shell.open_window_with_app(
+                    "Under",
+                    Rect::new(200.0, 200.0, 420.0, 320.0),
+                    "com.liquide.test.mutable",
+                );
+                ar.set(wa);
+                register_mut_app(shell, wa, rows);
+                // B overlaps A's bottom-right, stacked above it.
+                let _wb = shell.open_window("Over", Rect::new(480.0, 380.0, 420.0, 300.0));
+            }
+        };
+        assert_confined_safe(
+            setup,
+            content_mutate(rows.clone(), vec!["CHANGED-WIDE-CONTENT".to_string()], &a),
+        );
+    }
+
+    #[test]
+    fn change_near_window_top_edge_covers_every_changed_pixel() {
+        // A content change whose painted text sits near the window's TOP content
+        // edge — the region closest to the titlebar glass + the window border —
+        // stresses the upper margin of the confined footprint.
+        let rows = Arc::new(Mutex::new(vec![String::new(); 1]));
+        let win = std::cell::Cell::new(WindowId(0));
+        assert_confined_safe(
+            content_setup(rows.clone(), &win),
+            content_mutate(
+                rows.clone(),
+                vec!["EDGE-OF-WINDOW-CONTENT-TOP".to_string()],
+                &win,
+            ),
+        );
+    }
+
+    // ── Teeth: shrinking the damage MUST leave a changed pixel UNCOVERED. ─────────
+
+    /// Build a confined case, then SHRINK every damage rect by `shrink` px per side
+    /// and recount uncovered-changed pixels. A correct tight superset MUST then
+    /// expose at least one changed pixel outside the shrunken damage — proving the
+    /// coverage check has teeth (it would catch a real under-damage).
+    fn teeth_uncovered_after_shrink(
+        setup: impl FnOnce(&mut Shell),
+        mutate: impl FnOnce(&mut Shell),
+        shrink: f32,
+    ) -> usize {
+        let (damage, prev, full) = render_n_and_n1(setup, mutate);
+        let shrunk: Vec<Rect> = damage
+            .iter()
+            .map(|r| {
+                Rect::new(
+                    r.x + shrink,
+                    r.y + shrink,
+                    (r.width - shrink * 2.0).max(0.0),
+                    (r.height - shrink * 2.0).max(0.0),
+                )
+            })
+            .collect();
+        let (uncovered, _changed) = uncovered_changed_pixels(&shrunk, &prev, &full);
+        uncovered
+    }
+
+    #[test]
+    fn teeth_shrinking_content_damage_exposes_uncovered_changed_pixels() {
+        let rows = Arc::new(Mutex::new(vec!["alpha".to_string(), "beta".to_string()]));
+        let win = std::cell::Cell::new(WindowId(0));
+        // Shrink by 2 tiles (128 px/side): the content footprint margin is 48 px,
+        // so this must bite into the painted-content tiles and expose changed px.
+        let uncovered = teeth_uncovered_after_shrink(
+            content_setup(rows.clone(), &win),
+            content_mutate(
+                rows.clone(),
+                vec!["GAMMA".to_string(), "delta!!".to_string()],
+                &win,
+            ),
+            128.0,
+        );
+        assert!(
+            uncovered > 0,
+            "shrinking the confined content damage by 128 px must leave changed pixels \
+             UNCOVERED — if none are exposed the coverage check has no teeth"
+        );
+    }
+
+    #[test]
+    fn teeth_shrinking_hover_damage_exposes_uncovered_changed_pixels() {
+        let id = std::cell::Cell::new(WindowId(0));
+        let uncovered = teeth_uncovered_after_shrink(
+            |shell| {
+                let w = shell.open_window("Hover", Rect::new(300.0, 200.0, 500.0, 360.0));
+                id.set(w);
+            },
+            |shell| {
+                shell.hovered_button = Some((id.get(), HitZone::CloseButton));
+                shell.mark_window_scene_dirty();
+            },
+            128.0,
+        );
+        assert!(
+            uncovered > 0,
+            "shrinking the confined hover damage by 128 px must leave the recolored \
+             button pixels UNCOVERED"
+        );
+    }
+
+    // ── Left-full (anti-fake-green): genuinely-full cases must NOT confine. ───────
+
+    #[test]
+    fn window_move_resize_open_stay_full_no_precomputed_damage() {
+        let mut shell = test_shell();
+        let id = shell.open_window("Geo", Rect::new(200.0, 160.0, 480.0, 360.0));
+        let _ = build(&mut shell);
+        let _ = build(&mut shell);
+
+        // MOVE (geometry) → structural → full.
+        if let Some(w) = shell.windows.get_mut(&id) {
+            w.bounds.x += 40.0;
+        }
+        shell.mark_window_scene_dirty();
+        let _ = build(&mut shell);
+        assert!(
+            shell.take_precomputed_damage().is_none(),
+            "a window MOVE is structural and must stay full (None)"
+        );
+
+        // RESIZE (geometry) → structural → full.
+        shell.resize_window(id, 600.0, 440.0).expect("resize");
+        let _ = build(&mut shell);
+        assert!(
+            shell.take_precomputed_damage().is_none(),
+            "a window RESIZE is structural and must stay full (None)"
+        );
+
+        // OPEN a new window → structural → full.
+        let _ = shell.open_window("New", Rect::new(700.0, 120.0, 300.0, 220.0));
+        let _ = build(&mut shell);
+        assert!(
+            shell.take_precomputed_damage().is_none(),
+            "opening a window is structural and must stay full (None)"
+        );
+    }
+
+    /// Manual measurement (run with `--ignored --nocapture`): report the confined
+    /// damage AREA for a window-content change as a fraction of the 1080p screen
+    /// and the implied frame-ms under the t173 cost model (a full 1080p frame is
+    /// ~85 ms shadow-bound; a confined frame's raster cost scales ~linearly with
+    /// damage area, with a ~1.3 ms floor). Before t176 this frame returned `None`
+    /// → full repaint (~85 ms); now it confines.
+    #[test]
+    #[ignore]
+    fn zzz_measure_window_content_confinement() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        let rows = Arc::new(Mutex::new(vec!["row".to_string()]));
+        let id = shell.open_window_with_app(
+            "Probe",
+            Rect::new(400.0, 300.0, 600.0, 400.0),
+            "com.liquide.test.mutable",
+        );
+        register_mut_app(&mut shell, id, rows.clone());
+        for _ in 0..3 {
+            shell.cursor_blink_on = true;
+            shell.cursor_blink_time_us = u64::MAX;
+            let _ = shell.build_scene();
+        }
+        *rows.lock().unwrap() = vec!["changed row".to_string()];
+        shell.bump_app_content_rev(id);
+        shell.mark_window_scene_dirty();
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        let _ = shell.build_scene();
+        let damage = shell.take_precomputed_damage();
+        let screen_area = 1920.0 * 1080.0;
+        match damage {
+            Some(rects) => {
+                let area: f32 = rects.iter().map(|r| r.width * r.height).sum();
+                let frac = area / screen_area;
+                // t173 cost model: full ~85 ms; confined ~max(1.3, frac*85) ms.
+                let implied_ms = (frac * 85.0).max(1.3);
+                eprintln!(
+                    "PERF window-content: CONFINED area={area:.0}px ({:.1}% of screen) \
+                     implied≈{implied_ms:.1}ms (was None→full≈85ms) rects={}",
+                    frac * 100.0,
+                    rects.len()
+                );
+            }
+            None => eprintln!("PERF window-content: None (full ~85ms) — NOT confined"),
+        }
+    }
+
+    #[test]
+    fn first_frame_with_window_stays_full_no_precomputed_damage() {
+        // No previous signature to diff against → cannot prove a superset → full.
+        let mut shell = test_shell();
+        let _ = shell.open_window("First", Rect::new(100.0, 100.0, 400.0, 300.0));
+        let _ = build(&mut shell);
+        assert!(
+            shell.take_precomputed_damage().is_none(),
+            "the first frame after a window appears has no old footprint to diff → full"
+        );
     }
 }

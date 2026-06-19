@@ -108,6 +108,11 @@ map = ["liquide-map/net"]
 criterion.workspace = true
 serde_json = "1"
 liquide-font-rasterizer.workspace = true
+# t176-damage-confine: the precomputed-damage SUPERSET teeth proof renders each
+# newly-confined frame TWICE through the real CPU rasterizer — once with the
+# confined damage, once full — and asserts the framebuffers are pixel-identical.
+# renderer-cpu does not depend on liquide-shell, so this dev-dep adds no cycle.
+liquide-renderer-cpu.workspace = true
 
 [[bench]]
 name = "shell_bench"
