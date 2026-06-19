@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use liquide_compositor::framebuffer::FrameBuffer;
-use liquide_compositor::geometry::Rect;
+use liquide_compositor::geometry::{Affine2D, Rect};
 use liquide_compositor::pixel::Color;
 use liquide_compositor::scene::{
     DecorationButtonRects, DecorationButtons, DecorationColors, DecorationLayout, NodeProperties,
@@ -26,6 +26,43 @@ use super::Shell;
 /// reaches a `FlatNode`; it sits in its own reserved range purely to keep the
 /// scene-tree ids distinct from the window leaf-node ids.
 const NODE_WINDOW_EFFECT_GROUP_BASE: u64 = 50_000_000;
+
+/// Base id for the per-window CONTENT wrapper (t163-drag-cache). Like the effect
+/// group above, this non-visual `Workspace`-kind container is stripped from the
+/// flattened paint output, so this id never reaches a `FlatNode`; it sits in its
+/// own reserved range (distinct from the effect-group range) purely to keep the
+/// scene-tree ids unique. It carries the per-window content TRANSLATE.
+const NODE_WINDOW_CONTENT_GROUP_BASE: u64 = 60_000_000;
+
+/// Canonical node id the cached (position-independent) content subtree is built
+/// with before it is rebased onto each window's `win_base` (t163-drag-cache).
+const CONTENT_CANON_NODE_BASE: u64 = 0;
+
+/// Canonical group id for the cached content wrapper (overwritten per window).
+const CONTENT_CANON_GROUP_ID: u64 = 0;
+
+/// Canonical content z-base the cached content subtree is built with before its
+/// per-node z_orders are rebased by each window's band-aware `paint_z_base`
+/// (t163-drag-cache). Mirrors the live `z_content = paint_z_base + 3`.
+const CONTENT_CANON_Z_BASE: u32 = 3;
+
+/// Rebase a cached canonical content subtree onto a specific window: add
+/// `id_delta` to every node id and `z_delta` to every node z_order
+/// (t163-drag-cache).
+///
+/// The cached content subtree is built with canonical (0-based) node ids and a
+/// canonical z-base so two windows that SHARE one cached entry (identical
+/// size+content, different position / window id / stacking rank) can each rebase
+/// the clone: ids onto their own `win_base` (no cross-window id collision in
+/// damage / skeleton / hit identity), and z_orders by their own band-aware
+/// `paint_z_base` (so a stacked window's content keeps its correct paint order).
+fn rebase_content_subtree(node: &mut SceneNode, id_delta: u64, z_delta: u32) {
+    node.id = node.id.wrapping_add(id_delta);
+    node.properties.z_order = node.properties.z_order.wrapping_add(z_delta);
+    for child in &mut node.children {
+        rebase_content_subtree(child, id_delta, z_delta);
+    }
+}
 
 /// Lightweight counters for the retained window workspace scene cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +186,23 @@ impl Default for FullSceneCache {
     }
 }
 
+/// Lightweight counters for the POSITION-INDEPENDENT per-window content cache
+/// (t163-drag-cache). A window MOVE (x/y change, same w/h + content) HITS this
+/// cache so the expensive content subtree (`content_view` + per-row/cell nodes)
+/// is reused and only the wrapper translate updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowContentCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub entries: usize,
+}
+
+/// Upper bound on retained distinct content signatures. Identical-size/content
+/// windows SHARE one entry (the key excludes position AND window id), so this
+/// only grows with genuinely distinct content shapes; clear wholesale past the
+/// cap rather than carry an unbounded map.
+const CONTENT_CACHE_CAP: usize = 64;
+
 /// Retains the manually assembled active-workspace/window subtree.
 #[derive(Debug)]
 pub(crate) struct WindowSceneCache {
@@ -157,6 +211,22 @@ pub(crate) struct WindowSceneCache {
     hits: u64,
     misses: u64,
     dirty: bool,
+    /// Per-window CONTENT subtree cache (t163-drag-cache), keyed by a
+    /// POSITION-INDEPENDENT [`WindowContentSignature`] (no x/y, no window id).
+    /// Built once at the canonical origin `(0,0)` with canonical (0-based) node
+    /// ids; the caller rebases the ids per window and wraps the clone in a
+    /// translate carrying the absolute `(x,y)`. So a pure MOVE reuses this entry
+    /// (no `content_view`, no per-row rebuild) and only the wrapper translate
+    /// changes; a RESIZE (w/h change) or content change misses (different
+    /// signature) and rebuilds. Two windows at different positions but identical
+    /// size+content share one entry. This map is deliberately NOT cleared by
+    /// [`Self::mark_dirty`] — a drag-move calls `mark_window_scene_dirty` every
+    /// frame, and blowing the content cache away there would re-introduce the
+    /// per-frame rebuild this cache exists to remove. Its only invalidation is
+    /// the signature mismatch (content/size change), which is exact.
+    content: std::collections::HashMap<WindowContentSignature, SceneNode>,
+    content_hits: u64,
+    content_misses: u64,
 }
 
 impl WindowSceneCache {
@@ -167,6 +237,9 @@ impl WindowSceneCache {
             hits: 0,
             misses: 0,
             dirty: true,
+            content: std::collections::HashMap::new(),
+            content_hits: 0,
+            content_misses: 0,
         }
     }
 
@@ -188,6 +261,25 @@ impl WindowSceneCache {
         self.dirty = false;
     }
 
+    /// Look up a cached CONTENT subtree for `signature`, returning a clone of the
+    /// canonical (origin-anchored, 0-based-id) subtree on a hit.
+    fn get_content(&mut self, signature: &WindowContentSignature) -> Option<SceneNode> {
+        if let Some(node) = self.content.get(signature) {
+            self.content_hits = self.content_hits.saturating_add(1);
+            return Some(node.clone());
+        }
+        self.content_misses = self.content_misses.saturating_add(1);
+        None
+    }
+
+    /// Store a canonical content subtree under its position-independent signature.
+    fn store_content(&mut self, signature: WindowContentSignature, node: SceneNode) {
+        if self.content.len() >= CONTENT_CACHE_CAP && !self.content.contains_key(&signature) {
+            self.content.clear();
+        }
+        self.content.insert(signature, node);
+    }
+
     pub(crate) fn mark_dirty(&mut self) {
         self.dirty = true;
     }
@@ -198,6 +290,14 @@ impl WindowSceneCache {
             misses: self.misses,
             dirty: self.dirty,
             cached: self.node.is_some(),
+        }
+    }
+
+    pub(crate) fn content_stats(&self) -> WindowContentCacheStats {
+        WindowContentCacheStats {
+            hits: self.content_hits,
+            misses: self.content_misses,
+            entries: self.content.len(),
         }
     }
 }
@@ -236,6 +336,44 @@ struct WindowSceneSignature {
     /// animation would never advance. Idle windows contribute nothing, so a
     /// steady-state scene keeps its cache exactly as before.
     effects: Vec<WindowEffectSignature>,
+}
+
+/// POSITION-INDEPENDENT cache key for a single window's CONTENT subtree
+/// (t163-drag-cache).
+///
+/// Captures everything `build_window_content` / `build_app_view_content` read
+/// that can change what the content subtree contains — but deliberately EXCLUDES
+/// the window's screen POSITION (x/y) and its window id / `win_base`. So a pure
+/// MOVE (x/y change, same w/h + content + state) yields the SAME signature and
+/// HITS the content cache; the absolute position is reapplied as a translate on
+/// the wrapper. A RESIZE changes `content_w`/`content_h` (which drive
+/// `cols`/`rows`) → different signature → rebuild. Content changes are folded in
+/// via `app_content_rev` (bumped on every input route / content-dirty),
+/// `focused`/`focused_text` (the typed-text field), and `cursor_blink_on` (the
+/// terminal/app caret). Two windows at different positions with identical
+/// size+content+state therefore share ONE cached content subtree.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct WindowContentSignature {
+    app_id: String,
+    title: String,
+    /// Content-area width/height (NOT the window bounds): a resize changes these
+    /// and re-lays-out `cols`/`rows`, so they must invalidate; a move does not.
+    content_w: u32,
+    content_h: u32,
+    /// Live app-view revision (0 when the window has no registered app view).
+    app_content_rev: u64,
+    has_app_view: bool,
+    focused: bool,
+    focused_text: Option<String>,
+    cursor_blink_on: bool,
+    /// Content-relevant theme colors (the same fields the content nodes paint
+    /// with). A theme recolour must re-emit the content with the new colors.
+    text_color: ColorSignature,
+    terminal_bg: ColorSignature,
+    terminal_text: ColorSignature,
+    sidebar_item: ColorSignature,
+    browser_urlbar: ColorSignature,
+    content_background: ColorSignature,
 }
 
 /// Cache-key fingerprint of a single window's active effect frame (t93-e2).
@@ -524,6 +662,15 @@ impl Shell {
     #[must_use]
     pub fn full_scene_cache_stats(&self) -> FullSceneCacheStats {
         self.full_scene_cache.stats()
+    }
+
+    /// Return counters for the POSITION-INDEPENDENT per-window content subtree
+    /// cache (t163-drag-cache). A window MOVE registers as a HIT here (content
+    /// reused, only the wrapper translate updates); a RESIZE / content change
+    /// registers as a MISS (content rebuilt).
+    #[must_use]
+    pub fn window_content_cache_stats(&self) -> WindowContentCacheStats {
+        self.window_scene_cache.content_stats()
     }
 
     /// Take (and clear) the authoritative precomputed damage produced by the
@@ -1521,8 +1668,43 @@ impl Shell {
         }
     }
 
-    fn build_uncached_window_workspace_node(
+    /// Build the POSITION-INDEPENDENT content signature for `window`
+    /// (t163-drag-cache). Captures everything the content subtree depends on
+    /// EXCEPT the window's screen position — so a pure move keeps it unchanged.
+    fn window_content_signature(
         &self,
+        window: &Window,
+        content_bounds: Rect,
+    ) -> WindowContentSignature {
+        let focused = self.focus.focused() == Some(window.id);
+        let has_app_view = self.app_views.contains_key(&window.id);
+        WindowContentSignature {
+            app_id: window.app_id.clone(),
+            title: window.title.clone(),
+            content_w: f32_signature(content_bounds.width),
+            content_h: f32_signature(content_bounds.height),
+            app_content_rev: self.app_content_revs.get(&window.id).copied().unwrap_or(0),
+            has_app_view,
+            focused,
+            // Only the FOCUSED window paints the typed-text field, so capture the
+            // typed buffer only when focused (mirrors `build_window_content`).
+            focused_text: if focused {
+                self.window_text_input(window.id).map(str::to_string)
+            } else {
+                None
+            },
+            cursor_blink_on: self.cursor_blink_on,
+            text_color: ColorSignature::from_color(self.theme.status_bar_text),
+            terminal_bg: ColorSignature::from_color(self.theme.app_terminal_background),
+            terminal_text: ColorSignature::from_color(self.theme.app_terminal_text),
+            sidebar_item: ColorSignature::from_color(self.theme.app_settings_sidebar_item),
+            browser_urlbar: ColorSignature::from_color(self.theme.app_browser_urlbar),
+            content_background: ColorSignature::from_color(self.theme.window_content_background),
+        }
+    }
+
+    fn build_uncached_window_workspace_node(
+        &mut self,
         screen: Rect,
         z_order: u32,
         button_colors: &DecorationColors,
@@ -1530,16 +1712,20 @@ impl Shell {
     ) -> SceneNode {
         use liquide_compositor::scene::GlassParams;
 
-        let theme = &self.theme;
-        let ws = self.workspaces.active();
-        let ws_id = NODE_WORKSPACE_BASE + ws.id.0 as u64;
+        let ws_index = self.workspaces.active().id.0;
+        let ws_id = NODE_WORKSPACE_BASE + ws_index as u64;
         let mut ws_node = SceneNode::new(
             ws_id,
-            SceneNodeKind::Workspace { index: ws.id.0 },
+            SceneNodeKind::Workspace { index: ws_index },
             NodeProperties::new(screen).with_z_order(z_order),
         );
 
-        for (paint_rank, window) in self.visible_windows().iter().enumerate() {
+        // Snapshot the visible windows as owned values so the per-window content
+        // cache (consulted via `&mut self` below) is not blocked by an immutable
+        // borrow of `self.visible_windows()` held across the loop (t163-drag-cache).
+        let windows: Vec<Window> = self.visible_windows().into_iter().cloned().collect();
+
+        for (paint_rank, window) in windows.iter().enumerate() {
             let win_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE;
 
             // Band-aware paint z-base (t93-e2 / t92 gap #2+#4). `visible_windows`
@@ -1592,7 +1778,7 @@ impl Shell {
             let win_group_z = paint_z_base;
             let mut win_group = SceneNode::new(
                 NODE_WINDOW_EFFECT_GROUP_BASE + window.id.0,
-                SceneNodeKind::Workspace { index: ws.id.0 },
+                SceneNodeKind::Workspace { index: ws_index },
                 NodeProperties::new(Rect::new(0.0, 0.0, screen.width, screen.height))
                     .with_z_order(win_group_z)
                     .with_opacity(paint_opacity),
@@ -1609,7 +1795,7 @@ impl Shell {
                 SceneNodeKind::Shadow {
                     spread: 4.0,
                     blur_radius: 12.0,
-                    color: theme.window_shadow,
+                    color: self.theme.window_shadow,
                     corner_radius: self.decoration_style.corner_radius,
                 },
                 NodeProperties::new(shadow_bounds).with_z_order(paint_z_base),
@@ -1645,7 +1831,7 @@ impl Shell {
                     win_base + 10,
                     SceneNodeKind::Glass(GlassParams {
                         blur_radius: 12,
-                        tint_color: theme.window_glass_tint,
+                        tint_color: self.theme.window_glass_tint,
                         inner_glow: false,
                         parallax: false,
                     }),
@@ -1653,11 +1839,11 @@ impl Shell {
                 ));
 
                 let title_bg = if is_focused {
-                    let mut c = theme.window_title_bar_focused;
+                    let mut c = self.theme.window_title_bar_focused;
                     c.a = (c.a / 2).max(60);
                     c
                 } else {
-                    let mut c = theme.window_title_bar_unfocused;
+                    let mut c = self.theme.window_title_bar_unfocused;
                     c.a = (c.a / 2).max(40);
                     c
                 };
@@ -1665,12 +1851,12 @@ impl Shell {
                     win_base + 1,
                     SceneNodeKind::Decoration {
                         title: Some(window.title.clone()),
-                        title_color: theme.window_title_text,
+                        title_color: self.theme.window_title_text,
                         background: title_bg,
                         border_color: if is_focused {
-                            theme.window_border_focused
+                            self.theme.window_border_focused
                         } else {
-                            theme.window_border_unfocused
+                            self.theme.window_border_unfocused
                         },
                         border_width: self.decoration_style.border_width,
                         corner_radius: self.decoration_style.corner_radius,
@@ -1709,20 +1895,84 @@ impl Shell {
             );
             let z_content = paint_z_base + 3;
 
+            // Content-area background (cheap, position-dependent): kept ABSOLUTE
+            // and rebuilt each frame — it is a single fill, not the expensive
+            // per-row content. It is NOT part of the translated content wrapper.
             win_group.add_child(solid_rect(
                 win_base + 2,
-                theme.window_content_background,
+                self.theme.window_content_background,
                 content_bounds,
                 z_content,
             ));
 
-            self.build_window_content(
+            // ── POSITION-INDEPENDENT content subtree (t163-drag-cache) ─────────
+            // The expensive part — `content_view` + a node per row/cell — is built
+            // ONCE at the canonical origin `(0,0)` with canonical (0-based) node
+            // ids and cached under a signature that EXCLUDES position. A pure MOVE
+            // (same w/h + content) HITS this cache; we then rebase the canonical
+            // ids onto this window's `win_base` and reapply the absolute position
+            // as a TRANSLATE on a dedicated content wrapper — so a move never
+            // re-runs the content build, it only updates one wrapper's translate.
+            // A RESIZE changes the content w/h → different signature → rebuild.
+            let content_sig = self.window_content_signature(window, content_bounds);
+            let mut canonical = match self.window_scene_cache.get_content(&content_sig) {
+                Some(node) => node,
+                None => {
+                    // Build relative to the origin: a content rect anchored at
+                    // (0,0) so every emitted node is window-relative, with the
+                    // canonical id base (0) and canonical z-base — both rebased
+                    // per-window below.
+                    let rel_content =
+                        Rect::new(0.0, 0.0, content_bounds.width, content_bounds.height);
+                    let mut canon = SceneNode::new(
+                        CONTENT_CANON_GROUP_ID,
+                        SceneNodeKind::Workspace { index: ws_index },
+                        NodeProperties::new(rel_content),
+                    );
+                    self.build_window_content(
+                        &mut canon,
+                        window,
+                        rel_content,
+                        CONTENT_CANON_NODE_BASE,
+                        CONTENT_CANON_Z_BASE,
+                        &self.theme,
+                    );
+                    self.window_scene_cache
+                        .store_content(content_sig, canon.clone());
+                    canon
+                }
+            };
+
+            // Rebase the canonical content onto this window: node ids onto its
+            // `win_base` (distinct ids even when two windows SHARE one cached
+            // entry) and z_orders by its band-aware `paint_z_base` (correct paint
+            // order for a stacked window). `paint_z_base + CONTENT_CANON_Z_BASE`
+            // reproduces the original `z_content` exactly.
+            rebase_content_subtree(&mut canonical, win_base, paint_z_base);
+            canonical.id = NODE_WINDOW_CONTENT_GROUP_BASE + window.id.0;
+
+            // Carry the absolute content origin as the wrapper TRANSLATE. The
+            // content was built relative to (0,0), so this places it exactly where
+            // the absolute content rect was — no double-count (the inner nodes use
+            // origin-relative coords only). The flatten path accumulates this
+            // translate (and the parent `win_group` opacity) down to every child.
+            canonical.properties.bounds = Rect::new(0.0, 0.0, screen.width, screen.height);
+            canonical.properties.transform =
+                Affine2D::translation(content_bounds.x, content_bounds.y);
+            canonical.properties.z_order = z_content;
+
+            win_group.add_child(canonical);
+
+            // Focused-window typed-text field: emitted ABSOLUTELY (not through the
+            // content translate wrapper) so its raw scene-node bounds stay in
+            // screen space and it is not folded into the cached content subtree.
+            self.build_window_text_field(
                 &mut win_group,
                 window,
                 content_bounds,
                 win_base,
                 z_content,
-                theme,
+                &self.theme,
             );
 
             ws_node.add_child(win_group);
@@ -1922,42 +2172,55 @@ impl Shell {
                 ));
             }
         }
+    }
 
-        // Typed-text input field (t57-fG feature 2): when this window is focused
-        // and the shell has routed keyboard text into its buffer, paint the text
-        // as an input field in the body so the typed glyphs appear. This is the
-        // visible end of the shell↔app text-input seam; the field sits at the
-        // body's vertical midpoint so it reads as an editable text area.
-        if self.focus.focused() == Some(window.id) {
-            if let Some(text) = self.window_text_input(window.id) {
-                if !text.is_empty() {
-                    let field_h = 28.0_f32;
-                    let field_y = cy + (content.height * 0.5 - field_h * 0.5).max(0.0);
-                    let field = Rect::new(cx + 16.0, field_y, (cw - 32.0).max(0.0), field_h);
-                    // Field background so the input area is unambiguous.
-                    parent.add_child(solid_rect(
-                        win_base + 900,
-                        theme.app_browser_urlbar,
-                        field,
-                        z + 4,
-                    ));
-                    // The typed text itself.
-                    parent.add_child(text_node(
-                        win_base + 901,
-                        text.to_string(),
-                        text_color,
-                        Rect::new(
-                            field.x + 8.0,
-                            field.y + 5.0,
-                            (field.width - 16.0).max(0.0),
-                            20.0,
-                        ),
-                        z + 5,
-                        1,
-                    ));
-                }
-            }
+    /// Paint the FOCUSED window's typed-text input field (t57-fG feature 2) at
+    /// ABSOLUTE coordinates.
+    ///
+    /// This is deliberately emitted OUTSIDE the position-independent content
+    /// cache (t163-drag-cache): it appears on only one (focused) window, is a
+    /// single rect + text (cheap to rebuild each frame), and its rect is read by
+    /// callers that inspect the raw scene-node bounds in absolute space. Keeping
+    /// it absolute (alongside the shadow/decoration/content-bg) avoids routing it
+    /// through the content translate wrapper.
+    fn build_window_text_field(
+        &self,
+        parent: &mut SceneNode,
+        window: &Window,
+        content: Rect,
+        win_base: u64,
+        z: u32,
+        theme: &ShellTheme,
+    ) {
+        // Only the focused window paints the typed-text field, and only when the
+        // legacy shell buffer (no registered app view) holds text.
+        if self.focus.focused() != Some(window.id) {
+            return;
         }
+        let Some(text) = self.window_text_input(window.id) else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        let text_color = theme.status_bar_text;
+        let cx = content.x;
+        let cy = content.y;
+        let cw = content.width;
+        let field_h = 28.0_f32;
+        let field_y = cy + (content.height * 0.5 - field_h * 0.5).max(0.0);
+        let field = Rect::new(cx + 16.0, field_y, (cw - 32.0).max(0.0), field_h);
+        // Field background so the input area is unambiguous.
+        parent.add_child(solid_rect(win_base + 900, theme.app_browser_urlbar, field, z + 4));
+        // The typed text itself.
+        parent.add_child(text_node(
+            win_base + 901,
+            text.to_string(),
+            text_color,
+            Rect::new(field.x + 8.0, field.y + 5.0, (field.width - 16.0).max(0.0), 20.0),
+            z + 5,
+            1,
+        ));
     }
 
     /// Paint a window's body from its registered [`AppView`]'s render model

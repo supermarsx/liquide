@@ -11,6 +11,7 @@ mod chrome_workspaces_tests;
 mod config_tests;
 mod context_menu_tests;
 mod decoration_tests;
+mod drag_content_cache_tests;
 mod devtools_zorder_tests;
 mod dock_config_tests;
 mod dock_tests;
