@@ -31,6 +31,17 @@ path = "src/bin/render_bench.rs"
 name = "frame_time_harness"
 path = "src/bin/frame_time_harness.rs"
 
+# EXTENSIVE per-operation LIVE frame-time harness (t161). Fixes the t97 harness's
+# cross-frame-state bug: keeps ONE Shell + Compositor + renderer + persistent
+# retained-flatten / tile-hash / snapshot-recycler / framebuffer alive across
+# EVERY frame (warmed exactly like the live render_full_job worker), and reports
+# median/p95 ms + fps + per-stage attribution for EVERY DE operation (idle,
+# cursor, clock, hover, menu, window drag-move, resize-drag, scroll, typing,
+# window open/close, workspace switch, theme switch, full-frame).
+[[bin]]
+name = "perf_ops"
+path = "src/bin/perf_ops.rs"
+
 [dependencies]
 # CPU rasterizer (SoftwareRenderer) for the raster stage of the render_bench bin.
 liquide-renderer-cpu.workspace = true
