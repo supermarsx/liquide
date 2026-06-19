@@ -23,7 +23,9 @@
 //! # Modules
 //!
 //! - [`blend`] — Porter-Duff SrcOver and CSS blend modes on scanlines
-//! - [`blur`] — Separable Gaussian blur (horizontal + vertical passes)
+//! - [`blur`] — Separable Gaussian blur (horizontal + vertical passes);
+//!   SSE2/FMA at 1 px/lane, AVX2 multi-pixel (2 px/iter H, 4 px/iter V),
+//!   bit-identical to the FMA path
 //! - [`convert`] — Channel conversion (BGRA↔RGBA), unpremultiply, bilinear upsample
 //! - [`filter`] — Per-pixel color filters (brightness, contrast, matrix, etc.)
 //! - [`delta`] — XOR delta encoding / popcount for tile differencing
