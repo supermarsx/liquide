@@ -50,8 +50,11 @@ fn painted_bar_height(fb: &FrameBuffer, plot: liquide_layout::geometry::Rect, co
     let mut top = None;
     for y in (plot.y as u32 + 2)..((plot.y + plot.height) as u32 - 1) {
         let p = fb.get_pixel(x, y);
-        // The bar is the accent blue; the plot bg is BG; gridlines are faint.
-        if p.b > 150 && p.r < 120 && p.a > 0 {
+        // The bar is the (macOS-dark) graphite accent — a bright neutral gray
+        // (~#8e8e93, all channels ~140+). The plot bg is the dark widget bg
+        // (~#2c2c2e, ~44) and gridlines are a faint white wash (~61 over bg),
+        // both well under 100, so a >100-on-all-channels test isolates the bar.
+        if p.r > 100 && p.g > 100 && p.b > 100 && p.a > 0 {
             top = Some(y);
             break;
         }

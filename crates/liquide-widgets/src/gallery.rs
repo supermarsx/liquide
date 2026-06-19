@@ -162,6 +162,23 @@ impl Gallery {
         fb.get_pixel(x, y)
     }
 
+    /// True iff `px` reads as the macOS-dark GRAPHITE accent (`--widget-accent`,
+    /// ~#8e8e93 in the standalone gallery): a BRIGHT, NEAR-NEUTRAL gray. This is
+    /// the honest successor to the old "blue-dominant" (`px.b > px.r`) accent
+    /// checks after the t172 macOS-dark retheme — graphite has no hue, so a hue
+    /// test is meaningless; what an accent-filled control now proves is that it
+    /// painted a bright neutral fill clearly distinct from the dark widget
+    /// surfaces (bg ~#2c2c2e ~44, elevated ~#3a3a3c ~58, both well under 100 and
+    /// also near-neutral, so brightness is the discriminator vs those surfaces;
+    /// saturated data hues are excluded by the neutrality band).
+    pub fn is_graphite_accent(px: Color) -> bool {
+        let bright = px.r > 100 && px.g > 100 && px.b > 100;
+        let max = px.r.max(px.g).max(px.b);
+        let min = px.r.min(px.g).min(px.b);
+        let neutral = max - min < 40;
+        bright && neutral && px.a > 0
+    }
+
     // ── scripted event injection (REAL dispatcher + hit-test) ──────────────
 
     fn hit(&self) -> &HitTestEngine {

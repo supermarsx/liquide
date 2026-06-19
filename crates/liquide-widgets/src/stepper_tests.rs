@@ -230,8 +230,8 @@ fn current_marker_differs_from_upcoming_marker() {
         cur != upc,
         "the current marker (accent fill) must differ from an upcoming marker (cur {cur:?} upc {upc:?})"
     );
-    // The current marker is accent (blue-dominant).
-    assert!(cur.b >= cur.r, "current marker fill is accent-blue (got {cur:?})");
+    // The current marker is the macOS-dark graphite accent (bright + neutral).
+    assert!(Gallery::is_graphite_accent(cur), "current marker fill is the graphite accent (got {cur:?})");
 }
 
 /// A COMPLETED step's marker (`:checked`, accent-active fill) paints distinctly
@@ -302,10 +302,10 @@ fn step_connector_fills_with_progress() {
         "the connector before a completed step must change once that step is completed \
          (unfilled {unfilled:?} filled {filled:?})"
     );
-    // The filled connector is the accent (blue-dominant, opaque).
+    // The filled connector is the graphite accent (bright + neutral, opaque).
     assert!(
-        filled.a > 0 && filled.b > filled.r,
-        "the filled connector must paint the accent colour (got {filled:?})"
+        Gallery::is_graphite_accent(filled),
+        "the filled connector must paint the graphite accent colour (got {filled:?})"
     );
 }
 

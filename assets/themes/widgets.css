@@ -32,22 +32,41 @@
      token OR the widget var. Each falls back to a literal so the gallery (which
      loads no variables.css) still paints. */
   :root {
-    --widget-bg:            var(--bg-tertiary,    #27272a);
+    /* macOS-dark surfaces. The literal FALLBACKS are the macOS graphite/dark
+       palette (NOT the old blue/zinc set) so the toolkit looks macOS-dark even
+       when loaded ALONE (the gallery harness loads ONLY this file, with no
+       variables.css / macos_dark.css to override). When composed in the real
+       shell the macos_dark.css `:root` tokens (--accent-color #8e8e93, etc.)
+       still win via @layer/cascade order. */
+    --widget-bg:            var(--bg-tertiary,    #2c2c2e);
     --widget-bg-hover:      var(--hover-bg,       rgba(255, 255, 255, 0.06));
     /* A SOLID hover surface (vs the translucent overlay above) so a hover
        restyle is unambiguously observable over any backdrop. */
-    --widget-bg-hover-solid: var(--bg-elevated,   #3f3f46);
+    --widget-bg-hover-solid: var(--bg-elevated,   #3a3a3c);
     --widget-bg-active:     var(--active-bg,      rgba(255, 255, 255, 0.10));
-    --widget-fg:            var(--text-primary,   rgba(250, 250, 250, 0.95));
-    --widget-fg-disabled:   var(--text-disabled,  rgba(113, 113, 122, 0.48));
+    --widget-bg-elevated:   var(--bg-elevated,    #3a3a3c);
+    --widget-fg:            var(--text-primary,   rgba(255, 255, 255, 0.92));
+    --widget-fg-disabled:   var(--text-disabled,  rgba(235, 235, 245, 0.30));
     --widget-border:        var(--border-default, rgba(255, 255, 255, 0.10));
     --widget-border-strong: var(--border-strong,  rgba(255, 255, 255, 0.18));
-    --widget-accent:        var(--accent-color,   #3b82f6);
-    --widget-accent-hover:  var(--accent-hover,   #60a5fa);
-    --widget-accent-active: var(--accent-active,  #2563eb);
-    --widget-selection:     var(--selection-bg,   rgba(59, 130, 246, 0.30));
+    /* Graphite accent (macOS systemGray) — selection / focus / active are all
+       graphite, never blue. */
+    --widget-accent:        var(--accent-color,   #8e8e93);
+    --widget-accent-hover:  var(--accent-hover,   #aeaeb2);
+    --widget-accent-active: var(--accent-active,  #636366);
+    --widget-on-accent:     #ffffff;
+    --widget-selection:     var(--selection-bg,   rgba(142, 142, 147, 0.35));
+    --widget-focus-tint:    var(--accent-subtle,  rgba(142, 142, 147, 0.22));
+    --widget-bg-disabled:   rgba(120, 120, 128, 0.14);
+    /* macOS "switch ON" green (system green). Distinct from the graphite accent:
+       macOS toggles flip green when on. */
+    --widget-switch-on:     #34c759;
     --widget-radius:        6;
-    --widget-focus-ring:    var(--accent-color,   #3b82f6);
+    --widget-focus-ring:    var(--accent-color,   #8e8e93);
+    /* Overlay scrollbar (thin, translucent, graphite). */
+    --widget-scroll-thumb:  var(--scrollbar-thumb, rgba(255, 255, 255, 0.18));
+    --widget-scroll-hover:  var(--scrollbar-hover, rgba(255, 255, 255, 0.30));
+    --widget-scroll-track:  var(--scrollbar-track, rgba(0, 0, 0, 0));
   }
 
   /* ── Custom-element resets ──────────────────────────────────
@@ -370,38 +389,42 @@
     width: 120px;
     height: 36px;
     padding: 8px 14px;
-    background-color: var(--widget-bg, #27272a);
+    background-color: var(--widget-bg, #2c2c2e);
     border: 1px solid var(--widget-border, rgba(255, 255, 255, 0.10));
-    border-radius: 6px;
-    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+    /* macOS-rounded control corners. */
+    border-radius: 7px;
+    color: var(--widget-fg, rgba(255, 255, 255, 0.92));
   }
   lq-button > lq-label {
     display: inline;
   }
   lq-button:hover {
-    background-color: var(--widget-bg-hover-solid, #3f3f46);
+    background-color: var(--widget-bg-hover-solid, #3a3a3c);
     border-color: var(--widget-border-strong, rgba(255, 255, 255, 0.18));
   }
   lq-button:active {
-    background-color: var(--widget-accent, #3b82f6);
-    border-color: var(--widget-accent-active, #2563eb);
+    background-color: var(--widget-accent, #8e8e93);
+    border-color: var(--widget-accent-active, #636366);
   }
+  /* macOS focus: a graphite ring drawn as a soft halo around the control
+     (border tint + outer glow) rather than a hard 1px box. */
   lq-button:focus {
-    border-color: var(--widget-focus-ring, #3b82f6);
+    border-color: var(--widget-focus-ring, #8e8e93);
+    box-shadow: 0 0 0 3px var(--widget-focus-tint, rgba(142, 142, 147, 0.22));
   }
   lq-button:disabled {
-    background-color: var(--widget-bg, #27272a);
-    color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
+    background-color: var(--widget-bg, #2c2c2e);
+    color: var(--widget-fg-disabled, rgba(235, 235, 245, 0.30));
     border-color: var(--widget-border, rgba(255, 255, 255, 0.10));
   }
   /* Variants (pure CSS classes). */
   lq-button.primary {
-    background-color: var(--widget-accent, #3b82f6);
-    border-color: var(--widget-accent, #3b82f6);
-    color: #ffffff;
+    background-color: var(--widget-accent, #8e8e93);
+    border-color: var(--widget-accent, #8e8e93);
+    color: var(--widget-on-accent, #ffffff);
   }
   lq-button.primary:hover {
-    background-color: var(--widget-accent-hover, #60a5fa);
+    background-color: var(--widget-accent-hover, #aeaeb2);
   }
   lq-button.danger {
     background-color: #b91c1c;
@@ -463,7 +486,9 @@
     background-color: rgba(0, 0, 0, 0);
   }
   lq-input:focus {
-    border-color: var(--widget-focus-ring, #3b82f6);
+    border-color: var(--widget-focus-ring, #8e8e93);
+    /* macOS soft graphite focus halo. */
+    box-shadow: 0 0 0 3px var(--widget-focus-tint, rgba(142, 142, 147, 0.22));
   }
   lq-input:focus lq-caret {
     background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
@@ -548,7 +573,8 @@
     background-color: rgba(0, 0, 0, 0);
   }
   lq-textarea:focus {
-    border-color: var(--widget-focus-ring, #3b82f6);
+    border-color: var(--widget-focus-ring, #8e8e93);
+    box-shadow: 0 0 0 3px var(--widget-focus-tint, rgba(142, 142, 147, 0.22));
   }
   lq-textarea:focus lq-caret {
     background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
@@ -587,17 +613,19 @@
   }
   lq-checkbox:checked > lq-indicator,
   lq-radio:checked > lq-indicator {
-    background-color: var(--widget-accent, #3b82f6);
-    border-color: var(--widget-accent, #3b82f6);
+    background-color: var(--widget-accent, #8e8e93);
+    border-color: var(--widget-accent, #8e8e93);
   }
   lq-checkbox:hover > lq-indicator,
   lq-radio:hover > lq-indicator {
-    border-color: var(--widget-focus-ring, #3b82f6);
+    border-color: var(--widget-focus-ring, #8e8e93);
   }
   lq-checkbox:focus > lq-indicator,
   lq-radio:focus > lq-indicator,
   lq-switch:focus > lq-indicator {
-    border-color: var(--widget-focus-ring, #3b82f6);
+    /* macOS focus: graphite ring border + soft halo. */
+    border-color: var(--widget-focus-ring, #8e8e93);
+    box-shadow: 0 0 0 3px var(--widget-focus-tint, rgba(142, 142, 147, 0.22));
   }
   lq-checkbox:disabled,
   lq-radio:disabled,
@@ -605,6 +633,13 @@
     color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
   }
 
+  /* macOS pill toggle: a rounded TRACK with a sliding round KNOB. The knob is a
+     ::after pseudo pinned inside the track (position the indicator relative).
+     OFF = dark track, knob on the LEFT. ON = green track (macOS toggles flip
+     SYSTEM-GREEN, not graphite), knob on the RIGHT. Geometry: track 36×20, knob
+     16×16 with a 2px inset — the knob never crosses the track CENTER (x=18) in
+     either state, so a centre-pixel sample reliably reads the TRACK colour
+     (dark→green) the pixel tests assert. */
   lq-switch {
     display: flex;
     flex-direction: row;
@@ -613,16 +648,42 @@
   }
   lq-switch > lq-indicator {
     display: inline-block;
+    position: relative;
     width: 36px;
     height: 20px;
     margin-right: 8px;
-    background-color: var(--widget-bg, #27272a);
+    background-color: var(--widget-bg, #2c2c2e);
     border: 1px solid var(--widget-border-strong, rgba(255, 255, 255, 0.18));
     border-radius: 10px;
   }
+  /* The sliding knob — a white circle. It is generated in-flow as the track's
+     sole content (::after); the layout engine places pseudo boxes IN FLOW and
+     honors width/height/margins (NOT position:absolute left/top), so the knob is
+     positioned + slid via MARGINS: margin-left moves it horizontally, margin-top
+     centers it vertically. OFF = 2px from the left edge. */
+  lq-switch > lq-indicator::after {
+    content: "";
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    margin-left: 1px;
+    border-radius: 8px;
+    background-color: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
   lq-switch:checked > lq-indicator {
-    background-color: var(--widget-accent, #3b82f6);
-    border-color: var(--widget-accent, #3b82f6);
+    /* macOS: ON flips system-green, with a matching border. */
+    background-color: var(--widget-switch-on, #34c759);
+    border-color: var(--widget-switch-on, #34c759);
+  }
+  /* ON: the knob slides to the RIGHT via a larger left margin
+     (track inner width 34 - knob 16 - 1px trailing inset = 17). */
+  lq-switch:checked > lq-indicator::after {
+    margin-left: 17px;
+  }
+  lq-switch:disabled > lq-indicator {
+    opacity: 0.5;
   }
   lq-radiogroup {
     display: flex;
@@ -653,25 +714,28 @@
   lq-slider lq-fill {
     display: block;
     height: 6px;
-    background-color: var(--widget-accent, #3b82f6);
+    background-color: var(--widget-accent, #8e8e93);
     border-radius: 3px;
   }
+  /* macOS slider knob: a white circular thumb with a soft drop shadow, hairline
+     graphite border. */
   lq-slider lq-thumb {
     display: block;
     width: 16px;
     height: 16px;
-    background-color: var(--widget-fg, rgba(250, 250, 250, 0.95));
-    border: 1px solid var(--widget-accent, #3b82f6);
+    background-color: var(--widget-fg, rgba(255, 255, 255, 0.95));
+    border: 1px solid var(--widget-accent, #8e8e93);
     border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   }
   lq-slider:hover lq-thumb {
-    border-color: var(--widget-accent-hover, #60a5fa);
+    border-color: var(--widget-accent-hover, #aeaeb2);
   }
   lq-slider:active lq-thumb {
-    background-color: var(--widget-accent, #3b82f6);
+    background-color: var(--widget-accent, #8e8e93);
   }
   lq-slider:focus lq-track {
-    border: 1px solid var(--widget-focus-ring, #3b82f6);
+    border: 1px solid var(--widget-focus-ring, #8e8e93);
   }
   lq-slider:disabled lq-fill {
     background-color: var(--widget-fg-disabled, rgba(113, 113, 122, 0.48));
@@ -841,24 +905,30 @@
     display: block;
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
   }
+  /* macOS overlay scrollbar: a THIN, TRANSLUCENT track (no solid gutter) with a
+     pill thumb that's a translucent graphite wash; it darkens on hover/drag.
+     The track keeps its 10px hit width (the drag math reads the laid-out box) but
+     paints transparent so it reads as an overlay floating on the content. */
   lq-scroll-area > lq-scroll-track {
     display: block;
     width: 10px;
     height: 160px;
-    background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.06));
+    background-color: var(--widget-scroll-track, rgba(0, 0, 0, 0));
   }
   lq-scroll-area > lq-scroll-track > lq-scroll-thumb {
     display: block;
-    width: 10px;
+    width: 6px;
+    margin-left: 2px;
+    margin-right: 2px;
     height: 100%;
-    background-color: var(--widget-border-strong, rgba(255, 255, 255, 0.28));
-    border-radius: 5px;
+    background-color: var(--widget-scroll-thumb, rgba(255, 255, 255, 0.18));
+    border-radius: 3px;
   }
   lq-scroll-area:hover > lq-scroll-track > lq-scroll-thumb {
-    background-color: var(--widget-fg-disabled, rgba(160, 160, 170, 0.55));
+    background-color: var(--widget-scroll-hover, rgba(255, 255, 255, 0.30));
   }
   lq-scroll-area > lq-scroll-track > lq-scroll-thumb:active {
-    background-color: var(--widget-accent, #3b82f6);
+    background-color: var(--widget-scroll-hover, rgba(255, 255, 255, 0.42));
   }
 
   /* ════════════════════════════════════════════════════════════
@@ -2591,20 +2661,21 @@
     background-color: var(--widget-selection, rgba(59, 130, 246, 0.30));
     box-shadow: inset 0 0 0 1px var(--widget-accent, #3b82f6);
   }
-  /* Vertical scrollbar track + thumb (sized/positioned in px off layout). */
+  /* Vertical scrollbar track + thumb (sized/positioned in px off layout) —
+     macOS overlay feel: transparent track, translucent graphite pill thumb. */
   lq-grid-track {
     display: block;
     width: 12px;
-    background-color: rgba(0, 0, 0, 0.18);
+    background-color: var(--widget-scroll-track, rgba(0, 0, 0, 0));
   }
   lq-grid-thumb {
     display: block;
-    width: 8px;
-    margin-left: 2px;
-    margin-right: 2px;
+    width: 6px;
+    margin-left: 3px;
+    margin-right: 3px;
     min-height: 8px;
-    border-radius: 4px;
-    background-color: var(--widget-border-strong, rgba(255, 255, 255, 0.28));
+    border-radius: 3px;
+    background-color: var(--widget-scroll-thumb, rgba(255, 255, 255, 0.18));
   }
 
   /* ── G2: listbox + listitem (classic form control) ───────────

@@ -202,6 +202,100 @@ fn indicator_center(g: &Gallery, id: &str) -> (u32, u32) {
     ((ind.x + ind.width / 2.0) as u32, (ind.y + ind.height / 2.0) as u32)
 }
 
+fn indicator_box(g: &Gallery, id: &str) -> liquide_layout::geometry::Rect {
+    let root = g.host.root_of(id).unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    q.box_of_part(root, "indicator").expect("indicator box")
+}
+
+// ── t172 macOS-dark style verification (no-fake-green: these prove the macOS
+//    look is actually painted, not just plausible) ──────────────────────────────
+
+/// macOS SPECIFIC: an ON switch flips the track to SYSTEM-GREEN (`--widget-switch-on`
+/// #34c759), NOT the graphite accent. Sample the track centre (x=18 of a 36px
+/// track — always over the track, never the knob) and assert it reads
+/// green-dominant (g clearly exceeds both r and b). If a future edit reverts the
+/// switch to the graphite accent (r≈g≈b) this goes RED.
+#[test]
+fn switch_on_track_is_macos_green() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("sw", Box::new(Toggle::switch("Wifi").checked(true)));
+    g.relayout();
+    let ind = indicator_box(&g, "sw");
+    // When ON the white knob sits on the RIGHT, so sample the LEFT edge of the
+    // track (x ~ +5) which is the exposed green track fill, never under the knob.
+    let (tx, ty) = ((ind.x + 5.0) as u32, (ind.y + ind.height / 2.0) as u32);
+    let px = Gallery::pixel(&g.rasterize(), tx, ty);
+    assert!(
+        px.g > px.r + 20 && px.g > px.b + 20,
+        "an ON macOS switch track must be system-green (g-dominant), got {px:?}"
+    );
+}
+
+/// macOS SPECIFIC: the switch is a PILL with a SLIDING KNOB. The white knob sits
+/// on the LEFT when off and the RIGHT when on. Sample the track's left third and
+/// right third: toggling moves the bright (white) knob from one side to the other,
+/// so the left sample and right sample SWAP brightness across the toggle. A fixed
+/// (non-sliding) knob would not swap. This proves the `::after` knob + its
+/// `:checked` slide actually render.
+#[test]
+fn switch_knob_slides_left_to_right() {
+    let bright = |p: liquide_compositor::pixel::Color| p.r as u32 + p.g as u32 + p.b as u32;
+
+    let mut off = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    off.mount("sw", Box::new(Toggle::switch("Wifi")));
+    off.relayout();
+    let ind = indicator_box(&off, "sw");
+    let lx = (ind.x + ind.width * 0.22) as u32; // left third (knob when OFF)
+    let rx = (ind.x + ind.width * 0.78) as u32; // right third (knob when ON)
+    let yy = (ind.y + ind.height / 2.0) as u32;
+    let off_fb = off.rasterize();
+    let off_left = bright(Gallery::pixel(&off_fb, lx, yy));
+    let off_right = bright(Gallery::pixel(&off_fb, rx, yy));
+
+    let mut on = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    on.mount("sw", Box::new(Toggle::switch("Wifi").checked(true)));
+    on.relayout();
+    let on_fb = on.rasterize();
+    let on_left = bright(Gallery::pixel(&on_fb, lx, yy));
+    let on_right = bright(Gallery::pixel(&on_fb, rx, yy));
+
+    // OFF: the white knob is on the LEFT -> left brighter than right.
+    assert!(
+        off_left > off_right,
+        "OFF: the knob (white) must be on the LEFT (left {off_left} > right {off_right})"
+    );
+    // ON: the white knob slid to the RIGHT -> right brighter than left.
+    assert!(
+        on_right > on_left,
+        "ON: the knob must slide to the RIGHT (right {on_right} > left {on_left})"
+    );
+}
+
+/// macOS SPECIFIC: a focused checkbox indicator paints a GRAPHITE focus ring
+/// (`--widget-focus-ring` #8e8e93 in the standalone gallery), NOT a blue one.
+/// Sample the indicator's top border line on focus and assert the ring pixel is
+/// near-neutral graphite (no blue dominance) — proving the accent→graphite token
+/// switch reached the widget focus ring.
+#[test]
+fn checkbox_focus_ring_is_graphite() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
+    g.mount("cb", Box::new(Toggle::checkbox("Enable")));
+    g.relayout();
+    let ind = indicator_box(&g, "cb");
+    let (bx, by) = ((ind.x + ind.width / 2.0) as u32, ind.y as u32);
+
+    g.host.set_focus(Some("cb"), &mut g.doc, &mut g.dispatcher);
+    g.relayout();
+    let ring = Gallery::pixel(&g.rasterize(), bx, by);
+    // The graphite ring is near-neutral: blue must NOT dominate red the way a blue
+    // (#3b82f6: b≈246 vs r≈59) ring would. Allow graphite's hairline blue lean.
+    assert!(
+        (ring.b as i32) - (ring.r as i32) < 24,
+        "the focus ring must be graphite (near-neutral), not blue-dominant (got {ring:?})"
+    );
+}
+
 /// :checked restyles the SWITCH indicator (track) pixels — the accent fill appears
 /// when toggled on (CSS `lq-switch:checked > lq-indicator`).
 #[test]

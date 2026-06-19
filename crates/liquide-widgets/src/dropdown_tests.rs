@@ -259,7 +259,7 @@ fn option_hover_restyles_pixels() {
 }
 
 /// The :checked/selected option paints the accent fill, and that fill MOVES with
-/// the selection: selecting option-0 paints option-0 accent (blue-dominant) while
+/// the selection: selecting option-0 paints option-0 accent (graphite) while
 /// option-2 stays the resting fill; a second dropdown selecting option-2 paints
 /// the accent there instead. Proves `lq-option:checked { background: accent }`.
 #[test]
@@ -281,8 +281,8 @@ fn selected_option_paints_accent_and_moves() {
     let a0px = Gallery::pixel(&afb, (a0.x + a0.width / 2.0) as u32, (a0.y + a0.height / 2.0) as u32);
     let a2px = Gallery::pixel(&afb, (a2.x + a2.width / 2.0) as u32, (a2.y + a2.height / 2.0) as u32);
     assert!(
-        a0px.b > a0px.r,
-        "selected option-0 must paint the blue-dominant accent (got {a0px:?})"
+        Gallery::is_graphite_accent(a0px),
+        "selected option-0 must paint the graphite accent (got {a0px:?})"
     );
     assert!(a0px != a2px, "the unselected option-2 must differ from selected option-0");
 
@@ -297,7 +297,7 @@ fn selected_option_paints_accent_and_moves() {
         q.box_of_part(broot, "option-2").expect("b option-2")
     };
     let b2px = Gallery::pixel(&b.rasterize(), (b2.x + b2.width / 2.0) as u32, (b2.y + b2.height / 2.0) as u32);
-    assert!(b2px.b > b2px.r, "selection moved: option-2 now the accent (got {b2px:?})");
+    assert!(Gallery::is_graphite_accent(b2px), "selection moved: option-2 now the graphite accent (got {b2px:?})");
     assert!(
         b2px != a2px,
         "option-2's fill differs once it is the selected one (resting {a2px:?} selected {b2px:?})"

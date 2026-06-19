@@ -134,10 +134,10 @@ fn progress_value_drives_fill_pixels() {
 // emit no actions; the meaningful "states" are the value-driven fill extent +
 // colour and the spinner ring paint, asserted below.
 
-/// The filled portion of the track paints the blue accent
+/// The filled portion of the track paints the graphite accent
 /// (`lq-progress-fill { background: accent }`), distinct from the unfilled track
-/// (`lq-progress-track { background: #27272a }`). A 60% bar: a point at 20% along
-/// is filled (accent, blue-dominant) while a point at 90% is unfilled track.
+/// (`lq-progress-track { background: dark widget bg }`). A 60% bar: a point at 20%
+/// along is filled (graphite accent) while a point at 90% is unfilled track.
 #[test]
 fn progress_fill_paints_accent_distinct_from_track() {
     let css = "lq-gallery { padding: 16px; } lq-progress { width: 240px; }";
@@ -161,8 +161,8 @@ fn progress_fill_paints_accent_distinct_from_track() {
     );
     assert!(filled != unfilled, "filled and unfilled regions must differ");
     assert!(
-        filled.b > filled.r,
-        "the fill must be the blue-dominant accent (got {filled:?})"
+        Gallery::is_graphite_accent(filled),
+        "the fill must be the graphite accent (got {filled:?})"
     );
 }
 
@@ -189,7 +189,7 @@ fn full_progress_fills_far_point_that_empty_leaves_bare() {
     empty.relayout();
     let empty_px = Gallery::pixel(&empty.rasterize(), sx, sy);
     assert!(full_px != empty_px, "100% must paint the far point the empty bar leaves bare");
-    assert!(full_px.b > full_px.r, "the full bar's far point is the accent fill (got {full_px:?})");
+    assert!(Gallery::is_graphite_accent(full_px), "the full bar's far point is the graphite accent fill (got {full_px:?})");
 }
 
 /// The spinner arc paints a real ring: the top edge carries the accent border

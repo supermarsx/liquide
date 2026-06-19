@@ -105,7 +105,10 @@ fn point_y_is_data_proportional() {
         let x = (cell.x + cell.width / 2.0) as u32;
         for y in (p.y as u32)..((p.y + p.height) as u32) {
             let px = fb.get_pixel(x, y);
-            if px.b > 150 && px.r < 120 && px.a > 0 {
+            // The marker is the (macOS-dark) graphite accent — a bright neutral
+            // gray (~#8e8e93, all channels ~140+). The plot bg is dark and the
+            // gridlines are a faint wash, both under 100 on every channel.
+            if px.r > 100 && px.g > 100 && px.b > 100 && px.a > 0 {
                 return Some(y);
             }
         }
@@ -246,11 +249,13 @@ fn stroke_is_continuous_between_points() {
     let p = plot(&g);
     let fb = g.rasterize();
     let xmid = (p.x + p.width * 0.5) as u32;
-    // Find the painted blue stroke at the horizontal midpoint.
+    // Find the painted graphite-accent stroke at the horizontal midpoint
+    // (the default series colour is the macOS-dark graphite accent — a bright
+    // neutral gray, all channels ~140+, vs the dark plot bg + faint gridlines).
     let mut line_y = None;
     for y in (p.y as u32 + 1)..((p.y + p.height) as u32 - 1) {
         let px = fb.get_pixel(xmid, y);
-        if px.b > 150 && px.r < 120 {
+        if px.r > 100 && px.g > 100 && px.b > 100 {
             line_y = Some(y as f32);
             break;
         }
@@ -280,18 +285,21 @@ fn multiple_series_render() {
     // At index 1, series a value 5 (high) paints higher than series b value 1 (low).
     let a1 = cell_box(&g, 0, 1);
     let xa = (a1.x + a1.width / 2.0) as u32;
-    let mut a_blue = None;
+    // Series "a" has no explicit colour -> the default macOS-dark graphite
+    // accent (bright neutral gray, all channels >100). Series "b" is explicitly
+    // #ef4444 red (DATA colour, r high / g,b low) — red-dominant detector stays.
+    let mut a_graphite = None;
     let mut b_red = None;
     for y in (p.y as u32)..((p.y + p.height) as u32) {
         let px = fb.get_pixel(xa, y);
-        if px.b > 150 && px.r < 120 && a_blue.is_none() {
-            a_blue = Some(y);
+        if px.r > 100 && px.g > 100 && px.b > 100 && a_graphite.is_none() {
+            a_graphite = Some(y);
         }
         if px.r > 150 && px.b < 120 && b_red.is_none() {
             b_red = Some(y);
         }
     }
-    let ay = a_blue.expect("series a (blue) paints");
+    let ay = a_graphite.expect("series a (graphite accent) paints");
     let by = b_red.expect("series b (red) paints");
     assert!(ay < by, "series a value 5 paints higher than series b value 1 ({ay} vs {by})");
     let _ = PLOT_BG;

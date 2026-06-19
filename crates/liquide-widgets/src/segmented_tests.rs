@@ -170,7 +170,7 @@ fn segment_hover_restyles_pixels() {
 }
 
 /// The :checked accent fill MOVES with the selection. seg-1 selected paints
-/// seg-1 the blue accent while seg-2 stays resting; seg-2 selected paints seg-2
+/// seg-1 the graphite accent while seg-2 stays resting; seg-2 selected paints seg-2
 /// the accent and seg-1 goes resting. Proves the selected style is keyed to the
 /// selected segment, not a fixed one.
 #[test]
@@ -187,7 +187,7 @@ fn selected_pixels_move_with_selection() {
     let afb = a.rasterize();
     let a1px = Gallery::pixel(&afb, (a1.x + a1.width / 2.0) as u32, (a1.y + a1.height / 2.0) as u32);
     let a2px = Gallery::pixel(&afb, (a2.x + a2.width / 2.0) as u32, (a2.y + a2.height / 2.0) as u32);
-    assert!(a1px.b > a1px.r, "selected seg-1 is blue-dominant accent (got {a1px:?})");
+    assert!(Gallery::is_graphite_accent(a1px), "selected seg-1 is the graphite accent (got {a1px:?})");
     assert!(a1px != a2px, "unselected seg-2 differs from selected seg-1");
 
     // seg-2 selected — accent moves.
@@ -202,7 +202,7 @@ fn selected_pixels_move_with_selection() {
     let bfb = b.rasterize();
     let b1px = Gallery::pixel(&bfb, (b1.x + b1.width / 2.0) as u32, (b1.y + b1.height / 2.0) as u32);
     let b2px = Gallery::pixel(&bfb, (b2.x + b2.width / 2.0) as u32, (b2.y + b2.height / 2.0) as u32);
-    assert!(b2px.b > b2px.r, "selection moved: seg-2 now the accent (got {b2px:?})");
+    assert!(Gallery::is_graphite_accent(b2px), "selection moved: seg-2 now the graphite accent (got {b2px:?})");
     assert!(b1px != a1px, "seg-1 lost the accent when selection moved away");
     assert!(b2px != a2px, "seg-2 gained the accent when selection moved to it");
 }

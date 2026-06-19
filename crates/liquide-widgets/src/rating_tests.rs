@@ -244,9 +244,10 @@ fn hover_preview_fills_star_bg_pixels() {
     assert_eq!(as_rating(&g, "rt").value(), 0.0);
 }
 
-/// A FILLED star paints the accent fill (the active theme resolves
-/// `--widget-accent` to #3b82f6 — blue-dominant), distinct from an empty star
-/// which is the dim widget bg. Proves the `.filled` bg rule lands.
+/// A FILLED star paints the accent fill (the standalone gallery resolves
+/// `--widget-accent` to the macOS-dark graphite #8e8e93 — bright + neutral),
+/// distinct from an empty star which is the dim widget bg. Proves the `.filled`
+/// bg rule lands.
 #[test]
 fn filled_star_paints_accent_bg() {
     let mut g = Gallery::new(W, H, "lq-gallery { padding: 16px; }");
@@ -256,8 +257,8 @@ fn filled_star_paints_accent_bg() {
     let empty = star_px(&mut g, "rt", 4); // star 4 empty
     assert!(filled != empty, "filled star differs from empty ({filled:?} vs {empty:?})");
     assert!(
-        filled.b > filled.r,
-        "filled star bg is the blue accent (blue-dominant, got {filled:?})"
+        Gallery::is_graphite_accent(filled),
+        "filled star bg is the graphite accent (bright + neutral, got {filled:?})"
     );
 }
 
@@ -277,11 +278,11 @@ fn filled_region_moves_with_value() {
         at1 != at3,
         "star-2 bg must differ between value 1 (empty) and value 3 (filled) ({at1:?} vs {at3:?})"
     );
-    assert!(at3.b > at3.r, "at value 3 star-2 is accent-filled (blue, got {at3:?})");
+    assert!(Gallery::is_graphite_accent(at3), "at value 3 star-2 is accent-filled (graphite, got {at3:?})");
 }
 
-/// A HALF star paints a distinct (darker accent — accent-active #2563eb) bg vs a
-/// full star (#3b82f6) and vs empty. The half value is set via a left-half click
+/// A HALF star paints a distinct (darker accent — accent-active #636366) bg vs a
+/// full star (graphite #8e8e93) and vs empty. The half value is set via a left-half click
 /// (the constructor snaps to whole steps, so the .5 must come through interaction).
 #[test]
 fn half_star_paints_distinct_bg() {

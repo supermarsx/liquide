@@ -181,8 +181,8 @@ fn sparkline_is_inert() {
 // painted MARK styles (accent bars vs thin line stems) rasterize distinctly and
 // that the mode (bar vs line) changes the painted geometry.
 
-/// A bar paints the accent (blue-dominant) fill (CSS `lq-spark-bar` background:
-/// accent). Sample near the bottom of a tall bar where it is certainly painted.
+/// A bar paints the accent (macOS-dark graphite) fill (CSS `lq-spark-bar`
+/// background: accent). Sample near the bottom of a tall bar where it is painted.
 #[test]
 fn bar_paints_accent_color() {
     let mut g = Gallery::new(W, H, "lq-gallery{padding:8px;} lq-sparkline{width:200px;height:80px;}");
@@ -196,7 +196,7 @@ fn bar_paints_accent_color() {
     let y = (p.y + p.height - 3.0) as u32;
     let px = fb.get_pixel(x, y);
     assert!(px.a > 0, "the bar must paint (alpha {})", px.a);
-    assert!(px.b > px.r, "the bar fill is the blue accent (got {px:?})");
+    assert!(Gallery::is_graphite_accent(px), "the bar fill is the graphite accent (got {px:?})");
 }
 
 /// Bar vs line MODE paints a different mark for the SAME data: a bar fills a wide

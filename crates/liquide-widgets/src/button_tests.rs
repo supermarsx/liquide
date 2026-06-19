@@ -220,10 +220,12 @@ fn primary_variant_paints_accent_fill() {
         def_px != pri_px,
         ".primary must paint a distinct accent fill (default {def_px:?} primary {pri_px:?})"
     );
-    // The accent fill is blue-dominant: blue channel clearly exceeds red.
+    // The accent fill is the macOS-dark GRAPHITE accent (~#8e8e93): a bright,
+    // near-neutral gray, distinctly lighter than the default button's dark
+    // surface (post-retheme successor to the old blue-dominant check).
     assert!(
-        pri_px.b > pri_px.r,
-        "primary fill must be blue-dominant accent (got {pri_px:?})"
+        Gallery::is_graphite_accent(pri_px),
+        "primary fill must be the bright graphite accent (got {pri_px:?})"
     );
 }
 

@@ -135,7 +135,7 @@ fn gauge_is_inert() {
 // distinct PART styles (arc-fill vs arc-rest vs needle) actually rasterize, and
 // that the value-driven needle moves in pixels (data -> pixel).
 
-/// The arc-FILL paints the accent (blue-dominant) and the arc-REST paints the
+/// The arc-FILL paints the accent (graphite) and the arc-REST paints the
 /// distinct dim track — proving the two arc segments carry different CSS, not one
 /// flat bar. Sampled at a value that yields a sizeable fill AND rest (50%).
 #[test]
@@ -149,7 +149,7 @@ fn arc_fill_and_rest_paint_distinct_colors() {
     let rpx = Gallery::pixel(&fb, (rest.x + rest.width / 2.0) as u32, (rest.y + rest.height / 2.0) as u32);
     assert!(fpx.a > 0 && rpx.a > 0, "both arc segments paint");
     assert!(fpx != rpx, "arc-fill and arc-rest paint different colors ({fpx:?} vs {rpx:?})");
-    assert!(fpx.b > fpx.r, "arc-fill is the blue accent (got {fpx:?})");
+    assert!(Gallery::is_graphite_accent(fpx), "arc-fill is the graphite accent (got {fpx:?})");
 }
 
 /// The needle paints a near-white bar (CSS `lq-gauge-needle` background: fg) —

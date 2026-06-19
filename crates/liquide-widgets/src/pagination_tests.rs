@@ -186,8 +186,8 @@ fn page_hover_restyles_pixels() {
     assert!(before != after, "hovering page-2 must restyle it (before {before:?} after {after:?})");
 }
 
-/// The :checked current-page button paints the blue accent, and that fill MOVES
-/// with the current page. page 0 current -> page-0 accent (blue-dominant), page-2
+/// The :checked current-page button paints the graphite accent, and that fill MOVES
+/// with the current page. page 0 current -> page-0 accent (graphite), page-2
 /// resting; a control on page 2 paints page-2 accent instead.
 #[test]
 fn current_page_paints_accent_and_moves() {
@@ -202,7 +202,7 @@ fn current_page_paints_accent_and_moves() {
     let afb = a.rasterize();
     let a0px = Gallery::pixel(&afb, (a0.x + a0.width / 2.0) as u32, (a0.y + a0.height / 2.0) as u32);
     let a2px = Gallery::pixel(&afb, (a2.x + a2.width / 2.0) as u32, (a2.y + a2.height / 2.0) as u32);
-    assert!(a0px.b > a0px.r, "current page-0 is the blue accent (got {a0px:?})");
+    assert!(Gallery::is_graphite_accent(a0px), "current page-0 is the graphite accent (got {a0px:?})");
     assert!(a0px != a2px, "non-current page-2 differs from the current page-0");
 
     let mut b = Gallery::new(W, H, "lq-gallery { padding: 12px; }");
@@ -214,7 +214,7 @@ fn current_page_paints_accent_and_moves() {
         q.box_of_part(broot, "page-2").unwrap()
     };
     let b2px = Gallery::pixel(&b.rasterize(), (b2.x + b2.width / 2.0) as u32, (b2.y + b2.height / 2.0) as u32);
-    assert!(b2px.b > b2px.r, "current moved: page-2 now the accent (got {b2px:?})");
+    assert!(Gallery::is_graphite_accent(b2px), "current moved: page-2 now the graphite accent (got {b2px:?})");
     assert!(b2px != a2px, "page-2's fill differs once it is current (resting {a2px:?} current {b2px:?})");
 }
 

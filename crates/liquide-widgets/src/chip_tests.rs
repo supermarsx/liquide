@@ -193,7 +193,7 @@ fn remove_box_hover_restyles() {
     assert!(before != after, "hovering the × must restyle it (before {before:?} after {after:?})");
 }
 
-/// A selected chip paints the blue accent fill (`lq-chip:checked { background:
+/// A selected chip paints the graphite accent fill (`lq-chip:checked { background:
 /// accent; border-color: accent }`) — deepens the flag-only selected test to a
 /// colour assertion.
 #[test]
@@ -205,7 +205,12 @@ fn selected_chip_paints_accent() {
     let r = g.box_of(root).unwrap();
     let px = Gallery::pixel(&g.rasterize(), (r.x + 3.0) as u32, (r.y + r.height / 2.0) as u32);
     assert!(as_chip(&g, "ch").is_selected());
-    assert!(px.b > px.r, "selected chip must paint the blue-dominant accent (got {px:?})");
+    // The selected fill is the macOS-dark graphite accent (~#8e8e93): bright +
+    // near-neutral, distinct from the chip's darker unselected surface.
+    assert!(
+        Gallery::is_graphite_accent(px),
+        "selected chip must paint the bright graphite accent (got {px:?})"
+    );
 }
 
 /// A disabled chip swallows clicks AND dims its pixels (`lq-chip:disabled

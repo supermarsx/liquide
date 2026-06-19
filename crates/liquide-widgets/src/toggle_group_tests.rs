@@ -229,8 +229,8 @@ fn checked_selection_moves_in_pixels() {
     let sel0_before = opt_px(&mut g, "tg", 0); // selected (accent)
     let sel2_before = opt_px(&mut g, "tg", 2); // plain
     assert!(
-        sel0_before.b > sel0_before.r,
-        "the selected opt-0 is blue-accent (got {sel0_before:?})"
+        Gallery::is_graphite_accent(sel0_before),
+        "the selected opt-0 is the graphite accent (got {sel0_before:?})"
     );
 
     let root = g.host.root_of("tg").unwrap();
@@ -245,7 +245,7 @@ fn checked_selection_moves_in_pixels() {
     let sel2_after = opt_px(&mut g, "tg", 2); // now accent
     assert!(sel0_after != sel0_before, "opt-0 lost the accent fill");
     assert!(sel2_after != sel2_before, "opt-2 gained the accent fill");
-    assert!(sel2_after.b > sel2_after.r, "opt-2 now blue-accent (got {sel2_after:?})");
+    assert!(Gallery::is_graphite_accent(sel2_after), "opt-2 now the graphite accent (got {sel2_after:?})");
 }
 
 /// Multi mode: TWO options can be :checked at once, both painting the accent bg
@@ -269,8 +269,8 @@ fn multi_two_checked_both_paint_accent() {
     let p0 = opt_px(&mut g, "tg", 0);
     let p1 = opt_px(&mut g, "tg", 1); // not active
     let p2 = opt_px(&mut g, "tg", 2);
-    assert!(p0.b > p0.r, "opt-0 accent (got {p0:?})");
-    assert!(p2.b > p2.r, "opt-2 accent (got {p2:?})");
+    assert!(Gallery::is_graphite_accent(p0), "opt-0 graphite accent (got {p0:?})");
+    assert!(Gallery::is_graphite_accent(p2), "opt-2 graphite accent (got {p2:?})");
     assert!(p1 != p0, "the inactive opt-1 differs from an active option");
 }
 
