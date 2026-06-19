@@ -129,12 +129,31 @@ fn first_dock_item() -> ((f32, f32), (u32, u32, u32, u32)) {
 }
 
 /// The tooltip paints in a band ABOVE the dock icon (anchored at
-/// `item.y - offset`). This region is bare wallpaper at base, so any paint here
-/// is the tooltip.
+/// `item.y - offset`).
+///
+/// GEOMETRY NOTE (t172-e5 dock magnification): the band *immediately* above the
+/// icon top is NO LONGER bare wallpaper on hover — macOS-style cursor-proximity
+/// magnification (`apply_dock_magnification`, paint-only `transform: scale` with
+/// `transform-origin: bottom`) grows the hovered glyph UPWARD out of its box the
+/// instant the cursor is over the dock, independent of the tooltip dwell. With
+/// the live dock (48px icons, ~1.5x peak factor) the magnified glyph reaches
+/// roughly `iy - 28`, so that lower sub-band shows hundreds of changed px at any
+/// dwell — even 0 ms — which is the magnification, not the tooltip. Measuring it
+/// would let the dwell "teeth" probe see paint while the tooltip is still
+/// Pending (the t172-e9 toothless failure).
+///
+/// We therefore probe ONLY the tooltip-only sub-band `[iy-44, iy-28)` (16 px),
+/// which sits ABOVE where the magnified icon reaches but WITHIN the tooltip's
+/// painted extent. Empirically (liquid-glass, this layout): 0 px changed while
+/// the tooltip is Pending (< show-delay), ~236 px once it has surfaced — so any
+/// paint here is the tooltip, and the dwell teeth stay sharp.
 fn tooltip_region(item: (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
     let (ix, iy, iw, _ih) = item;
     let top = iy.saturating_sub(44);
-    let h = iy.saturating_sub(top).max(1);
+    // Exclude the magnification zone (the ~28 px just above the icon top): the
+    // tooltip-only band ends 28 px above the icon, not at the icon top.
+    let bottom = iy.saturating_sub(28).max(top + 1);
+    let h = bottom.saturating_sub(top).max(1);
     let x = ix.saturating_sub(40);
     let w = iw + 80;
     (x, top, w, h)
