@@ -120,6 +120,14 @@ pub(super) struct RenderJob {
     pub(super) authoritative_damage: Option<DamageSet>,
     /// Window ID being dragged (for skeleton rendering - outline only).
     pub(super) dragged_window: Option<u64>,
+    /// The dragged window's NEW (post-event) screen bounds, supplied ONLY on a
+    /// clean MOVE-drag frame that is a blit-move candidate (t164-blit-move): a
+    /// pure move (not resize), no other dirty region this frame, no theme/blur/
+    /// quality change. `None` keeps the legacy skeleton drag path. The worker is
+    /// the final authority — it owns the retained framebuffer and its own record
+    /// of the window's previously-rendered rect, and silently re-establishes a
+    /// full window render whenever a blit cannot be proven byte-identical.
+    pub(super) drag_new_bounds: Option<Rect>,
     /// When true, the OS renders the cursor — skip the software cursor node.
     pub(super) hardware_cursor: bool,
     /// Newly-decoded images (`image_id`, RGBA8 pixels, width, height) to upload
@@ -1008,6 +1016,210 @@ fn damage_present_rects(damage: Option<&DamageSet>, width: u32, height: u32) -> 
     }
 }
 
+/// Window-node id range for a window id (mirrors the skeleton-filter constants
+/// in [`DesktopCompositor::render_full_job`] and the renderer's
+/// `is_skeleton_node`).
+fn window_node_id_range(window_id: u64) -> (u64, u64) {
+    const NODE_WINDOW_BASE: u64 = 10_000;
+    const NODE_WINDOW_STRIDE: u64 = 10;
+    let base = NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE;
+    (base, base + NODE_WINDOW_STRIDE)
+}
+
+/// Sub-pixel tolerance for treating a corner radius as "square" (mirrors the
+/// renderer's occlusion `RADIUS_EPS`).
+const BLIT_RADIUS_EPS: f32 = 0.5;
+
+/// The rect a flat node is guaranteed to fully paint OPAQUE (its occluder rect)
+/// under the conservative rule used by the renderer's occlusion culler: a plain
+/// opaque solid `Background`/`BackgroundFill` (alpha 255, no image), full
+/// opacity, square corners. `None` otherwise. Mirrors
+/// `renderer::occlusion::opaque_occluder_rect` so the damage decision matches
+/// what the renderer will actually paint.
+fn flat_node_opaque_fill_rect(node: &FlatNode) -> Option<Rect> {
+    use liquide_compositor::pixel::Color;
+    if node.opacity < 1.0 {
+        return None;
+    }
+    let (r_tl, r_tr, r_br, r_bl) = node.corner_radius;
+    if r_tl > BLIT_RADIUS_EPS
+        || r_tr > BLIT_RADIUS_EPS
+        || r_br > BLIT_RADIUS_EPS
+        || r_bl > BLIT_RADIUS_EPS
+    {
+        return None;
+    }
+    let opaque = match node.kind_ref() {
+        SceneNodeKind::Background { color } => color.a == 255,
+        SceneNodeKind::BackgroundFill { background } => {
+            background.image.is_none()
+                && matches!(background.color, Some(Color { a: 255, .. }))
+        }
+        _ => false,
+    };
+    if !opaque {
+        return None;
+    }
+    match node.clip {
+        None => Some(node.absolute_bounds),
+        Some(clip) => node.absolute_bounds.intersection(&clip),
+    }
+}
+
+/// Decide whether the pixels of window `window_id` over `blit_rect` (in
+/// NEW-position coordinates, i.e. already translated) can be reproduced
+/// BYTE-IDENTICALLY by translating the previous frame's pixels — the core
+/// safety gate for a blit-move (t164-blit-move).
+///
+/// `full_scene` is the complete, UNFILTERED flattened scene for THIS frame
+/// (pre-skeleton, pre-cursor), with the dragged window already at its NEW
+/// position. The blit is byte-identical to a full re-raster iff, over the
+/// `old_blit_rect` (the blit_rect translated back to the OLD position — the
+/// region whose pixels we will copy FROM):
+///   1. Every pixel of `old_blit_rect` is covered by an opaque solid fill that
+///      belongs to the dragged window (so no backdrop/desktop shows through —
+///      the window paints its own pixels there, which translate rigidly), AND
+///   2. No window node samples the backdrop (glass / blur / filter) — such a
+///      node's output depends on the static desktop BEHIND it, which does NOT
+///      translate with the window, so a blit would be wrong, AND
+///   3. No OTHER painting node (not belonging to the window) overlaps the
+///      old∪new region with a z-order >= the window's top node — i.e. the
+///      window is the topmost surface over the region it moves through, so
+///      nothing is painted on top of the blitted pixels and nothing else in the
+///      region changed shape.
+///
+/// All checks are conservative: any doubt returns `false` and the caller falls
+/// back to a full window re-raster (never a missing/ghosted window).
+fn blit_move_is_byte_identical(
+    full_scene: &[FlatNode],
+    window_id: u64,
+    old_blit_rect: Rect,
+    new_blit_rect: Rect,
+    region: Rect,
+) -> bool {
+    if old_blit_rect.width <= 0.0 || old_blit_rect.height <= 0.0 {
+        return false;
+    }
+    let (win_base, win_end) = window_node_id_range(window_id);
+    let is_window_node = |id: u64| id >= win_base && id < win_end;
+
+    // Find the window's top z-order and collect its opaque fills, while
+    // rejecting any window node that samples the backdrop.
+    let mut window_top_z: Option<u32> = None;
+    let mut window_opaque_fills: Vec<Rect> = Vec::new();
+    let mut saw_window_node = false;
+    for node in full_scene {
+        if node.id == CURSOR_FLAT_NODE_ID {
+            continue;
+        }
+        if is_window_node(node.id) {
+            saw_window_node = true;
+            // Rule 2: a backdrop-sampling node inside the window cannot be
+            // rigidly translated (its output depends on the desktop behind it).
+            if flat_node_samples_backdrop(node) {
+                return false;
+            }
+            window_top_z = Some(match window_top_z {
+                Some(z) => z.max(node.z_order),
+                None => node.z_order,
+            });
+            if let Some(fill) = flat_node_opaque_fill_rect(node) {
+                window_opaque_fills.push(fill);
+            }
+        }
+    }
+    if !saw_window_node {
+        return false;
+    }
+    let Some(window_top_z) = window_top_z else {
+        return false;
+    };
+
+    // Rule 1: the destination blit region must be fully covered by the window's
+    // own opaque fills. The fills in `full_scene` are at the window's NEW
+    // position, so we test `new_blit_rect` (the destination, same coordinate
+    // space). By rigid translation this is EQUIVALENT to the OLD-position fill
+    // having covered `old_blit_rect` in the previous frame (same window, same
+    // size, copied with offset (dx,dy)) — so the pixels we copy FROM were 100%
+    // the window's own opaque content, and the pixels a full re-raster would
+    // paint at the destination are that same content translated. Reuse the exact
+    // rectangle-subtraction coverage test the occlusion culler uses.
+    if !rect_fully_covered(new_blit_rect, &window_opaque_fills) {
+        return false;
+    }
+    // `old_blit_rect` must be a valid (non-degenerate) source — already checked
+    // at entry; bind it so the signature documents the source/destination pair.
+    let _ = old_blit_rect;
+
+    // Rule 3: no foreign painting node at or above the window's z-order may
+    // overlap the move region (old∪new) — otherwise it is painted on top of (or
+    // changes within) the blitted area. A node BELOW the window is irrelevant
+    // (the window's opaque fill covers it within the overlap, and the strips/old
+    // footprint are re-rastered separately).
+    for node in full_scene {
+        if node.id == CURSOR_FLAT_NODE_ID || is_window_node(node.id) {
+            continue;
+        }
+        if !flat_node_paints(node) {
+            continue;
+        }
+        if node.z_order < window_top_z {
+            continue;
+        }
+        if let Some(rect) = flat_node_paint_rect(node) {
+            if rect.intersects(&region) {
+                return false;
+            }
+        }
+    }
+
+    // The new blit rect must be non-degenerate too (it is the destination).
+    new_blit_rect.width > 0.0 && new_blit_rect.height > 0.0
+}
+
+/// True iff `target` is entirely covered by the union of `covers` (axis-aligned
+/// rectangle subtraction; conservative — a sub-pixel gap never collapses).
+/// Mirrors `renderer::occlusion::is_fully_covered_by_later`.
+fn rect_fully_covered(target: Rect, covers: &[Rect]) -> bool {
+    let mut uncovered: Vec<Rect> = vec![target];
+    for c in covers {
+        let mut next: Vec<Rect> = Vec::new();
+        for frag in &uncovered {
+            subtract_rect_into(frag, c, &mut next);
+            if next.len() > 256 {
+                return false; // pathological fragmentation — decline conservatively
+            }
+        }
+        uncovered = next;
+        if uncovered.is_empty() {
+            return true;
+        }
+    }
+    uncovered.is_empty()
+}
+
+/// Push the parts of `frag` not covered by `cut` into `out` (up to 4 pieces).
+fn subtract_rect_into(frag: &Rect, cut: &Rect, out: &mut Vec<Rect>) {
+    let Some(overlap) = frag.intersection(cut) else {
+        out.push(*frag);
+        return;
+    };
+    let (fx0, fy0, fx1, fy1) = (frag.x, frag.y, frag.right(), frag.bottom());
+    let (ox0, oy0, ox1, oy1) = (overlap.x, overlap.y, overlap.right(), overlap.bottom());
+    if oy0 > fy0 {
+        out.push(Rect::new(fx0, fy0, fx1 - fx0, oy0 - fy0));
+    }
+    if oy1 < fy1 {
+        out.push(Rect::new(fx0, oy1, fx1 - fx0, fy1 - oy1));
+    }
+    if ox0 > fx0 {
+        out.push(Rect::new(fx0, oy0, ox0 - fx0, oy1 - oy0));
+    }
+    if ox1 < fx1 {
+        out.push(Rect::new(ox1, oy0, fx1 - ox1, oy1 - oy0));
+    }
+}
+
 fn cursor_flat_node(cursor_x: f32, cursor_y: f32, cursor_shape: CursorShape) -> FlatNode {
     let bounds = Rect::new(cursor_x, cursor_y, CURSOR_SIZE, CURSOR_SIZE);
     FlatNode {
@@ -1835,6 +2047,24 @@ impl DesktopCompositor {
             })
         };
 
+        // BLIT-MOVE candidate (t164-blit-move): on a drag frame with NO devtools
+        // overlays (which would inject un-bounded scene nodes), pass the dragged
+        // window's NEW screen bounds so the worker can try to copy its already-
+        // rendered pixels from the old position instead of re-rastering them. The
+        // worker is the FINAL authority — it cross-checks the move against its own
+        // record of the window's previously-rendered rect and the live flattened
+        // scene (topmost, opaque, no backdrop-sampling) and falls back to a full
+        // window render whenever a blit cannot be proven byte-identical. We never
+        // gate move-vs-resize here: the worker rejects a size change (the blitted
+        // overlap would not equal the new bounds) and re-establishes.
+        let drag_new_bounds = if devtools_overlays_active {
+            None
+        } else {
+            dragged_window
+                .and_then(|wid| self.shell.window(wid).ok())
+                .map(|w| w.bounds)
+        };
+
         // Overlay devtools panel scene nodes (if active).
         self.dt.overlay_scene(
             &mut scene,
@@ -1870,6 +2100,7 @@ impl DesktopCompositor {
             damage: self.dirty_damage.take(),
             authoritative_damage,
             dragged_window: dragged_window.map(|wid| wid.0),
+            drag_new_bounds,
             hardware_cursor: self.cursor.use_hardware,
             images,
             cursor_theme,
@@ -2323,6 +2554,16 @@ impl DesktopCompositor {
         // re-cloning every node. Reconciled against the compositor's per-frame
         // `flat_scene()` by `retained_flatten_into`.
         let mut retained_flat: Vec<FlatNode> = Vec::with_capacity(512);
+        // BLIT-MOVE state (t164-blit-move): the `(window_id, rendered_rect)` whose
+        // full, blittable pixels the retained `fb` currently holds. `Some` only
+        // after a frame that rendered that window FULL at `rendered_rect` (the
+        // establishing frame and every successful blit-move frame update it to the
+        // new rect). Cleared on ANY frame that does not leave a known full window
+        // image in `fb` — a non-drag frame, a resize, a skeleton/fallback frame,
+        // or a framebuffer recreation — which forces the next drag frame to
+        // re-establish before it can blit. Worker-owned because only the worker
+        // knows what is actually in `fb`.
+        let mut prev_blit_window: Option<(u64, Rect)> = None;
 
         while let Ok(msg) = rx.recv() {
             match msg {
@@ -2337,6 +2578,9 @@ impl DesktopCompositor {
                         fb = None;
                     }
                     tile_hash_tracker.reset();
+                    // The retained pixels are invalidated by a resize — drop the
+                    // blit-move record so the next drag frame re-establishes.
+                    prev_blit_window = None;
                 }
                 RenderMsg::CursorOnly(mut cursor_job) => {
                     // Drain any queued messages — a full Job supersedes cursor-only.
@@ -2355,6 +2599,7 @@ impl DesktopCompositor {
                                 let _ = compositor.resize(width, height);
                                 fb = None;
                                 tile_hash_tracker.reset();
+                                prev_blit_window = None;
                             }
                             RenderMsg::Job(j) => {
                                 upgrade_to_full = Some(j);
@@ -2387,6 +2632,7 @@ impl DesktopCompositor {
                             &mut cached_flat_nodes,
                             &mut flat_nodes_buf,
                             &mut retained_flat,
+                            &mut prev_blit_window,
                             &tx,
                         );
                         continue;
@@ -2523,6 +2769,7 @@ impl DesktopCompositor {
                                 let _ = compositor.resize(width, height);
                                 fb = None;
                                 tile_hash_tracker.reset();
+                                prev_blit_window = None;
                             }
                             RenderMsg::Job(j) => {
                                 latest_job = j;
@@ -2543,6 +2790,7 @@ impl DesktopCompositor {
                         &mut cached_flat_nodes,
                         &mut flat_nodes_buf,
                         &mut retained_flat,
+                        &mut prev_blit_window,
                         &tx,
                     );
                 }
@@ -2561,6 +2809,7 @@ impl DesktopCompositor {
         cached_flat_nodes: &mut Option<Vec<FlatNode>>,
         flat_nodes_buf: &mut Vec<FlatNode>,
         retained_flat: &mut Vec<FlatNode>,
+        prev_blit_window: &mut Option<(u64, Rect)>,
         tx: &mpsc::Sender<RenderedFrame>,
     ) {
         let t_total = Instant::now();
@@ -2688,9 +2937,126 @@ impl DesktopCompositor {
             *cached_flat_nodes = None;
         }
 
+        // 3c. BLIT-MOVE decision (t164-blit-move, the t127/t160 deferred item C).
+        //
+        // During a window MOVE-drag the window's pixels are UNCHANGED — only
+        // their position moves. So when it is provably safe, COPY the previously
+        // presented pixels of the window from its OLD rect to its NEW rect (a
+        // memcpy of the overlap) and re-raster only the newly-revealed strips +
+        // the old-footprint background — avoiding a per-frame re-raster
+        // (re-blur) of the whole window region (the ~9fps drag lever, t161).
+        //
+        // A blit-move is taken ONLY when ALL of these hold (else fall back; no
+        // regression):
+        //  * the job carries `drag_new_bounds` (a clean drag frame with no
+        //    devtools overlay) and a dragged window id;
+        //  * the framebuffer was NOT just (re)created — `!needs_new` — so it
+        //    holds the previous frame's presented pixels (checked below);
+        //  * `prev_blit_window` records THIS window at a KNOWN old rect (the
+        //    establishing full-render frame ran first) of the SAME SIZE as the
+        //    new bounds (a pure move, not a resize);
+        //  * the old and new rects OVERLAP (otherwise nothing to copy);
+        //  * the blit is BYTE-IDENTICAL to a full re-raster
+        //    (`blit_move_is_byte_identical`: the window is topmost + opaque over
+        //    the region and samples no backdrop).
+        //
+        // When a drag frame is NOT a blit-move it is an ESTABLISHING frame for
+        // an eligible window (render the window FULL so the NEXT frame can blit)
+        // or the legacy SKELETON frame for a non-eligible window (outline only,
+        // the cheap fallback — unchanged behaviour). `blit_plan` is `Some` only
+        // for an actual blit-move; the skeleton filter below is skipped whenever
+        // we render the window full (blit or establish).
+        let fb_dims_match = fb
+            .as_ref()
+            .is_some_and(|f| f.width == latest_job.width && f.height == latest_job.height);
+        let mut blit_plan: Option<liquide_shell::MoveValidRect> = None;
+        let mut render_window_full = false; // blit OR establish: do NOT skeletonise
+        if let (Some(window_id), Some(new_bounds)) =
+            (latest_job.dragged_window, latest_job.drag_new_bounds)
+        {
+            let region_check = |old: Rect| -> Option<liquide_shell::MoveValidRect> {
+                // Pure move only: identical size (a resize cannot be blitted).
+                if (old.width - new_bounds.width).abs() > 0.5
+                    || (old.height - new_bounds.height).abs() > 0.5
+                {
+                    return None;
+                }
+                let vr = liquide_shell::compute_move_valid_rect(old, new_bounds);
+                if vr.blit_rect.width <= 0.0 || vr.blit_rect.height <= 0.0 {
+                    return None; // no overlap → no blit benefit
+                }
+                // Source rect in the retained framebuffer = the blit_rect (in NEW
+                // coords) translated back by (-dx, -dy) to the OLD position.
+                let old_blit_rect = Rect::new(
+                    vr.blit_rect.x - vr.dx,
+                    vr.blit_rect.y - vr.dy,
+                    vr.blit_rect.width,
+                    vr.blit_rect.height,
+                );
+                let region = old.union(&new_bounds);
+                if blit_move_is_byte_identical(
+                    flat_nodes_buf,
+                    window_id,
+                    old_blit_rect,
+                    vr.blit_rect,
+                    region,
+                ) {
+                    Some(vr)
+                } else {
+                    None
+                }
+            };
+
+            // Try a true blit-move: the retained fb holds THIS window's full
+            // pixels at the recorded old rect, dimensions match, and the move is
+            // provably byte-identical.
+            if fb_dims_match {
+                if let Some((prev_id, old_rect)) = *prev_blit_window {
+                    if prev_id == window_id {
+                        if let Some(vr) = region_check(old_rect) {
+                            blit_plan = Some(vr);
+                            render_window_full = true;
+                        }
+                    }
+                }
+            }
+
+            // Not a blit this frame. If the window is ELIGIBLE (topmost/opaque/no
+            // backdrop) at its NEW position, render it FULL this frame to
+            // ESTABLISH blittable pixels for the next frame. Otherwise leave it
+            // to the legacy skeleton path.
+            if blit_plan.is_none() {
+                let region = new_bounds; // establishing: only the window itself matters
+                let eligible = blit_move_is_byte_identical(
+                    flat_nodes_buf,
+                    window_id,
+                    new_bounds,
+                    new_bounds,
+                    region,
+                );
+                if eligible {
+                    render_window_full = true;
+                    *prev_blit_window = Some((window_id, new_bounds));
+                } else {
+                    *prev_blit_window = None;
+                }
+            } else {
+                // Successful blit-move: the retained fb now holds the window at
+                // its NEW rect.
+                *prev_blit_window = Some((window_id, new_bounds));
+            }
+        } else {
+            // Not a drag frame (or no new bounds) — the retained fb no longer
+            // holds a known full drag-window image. Drop the record so the next
+            // drag frame re-establishes.
+            *prev_blit_window = None;
+        }
+
         // 4. Skeleton mode filtering during drag (applied to the RENDER buffer
-        //    only, never to the cached scene above).
-        if let Some(window_id) = latest_job.dragged_window {
+        //    only, never to the cached scene above). SKIPPED when we render the
+        //    dragged window FULL (a blit-move or an establishing frame) — those
+        //    paths need the window's real pixels, not an outline.
+        if let Some(window_id) = latest_job.dragged_window.filter(|_| !render_window_full) {
             const NODE_WINDOW_BASE: u64 = 10_000;
             const NODE_WINDOW_STRIDE: u64 = 10;
             let win_base = NODE_WINDOW_BASE + window_id * NODE_WINDOW_STRIDE;
@@ -2753,8 +3119,48 @@ impl DesktopCompositor {
         //    co-incident hinted change is never dropped. `needs_new` still wins:
         //    a fresh/resized framebuffer has no trustworthy previous pixels, so a
         //    partial set would leave the rest of the surface uninitialised.
+        // Defensive: a blit can only run when the framebuffer carries the
+        // previous frame's pixels. If it was just (re)created, drop the plan.
+        let blit_plan = blit_plan.filter(|_| !needs_new);
+
         let mut damage = if needs_new {
             full_damage(latest_job.tile_size, latest_job.width, latest_job.height)
+        } else if let Some(vr) = blit_plan.as_ref() {
+            // BLIT-MOVE damage = the newly-revealed strips of the new position
+            // PLUS the old footprint the window uncovered. The blit_rect INTERIOR
+            // is deliberately EXCLUDED — its pixels are produced by the memcpy
+            // below, not re-rastered. (Edge tiles that straddle a strip and the
+            // blit_rect are still re-rastered; because the dragged window is
+            // present FULL in `flat_nodes_buf` at its new position, those tiles
+            // are repainted byte-identically — the blit only saves the interior
+            // tiles fully inside the overlap.) Union any caller damage hint so a
+            // co-incident change is never dropped.
+            let grid_w = latest_job.width.div_ceil(latest_job.tile_size);
+            let grid_h = latest_job.height.div_ceil(latest_job.tile_size);
+            let mut d = DamageSet::new(latest_job.tile_size);
+            let fb_w = latest_job.width as f32;
+            let fb_h = latest_job.height as f32;
+            let mut mark = |r: &Rect| {
+                let x0 = r.x.max(0.0).min(fb_w).floor();
+                let y0 = r.y.max(0.0).min(fb_h).floor();
+                let x1 = (r.x + r.width).max(0.0).min(fb_w).ceil();
+                let y1 = (r.y + r.height).max(0.0).min(fb_h).ceil();
+                let w = (x1 - x0).max(0.0) as u32;
+                let h = (y1 - y0).max(0.0) as u32;
+                if w > 0 && h > 0 {
+                    d.mark_rect(x0 as u32, y0 as u32, w, h, grid_w, grid_h);
+                }
+            };
+            for r in &vr.new_strips {
+                mark(r);
+            }
+            for r in &vr.old_uncovered {
+                mark(r);
+            }
+            if let Some(hint) = latest_job.damage.take() {
+                d.merge(&hint);
+            }
+            d
         } else if let Some(mut authoritative) = latest_job.authoritative_damage.take() {
             if let Some(hint) = latest_job.damage.take() {
                 authoritative.merge(&hint);
@@ -2776,6 +3182,27 @@ impl DesktopCompositor {
         };
         damage.dedup();
 
+        // 5a-blit. SELF-BLIT the window's previously-presented pixels from its
+        // OLD position to its NEW position BEFORE clearing/rastering. The copy
+        // populates the blit_rect interior; the strip/footprint damage (above)
+        // then clears + re-rasters only the edges, leaving the copied interior
+        // intact. Done before `clear_damage_tiles` so the (excluded) interior is
+        // never cleared.
+        if let Some(vr) = blit_plan.as_ref() {
+            let src = Rect::new(
+                vr.blit_rect.x - vr.dx,
+                vr.blit_rect.y - vr.dy,
+                vr.blit_rect.width,
+                vr.blit_rect.height,
+            );
+            liquide_renderer_cpu::blit::blit_within(
+                framebuf,
+                src,
+                vr.blit_rect.x.round() as i32,
+                vr.blit_rect.y.round() as i32,
+            );
+        }
+
         // 5b. Clear only the damaged tiles. The framebuffer is intentionally
         // preserved between frames so partial damage has valid previous pixels.
         clear_damage_tiles(framebuf, &damage);
@@ -2786,13 +3213,25 @@ impl DesktopCompositor {
         let saved_blur = renderer.blur_enabled();
         let saved_quality = renderer.get_quality_mode();
 
-        if latest_job.dragged_window.is_some() && saved_blur {
+        // The legacy SKELETON drag path trades quality for speed (blur off,
+        // Performance LOD, skeleton outline). A blit-move / establish frame
+        // (`render_window_full`) instead paints the window with its NORMAL
+        // settings so the blitted interior and the freshly-rastered strips are
+        // byte-identical to a full re-raster — no skeleton, blur and quality
+        // left untouched. The perf overrides therefore apply ONLY to the
+        // skeleton fallback.
+        let skeleton_drag = latest_job.dragged_window.is_some() && !render_window_full;
+        if skeleton_drag && saved_blur {
             renderer.set_blur_enabled(false);
         }
-        if latest_job.dragged_window.is_some() {
+        if skeleton_drag {
             renderer.set_quality_mode(liquide_compositor::RenderQuality::Performance);
         }
-        renderer.set_skeleton_window(latest_job.dragged_window);
+        renderer.set_skeleton_window(if skeleton_drag {
+            latest_job.dragged_window
+        } else {
+            None
+        });
 
         // LIVE full-scene render (de-choppy #1): non-blocking glyph drain so the
         // single in-flight render job never block-stalls present cadence on text.
@@ -2803,15 +3242,41 @@ impl DesktopCompositor {
         // Capture whether glyphs were still rasterising so the main loop can
         // schedule a bounded damage-only follow-up frame (text fills in).
         let pending_glyphs = renderer.has_pending_glyphs();
-        let damage = classified_damage_or_fallback(latest_job.tile_size, damage, render_result);
+        let mut damage = classified_damage_or_fallback(latest_job.tile_size, damage, render_result);
+        // BLIT-MOVE: the memcpy'd interior tiles were NOT in the raster damage
+        // (deliberately, so they were neither cleared nor re-rastered), but their
+        // pixels DID change this frame. They MUST be in the REPORTED damage so
+        // (a) the snapshot recycler copies the blitted interior into the
+        // presented buffer and (b) the platform present blits it to screen —
+        // otherwise the window would appear to stay at its old position. Add the
+        // full blit_rect; the post-raster hash trim below then drops any tile
+        // whose pixels happened not to change (e.g. a uniform region), keeping
+        // the reported set minimal but never missing a changed pixel.
+        if let Some(vr) = blit_plan.as_ref() {
+            let grid_w = latest_job.width.div_ceil(latest_job.tile_size);
+            let grid_h = latest_job.height.div_ceil(latest_job.tile_size);
+            let r = &vr.blit_rect;
+            let fb_w = latest_job.width as f32;
+            let fb_h = latest_job.height as f32;
+            let x0 = r.x.max(0.0).min(fb_w).floor();
+            let y0 = r.y.max(0.0).min(fb_h).floor();
+            let x1 = (r.x + r.width).max(0.0).min(fb_w).ceil();
+            let y1 = (r.y + r.height).max(0.0).min(fb_h).ceil();
+            let w = (x1 - x0).max(0.0) as u32;
+            let h = (y1 - y0).max(0.0) as u32;
+            if w > 0 && h > 0 {
+                damage.mark_rect(x0 as u32, y0 as u32, w, h, grid_w, grid_h);
+                damage.dedup();
+            }
+        }
         let damage = tile_hash_tracker.trim_damage(latest_job.tile_size, framebuf, damage);
 
         // Restore rendering quality.
         renderer.set_skeleton_window(None);
-        if latest_job.dragged_window.is_some() && saved_blur {
+        if skeleton_drag && saved_blur {
             renderer.set_blur_enabled(true);
         }
-        if latest_job.dragged_window.is_some() {
+        if skeleton_drag {
             renderer.set_quality_mode(saved_quality);
         }
 
@@ -3530,6 +3995,7 @@ mod tests {
             damage: None,
             authoritative_damage: None,
             dragged_window: dragged.then_some(window_id),
+            drag_new_bounds: None,
             hardware_cursor: true,
             images: Vec::new(),
             cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
@@ -3556,6 +4022,7 @@ mod tests {
             damage: None,
             authoritative_damage: None,
             dragged_window: None,
+            drag_new_bounds: None,
             hardware_cursor: true,
             images: Vec::new(),
             cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
@@ -3678,6 +4145,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
         assert_eq!(
@@ -3695,6 +4163,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
         assert_eq!(
@@ -3729,6 +4198,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
 
@@ -3749,6 +4219,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
 
@@ -3816,6 +4287,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
         assert!(
@@ -3835,6 +4307,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
         assert_eq!(
@@ -3883,6 +4356,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
 
@@ -3899,6 +4373,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
         assert_eq!(
@@ -3960,6 +4435,7 @@ mod tests {
             cached_flat_nodes,
             flat_nodes_buf,
             retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
     }
@@ -4131,6 +4607,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
 
@@ -4155,6 +4632,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
 
@@ -4220,6 +4698,7 @@ mod tests {
                 &mut cached_flat_nodes,
                 &mut flat_nodes_buf,
                 &mut retained_flat,
+                &mut None::<(u64, liquide_compositor::geometry::Rect)>,
                 &tx,
             );
         }
@@ -4603,6 +5082,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
 
@@ -4641,6 +5121,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
         let cache_a = cached_flat_nodes.clone().expect("frame A publishes a cache");
@@ -4664,6 +5145,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
         let cache_b = cached_flat_nodes.as_ref().expect("frame B publishes a cache");
@@ -4804,6 +5286,7 @@ mod tests {
             &mut cached_flat_nodes,
             &mut flat_nodes_buf,
             &mut retained_flat,
+            &mut None::<(u64, liquide_compositor::geometry::Rect)>,
             &tx,
         );
 
@@ -5488,5 +5971,495 @@ mod scene_diff_tests {
             scene_diff_damage(&prev, &curr, TILE, W, H).is_none(),
             "a full-frame repaint must fall back to None (full damage)"
         );
+    }
+}
+
+#[cfg(test)]
+mod blit_move_tests {
+    //! BLIT-MOVE (t164-blit-move) — disappear-class adversarial tests driving
+    //! the REAL `SoftwareRenderer` through `render_full_job`.
+    //!
+    //! The contract these prove:
+    //!  (a) a VALID blit-move (topmost opaque window over a static background)
+    //!      produces a framebuffer BYTE-IDENTICAL to a full re-raster of the same
+    //!      move;
+    //!  (b) the revealed strips + the uncovered old footprint are re-rastered
+    //!      correctly (no smear/ghost of the old position, no stale strip);
+    //!  (c) overlap-with-another-window / content-changed / first-frame FALL BACK
+    //!      to a full window render (no blit);
+    //!  (d) the capture path (`Renderer::render`) never blits.
+    use super::*;
+    use liquide_compositor::pixel::Color;
+    use liquide_compositor::scene::{
+        BackgroundRepeat, BackgroundSize, BackgroundSpec, NodeProperties, SceneNode,
+    };
+
+    const W: u32 = 128;
+    const H: u32 = 128;
+    const TILE: u32 = 32;
+
+    fn window_base(wid: u64) -> u64 {
+        10_000 + wid * 10
+    }
+
+    fn opaque_fill(color: Color) -> SceneNodeKind {
+        SceneNodeKind::BackgroundFill {
+            background: BackgroundSpec {
+                color: Some(color),
+                image: None,
+                size: BackgroundSize::Auto,
+                position: (0.0, 0.0),
+                repeat: BackgroundRepeat::NoRepeat,
+            },
+        }
+    }
+
+    /// Scene = a full-frame opaque DESKTOP background (z=0) + an opaque dragged
+    /// WINDOW fill (z=10) at `win`. Optionally a SECOND opaque foreign window
+    /// painted ON TOP (z=20) overlapping the move region to defeat the topmost
+    /// gate.
+    fn scene_with_window(win: Rect, wid: u64, foreign_on_top: Option<Rect>) -> SceneNode {
+        let mut root = SceneNode::new(
+            1,
+            SceneNodeKind::Root,
+            NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)),
+        );
+        root.add_child(SceneNode::new(
+            2,
+            opaque_fill(Color::new(20, 40, 60, 255)),
+            NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)).with_z_order(0),
+        ));
+        root.add_child(SceneNode::new(
+            window_base(wid),
+            opaque_fill(Color::new(200, 120, 40, 255)),
+            NodeProperties::new(win).with_z_order(10),
+        ));
+        if let Some(f) = foreign_on_top {
+            root.add_child(SceneNode::new(
+                7_777,
+                opaque_fill(Color::new(0, 200, 0, 255)),
+                NodeProperties::new(f).with_z_order(20),
+            ));
+        }
+        root
+    }
+
+    fn drag_job(scene: SceneNode, wid: u64, new_bounds: Option<Rect>) -> RenderJob {
+        RenderJob {
+            scene,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            cursor_shape: CursorShape::Arrow,
+            width: W,
+            height: H,
+            tile_size: TILE,
+            damage: None,
+            authoritative_damage: None,
+            dragged_window: Some(wid),
+            drag_new_bounds: new_bounds,
+            hardware_cursor: true,
+            images: Vec::new(),
+            cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
+        }
+    }
+
+    fn new_renderer() -> Box<dyn Renderer> {
+        Box::new(liquide_renderer_cpu::SoftwareRenderer::new())
+    }
+
+    fn new_compositor() -> Compositor {
+        Compositor::new(W, H, TILE, liquide_compositor::QualityProfile::Balanced)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_frame(
+        job: RenderJob,
+        renderer: &mut dyn Renderer,
+        compositor: &mut Compositor,
+        fb: &mut Option<FrameBuffer>,
+        tracker: &mut FrameTileHashTracker,
+        recycler: &mut FrameSnapshotRecycler,
+        cache: &mut Option<Vec<FlatNode>>,
+        buf: &mut Vec<FlatNode>,
+        retained: &mut Vec<FlatNode>,
+        prev_blit: &mut Option<(u64, Rect)>,
+    ) -> Arc<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        DesktopCompositor::render_full_job(
+            job, renderer, compositor, fb, tracker, recycler, cache, buf, retained, prev_blit,
+            &tx,
+        );
+        rx.recv().expect("frame produced").pixels
+    }
+
+    /// Reference: render `scene` into a FRESH framebuffer with FULL damage and no
+    /// drag (the canonical full re-raster, via the capture `render` entry).
+    fn full_reraster(scene: SceneNode) -> Vec<u8> {
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let _ = compositor.submit_scene(scene);
+        compositor.prepare_frame();
+        let flat = compositor.flat_scene().to_vec();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let damage = full_damage(TILE, W, H);
+        clear_damage_tiles(&mut fb, &damage);
+        let _ = renderer.render(&flat, &mut fb, &damage);
+        fb.pixels().to_vec()
+    }
+
+    // (a) + (b): a valid blit-move is BYTE-IDENTICAL to a full re-raster, with no
+    // ghost of the old position and the window present at the new position.
+    #[test]
+    fn valid_blit_move_is_byte_identical_to_full_reraster() {
+        let wid = 3;
+        let old = Rect::new(16.0, 16.0, 64.0, 48.0);
+        let new = Rect::new(48.0, 40.0, 64.0, 48.0);
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+
+        run_frame(
+            drag_job(scene_with_window(old, wid, None), wid, Some(old)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit,
+            Some((wid, old)),
+            "establish frame must record the window at its old rect"
+        );
+
+        let blit_pixels = run_frame(
+            drag_job(scene_with_window(new, wid, None), wid, Some(new)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit,
+            Some((wid, new)),
+            "a successful blit-move must advance the record to the new rect"
+        );
+
+        let reference = full_reraster(scene_with_window(new, wid, None));
+        assert_eq!(
+            blit_pixels.as_slice(),
+            reference.as_slice(),
+            "a valid blit-move must be byte-identical to a full re-raster of the move"
+        );
+
+        let fb_ref = fb.as_ref().unwrap();
+        assert_eq!(
+            fb_ref.get_pixel(20, 20),
+            Color::new(20, 40, 60, 255),
+            "the uncovered old footprint must repaint to the desktop (no window ghost)"
+        );
+        assert_eq!(
+            fb_ref.get_pixel(60, 60),
+            Color::new(200, 120, 40, 255),
+            "the window must be present at its new position"
+        );
+    }
+
+    // (c1) FIRST frame (no prior record) must NOT blit — it establishes, and the
+    // output is a correct full render (never a blit of uninitialised pixels).
+    #[test]
+    fn first_frame_does_not_blit() {
+        let wid = 4;
+        let old = Rect::new(16.0, 16.0, 64.0, 48.0);
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+
+        let pixels = run_frame(
+            drag_job(scene_with_window(old, wid, None), wid, Some(old)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        let reference = full_reraster(scene_with_window(old, wid, None));
+        assert_eq!(
+            pixels.as_slice(),
+            reference.as_slice(),
+            "the first drag frame must full-render (establish), byte-identical to a re-raster"
+        );
+    }
+
+    // (c2) A foreign window painted ON TOP of the move region defeats the topmost
+    // gate → no blit; the record is cleared.
+    #[test]
+    fn foreign_window_on_top_falls_back_no_blit() {
+        let wid = 5;
+        let old = Rect::new(16.0, 16.0, 64.0, 48.0);
+        let new = Rect::new(48.0, 40.0, 64.0, 48.0);
+        let foreign = Rect::new(40.0, 30.0, 50.0, 50.0);
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+
+        run_frame(
+            drag_job(scene_with_window(old, wid, None), wid, Some(old)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(prev_blit, Some((wid, old)));
+
+        run_frame(
+            drag_job(scene_with_window(new, wid, Some(foreign)), wid, Some(new)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit, None,
+            "a foreign window on top must defeat the topmost gate -> no blit, record cleared"
+        );
+    }
+
+    // (c3) A window carrying a backdrop-sampling Glass node can never be rigidly
+    // translated → never eligible, never blits.
+    #[test]
+    fn backdrop_sampling_window_falls_back_no_blit() {
+        let wid = 6;
+        let old = Rect::new(16.0, 16.0, 64.0, 48.0);
+        let new = Rect::new(48.0, 40.0, 64.0, 48.0);
+
+        let glass_scene = |win: Rect| {
+            let mut root = SceneNode::new(
+                1,
+                SceneNodeKind::Root,
+                NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)),
+            );
+            root.add_child(SceneNode::new(
+                2,
+                opaque_fill(Color::new(20, 40, 60, 255)),
+                NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)).with_z_order(0),
+            ));
+            root.add_child(SceneNode::new(
+                window_base(wid),
+                SceneNodeKind::Glass(liquide_compositor::scene::GlassParams::default()),
+                NodeProperties::new(win).with_z_order(10),
+            ));
+            root
+        };
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+
+        run_frame(
+            drag_job(glass_scene(old), wid, Some(old)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit, None,
+            "a backdrop-sampling window is not blit-eligible -> no record"
+        );
+
+        run_frame(
+            drag_job(glass_scene(new), wid, Some(new)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit, None,
+            "a backdrop-sampling window must never blit on any frame"
+        );
+    }
+
+    // (c4) No `drag_new_bounds` (e.g. devtools overlay active) → the worker can
+    // never blit even if a stale record exists; the record is cleared.
+    #[test]
+    fn missing_new_bounds_never_blits() {
+        let wid = 7;
+        let old = Rect::new(16.0, 16.0, 64.0, 48.0);
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = Some((wid, old));
+
+        run_frame(
+            drag_job(scene_with_window(old, wid, None), wid, None),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit, None,
+            "without new bounds the worker cannot blit and must clear the record"
+        );
+    }
+
+    // (c5) A size change between the record and the new bounds (a resize, not a
+    // pure move) must NOT blit; the frame re-establishes, byte-identical to a
+    // full re-raster (no partial-blit corruption).
+    #[test]
+    fn size_change_falls_back_no_blit() {
+        let wid = 8;
+        let old = Rect::new(16.0, 16.0, 64.0, 48.0);
+        let resized = Rect::new(16.0, 16.0, 80.0, 60.0);
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+
+        run_frame(
+            drag_job(scene_with_window(old, wid, None), wid, Some(old)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(prev_blit, Some((wid, old)));
+
+        let pixels = run_frame(
+            drag_job(scene_with_window(resized, wid, None), wid, Some(resized)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(prev_blit, Some((wid, resized)));
+        let reference = full_reraster(scene_with_window(resized, wid, None));
+        assert_eq!(
+            pixels.as_slice(),
+            reference.as_slice(),
+            "a size change must re-establish (full render), byte-identical to a re-raster"
+        );
+    }
+
+    // (c6) A window whose opaque fill does NOT cover the blit region (a partial
+    // / transparent window) must NOT blit — the copied pixels would include the
+    // backdrop showing through, which does NOT translate with the window. Proves
+    // Rule 1 (full opaque coverage of the DESTINATION blit_rect).
+    #[test]
+    fn partially_covered_window_falls_back_no_blit() {
+        let wid = 11;
+        let old = Rect::new(16.0, 16.0, 64.0, 48.0);
+        let new = Rect::new(48.0, 40.0, 64.0, 48.0);
+
+        // Window fill covers only the LEFT half of the window bounds, so the
+        // blit_rect is not fully opaque-covered.
+        let partial_scene = |win: Rect| {
+            let mut root = SceneNode::new(
+                1,
+                SceneNodeKind::Root,
+                NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)),
+            );
+            root.add_child(SceneNode::new(
+                2,
+                opaque_fill(Color::new(20, 40, 60, 255)),
+                NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)).with_z_order(0),
+            ));
+            // Only HALF-width opaque fill keyed to the window id.
+            root.add_child(SceneNode::new(
+                window_base(wid),
+                opaque_fill(Color::new(200, 120, 40, 255)),
+                NodeProperties::new(Rect::new(
+                    win.x,
+                    win.y,
+                    win.width / 2.0,
+                    win.height,
+                ))
+                .with_z_order(10),
+            ));
+            root
+        };
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+
+        // Even establishing must be rejected: the window is not fully opaque over
+        // its bounds, so no frame is blit-eligible.
+        run_frame(
+            drag_job(partial_scene(old), wid, Some(old)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit, None,
+            "a partially-opaque window is not blit-eligible (Rule 1) -> no record"
+        );
+        run_frame(
+            drag_job(partial_scene(new), wid, Some(new)),
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            prev_blit, None,
+            "a partially-opaque window must never blit"
+        );
+    }
+
+    // (d) A non-drag / capture-style render never blits: it equals a full
+    // re-raster and clears any record.
+    #[test]
+    fn capture_path_equals_full_reraster_no_blit() {
+        let wid = 9;
+        let new = Rect::new(48.0, 40.0, 64.0, 48.0);
+        let capture = full_reraster(scene_with_window(new, wid, None));
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+
+        let mut job = drag_job(scene_with_window(new, wid, None), wid, None);
+        job.dragged_window = None;
+        let pixels = run_frame(
+            job,
+            &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut cache, &mut buf, &mut retained, &mut prev_blit,
+        );
+        assert_eq!(
+            pixels.as_slice(),
+            capture.as_slice(),
+            "a non-drag / capture-style render must equal a full re-raster (never blits)"
+        );
+        assert_eq!(prev_blit, None, "a non-drag frame clears any blit record");
     }
 }

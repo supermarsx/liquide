@@ -653,6 +653,110 @@ pub fn compute_valid_rects(
     results
 }
 
+/// Pure-geometry valid-rect result for a SINGLE window move (t164-blit-move).
+///
+/// Unlike [`ValidRect`] (which is computed per-op over a whole
+/// [`WindowBatch`]), this describes one window translating from `old` to `new`
+/// and additionally exposes the OLD footprint the window UNCOVERED (the part of
+/// the old bounds the new bounds no longer occupies) — the background that must
+/// be repainted so the move leaves no ghost of the old position. It carries no
+/// `WindowId` and reads no shell state, so the render worker can call it
+/// directly to drive a blit-move.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoveValidRect {
+    /// The overlap of `old` and `new`, in NEW-position coordinates — the pixels
+    /// that can be copied (blitted) from the old framebuffer position.
+    pub blit_rect: Rect,
+    /// Horizontal copy offset: `new.x - old.x`.
+    pub dx: f32,
+    /// Vertical copy offset: `new.y - old.y`.
+    pub dy: f32,
+    /// The L-shaped strips of `new` NOT covered by `blit_rect` — the
+    /// newly-revealed leading edges that must be freshly rastered.
+    pub new_strips: Vec<Rect>,
+    /// The parts of `old` NOT covered by `new` — the background the window
+    /// uncovered, which must be repainted (else a ghost of the old position
+    /// survives).
+    pub old_uncovered: Vec<Rect>,
+}
+
+/// Compute the [`MoveValidRect`] for a single window translating from `old` to
+/// `new` (same size; a pure move). Pure geometry, no shell/window state.
+///
+/// `blit_rect` is `old ∩ new` (the rigidly-translatable pixels). `new_strips`
+/// are the parts of `new` outside the overlap (using the exact same four-strip
+/// decomposition as [`compute_valid_rects`]); `old_uncovered` is `old` minus
+/// `new` (the revealed background). When `old` and `new` do not overlap at all,
+/// `blit_rect` is [`Rect::ZERO`], all of `new` is a strip, and all of `old` is
+/// uncovered — the caller then has no blit benefit and should fall back.
+#[must_use]
+pub fn compute_move_valid_rect(old: Rect, new: Rect) -> MoveValidRect {
+    let dx = new.x - old.x;
+    let dy = new.y - old.y;
+
+    let Some(blit_rect) = old.intersection(&new) else {
+        return MoveValidRect {
+            blit_rect: Rect::ZERO,
+            dx,
+            dy,
+            new_strips: vec![new],
+            old_uncovered: vec![old],
+        };
+    };
+
+    let new_strips = rect_minus(new, blit_rect);
+    // The uncovered old footprint is `old` minus `new` (everything the window
+    // used to cover that it no longer does).
+    let old_uncovered = rect_minus(old, new);
+
+    MoveValidRect {
+        blit_rect,
+        dx,
+        dy,
+        new_strips,
+        old_uncovered,
+    }
+}
+
+/// Subtract `cut` from `frag`, returning up to four axis-aligned remainder
+/// rects (the parts of `frag` not covered by `cut`). Mirrors the renderer's
+/// `subtract_rect` (occlusion.rs) so the two stay consistent. Empty when `cut`
+/// fully covers `frag`; `[frag]` when they do not overlap.
+fn rect_minus(frag: Rect, cut: Rect) -> Vec<Rect> {
+    let mut out = Vec::new();
+    let Some(overlap) = frag.intersection(&cut) else {
+        out.push(frag);
+        return out;
+    };
+
+    let fx0 = frag.x;
+    let fy0 = frag.y;
+    let fx1 = frag.right();
+    let fy1 = frag.bottom();
+    let ox0 = overlap.x;
+    let oy0 = overlap.y;
+    let ox1 = overlap.right();
+    let oy1 = overlap.bottom();
+
+    // Top strip (full width, above the overlap).
+    if oy0 > fy0 {
+        out.push(Rect::new(fx0, fy0, fx1 - fx0, oy0 - fy0));
+    }
+    // Bottom strip (full width, below the overlap).
+    if oy1 < fy1 {
+        out.push(Rect::new(fx0, oy1, fx1 - fx0, fy1 - oy1));
+    }
+    // Left strip (only the overlap's vertical extent).
+    if ox0 > fx0 {
+        out.push(Rect::new(fx0, oy0, ox0 - fx0, oy1 - oy0));
+    }
+    // Right strip (only the overlap's vertical extent).
+    if ox1 < fx1 {
+        out.push(Rect::new(ox1, oy0, fx1 - ox1, oy1 - oy0));
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Z-order validation — NT ValidateZorder pattern
 // ---------------------------------------------------------------------------

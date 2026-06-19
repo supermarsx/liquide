@@ -1,8 +1,86 @@
 use liquide_compositor::geometry::Rect;
 
 use crate::shell::Shell;
-use crate::shell::batch::{WindowBatch, WindowOp, ZOrderOp};
+use crate::shell::batch::{WindowBatch, WindowOp, ZOrderOp, compute_move_valid_rect};
 use crate::window::WindowId;
+
+// ---------------------------------------------------------------------------
+// compute_move_valid_rect — single-window blit-move geometry (t164-blit-move)
+// ---------------------------------------------------------------------------
+
+/// Total area of a set of disjoint axis-aligned rects (used to assert the
+/// strip/footprint decomposition exactly tiles a region with no overlap/gap).
+fn area_sum(rects: &[Rect]) -> f32 {
+    rects.iter().map(|r| r.width * r.height).sum()
+}
+
+#[test]
+fn move_valid_rect_overlap_blit_and_strips_partition_exactly() {
+    // A 100x80 window slides right+down by (30, 20). The overlap is the
+    // blittable region; the new strips + old uncovered must EXACTLY account for
+    // the rest of new / old with no double-count.
+    let old = Rect::new(0.0, 0.0, 100.0, 80.0);
+    let new = Rect::new(30.0, 20.0, 100.0, 80.0);
+    let vr = compute_move_valid_rect(old, new);
+
+    assert_eq!(vr.dx, 30.0);
+    assert_eq!(vr.dy, 20.0);
+    // Overlap, expressed in new coords: x in [30,100], y in [20,80] → 70x60.
+    assert_eq!(vr.blit_rect, Rect::new(30.0, 20.0, 70.0, 60.0));
+
+    // new = blit ∪ new_strips, disjoint → areas add up to new's area.
+    let new_area = new.width * new.height;
+    assert!(
+        (vr.blit_rect.width * vr.blit_rect.height + area_sum(&vr.new_strips) - new_area).abs()
+            < 0.01,
+        "blit_rect + new_strips must exactly cover new (no gap, no overlap)"
+    );
+    // old_uncovered = old minus new; with new fully inside the lower-right, the
+    // uncovered region is old's area minus the overlap area.
+    let old_area = old.width * old.height;
+    let overlap_area = vr.blit_rect.width * vr.blit_rect.height;
+    assert!(
+        (area_sum(&vr.old_uncovered) - (old_area - overlap_area)).abs() < 0.01,
+        "old_uncovered must equal old minus the overlap"
+    );
+    // No strip / footprint rect may intersect the blit_rect interior (else the
+    // re-raster would clobber blitted pixels). Check via intersection emptiness.
+    for r in vr.new_strips.iter().chain(vr.old_uncovered.iter()) {
+        if let Some(i) = r.intersection(&vr.blit_rect) {
+            assert!(
+                i.width < 0.01 || i.height < 0.01,
+                "strip/footprint {r:?} must not overlap blit_rect {:?}",
+                vr.blit_rect
+            );
+        }
+    }
+}
+
+#[test]
+fn move_valid_rect_disjoint_move_has_no_blit() {
+    // Move so far the old and new bounds do not overlap → no blittable region;
+    // all of new is a strip and all of old is uncovered (full fallback case).
+    let old = Rect::new(0.0, 0.0, 50.0, 50.0);
+    let new = Rect::new(200.0, 200.0, 50.0, 50.0);
+    let vr = compute_move_valid_rect(old, new);
+    assert_eq!(vr.blit_rect, Rect::ZERO);
+    assert_eq!(vr.new_strips, vec![new]);
+    assert_eq!(vr.old_uncovered, vec![old]);
+}
+
+#[test]
+fn move_valid_rect_pure_horizontal_move() {
+    // Pure rightward slide: the uncovered old footprint is exactly the left band
+    // the window vacated; the new strip is exactly the right band it revealed.
+    let old = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let new = Rect::new(40.0, 0.0, 100.0, 100.0);
+    let vr = compute_move_valid_rect(old, new);
+    assert_eq!(vr.blit_rect, Rect::new(40.0, 0.0, 60.0, 100.0));
+    // Revealed new strip on the right: x in [100,140].
+    assert_eq!(vr.new_strips, vec![Rect::new(100.0, 0.0, 40.0, 100.0)]);
+    // Uncovered old band on the left: x in [0,40].
+    assert_eq!(vr.old_uncovered, vec![Rect::new(0.0, 0.0, 40.0, 100.0)]);
+}
 
 // ---------------------------------------------------------------------------
 // WindowBatch unit tests (no Shell required)

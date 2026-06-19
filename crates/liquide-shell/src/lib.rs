@@ -186,7 +186,9 @@ pub use screen_time::{
 };
 pub use shell::Shell;
 pub use shell::{DialogContent, SessionRequest, WiringBit, WiringReport};
-pub use shell::batch::{WindowBatch, WindowOp, ZOrderOp};
+pub use shell::batch::{
+    MoveValidRect, WindowBatch, WindowOp, ZOrderOp, compute_move_valid_rect,
+};
 pub use shell::hooks::{HookId, HookManager, HookPriority, HookResult, ShellHookEvent};
 pub use stats::{AppStats, StatsCollector, SystemStats, WindowStats};
 // SINGLE-SOURCE DECISION (t52-e7): the shell `WindowId` IS the single window
