@@ -144,14 +144,6 @@ impl Shell {
             .is_some_and(liquide_tooltip::TooltipManager::is_visible)
     }
 
-    /// Current tooltip opacity (0.0–1.0) from the canonical manager, or `0.0`
-    /// when no manager exists.
-    #[must_use]
-    pub(crate) fn tooltip_manager_opacity(&self) -> f32 {
-        self.chrome_tooltip
-            .as_ref()
-            .map_or(0.0, liquide_tooltip::TooltipManager::opacity)
-    }
 }
 
 #[cfg(test)]
@@ -197,9 +189,17 @@ mod tests {
         assert!(shell.tooltip_manager_visible());
 
         // Opacity ramps during fade-in; after a further frame it is positive and
-        // bounded in [0, 1].
+        // bounded in [0, 1]. Read the canonical manager directly — the shell
+        // render path deliberately paints the bubble at a CONSTANT opacity (no
+        // per-frame fade, to keep a held hover byte-stable; see
+        // `scene.rs::add_tooltip_overlay`), so there is no shell-level opacity
+        // accessor to assert through.
         shell.sync_tooltip_manager(8.0);
-        let opacity = shell.tooltip_manager_opacity();
+        let opacity = shell
+            .chrome_tooltip
+            .as_ref()
+            .expect("manager constructed")
+            .opacity();
         assert!(
             opacity > 0.0 && opacity <= 1.0,
             "fading-in tooltip opacity must ramp into (0, 1], got {opacity}"

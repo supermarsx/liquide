@@ -354,7 +354,7 @@ impl FrameBuffer {
         let px = self.pixels();
 
         // Hash the bytes of one tile (clamped to the surface), row-by-row.
-        let mut mix_tile = |hash: &mut u64, tx: u32, ty: u32| {
+        let mix_tile = |hash: &mut u64, tx: u32, ty: u32| {
             let x0 = tx.saturating_mul(tile_size).min(self.width);
             let y0 = ty.saturating_mul(tile_size).min(self.height);
             let x1 = x0.saturating_add(tile_size).min(self.width);

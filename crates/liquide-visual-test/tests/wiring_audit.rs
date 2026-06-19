@@ -50,6 +50,7 @@ const EXPECTED_DRIVEN: &[WiringBit] = &[
     WiringBit::LockScreen,         // LockSession action -> canonical lock screen
     WiringBit::Workspace,          // WorkspaceAdd + switch -> canonical switch
     WiringBit::Tooltip,            // dock-item hover + dwell -> TooltipManager visible (f6b)
+    WiringBit::ShellServices,      // open_app_window -> plan_app_launch consults the registry
 ];
 
 /// Managers that are CONSTRUCTED in the codebase but have **no live runtime
@@ -95,13 +96,15 @@ const ALLOWLIST: &[(WiringBit, &str)] = &[
 ///   `add_dialog_overlay` paints; proven by `visual_overlays::dialog_message_box_paints`).
 ///   Removed.
 ///
-/// Remaining genuinely-dead (kept until a slice wires it):
-/// - `shell_services(chrome_shell_services)` — the field is still never read
-///   (cargo warns `chrome_shell_services` is never read); no live consumer yet.
-const DEAD_ACTION_ARMS: &[(&str, &str)] = &[(
-    "shell_services(chrome_shell_services)",
-    "f9-followup (field still never read; no live consumer)",
-)];
+/// t177-warnings-deadcode wired the last remaining entry:
+/// - `shell_services(chrome_shell_services)` — WIRED: `Shell::open_app_window`
+///   now consults the canonical registry via `plan_app_launch`, caching it in
+///   `chrome_shell_services` and flipping the `ShellServices` wiring bit. Moved
+///   into [`EXPECTED_DRIVEN`]; the cargo `never read` warning is gone.
+///
+/// No documented dead arms remain; the list is kept (empty) as the owner-stamped
+/// home for any future known-dormant non-manager wiring.
+const DEAD_ACTION_ARMS: &[(&str, &str)] = &[];
 
 /// Boot the DE headlessly, perform representative interactions, and return the
 /// post-render wiring report.

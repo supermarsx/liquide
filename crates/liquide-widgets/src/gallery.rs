@@ -270,10 +270,3 @@ impl Gallery {
         &self.doc
     }
 }
-
-/// Convenience: drive a click at a point, then process the queue, returning the
-/// emitted actions (the common "render + interact" step a widget test runs).
-pub fn click_and_process(g: &mut Gallery, x: f32, y: f32) -> Vec<WidgetAction> {
-    g.left_click(x, y);
-    g.process()
-}

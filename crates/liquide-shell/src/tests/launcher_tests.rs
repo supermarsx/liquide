@@ -733,3 +733,43 @@ fn resolve_launch_unknown_app_errors_via_shell_services() {
         .unwrap_err();
     assert!(matches!(err, ShellExecuteError::UnknownApplication { .. }));
 }
+
+/// `open_app_window` must consult the canonical shell-services registry on every
+/// launch — caching it in `chrome_shell_services` and flipping the
+/// `ShellServices` wiring bit. This is the regression guard that keeps the field
+/// genuinely WIRED (t177): if the live consumer in `open_app_window` were
+/// removed, the field would go back to never-read and this test would fail.
+#[test]
+fn open_app_window_consults_shell_services_registry() {
+    use crate::shell::{Shell, WiringBit};
+
+    let mut shell = Shell::new(1920.0, 1080.0);
+
+    // Before any launch the registry cache is dormant and the bit is unset.
+    assert!(shell.chrome_shell_services.is_none());
+    assert!(!shell.wiring_report().is_driven(WiringBit::ShellServices));
+
+    // Register an exec-backed launcher app so the canonical planner resolves a
+    // real spawn-free plan (the built-in apps run in-process with no Exec).
+    shell.launcher_mut().add_app(make_app("term", "Terminal"));
+
+    let _wid = shell.open_app_window("term");
+
+    // The launch consulted + cached the canonical registry, and the wiring bit
+    // flipped — the field is genuinely read on the live launch path.
+    assert!(
+        shell.chrome_shell_services.is_some(),
+        "open_app_window must cache the canonical association registry"
+    );
+    assert!(
+        shell.wiring_report().is_driven(WiringBit::ShellServices),
+        "open_app_window must drive the ShellServices wiring bit"
+    );
+
+    // The cached registry resolves the exec-backed app to a real command plan.
+    let plan = shell
+        .plan_app_launch("term")
+        .expect("exec-backed app resolves through shell-services");
+    assert_eq!(plan.app_id, "term");
+    assert_eq!(plan.command, vec!["/usr/bin/term".to_string()]);
+}

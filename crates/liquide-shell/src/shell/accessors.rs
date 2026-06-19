@@ -631,11 +631,15 @@ pub enum WiringBit {
     Tiling,
     /// Canonical tooltip manager (only when it surfaces a tooltip).
     Tooltip,
+    /// Canonical shell-services association registry
+    /// (`chrome_shell_services`) — consulted on every `open_app_window` to plan
+    /// the launch through `liquide-shell-services`.
+    ShellServices,
 }
 
 impl WiringBit {
     /// Every audited manager bit (used by the partition test).
-    pub const ALL: [WiringBit; 13] = [
+    pub const ALL: [WiringBit; 14] = [
         WiringBit::StatusBar,
         WiringBit::Dock,
         WiringBit::Launcher,
@@ -649,6 +653,7 @@ impl WiringBit {
         WiringBit::Workspace,
         WiringBit::Tiling,
         WiringBit::Tooltip,
+        WiringBit::ShellServices,
     ];
 
     /// The single-bit mask for this manager.
@@ -674,6 +679,7 @@ impl WiringBit {
             WiringBit::Workspace => "workspace",
             WiringBit::Tiling => "chrome_tiling",
             WiringBit::Tooltip => "chrome_tooltip",
+            WiringBit::ShellServices => "chrome_shell_services",
         }
     }
 }

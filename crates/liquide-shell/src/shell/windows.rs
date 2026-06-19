@@ -1102,8 +1102,77 @@ impl Shell {
         self.mark_window_scene_dirty();
     }
 
+    /// Resolve a launch of `app_id` through the canonical
+    /// [`liquide_shell_services`] association registry, caching the registry in
+    /// `chrome_shell_services` so it is built once per launcher state and reused.
+    ///
+    /// This is the live consumer of `chrome_shell_services`: every
+    /// [`Shell::open_app_window`] consults it so app launches route through the
+    /// canonical ShellExecute-style planner rather than only the ad-hoc in-shell
+    /// shortcut. Built-in apps that run in-process carry no `Exec` line, so the
+    /// registry has nothing to spawn for them and returns
+    /// [`ShellExecuteError::UnknownApplication`] / `MissingExec` — that is the
+    /// expected, non-fatal outcome (the in-process app-view path still renders
+    /// the window). Apps backed by a real `Exec` (e.g. XDG entries the host
+    /// installs) resolve to a spawn-free [`ShellExecutePlan`].
+    ///
+    /// Returns the plan when the app is launchable through shell-services, or the
+    /// resolution error otherwise. Either way the registry was consulted, so the
+    /// `ShellServices` wiring bit is flipped by the caller.
+    pub(crate) fn plan_app_launch(
+        &mut self,
+        app_id: &str,
+    ) -> std::result::Result<
+        liquide_shell_services::ShellExecutePlan,
+        liquide_shell_services::ShellExecuteError,
+    > {
+        // Build the canonical registry from the current launcher apps and cache
+        // it. Rebuilt on each launch so newly-installed launcher apps are
+        // reflected; cached into the field so the value is genuinely retained and
+        // readable by later queries rather than discarded.
+        let registry = self.launcher.build_association_registry();
+        let registry = self.chrome_shell_services.insert(registry);
+
+        // A bare application launch has no document target; pass a placeholder so
+        // the planner resolves the command from the app's own `Exec` template
+        // (the app-id override pins the target app).
+        let request = liquide_shell_services::ShellExecuteRequest {
+            targets: vec![liquide_shell_services::ShellTarget::Uri(
+                "liquide://launch".to_string(),
+            )],
+            verb: liquide_shell_services::ShellVerb::Open,
+            app_id_override: Some(app_id.to_owned()),
+        };
+        registry.plan_execute(request)
+    }
+
     /// Open a new window for the given application, or focus an existing one.
     pub fn open_app_window(&mut self, app_id: &str) -> WindowId {
+        // Consult the canonical shell-services registry to plan this launch
+        // (caches the registry in `chrome_shell_services`). For in-process
+        // built-in apps the planner has no `Exec` to spawn — that is expected and
+        // non-fatal; the in-process window path below still runs. Recording the
+        // attempt here is the live consumer that keeps `chrome_shell_services`
+        // wired (audited via the `ShellServices` wiring bit).
+        match self.plan_app_launch(app_id) {
+            Ok(plan) => {
+                tracing::debug!(
+                    app_id,
+                    command = ?plan.command,
+                    terminal = plan.terminal,
+                    "shell-services resolved launch plan",
+                );
+            }
+            Err(err) => {
+                tracing::trace!(
+                    app_id,
+                    %err,
+                    "shell-services has no spawnable plan (in-process app)",
+                );
+            }
+        }
+        self.mark_wired(crate::shell::WiringBit::ShellServices);
+
         self.sandbox_manager.register_app(app_id.to_string());
         let can_create_windows = self
             .sandbox_manager

@@ -987,7 +987,6 @@ impl Drop for GdiBackBuffer {
 
 struct WindowInfo {
     hwnd: ffi::HWND,
-    handle: NativeWindowHandle,
     _data: Box<WindowData>,
     /// DXGI swap-chain presenter (lazily initialized on first present).
     dxgi: Option<dxgi::DxgiPresenter>,
@@ -1410,7 +1409,6 @@ impl NativeWindowHost for Win32WindowHost {
 
         let info = WindowInfo {
             hwnd,
-            handle,
             _data: data,
             dxgi: None,
             gdi_back_buffer: None,
