@@ -57,6 +57,28 @@ pub(crate) struct CachedShadow {
 /// Maximum number of entries in the shadow mask cache before eviction.
 const MAX_SHADOW_CACHE: usize = 256;
 
+/// Cached chrome box-shadow mask, keyed by a signature of EVERY input that
+/// affects the generated mask (surface geometry, corner radius, spread, blur,
+/// offset, colour, and the framebuffer dimensions used to clamp it).
+///
+/// Unlike the per-node window [`CachedShadow`] (keyed by `NodeId` + bounds), the
+/// chrome `BoxShadows` nodes are rebuilt every frame with churning ids, so this
+/// cache is keyed purely on the mask's INPUTS. A steady chrome shadow (statusbar,
+/// dock) hits the cache and reuses the once-computed SDF + blur mask; any change
+/// to a keyed input yields a different signature and forces a fresh compute, so a
+/// stale mask can never paint. Only used on the FULL-frame path (no write-scissor);
+/// a scissored frame computes a clip-confined mask fresh (never cached), exactly
+/// like the window Shadow path.
+pub(crate) struct CachedBoxShadow {
+    /// Signature of all mask inputs (see [`box_shadow_mask_key`]).
+    key: u64,
+    /// The pre-computed mask.
+    mask: ShadowMask,
+}
+
+/// Maximum number of distinct chrome box-shadow masks cached before eviction.
+const MAX_BOX_SHADOW_CACHE: usize = 64;
+
 /// An OPEN `clip-path` scope (t149).
 ///
 /// The scene bridge brackets a clipped element's OWN draws between a paired
@@ -232,6 +254,12 @@ pub struct SoftwareRenderer {
     /// Per-node shadow mask cache — avoids recomputing expensive SDF + blur
     /// every frame. Invalidated when window bounds change.
     shadow_cache: HashMap<NodeId, CachedShadow>,
+    /// Chrome box-shadow mask cache — keyed on a signature of the mask inputs
+    /// (geometry/radius/spread/blur/offset/colour/fb-size), NOT a node id, so a
+    /// steady chrome drop-shadow (statusbar, dock) reuses its once-computed
+    /// SDF + blur mask across frames instead of regenerating it every full frame.
+    /// Bounded; invalidated implicitly because a changed input yields a new key.
+    box_shadow_cache: Vec<CachedBoxShadow>,
     /// Background thread for async glyph rasterization.
     font_worker: FontWorker,
     /// Renderer behavior options.
@@ -335,6 +363,7 @@ impl SoftwareRenderer {
             blur_budget_ms: 16.0, // Target ~60fps render budget
             blur_worker: BlurWorker::new(),
             shadow_cache: HashMap::new(),
+            box_shadow_cache: Vec::new(),
             font_worker,
             options,
             layout_cache: LayoutCacheManager::new(),
@@ -512,6 +541,28 @@ impl SoftwareRenderer {
     /// Clear the entire shadow cache.
     pub fn clear_shadow_cache(&mut self) {
         self.shadow_cache.clear();
+        self.box_shadow_cache.clear();
+    }
+
+    /// Look up a cached chrome box-shadow mask by its input signature.
+    pub(crate) fn box_shadow_cache_get(&self, key: u64) -> Option<&ShadowMask> {
+        self.box_shadow_cache
+            .iter()
+            .find(|c| c.key == key)
+            .map(|c| &c.mask)
+    }
+
+    /// Insert a freshly-computed chrome box-shadow mask, evicting the oldest
+    /// entry when at capacity (simple FIFO — chrome shadows are few + long-lived).
+    pub(crate) fn box_shadow_cache_insert(&mut self, key: u64, mask: ShadowMask) {
+        if let Some(slot) = self.box_shadow_cache.iter_mut().find(|c| c.key == key) {
+            slot.mask = mask;
+            return;
+        }
+        if self.box_shadow_cache.len() >= MAX_BOX_SHADOW_CACHE {
+            self.box_shadow_cache.remove(0);
+        }
+        self.box_shadow_cache.push(CachedBoxShadow { key, mask });
     }
 
     /// Insert a shadow into the cache, evicting the oldest half when at capacity.
@@ -542,6 +593,10 @@ impl SoftwareRenderer {
             for id in to_remove {
                 self.shadow_cache.remove(&id);
             }
+        }
+        if self.box_shadow_cache.len() > MAX_BOX_SHADOW_CACHE / 2 {
+            let drop = self.box_shadow_cache.len() / 2;
+            self.box_shadow_cache.drain(0..drop);
         }
         self.blur_worker.trim_cache();
     }

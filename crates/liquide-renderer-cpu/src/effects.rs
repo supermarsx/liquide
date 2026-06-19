@@ -244,7 +244,81 @@ impl BoxShadow {
     }
 
     /// Composite a pre-rendered shadow mask into the framebuffer.
+    ///
+    /// The shadow mask holds premultiplied BGRA pixels; compositing is a
+    /// per-pixel Porter-Duff SrcOver (`out = src + dst * (1 - src.a)`). The hot
+    /// path vectorizes this row-by-row using the shared `liquide_simd` SrcOver
+    /// scanline kernel (the SAME wide SSE2/AVX2/AVX-512 runtime-dispatched kernel
+    /// the blend/blit paths use). The SIMD kernel is BIT-FOR-BIT identical to the
+    /// scalar `blend::blend_src_over` here: both compute `(d * inv_a + 127) / 255`
+    /// (the SIMD `(x + 128 + ((x + 128) >> 8)) >> 8` form equals `(x + 127) / 255`
+    /// for every `x` in `0..=255*255`, the full range of `d * inv_a`), and a
+    /// zero-alpha mask pixel is a SrcOver no-op exactly like the scalar `a == 0`
+    /// skip. The kernel operates on raw bytes (alpha at byte 3, per-channel
+    /// SrcOver), so it is only applied when the framebuffer is `Bgra8` — the same
+    /// channel order as the BGRA mask. For any other format we fall back to the
+    /// scalar `Color`-based path (which converts per pixel), preserving output.
+    ///
+    /// The per-thread write-scissor (t80) is honoured by clamping each row's
+    /// destination span to the scissor window ONCE per row (rows outside the
+    /// scissor's y-range are skipped entirely), instead of a per-pixel
+    /// `scissor_allows` test — an exact equivalent because the scissor is a single
+    /// rectangular `[x0,x1) × [y0,y1)` window.
     pub fn composite_shadow_mask(fb: &mut FrameBuffer, mask: &ShadowMask) {
+        use liquide_compositor::pixel::PixelFormat;
+
+        // Vectorized fast path: only valid when the framebuffer's byte order
+        // matches the mask's (BGRA). The SrcOver scanline kernel blends raw bytes
+        // with alpha at offset 3, so applying it to an Rgba8 buffer would blend
+        // the mask's B onto the framebuffer's R, etc. — wrong. Other formats take
+        // the scalar (Color-converting) path below, byte-identical to before.
+        if fb.format == PixelFormat::Bgra8 {
+            let fb_w = fb.width;
+            let fb_h = fb.height;
+            let stride = fb.stride as usize;
+            let mw = mask.width;
+            let mh = mask.height;
+            let x0 = mask.x0;
+            let y0 = mask.y0;
+
+            let Some(pixels) = fb.pixels_mut() else {
+                return; // GPU-backed framebuffer: nothing to composite into.
+            };
+
+            for my in 0..mh {
+                let dy = y0 + my;
+                if dy >= fb_h {
+                    break;
+                }
+                // Clamp this row's destination span [x0, x0+mw) to the framebuffer
+                // AND the write-scissor (in BOTH axes — a row outside the
+                // scissor's y-range is dropped entirely). Equivalent to the
+                // per-pixel scissor_allows test, but resolved once per row.
+                let row_x0 = x0;
+                let row_x1 = (x0 + mw).min(fb_w);
+                let (cx0, cy0, cx1, cy1) =
+                    crate::rasterizer::scissor_clamp_window(row_x0, dy, row_x1, dy + 1);
+                if cx1 <= cx0 || cy1 <= cy0 {
+                    continue;
+                }
+                let span = (cx1 - cx0) as usize;
+                let src_col = (cx0 - x0) as usize;
+                let src_off = ((my * mw) as usize + src_col) * 4;
+                let dst_off = dy as usize * stride + cx0 as usize * 4;
+                let bytes = span * 4;
+                if src_off + bytes > mask.pixels.len() || dst_off + bytes > pixels.len() {
+                    continue;
+                }
+                liquide_simd::blend::blend_scanline_src_over(
+                    &mut pixels[dst_off..dst_off + bytes],
+                    &mask.pixels[src_off..src_off + bytes],
+                );
+            }
+            return;
+        }
+
+        // Scalar fallback (non-BGRA framebuffers): per-pixel SrcOver via `Color`,
+        // byte-identical to the historic path.
         for my in 0..mask.height {
             for mx in 0..mask.width {
                 let off = ((my * mask.width + mx) * 4) as usize;
@@ -482,4 +556,224 @@ fn sdf_rounded_rect(fx: f32, fy: f32, rect: &Rect, radius: f32) -> f32 {
     let inside = qx.max(qy).min(0.0);
 
     outside + inside - radius
+}
+
+#[cfg(test)]
+mod shadow_composite_tests {
+    use super::*;
+    use liquide_compositor::pixel::PixelFormat;
+
+    /// Reference scalar composite — a verbatim copy of the HISTORIC per-pixel
+    /// `composite_shadow_mask` (Color + `blend_src_over` + per-pixel
+    /// `scissor_allows`). The vectorized production path MUST equal this byte-for-
+    /// byte. If `composite_shadow_mask` ever drifts from the scalar SrcOver math
+    /// (different rounding, channel order, or scissor handling), the equality
+    /// assertions below go RED.
+    fn composite_scalar_reference(fb: &mut FrameBuffer, mask: &ShadowMask) {
+        for my in 0..mask.height {
+            for mx in 0..mask.width {
+                let off = ((my * mask.width + mx) * 4) as usize;
+                let src = Color::from_bgra_bytes([
+                    mask.pixels[off],
+                    mask.pixels[off + 1],
+                    mask.pixels[off + 2],
+                    mask.pixels[off + 3],
+                ]);
+                if src.a == 0 {
+                    continue;
+                }
+                let dx = mask.x0 + mx;
+                let dy = mask.y0 + my;
+                if !crate::rasterizer::scissor_allows(dx, dy) {
+                    continue;
+                }
+                let dst = fb.get_pixel(dx, dy);
+                let result = blend::blend_src_over(dst, src);
+                fb.set_pixel(dx, dy, result);
+            }
+        }
+    }
+
+    /// Deterministic non-flat backdrop so the SrcOver dst varies per pixel.
+    fn paint_backdrop(fb: &mut FrameBuffer) {
+        for y in 0..fb.height {
+            for x in 0..fb.width {
+                let c = Color::new(
+                    (x.wrapping_mul(13).wrapping_add(7)) as u8,
+                    (y.wrapping_mul(11).wrapping_add(29)) as u8,
+                    ((x ^ y).wrapping_mul(5)) as u8,
+                    255,
+                );
+                fb.set_pixel(x, y, c);
+            }
+        }
+    }
+
+    fn make_mask(fb_w: u32, fb_h: u32, color: Color, blur: u32, spread: f32) -> Option<ShadowMask> {
+        let params = ShadowParams {
+            surface_rect: Rect::new(20.0, 18.0, 90.0, 70.0),
+            corner_radius: 12.0,
+            spread,
+            blur_radius: blur,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            shadow_color: color,
+        };
+        BoxShadow::generate_shadow_mask(fb_w, fb_h, &params)
+    }
+
+    /// SIMD composite output == scalar composite output, BIT-FOR-BIT, across a
+    /// sweep of shadow alphas, colours, blur radii and spreads (which vary the
+    /// mask size + per-pixel alpha). assert_eq, not ±1.
+    #[test]
+    fn simd_composite_is_byte_identical_to_scalar() {
+        let fb_w = 160u32;
+        let fb_h = 140u32;
+        let colors = [
+            Color::new(0, 0, 0, 180),
+            Color::new(255, 0, 0, 64),
+            Color::new(40, 120, 200, 255),
+            Color::new(17, 240, 33, 1),
+            Color::new(200, 200, 200, 128),
+        ];
+        for color in colors {
+            for &blur in &[0u32, 1, 3, 8, 16] {
+                for &spread in &[0.0f32, 4.0, 9.0] {
+                    let Some(mask) = make_mask(fb_w, fb_h, color, blur, spread) else {
+                        continue;
+                    };
+
+                    let mut fb_simd = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+                    paint_backdrop(&mut fb_simd);
+                    let mut fb_ref = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+                    paint_backdrop(&mut fb_ref);
+
+                    BoxShadow::composite_shadow_mask(&mut fb_simd, &mask);
+                    composite_scalar_reference(&mut fb_ref, &mask);
+
+                    let a = fb_simd.pixels().to_vec();
+                    let b = fb_ref.pixels().to_vec();
+                    assert_eq!(
+                        a, b,
+                        "SIMD composite differs from scalar: color={color:?} blur={blur} spread={spread}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// SIMD composite honours the write-scissor IDENTICALLY to the per-pixel
+    /// scalar `scissor_allows` path: only the scissor window is touched, and the
+    /// touched pixels match the scalar blend bit-for-bit. Catches a row-span
+    /// scissor-clamp bug (writing outside the damage rect) or a different value.
+    #[test]
+    fn simd_composite_respects_scissor_byte_identical() {
+        let fb_w = 160u32;
+        let fb_h = 140u32;
+        let mask = make_mask(fb_w, fb_h, Color::new(0, 0, 0, 200), 8, 6.0).expect("mask");
+
+        for &(sx, sy, sw, sh) in &[
+            (30.0f32, 25.0, 40.0, 35.0),
+            (0.0, 0.0, 50.0, 50.0),
+            (60.0, 50.0, 90.0, 80.0),
+            (45.0, 40.0, 7.0, 9.0), // tiny, smaller than a SIMD chunk
+        ] {
+            let scissor = Rect::new(sx, sy, sw, sh);
+
+            let mut fb_simd = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+            paint_backdrop(&mut fb_simd);
+            let prev = crate::rasterizer::set_write_scissor(Some(scissor));
+            BoxShadow::composite_shadow_mask(&mut fb_simd, &mask);
+            crate::rasterizer::set_write_scissor(prev);
+
+            let mut fb_ref = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+            paint_backdrop(&mut fb_ref);
+            let prev = crate::rasterizer::set_write_scissor(Some(scissor));
+            composite_scalar_reference(&mut fb_ref, &mask);
+            crate::rasterizer::set_write_scissor(prev);
+
+            assert_eq!(
+                fb_simd.pixels().to_vec(),
+                fb_ref.pixels().to_vec(),
+                "SIMD scissored composite differs from scalar for scissor={scissor:?}"
+            );
+
+            // And nothing was written outside the scissor (vs a sharp baseline).
+            let mut sharp = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+            paint_backdrop(&mut sharp);
+            let (wx0, wy0, wx1, wy1) = (
+                sx as u32,
+                sy as u32,
+                (sx + sw).ceil() as u32,
+                (sy + sh).ceil() as u32,
+            );
+            for y in 0..fb_h {
+                for x in 0..fb_w {
+                    let inside = x >= wx0 && x < wx1 && y >= wy0 && y < wy1;
+                    if !inside {
+                        assert_eq!(
+                            fb_simd.get_pixel(x, y),
+                            sharp.get_pixel(x, y),
+                            "SIMD composite wrote OUTSIDE scissor at ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Manual bench (run with `--ignored --nocapture`): scalar vs SIMD composite
+    /// for a chrome-scale (1948×~40 statusbar) shadow mask over a 1080p frame,
+    /// many iterations. Reports ms/iter for each path. Not an assertion.
+    #[test]
+    #[ignore]
+    fn bench_shadow_composite_scalar_vs_simd() {
+        use std::time::Instant;
+        let fb_w = 1920u32;
+        let fb_h = 1080u32;
+        // A wide statusbar-like shadow + a tall window-like shadow.
+        let params = ShadowParams {
+            surface_rect: Rect::new(2.0, 0.0, 1948.0, 40.0),
+            corner_radius: 0.0,
+            spread: 2.0,
+            blur_radius: 12,
+            offset_x: 0.0,
+            offset_y: 4.0,
+            shadow_color: Color::new(0, 0, 0, 160),
+        };
+        let mask = BoxShadow::generate_shadow_mask(fb_w, fb_h, &params).expect("mask");
+        let iters = 200u32;
+
+        let mut fb = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        let t = Instant::now();
+        for _ in 0..iters {
+            composite_scalar_reference(&mut fb, &mask);
+        }
+        let scalar_ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+
+        let mut fb = FrameBuffer::new(fb_w, fb_h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        let t = Instant::now();
+        for _ in 0..iters {
+            BoxShadow::composite_shadow_mask(&mut fb, &mask);
+        }
+        let simd_ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+
+        // Mask regenerate cost (the chrome BoxShadows per-frame cost the cache removes).
+        let t = Instant::now();
+        for _ in 0..iters {
+            let _ = BoxShadow::generate_shadow_mask(fb_w, fb_h, &params);
+        }
+        let regen_ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+
+        println!(
+            "SHADOW COMPOSITE bench (statusbar 1948x{} mask):\n  \
+             scalar composite : {scalar_ms:.3} ms\n  \
+             SIMD   composite : {simd_ms:.3} ms  ({:.2}x)\n  \
+             mask regenerate  : {regen_ms:.3} ms  (eliminated per-frame by cache; lookup ~0)",
+            mask.height,
+            scalar_ms / simd_ms.max(1e-9),
+        );
+    }
 }

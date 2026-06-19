@@ -262,10 +262,33 @@ impl SoftwareRenderer {
                         offset_y: shadow.offset_y,
                         shadow_color,
                     };
-                    if let Some(mask) =
+
+                    // On a partial-damage frame `generate_shadow_mask` confines the
+                    // mask to (shadow rect ∩ scissor + blur margin) — byte-identical
+                    // inside the damage rect but CLIP-SPECIFIC, so it must NOT be
+                    // cached (a later frame with a different clip would wrongly reuse
+                    // it). Compute fresh + composite, exactly the Shadow-node
+                    // discipline. The FULL-frame path (no scissor) caches the mask by
+                    // a signature of all its inputs so a steady chrome drop-shadow
+                    // (statusbar/dock) reuses the once-computed SDF + blur instead of
+                    // regenerating it every full frame (the t173 ~35-50 ms culprit).
+                    if crate::rasterizer::write_scissor().is_some() {
+                        if let Some(mask) =
+                            BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
+                        {
+                            BoxShadow::composite_shadow_mask(fb, &mask);
+                        }
+                        continue;
+                    }
+
+                    let key = box_shadow_mask_key(fb.width, fb.height, &params);
+                    if let Some(mask) = self.box_shadow_cache_get(key) {
+                        BoxShadow::composite_shadow_mask(fb, mask);
+                    } else if let Some(mask) =
                         BoxShadow::generate_shadow_mask(fb.width, fb.height, &params)
                     {
                         BoxShadow::composite_shadow_mask(fb, &mask);
+                        self.box_shadow_cache_insert(key, mask);
                     }
                 }
             }
@@ -727,6 +750,37 @@ impl SoftwareRenderer {
         }
         hasher.finish()
     }
+}
+
+/// Derive a stable signature for a chrome box-shadow mask from EVERY input that
+/// affects the generated mask: the framebuffer dimensions used to clamp it, the
+/// surface geometry, corner radius, spread, blur radius, offset, and colour.
+///
+/// Two frames whose chrome shadow has identical inputs produce the same key and
+/// reuse the cached mask; any change to ANY field (size, radius, blur, spread,
+/// colour, offset, fb dims) changes the key and forces a fresh full compute — so
+/// a stale mask can never paint. `f32` fields are hashed by their exact bit
+/// pattern (`to_bits`): the cache must distinguish values that produce a
+/// different mask, which is exactly bit-distinctness of the geometry inputs.
+fn box_shadow_mask_key(fb_width: u32, fb_height: u32, params: &ShadowParams) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    fb_width.hash(&mut h);
+    fb_height.hash(&mut h);
+    params.surface_rect.x.to_bits().hash(&mut h);
+    params.surface_rect.y.to_bits().hash(&mut h);
+    params.surface_rect.width.to_bits().hash(&mut h);
+    params.surface_rect.height.to_bits().hash(&mut h);
+    params.corner_radius.to_bits().hash(&mut h);
+    params.spread.to_bits().hash(&mut h);
+    params.blur_radius.hash(&mut h);
+    params.offset_x.to_bits().hash(&mut h);
+    params.offset_y.to_bits().hash(&mut h);
+    params.shadow_color.r.hash(&mut h);
+    params.shadow_color.g.hash(&mut h);
+    params.shadow_color.b.hash(&mut h);
+    params.shadow_color.a.hash(&mut h);
+    h.finish()
 }
 
 /// Build a 5×4 color matrix for partial sepia (amount 0..1).
@@ -1345,6 +1399,281 @@ mod tests {
         assert!(
             differing > 1000,
             "clip-None must blur the whole glass region (only {differing} px changed)"
+        );
+    }
+
+    // ── Chrome BoxShadows mask cache correctness ──────────────────────────────
+
+    use liquide_compositor::scene::BoxShadowSpec;
+
+    fn box_shadows_node(id: NodeId, bounds: Rect, shadow: BoxShadowSpec) -> FlatNode {
+        FlatNode {
+            id,
+            kind: SceneNodeKind::BoxShadows {
+                shadows: vec![shadow],
+            }
+            .into(),
+            absolute_bounds: bounds,
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    fn default_shadow() -> BoxShadowSpec {
+        BoxShadowSpec {
+            offset_x: 0.0,
+            offset_y: 4.0,
+            blur_radius: 12.0,
+            spread_radius: 2.0,
+            color: Color::new(0, 0, 0, 160),
+            inset: false,
+        }
+    }
+
+    /// Render a chrome BoxShadows node on a FRESH renderer (cold cache) over a
+    /// painted backdrop. This is the ground-truth "fresh full compute" the cached
+    /// path must match.
+    fn render_box_shadows_fresh(bounds: Rect, shadow: BoxShadowSpec, w: u32, h: u32) -> FrameBuffer {
+        let mut renderer = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb);
+        renderer.render_box_shadows_node(
+            &box_shadows_node(1, bounds, shadow),
+            &mut fb,
+            LodLevel::High,
+            1.0,
+        );
+        fb
+    }
+
+    /// The cache key must change iff a mask-affecting input changes. Distinct keys
+    /// for distinct geometry/radius/blur/spread/colour/offset/fb-size; equal key
+    /// for identical inputs. This is the field-coverage tooth at the unit level:
+    /// dropping a field from `box_shadow_mask_key` collapses two distinct cases to
+    /// the same key → RED here AND a stale mask downstream.
+    #[test]
+    fn box_shadow_mask_key_covers_every_input() {
+        let base = || ShadowParams {
+            surface_rect: Rect::new(10.0, 20.0, 200.0, 30.0),
+            corner_radius: 0.0,
+            spread: 2.0,
+            blur_radius: 12,
+            offset_x: 0.0,
+            offset_y: 4.0,
+            shadow_color: Color::new(0, 0, 0, 160),
+        };
+        let k0 = box_shadow_mask_key(1920, 1080, &base());
+        assert_eq!(k0, box_shadow_mask_key(1920, 1080, &base()), "stable");
+
+        // Each mutation must change the key.
+        let mut p = base();
+        p.surface_rect.x += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "x must be keyed");
+        let mut p = base();
+        p.surface_rect.y += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "y must be keyed");
+        let mut p = base();
+        p.surface_rect.width += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "width must be keyed");
+        let mut p = base();
+        p.surface_rect.height += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "height must be keyed");
+        let mut p = base();
+        p.corner_radius += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "corner must be keyed");
+        let mut p = base();
+        p.spread += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "spread must be keyed");
+        let mut p = base();
+        p.blur_radius += 1;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "blur must be keyed");
+        let mut p = base();
+        p.offset_x += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "offset_x must be keyed");
+        let mut p = base();
+        p.offset_y += 1.0;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "offset_y must be keyed");
+        let mut p = base();
+        p.shadow_color.r ^= 0xFF;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "color.r must be keyed");
+        let mut p = base();
+        p.shadow_color.g ^= 0xFF;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "color.g must be keyed");
+        let mut p = base();
+        p.shadow_color.b ^= 0xFF;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "color.b must be keyed");
+        let mut p = base();
+        p.shadow_color.a ^= 0xFF;
+        assert_ne!(k0, box_shadow_mask_key(1920, 1080, &p), "color.a must be keyed");
+        assert_ne!(k0, box_shadow_mask_key(1921, 1080, &base()), "fb_w must be keyed");
+        assert_ne!(k0, box_shadow_mask_key(1920, 1081, &base()), "fb_h must be keyed");
+    }
+
+    /// A steady chrome shadow rendered TWICE on the same renderer (2nd frame hits
+    /// the cache) must paint BYTE-IDENTICALLY to a fresh full compute. Proves the
+    /// cache HIT path reuses the correct mask (not a stale/empty one).
+    #[test]
+    fn cached_box_shadow_equals_fresh_when_inputs_unchanged() {
+        let bounds = Rect::new(6.0, 40.0, 200.0, 36.0);
+        let shadow = default_shadow();
+        let w = 240u32;
+        let h = 120u32;
+
+        let mut renderer = SoftwareRenderer::new();
+
+        // Frame 1: cold → computes + caches.
+        let mut fb1 = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb1);
+        renderer.render_box_shadows_node(
+            &box_shadows_node(1, bounds, shadow.clone()),
+            &mut fb1,
+            LodLevel::High,
+            1.0,
+        );
+
+        // Frame 2: DIFFERENT node id (id churns in the shell), identical inputs →
+        // must HIT the cache and paint the same as a cold compute.
+        let mut fb2 = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb2);
+        renderer.render_box_shadows_node(
+            &box_shadows_node(99999, bounds, shadow.clone()),
+            &mut fb2,
+            LodLevel::High,
+            1.0,
+        );
+
+        let fresh = render_box_shadows_fresh(bounds, shadow.clone(), w, h);
+        assert_eq!(
+            fb2.pixels().to_vec(),
+            fresh.pixels().to_vec(),
+            "cache-hit frame must equal a fresh full compute"
+        );
+        // Sanity: the shadow actually painted something (not a vacuous all-equal).
+        let mut sharp = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut sharp);
+        assert_ne!(
+            fb2.pixels().to_vec(),
+            sharp.pixels().to_vec(),
+            "the cached shadow must actually paint (test would be vacuous otherwise)"
+        );
+        // And frame 1 == frame 2 (cache hit identical to cold).
+        assert_eq!(fb1.pixels().to_vec(), fb2.pixels().to_vec());
+    }
+
+    /// THE TEETH: after caching a shadow, mutating EACH mask-affecting input must
+    /// force a recompute that matches a FRESH full compute of the NEW input — i.e.
+    /// the cache never serves the old mask for new inputs. A cache key missing any
+    /// field would serve the stale mask → mismatch vs fresh → RED.
+    #[test]
+    fn mutating_any_input_recomputes_and_matches_fresh_never_stale() {
+        let bounds = Rect::new(6.0, 40.0, 200.0, 36.0);
+        let base = default_shadow();
+        let w = 260u32;
+        let h = 130u32;
+
+        // Mutators: one per mask-affecting field (geometry mutated via bounds,
+        // the rest via the shadow spec). Each returns (mutated_bounds, mutated_spec).
+        type Mut = (&'static str, fn(Rect, BoxShadowSpec) -> (Rect, BoxShadowSpec));
+        let mutators: &[Mut] = &[
+            ("bounds.x", |b, s| (Rect::new(b.x + 5.0, b.y, b.width, b.height), s)),
+            ("bounds.y", |b, s| (Rect::new(b.x, b.y + 5.0, b.width, b.height), s)),
+            ("bounds.width", |b, s| (Rect::new(b.x, b.y, b.width + 7.0, b.height), s)),
+            ("bounds.height", |b, s| (Rect::new(b.x, b.y, b.width, b.height + 7.0), s)),
+            ("blur", |b, mut s| { s.blur_radius += 4.0; (b, s) }),
+            ("spread", |b, mut s| { s.spread_radius += 3.0; (b, s) }),
+            ("offset_x", |b, mut s| { s.offset_x += 6.0; (b, s) }),
+            ("offset_y", |b, mut s| { s.offset_y += 6.0; (b, s) }),
+            ("color", |b, mut s| { s.color = Color::new(20, 90, 200, 200); (b, s) }),
+        ];
+
+        for (name, mutate) in mutators {
+            // Fresh renderer; render the BASE shadow first so it is cached.
+            let mut renderer = SoftwareRenderer::new();
+            let mut warm = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+            paint_backdrop(&mut warm);
+            renderer.render_box_shadows_node(
+                &box_shadows_node(1, bounds, base.clone()),
+                &mut warm,
+                LodLevel::High,
+                1.0,
+            );
+
+            // Now render the MUTATED shadow on the SAME (warm) renderer.
+            let (mb, ms) = mutate(bounds, base.clone());
+            let mut got = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+            paint_backdrop(&mut got);
+            renderer.render_box_shadows_node(
+                &box_shadows_node(2, mb, ms.clone()),
+                &mut got,
+                LodLevel::High,
+                1.0,
+            );
+
+            // Ground truth: a cold renderer computing the mutated shadow fresh.
+            let fresh = render_box_shadows_fresh(mb, ms, w, h);
+
+            assert_eq!(
+                got.pixels().to_vec(),
+                fresh.pixels().to_vec(),
+                "mutating `{name}` served a STALE cached mask (got != fresh full compute)"
+            );
+
+            // And the mutation actually changed the output vs the base shadow —
+            // otherwise the test couldn't distinguish stale from fresh.
+            let base_fresh = render_box_shadows_fresh(bounds, base.clone(), w, h);
+            assert_ne!(
+                fresh.pixels().to_vec(),
+                base_fresh.pixels().to_vec(),
+                "mutator `{name}` did not change the mask — test is vacuous for it"
+            );
+        }
+    }
+
+    /// A scissored (partial-damage) frame must NOT poison the cache: the
+    /// clip-confined mask is never stored, so a later FULL frame still computes +
+    /// caches the true full mask. Guards against caching a clip-specific mask.
+    #[test]
+    fn scissored_frame_does_not_cache_a_clip_specific_mask() {
+        let bounds = Rect::new(6.0, 40.0, 200.0, 36.0);
+        let shadow = default_shadow();
+        let w = 240u32;
+        let h = 120u32;
+
+        let mut renderer = SoftwareRenderer::new();
+
+        // Scissored frame first (confined mask — must not be cached).
+        let mut fb_clip = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb_clip);
+        let dmg = Rect::new(20.0, 30.0, 30.0, 30.0);
+        let prev = crate::rasterizer::set_write_scissor(Some(dmg));
+        renderer.render_box_shadows_node(
+            &box_shadows_node(1, bounds, shadow.clone()),
+            &mut fb_clip,
+            LodLevel::High,
+            1.0,
+        );
+        crate::rasterizer::set_write_scissor(prev);
+
+        // Now a FULL frame: must equal a cold fresh full compute (the scissored
+        // frame must not have cached its confined mask under the same key).
+        let mut fb_full = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        paint_backdrop(&mut fb_full);
+        renderer.render_box_shadows_node(
+            &box_shadows_node(2, bounds, shadow.clone()),
+            &mut fb_full,
+            LodLevel::High,
+            1.0,
+        );
+
+        let fresh = render_box_shadows_fresh(bounds, shadow.clone(), w, h);
+        assert_eq!(
+            fb_full.pixels().to_vec(),
+            fresh.pixels().to_vec(),
+            "full frame after a scissored frame must equal a fresh full compute"
         );
     }
 }
