@@ -516,10 +516,24 @@ window-content {
 /* ── Dock ── */
 
 dock {
+    /* Full-width bottom bar with the icons centred — the same anchoring
+       liquid_glass.css uses (`left:0; right:0; justify-content:center`), which
+       the layout engine renders correctly.
+
+       The previous `left:50%; transform:translateX(-50%)` shrink-wrapped pill
+       did NOT centre: the engine's transform parser (value_resolve::parse_px)
+       only accepts px, so the `translateX(-50%)` percentage was DROPPED, leaving
+       the dock pinned with its left edge at screen-centre (right-shifted). And a
+       shrink-wrapped fixed element cannot be centred via auto-margins here (the
+       positioned-layout pass does not honour margin:auto for abspos, and setting
+       both `left` and `right` disables its shrink-to-fit so the box fills the
+       row). So the dock is a full-width bar and `justify-content:center` centres
+       the icon cluster within it — visually identical to the liquid-glass dock. */
     display: flex;
     position: fixed;
     bottom: 0;
-    left: 50%;
+    left: 0;
+    right: 0;
     height: 56;
     justify-content: center;
     align-items: center;
@@ -528,12 +542,9 @@ dock {
     padding-right: 8;
     padding-top: 6;
     padding-bottom: 6;
-    transform: translateX(-50%);
     background: rgba(40, 40, 42, 0.45);
-    border-color: rgba(255, 255, 255, 0.12);
     border-top-color: rgba(255, 255, 255, 0.12);
-    border-width: 1;
-    border-radius: 18;
+    border-top-width: 1;
     blur-radius: 30;
     glass-tint: rgba(40, 40, 42, 0.45);
     box-shadow: 0px -2px 24px rgba(0, 0, 0, 0.50);

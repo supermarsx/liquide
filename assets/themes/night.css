@@ -359,10 +359,18 @@ window-content {
 /* ── Dock ── */
 
 dock {
+    /* Full-width bottom bar, icons centred — same anchoring as liquid_glass.css
+       (`left:0; right:0; justify-content:center`). The old
+       `left:50%; transform:translateX(-50%)` did NOT centre: the engine's
+       transform parser only accepts px, so the `-50%` translate was dropped and
+       the dock pinned its left edge to screen-centre (right-shifted). A
+       shrink-wrapped fixed pill can't be centred via auto-margins in the
+       positioned-layout pass, so the dock is a full-width bar instead. */
     display: flex;
     position: fixed;
     bottom: 0;
-    left: 50%;
+    left: 0;
+    right: 0;
     height: 56;
     justify-content: center;
     align-items: center;
@@ -371,12 +379,9 @@ dock {
     padding-right: 6;
     padding-top: 6;
     padding-bottom: 6;
-    transform: translateX(-50%);
     background: rgba(20, 20, 20, 0.78);
-    border-color: rgba(255, 255, 255, 0.10);
     border-top-color: rgba(255, 255, 255, 0.10);
-    border-width: 1;
-    border-radius: 8;
+    border-top-width: 1;
     blur-radius: 18;
     glass-tint: rgba(18, 18, 18, 0.76);
     box-shadow: 0px -2px 16px rgba(0, 0, 0, 0.60);

@@ -84,10 +84,24 @@ pub(crate) fn emit_gradient(
             stops,
             ..
         } => {
-            // Convert normalized start/end to angle in degrees
+            // Convert the normalized start→end vector back into the CSS-convention
+            // angle that the scene bridge re-expands (scene_bridge.rs:
+            // `start = (0.5 - 0.5·sinθ, 0.5 + 0.5·cosθ)`,
+            // `end   = (0.5 + 0.5·sinθ, 0.5 - 0.5·cosθ)`), i.e. the end direction
+            // is `(sinθ, -cosθ)`. Inverting that gives `θ = atan2(dx, -dy)`.
+            //
+            // The previous `dy.atan2(dx)` used the standard math convention
+            // (CCW from +x), which is rotated 90° from the CSS convention the
+            // bridge consumes — so a vertical `to bottom` (180deg) gradient
+            // (dx=0, dy=1) emitted angle 90° and the bridge re-expanded it as a
+            // HORIZONTAL left→right gradient, painting the desktop backdrop as a
+            // hard left/right half-split (visible on every gradient-only theme:
+            // night, macos-dark, sunset). liquid-glass escaped only because it
+            // paints a `background-image` and never round-trips its fallback
+            // gradient through this path.
             let dx = end_x - start_x;
             let dy = end_y - start_y;
-            let angle_deg = dy.atan2(dx).to_degrees();
+            let angle_deg = dx.atan2(-dy).to_degrees();
             let grad_stops = tile_stops(stops, repeating);
             list.push(DisplayItem::LinearGradient {
                 rect: *rect,
