@@ -1,6 +1,17 @@
 /* ═══════════════════════════════════════════════════════
-   LiquiDE Component: StatusBar
-   Top bar with left/center/right slot layout.
+   LiquiDE Component: StatusBar  (macOS dark menu bar)
+   ───────────────────────────────────────────────────────
+   The top status bar IS the macOS global menu bar: a thin,
+   translucent dark strip pinned to the top with a bold leading
+   app/branding item, the File/Edit/View menu-bar entries, a
+   centred clock, and right-side system/status items.
+
+   This file is token-driven so every packaged theme restyles it
+   for free: under `macos_dark.css` the `:root` overrides resolve
+   `--statusbar-*` to the dark graphite vibrancy palette, while the
+   other themes keep their own look. The dark translucent material
+   is the `--statusbar-bg` tint + `backdrop-filter` blur below
+   (the macOS "vibrancy" menu-bar surface).
    ═══════════════════════════════════════════════════════ */
 
 statusbar {
@@ -19,7 +30,10 @@ statusbar {
     border-bottom-width: var(--border-width);
     border-bottom-style: solid;
     border-bottom-color: var(--statusbar-border);
-    backdrop-filter: blur(var(--blur-medium));
+    /* macOS menu-bar vibrancy: translucent tint + backdrop blur. */
+    backdrop-filter: blur(var(--blur-strong));
+    -webkit-backdrop-filter: blur(var(--blur-strong));
+    font-family: var(--font-family-ui);
     font-size: var(--font-size-sm);
 }
 
@@ -27,7 +41,7 @@ statusbar-slot {
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: var(--spacing-sm);
+    gap: var(--spacing-xs);
 }
 
 statusbar-slot.left {
@@ -45,12 +59,18 @@ statusbar-slot.right {
     justify-content: flex-end;
 }
 
+/* Leading app/branding item — bold, like the macOS Apple/app name. */
 statusbar-logo {
+    display: flex;
+    align-items: center;
+    height: 22;
+    font-family: var(--font-family-ui);
     font-weight: var(--font-weight-bold);
     font-size: var(--font-size-sm);
     cursor: pointer;
     padding: 0 var(--spacing-sm);
     border-radius: var(--radius-small);
+    color: var(--statusbar-text);
     transition: background var(--transition-fast);
 }
 
@@ -58,24 +78,53 @@ statusbar-logo:hover {
     background: var(--statusbar-hover-bg);
 }
 
+/* Menu-bar entries (File/Edit/View …) and generic items: medium-weight
+   macOS menu typography, compact graphite hover pill. */
 statusbar-item {
-    padding: 0 var(--spacing-xs);
+    display: flex;
+    align-items: center;
+    height: 22;
+    padding: 0 var(--spacing-sm);
+    font-family: var(--font-family-ui);
     font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--statusbar-text);
     border-radius: var(--radius-small);
-    transition: background var(--transition-fast);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 statusbar-item:hover {
     background: var(--statusbar-hover-bg);
+    color: var(--text-primary);
+}
+
+/* The open menu-bar entry stays highlighted while its dropdown is up. */
+statusbar-item.active,
+statusbar-item.open {
+    background: var(--statusbar-hover-bg);
+    color: var(--text-primary);
+}
+
+/* Centred clock: a touch more breathing room, brighter and tabular-feel. */
+statusbar-item#clock {
+    padding: 0 var(--spacing-md);
+    color: var(--text-primary);
+    cursor: default;
 }
 
 notification-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--spacing-lg);
+    height: 22;
     padding: 0 6px;
     font-size: var(--font-size-sm);
-    border-radius: var(--radius-medium);
-    min-width: var(--spacing-lg);
+    border-radius: var(--radius-small);
     text-align: center;
     cursor: pointer;
+    color: var(--statusbar-text);
     transition: background var(--transition-fast);
 }
 
@@ -84,6 +133,8 @@ notification-indicator:hover {
 }
 
 notification-indicator.active {
+    background: var(--accent-subtle);
+    color: var(--text-primary);
     font-weight: var(--font-weight-bold);
 }
 
@@ -92,8 +143,17 @@ notification-indicator.dnd {
 }
 
 status-indicator {
+    display: flex;
+    align-items: center;
+    height: 22;
     padding: 0 var(--spacing-xs);
+    border-radius: var(--radius-small);
     font-size: var(--font-size-sm);
+    color: var(--statusbar-text);
+}
+
+status-indicator:hover {
+    background: var(--statusbar-hover-bg);
 }
 
 status-indicator.connected::before {
@@ -116,15 +176,21 @@ status-tray {
     flex-direction: row;
     align-items: center;
     gap: var(--spacing-xs);
+    height: 22;
     padding: 0 var(--spacing-xs);
     border-radius: var(--radius-small);
 }
 
 session-button {
-    padding: 2px var(--spacing-sm);
+    display: flex;
+    align-items: center;
+    height: 22;
+    padding: 0 var(--spacing-sm);
     border-radius: var(--radius-small);
     cursor: pointer;
+    font-family: var(--font-family-ui);
     font-size: var(--font-size-sm);
+    color: var(--statusbar-text);
     transition: background var(--transition-fast);
 }
 

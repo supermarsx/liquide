@@ -1612,3 +1612,269 @@ fn background_colors(nodes: &[liquide_compositor::scene::SceneNode]) -> Vec<Colo
         })
         .collect()
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// t172-e3 — macOS dark VIBRANCY restyle of the menu bar / dropdowns /
+// popovers / dialogs / notifications / tooltips / launcher.
+//
+// These tests drive the REAL production cascade end-to-end:
+//
+//   variables.css → components.css → widgets.css
+//     → components/{statusbar,menus,notifications,tooltip,launcher}.css  (base)
+//     → macos_dark.css                                                   (theme)
+//
+// added exactly as the live loader does (base layers via `add_base_layer`,
+// then `set_theme(macos_dark)`), so they PROVE the chrome CSS edited in this
+// task actually takes effect post-t181 (when `set_theme` rebuilds the engine
+// as base → theme → custom). Every assertion carries a TEETH note: it goes RED
+// if the macOS vibrancy/graphite styling were reverted to the old light look.
+// ════════════════════════════════════════════════════════════════════════
+
+const VARIABLES_CSS: &str = include_str!("../../../../assets/themes/variables.css");
+const COMPONENTS_CSS: &str = include_str!("../../../../assets/themes/components.css");
+const WIDGETS_CSS: &str = include_str!("../../../../assets/themes/widgets.css");
+const STATUSBAR_SPLIT_CSS: &str =
+    include_str!("../../../../assets/themes/components/statusbar.css");
+const MENUS_SPLIT_CSS: &str = include_str!("../../../../assets/themes/components/menus.css");
+
+/// Build a pipeline whose engine matches the live desktop cascade: the real
+/// base layers (tokens + components + widgets + the split status-bar/menu
+/// fragments) loaded as BASE layers, then `macos_dark.css` loaded as the active
+/// THEME — exactly the shape `load_external_css` produces at startup. Returns a
+/// pipeline ready to render a chrome document through the macOS-dark cascade.
+fn macos_dark_chrome_pipeline() -> DesktopPipeline {
+    let config = PipelineConfig {
+        width: 1280.0,
+        height: 800.0,
+        ..PipelineConfig::default()
+    };
+    let mut pipeline = DesktopPipeline::new(&config);
+    // BASE layers (survive the theme load post-t181).
+    pipeline.add_base_layer(VARIABLES_CSS);
+    pipeline.add_base_layer(COMPONENTS_CSS);
+    pipeline.add_base_layer(WIDGETS_CSS);
+    pipeline.add_base_layer(STATUSBAR_SPLIT_CSS);
+    pipeline.add_base_layer(MENUS_SPLIT_CSS);
+    // Active THEME (graphite-dark token overrides + macOS literal element rules).
+    pipeline.set_theme(theme_loader::macos_dark_css());
+    pipeline
+}
+
+/// A translucent surface is one whose resolved alpha is below opaque (a glass /
+/// vibrancy material), as opposed to a flat opaque fill.
+fn is_translucent(c: Color) -> bool {
+    c.a < 255
+}
+
+/// A graphite (monochrome) color: the RGB channels are close to each other
+/// (low saturation), unlike the legacy BLUE accent (#3b82f6 — blue ≫ red).
+fn is_graphite(c: Color) -> bool {
+    let max = c.r.max(c.g).max(c.b) as i32;
+    let min = c.r.min(c.g).min(c.b) as i32;
+    (max - min) <= 24
+}
+
+/// The legacy default accent was a saturated BLUE (`#3b82f6`: blue channel far
+/// exceeds red). A graphite restyle must never resolve menu selection to that.
+fn is_legacy_blue(c: Color) -> bool {
+    (c.b as i32) - (c.r as i32) > 60
+}
+
+/// The top menu bar (`statusbar`) must resolve to the THIN TRANSLUCENT DARK
+/// macOS menu-bar material: a dark, low-alpha vibrancy tint (not an opaque or
+/// light bar).
+///
+/// TEETH: revert `--statusbar-bg` to an opaque/light value (or drop the dark
+/// macos_dark override) and the translucency / darkness assertions go RED.
+#[test]
+fn macos_menu_bar_resolves_to_thin_translucent_dark_material() {
+    let mut pipeline = macos_dark_chrome_pipeline();
+    let mut desktop = DesktopDocument::from_html(
+        r#"<statusbar id="sb"><statusbar-slot class="left"><statusbar-logo id="logo">LiquiDE</statusbar-logo><statusbar-item id="file">File</statusbar-item></statusbar-slot></statusbar>"#,
+    );
+    let (output, _a) = pipeline.run(&mut desktop.doc, 16.0);
+
+    let sb = desktop.doc.get_element_by_id("sb").expect("statusbar node");
+    let style = output.styles.get(sb).expect("statusbar style");
+    let bg = style.background_color;
+
+    assert!(
+        is_translucent(bg),
+        "the macOS menu bar must be a TRANSLUCENT vibrancy surface (alpha < 255); \
+         got {bg:?}"
+    );
+    // Dark material: clearly below mid-gray on every channel.
+    assert!(
+        bg.r < 90 && bg.g < 90 && bg.b < 90,
+        "the macOS menu bar must be a DARK material; got {bg:?}"
+    );
+    // It must carry the SF-like system-UI font stack (macOS menu typography).
+    assert!(
+        style
+            .font_family
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case("system-ui") || f.eq_ignore_ascii_case("Inter")),
+        "the menu bar must use the system-UI / Inter macОS font stack; got {:?}",
+        style.font_family
+    );
+}
+
+/// macOS dropdown menus must be a ROUNDED, DARK TRANSLUCENT VIBRANCY surface
+/// with a graphite (not blue) hover/selection.
+///
+/// TEETH:
+///  - drop the dark `--menu-bg` / glass material → the menu resolves opaque or
+///    light → translucency / darkness assertions RED.
+///  - revert the accent to the legacy blue → the `menu-item:hover` background
+///    resolves blue → `is_graphite` / `!is_legacy_blue` assertions RED.
+#[test]
+fn macos_dropdown_menu_is_dark_translucent_with_graphite_hover() {
+    let mut pipeline = macos_dark_chrome_pipeline();
+    let mut desktop = DesktopDocument::from_html(
+        r#"<context-menu id="cm"><menu-item id="mi"><menu-item-label>Open</menu-item-label></menu-item><menu-item id="mh"><menu-item-label>Close</menu-item-label></menu-item></context-menu>"#,
+    );
+
+    // Drive the hover pseudo on the second item so `menu-item:hover` resolves.
+    let mh = desktop.doc.get_element_by_id("mh").expect("hover item");
+    desktop
+        .doc
+        .set_pseudo_state(mh, liquide_dom::PseudoStateFlags::HOVER, true);
+
+    let (output, _a) = pipeline.run(&mut desktop.doc, 16.0);
+
+    // ── The dropdown surface itself: dark + translucent (vibrancy). ──
+    let cm = desktop.doc.get_element_by_id("cm").expect("context-menu node");
+    let cm_style = output.styles.get(cm).expect("context-menu style");
+    let cm_bg = cm_style.background_color;
+    assert!(
+        is_translucent(cm_bg),
+        "the dropdown menu must be a TRANSLUCENT vibrancy surface; got {cm_bg:?}"
+    );
+    assert!(
+        cm_bg.r < 90 && cm_bg.g < 90 && cm_bg.b < 90,
+        "the dropdown menu must be a DARK material; got {cm_bg:?}"
+    );
+    // Rounded corners (macОS dropdown), resolved from `--menu-radius`.
+    assert!(
+        cm_style.border_radius.top_left.x > 6.0,
+        "the dropdown menu must have macOS-rounded corners; got {:?}",
+        cm_style.border_radius.top_left.x
+    );
+
+    // ── The hovered row: graphite selection, never blue. ──
+    let hover_style = output.styles.get(mh).expect("hovered menu-item style");
+    let hover_bg = hover_style.background_color;
+    assert!(
+        is_translucent(hover_bg) && hover_bg.a > 0,
+        "the hovered menu row must paint a graphite selection tint; got {hover_bg:?}"
+    );
+    assert!(
+        is_graphite(hover_bg),
+        "the macOS menu hover must be GRAPHITE (monochrome), not a colored accent; \
+         got {hover_bg:?}"
+    );
+    assert!(
+        !is_legacy_blue(hover_bg),
+        "the macOS menu hover must NOT be the legacy blue accent; got {hover_bg:?}"
+    );
+
+    // ── The non-hovered row stays unselected (the hover teeth aren't vacuous). ──
+    let mi = desktop.doc.get_element_by_id("mi").expect("plain menu-item");
+    let plain_bg = output.styles.get(mi).expect("plain style").background_color;
+    assert!(
+        plain_bg.a == 0 || plain_bg != hover_bg,
+        "a non-hovered menu row must NOT carry the hover selection; \
+         hover={hover_bg:?} plain={plain_bg:?}"
+    );
+}
+
+/// Menu PAINT == HIT: each painted `<menu-item>` row must be exactly as tall as
+/// the value the menu hit-test arithmetic reads (`--menu-item-height`), so the
+/// Nth painted row's box lines up with the Nth click zone. The split menus.css
+/// paints `menu-item { height: var(--menu-item-height) }` precisely so the
+/// painted row tracks the token the hit-test divides by (events.rs:
+/// `idx = rel_y / menu_item_height`).
+///
+/// TEETH: paint the row at a fixed height that diverges from
+/// `--menu-item-height` (the drift §0.4 warns about) and this goes RED — the
+/// painted box no longer matches the click zone.
+#[test]
+fn macos_menu_item_painted_height_matches_hit_test_token() {
+    let mut pipeline = macos_dark_chrome_pipeline();
+
+    // The value the hit-test reads (accessors.rs::menu_item_height →
+    // resolve_css_length_var("--menu-item-height")).
+    let token = pipeline
+        .style_engine
+        .resolve_variable("--menu-item-height")
+        .and_then(|v| {
+            v.resolve_px(
+                pipeline.style_engine.base_font_size,
+                pipeline.style_engine.viewport.width,
+                pipeline.style_engine.viewport.height,
+            )
+        })
+        .expect("--menu-item-height token must resolve in the live cascade");
+
+    let mut desktop = DesktopDocument::from_html(
+        r#"<context-menu id="cm" style="position:fixed; left:40; top:40;"><menu-item id="mi"><menu-item-label>Open</menu-item-label></menu-item></context-menu>"#,
+    );
+    let (output, _a) = pipeline.run(&mut desktop.doc, 16.0);
+
+    let mi = desktop.doc.get_element_by_id("mi").expect("menu-item node");
+    let mi_box = output
+        .layout
+        .boxes
+        .iter()
+        .find(|b| b.node == mi)
+        .expect("menu-item must be laid out");
+    let painted_h = mi_box.content_rect.height;
+
+    assert!(
+        (painted_h - token).abs() <= 1.0,
+        "PAINT must equal HIT: the painted menu-item row height ({painted_h}) must \
+         match the hit-test token --menu-item-height ({token}); a mismatch drifts \
+         the Nth click zone away from the Nth painted row (§0.4)"
+    );
+}
+
+/// Vibrancy must be applied CONSISTENTLY across the secondary overlay surfaces —
+/// dialogs and popovers carry the dark translucent material with a backdrop blur
+/// (the gap this task closed in components.css), so they read as macOS glass.
+///
+/// TEETH: remove the `backdrop-filter` / dark `--dialog-bg` / `--popover-bg` and
+/// the blur-or-tint assertion goes RED (the surface falls back to a flat fill).
+#[test]
+fn macos_dialog_and_popover_carry_dark_vibrancy_material() {
+    let mut pipeline = macos_dark_chrome_pipeline();
+    let mut desktop = DesktopDocument::from_html(
+        r#"<dialog id="dlg"><dialog-body><dialog-message>Hi</dialog-message></dialog-body></dialog><popover id="pop"><popover-body>Hi</popover-body></popover>"#,
+    );
+    let (output, _a) = pipeline.run(&mut desktop.doc, 16.0);
+
+    for id in ["dlg", "pop"] {
+        let node = desktop.doc.get_element_by_id(id).unwrap_or_else(|| {
+            panic!("{id} node");
+        });
+        let style = output.styles.get(node).unwrap_or_else(|| {
+            panic!("{id} style");
+        });
+        let bg = style.background_color;
+        assert!(
+            is_translucent(bg) && bg.r < 90 && bg.g < 90 && bg.b < 90,
+            "<{id}> must be a DARK TRANSLUCENT vibrancy surface; got {bg:?}"
+        );
+        // The vibrancy blur is carried either as a `backdrop-filter` (the
+        // components.css edit, base path) or a glass `blur-radius` (the
+        // macos_dark literal). Either is acceptable; at least one must be present.
+        let has_backdrop = !style.backdrop_filter.is_empty();
+        let has_glass = style.x_blur_radius > 0.0;
+        assert!(
+            has_backdrop || has_glass,
+            "<{id}> must carry a vibrancy blur (backdrop-filter or glass blur-radius); \
+             got backdrop_filter={:?} blur_radius={}",
+            style.backdrop_filter,
+            style.x_blur_radius
+        );
+    }
+}

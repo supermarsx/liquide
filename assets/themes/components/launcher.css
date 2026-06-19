@@ -26,9 +26,13 @@ launcher {
     background: var(--launcher-bg);
     border-color: var(--launcher-border);
     overflow: hidden;
+    /* macOS Spotlight-style heavy vibrancy: translucent material + deep blur. */
     backdrop-filter: blur(var(--blur-heavy));
+    -webkit-backdrop-filter: blur(var(--blur-heavy));
+    box-shadow: var(--shadow-large);
     border-width: var(--border-width);
     border-style: solid;
+    font-family: var(--font-family-ui);
     transition: transform var(--transition-normal), opacity var(--transition-normal);
 }
 

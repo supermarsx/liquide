@@ -1,11 +1,29 @@
 /* ═══════════════════════════════════════════════════════
-   LiquiDE Component: Menus
-   Context menu, session menu, and app menu styles.
+   LiquiDE Component: Menus  (macOS dark dropdowns)
+   ───────────────────────────────────────────────────────
+   Context menu, session menu, and app/Apple menu — restyled as
+   macOS dropdowns: rounded, dark translucent VIBRANCY material
+   (`--menu-bg` tint + backdrop blur), hairline border, graphite
+   hover/selection (never blue), tidy item padding, and subtle
+   inset separators.
+
+   Token-driven so every theme restyles for free. Under
+   `macos_dark.css` the `:root` overrides resolve `--menu-*` to the
+   dark graphite palette; other themes keep their own look.
+
+   GEOMETRY CAUTION (hit-test): the menu hit-test arithmetic reads
+   `--menu-item-height` / `--menu-padding` / `--menu-min-width`
+   (accessors.rs → events.rs). This file consumes those tokens but
+   does NOT redefine them, so the painted rows stay aligned with the
+   click zones (paint == hit). Any change to those metrics must land
+   on the token (with a paired hit-test), not as ad-hoc padding here.
    ═══════════════════════════════════════════════════════ */
 
-/* ── Context Menu ── */
+/* ── Shared dropdown surface (context / session / app menus) ── */
 
-context-menu {
+context-menu,
+session-menu,
+app-menu {
     display: flex;
     flex-direction: column;
     position: fixed;
@@ -18,42 +36,21 @@ context-menu {
     border-color: var(--menu-border);
     border-width: var(--border-width);
     border-style: solid;
+    /* macOS dropdown vibrancy material. */
     backdrop-filter: blur(var(--blur-strong));
+    -webkit-backdrop-filter: blur(var(--blur-strong));
+    box-shadow: var(--shadow-large);
+    font-family: var(--font-family-ui);
     overflow: hidden;
 }
 
-/* ── Session Menu ── */
-
-session-menu {
-    display: flex;
-    flex-direction: column;
-    position: fixed;
-    z-index: var(--z-menu);
-    min-width: 200;
-    padding: var(--menu-padding);
-    border-radius: var(--menu-radius);
-    background: var(--menu-bg);
-    border-color: var(--menu-border);
-    border-width: var(--border-width);
-    border-style: solid;
-    backdrop-filter: blur(var(--blur-strong));
+context-menu {
+    min-width: var(--menu-min-width);
 }
 
-/* ── App Menu ── */
-
+session-menu,
 app-menu {
-    display: flex;
-    flex-direction: column;
-    position: fixed;
-    z-index: var(--z-menu);
     min-width: 200;
-    padding: var(--menu-padding);
-    border-radius: var(--menu-radius);
-    background: var(--menu-bg);
-    border-color: var(--menu-border);
-    border-width: var(--border-width);
-    border-style: solid;
-    backdrop-filter: blur(var(--blur-strong));
 }
 
 /* ── Shared Menu Items ── */
@@ -63,17 +60,26 @@ menu-item {
     flex-direction: row;
     align-items: center;
     gap: var(--spacing-sm);
-    padding: var(--spacing-sm) var(--spacing-md);
+    /* Horizontal padding only: the ROW HEIGHT comes from
+       `--menu-item-height` (the value the hit-test reads), so the
+       painted row matches the click zone. Vertical padding here would
+       desync paint from hit. */
+    padding: 0 var(--spacing-md);
+    height: var(--menu-item-height);
+    min-height: var(--menu-item-height);
     border-radius: var(--radius-small);
     cursor: pointer;
-    font-size: var(--font-size-md);
+    font-family: var(--font-family-ui);
+    font-size: var(--font-size-sm);
     color: var(--menu-text);
-    min-height: var(--menu-item-height);
-    transition: background var(--transition-fast);
+    white-space: nowrap;
+    transition: background var(--transition-fast), color var(--transition-fast);
 }
 
+/* macOS graphite hover/selection (NOT blue). */
 menu-item:hover {
     background: var(--menu-hover-bg);
+    color: var(--text-primary);
 }
 
 menu-item.disabled {
@@ -96,6 +102,7 @@ menu-item-label {
     text-overflow: ellipsis;
 }
 
+/* Right-aligned shortcut hint, dimmed; brightens with the hovered row. */
 menu-item-shortcut {
     font-size: var(--font-size-xs);
     color: var(--text-tertiary);
@@ -103,9 +110,14 @@ menu-item-shortcut {
     margin-left: var(--spacing-lg);
 }
 
+menu-item:hover > menu-item-shortcut {
+    color: var(--text-secondary);
+}
+
+/* Inset hairline separator, macOS-style. */
 menu-separator {
     display: block;
     height: 1;
-    margin: var(--spacing-xs) var(--spacing-sm);
+    margin: var(--spacing-xs) var(--spacing-md);
     background: var(--menu-separator);
 }

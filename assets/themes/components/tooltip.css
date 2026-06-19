@@ -34,9 +34,13 @@ tooltip-content {
     border-width: var(--border-width);
     border-style: solid;
     border-color: var(--tooltip-border);
+    font-family: var(--font-family-ui);
     font-size: var(--font-size-sm);
     white-space: nowrap;
+    /* macOS tooltip vibrancy: translucent material + backdrop blur. */
     backdrop-filter: blur(var(--blur-medium));
+    -webkit-backdrop-filter: blur(var(--blur-medium));
+    box-shadow: var(--shadow-medium);
 }
 
 tooltip-arrow {

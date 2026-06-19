@@ -27,9 +27,13 @@ notification {
     border-radius: var(--notification-radius);
     background: var(--notification-bg);
     border-color: var(--notification-border);
+    /* macOS notification vibrancy: translucent material + backdrop blur. */
     backdrop-filter: blur(var(--blur-strong));
+    -webkit-backdrop-filter: blur(var(--blur-strong));
+    box-shadow: var(--shadow-large);
     border-width: var(--border-width);
     border-style: solid;
+    font-family: var(--font-family-ui);
     pointer-events: auto;
     cursor: default;
     overflow: hidden;

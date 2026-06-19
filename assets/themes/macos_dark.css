@@ -759,11 +759,13 @@ launcher-item-label {
 
 /* ── Menus ── */
 
-/* NOTE: menu metrics (padding 4, item height 28, min-width 180) deliberately
-   match the inherited defaults / hit-test fallback constants so the painted
-   menu boxes stay aligned with the hit-test arithmetic. The macOS menu-metric
-   restyle is owned by the menu-bar executor (e3) in a base layer, with a
-   paired hit-test (e9). See the `:root` menu-geometry note above. */
+/* NOTE: menu metrics (padding 4, item height 30, min-width 180) deliberately
+   match the inherited token defaults the hit-test reads
+   (`--menu-item-height: 30`, `--menu-padding: 4`, `--menu-min-width: 180` in
+   variables.css) so the painted menu boxes stay aligned with the hit-test
+   arithmetic (PAINT == HIT, §0.4). Because this theme file is parsed standalone
+   by the ShellTheme resolver (no `var()`), the metrics are literals kept in
+   lock-step with the tokens by the paint==hit test. */
 context-menu {
     display: flex;
     flex-direction: column;
@@ -821,7 +823,15 @@ app-menu {
 menu-item {
     display: flex;
     align-items: center;
-    height: 28;
+    /* PAINT == HIT: this MUST equal `--menu-item-height` (variables.css = 30),
+       the value the menu hit-test arithmetic divides by
+       (accessors.rs::menu_item_height → events.rs `idx = rel_y / h`). A literal
+       that diverges from the token drifts the Nth painted row away from the Nth
+       click zone (§0.4). macos_dark.css is parsed standalone by the ShellTheme
+       resolver, where `var()` does not resolve, so the value is a literal kept
+       in lock-step with the token by the paint==hit test
+       `macos_menu_item_painted_height_matches_hit_test_token`. */
+    height: 30;
     padding-left: 12;
     padding-right: 12;
     border-radius: 6;

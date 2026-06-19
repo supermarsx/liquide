@@ -264,6 +264,10 @@ dialog {
   border-width: var(--border-width);
   border-style: solid;
   border-color: var(--dialog-border);
+  /* macOS sheet/dialog vibrancy: translucent material + backdrop blur. */
+  backdrop-filter: blur(var(--blur-strong));
+  -webkit-backdrop-filter: blur(var(--blur-strong));
+  box-shadow: var(--shadow-large);
   overflow: hidden;
 }
 
@@ -851,6 +855,10 @@ popover {
   border-width: var(--border-width);
   border-style: solid;
   border-color: var(--popover-border);
+  /* macOS popover vibrancy: translucent material + backdrop blur. */
+  backdrop-filter: blur(var(--blur-strong));
+  -webkit-backdrop-filter: blur(var(--blur-strong));
+  box-shadow: var(--shadow-large);
   overflow: hidden;
 }
 
