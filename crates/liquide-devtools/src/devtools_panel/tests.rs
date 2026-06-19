@@ -52,8 +52,66 @@ fn test_dock_position_change() {
     panel.set_screen_size(1920.0, 1080.0);
     panel.set_dock_position(DockPosition::Right);
     let bounds = panel.panel_bounds();
-    assert_eq!(bounds.x, 1920.0 - 320.0);
+    // Side-dock: the panel is pinned to the right edge, fills the full height,
+    // and its width is the single-source `panel_size` (default 320). Asserting
+    // against `panel_size()` rather than a bare literal keeps this honest if the
+    // default size is ever retuned — but still proves the dock-position geometry
+    // (right edge = screen_width - size; full height).
+    let size = panel.panel_size();
+    assert_eq!(size, 320.0); // default; the single source for the docked width
+    assert_eq!(bounds.x, 1920.0 - size);
+    assert_eq!(bounds.width, size);
     assert_eq!(bounds.height, 1080.0);
+}
+
+/// Mount the full panel `render_template` under a fresh parent and return the
+/// reconciled (doc, devtools-panel root NodeId). Mirrors how the shell / the
+/// separate devtools window reconcile the panel into a live document.
+fn mount_panel_root(panel: &DevToolsPanel) -> (liquide_dom::Document, liquide_dom::NodeId) {
+    use liquide_components::TemplateRenderer;
+    let layout = liquide_layout::tree::LayoutTree::new();
+    let styles = liquide_style_engine::StyleMap::new();
+    let mut doc = liquide_dom::Document::new();
+    let root = doc.root();
+    let host = doc.create_element("devtools-host");
+    doc.append_child(root, host);
+    let tmpl = panel.render_template(&doc, &layout, &styles);
+    // `apply_to_node` reconciles the template root IN PLACE onto `host`, so after
+    // this `host` *is* the `devtools-panel` root (carrying its class + styles).
+    TemplateRenderer::apply_to_node(&mut doc, host, &tmpl);
+    (doc, host)
+}
+
+/// The painted/laid-out width of the docked panel (driven by the inline style
+/// on the panel root, sourced from `config.panel_size`) MUST equal the width of
+/// the hit/bounds region returned by `panel_bounds()`. Single source of truth:
+/// they read the same `panel_size`, so paint == hit. RED if the rendered width
+/// ever diverges from the bounds gate (the original 480px-CSS vs 320-config bug
+/// escalated by t174).
+#[test]
+fn docked_panel_paint_width_matches_bounds_width() {
+    for pos in [DockPosition::Left, DockPosition::Right] {
+        let mut panel = DevToolsPanel::with_defaults();
+        panel.set_screen_size(1920.0, 1080.0);
+        panel.set_dock_position(pos);
+
+        let bounds_w = panel.panel_bounds().width;
+
+        let (doc, panel_root) = mount_panel_root(&panel);
+        let painted = doc
+            .get_inline_style(panel_root, "width")
+            .expect("docked panel root must carry an inline width (single source)");
+        let painted_px: f32 = painted
+            .trim_end_matches("px")
+            .parse()
+            .expect("inline width must be a px length");
+
+        assert_eq!(
+            painted_px, bounds_w,
+            "{:?}: painted width {} must equal bounds width {} (single source)",
+            pos, painted_px, bounds_w
+        );
+    }
 }
 
 #[test]

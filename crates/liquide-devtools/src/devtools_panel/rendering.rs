@@ -41,9 +41,38 @@ impl DevToolsPanel {
 
         let tab_id = self.tab_data_id();
 
-        TemplateNode::el("devtools-panel")
+        let mut panel = TemplateNode::el("devtools-panel")
             .id("devtools-panel")
-            .class(dock_class)
+            .class(dock_class);
+
+        // SINGLE SOURCE OF TRUTH for the docked panel's primary dimension.
+        //
+        // `panel_bounds()` (the hit/bounds region) derives the docked size from
+        // `config.panel_size`. The CSS carries only a *fallback* fixed size, which
+        // can drift from the config (it did: CSS `width: 480px` vs config `320`,
+        // escalated by t174). To keep paint == hit we override the CSS dimension
+        // with an inline style sourced from the SAME `config.panel_size` that
+        // `panel_bounds()` reads. Inline styles win over the stylesheet rule, so
+        // the rendered/laid-out box and the bounds gate cannot disagree.
+        //
+        // `box-sizing: border-box` on `devtools-panel` means this width/height is
+        // the *outer* box (borders included), exactly matching `panel_bounds`.
+        //
+        // Bottom docks set the height; side docks set the width. Detached fills
+        // its own window and Float is a centered overlay — neither derives from
+        // `panel_size`, so they keep their CSS-driven sizing.
+        let size_px = format!("{}px", self.config.panel_size);
+        match self.config.dock_position {
+            DockPosition::Bottom => {
+                panel = panel.style("height", &size_px);
+            }
+            DockPosition::Right | DockPosition::Left => {
+                panel = panel.style("width", &size_px);
+            }
+            DockPosition::Detached | DockPosition::Float => {}
+        }
+
+        panel
             .child(self.render_toolbar_template())
             .child(self.render_content_template(doc, layout, styles, tab_id))
             .child(self.render_statusbar_template())

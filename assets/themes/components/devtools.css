@@ -20,6 +20,12 @@
 
 /* ── Panel container ─────────────────────────────────── */
 
+/* The docked panel's primary dimension (bottom: height; left/right: width) is
+   driven by an inline style sourced from `config.panel_size` in the Rust
+   renderer (render_template) so the painted box matches `panel_bounds()` exactly
+   — see the comment there. The fixed sizes below are FALLBACKS only (used if the
+   inline style is ever absent) and are kept equal to the default panel_size
+   (320px) so the fallback agrees too. Do not treat these as the source of truth. */
 devtools-panel {
     display: flex;
     flex-direction: column;
@@ -27,7 +33,7 @@ devtools-panel {
     bottom: 0;
     left: 0;
     right: 0;
-    height: 320px;
+    height: 320px; /* fallback; real height = config.panel_size (inline) */
     z-index: var(--z-devtools);
     background: var(--bg-secondary);
     border-top-width: 1px;
@@ -44,7 +50,7 @@ devtools-panel.dock-right {
     left: auto;
     right: 0;
     top: 0;
-    width: 480px;
+    width: 320px; /* fallback; real width = config.panel_size (inline) */
     height: auto;
     border-top-width: 0;
     border-left-width: 1px;
@@ -57,7 +63,7 @@ devtools-panel.dock-left {
     left: 0;
     right: auto;
     top: 0;
-    width: 480px;
+    width: 320px; /* fallback; real width = config.panel_size (inline) */
     height: auto;
     border-top-width: 0;
     border-right-width: 1px;
