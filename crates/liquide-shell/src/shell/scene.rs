@@ -18,6 +18,112 @@ use crate::window::{Window, WindowFlags, WindowState};
 
 use super::Shell;
 
+/// Base of the chrome overlay z-band. Background fills get `[0..)`, the workspace
+/// (windows) sits at `WORKSPACE_Z_ORDER`, and every chrome surface gets
+/// `[CHROME_Z_BASE..)`. The software cursor is composited at flatten time with
+/// `z_order = 9999` (render_thread.rs `cursor_flat_node`), so it paints ABOVE the
+/// background band and BELOW the chrome band — the invariant this classifier
+/// preserves.
+const CHROME_Z_BASE: u32 = 10_000;
+
+/// Is `node` a full-screen FILL — a solid color, gradient, or image that covers
+/// (nearly) the whole screen? These are the only node kinds the
+/// `<desktop-background>` element emits for its `background` shorthand. The
+/// 0.9-screen-area guard keeps small images (icons, thumbnails) and bar-shaped
+/// chrome fills (statusbar, dock) out of the desktop-background classification.
+fn is_fullscreen_fill(node: &SceneNode, screen_area: f32) -> bool {
+    let nb = &node.properties.bounds;
+    let node_area = nb.width * nb.height;
+    matches!(
+        node.kind,
+        SceneNodeKind::Background { .. }
+            | SceneNodeKind::GradientFill { .. }
+            // t74-realimg: a `background-image: url(...)` desktop wallpaper
+            // becomes a full-screen Image node. It is the backdrop exactly like a
+            // gradient fill, so it must join the background layer (below windows),
+            // not the chrome overlay (above them).
+            | SceneNodeKind::Image { .. }
+    ) && node_area >= screen_area * 0.9
+}
+
+/// Assign each pipeline node its final `z_order`, splitting the stream into a
+/// background band and a chrome overlay band.
+///
+/// ── Classify the desktop-background fills by ORIGIN, not by count (t182) ──
+///
+/// `<desktop-background>` is the FIRST element in the desktop DOM
+/// (desktop_dom.rs) — `position:fixed; (0,0); 100%×100%` — so the CSS pipeline
+/// paints its fills FIRST, ahead of all other chrome (statusbar, dock, windows,
+/// overlays). Its `background` shorthand can resolve to MORE THAN ONE full-screen
+/// fill: e.g. after the cascade fix the liquid-glass theme layers a
+/// `var(--bg-primary)` solid color (from components.css) UNDER a `url(...)`
+/// wallpaper Image — two stacked full-screen nodes that BOTH originate from the
+/// same element and must BOTH live in the background band, below windows and
+/// below the software cursor (z=9999) and every overlay.
+///
+/// The desktop-background's fills are therefore the LEADING, CONTIGUOUS run of
+/// full-screen fills in the pipeline stream. Pre-pended Glass nodes (chrome
+/// blurs) are never full-screen FILLS, so they don't open the run; the run OPENS
+/// at the first full-screen fill and CLOSES at the first node after it that is
+/// NOT a full-screen fill (the first real chrome content — statusbar / dock /
+/// window draws). Every full-screen fill INSIDE that run is the
+/// desktop-background's own stack and joins the background band, preserving its
+/// emit order (color UNDER image). Any full-screen fill AFTER the run closes is a
+/// later overlay (launcher-overlay / loading-overlay) and stays in the chrome
+/// band, ABOVE windows + cursor — never demoted below them.
+///
+/// This is origin-based: it captures N desktop-background fills (1, 2, or more)
+/// without assuming a fixed count, and without dropping or hacking any node. The
+/// single-fullscreen-bg case (themes with just one fill) still classifies that
+/// one fill as background — identical behaviour to before t182.
+///
+/// Z-order scheme for root's children:
+///   `[0 .. bg_count)`                      — background layer
+///   `WORKSPACE_Z_ORDER` (caller)           — workspace (windows)
+///   `[chrome_z_base .. chrome_z_base+N)`   — chrome overlay layer
+fn classify_pipeline_nodes(
+    pipeline_nodes: Vec<SceneNode>,
+    screen: Rect,
+    chrome_z_base: u32,
+) -> Vec<SceneNode> {
+    let screen_area = screen.width * screen.height;
+    let mut bg_z = 0u32;
+    let mut chrome_z = chrome_z_base;
+    let mut in_desktop_bg_run = false;
+    let mut desktop_bg_run_closed = false;
+
+    let mut out = Vec::with_capacity(pipeline_nodes.len());
+    for mut node in pipeline_nodes {
+        let fullscreen = is_fullscreen_fill(&node, screen_area);
+
+        // A node belongs to the desktop-background origin when it is a
+        // full-screen fill within the LEADING contiguous run (see above). Glass /
+        // other chrome before the first fill leaves the run unopened; the first
+        // non-fill after the run permanently closes it.
+        if !desktop_bg_run_closed {
+            if fullscreen {
+                in_desktop_bg_run = true;
+            } else if in_desktop_bg_run {
+                // First non-fill after the run started → the desktop-background
+                // stack is complete; everything full-screen after this is a later
+                // overlay (chrome), not the desktop background.
+                desktop_bg_run_closed = true;
+            }
+        }
+
+        let is_bg = fullscreen && in_desktop_bg_run && !desktop_bg_run_closed;
+        if is_bg {
+            node.properties.z_order = bg_z;
+            bg_z += 1;
+        } else {
+            node.properties.z_order = chrome_z;
+            chrome_z += 1;
+        }
+        out.push(node);
+    }
+    out
+}
+
 /// Traffic-light button REST colors resolved from the FULL CSS cascade
 /// (t172-e2). See [`Shell::button_colors_from_css`]: the painted decoration
 /// reads its button backgrounds from the active theme resolver, which does NOT
@@ -1315,15 +1421,6 @@ impl Shell {
         //   WORKSPACE_Z_ORDER                    — workspace (windows)
         //   [CHROME_Z_BASE .. CHROME_Z_BASE+N)   — chrome overlay layer
         const WORKSPACE_Z_ORDER: u32 = 100;
-        const CHROME_Z_BASE: u32 = 10_000;
-
-        let screen_area = screen.width * screen.height;
-        let mut bg_z = 0u32;
-        let mut chrome_z = CHROME_Z_BASE;
-        // Only the first full-screen fill is the desktop background.
-        // Subsequent full-screen fills (launcher-overlay, loading-overlay)
-        // are overlays that must render ABOVE windows, not below.
-        let mut found_desktop_bg = false;
 
         // Every shell chrome surface (statusbar, dock, launcher, notifications,
         // menus, overlays) is CSS-driven, so the CSS pipeline always emits at
@@ -1331,35 +1428,12 @@ impl Shell {
         // The old imperative `thread_coordinator` fallback track (composited
         // only when the pipeline produced nothing) was therefore dead and has
         // been retired (t112-p9).
-        for mut node in pipeline_nodes {
-            let nb = &node.properties.bounds;
-            let node_area = nb.width * nb.height;
-            let is_fullscreen_fill = matches!(
-                node.kind,
-                SceneNodeKind::Background { .. }
-                    | SceneNodeKind::GradientFill { .. }
-                    // t74-realimg: a `background-image: url(...)` desktop wallpaper
-                    // becomes a full-screen Image node. It is the backdrop exactly
-                    // like a gradient fill, so it must join the background layer
-                    // (below windows), not the chrome overlay (above them). Without
-                    // this, an opaque full-screen wallpaper paints OVER every
-                    // window. The 0.9 screen-area guard keeps small images (icons,
-                    // thumbnails) out of the background layer.
-                    | SceneNodeKind::Image { .. }
-            ) && node_area >= screen_area * 0.9;
-
-            let is_bg = is_fullscreen_fill && !found_desktop_bg;
-            if is_bg {
-                found_desktop_bg = true;
-            }
-
-            if is_bg {
-                node.properties.z_order = bg_z;
-                bg_z += 1;
-            } else {
-                node.properties.z_order = chrome_z;
-                chrome_z += 1;
-            }
+        //
+        // `classify_pipeline_nodes` assigns each pipeline node its z_order:
+        // desktop-background fills → background band ([0..); below windows +
+        // cursor + overlays), everything else → chrome band ([CHROME_Z_BASE..);
+        // above them). See the function for the origin-based run heuristic.
+        for node in classify_pipeline_nodes(pipeline_nodes, screen, CHROME_Z_BASE) {
             root.add_child(node);
         }
 
@@ -3459,6 +3533,256 @@ mod left_traffic_light_tests {
             (colors.minimize_bg.r, colors.minimize_bg.g, colors.minimize_bg.b),
             (colors.maximize_bg.r, colors.maximize_bg.g, colors.maximize_bg.b),
             "minimize (yellow) and maximize (green) must be distinct colors"
+        );
+    }
+}
+
+#[cfg(test)]
+mod wallpaper_zorder_tests {
+    //! t182-wallpaper-zorder: the desktop-background `<desktop-background>`
+    //! element can emit MORE THAN ONE full-screen fill (after the cascade fix,
+    //! the liquid-glass theme layers a `var(--bg-primary)` solid color UNDER a
+    //! `url(...)` wallpaper Image). BOTH fills originate from the same element and
+    //! must land in the BACKGROUND band — below windows, below the software
+    //! cursor (z=9999), and below every overlay — in their emit order (color
+    //! UNDER image). The previous classifier captured only the FIRST full-screen
+    //! fill as desktop-background and bumped the SECOND (the wallpaper Image) into
+    //! the chrome band at z>10000, so the wallpaper painted OVER the cursor and
+    //! overlays. This suite proves the origin-based (contiguous-run) classifier
+    //! keeps ALL desktop-background fills in the background band, in order, and
+    //! still promotes LATER overlay fills (launcher/loading) above windows +
+    //! cursor.
+    //!
+    //! TEETH: revert `classify_pipeline_nodes` to "first full-screen fill only"
+    //! and `multi_fill_desktop_background_all_below_cursor` goes RED — the second
+    //! fill (the wallpaper) lands at z>=CURSOR_Z, above the cursor.
+
+    use super::{CHROME_Z_BASE, classify_pipeline_nodes};
+    use liquide_compositor::geometry::Rect;
+    use liquide_compositor::pixel::Color;
+    use liquide_compositor::scene::{
+        GradientSpec, ImageFit, NodeProperties, SceneNode, SceneNodeKind,
+    };
+
+    const W: f32 = 1280.0;
+    const H: f32 = 720.0;
+
+    /// The software cursor's flatten-time z_order (render_thread.rs
+    /// `cursor_flat_node`). Background nodes MUST stay strictly below this so the
+    /// cursor paints on top of the wallpaper; chrome overlays MUST stay at/above
+    /// it so menus / dock / overlays paint on top of the cursor.
+    const CURSOR_Z: u32 = 9999;
+
+    fn screen() -> Rect {
+        Rect::new(0.0, 0.0, W, H)
+    }
+
+    fn fullscreen() -> Rect {
+        Rect::new(0.0, 0.0, W, H)
+    }
+
+    fn node(id: u64, kind: SceneNodeKind, bounds: Rect) -> SceneNode {
+        SceneNode::new(id, kind, NodeProperties::new(bounds))
+    }
+
+    /// A full-screen solid color fill (the desktop-background's `--bg-primary`).
+    fn color_fill(id: u64) -> SceneNode {
+        node(
+            id,
+            SceneNodeKind::Background {
+                color: Color::new(12, 14, 28, 255),
+            },
+            fullscreen(),
+        )
+    }
+
+    /// A full-screen wallpaper Image fill (the desktop-background's `url(...)`).
+    fn image_fill(id: u64) -> SceneNode {
+        node(
+            id,
+            SceneNodeKind::Image {
+                image_id: 42,
+                width: W as u32,
+                height: H as u32,
+                fit: ImageFit::Cover,
+            },
+            fullscreen(),
+        )
+    }
+
+    /// A full-screen gradient fill (alternate desktop-background backdrop).
+    fn gradient_fill(id: u64) -> SceneNode {
+        node(
+            id,
+            SceneNodeKind::GradientFill {
+                gradient: GradientSpec::Linear {
+                    start_x: 0.0,
+                    start_y: 0.0,
+                    end_x: 0.0,
+                    end_y: 1.0,
+                    stops: vec![(0.0, Color::new(14, 16, 44, 255))],
+                    repeating: false,
+                },
+            },
+            fullscreen(),
+        )
+    }
+
+    /// A bar-shaped chrome fill (e.g. the statusbar background): a `Background`
+    /// node that does NOT cover the screen — the first real chrome content after
+    /// the desktop-background run, which CLOSES the run.
+    fn chrome_bar(id: u64) -> SceneNode {
+        node(
+            id,
+            SceneNodeKind::Background {
+                color: Color::new(20, 20, 30, 200),
+            },
+            Rect::new(0.0, 0.0, W, 36.0),
+        )
+    }
+
+    /// A full-screen overlay fill emitted LATER in the stream (launcher /
+    /// loading overlay) — must stay in the chrome band, above the cursor.
+    fn overlay_fill(id: u64) -> SceneNode {
+        node(
+            id,
+            SceneNodeKind::Background {
+                color: Color::new(0, 0, 0, 230),
+            },
+            fullscreen(),
+        )
+    }
+
+    fn z_of(nodes: &[SceneNode], id: u64) -> u32 {
+        nodes
+            .iter()
+            .find(|n| n.id == id)
+            .unwrap_or_else(|| panic!("node {id} missing from classified output"))
+            .properties
+            .z_order
+    }
+
+    /// THE REGRESSION: desktop-background emits a color fill THEN a wallpaper
+    /// Image (two full-screen fills, same origin). BOTH must land in the
+    /// background band strictly BELOW the cursor, with the color UNDER the image.
+    #[test]
+    fn multi_fill_desktop_background_all_below_cursor() {
+        // Stream order mirrors the real pipeline: desktop-background's stacked
+        // fills first (color under image), then real chrome (statusbar bar).
+        let nodes = classify_pipeline_nodes(
+            vec![color_fill(1), image_fill(2), chrome_bar(3)],
+            screen(),
+            CHROME_Z_BASE,
+        );
+
+        let z_color = z_of(&nodes, 1);
+        let z_image = z_of(&nodes, 2);
+        let z_chrome = z_of(&nodes, 3);
+
+        // BOTH desktop-background fills are in the background band, BELOW the
+        // cursor — so the cursor paints over the wallpaper (the t181 regression
+        // was the image at z>10000, above the cursor).
+        assert!(
+            z_color < CURSOR_Z,
+            "desktop-background color fill must be below the cursor (z={z_color} < {CURSOR_Z})"
+        );
+        assert!(
+            z_image < CURSOR_Z,
+            "WALLPAPER-ABOVE-CURSOR REGRESSION: the desktop-background wallpaper \
+             Image is at z={z_image} (cursor z={CURSOR_Z}); the second full-screen \
+             fill was bumped into the chrome band and paints OVER the cursor. The \
+             classifier must keep ALL desktop-background fills in the background band."
+        );
+
+        // Relative order preserved: color UNDER image.
+        assert!(
+            z_color < z_image,
+            "color fill (z={z_color}) must paint UNDER the wallpaper image (z={z_image})"
+        );
+
+        // The first real chrome content (statusbar bar) is in the chrome band,
+        // ABOVE the cursor.
+        assert!(
+            z_chrome >= CHROME_Z_BASE && z_chrome > CURSOR_Z,
+            "chrome content must be in the chrome band above the cursor (z={z_chrome})"
+        );
+    }
+
+    /// A LATER full-screen fill (overlay), appearing AFTER chrome content closed
+    /// the desktop-background run, must stay in the chrome band above the cursor
+    /// — it is NOT demoted into the background just because it is full-screen.
+    #[test]
+    fn later_overlay_fullscreen_fill_stays_above_cursor() {
+        let nodes = classify_pipeline_nodes(
+            vec![
+                color_fill(1),   // desktop-background color
+                image_fill(2),   // desktop-background wallpaper
+                chrome_bar(3),   // statusbar — closes the bg run
+                overlay_fill(4), // launcher/loading overlay — full-screen, LATER
+            ],
+            screen(),
+            CHROME_Z_BASE,
+        );
+
+        assert!(z_of(&nodes, 1) < CURSOR_Z, "bg color below cursor");
+        assert!(z_of(&nodes, 2) < CURSOR_Z, "bg image below cursor");
+
+        let z_overlay = z_of(&nodes, 4);
+        assert!(
+            z_overlay > CURSOR_Z,
+            "a LATER full-screen overlay fill must stay above the cursor \
+             (z={z_overlay} > {CURSOR_Z}); it is an overlay, not the desktop background"
+        );
+    }
+
+    /// Glass chrome blur nodes are PRE-PENDED before the paint nodes (they are
+    /// never full-screen FILLS), so they must not open the desktop-background run
+    /// nor steal the background band — and the bg fills after them still classify
+    /// as background.
+    #[test]
+    fn leading_glass_chrome_does_not_break_bg_run() {
+        use liquide_compositor::scene::GlassParams;
+        let glass = node(
+            10,
+            SceneNodeKind::Glass(GlassParams {
+                blur_radius: 12,
+                tint_color: Color::new(0, 0, 0, 80),
+                inner_glow: true,
+                parallax: false,
+            }),
+            fullscreen(), // even a full-screen glass blur is NOT a fill
+        );
+
+        let nodes = classify_pipeline_nodes(
+            vec![glass, color_fill(1), image_fill(2), chrome_bar(3)],
+            screen(),
+            CHROME_Z_BASE,
+        );
+
+        // Glass is chrome (above cursor); both bg fills are background (below).
+        assert!(z_of(&nodes, 10) >= CHROME_Z_BASE, "glass blur is chrome");
+        assert!(z_of(&nodes, 1) < CURSOR_Z, "bg color below cursor");
+        assert!(z_of(&nodes, 2) < CURSOR_Z, "bg image below cursor");
+        assert!(z_of(&nodes, 1) < z_of(&nodes, 2), "color under image");
+    }
+
+    /// Single-fullscreen-bg case (themes with one fill, e.g. a gradient-only
+    /// desktop-background): the lone fill still classifies as background below
+    /// the cursor — no regression to the common case.
+    #[test]
+    fn single_fill_desktop_background_below_cursor() {
+        let nodes = classify_pipeline_nodes(
+            vec![gradient_fill(1), chrome_bar(2)],
+            screen(),
+            CHROME_Z_BASE,
+        );
+        assert!(
+            z_of(&nodes, 1) < CURSOR_Z,
+            "single desktop-background gradient must be in the background band"
+        );
+        assert!(
+            z_of(&nodes, 2) > CURSOR_Z,
+            "chrome content must stay above the cursor"
         );
     }
 }
