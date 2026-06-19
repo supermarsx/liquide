@@ -263,6 +263,30 @@ impl ElementTreeInspector {
         }
     }
 
+    /// A cheap, order-independent fingerprint of the inspector's EXPANSION state
+    /// (the set of expanded node IDs + the auto-expand depth). It changes whenever
+    /// a tree node is expanded or collapsed, so the host's devtools refresh
+    /// throttle can detect a tree expand/collapse interaction and rebuild the tree
+    /// snapshot promptly (the snapshot's `children` are materialised from this set
+    /// at `build_snapshot` time, so a toggle has no visible effect until the next
+    /// rebuild). Computed in O(n) over the expanded set (small) with no DOM walk.
+    pub fn expansion_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        // XOR each id's hash so the result is independent of iteration order
+        // (HashSet has no stable order), then fold in the count + depth.
+        let mut acc: u64 = 0;
+        for id in &self.expanded {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            id.hash(&mut h);
+            acc ^= h.finish();
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        acc.hash(&mut h);
+        (self.expanded.len() as u64).hash(&mut h);
+        self.auto_expand_depth.hash(&mut h);
+        h.finish()
+    }
+
     /// Get a flat list of visible nodes for rendering in a list view.
     pub fn visible_nodes(&self) -> Vec<&InspectorNode> {
         let mut result = Vec::new();

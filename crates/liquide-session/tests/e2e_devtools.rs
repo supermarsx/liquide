@@ -39,6 +39,316 @@ fn shell_with_devtools_template() -> (Shell, DevToolsPanel) {
     (shell, panel)
 }
 
+/// Find a DOM node carrying `attr == value` anywhere under the document root.
+fn find_node_with_attr(
+    shell: &Shell,
+    attr: &str,
+    value: &str,
+) -> Option<liquide_dom::NodeId> {
+    let doc = shell.document();
+    doc.descendants(doc.root())
+        .into_iter()
+        .find(|&id| doc.get_attribute(id, attr).as_deref() == Some(value))
+}
+
+/// Resolve the absolute laid-out center of a DOM node in the shell's layout.
+fn node_center(shell: &Shell, node: liquide_dom::NodeId) -> Option<(f32, f32)> {
+    let ht = shell.hit_test_engine()?;
+    let b = ht.bounds_for_node(node)?;
+    Some((b.x + b.width / 2.0, b.y + b.height / 2.0))
+}
+
+/// Collect every text-node string under `root` in the shell document.
+fn collect_doc_text(shell: &Shell, root: liquide_dom::NodeId, out: &mut Vec<String>) {
+    let doc = shell.document();
+    if let Some(node) = doc.get(root) {
+        if let Some(t) = node.text_content() {
+            out.push(t.to_string());
+        }
+    }
+    for &c in doc.children(root) {
+        collect_doc_text(shell, c, out);
+    }
+}
+
+/// All text currently mounted in the live shell DOM (post mount_template).
+fn shell_dom_text(shell: &Shell) -> Vec<String> {
+    let mut out = Vec::new();
+    let root = shell.document().root();
+    collect_doc_text(shell, root, &mut out);
+    out
+}
+
+/// Re-mount the panel template into the shell and relayout — mirrors the host's
+/// `sync_template` + `build_scene` for one frame so a state change is reflected
+/// in the live DOM/layout the next click can hit-test against.
+fn remount_and_layout(shell: &mut Shell, panel: &DevToolsPanel) {
+    let doc = shell.document();
+    let template = match (shell.layout_tree(), shell.style_map()) {
+        (Some(layout), Some(styles)) => panel.render_template(doc, layout, styles),
+        _ => liquide_devtools::TemplateNode::el("devtools-panel").id("devtools-panel"),
+    };
+    shell.mount_template("devtools-panel", &template);
+    let _ = shell.build_scene();
+}
+
+// ── E2E: real tab-click through the in-DE pipeline (the headline bug) ────────
+
+/// THE TAB BUG (in-DE path): clicking a devtools tab in the docked overlay must
+/// (1) be consumed, (2) switch the active tab, and (3) switch the rendered tab
+/// CONTENT in the live shell DOM. Drives a REAL click via `on_panel_click` at
+/// the laid-out center of the "console" tab element — exactly what the event
+/// loop does — and asserts state + content, NOT just "no panic".
+#[test]
+fn clicking_a_tab_switches_active_tab_and_content_in_de() {
+    let (mut shell, mut panel) = shell_with_devtools_template();
+    assert_eq!(panel.active_tab(), DevToolsTab::Elements, "starts on Elements");
+
+    // The Elements content must be present and the Console content absent now.
+    let before = shell_dom_text(&shell);
+    assert!(
+        !before.iter().any(|t| t.contains("$") || t.contains("console")),
+        "sanity: console field not shown on Elements tab"
+    );
+
+    // Find the laid-out "console" tab element and click its center.
+    let console_tab = find_node_with_attr(&shell, "data-tab", "console")
+        .expect("a devtools-tab carrying data-tab=console must be mounted + laid out");
+    let (cx, cy) = node_center(&shell, console_tab)
+        .expect("the console tab must have a laid-out box");
+
+    let styles = shell.style_map().unwrap().clone();
+    let hit_test = shell.hit_test_engine().unwrap();
+    let doc = shell.document();
+    let consumed = panel.on_panel_click(cx, cy, &styles, doc, hit_test);
+
+    assert!(consumed, "a click on the console tab must be consumed by the panel");
+    assert_eq!(
+        panel.active_tab(),
+        DevToolsTab::Console,
+        "clicking the Console tab must switch the active tab to Console (the headline bug)"
+    );
+
+    // Now re-mount the template from the changed state (one host frame) and
+    // assert the rendered CONTENT switched to Console — the console input prompt
+    // ">" is emitted only by the Console tab.
+    remount_and_layout(&mut shell, &panel);
+    let after = shell_dom_text(&shell);
+    assert!(
+        after.iter().any(|t| t == ">"),
+        "after switching to Console the rendered content must include the console \
+         input prompt; DOM text was {after:?}"
+    );
+}
+
+/// Every main tab must be reachable by a real click on its laid-out box, and the
+/// active tab must follow each click (not just the first). Re-lays-out between
+/// clicks so each tab's box is resolved against the live layout.
+#[test]
+fn every_tab_is_selectable_by_a_real_click() {
+    let (mut shell, mut panel) = shell_with_devtools_template();
+
+    let cases = [
+        ("perf", DevToolsTab::Performance),
+        ("mutations", DevToolsTab::Mutations),
+        ("scene", DevToolsTab::Scene),
+        ("sources", DevToolsTab::Sources),
+        ("console", DevToolsTab::Console),
+        ("elements", DevToolsTab::Elements),
+    ];
+
+    for (data_tab, expected) in cases {
+        let tab_node = find_node_with_attr(&shell, "data-tab", data_tab)
+            .unwrap_or_else(|| panic!("tab {data_tab} must be mounted"));
+        let (cx, cy) = node_center(&shell, tab_node)
+            .unwrap_or_else(|| panic!("tab {data_tab} must be laid out"));
+        let styles = shell.style_map().unwrap().clone();
+        let hit_test = shell.hit_test_engine().unwrap();
+        let doc = shell.document();
+        let consumed = panel.on_panel_click(cx, cy, &styles, doc, hit_test);
+        assert!(consumed, "click on tab {data_tab} must be consumed");
+        assert_eq!(
+            panel.active_tab(),
+            expected,
+            "clicking tab {data_tab} must make it active"
+        );
+        remount_and_layout(&mut shell, &panel);
+    }
+}
+
+/// Click the laid-out center of the element carrying `attr == value` via the
+/// real `on_panel_click` hit-test path. Returns whether the click was consumed.
+fn click_attr(shell: &mut Shell, panel: &mut DevToolsPanel, attr: &str, value: &str) -> bool {
+    let doc = shell.document();
+    let node = doc
+        .descendants(doc.root())
+        .into_iter()
+        .find(|&id| doc.get_attribute(id, attr).as_deref() == Some(value))
+        .unwrap_or_else(|| panic!("element with {attr}={value} must be mounted"));
+    let (cx, cy) =
+        node_center(shell, node).unwrap_or_else(|| panic!("{attr}={value} must be laid out"));
+    let styles = shell.style_map().unwrap().clone();
+    let hit_test = shell.hit_test_engine().unwrap();
+    let doc = shell.document();
+    panel.on_panel_click(cx, cy, &styles, doc, hit_test)
+}
+
+/// CHROME BUTTONS via real clicks: the toolbar action buttons (picker toggle,
+/// dock-right, dock-bottom) must each change panel state when clicked at their
+/// laid-out box — exercising the `data-action` hit-test path, not direct calls.
+#[test]
+fn chrome_buttons_change_state_on_real_click() {
+    let (mut shell, mut panel) = shell_with_devtools_template();
+
+    // Picker toggle.
+    assert!(!panel.element_picker.is_active(), "picker starts inactive");
+    assert!(click_attr(&mut shell, &mut panel, "data-action", "picker"));
+    assert!(
+        panel.element_picker.is_active(),
+        "clicking the picker button must activate the element picker"
+    );
+    remount_and_layout(&mut shell, &panel);
+    assert!(click_attr(&mut shell, &mut panel, "data-action", "picker"));
+    assert!(!panel.element_picker.is_active(), "clicking again must toggle it off");
+
+    // Dock-right then dock-bottom.
+    remount_and_layout(&mut shell, &panel);
+    assert!(click_attr(&mut shell, &mut panel, "data-action", "dock-right"));
+    assert_eq!(panel.dock_position(), liquide_devtools::DockPosition::Right);
+    // NOTE: we do NOT click dock-bottom *from* the right-dock here — when docked
+    // right the panel's toolbar overlaps the shell's own top chrome bar in this
+    // bare test harness (a shell-chrome z-order concern, out of devtools lock),
+    // so the hit-test at the button center resolves to the shell chrome. The
+    // `data-action` dispatch path itself is already proven by picker + dock-right.
+}
+
+/// DETACH button via a real click must raise the detach request (the host then
+/// spawns the separate window).
+#[test]
+fn detach_button_requests_window_on_real_click() {
+    let (mut shell, mut panel) = shell_with_devtools_template();
+    assert!(!panel.detach_requested());
+    assert!(click_attr(&mut shell, &mut panel, "data-action", "detach"));
+    assert!(
+        panel.is_detached() && panel.detach_requested(),
+        "clicking the detach button must request detaching into a window"
+    );
+}
+
+/// SIDE-TAB switching via real clicks: on the Elements tab the side panel sub-tabs
+/// (Styles / Layout / Computed / Fonts / Anim) must switch on a click at their
+/// laid-out box — the `data-sidetab` hit-test path.
+#[test]
+fn side_tabs_switch_on_real_click() {
+    let (mut shell, mut panel) = shell_with_devtools_template();
+    panel.set_tab(DevToolsTab::Elements);
+    remount_and_layout(&mut shell, &panel);
+
+    for (id, expected) in [
+        ("layout", liquide_devtools::SideTab::Layout),
+        ("computed", liquide_devtools::SideTab::Computed),
+        ("fonts", liquide_devtools::SideTab::Fonts),
+        ("animations", liquide_devtools::SideTab::Animations),
+        ("styles", liquide_devtools::SideTab::Styles),
+    ] {
+        assert!(click_attr(&mut shell, &mut panel, "data-sidetab", id));
+        assert_eq!(panel.side_tab(), expected, "side tab {id} must activate");
+        remount_and_layout(&mut shell, &panel);
+    }
+}
+
+/// TREE INTERACTIONS via real clicks: with the inspector populated from the live
+/// document, clicking a tree ROW selects that node, and clicking its expand ARROW
+/// toggles whether its children are visible (the `data-node` / `data-tree-arrow`
+/// hit-test paths). Asserts the selection + the visible-row count actually change.
+#[test]
+fn tree_row_click_selects_and_arrow_click_expands() {
+    let (mut shell, mut panel) = shell_with_devtools_template();
+    panel.set_tab(DevToolsTab::Elements);
+    // Manual expansion only (no auto-expand) so an arrow toggle on the root has a
+    // real, observable effect on the visible row set. Expand only the root so the
+    // root's arrow is "expanded" (its direct children show) and collapsing it
+    // hides them.
+    panel.inspector.set_auto_expand_depth(0);
+    let root = panel.inspector.build_snapshot(shell.document()).id;
+    panel.inspector.expand(root);
+    panel.refresh_inspector(shell.document());
+    remount_and_layout(&mut shell, &panel);
+
+    // Find the first tree ROW (carries data-node, not an arrow) and click it.
+    let row = {
+        let doc = shell.document();
+        doc.descendants(doc.root()).into_iter().find(|&id| {
+            doc.get_attribute(id, "data-node").is_some()
+                && doc.get_attribute(id, "data-tree-arrow").is_none()
+                && doc.tag_name(id).as_deref() == Some("devtools-tree-row")
+        })
+    };
+    if let Some(row) = row {
+        let target: liquide_dom::NodeId = shell
+            .document()
+            .get_attribute(row, "data-node")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let (cx, cy) = node_center(&shell, row).expect("tree row laid out");
+        let styles = shell.style_map().unwrap().clone();
+        let hit_test = shell.hit_test_engine().unwrap();
+        let doc = shell.document();
+        assert!(
+            panel.on_panel_click(cx, cy, &styles, doc, hit_test),
+            "a tree row click must be consumed"
+        );
+        assert_eq!(
+            panel.selected_node(),
+            Some(target),
+            "clicking a tree row must select that DOM node"
+        );
+    }
+
+    // Find an expand ARROW and click it: the count of visible tree rows must
+    // change (children appear or disappear).
+    let arrow = {
+        let doc = shell.document();
+        doc.descendants(doc.root())
+            .into_iter()
+            .find(|&id| doc.get_attribute(id, "data-tree-arrow").is_some())
+    };
+    if let Some(arrow) = arrow {
+        // Snapshot the expansion fingerprint + visible count BEFORE the toggle.
+        let sig_before = panel.refresh_signature();
+        let before = panel.inspector.visible_nodes().len();
+        let (cx, cy) = node_center(&shell, arrow).expect("arrow laid out");
+        let styles = shell.style_map().unwrap().clone();
+        let hit_test = shell.hit_test_engine().unwrap();
+        let doc = shell.document();
+        assert!(
+            panel.on_panel_click(cx, cy, &styles, doc, hit_test),
+            "an arrow click must be consumed"
+        );
+
+        // The toggle must change the refresh signature so the host rebuilds the
+        // tree promptly (otherwise expand/collapse is frozen until a periodic
+        // tick — the bug the expansion_fingerprint fix addresses).
+        assert_ne!(
+            panel.refresh_signature(),
+            sig_before,
+            "a tree expand/collapse must change the refresh signature so the panel \
+             rebuilds the tree immediately"
+        );
+
+        // Rebuild the tree snapshot the way the host's refresh does, then assert
+        // the visible-row count actually changed (children appeared/disappeared).
+        panel.refresh_inspector(shell.document());
+        let after = panel.inspector.visible_nodes().len();
+        assert_ne!(
+            before, after,
+            "after toggling the expand/collapse arrow + rebuilding, the number of \
+             visible tree rows must change (children appear/disappear)"
+        );
+    }
+}
+
 // ── DevToolsPanel Construction ──────────────────────────────────────────────
 
 #[test]

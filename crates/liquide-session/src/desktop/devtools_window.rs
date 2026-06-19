@@ -489,6 +489,102 @@ mod tests {
         );
     }
 
+    /// TEXT-OVERLAP SWEEP (t167 §"two_consecutive_devtools_rows_do_not_overlap"):
+    /// two consecutive stacked rows in the devtools window must not paint their
+    /// glyph ink into each other's vertical band. This is the pixel-level guard
+    /// against the bitmap-mis-advance / wrong-y jumble the user reported as
+    /// "overlapping text". It rasterizes the REAL window pipeline (font-seeded,
+    /// t170) and asserts the painted-ink y-bands of two known Performance-tab
+    /// labels are DISJOINT in y — a layout that stacks but a paint that overlaps
+    /// would be RED.
+    #[test]
+    fn two_consecutive_window_rows_do_not_overlap_in_painted_ink() {
+        let (mut window, shell, mut panel) = detached_window_and_panel();
+        panel.set_tab(DevToolsTab::Performance);
+        // Push a frame snapshot so the Performance tab has its metric rows.
+        panel.push_frame_snapshot(liquide_devtools::FrameSnapshot {
+            frame_number: 42,
+            fps: 60.0,
+            avg_frame_ms: 16.0,
+            css_rule_count: 10,
+            css_variable_count: 5,
+            stylesheet_count: 3,
+            viewport_w: window.width as f32,
+            viewport_h: window.height as f32,
+        });
+        let (layout, styles) = (
+            shell.layout_tree().expect("layout"),
+            shell.style_map().expect("styles"),
+        );
+        let scene = window.build_scene(&panel, shell.document(), layout, styles);
+
+        // Two stacked rows from the "DOM Statistics" section.
+        let b1 = DevToolsWindow::find_text_node_bounds(&scene, "Node count")
+            .expect("'Node count' row label must exist on the Performance tab");
+        let b2 = DevToolsWindow::find_text_node_bounds(&scene, "Layout boxes")
+            .expect("'Layout boxes' row label must exist on the Performance tab");
+
+        // Layout sanity: the rows stack (distinct y) and do not overlap as boxes.
+        let (top, bot) = if b1.1 <= b2.1 { (b1, b2) } else { (b2, b1) };
+        assert!(
+            top.1 + top.3 <= bot.1 + 0.5,
+            "sanity: the two row label BOXES must stack without overlap \
+             (top={top:?} bot={bot:?})"
+        );
+
+        // Rasterize twice to drain the async glyph worker (t167 capture caveat).
+        let _ = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
+        let px = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
+        let fb_w = window.width;
+        let fb_h = window.height;
+
+        // Painted-ink y extent of a label's text, scanned over a generous x span
+        // starting at its origin. "ink" = luma far from the local row background.
+        // The y scan is the label box padded by a small margin (half a row gap):
+        // tight enough that it measures THIS row's own ink, but with enough slack
+        // that a row whose glyphs were mis-advanced DOWNWARD into the next row's
+        // band still shows up as an enlarged band that crosses the boundary.
+        let margin = 2.0f32;
+        let ink_y_band = |b: (f32, f32, f32, f32)| -> Option<(u32, u32)> {
+            let x0 = b.0.max(0.0).floor() as u32;
+            let y_lo = (b.1 - margin).max(0.0).floor() as u32;
+            let y_hi = ((b.1 + b.3 + margin).ceil() as u32).min(fb_h);
+            let w = ((b.2 * 2.0).ceil() as u32).min(fb_w.saturating_sub(x0));
+            let mut min_y: Option<u32> = None;
+            let mut max_y: Option<u32> = None;
+            for y in y_lo..y_hi {
+                for x in x0..(x0 + w) {
+                    let idx = ((y * fb_w + x) * 4) as usize;
+                    if idx + 4 <= px.len() {
+                        // Label ink is light over the dark panel bg.
+                        if luma(&px[idx..idx + 4]) > 110 {
+                            min_y = Some(min_y.map_or(y, |m| m.min(y)));
+                            max_y = Some(max_y.map_or(y, |m| m.max(y)));
+                        }
+                    }
+                }
+            }
+            match (min_y, max_y) {
+                (Some(a), Some(b)) => Some((a, b)),
+                _ => None,
+            }
+        };
+
+        let band_top = ink_y_band(top).expect("top row must paint glyph ink");
+        let band_bot = ink_y_band(bot).expect("bottom row must paint glyph ink");
+
+        // The painted ink of the top row must END at or above where the bottom
+        // row's ink BEGINS — i.e. the ink bands are disjoint in y (no overlap).
+        assert!(
+            band_top.1 < band_bot.0,
+            "painted glyph ink of two consecutive devtools rows must NOT overlap in \
+             y: top row ink y∈[{},{}], bottom row ink y∈[{},{}] — overlap means the \
+             paint-time advance/positioning jumbles the rows (the reported \
+             'overlapping text')",
+            band_top.0, band_top.1, band_bot.0, band_bot.1
+        );
+    }
+
     #[test]
     fn window_text_paint_matches_real_font_not_the_bitmap_fallback() {
         // TEETH (the assertion that goes RED if the fix is reverted):

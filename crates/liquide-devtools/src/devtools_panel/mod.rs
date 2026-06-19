@@ -481,6 +481,10 @@ impl DevToolsPanel {
         (self.scroll_offset as i64).hash(&mut h);
         self.selected_node.hash(&mut h);
         self.inspector.hovered().hash(&mut h);
+        // Tree expand/collapse: the materialised tree snapshot is rebuilt from the
+        // inspector's expanded set, so a toggle must bump the signature or the
+        // expand/collapse interaction stays frozen until the next periodic tick.
+        self.inspector.expansion_fingerprint().hash(&mut h);
         self.element_picker.is_active().hash(&mut h);
         // DOM churn: the running total of observed mutations only advances when
         // the live document actually changed, so a bump means the inspector /

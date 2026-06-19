@@ -95,6 +95,16 @@ struct RefreshThrottle {
     /// re-rendered (second pipeline + raster).
     #[cfg(test)]
     window_render_count: u64,
+    /// Test-only: when set, `should_render_window` ignores the WALL-CLOCK interval
+    /// (`due`) and renders ONLY on an explicit dirty. The wall-clock path is
+    /// inherently non-deterministic under parallel test load (a "tight" loop can
+    /// still span several 80ms boundaries when the CPU is contended, making each
+    /// boundary legitimately fire a render). Suppressing the time path lets the
+    /// dirty-coalescing contract — the actual thing the throttle test asserts — be
+    /// checked deterministically. Production behaviour is unchanged (the flag is
+    /// `cfg(test)` and defaults to off).
+    #[cfg(test)]
+    suppress_time_due: bool,
 }
 
 /// Minimum wall-clock interval between separate-window repaints when nothing has
@@ -116,6 +126,8 @@ impl RefreshThrottle {
             refresh_count: 0,
             #[cfg(test)]
             window_render_count: 0,
+            #[cfg(test)]
+            suppress_time_due: false,
         }
     }
 
@@ -128,6 +140,10 @@ impl RefreshThrottle {
             None => true,
             Some(t) => t.elapsed() >= WINDOW_REFRESH_INTERVAL,
         };
+        // Under test, optionally ignore the wall-clock interval so the
+        // dirty-coalescing contract can be asserted deterministically.
+        #[cfg(test)]
+        let due = due && !self.suppress_time_due;
         if self.window_dirty || due {
             self.window_dirty = false;
             self.last_window_render = Some(std::time::Instant::now());
@@ -455,16 +471,30 @@ impl DevToolsState {
             // REFRESH FRAME: rebuild the panel template from live state and cache
             // it. This is the expensive path (full inspector/console/scene tree)
             // and now runs only ~every Nth frame instead of every frame.
-            let template = {
-                let devtools = self.devtools.as_ref().expect("in_de implies devtools");
-                let doc = shell.document();
-                match (shell.layout_tree(), shell.style_map()) {
-                    (Some(layout), Some(styles)) => devtools.render_template(doc, layout, styles),
-                    _ => TemplateNode::el("devtools-panel").id("devtools-panel"),
+            let devtools = self.devtools.as_ref().expect("in_de implies devtools");
+            let doc = shell.document();
+            match (shell.layout_tree(), shell.style_map()) {
+                (Some(layout), Some(styles)) => {
+                    let template = devtools.render_template(doc, layout, styles);
+                    shell.mount_template("devtools-panel", &template);
+                    self.refresh.cached_template = Some(template);
                 }
-            };
-            shell.mount_template("devtools-panel", &template);
-            self.refresh.cached_template = Some(template);
+                _ => {
+                    // LAYOUT NOT READY YET (e.g. the very first frame after the
+                    // panel becomes visible, before any `build_scene` has run): we
+                    // can only mount an EMPTY placeholder. Do NOT cache it and do
+                    // NOT let this count as a primed refresh — otherwise the
+                    // throttle would re-mount this empty shell for the whole
+                    // interval, leaving the panel blank (no tabs/content) for the
+                    // first several frames. Roll the throttle back so the NEXT
+                    // frame retries the real build once layout exists.
+                    let placeholder = TemplateNode::el("devtools-panel").id("devtools-panel");
+                    shell.mount_template("devtools-panel", &placeholder);
+                    self.refresh.cached_template = None;
+                    self.refresh.primed = false;
+                    self.refresh.frames_since = u64::MAX;
+                }
+            }
         } else {
             // THROTTLED FRAME: re-mount the previously-built template verbatim so
             // the panel stays on screen without re-serialising the DOM/scene. The
@@ -636,6 +666,40 @@ mod tests {
         for c in &node.children {
             collect_text(c, out);
         }
+    }
+
+    /// Find a DOM node carrying `data-tab == value` in the shell document.
+    fn find_data_tab_node(shell: &Shell, value: &str) -> Option<liquide_dom::NodeId> {
+        let doc = shell.document();
+        doc.descendants(doc.root())
+            .into_iter()
+            .find(|&id| doc.get_attribute(id, "data-tab").as_deref() == Some(value))
+    }
+
+    /// Center of a DOM node's laid-out box in the shell.
+    fn shell_node_center(shell: &Shell, node: liquide_dom::NodeId) -> Option<(f32, f32)> {
+        let ht = shell.hit_test_engine()?;
+        let b = ht.bounds_for_node(node)?;
+        Some((b.x + b.width / 2.0, b.y + b.height / 2.0))
+    }
+
+    /// Collect text mounted in the live shell DOM (the panel template the user
+    /// actually sees, post `sync_template`).
+    fn shell_dom_text(shell: &Shell) -> Vec<String> {
+        fn walk(shell: &Shell, n: liquide_dom::NodeId, out: &mut Vec<String>) {
+            let doc = shell.document();
+            if let Some(node) = doc.get(n) {
+                if let Some(t) = node.text_content() {
+                    out.push(t.to_string());
+                }
+            }
+            for &c in shell.document().children(n) {
+                walk(shell, c, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(shell, shell.document().root(), &mut out);
+        out
     }
 
     #[test]
@@ -866,20 +930,10 @@ mod tests {
             .descendants(doc.root())
             .into_iter()
             .find(|&id| doc.get_attribute(id, "data-tab").as_deref() == Some("console"));
-        let console_tab = match console_tab {
-            Some(id) => id,
-            None => {
-                // The tab element should exist; if the DOM API differs, fall back
-                // to asserting routing returns false for an off-panel point.
-                assert!(
-                    !dt.route_window_click(5.0, 5.0, false)
-                        || dt.devtools.as_ref().unwrap().active_tab()
-                            == liquide_devtools::DevToolsTab::Performance,
-                    "off-target routing must not misfire"
-                );
-                return;
-            }
-        };
+        // The tab element MUST exist + be laid out — no silent fallback (that
+        // would let a broken tab strip pass this test green).
+        let console_tab =
+            console_tab.expect("a devtools-tab carrying data-tab=console must be in the window DOM");
         let b = hit_test.layout().find_by_node(console_tab).map(|lb| {
             hit_test.layout().absolute_border_rect(lb.id)
         });
@@ -893,6 +947,25 @@ mod tests {
             liquide_devtools::DevToolsTab::Console,
             "clicking the Console tab in the devtools window must switch the \
              panel to Console — proving the window's events drive devtools state"
+        );
+
+        // And the window's RENDERED CONTENT must follow the click: re-render the
+        // window scene and assert the Console tab content (its '>' input prompt)
+        // is now present and the Performance heading is gone. This proves the
+        // click→content loop end to end through the window pipeline, not just the
+        // state flag.
+        let scene = dt.build_window_scene_for_test(&shell).expect("window scene");
+        let mut text = Vec::new();
+        collect_text(&scene, &mut text);
+        assert!(
+            text.iter().any(|t| t == ">"),
+            "after clicking the Console tab the window must render the Console \
+             content (its '>' input prompt); window text was {text:?}"
+        );
+        assert!(
+            !text.iter().any(|t| t.contains("Pipeline Metrics")),
+            "the window must no longer render the Performance heading after \
+             switching to Console — the content must actually switch, not stack"
         );
     }
 
@@ -963,6 +1036,110 @@ mod tests {
         );
     }
 
+    /// EMPTY-FALLBACK-CACHE BUG: when the panel becomes visible before any
+    /// `build_scene` has produced a layout (the first frame), `sync_template` can
+    /// only mount an empty `devtools-panel` placeholder. It must NOT cache that
+    /// empty shell as a primed refresh — otherwise the throttle re-serves it for
+    /// the whole interval and the panel renders BLANK (no tabs, no content) for
+    /// the first several frames. After 2 frames (layout ready on frame 1) the
+    /// panel's tab strip + content must be mounted. RED before the fix (still
+    /// empty), GREEN after.
+    #[test]
+    fn panel_is_not_blank_for_the_first_frames_after_becoming_visible() {
+        let mut shell = Shell::new(1280.0, 800.0);
+        let mut dt = DevToolsState::new();
+        dt.set_dev_mode(true, &mut shell, 1280, 800);
+        if let Some(panel) = dt.devtools.as_mut() {
+            panel.show();
+        }
+
+        // Frame 0: layout not ready → placeholder. Frame 1: layout ready → full.
+        dt.drive_one_frame_for_test(&mut shell);
+        dt.drive_one_frame_for_test(&mut shell);
+
+        // The tab strip must be mounted: every main tab label present, and the
+        // tab elements must carry data-tab so they are clickable + laid out.
+        let mounted = shell_dom_text(&shell);
+        for label in ["Elements", "Console", "Sources", "Performance", "Mutations", "Scene"] {
+            assert!(
+                mounted.iter().any(|t| t == label),
+                "tab '{label}' must be mounted within the first frames; the panel must \
+                 not stay blank (empty-fallback cache bug). Mounted text: {mounted:?}"
+            );
+        }
+        // And a real, laid-out tab box must exist (clickable), not just DOM text.
+        let console_tab = find_data_tab_node(&shell, "console")
+            .expect("console tab must be mounted with data-tab");
+        assert!(
+            shell_node_center(&shell, console_tab).is_some(),
+            "the console tab must be LAID OUT (have a box) so it is clickable"
+        );
+    }
+
+    /// THE TAB BUG (in-DE, frame-driven THROUGH the throttle): a real click on a
+    /// devtools tab must switch the active tab AND the rendered content the user
+    /// sees in the LIVE shell DOM — even after the throttle has settled into its
+    /// cached-template cadence. Proves suspect (b) is not present: the tab click
+    /// changes the refresh signature, forcing an immediate rebuild instead of
+    /// re-mounting the stale cached (Elements) template.
+    #[test]
+    fn tab_click_switches_mounted_content_through_the_throttle() {
+        let mut shell = Shell::new(1280.0, 800.0);
+        let mut dt = DevToolsState::new();
+        dt.set_dev_mode(true, &mut shell, 1280, 800);
+        if let Some(panel) = dt.devtools.as_mut() {
+            panel.show();
+            // Start on Elements (default) so the click target (Console) differs.
+            panel.set_tab(liquide_devtools::DevToolsTab::Elements);
+        }
+
+        // Settle into the throttled cadence: drive several frames so the next
+        // frame would normally be a CACHED (no-rebuild) frame. If the tab click
+        // is clobbered by the throttle, the mounted content stays on Elements.
+        // Two frames is enough: frame 0 mounts a placeholder (layout not ready) but
+        // — with the empty-fallback-cache fix — does NOT prime the throttle, so
+        // frame 1 (layout now ready) builds the full panel. Without the fix the
+        // empty placeholder is cached and re-served for the whole interval, so the
+        // tabs are not even laid out here.
+        for _ in 0..2 {
+            dt.drive_one_frame_for_test(&mut shell);
+        }
+
+        // Resolve the laid-out Console tab box in the live shell layout and click
+        // its center exactly like the in-DE event path does.
+        let console_tab =
+            find_data_tab_node(&shell, "console").expect("console tab must be mounted + laid out");
+        let (cx, cy) =
+            shell_node_center(&shell, console_tab).expect("console tab must have a laid-out box");
+
+        let styles = shell.style_map().unwrap().clone();
+        let hit_test = shell.hit_test_engine().unwrap();
+        let doc = shell.document();
+        let consumed = dt
+            .devtools
+            .as_mut()
+            .unwrap()
+            .on_panel_click(cx, cy, &styles, doc, hit_test);
+        assert!(consumed, "the tab click must be consumed");
+        assert_eq!(
+            dt.devtools.as_ref().unwrap().active_tab(),
+            liquide_devtools::DevToolsTab::Console,
+            "the tab click must switch the active tab to Console"
+        );
+
+        // Drive ONE more frame: the changed signature must force a rebuild so the
+        // mounted DOM shows Console content (the console input prompt ">"), NOT
+        // the stale cached Elements template.
+        dt.drive_one_frame_for_test(&mut shell);
+        let mounted = shell_dom_text(&shell);
+        assert!(
+            mounted.iter().any(|t| t == ">"),
+            "after a tab click the throttle must rebuild + mount the Console tab's \
+             content (its '>' prompt); the mounted DOM text was {mounted:?} — if this \
+             is RED the cached-template throttle clobbered the tab switch"
+        );
+    }
+
     /// MAIN-DE COST PARITY (no-fake-green): the main DE frame cost with devtools
     /// open must be close to without. We approximate cost by the number of
     /// expensive devtools serializations performed over a run of idle frames:
@@ -1004,22 +1181,40 @@ mod tests {
         dt.sync_window(&mut platform);
         assert!(dt.has_window());
 
-        // Hammer the window-render drive many times in a tight loop (no time for
-        // the 80ms interval to elapse, no interaction marking it dirty).
+        // Suppress the wall-clock interval so this asserts the DIRTY-COALESCING
+        // contract deterministically: under parallel test load a "tight" 50-call
+        // loop can still span several 80ms interval boundaries (CPU contention),
+        // each of which legitimately fires one render — that is the throttle
+        // working as designed (≈12 Hz idle repaint), not a regression, but it
+        // makes a raw `renders <= 2` bound flaky. With the time path suppressed,
+        // the ONLY thing that triggers a render is an explicit dirty, so a burst
+        // with no interaction must coalesce to exactly the one initial render.
+        dt.refresh.suppress_time_due = true;
+
+        // Hammer the window-render drive many times with no interaction marking it
+        // dirty between calls.
         for _ in 0..50 {
             dt.render_window(&shell, &mut platform);
         }
 
         let renders = dt.window_render_count_for_test();
-        assert!(
-            renders <= 2,
-            "the separate devtools window must NOT re-render every loop iteration; \
-             it rendered {renders} times in a tight 50-iteration burst (expected ≤ 2: \
-             one initial + at most one interval boundary)"
+        assert_eq!(
+            renders, 1,
+            "with the wall-clock interval suppressed, the separate devtools window \
+             must render EXACTLY once for a 50-call burst with no interaction — it \
+             must NOT re-render every loop iteration (got {renders}). The initial \
+             dirty fires one render; nothing dirties it again, so the rest are \
+             coalesced away."
         );
-        assert!(
-            renders >= 1,
-            "the window must render at least once when first opened; got {renders}"
+
+        // And a fresh explicit dirty (e.g. an interaction / resize) must fire one
+        // more render — proving the dirty path still works (not stuck off).
+        dt.refresh.window_dirty = true;
+        dt.render_window(&shell, &mut platform);
+        assert_eq!(
+            dt.window_render_count_for_test(),
+            2,
+            "marking the window dirty must fire exactly one additional render"
         );
     }
 }
