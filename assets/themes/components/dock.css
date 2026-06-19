@@ -35,12 +35,17 @@ dock-item {
     border-radius: var(--radius-large);
     cursor: pointer;
     position: relative;
+    /* Anchor magnification to the dock floor so an item grows UP out of the
+       dock (macOS) rather than ballooning from its center. The shell writes a
+       per-item inline `transform: scale()` driven by cursor proximity
+       (apply_dock_magnification, t172-e5); that inline transform wins over the
+       :hover rule below. */
+    transform-origin: bottom center;
     transition: transform var(--transition-fast), background var(--transition-fast);
 }
 
 dock-item:hover {
     background: var(--dock-item-hover-bg);
-    transform: scale(1.15);
 }
 
 dock-item.active {

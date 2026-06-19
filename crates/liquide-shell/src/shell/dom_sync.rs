@@ -486,7 +486,95 @@ impl Shell {
         // class, which the theme does not style). Applied after the template so
         // it targets the freshly-rendered item children (t65-s3).
         self.desktop_dom.set_dock_hover(hover_idx);
+        // macOS-style cursor-proximity magnification: scale each dock item by
+        // how close the live cursor is to it along the dock's main axis. This is
+        // the real interactive behavior (pure CSS `:hover` only scales the ONE
+        // hovered item) and is paint-only (`transform: scale`, no relayout).
+        self.apply_dock_magnification();
         self.mark_wired(crate::shell::WiringBit::Dock);
+    }
+
+    /// Per-item dock magnification (t172-e5).
+    ///
+    /// For each dock item, compute the distance from the live cursor
+    /// ([`Shell::last_cursor_x`]/`last_cursor_y`) to the item's CENTER along the
+    /// dock's main axis — resolved from the LAID-OUT dock boxes
+    /// (`compute_item_rects`, the same geometry authority hit-testing reads), NOT
+    /// from constants — and write a per-item inline `transform: scale(f)`.
+    ///
+    /// The scale follows a smooth Gaussian falloff in units of icon-widths so it
+    /// is resolution-independent: the item nearest the cursor is largest (up to
+    /// the dock's `magnification_factor`), tapering back to `1.0` beyond a few
+    /// icon-widths. When the cursor is NOT over the dock (or magnification is
+    /// disabled) every item is reset to `scale(1.0)`.
+    ///
+    /// HIT-ZONE NOTE: `transform: scale` is paint-only — it changes the painted
+    /// size but NOT the laid-out box. The dock hit-test
+    /// (`Dock::compute_item_rects` in `handle_mouse_move`) reads the un-scaled
+    /// laid-out boxes, so clicks still land on each icon's base box and launch
+    /// the right app. The magnified glyph is centered on (and, with
+    /// `transform-origin: bottom` from the dock CSS, grows upward out of) that
+    /// same base box, so the visible icon stays over its own click zone. Push-
+    /// apart neighbor spreading (which WOULD need per-item layout writes) is a
+    /// flagged follow-up, deliberately NOT done in v1.
+    fn apply_dock_magnification(&mut self) {
+        let cfg = self.dock.config();
+        let enabled = cfg.magnification_enabled && self.cursor_over_dock;
+        let factor = cfg.magnification_factor.max(1.0);
+        let icon = (cfg.icon_size as f32).max(1.0);
+        let vertical = cfg.is_vertical();
+
+        // Per-item scales resolved from the laid-out dock boxes. Off-dock (or
+        // disabled) ⇒ everything collapses to base scale 1.0.
+        let item_rects = self.dock.compute_item_rects(self.screen_rect);
+        let scales: Vec<f32> = if enabled {
+            // Gaussian falloff over ~1.5 icon-widths: the peak (cursor-nearest)
+            // item reaches `factor`; an item ~3 icon-widths away is essentially
+            // back to 1.0. `sigma` in icon-width units.
+            let sigma = 1.5_f32;
+            let cursor_main = if vertical {
+                self.last_cursor_y
+            } else {
+                self.last_cursor_x
+            };
+            item_rects
+                .iter()
+                .map(|(_, rect)| {
+                    let center_main = if vertical {
+                        rect.y + rect.height / 2.0
+                    } else {
+                        rect.x + rect.width / 2.0
+                    };
+                    // Distance in icon-widths so the falloff is resolution- and
+                    // size-independent.
+                    let d = (cursor_main - center_main).abs() / icon;
+                    let bump = (-(d * d) / (2.0 * sigma * sigma)).exp();
+                    1.0 + (factor - 1.0) * bump
+                })
+                .collect()
+        } else {
+            vec![1.0; item_rects.len()]
+        };
+
+        // Write each scale as an inline `transform` on the matching dock-item,
+        // in index order. `set_inline_style_if_changed` keeps an idle frame
+        // (same cursor position) from re-dirtying the dock subtree (t76 cache).
+        let dock_id = crate::desktop_dom::element_ids::DOCK;
+        let Some(dock_node) = self.desktop_dom.doc.get_element_by_id(dock_id) else {
+            return;
+        };
+        let items: Vec<NodeId> = self.desktop_dom.doc.children(dock_node).to_vec();
+        for (i, &item) in items.iter().enumerate() {
+            let scale = scales.get(i).copied().unwrap_or(1.0);
+            // 4 decimals: smooth motion without thrashing the changed-check.
+            let value = format!("scale({scale:.4})");
+            Self::set_inline_style_if_changed(
+                &mut self.desktop_dom.doc,
+                item,
+                "transform",
+                &value,
+            );
+        }
     }
 
     /// Push the resolved [`DockConfig`] onto the `#shell-dock` element as

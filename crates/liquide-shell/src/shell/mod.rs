@@ -463,6 +463,16 @@ pub struct Shell {
     pub(crate) pending_session_request: Option<SessionRequest>,
     /// Last known cursor Y position for status-bar auto-reveal on top-edge hover.
     pub(crate) last_cursor_y: f32,
+    /// Last known cursor X position. Paired with [`Self::last_cursor_y`] it is
+    /// the live cursor sample consumed by the dock magnification seam
+    /// (`apply_dock_magnification`): per-item `transform: scale` is computed from
+    /// the cursor's distance to each laid-out dock item along the dock's main
+    /// axis (t172-e5). Updated in `handle_mouse_move`.
+    pub(crate) last_cursor_x: f32,
+    /// Whether the cursor's last sample was inside the dock's bounds. When the
+    /// cursor leaves the dock this is cleared so the next dock sync resets every
+    /// item back to `scale(1.0)` (magnification is OFF when the cursor is away).
+    pub(crate) cursor_over_dock: bool,
     pub(crate) app_menu_open: Option<String>,
     #[cfg(windows)]
     pub(crate) win32_dock: liquide_dock::Win32DockIntegration,
@@ -778,6 +788,8 @@ impl Shell {
             screen_recording: false,
             pending_session_request: None,
             last_cursor_y: 0.0,
+            last_cursor_x: 0.0,
+            cursor_over_dock: false,
             app_menu_open: None,
             #[cfg(windows)]
             win32_dock: liquide_dock::Win32DockIntegration::new(),
@@ -920,6 +932,8 @@ impl Shell {
             screen_recording: false,
             pending_session_request: None,
             last_cursor_y: 0.0,
+            last_cursor_x: 0.0,
+            cursor_over_dock: false,
             app_menu_open: None,
             #[cfg(windows)]
             win32_dock: liquide_dock::Win32DockIntegration::new(),

@@ -984,8 +984,12 @@ impl Shell {
         let pt = Point::new(x, y);
         let mut need_redraw = false;
 
-        // Track cursor Y for status-bar auto-reveal on top-edge hover.
+        // Track cursor X/Y. `last_cursor_y` drives the status-bar top-edge
+        // auto-reveal; the (x, y) pair is the live cursor sample consumed by the
+        // dock magnification seam (`apply_dock_magnification`) on the next dock
+        // sync (t172-e5).
         self.last_cursor_y = y;
+        self.last_cursor_x = x;
 
         // Active drag handling
         if let Some(drag) = self.drag_state {
@@ -1148,6 +1152,14 @@ impl Shell {
 
         // Dock hover
         let dock_bounds = self.dock.compute_bounds(self.screen_rect);
+        // Record whether the cursor is over the dock so the dock sync's
+        // magnification seam knows to apply the cursor-proximity scale (and to
+        // reset every item to scale(1.0) once the cursor leaves the dock).
+        let was_over_dock = self.cursor_over_dock;
+        self.cursor_over_dock = dock_bounds.contains(pt);
+        if self.cursor_over_dock != was_over_dock {
+            need_redraw = true;
+        }
         if dock_bounds.contains(pt) {
             let item_rects = self.dock.compute_item_rects(self.screen_rect);
             let mut found = None;
