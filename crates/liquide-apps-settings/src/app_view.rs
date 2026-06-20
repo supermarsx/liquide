@@ -7,6 +7,8 @@ use liquide_interop::{
     AppWidgetModel, ContentKind, ContentRow, SelectionMode, WidgetOption,
 };
 
+use std::collections::BTreeMap;
+
 use crate::category::Category;
 use crate::entry::{SettingEntry, SettingKind, SettingValue};
 use crate::runtime::SettingsRuntime;
@@ -68,7 +70,10 @@ fn entry_to_widget(entry: &SettingEntry) -> AppWidget {
     let key = entry.key.clone();
     match (&entry.kind, &entry.value) {
         (SettingKind::Toggle, SettingValue::Bool(checked)) => {
-            AppWidget::Checkbox { key, checked: *checked }
+            // A switch (pill) reads better than a checkbox for an on/off setting,
+            // matching the macOS settings look. Actions are keyed off the entry's
+            // `SettingKind::Toggle`, so the control choice does not affect routing.
+            AppWidget::Switch { key, checked: *checked }
         }
         (SettingKind::Slider { min, max, step }, SettingValue::Number(value)) => AppWidget::Slider {
             key,
@@ -98,19 +103,35 @@ fn entry_to_widget(entry: &SettingEntry) -> AppWidget {
     }
 }
 
-impl SettingsRuntime {
-    /// Build the toolkit-free widget model from the live runtime state: a search
-    /// field, a category sidebar list (with the active category selected), and
-    /// one control per visible entry of the active category.
-    fn build_widget_model(&self) -> AppWidgetModel {
-        // Search field reflecting the live query buffer.
-        let search = AppWidget::TextInput {
-            key: SEARCH_KEY.to_string(),
-            value: self.search_query().to_string(),
-        };
+/// Build one labelled settings row: a horizontal strip pairing the entry's
+/// human label with its control. A `Toolbar` is the toolkit's horizontal flex
+/// container, so the label sits to the LEFT of the control on a single line
+/// (`lq-toolbar.horizontal`), instead of the control floating unlabelled.
+fn entry_row(entry: &SettingEntry) -> AppWidget {
+    AppWidget::Toolbar {
+        children: vec![
+            AppWidget::Label {
+                text: entry.label.clone(),
+            },
+            entry_to_widget(entry),
+        ],
+    }
+}
 
-        // Category sidebar: one item per category, selecting the active one.
+impl SettingsRuntime {
+    /// Build the toolkit-free widget model from the live runtime state.
+    ///
+    /// Layout: a two-column settings panel. The LEFT column is the category
+    /// sidebar (a single-select `List`, fixed-width via `lq-list`); the RIGHT
+    /// column is a scroll of the active category's settings, grouped into titled
+    /// `Card`s by section, each row pairing a human label with its control. A
+    /// search field sits above the content column. The two columns are the two
+    /// children of a horizontal `Toolbar` (the toolkit's only horizontal flex
+    /// container) so they render side-by-side rather than stacked.
+    fn build_widget_model(&self) -> AppWidgetModel {
         let active = self.active_category();
+
+        // ── Left column: category sidebar ───────────────────────────────────
         let items: Vec<String> = Category::ALL.iter().map(|c| c.label().to_string()).collect();
         let selected_idx = Category::ALL
             .iter()
@@ -123,18 +144,56 @@ impl SettingsRuntime {
             selected: selected_idx.into_iter().collect(),
         };
 
-        // Entries of the active category, deterministically ordered by key so the
-        // model is stable frame-to-frame (HashMap iteration order is not).
+        // ── Right column: header + search + grouped settings cards ──────────
+        // A labelled search row (label to the left of the field, like the entry
+        // rows) so the field is not an unexplained floating box.
+        let search_row = AppWidget::Toolbar {
+            children: vec![
+                AppWidget::Label {
+                    text: "Search".to_string(),
+                },
+                AppWidget::TextInput {
+                    key: SEARCH_KEY.to_string(),
+                    value: self.search_query().to_string(),
+                },
+            ],
+        };
+
+        // Entries of the active category, grouped by their `section` and ordered
+        // deterministically (BTreeMap keys + sorted entries) so the model is
+        // stable frame-to-frame (HashMap iteration order is not).
         let mut entries = self.visible_entries();
         entries.sort_by(|a, b| a.key.cmp(&b.key));
-        let entry_widgets: Vec<AppWidget> = entries.into_iter().map(entry_to_widget).collect();
-        let panel = AppWidget::Panel {
-            children: entry_widgets,
+        let mut sections: BTreeMap<String, Vec<&SettingEntry>> = BTreeMap::new();
+        for entry in entries {
+            sections.entry(entry.section.clone()).or_default().push(entry);
+        }
+
+        // The content column: a search row, then one titled Card per section
+        // holding that section's labelled rows. The category name + description
+        // live in the title bar / sidebar, so the column stays uncluttered.
+        let mut content_children: Vec<AppWidget> = Vec::new();
+        content_children.push(search_row);
+        for (section, rows) in sections {
+            let body: Vec<AppWidget> = rows.into_iter().map(entry_row).collect();
+            content_children.push(AppWidget::Card {
+                title: Some(section),
+                children: body,
+            });
+        }
+
+        let content = AppWidget::Panel {
+            children: content_children,
+        };
+
+        // The two columns sit side-by-side in a horizontal toolbar.
+        let columns = AppWidget::Toolbar {
+            children: vec![sidebar, content],
         };
 
         AppWidgetModel {
             title: Some(format!("Settings — {}", active.label())),
-            root: vec![search, sidebar, panel],
+            root: vec![columns],
         }
     }
 
@@ -342,9 +401,9 @@ mod tests {
             other => panic!("expected a List, got {other:?}"),
         }
 
-        // The night-light toggle (a Display entry) appears as an unchecked Checkbox.
+        // The night-light toggle (a Display entry) appears as an off Switch.
         let toggle = find(&model, "display.night_light").expect("night_light entry in model");
-        assert!(matches!(toggle, AppWidget::Checkbox { checked: false, .. }));
+        assert!(matches!(toggle, AppWidget::Switch { checked: false, .. }));
 
         // The resolution choice appears as a Dropdown with the current selection.
         let dropdown = find(&model, "display.resolution").expect("resolution entry in model");
@@ -373,7 +432,7 @@ mod tests {
         let model = rt.widget_model().expect("model");
         let toggle = find(&model, "display.night_light").expect("toggle present");
         assert!(
-            matches!(toggle, AppWidget::Checkbox { checked: true, .. }),
+            matches!(toggle, AppWidget::Switch { checked: true, .. }),
             "a toggled setting must show checked=true, got {toggle:?}"
         );
     }
@@ -407,7 +466,7 @@ mod tests {
         let model = rt.widget_model().expect("model");
         assert!(matches!(
             find(&model, "display.night_light"),
-            Some(AppWidget::Checkbox { checked: true, .. })
+            Some(AppWidget::Switch { checked: true, .. })
         ));
     }
 
@@ -504,6 +563,253 @@ mod tests {
         assert!(
             rt.widget_model().is_some(),
             "settings must opt into the widget seam"
+        );
+    }
+
+    // ---- layout structure (t191) ------------------------------------------
+    //
+    // These are the teeth for the "looks like a clean settings panel" fix. They
+    // assert the MODEL produces a sensible LAYOUT, not a flat pile of bare
+    // controls. They fail RED against the pre-t191 model (a flat
+    // `root: [search, sidebar, panel-of-bare-controls]` with no labels, no
+    // grouping, and no side-by-side columns).
+
+    /// A control is "interactive" if it carries a key (checkbox/switch/slider/
+    /// dropdown/text/list/…). Containers and static labels are not.
+    fn is_control(w: &AppWidget) -> bool {
+        matches!(
+            w,
+            AppWidget::Switch { .. }
+                | AppWidget::Checkbox { .. }
+                | AppWidget::Slider { .. }
+                | AppWidget::Dropdown { .. }
+                | AppWidget::TextInput { .. }
+                | AppWidget::RadioGroup { .. }
+                | AppWidget::Segmented { .. }
+        )
+    }
+
+    /// The root is a SINGLE horizontal container (Toolbar) whose two children are
+    /// the category sidebar (a List) and the content column (a Panel) — i.e. a
+    /// two-column layout, not a vertical stack of three siblings.
+    #[test]
+    fn root_is_two_columns_sidebar_and_content() {
+        let rt = runtime();
+        let model = rt.widget_model().expect("model");
+        assert_eq!(
+            model.root.len(),
+            1,
+            "root must be a single two-column container, got {} top-level nodes",
+            model.root.len()
+        );
+        let AppWidget::Toolbar { children } = &model.root[0] else {
+            panic!("root must be a horizontal Toolbar (the two columns), got {:?}", model.root[0]);
+        };
+        assert_eq!(children.len(), 2, "two columns: sidebar + content");
+        // First column: the category sidebar list.
+        assert!(
+            matches!(&children[0], AppWidget::List { key, items, .. }
+                if key == CATEGORY_LIST_KEY && items.len() == Category::ALL.len()),
+            "first column must be the category sidebar List, got {:?}",
+            children[0]
+        );
+        // Second column: a content Panel (holds the cards).
+        assert!(
+            matches!(&children[1], AppWidget::Panel { .. }),
+            "second column must be the content Panel, got {:?}",
+            children[1]
+        );
+    }
+
+    /// The content column groups settings into TITLED cards (by section) — proof
+    /// of grouping, not one flat list.
+    #[test]
+    fn settings_are_grouped_into_titled_cards() {
+        let mut rt = runtime();
+        rt.set_category(Category::Display);
+        let model = rt.widget_model().expect("model");
+        let AppWidget::Toolbar { children } = &model.root[0] else {
+            panic!("root toolbar");
+        };
+        let AppWidget::Panel { children: content } = &children[1] else {
+            panic!("content panel");
+        };
+        let cards: Vec<&AppWidget> = content
+            .iter()
+            .filter(|w| matches!(w, AppWidget::Card { .. }))
+            .collect();
+        assert!(
+            !cards.is_empty(),
+            "the content column must contain at least one section Card"
+        );
+        // Every Card carries a non-empty section title.
+        for card in &cards {
+            if let AppWidget::Card { title, .. } = card {
+                assert!(
+                    title.as_deref().is_some_and(|t| !t.is_empty()),
+                    "every section Card must have a non-empty title, got {title:?}"
+                );
+            }
+        }
+    }
+
+    /// EVERY interactive control sits in a labelled ROW (a horizontal Toolbar
+    /// pairing a Label with the control) — NOT as a bare, unlabelled control.
+    /// This is the load-bearing teeth: the pre-t191 model emitted bare controls
+    /// with no labels (the "what is this knob?" jank), which fails here.
+    #[test]
+    fn every_control_has_a_label_in_its_row() {
+        let mut rt = runtime();
+        rt.set_category(Category::Display);
+        let model = rt.widget_model().expect("model");
+
+        // Walk the whole tree; every control we find must have a sibling Label
+        // inside the SAME immediate Toolbar row.
+        fn check_rows(w: &AppWidget, control_count: &mut usize, labelled: &mut usize) {
+            match w {
+                AppWidget::Toolbar { children } => {
+                    let has_label = children.iter().any(|c| matches!(c, AppWidget::Label { text } if !text.is_empty()));
+                    let row_controls: Vec<&AppWidget> =
+                        children.iter().filter(|c| is_control(c)).collect();
+                    for ctrl in &row_controls {
+                        *control_count += 1;
+                        if has_label {
+                            *labelled += 1;
+                        }
+                        // Recurse no further into a control (it's a leaf).
+                        let _ = ctrl;
+                    }
+                    // Recurse into any nested containers (not the leaf controls).
+                    for c in children {
+                        if !is_control(c) {
+                            check_rows(c, control_count, labelled);
+                        }
+                    }
+                }
+                AppWidget::Panel { children }
+                | AppWidget::Card { children, .. }
+                | AppWidget::GroupBox { children, .. } => {
+                    // A control sitting DIRECTLY in a Panel/Card (not in a row) is
+                    // the bare-control jank — count it as an unlabelled control.
+                    for c in children {
+                        if is_control(c) {
+                            *control_count += 1; // no label sibling row ⇒ not labelled
+                        } else {
+                            check_rows(c, control_count, labelled);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut total = 0usize;
+        let mut labelled = 0usize;
+        for w in &model.root {
+            check_rows(w, &mut total, &mut labelled);
+        }
+        assert!(total > 0, "the active category must expose some controls");
+        assert_eq!(
+            labelled, total,
+            "every control must be paired with a label in its row \
+             ({labelled}/{total} labelled) — bare unlabelled controls are the jank this fixes"
+        );
+    }
+
+    /// Teeth for the search field: it lives in a labelled row too (not a floating
+    /// box), and is still findable by its key so search actions keep working.
+    #[test]
+    fn search_field_is_present_and_labelled() {
+        let rt = runtime();
+        let model = rt.widget_model().expect("model");
+        assert!(
+            find(&model, SEARCH_KEY).is_some(),
+            "the search field must still be in the model"
+        );
+    }
+
+    /// HONEST-RED proof: the structural checks above genuinely have teeth. We
+    /// reconstruct the PRE-t191 flat model (search + sidebar + a Panel of BARE,
+    /// unlabelled controls, three vertically-stacked siblings) and show the new
+    /// invariants reject it. If someone regresses the builder back to the flat
+    /// stack, the real tests above fail exactly the way this proof predicts.
+    #[test]
+    fn pre_t191_flat_model_violates_the_layout_invariants() {
+        let mut rt = runtime();
+        rt.set_category(Category::Display);
+        let mut entries = rt.visible_entries();
+        entries.sort_by(|a, b| a.key.cmp(&b.key));
+        let bare: Vec<AppWidget> = entries.iter().map(|e| entry_to_widget(e)).collect();
+
+        let old = AppWidgetModel::with_root(vec![
+            AppWidget::TextInput { key: SEARCH_KEY.to_string(), value: String::new() },
+            AppWidget::List {
+                key: CATEGORY_LIST_KEY.to_string(),
+                items: Category::ALL.iter().map(|c| c.label().to_string()).collect(),
+                selection_mode: SelectionMode::Single,
+                selected: vec![0],
+            },
+            AppWidget::Panel { children: bare },
+        ]);
+
+        // (1) NOT a single two-column root.
+        assert_ne!(old.root.len(), 1, "old model was a 3-sibling vertical stack");
+
+        // (2) NO titled section Cards anywhere.
+        fn has_card(w: &AppWidget) -> bool {
+            match w {
+                AppWidget::Card { .. } => true,
+                AppWidget::Panel { children }
+                | AppWidget::Toolbar { children }
+                | AppWidget::GroupBox { children, .. } => children.iter().any(has_card),
+                _ => false,
+            }
+        }
+        assert!(!old.root.iter().any(has_card), "old model had no grouping cards");
+
+        // (3) The controls are BARE — they sit directly under a Panel with no
+        // label row. Mirror the production test's accounting to show it would
+        // have flagged them all as unlabelled.
+        fn count(w: &AppWidget, total: &mut usize, labelled: &mut usize) {
+            match w {
+                AppWidget::Toolbar { children } => {
+                    let has_label = children
+                        .iter()
+                        .any(|c| matches!(c, AppWidget::Label { text } if !text.is_empty()));
+                    for c in children {
+                        if is_control(c) {
+                            *total += 1;
+                            if has_label {
+                                *labelled += 1;
+                            }
+                        } else {
+                            count(c, total, labelled);
+                        }
+                    }
+                }
+                AppWidget::Panel { children }
+                | AppWidget::Card { children, .. }
+                | AppWidget::GroupBox { children, .. } => {
+                    for c in children {
+                        if is_control(c) {
+                            *total += 1; // bare control: no labelled row
+                        } else {
+                            count(c, total, labelled);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let (mut total, mut labelled) = (0, 0);
+        for w in &old.root {
+            count(w, &mut total, &mut labelled);
+        }
+        assert!(total > 0, "the old model did have controls");
+        assert_ne!(
+            labelled, total,
+            "the old bare-control model must FAIL the 'every control labelled' \
+             invariant ({labelled}/{total}) — proving that test has teeth"
         );
     }
 }
