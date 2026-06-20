@@ -1547,11 +1547,31 @@ impl Shell {
                     self.desktop_dom.doc.remove_child(host_node, child);
                     self.desktop_dom.doc.destroy_node(child);
                 }
+                // Mount the widget model under an IN-FLOW (display:block) body
+                // wrapper nested inside the position:fixed host — NOT directly
+                // under the host. This is load-bearing: the layout engine lays a
+                // flex container that is a DIRECT child of an out-of-flow
+                // (position:fixed/absolute) element as a vertical COLUMN even when
+                // its computed `flex-direction` is `row` (t186 jank bucket D — the
+                // Files nav toolbar rendered as a tall stacked box). Interposing a
+                // normal-flow block between the fixed host and the widget subtree
+                // restores correct flex-row layout for the toolbar (and any other
+                // flex-row widget) while the host keeps owning the fixed
+                // position + clip over the window's content rect.
+                let body = self.desktop_dom.doc.create_element("app-content-body");
+                self.desktop_dom
+                    .doc
+                    .set_id(body, &format!("app-content-body-{}", st.id.0));
+                self.desktop_dom.doc.set_inline_style(body, "display", "block");
+                self.desktop_dom.doc.set_inline_style(body, "width", "100%");
+                self.desktop_dom.doc.set_inline_style(body, "height", "100%");
+                self.desktop_dom.doc.append_child(host_node, body);
+
                 let mut host = liquide_widgets::WidgetHost::new();
                 crate::app_widgets::mount_model_into(
                     &st.model,
                     st.id.0,
-                    host_node,
+                    body,
                     &mut host,
                     &mut self.desktop_dom.doc,
                     &mut self.event_dispatcher,

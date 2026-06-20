@@ -970,15 +970,30 @@ fn mount_widget(
         // Create a plain DOM wrapper element (styled by widgets.css) and mount
         // the interactive children inside it, so nesting is preserved while each
         // interactive widget keeps its own keyed host state.
-        let (tag, caption, children): (&str, Option<&str>, Vec<&AppWidget>) = match widget {
-            AppWidget::Panel { children } => ("lq-panel", None, children.iter().collect()),
-            AppWidget::Card { title, children } => {
-                ("lq-card", title.as_deref(), children.iter().collect())
-            }
-            AppWidget::GroupBox { label, children } => {
-                ("lq-groupbox", Some(label.as_str()), children.iter().collect())
-            }
-            AppWidget::Toolbar { children } => ("lq-toolbar", None, children.iter().collect()),
+        // The optional class pins the wrapper's layout intent. The toolbar in
+        // particular MUST carry `horizontal` so `lq-toolbar.horizontal` resolves
+        // `flex-direction: row`; without it the engine's default cross-axis
+        // (column) stacks the nav buttons vertically + oversized (t186 bucket D2).
+        let (tag, class, caption, children): (&str, Option<&str>, Option<&str>, Vec<&AppWidget>) =
+            match widget {
+                AppWidget::Panel { children } => {
+                    ("lq-panel", None, None, children.iter().collect())
+                }
+                AppWidget::Card { title, children } => {
+                    ("lq-card", None, title.as_deref(), children.iter().collect())
+                }
+                AppWidget::GroupBox { label, children } => (
+                    "lq-groupbox",
+                    None,
+                    Some(label.as_str()),
+                    children.iter().collect(),
+                ),
+                AppWidget::Toolbar { children } => (
+                    "lq-toolbar",
+                    Some("horizontal"),
+                    None,
+                    children.iter().collect(),
+                ),
             AppWidget::Tabs { tabs, selected } => {
                 // Flatten to the selected tab's children (a structural tab strip
                 // would need its own behavior; the selected panel is what paints).
@@ -1008,6 +1023,9 @@ fn mount_widget(
         };
 
         let wrapper = doc.create_element(tag);
+        if let Some(c) = class {
+            doc.add_class(wrapper, c);
+        }
         doc.append_child(parent, wrapper);
         if let Some(cap) = caption {
             let cap_el = doc.create_element("lq-caption");

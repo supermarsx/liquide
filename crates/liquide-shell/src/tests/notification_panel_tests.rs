@@ -130,3 +130,92 @@ fn launcher_click_respects_show_app_menu_setting() {
     assert!(action.is_none());
     assert!(!shell.launcher.is_visible());
 }
+
+// ── t187 teeth: E (one styled, positioned notification center; no TL leak) ────
+
+const VARIABLES_CSS: &str = include_str!("../../../../assets/themes/variables.css");
+const COMPONENTS_NOTIFICATIONS_CSS: &str =
+    include_str!("../../../../assets/themes/components/notifications.css");
+
+/// E (notification center is ONE styled, correctly-positioned panel — no
+/// top-left unstyled leak): with the notification-center CSS loaded, an open
+/// center with one item lays out as a SINGLE positioned panel that is NOT in the
+/// top-left menu-bar corner.
+///
+/// RED before t187: the `notification-center` DOM subtree had ZERO matching CSS,
+/// so it laid out in normal flow at the document origin (x≈0, y≈0) — bare text
+/// leaking over the menu bar. GREEN after: `components/notifications.css` styles
+/// `notification-center*` as a fixed top-RIGHT panel.
+#[test]
+fn notification_center_is_one_styled_positioned_panel() {
+    let mut shell = Shell::new(1280.0, 720.0);
+    shell.cursor_blink_on = true;
+    shell.cursor_blink_time_us = u64::MAX;
+    // Load the design tokens + the notification component rules (the same base
+    // layers the live DE loads). Without the center CSS the panel would leak to
+    // the top-left.
+    shell.add_stylesheet(VARIABLES_CSS);
+    shell.add_stylesheet(COMPONENTS_NOTIFICATIONS_CSS);
+
+    let mut notif = liquide_interop::notification::Notification::new(
+        "Visual Test",
+        "Notification center entry",
+    );
+    notif.body = "An item to populate the notification center.".to_string();
+    let _ = shell.post_notification(notif, 0);
+    assert!(shell.open_notification_center());
+    let _ = shell.build_scene();
+
+    // Exactly ONE notification-center element exists (no duplicate track).
+    let mut centers = 0usize;
+    fn count_centers(doc: &liquide_dom::Document, n: liquide_dom::NodeId, acc: &mut usize) {
+        if let Some(node) = doc.get(n) {
+            if node.tag_name() == "notification-center" {
+                *acc += 1;
+            }
+        }
+        for &c in doc.children(n) {
+            count_centers(doc, c, acc);
+        }
+    }
+    count_centers(
+        &shell.desktop_dom.doc,
+        shell.desktop_dom.doc.root(),
+        &mut centers,
+    );
+    assert_eq!(
+        centers, 1,
+        "there must be exactly ONE notification-center track, got {centers}"
+    );
+
+    // The center is laid out as a POSITIONED panel — NOT parked in the top-left
+    // menu-bar corner (the unstyled-leak signature is x≈0 AND y≈0).
+    let center = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id("notification-center")
+        .expect("notification-center element");
+    let b = shell
+        .hit_test_engine
+        .as_ref()
+        .expect("hit-test engine")
+        .bounds_for_node(center)
+        .expect("notification-center laid-out box");
+    let in_top_left_menu_bar = b.x < 40.0 && b.y < 40.0;
+    assert!(
+        !in_top_left_menu_bar,
+        "notification-center must NOT render in the top-left menu-bar region \
+         (the unstyled-leak signature); got box {b:?}"
+    );
+    // It is anchored to the RIGHT half of the screen (top-right panel).
+    assert!(
+        b.x > 1280.0 / 2.0,
+        "the styled center panel must be anchored on the right, got x={}",
+        b.x
+    );
+    // And it has real extent (a styled panel, not a zero-box).
+    assert!(
+        b.width > 100.0 && b.height > 20.0,
+        "the center panel must have panel-sized extent, got {b:?}"
+    );
+}

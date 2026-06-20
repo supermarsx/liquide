@@ -429,3 +429,163 @@ fn text_only_window_gets_no_content_host() {
     );
     assert!(!shell.app_widget_hosts.contains_key(&wid));
 }
+
+// ── t187 teeth: D1 (content nested + contained) + D2 (horizontal toolbar) ─────
+
+/// D2 (toolbar horizontal): a `Toolbar` of buttons lays its buttons out as a
+/// horizontal ROW through the REAL pipeline — buttons side-by-side (distinct x,
+/// shared y), NOT block-stacked (shared x, increasing y).
+///
+/// RED before t187: the toolbar wrapper was a flex container that is a DIRECT
+/// child of the `position:fixed` `app-content-host`; the layout engine lays such
+/// a flex container as a COLUMN regardless of its `flex-direction:row` computed
+/// style, so the four nav buttons stacked vertically + oversized (the Files
+/// "Back/Forward/Up/Refresh" tall box). GREEN after: the widgets mount under an
+/// in-flow `app-content-body` wrapper, restoring flex-row layout.
+#[test]
+fn toolbar_lays_buttons_out_horizontally() {
+    let model = AppWidgetModel::with_root(vec![AppWidget::Toolbar {
+        children: vec![
+            AppWidget::Button { id: "back".into(), label: "Back".into(), kind: ButtonKind::Normal },
+            AppWidget::Button { id: "fwd".into(), label: "Forward".into(), kind: ButtonKind::Normal },
+            AppWidget::Button { id: "up".into(), label: "Up".into(), kind: ButtonKind::Normal },
+        ],
+    }]);
+    let (shell, wid, _s, _a) = widget_shell(model);
+
+    let back = widget_box(&shell, wid, "back").expect("back button laid-out box");
+    let fwd = widget_box(&shell, wid, "fwd").expect("forward button laid-out box");
+    let up = widget_box(&shell, wid, "up").expect("up button laid-out box");
+
+    // Horizontal row: x strictly increases left→right.
+    assert!(
+        back.x < fwd.x && fwd.x < up.x,
+        "toolbar buttons must be laid out left-to-right (a horizontal row), \
+         got back.x={}, fwd.x={}, up.x={} (equal x ⇒ vertical stack = the bug)",
+        back.x, fwd.x, up.x
+    );
+    // Same row: their tops match (within a hairline) — they are NOT stacked.
+    assert!(
+        (back.y - fwd.y).abs() < 1.0 && (fwd.y - up.y).abs() < 1.0,
+        "toolbar buttons in a row must share a top (y), got back.y={}, fwd.y={}, up.y={}",
+        back.y, fwd.y, up.y
+    );
+    // Compact: the toolbar's height is on the order of a single button row, not
+    // the sum of three stacked buttons.
+    let tb_h = back.height.max(fwd.height).max(up.height);
+    let span = (up.y + up.height).max(fwd.y + fwd.height) - back.y;
+    assert!(
+        span < tb_h * 2.0,
+        "a horizontal toolbar's vertical span ({span}) must be ~one button tall \
+         (button≈{tb_h}); a stacked toolbar would span ~3×"
+    );
+}
+
+/// D1 (content nested under the host, not a bare child): the widget subtree is
+/// mounted under an in-flow `app-content-body` wrapper that is a CHILD of the
+/// per-window `app-content-host`, and the host is the content's positioning +
+/// clipping context. This is the structural guard for the flex-under-fixed fix.
+#[test]
+fn widget_content_is_nested_under_an_in_flow_body() {
+    let model = AppWidgetModel::with_root(vec![AppWidget::Button {
+        id: "go".into(),
+        label: "Go".into(),
+        kind: ButtonKind::Normal,
+    }]);
+    let (shell, wid, _s, _a) = widget_shell(model);
+    let doc = &shell.desktop_dom.doc;
+
+    let host = doc
+        .get_element_by_id(&format!("app-content-{}", wid.0))
+        .expect("content host must exist");
+    let body = doc
+        .get_element_by_id(&format!("app-content-body-{}", wid.0))
+        .expect("content BODY wrapper must exist");
+
+    // The body is a direct child of the host (the host owns position/clip; the
+    // body is the in-flow formatting context for the widgets).
+    assert_eq!(
+        doc.parent(body),
+        Some(host),
+        "the content body must be a child of the content host"
+    );
+
+    // The widget mounts UNDER the body (in flow), NOT directly under the fixed
+    // host — this is what restores correct flex layout.
+    let btn = doc
+        .get_element_by_id(&crate::app_widgets::widget_id(wid.0, "go"))
+        .expect("button must mount");
+    let mut p = doc.parent(btn);
+    let mut reaches_body = false;
+    while let Some(node) = p {
+        if node == body {
+            reaches_body = true;
+            break;
+        }
+        p = doc.parent(node);
+    }
+    assert!(
+        reaches_body,
+        "the mounted widget must be a descendant of the in-flow content body"
+    );
+}
+
+/// D1 (content contained within its window): every laid-out widget box stays
+/// inside the owning window's screen rect — app content does not float/bleed
+/// outside the window it belongs to.
+#[test]
+fn widget_content_stays_within_its_window_rect() {
+    let model = AppWidgetModel::with_root(vec![
+        AppWidget::Toolbar {
+            children: vec![
+                AppWidget::Button { id: "a".into(), label: "A".into(), kind: ButtonKind::Normal },
+                AppWidget::Button { id: "b".into(), label: "B".into(), kind: ButtonKind::Normal },
+            ],
+        },
+        AppWidget::Button { id: "c".into(), label: "C".into(), kind: ButtonKind::Normal },
+    ]);
+    // A generously sized window so the (clipped) content rect is unambiguous.
+    let mut shell = Shell::new(W, H);
+    shell.cursor_blink_on = true;
+    shell.cursor_blink_time_us = u64::MAX;
+    shell.add_stylesheet(WIDGETS_CSS);
+    shell.add_stylesheet(APP_WIDGET_TEST_CSS);
+    let win_rect = Rect::new(120.0, 90.0, 700.0, 480.0);
+    let wid = shell.open_window("Files", win_rect);
+    let (app, _s, _a) = ModelApp::new(model);
+    shell.register_app_view(wid, Box::new(app));
+    let _ = shell.build_scene();
+
+    // The host is positioned over the window's content rect.
+    let host = shell
+        .desktop_dom
+        .doc
+        .get_element_by_id(&format!("app-content-{}", wid.0))
+        .expect("host");
+    let host_box = shell
+        .hit_test_engine
+        .as_ref()
+        .unwrap()
+        .bounds_for_node(host)
+        .expect("host box");
+    // The host sits within the window's outer rect (it covers the content area
+    // below the titlebar), never outside the window.
+    assert!(
+        host_box.x >= win_rect.x - 1.0
+            && host_box.y >= win_rect.y - 1.0
+            && host_box.x + host_box.width <= win_rect.x + win_rect.width + 1.0
+            && host_box.y + host_box.height <= win_rect.y + win_rect.height + 1.0,
+        "content host {host_box:?} must lie within its window {win_rect:?}"
+    );
+
+    // Each laid-out widget box is inside the host (clipped to the content rect),
+    // so content cannot bleed past the window.
+    for k in ["a", "b", "c"] {
+        let b = widget_box(&shell, wid, k).unwrap_or_else(|| panic!("widget {k} box"));
+        assert!(
+            b.x >= host_box.x - 1.0
+                && b.x + b.width <= host_box.x + host_box.width + 1.0,
+            "widget {k} box {b:?} must stay within the content host {host_box:?}"
+        );
+    }
+}

@@ -107,3 +107,99 @@ notification-action:hover {
     background: var(--accent-color);
     color: var(--text-inverse);
 }
+
+/* ═══════════════════════════════════════════════════════
+   Notification CENTER panel (t187 bucket E).
+
+   The notification-center DOM subtree is built imperatively by
+   `dom_sync::sync_notification_center_template` (`<notification-center>` +
+   `-header` / `-list` / `-item` / `-title` / `-body`) and mounted at the DOM
+   root. Before t187 it had ZERO matching CSS, so it laid out in normal flow at
+   the document top-left (0,0) and leaked bare unstyled text over the menu bar.
+   These rules give it a fixed, positioned, styled panel on the RIGHT edge below
+   the menu bar (the single, canonical notification-center surface — the toast
+   `notification-area` above remains a SEPARATE transient surface). There is no
+   second styled center track; this IS the one track.
+   ═══════════════════════════════════════════════════════ */
+
+notification-center {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: calc(var(--titlebar-height) + var(--spacing-sm));
+    right: var(--spacing-md);
+    width: var(--notification-width);
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
+    z-index: var(--z-notification);
+    padding: var(--spacing-md);
+    gap: var(--spacing-sm);
+    border-radius: var(--notification-radius);
+    background: var(--notification-bg);
+    border-width: var(--border-width);
+    border-style: solid;
+    border-color: var(--notification-border);
+    box-shadow: var(--shadow-large);
+    backdrop-filter: blur(var(--blur-strong));
+    -webkit-backdrop-filter: blur(var(--blur-strong));
+    font-family: var(--font-family-ui);
+}
+
+notification-center-header {
+    display: block;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    padding-bottom: var(--spacing-xs);
+}
+
+notification-center-empty {
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    padding: var(--spacing-md) 0;
+    text-align: center;
+}
+
+notification-center-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+notification-center-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-small);
+    background: var(--bg-elevated);
+    border-width: var(--border-width);
+    border-style: solid;
+    border-color: var(--border-default);
+    overflow: hidden;
+}
+
+notification-center-item.urgency-critical {
+    border-left-width: 3;
+    border-left-style: solid;
+    border-left-color: var(--error-color);
+}
+
+notification-center-title {
+    display: block;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    color: var(--notification-title-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+notification-center-body {
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--notification-body-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+}

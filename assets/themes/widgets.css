@@ -853,6 +853,15 @@
     overflow: hidden;
   }
   lq-toolbar.horizontal {
+    /* `display` is repeated here (not only `flex-direction`) so the class
+       selector's higher specificity guarantees the toolbar lays its buttons out
+       as a horizontal flex ROW even if the bare `lq-toolbar { display: flex }`
+       rule above loses the same-specificity cascade to the `lq-toolbar`
+       custom-element RESET (`display: block`). Mounting code (app_widgets.rs)
+       always tags the Toolbar wrapper `.horizontal`, so the nav buttons render
+       side-by-side and compactly instead of block-stacked + oversized
+       (t186 jank bucket D2). */
+    display: flex;
     flex-direction: row;
   }
   lq-toolbar.vertical {
