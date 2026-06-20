@@ -1150,45 +1150,143 @@ pub fn stroke_rounded_rect(
     // Confine to the per-thread write-scissor (t80).
     let (x0, y0, x1, y1) = scissor_clamp_window(x0, y0, x1, y1);
 
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+
     let pm = color.premultiply();
 
-    for y in y0..y1 {
+    // The per-pixel stroke kernel — IDENTICAL math to the original full-bbox loop.
+    // Hoisting it into a closure lets us drive it over only the perimeter bands
+    // (Win 1) while leaving every surviving pixel's computation untouched.
+    let paint = |fb: &mut FrameBuffer, x: u32, y: u32| {
+        let fx = x as f32 + 0.5;
         let fy = y as f32 + 0.5;
+
+        // SDF for outer rounded rect
+        let outer_d = sdf_rounded_rect_val(fx, fy, &outer, outer_r);
+        let outer_cov = (-outer_d + 0.5).clamp(0.0, 1.0);
+        if outer_cov <= 0.0 {
+            return;
+        }
+
+        // SDF for inner rounded rect
+        let inner_cov = if inner.width > 0.0 && inner.height > 0.0 {
+            let inner_d = sdf_rounded_rect_val(fx, fy, &inner, inner_r);
+            (-inner_d + 0.5).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        // Stroke = outer coverage minus inner coverage
+        let stroke_cov = (outer_cov - inner_cov).clamp(0.0, 1.0);
+        if stroke_cov <= 0.0 {
+            return;
+        }
+
+        let mut src = pm;
+        if stroke_cov < 1.0 {
+            src.a = (src.a as f32 * stroke_cov + 0.5) as u8;
+            src.r = (src.r as f32 * stroke_cov + 0.5) as u8;
+            src.g = (src.g as f32 * stroke_cov + 0.5) as u8;
+            src.b = (src.b as f32 * stroke_cov + 0.5) as u8;
+        }
+
+        let dst = fb.get_pixel(x, y);
+        let result = blend::blend(dst, src, mode);
+        fb.set_pixel(x, y, result);
+    };
+
+    // ── Win 1: perimeter-only iteration ─────────────────────────────────
+    //
+    // The interior of the ring contributes ZERO coverage and is provably
+    // skippable. A pixel emits a non-zero stroke only when
+    //   stroke_cov = clamp(outer_cov - inner_cov) > 0  ⇒  outer_cov > inner_cov.
+    // Any pixel whose center lies strictly inside the inner rounded rect by
+    // more than the AA margin has `inner_d <= -0.5`, hence `inner_cov == 1.0`
+    // and (since `outer_cov <= 1.0`) `stroke_cov == 0` — the kernel would
+    // `return` without writing. We compute the largest axis-aligned rectangle
+    // provably contained in that fully-covered region and skip it.
+    //
+    // For a rounded rect of radius `inner_r`, every point inside the rect inset
+    // by `inner_r` on each side lies in the "flat" region where the SDF reduces
+    // to minus the distance to the nearest straight edge; insetting a further
+    // 0.5 px guarantees `inner_d <= -0.5`. So the skip rect is `inner` inset by
+    // `inner_r + 0.5` on all sides. We round the skip rect INWARD (ceil on the
+    // low edge, floor on the high edge) so only pixel centers strictly within it
+    // are skipped — never a pixel that could contribute coverage.
+    //
+    // When the skip rect is empty (thin/large-radius/degenerate-inner cases),
+    // we fall back to walking the full bbox — byte-identical, just no skip.
+    let inset = inner_r + 0.5;
+    let skip_present = inner.width > 0.0
+        && inner.height > 0.0
+        && inner.width > 2.0 * inset
+        && inner.height > 2.0 * inset;
+
+    let (sx0, sy0, sx1, sy1) = if skip_present {
+        // Skip rect in pixel-index space. A pixel index `p` has center `p+0.5`;
+        // it is strictly inside the float skip rect iff
+        //   left < p+0.5  and  p+0.5 < right.
+        let left = inner.x + inset;
+        let top = inner.y + inset;
+        let right = inner.right() - inset;
+        let bottom = inner.bottom() - inset;
+        // smallest p with p+0.5 > left  ⇒  p > left-0.5  ⇒  p = floor(left-0.5)+1
+        let sx0 = ((left - 0.5).floor() as i64 + 1).max(0) as u32;
+        let sy0 = ((top - 0.5).floor() as i64 + 1).max(0) as u32;
+        // largest p with p+0.5 < right ⇒  p < right-0.5  ⇒  p = ceil(right-0.5)-1
+        // exclusive upper bound = that+1 = ceil(right-0.5)
+        let sx1 = (((right - 0.5).ceil() as i64).max(0) as u32).clamp(x0, x1);
+        let sy1 = (((bottom - 0.5).ceil() as i64).max(0) as u32).clamp(y0, y1);
+        let sx0 = sx0.clamp(x0, x1);
+        let sy0 = sy0.clamp(y0, y1);
+        if sx0 < sx1 && sy0 < sy1 {
+            (sx0, sy0, sx1, sy1)
+        } else {
+            // Degenerate after clamping — disable skip.
+            (x0, y0, x0, y0)
+        }
+    } else {
+        (x0, y0, x0, y0)
+    };
+
+    let has_skip = sx0 < sx1 && sy0 < sy1;
+
+    if !has_skip {
+        // No interior to skip — original full-bbox walk (byte-identical).
+        for y in y0..y1 {
+            for x in x0..x1 {
+                paint(fb, x, y);
+            }
+        }
+        return;
+    }
+
+    // Four perimeter bands around the skip rect:
+    //   top    band: rows [y0, sy0)            × cols [x0, x1)
+    //   bottom band: rows [sy1, y1)            × cols [x0, x1)
+    //   left   band: rows [sy0, sy1)           × cols [x0, sx0)
+    //   right  band: rows [sy0, sy1)           × cols [sx1, x1)
+    // The union of these four bands is exactly the bbox minus the skip rect,
+    // with no overlap and no gaps — so every potentially-covered pixel is
+    // visited exactly once and every skipped pixel is provably zero-coverage.
+    for y in y0..sy0 {
         for x in x0..x1 {
-            let fx = x as f32 + 0.5;
-
-            // SDF for outer rounded rect
-            let outer_d = sdf_rounded_rect_val(fx, fy, &outer, outer_r);
-            let outer_cov = (-outer_d + 0.5).clamp(0.0, 1.0);
-            if outer_cov <= 0.0 {
-                continue;
-            }
-
-            // SDF for inner rounded rect
-            let inner_cov = if inner.width > 0.0 && inner.height > 0.0 {
-                let inner_d = sdf_rounded_rect_val(fx, fy, &inner, inner_r);
-                (-inner_d + 0.5).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-
-            // Stroke = outer coverage minus inner coverage
-            let stroke_cov = (outer_cov - inner_cov).clamp(0.0, 1.0);
-            if stroke_cov <= 0.0 {
-                continue;
-            }
-
-            let mut src = pm;
-            if stroke_cov < 1.0 {
-                src.a = (src.a as f32 * stroke_cov + 0.5) as u8;
-                src.r = (src.r as f32 * stroke_cov + 0.5) as u8;
-                src.g = (src.g as f32 * stroke_cov + 0.5) as u8;
-                src.b = (src.b as f32 * stroke_cov + 0.5) as u8;
-            }
-
-            let dst = fb.get_pixel(x, y);
-            let result = blend::blend(dst, src, mode);
-            fb.set_pixel(x, y, result);
+            paint(fb, x, y);
+        }
+    }
+    for y in sy1..y1 {
+        for x in x0..x1 {
+            paint(fb, x, y);
+        }
+    }
+    for y in sy0..sy1 {
+        for x in x0..sx0 {
+            paint(fb, x, y);
+        }
+        for x in sx1..x1 {
+            paint(fb, x, y);
         }
     }
 }
@@ -1347,5 +1445,314 @@ pub fn draw_line(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod stroke_band_tests {
+    //! Win 1 byte-identity: the perimeter-band `stroke_rounded_rect` must
+    //! produce bit-for-bit identical output to the original full-bbox scalar
+    //! loop, across stroke widths, corner radii (incl. 0 and large), and sizes.
+    use super::*;
+    use crate::color::SrgbLut;
+    use liquide_compositor::framebuffer::FrameBuffer;
+    use liquide_compositor::geometry::Rect;
+    use liquide_compositor::pixel::{BlendMode, Color, PixelFormat};
+
+    /// Reference: the ORIGINAL full-bounding-box stroke loop, walking every
+    /// pixel in the outer bbox with no interior skip. A verbatim transcription
+    /// of the pre-Win-1 algorithm so the test has independent teeth.
+    fn stroke_reference(
+        fb: &mut FrameBuffer,
+        rect: Rect,
+        corner_radius: f32,
+        width: f32,
+        color: Color,
+        mode: BlendMode,
+    ) {
+        if width <= 0.0 {
+            return;
+        }
+        let half = width / 2.0;
+        let outer = Rect::new(
+            rect.x - half,
+            rect.y - half,
+            rect.width + width,
+            rect.height + width,
+        );
+        let inner = Rect::new(
+            rect.x + half,
+            rect.y + half,
+            (rect.width - width).max(0.0),
+            (rect.height - width).max(0.0),
+        );
+        let outer_r = (corner_radius + half).max(0.0);
+        let inner_r = (corner_radius - half).max(0.0);
+
+        let x0 = (outer.x.max(0.0) as u32).min(fb.width);
+        let y0 = (outer.y.max(0.0) as u32).min(fb.height);
+        let x1 = (outer.right().ceil() as u32).min(fb.width);
+        let y1 = (outer.bottom().ceil() as u32).min(fb.height);
+        let (x0, y0, x1, y1) = scissor_clamp_window(x0, y0, x1, y1);
+
+        let pm = color.premultiply();
+
+        for y in y0..y1 {
+            let fy = y as f32 + 0.5;
+            for x in x0..x1 {
+                let fx = x as f32 + 0.5;
+                let outer_d = sdf_rounded_rect_val(fx, fy, &outer, outer_r);
+                let outer_cov = (-outer_d + 0.5).clamp(0.0, 1.0);
+                if outer_cov <= 0.0 {
+                    continue;
+                }
+                let inner_cov = if inner.width > 0.0 && inner.height > 0.0 {
+                    let inner_d = sdf_rounded_rect_val(fx, fy, &inner, inner_r);
+                    (-inner_d + 0.5).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let stroke_cov = (outer_cov - inner_cov).clamp(0.0, 1.0);
+                if stroke_cov <= 0.0 {
+                    continue;
+                }
+                let mut src = pm;
+                if stroke_cov < 1.0 {
+                    src.a = (src.a as f32 * stroke_cov + 0.5) as u8;
+                    src.r = (src.r as f32 * stroke_cov + 0.5) as u8;
+                    src.g = (src.g as f32 * stroke_cov + 0.5) as u8;
+                    src.b = (src.b as f32 * stroke_cov + 0.5) as u8;
+                }
+                let dst = fb.get_pixel(x, y);
+                let result = blend::blend(dst, src, mode);
+                fb.set_pixel(x, y, result);
+            }
+        }
+    }
+
+    fn checker(w: u32, h: u32) -> FrameBuffer {
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        for y in 0..h {
+            for x in 0..w {
+                let c = if (x + y) % 2 == 0 {
+                    Color::new(30, 60, 90, 255)
+                } else {
+                    Color::new(200, 180, 160, 255)
+                };
+                fb.set_pixel(x, y, c);
+            }
+        }
+        fb
+    }
+
+    fn assert_byte_identical(w: u32, h: u32, rect: Rect, radius: f32, width: f32) {
+        let lut = SrgbLut::new();
+        let color = Color::new(220, 40, 40, 200);
+
+        let mut fast = checker(w, h);
+        stroke_rounded_rect(
+            &mut fast,
+            rect,
+            radius,
+            width,
+            color,
+            BlendMode::SrcOver,
+            &lut,
+        );
+
+        let mut slow = checker(w, h);
+        stroke_reference(&mut slow, rect, radius, width, color, BlendMode::SrcOver);
+
+        assert_eq!(
+            fast.pixels(),
+            slow.pixels(),
+            "byte mismatch for rect={rect:?} radius={radius} width={width} size={w}x{h}"
+        );
+    }
+
+    #[test]
+    fn band_matches_full_loop_across_params() {
+        let w = 80;
+        let h = 64;
+        let rect = Rect::new(8.0, 8.0, 60.0, 44.0);
+        for &width in &[1.0_f32, 2.0, 3.5, 6.0, 11.0] {
+            for &radius in &[0.0_f32, 1.0, 4.0, 12.0, 25.0, 60.0] {
+                assert_byte_identical(w, h, rect, radius, width);
+            }
+        }
+    }
+
+    #[test]
+    fn band_matches_full_loop_small_and_clamped() {
+        assert_byte_identical(40, 40, Rect::new(0.0, 0.0, 30.0, 30.0), 6.0, 3.0);
+        assert_byte_identical(40, 40, Rect::new(10.0, 10.0, 8.0, 8.0), 2.0, 10.0);
+        assert_byte_identical(200, 160, Rect::new(20.0, 20.0, 150.0, 110.0), 10.0, 2.0);
+        assert_byte_identical(200, 160, Rect::new(20.0, 20.0, 150.0, 110.0), 0.0, 2.0);
+    }
+
+    #[test]
+    fn band_matches_full_loop_under_scissor() {
+        let _ = liquide_compositor::scissor::set_write_scissor(Some(Rect::new(
+            10.0, 10.0, 120.0, 90.0,
+        )));
+        assert_byte_identical(200, 160, Rect::new(20.0, 20.0, 150.0, 110.0), 12.0, 3.0);
+        let _ = liquide_compositor::scissor::set_write_scissor(None);
+    }
+
+    #[test]
+    fn sabotage_shrunk_band_diverges() {
+        // TEETH: a skip rect grown by 2px each side eats a stroke pixel and must
+        // diverge from the reference — proving the correct band is load-bearing.
+        let color = Color::new(220, 40, 40, 200);
+        let mode = BlendMode::SrcOver;
+        let rect = Rect::new(20.0, 20.0, 150.0, 110.0);
+        let (radius, width) = (12.0_f32, 3.0_f32);
+        let (w, h) = (200u32, 160u32);
+
+        let mut slow = checker(w, h);
+        stroke_reference(&mut slow, rect, radius, width, color, mode);
+
+        let mut bad = checker(w, h);
+        {
+            let half = width / 2.0;
+            let outer = Rect::new(
+                rect.x - half,
+                rect.y - half,
+                rect.width + width,
+                rect.height + width,
+            );
+            let inner = Rect::new(
+                rect.x + half,
+                rect.y + half,
+                (rect.width - width).max(0.0),
+                (rect.height - width).max(0.0),
+            );
+            let outer_r = (radius + half).max(0.0);
+            let inner_r = (radius - half).max(0.0);
+            let x0 = (outer.x.max(0.0) as u32).min(bad.width);
+            let y0 = (outer.y.max(0.0) as u32).min(bad.height);
+            let x1 = (outer.right().ceil() as u32).min(bad.width);
+            let y1 = (outer.bottom().ceil() as u32).min(bad.height);
+            let pm = color.premultiply();
+            let paint = |fb: &mut FrameBuffer, x: u32, y: u32| {
+                let fx = x as f32 + 0.5;
+                let fy = y as f32 + 0.5;
+                let outer_d = sdf_rounded_rect_val(fx, fy, &outer, outer_r);
+                let outer_cov = (-outer_d + 0.5).clamp(0.0, 1.0);
+                if outer_cov <= 0.0 {
+                    return;
+                }
+                let inner_cov = if inner.width > 0.0 && inner.height > 0.0 {
+                    let inner_d = sdf_rounded_rect_val(fx, fy, &inner, inner_r);
+                    (-inner_d + 0.5).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let stroke_cov = (outer_cov - inner_cov).clamp(0.0, 1.0);
+                if stroke_cov <= 0.0 {
+                    return;
+                }
+                let mut src = pm;
+                if stroke_cov < 1.0 {
+                    src.a = (src.a as f32 * stroke_cov + 0.5) as u8;
+                    src.r = (src.r as f32 * stroke_cov + 0.5) as u8;
+                    src.g = (src.g as f32 * stroke_cov + 0.5) as u8;
+                    src.b = (src.b as f32 * stroke_cov + 0.5) as u8;
+                }
+                let dst = fb.get_pixel(x, y);
+                fb.set_pixel(x, y, blend::blend(dst, src, mode));
+            };
+            // BUG: skip rect grown until it overlaps the stroke ring. The
+            // correct inset is `inner_r + 0.5`; here we use a tiny inset so the
+            // skip rect swallows the inner edge of the ring and drops pixels.
+            let inset = -1.0_f32;
+            let left = inner.x + inset;
+            let top = inner.y + inset;
+            let right = inner.right() - inset;
+            let bottom = inner.bottom() - inset;
+            let sx0 = ((left - 0.5).floor() as i64 + 1).max(0) as u32;
+            let sy0 = ((top - 0.5).floor() as i64 + 1).max(0) as u32;
+            let sx1 = (((right - 0.5).ceil() as i64).max(0) as u32).clamp(x0, x1);
+            let sy1 = (((bottom - 0.5).ceil() as i64).max(0) as u32).clamp(y0, y1);
+            let sx0 = sx0.clamp(x0, x1);
+            let sy0 = sy0.clamp(y0, y1);
+            for y in y0..sy0 {
+                for x in x0..x1 {
+                    paint(&mut bad, x, y);
+                }
+            }
+            for y in sy1..y1 {
+                for x in x0..x1 {
+                    paint(&mut bad, x, y);
+                }
+            }
+            for y in sy0..sy1 {
+                for x in x0..sx0 {
+                    paint(&mut bad, x, y);
+                }
+                for x in sx1..x1 {
+                    paint(&mut bad, x, y);
+                }
+            }
+        }
+
+        assert_ne!(
+            bad.pixels(),
+            slow.pixels(),
+            "a skip rect grown by 2px MUST drop a stroke pixel and diverge (teeth)"
+        );
+    }
+
+    #[test]
+    #[ignore = "bench: cargo test -p liquide-renderer-cpu --release -- --ignored bench_border"]
+    fn bench_border() {
+        use std::time::Instant;
+        // The t192 scene: ~760x600 window, r12, 1px border.
+        let (w, h) = (800u32, 640u32);
+        let rect = Rect::new(20.0, 20.0, 760.0, 600.0);
+        let (radius, width) = (12.0_f32, 1.0_f32);
+        let color = Color::new(220, 40, 40, 200);
+        let lut = SrgbLut::new();
+        let iters = 200;
+
+        let base = {
+            let t = Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(checker(w, h));
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / iters as f64
+        };
+
+        let full = {
+            let t = Instant::now();
+            for _ in 0..iters {
+                let mut fb = checker(w, h);
+                stroke_reference(&mut fb, rect, radius, width, color, BlendMode::SrcOver);
+                std::hint::black_box(&fb);
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / iters as f64
+        };
+
+        let band = {
+            let t = Instant::now();
+            for _ in 0..iters {
+                let mut fb = checker(w, h);
+                stroke_rounded_rect(&mut fb, rect, radius, width, color, BlendMode::SrcOver, &lut);
+                std::hint::black_box(&fb);
+            }
+            t.elapsed().as_secs_f64() * 1000.0 / iters as f64
+        };
+
+        eprintln!(
+            "\nBORDER 760x600 r12 w1: full(old)={:.3}ms band(new)={:.3}ms baseline={:.3}ms",
+            full, band, base
+        );
+        eprintln!(
+            "  stroke-only/window: old~{:.3} new~{:.3}  | x3 windows: old~{:.2} new~{:.2}",
+            full - base,
+            band - base,
+            (full - base) * 3.0,
+            (band - base) * 3.0
+        );
     }
 }
