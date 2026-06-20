@@ -881,10 +881,29 @@ impl Painter {
                     });
                 }
                 NodeData::Element => {
-                    // Check for data-icon attribute (dock items, statusbar items)
+                    // Check for data-icon attribute (dock items, statusbar items).
+                    //
+                    // CONTAINER DE-DUP (t189 launcher widget bleed): container rows
+                    // such as `launcher-item` / `dock-item` carry `data-icon` for
+                    // app-id/state lookup convenience, but they ALSO nest a dedicated
+                    // icon element (`launcher-item-icon` / `dock-item-icon`) that
+                    // carries the same `data-icon` and is sized as a small square box.
+                    // Painting the glyph on BOTH stretches a second copy across the
+                    // whole container content box (e.g. a 524px-wide launcher row),
+                    // which rasterises the icon's vector art into bar/slider/gear-like
+                    // shapes that bleed over the row label. Only the dedicated icon
+                    // element should paint: if any child element ALSO carries
+                    // `data-icon`, the child is the real icon carrier — skip the
+                    // container so the icon paints exactly once at its proper size.
+                    // (Leaf icon carriers such as `status-tray-item`, which have no
+                    // `data-icon` child, are unaffected and still paint normally.)
                     if let Some(icon_name) = doc.get_attribute(layout_box.node, "data-icon") {
+                        let child_carries_icon = doc
+                            .children(layout_box.node)
+                            .iter()
+                            .any(|&child| doc.get_attribute(child, "data-icon").is_some());
                         let icon_id = icon_id_for_name(&icon_name);
-                        if icon_id > 0 {
+                        if icon_id > 0 && !child_carries_icon {
                             list.push(DisplayItem::Icon {
                                 rect: abs_content,
                                 icon_id,
@@ -1455,6 +1474,103 @@ mod tests {
         assert!(
             !display_list.is_empty(),
             "Display list should have paint commands"
+        );
+    }
+
+    /// t189 launcher widget bleed — painter-level TEETH.
+    ///
+    /// A `data-icon` CONTAINER that nests a dedicated `data-icon` icon child must
+    /// emit the icon glyph EXACTLY ONCE (on the small child), never twice. The
+    /// bug emitted a second `DisplayItem::Icon` on the full-size container box, so
+    /// for a wide launcher row the icon's vector art stretched into a bar/slider/
+    /// gear/segmented shape that bled over the row label. The de-dup skips the
+    /// container when any child also carries `data-icon`.
+    ///
+    /// RED before the fix (TWO icon items: one ~600px-wide container box + one
+    /// small child box); GREEN after (only the small child icon remains).
+    #[test]
+    fn container_with_icon_child_paints_icon_once_not_stretched() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        // `launcher-item` row carries data-icon (for app-id/state convenience) AND
+        // nests `launcher-item-icon` which is the real icon carrier.
+        let row = doc.create_element("launcher-item");
+        doc.set_attribute(row, "data-icon", "folder");
+        doc.append_child(root, row);
+        let icon = doc.create_element("launcher-item-icon");
+        doc.set_attribute(icon, "data-icon", "folder");
+        doc.append_child(row, icon);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(
+            "launcher-item { display: flex; width: 600px; height: 40px; } \
+             launcher-item-icon { display: block; width: 20px; height: 20px; }",
+        );
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint(&doc, &layout_tree, &style_map);
+
+        let icon_rects: Vec<_> = display_list
+            .items
+            .iter()
+            .filter_map(|it| match it {
+                DisplayItem::Icon { rect, icon_id, .. } => Some((rect.width, *icon_id)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            icon_rects.len(),
+            1,
+            "exactly one icon must paint for a container+icon-child pair (no \
+             stretched duplicate); got {icon_rects:?}"
+        );
+        let (w, id) = icon_rects[0];
+        assert_eq!(id, 1, "icon id for 'folder' must be 1");
+        assert!(
+            w <= 64.0,
+            "the surviving icon must be the small child box (~20px), not the \
+             stretched 600px container box; got width {w}"
+        );
+    }
+
+    /// Companion to the de-dup test: a LEAF element carrying `data-icon` with no
+    /// `data-icon` child (e.g. `status-tray-item`) MUST still paint its icon. This
+    /// guards against the fix over-reaching and suppressing legitimate icons.
+    #[test]
+    fn leaf_with_icon_still_paints() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let item = doc.create_element("status-tray-item");
+        doc.set_attribute(item, "data-icon", "wifi");
+        doc.append_child(root, item);
+        // A non-icon child (a badge) must NOT suppress the leaf's own icon.
+        let badge = doc.create_element("status-tray-badge");
+        doc.append_child(item, badge);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(
+            "status-tray-item { display: block; width: 24px; height: 24px; } \
+             status-tray-badge { display: block; width: 8px; height: 8px; }",
+        );
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(1920.0, 1080.0), 16.0);
+        let layout_tree = le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let display_list = painter.paint(&doc, &layout_tree, &style_map);
+
+        let icon_count = display_list
+            .items
+            .iter()
+            .filter(|it| matches!(it, DisplayItem::Icon { .. }))
+            .count();
+        assert_eq!(
+            icon_count, 1,
+            "a leaf data-icon element with no data-icon child must still paint its icon"
         );
     }
 

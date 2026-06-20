@@ -3490,6 +3490,117 @@ mod tests {
         assert_eq!(strip_css_url("url(\"\")"), None);
     }
 
+    /// t189 launcher widget bleed — TEETH.
+    ///
+    /// Drives the REAL launcher open via the production Super-hotkey path (the
+    /// same input `liquide-visual-test`'s `launcher` scenario uses), then walks
+    /// the live scene graph and asserts that NO `Icon` scene node painted inside
+    /// the launcher results band is wider than a real app icon. The bug painted a
+    /// SECOND, full-row-width (~524px) icon per row — because the `launcher-item`
+    /// CONTAINER carried `data-icon` AND nested a dedicated `launcher-item-icon`
+    /// child carrying the same attribute, so the painter emitted the glyph twice:
+    /// once correctly (small square box) and once stretched across the whole row,
+    /// whose vector art rasterised into bar/slider/gear/segmented shapes that bled
+    /// over the row labels. With the container de-dup fix every launcher icon
+    /// paints exactly once at its proper size.
+    ///
+    /// RED before the painter fix (each row emits an extra ~524x24 Icon node);
+    /// GREEN after (only the ~18px icon boxes remain). The threshold (64px) is a
+    /// generous ceiling: a real launcher icon box is `--spacing-xl` (~18-24px),
+    /// while the bleeding icon spanned the full ~524px row, so the test cannot be
+    /// satisfied by a stray icon merely being a few px large.
+    #[test]
+    fn launcher_rows_paint_no_oversized_widget_icons() {
+        use liquide_input::keyboard::{KeyCode, KeyEvent, KeyState, Modifiers};
+        use liquide_platform::event_loop::PlatformEvent;
+        use liquide_platform::standalone::{StandaloneConfig, StandalonePlatform};
+        use liquide_platform::window_host::NativeWindowHandle;
+
+        let mut desktop = dev_compositor_with_theme("macos-dark", 1280, 720);
+        let mut platform = StandalonePlatform::new(StandaloneConfig {
+            width: 1280,
+            height: 720,
+            hardware_cursor: false,
+            ..StandaloneConfig::default()
+        })
+        .expect("standalone platform");
+
+        // Production launcher-open input: Super (LeftSuper) toggles the launcher.
+        let sup = Modifiers::from_bits(Modifiers::SUPER);
+        let h = NativeWindowHandle(1);
+        let events = vec![
+            PlatformEvent::KeyInput {
+                handle: h,
+                event: KeyEvent::new(KeyCode::LeftSuper, KeyState::Pressed, sup, 0, 0),
+            },
+            PlatformEvent::KeyInput {
+                handle: h,
+                event: KeyEvent::new(KeyCode::LeftSuper, KeyState::Released, sup, 0, 0),
+            },
+        ];
+
+        // Collected (width, height) of every Icon scene node whose top sits below
+        // the launcher search bar (i.e. in the results band) — gathered inside the
+        // post-input render seam against the LIVE scene.
+        let mut launcher_icon_sizes: Vec<(f32, f32)> = Vec::new();
+        desktop.capture_once_scripted_with(&mut platform, events, |shell| {
+            assert!(
+                shell.launcher().is_visible(),
+                "Super hotkey must open the launcher (production OpenLauncher path)"
+            );
+            let scene = shell.build_scene();
+
+            fn collect_icons(
+                n: &liquide_compositor::scene::SceneNode,
+                out: &mut Vec<(f32, f32)>,
+            ) {
+                if let liquide_compositor::scene::SceneNodeKind::Icon { .. } = n.kind {
+                    let b = n.properties.bounds;
+                    // The launcher results band: below the search bar (~y>50) and
+                    // inside the centred card column (x in ~[360, 920]). The status
+                    // bar / dock icons live outside this band.
+                    let in_results_band = b.y > 50.0
+                        && b.y < 600.0
+                        && b.x > 360.0
+                        && b.x + b.width < 920.0;
+                    if in_results_band {
+                        out.push((b.width, b.height));
+                    }
+                }
+                for c in &n.children {
+                    collect_icons(c, out);
+                }
+            }
+            collect_icons(&scene, &mut launcher_icon_sizes);
+        });
+
+        // There MUST be launcher row icons (otherwise the test is vacuously green
+        // and not testing the real render).
+        assert!(
+            launcher_icon_sizes.len() >= 5,
+            "expected at least the 5 launcher app-row icons in the results band, \
+             found {}: {launcher_icon_sizes:?}",
+            launcher_icon_sizes.len()
+        );
+
+        // No launcher icon may be wider than a real app icon. The widget-bleed bug
+        // painted a ~524px-wide icon per row; a real icon box is ~18-24px.
+        const MAX_ICON_W: f32 = 64.0;
+        let oversized: Vec<(f32, f32)> = launcher_icon_sizes
+            .iter()
+            .copied()
+            .filter(|(w, _)| *w > MAX_ICON_W)
+            .collect();
+        assert!(
+            oversized.is_empty(),
+            "launcher widget bleed: {} oversized icon node(s) painted across the \
+             launcher rows (width > {MAX_ICON_W}px), e.g. a full-row-width icon \
+             whose stretched glyph reads as a slider/progress/gauge/segmented \
+             control over the app labels: {oversized:?}",
+            oversized.len()
+        );
+    }
+
     #[test]
     fn drain_new_images_decodes_and_caches_referenced_wallpaper() {
         // Drive a real desktop + the bundled liquid-glass theme (which references
