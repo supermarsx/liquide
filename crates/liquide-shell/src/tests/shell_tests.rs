@@ -287,6 +287,123 @@ fn shell_sync_dom_preserves_launcher_overlay_root() {
 }
 
 #[test]
+fn shell_sync_dom_marks_selected_launcher_item() {
+    // t195 teeth: the keyboard-selected result must carry `.selected` in the
+    // rendered DOM (previously never wired, so nothing was ever highlighted).
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.launcher.open(); // empty query → full app listing, selection at 0
+    shell.sync_dom();
+
+    let items: Vec<_> = shell
+        .desktop_dom
+        .doc
+        .descendants(shell.desktop_dom.doc.root())
+        .into_iter()
+        .filter(|&n| {
+            shell
+                .desktop_dom
+                .doc
+                .get(n)
+                .map_or(false, |node| node.tag_name() == "launcher-item")
+        })
+        .collect();
+    assert!(items.len() >= 2, "expected several launcher items");
+
+    let selected: Vec<bool> = items
+        .iter()
+        .map(|&n| shell.desktop_dom.doc.get(n).unwrap().has_class("selected"))
+        .collect();
+    assert!(
+        selected[0],
+        "the first (selected_index 0) item must be marked .selected"
+    );
+    assert_eq!(
+        selected.iter().filter(|&&s| s).count(),
+        1,
+        "exactly one item may be marked selected"
+    );
+
+    // Moving the selection down moves the `.selected` marker.
+    shell.launcher.select_next();
+    shell.sync_dom();
+    let items2: Vec<_> = shell
+        .desktop_dom
+        .doc
+        .descendants(shell.desktop_dom.doc.root())
+        .into_iter()
+        .filter(|&n| {
+            shell
+                .desktop_dom
+                .doc
+                .get(n)
+                .map_or(false, |node| node.tag_name() == "launcher-item")
+        })
+        .collect();
+    assert!(
+        !shell.desktop_dom.doc.get(items2[0]).unwrap().has_class("selected"),
+        "after select_next the first item must no longer be selected"
+    );
+    assert!(
+        shell.desktop_dom.doc.get(items2[1]).unwrap().has_class("selected"),
+        "after select_next the second item must be selected"
+    );
+}
+
+#[test]
+fn shell_sync_dom_renders_launcher_empty_state_on_no_match() {
+    // t195 teeth: a query that matches nothing must render the `launcher-empty`
+    // node (and NOT a `launcher-results` list), so the UI shows a no-results
+    // state instead of a broken blank card.
+    let mut shell = Shell::new(1920.0, 1080.0);
+    shell.launcher.open();
+    shell.launcher.set_query("qqzzx"); // matches no default app, web search off
+    shell.sync_dom();
+
+    let doc = &shell.desktop_dom.doc;
+    let all = doc.descendants(doc.root());
+    let has_empty = all
+        .iter()
+        .any(|&n| doc.get(n).map_or(false, |node| node.tag_name() == "launcher-empty"));
+    let has_results = all
+        .iter()
+        .any(|&n| doc.get(n).map_or(false, |node| node.tag_name() == "launcher-results"));
+    assert!(has_empty, "no-match query must render <launcher-empty>");
+    assert!(
+        !has_results,
+        "no-match query must NOT render a <launcher-results> list"
+    );
+
+    // The empty node carries the no-results message including the query.
+    let empty = all
+        .iter()
+        .find(|&&n| doc.get(n).map_or(false, |node| node.tag_name() == "launcher-empty"))
+        .copied()
+        .expect("launcher-empty node");
+    let text_node = doc.children(empty)[0];
+    let text = doc.get(text_node).unwrap().text_content().unwrap_or("");
+    assert!(
+        text.contains("qqzzx"),
+        "empty-state text must mention the query, got {text:?}"
+    );
+
+    // Conversely, a matching query renders results and no empty node.
+    shell.launcher.set_query("terminal");
+    shell.sync_dom();
+    let doc = &shell.desktop_dom.doc;
+    let all = doc.descendants(doc.root());
+    assert!(
+        all.iter()
+            .any(|&n| doc.get(n).map_or(false, |node| node.tag_name() == "launcher-results")),
+        "a matching query must render <launcher-results>"
+    );
+    assert!(
+        !all.iter()
+            .any(|&n| doc.get(n).map_or(false, |node| node.tag_name() == "launcher-empty")),
+        "a matching query must NOT render <launcher-empty>"
+    );
+}
+
+#[test]
 fn shell_sync_dom_formats_clock_from_status_bar_model() {
     let mut shell = Shell::new(1920.0, 1080.0);
     shell.status_bar.set_clock_offset_minutes(60);

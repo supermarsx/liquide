@@ -24,6 +24,16 @@ fn make_app(id: &str, name: &str) -> LauncherApp {
     }
 }
 
+/// Like [`make_app`] but with NO description/keywords, so matching is decided
+/// purely by the title (used by the ranking teeth where a stray description
+/// match would muddy the tier under test).
+fn make_named(id: &str, name: &str) -> LauncherApp {
+    LauncherApp {
+        description: None,
+        ..make_app(id, name)
+    }
+}
+
 // ========== LauncherConfig defaults ==========
 
 #[test]
@@ -92,50 +102,120 @@ fn remove_app_also_removes_from_favorites() {
 
 // ========== Fuzzy search scoring ==========
 
+// The scorer is tiered: a better match KIND always outranks a worse one, and
+// the bands stay inside [0.3, 1.0] so the calculator's 2.0 relevance still wins.
+// Bands: exact = 1.0, prefix ∈ [0.85, 0.90), substring ∈ [0.65, 0.75),
+// subsequence ∈ [0.30, 0.50). Within a tier a fine fuzzy nudge orders ties.
+
 #[test]
 fn fuzzy_score_exact_match() {
+    // Exact is a single fixed value at the top of the scale.
     let score = Launcher::fuzzy_score("terminal", "terminal");
-    assert!((score - 1.0).abs() < 0.01);
+    assert!((score - 1.0).abs() < 0.001, "exact must be 1.0, got {score}");
 }
 
 #[test]
-fn fuzzy_score_prefix_match() {
+fn fuzzy_score_prefix_match_in_band() {
     let score = Launcher::fuzzy_score("fire", "firefox");
-    assert!((score - 0.9).abs() < 0.01);
+    assert!(
+        (0.85..0.90).contains(&score),
+        "prefix must land in [0.85, 0.90), got {score}"
+    );
 }
 
 #[test]
-fn fuzzy_score_substring_match() {
+fn fuzzy_score_substring_match_in_band() {
     let score = Launcher::fuzzy_score("fox", "firefox");
-    assert!((score - 0.7).abs() < 0.01);
+    assert!(
+        (0.65..0.75).contains(&score),
+        "substring must land in [0.65, 0.75), got {score}"
+    );
 }
 
 #[test]
-fn fuzzy_score_subsequence_match() {
+fn fuzzy_score_subsequence_match_in_band() {
     let score = Launcher::fuzzy_score("ffx", "firefox");
-    assert!((score - 0.3).abs() < 0.01);
+    assert!(
+        (0.30..0.50).contains(&score),
+        "subsequence must land in [0.30, 0.50), got {score}"
+    );
+}
+
+#[test]
+fn fuzzy_score_tiers_are_strictly_ordered() {
+    // The core ranking contract: exact > prefix > substring > subsequence, with
+    // NO band overlap, so a better match kind always sorts ahead of a worse one.
+    let exact = Launcher::fuzzy_score("firefox", "firefox");
+    let prefix = Launcher::fuzzy_score("fire", "firefox");
+    let substring = Launcher::fuzzy_score("fox", "firefox");
+    let subseq = Launcher::fuzzy_score("ffx", "firefox");
+    assert!(
+        exact > prefix && prefix > substring && substring > subseq,
+        "tiers must be strictly ordered: exact {exact} > prefix {prefix} > substring {substring} > subseq {subseq}"
+    );
 }
 
 #[test]
 fn fuzzy_score_no_match() {
     let score = Launcher::fuzzy_score("zzz", "firefox");
-    assert!((score - 0.0).abs() < 0.01);
+    assert!((score - 0.0).abs() < 0.001);
 }
 
 #[test]
 fn fuzzy_score_empty_query() {
-    assert!((Launcher::fuzzy_score("", "firefox") - 0.0).abs() < 0.01);
+    assert!((Launcher::fuzzy_score("", "firefox") - 0.0).abs() < 0.001);
 }
 
 #[test]
 fn fuzzy_score_empty_target() {
-    assert!((Launcher::fuzzy_score("fire", "") - 0.0).abs() < 0.01);
+    assert!((Launcher::fuzzy_score("fire", "") - 0.0).abs() < 0.001);
 }
 
 #[test]
 fn fuzzy_score_case_insensitive() {
+    // Mixed-case query against mixed-case target still resolves as a prefix.
     let score = Launcher::fuzzy_score("FIRE", "Firefox");
-    assert!((score - 0.9).abs() < 0.01);
+    assert!(
+        (0.85..0.90).contains(&score),
+        "case-insensitive prefix must land in the prefix band, got {score}"
+    );
+    // And the score is identical regardless of query casing.
+    let lower = Launcher::fuzzy_score("fire", "Firefox");
+    assert!(
+        (score - lower).abs() < 0.001,
+        "score must not depend on query casing: {score} vs {lower}"
+    );
+}
+
+#[test]
+fn fuzzy_score_prefix_beats_midword_substring() {
+    // A query that is a PREFIX of one title and only a MID-WORD substring of
+    // another must rank the prefix higher (Spotlight-style "best match first").
+    let prefix = Launcher::fuzzy_score("set", "Settings");
+    let midword = Launcher::fuzzy_score("set", "Reset");
+    assert!(
+        prefix > midword,
+        "prefix 'set'→Settings ({prefix}) must beat mid-word 'set'→Reset ({midword})"
+    );
+}
+
+#[test]
+fn fuzzy_score_boundary_subsequence_beats_scattered() {
+    // Within the SAME (subsequence) tier the word-boundary-aligned match wins
+    // via the fuzzy nudge: "fb" hits the start of both words in "Foo Bar"
+    // (F…B), but is buried mid-word in "fabric" (Fa-B-ric). Both are
+    // non-contiguous subsequences, so both sit in [0.30, 0.50) and only the
+    // nudge separates them.
+    let aligned = Launcher::fuzzy_score("fb", "Foo Bar");
+    let buried = Launcher::fuzzy_score("fb", "fabric");
+    assert!(
+        (0.30..0.50).contains(&aligned) && (0.30..0.50).contains(&buried),
+        "both must be subsequence-tier: aligned {aligned}, buried {buried}"
+    );
+    assert!(
+        aligned > buried,
+        "boundary-aligned 'fb'→'Foo Bar' ({aligned}) must beat buried 'fb'→'fabric' ({buried})"
+    );
 }
 
 // ========== Search — calculator integration ==========
@@ -270,6 +350,146 @@ fn search_results_sorted_by_relevance() {
         }
         _ => panic!("Expected Application result kind"),
     }
+}
+
+// ========== Search — filtering + ranking TEETH (t195) ==========
+//
+// These mirror the real default launcher catalog (Files / Terminal / Browser /
+// Settings / Calculator) and assert the ACTUAL filtered + ranked result set,
+// not merely "didn't panic". They are the teeth behind the t195 search fixes:
+// live filtering, case-insensitive fuzzy matching, sensible best-first ranking,
+// empty-query "show all", and a real no-match empty set.
+
+/// Build a launcher seeded with the production default-app catalog.
+fn catalog_launcher() -> Launcher {
+    let mut launcher = default_launcher();
+    for (id, name) in [
+        ("com.liquide.files", "Files"),
+        ("com.liquide.terminal", "Terminal"),
+        ("com.liquide.browser", "Browser"),
+        ("com.liquide.settings", "Settings"),
+        ("com.liquide.calculator", "Calculator"),
+    ] {
+        // No description/keywords — match purely on the name, like the defaults
+        // (description is empty so it cannot accidentally widen the match set).
+        launcher.add_app(LauncherApp {
+            app_id: id.into(),
+            name: name.into(),
+            description: None,
+            icon: Some("icon".into()),
+            exec: None,
+            categories: vec![],
+            keywords: vec![],
+            terminal: false,
+            no_display: false,
+            launch_count: 0,
+            last_launched_us: 0,
+        });
+    }
+    launcher
+}
+
+/// The set of matched app_ids in result order.
+fn result_ids(launcher: &Launcher) -> Vec<String> {
+    launcher
+        .results()
+        .iter()
+        .filter_map(|r| match &r.kind {
+            SearchResultKind::Application { app_id } => Some(app_id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn search_filters_to_matching_apps_not_all_not_none() {
+    let mut launcher = catalog_launcher();
+    // "te" matches Terminal (prefix) only among names; Settings has no "te"
+    // subsequence in its NAME ("Settings": no 't' followed by 'e').
+    launcher.set_query("te");
+    let ids = result_ids(&launcher);
+    assert_eq!(
+        ids,
+        vec!["com.liquide.terminal".to_string()],
+        "typing 'te' must filter to exactly Terminal, got {ids:?}"
+    );
+    // Sanity: filtering actually narrowed from the full catalog of 5.
+    assert!(ids.len() < 5, "filtering must narrow the catalog");
+}
+
+#[test]
+fn search_prefix_is_selected_and_ranked_first() {
+    let mut launcher = catalog_launcher();
+    launcher.set_query("ca");
+    let ids = result_ids(&launcher);
+    assert_eq!(
+        ids,
+        vec!["com.liquide.calculator".to_string()],
+        "typing 'ca' must filter to exactly Calculator, got {ids:?}"
+    );
+    // The first (and selected) result is the prefix match.
+    assert_eq!(launcher.selected_index(), 0);
+}
+
+#[test]
+fn search_ranks_prefix_match_before_weaker_match() {
+    // "se" is a PREFIX of Settings but only a non-contiguous SUBSEQUENCE of
+    // "Browser" (browSE-r → b…r…o…wsE? actually B-r-o-w-s-e-r contains "se"
+    // contiguously). To get an unambiguous prefix-vs-subsequence ranking we use
+    // two synthetic apps so the tiers are clean.
+    let mut launcher = default_launcher();
+    launcher.add_app(make_named("a.sysenv", "System Env")); // "se" subsequence: Sy…s..E
+    launcher.add_app(make_named("a.setup", "Setup")); // "se" prefix
+    launcher.set_query("se");
+    let ids = result_ids(&launcher);
+    assert!(
+        ids.len() == 2,
+        "both apps should match 'se' as a subsequence, got {ids:?}"
+    );
+    assert_eq!(
+        ids[0], "a.setup",
+        "the prefix match (Setup) must rank ahead of the subsequence match, got {ids:?}"
+    );
+}
+
+#[test]
+fn search_is_case_insensitive() {
+    let mut launcher = catalog_launcher();
+    launcher.set_query("FILES");
+    let ids = result_ids(&launcher);
+    assert_eq!(
+        ids,
+        vec!["com.liquide.files".to_string()],
+        "uppercase query must still match the lowercase title, got {ids:?}"
+    );
+}
+
+#[test]
+fn search_empty_query_shows_all_apps() {
+    let mut launcher = catalog_launcher();
+    launcher.set_query("fi");
+    assert_eq!(result_ids(&launcher).len(), 1, "filtered to one first");
+    // Clearing the query (e.g. backspace to empty) restores the full catalog.
+    launcher.set_query("");
+    assert_eq!(
+        result_ids(&launcher).len(),
+        5,
+        "empty query must show ALL apps, not the filtered subset"
+    );
+}
+
+#[test]
+fn search_no_match_yields_empty_set() {
+    // With web fallback off (the default), a query matching nothing must produce
+    // an EMPTY result set so the UI shows its no-results empty-state — not a
+    // stale or full list.
+    let mut launcher = catalog_launcher();
+    launcher.set_query("qqzzx");
+    assert_eq!(
+        launcher.result_count(),
+        0,
+        "a no-match query must yield zero results (drives the empty-state)"
+    );
 }
 
 // ========== Search — web search fallback ==========

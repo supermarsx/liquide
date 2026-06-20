@@ -38,7 +38,9 @@ launcher {
 
 launcher-search {
     display: flex;
+    flex-direction: row;
     align-items: center;
+    gap: var(--spacing-md);
     padding: var(--spacing-md) var(--spacing-lg);
     font-size: var(--font-size-lg);
     color: var(--text-primary);
@@ -47,6 +49,27 @@ launcher-search {
     border-bottom-style: solid;
     border-bottom-color: var(--border-subtle);
     min-height: var(--launcher-search-height);
+}
+
+/* Leading magnifier glyph in the search field (Spotlight-style affordance). */
+launcher-search-icon {
+    display: block;
+    width: var(--spacing-lg);
+    height: var(--spacing-lg);
+    flex-shrink: 0;
+    opacity: 0.7;
+}
+
+/* The live query text (when something has been typed). */
+launcher-search-text {
+    display: block;
+    color: var(--text-primary);
+}
+
+/* Dimmed placeholder shown when the query is empty. */
+launcher-search-placeholder {
+    display: block;
+    color: var(--text-tertiary);
 }
 
 launcher-results {
@@ -90,4 +113,15 @@ launcher-item-label {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+/* ── Empty state ───────────────────────────────────────────
+   Shown in place of the results list when a query matches nothing,
+   so the launcher reads as "no matches" rather than a broken blank card. */
+launcher-empty {
+    display: block;
+    padding: var(--spacing-xl) var(--spacing-lg);
+    font-size: var(--font-size-md);
+    color: var(--text-secondary);
+    text-align: center;
 }

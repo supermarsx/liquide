@@ -878,8 +878,10 @@ impl Shell {
         if self.launcher.is_visible() {
             self.mark_wired(crate::shell::WiringBit::Launcher);
             let mut ctx = TemplateContext::new();
-            ctx.set("query", self.launcher.query());
+            let query = self.launcher.query();
+            ctx.set("query", query);
 
+            let selected = self.launcher.selected_index();
             let items: Vec<TemplateContext> = self
                 .launcher
                 .results()
@@ -901,10 +903,16 @@ impl Shell {
                     ic.set("app_id", app_id);
                     ic.set("label", &r.title);
                     ic.set("icon", r.icon.as_deref().unwrap_or(""));
+                    // The keyboard-selected result gets `.selected` so the render
+                    // actually highlights it (previously never wired — the
+                    // template's `{{#if selected}}` was always false).
+                    ic.set("selected", i == selected);
                     ic
                 })
                 .collect();
+            let has_results = !items.is_empty();
             ctx.set("results", items);
+            ctx.set("has_results", has_results);
 
             let result_state: Vec<_> = self
                 .launcher
@@ -924,7 +932,10 @@ impl Shell {
                     )
                 })
                 .collect();
-            let state_hash = template_state_hash(&(self.launcher.query(), &result_state));
+            // Fold the selected index into the hash so moving the keyboard
+            // selection (which only flips a `.selected` class) re-renders.
+            let state_hash =
+                template_state_hash(&(self.launcher.query(), selected, &result_state));
             ctx.set("state_hash", &state_hash);
 
             if let Some(html) = self.template_registry.render("launcher", &ctx) {

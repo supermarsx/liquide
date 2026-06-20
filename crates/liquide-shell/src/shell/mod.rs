@@ -112,16 +112,21 @@ const SHELL_STATUSBAR_TEMPLATE: &str = r#"<statusbar-slot class="left" id="statu
 const SHELL_LAUNCHER_TEMPLATE: &str = r#"<launcher-overlay id="launcher-overlay" data-state-hash="{{state_hash}}">
   <launcher id="shell-launcher">
     <launcher-search id="launcher-search" data-query="{{query}}">
-      {{#if query}}{{query}}{{else}}Search applications...{{/if}}
+      <launcher-search-icon data-icon="search" />
+      {{#if query}}<launcher-search-text>{{query}}</launcher-search-text>{{else}}<launcher-search-placeholder>Search applications...</launcher-search-placeholder>{{/if}}
     </launcher-search>
+    {{#if has_results}}
     <launcher-results>
       {{#each results}}
-      <launcher-item data-key="{{key}}" data-app-id="{{app_id}}" data-icon="{{icon}}" data-index="{{index}}">
+      <launcher-item data-key="{{key}}" data-app-id="{{app_id}}" data-icon="{{icon}}" data-index="{{index}}" {{#if selected}}class="selected"{{/if}}>
         <launcher-item-icon data-icon="{{icon}}" />
         <launcher-item-label>{{label}}</launcher-item-label>
       </launcher-item>
       {{/each}}
     </launcher-results>
+    {{else}}
+    <launcher-empty>No results for "{{query}}"</launcher-empty>
+    {{/if}}
   </launcher>
 </launcher-overlay>"#;
 

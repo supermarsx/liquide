@@ -540,12 +540,31 @@ impl Launcher {
 
     /// Case-insensitive fuzzy scoring of `query` against `target`.
     ///
-    /// Returns:
-    /// - `1.0` — exact match
-    /// - `0.9` — `target` starts with `query`
-    /// - `0.7` — `target` contains `query` as a substring
-    /// - `0.3` — `query` characters appear as a subsequence in `target`
-    /// - `0.0` — no match
+    /// The result is built from two parts so ranking is sensible *both* across
+    /// match kinds and *within* a kind (best match first):
+    ///
+    /// 1. A coarse **tier** that separates the broad match classes so a better
+    ///    kind always outranks a worse one. Each tier owns a disjoint band and
+    ///    the bands stay inside `[0.3, 1.0]`, preserving the historical scale
+    ///    (so the calculator's `2.0` relevance still sits above every app match
+    ///    and the description/keyword weights below keep their meaning):
+    ///    - exact match           → `1.0`
+    ///    - prefix (`starts_with`) → `[0.85, 0.90)`
+    ///    - contiguous substring   → `[0.65, 0.75)`
+    ///    - subsequence only       → `[0.30, 0.50)`
+    ///    - no match               → `0.0`
+    /// 2. A fine **intra-tier nudge** derived from the shared
+    ///    [`liquide_widgets::fuzzy::score`] (the command-palette scorer that
+    ///    rewards contiguity and word/`camelCase` boundaries), so among matches
+    ///    in the same tier the tighter / more boundary-aligned one wins (e.g.
+    ///    "om" prefers "**O**pen **M**ap" over "rand**om**"). The nudge is
+    ///    squashed inside each tier's band so it can never promote a worse tier
+    ///    above a better one.
+    ///
+    /// Returns `0.0` when there is no match (so existing `> 0.0` gating callers
+    /// keep working). Empty `query` or `target` is never a match here — the
+    /// empty-query "show all" path is handled upstream in
+    /// [`Launcher::populate_default_results`].
     #[must_use]
     pub fn fuzzy_score(query: &str, target: &str) -> f64 {
         if query.is_empty() || target.is_empty() {
@@ -555,43 +574,31 @@ impl Launcher {
         let q = query.to_lowercase();
         let t = target.to_lowercase();
 
-        // Exact match.
-        if q == t {
-            return 1.0;
-        }
+        // Coarse tier band [floor, ceil): a better kind always dominates.
+        let (floor, span) = if q == t {
+            return 1.0; // exact: single fixed value, no nudge needed
+        } else if t.starts_with(&q) {
+            (0.85, 0.05)
+        } else if t.contains(&q) {
+            (0.65, 0.10)
+        } else if liquide_widgets::fuzzy::matches(&q, &t) {
+            (0.30, 0.20)
+        } else {
+            return 0.0;
+        };
 
-        // Prefix match.
-        if t.starts_with(&q) {
-            return 0.9;
-        }
+        // Fine intra-tier nudge in [0.0, 1.0): the shared palette scorer rewards
+        // contiguity + word/camelCase boundaries, breaking ties within a tier so
+        // the visually-best match floats up. Mapped into the tier's own band so
+        // it can never lift a result into a higher tier.
+        let nudge = liquide_widgets::fuzzy::score(query, target)
+            .map(|s| {
+                let s = s.max(0) as f64;
+                s / (s + 16.0)
+            })
+            .unwrap_or(0.0);
 
-        // Substring match.
-        if t.contains(&q) {
-            return 0.7;
-        }
-
-        // Subsequence match.
-        let mut t_iter = t.chars();
-        let mut matched = 0_usize;
-        let q_chars: Vec<char> = q.chars().collect();
-        for qc in &q_chars {
-            let mut found = false;
-            for tc in t_iter.by_ref() {
-                if tc == *qc {
-                    found = true;
-                    matched += 1;
-                    break;
-                }
-            }
-            if !found {
-                break;
-            }
-        }
-        if matched == q_chars.len() {
-            return 0.3;
-        }
-
-        0.0
+        floor + nudge * span
     }
 
     // -- result access ------------------------------------------------------
