@@ -11,13 +11,12 @@ window-decoration {
     border-style: solid;
     border-color: var(--window-border);
     border-radius: var(--window-radius);
-    /* NOTE: the engine cannot re-parse a multi-token box-shadow shorthand
-       delivered via var() (var() resolution routes through parse_inline_value,
-       which only handles single number/color/keyword). The literal px
-       shorthand below is parsed by lightningcss into a real BoxShadowSpec so
-       the window drop-shadow actually renders. Keep in sync with
-       --window-shadow in variables.css. See t69-effects2 escalation. */
-    box-shadow: 0px 8px 32px rgba(0, 0, 0, 0.50);
+    /* t190: windows carry NO drop shadow. The shadow MECHANISM stays intact
+       (the renderer's box-shadow painting/caching is untouched; scene.rs emits a
+       window Shadow node fed by `window { box-shadow-color }`). A fully
+       transparent shadow here means the window emits no halo. Re-enableable by a
+       theme restoring an opaque box-shadow. Other surfaces keep their shadows. */
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.0);
     overflow: hidden;
 }
 

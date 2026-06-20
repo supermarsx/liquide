@@ -812,3 +812,98 @@ fn titlebar_top_corner_starts_resize_not_move() {
         shell2.drag_state
     );
 }
+
+// ── t190-no-window-shadow: windows emit NO drop shadow (theme-only) ────────
+//
+// The window drop shadow is painted by `scene.rs` as a `Shadow` scene node whose
+// COLOR comes from the active theme's `window { box-shadow-color }` (resolved by
+// `theme_loader::css_to_shell_theme` into `ShellTheme::window_shadow`). The user
+// asked for the window drop shadow to be REMOVED while keeping the MECHANISM
+// (the box-shadow paint/cache + the Shadow node) intact — so we do it purely in
+// the theme by making the window's box-shadow color fully transparent (alpha 0).
+// A transparent shadow color makes the (still-emitted) Shadow node paint
+// nothing, so there is no halo around the window rect.
+//
+// These tests have teeth on BOTH sides:
+//   * RED-before / GREEN-after: the window shadow alpha of the SHIPPED macos-dark
+//     and night themes must be 0. Before t190 it was 140 (0.55) / 183 (0.72), so
+//     these failed; after the theme edit they pass.
+//   * No collateral: a representative NON-window surface (context-menu / dialog)
+//     must KEEP an opaque box-shadow — proving we removed only the WINDOW shadow,
+//     not every shadow (and didn't share a single token across both).
+
+use crate::theme_loader::css_to_shell_theme;
+use liquide_theme_css::prelude::PropertyValue;
+use liquide_theme_css::{ThemeEngine, ThemeParser};
+
+const MACOS_DARK_CSS: &str = include_str!("../../../../assets/themes/macos_dark.css");
+const NIGHT_CSS: &str = include_str!("../../../../assets/themes/night.css");
+
+/// Build a `ThemeEngine` from a standalone theme stylesheet (no `var()`
+/// resolution — the shipped theme files use literal values, the same way the
+/// `ShellTheme` resolver parses them).
+fn engine_for(css: &str) -> ThemeEngine {
+    let stylesheet = ThemeParser::new().parse_str(css).expect("theme css must parse");
+    ThemeEngine::new(stylesheet)
+}
+
+/// The alpha of a selector's resolved `box-shadow-color`, or `None` if the
+/// selector specifies no box-shadow at all. Used to assert that NON-window
+/// surfaces still cast a visible (opaque) shadow.
+fn box_shadow_alpha(engine: &ThemeEngine, selector: &str) -> Option<u8> {
+    let styles = engine.query(selector, &[], &[]).ok()?;
+    match styles.get("box-shadow-color")? {
+        PropertyValue::Color(c) => Some(c.a),
+        _ => None,
+    }
+}
+
+/// macos-dark: the window emits NO drop shadow — `ShellTheme::window_shadow` is
+/// fully transparent. (RED before t190: alpha was 140.)
+#[test]
+fn macos_dark_window_has_no_drop_shadow() {
+    let theme = css_to_shell_theme(&engine_for(MACOS_DARK_CSS));
+    assert_eq!(
+        theme.window_shadow.a, 0,
+        "the macos-dark window drop shadow must be fully transparent (no halo); \
+         got alpha {} — the `window {{ box-shadow }}` rule must use a transparent \
+         color so the (still-emitted) Shadow node paints nothing",
+        theme.window_shadow.a
+    );
+}
+
+/// night: same contract. (RED before t190: alpha was 183.)
+#[test]
+fn night_window_has_no_drop_shadow() {
+    let theme = css_to_shell_theme(&engine_for(NIGHT_CSS));
+    assert_eq!(
+        theme.window_shadow.a, 0,
+        "the night window drop shadow must be fully transparent (no halo); got \
+         alpha {}",
+        theme.window_shadow.a
+    );
+}
+
+/// No collateral: removing the WINDOW shadow must NOT remove menu/dialog
+/// shadows. The context-menu (macos-dark) and dialog (night) keep an opaque
+/// box-shadow — proving the window shadow was a distinct rule/token, not shared.
+#[test]
+fn non_window_surfaces_keep_their_shadows() {
+    let macos = engine_for(MACOS_DARK_CSS);
+    let menu_alpha = box_shadow_alpha(&macos, "context-menu")
+        .expect("macos-dark context-menu must specify a box-shadow");
+    assert!(
+        menu_alpha > 0,
+        "the macos-dark context-menu must keep a visible (opaque) shadow, got \
+         alpha {menu_alpha} — only the WINDOW shadow should have been removed"
+    );
+
+    let night = engine_for(NIGHT_CSS);
+    let dialog_alpha = box_shadow_alpha(&night, "dialog")
+        .expect("night dialog must specify a box-shadow");
+    assert!(
+        dialog_alpha > 0,
+        "the night dialog must keep a visible (opaque) shadow, got alpha \
+         {dialog_alpha} — only the WINDOW shadow should have been removed"
+    );
+}

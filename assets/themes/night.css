@@ -209,7 +209,11 @@ window {
     border-color: rgba(255, 255, 255, 0.12);
     border-width: 1;
     border-radius: 8;
-    box-shadow: 0px 8px 32px rgba(0, 0, 0, 0.72);
+    /* t190: windows carry NO drop shadow. The shadow MECHANISM stays intact
+       (scene.rs emits a Shadow node fed by `window { box-shadow-color }`); a
+       fully transparent shadow color makes it paint nothing — no halo. Menus,
+       dialogs, popovers and the dock keep their own shadows. */
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.0);
     glass-tint: rgba(16, 16, 16, 0.88);
     overflow: hidden;
 }

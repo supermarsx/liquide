@@ -147,7 +147,9 @@
   --notification-radius: 12;
 
   /* ── Shadows (soft, deep dark) ── */
-  --window-shadow: 0px 18px 50px rgba(0, 0, 0, 0.55);
+  /* t190: windows have NO drop shadow (kept as a distinct token from
+     --shadow-large so menus/dialogs/popovers/dock keep theirs). */
+  --window-shadow: 0px 0px 0px rgba(0, 0, 0, 0.0);
   --shadow-large:  0px 18px 50px rgba(0, 0, 0, 0.55);
   --shadow-medium: 0px 8px 28px rgba(0, 0, 0, 0.45);
   --shadow-small:  0px 2px 10px rgba(0, 0, 0, 0.35);
@@ -359,7 +361,13 @@ window {
     border-color: rgba(255, 255, 255, 0.10);
     border-width: 1;
     border-radius: 10;
-    box-shadow: 0px 18px 50px rgba(0, 0, 0, 0.55);
+    /* t190: windows carry NO drop shadow. The shadow MECHANISM is intact
+       (scene.rs still emits a Shadow node fed by `window { box-shadow-color }`
+       via theme_loader); a fully transparent shadow color makes that node paint
+       nothing, so there is no halo around the window. Re-enableable by a theme
+       restoring an opaque box-shadow here. Other surfaces (menus/dialogs/dock)
+       keep their own shadows. */
+    box-shadow: 0px 0px 0px rgba(0, 0, 0, 0.0);
     glass-tint: rgba(30, 30, 30, 0.90);
     overflow: hidden;
 }
