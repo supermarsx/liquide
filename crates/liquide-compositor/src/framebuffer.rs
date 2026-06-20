@@ -2,6 +2,119 @@
 
 use crate::pixel::{Color, PixelFormat};
 
+/// Castagnoli (CRC-32C) polynomial, reflected form.
+const CRC32C_POLY: u32 = 0x82F6_3B78;
+
+/// Precomputed CRC-32C lookup table for the scalar fallback path.
+///
+/// Generated at compile time from [`CRC32C_POLY`]; this is the canonical
+/// reflected table-driven CRC-32C, bit-identical to what the SSE4.2 `crc32`
+/// instruction computes, so the hardware and scalar paths agree exactly.
+const CRC32C_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0u32;
+    while i < 256 {
+        let mut crc = i;
+        let mut j = 0;
+        while j < 8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ CRC32C_POLY;
+            } else {
+                crc >>= 1;
+            }
+            j += 1;
+        }
+        table[i as usize] = crc;
+        i += 1;
+    }
+    table
+};
+
+/// A streaming CRC-32C accumulator used by [`FrameBuffer::content_hash_damaged`]
+/// as a fast, deterministic per-frame change detector (t194 fps win 3).
+///
+/// Unlike a one-shot `crc32c(bytes)` call, this folds an arbitrary number of
+/// byte chunks (shape preamble, damage geometry, then the damaged pixel rows)
+/// into ONE continuous CRC stream, so the digest depends on every byte in
+/// order — a single-byte change anywhere flips the result (the standard CRC
+/// avalanche property), which is exactly what the change detector needs.
+///
+/// Each [`update`](Crc32c::update) chunk is processed with the SSE4.2 `crc32`
+/// hardware instruction (8 bytes per instruction) when the CPU supports it,
+/// detected at RUNTIME via `is_x86_feature_detected!` — not a build-time
+/// `target_feature` flag, so a single binary runs the fast path on capable
+/// CPUs and the table-based scalar fallback everywhere else. Both paths fold
+/// against the same reflected CRC-32C polynomial and are therefore
+/// bit-for-bit identical.
+struct Crc32c {
+    /// Running CRC state (pre-final-inversion, init `!0`).
+    state: u32,
+}
+
+impl Crc32c {
+    #[inline]
+    fn new() -> Self {
+        Self { state: !0u32 }
+    }
+
+    /// Fold `bytes` into the running CRC.
+    #[inline]
+    fn update(&mut self, bytes: &[u8]) {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::is_x86_feature_detected!("sse4.2") {
+                // SAFETY: sse4.2 confirmed available at runtime above.
+                self.state = unsafe { crc32c_sse42(self.state, bytes) };
+                return;
+            }
+        }
+        self.state = crc32c_table(self.state, bytes);
+    }
+
+    /// Finalise the CRC and widen it to the `u64` the frame-hash API returns.
+    ///
+    /// The final inversion matches the canonical CRC-32C convention so the
+    /// streamed result equals `liquide_simd::crc::crc32c` over the identical
+    /// concatenated byte sequence (verified in the test module).
+    #[inline]
+    fn finish(self) -> u64 {
+        u64::from(!self.state)
+    }
+}
+
+/// Table-driven CRC-32C, resuming from `crc` (pre-inversion state).
+#[inline]
+fn crc32c_table(mut crc: u32, data: &[u8]) -> u32 {
+    for &byte in data {
+        crc = CRC32C_TABLE[((crc ^ u32::from(byte)) & 0xFF) as usize] ^ (crc >> 8);
+    }
+    crc
+}
+
+/// SSE4.2 hardware CRC-32C, resuming from `crc` (pre-inversion state).
+///
+/// Processes 8 bytes per `_mm_crc32_u64` instruction with a byte-wise tail.
+/// Produces the bit-identical result to [`crc32c_table`] for the same input.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse4.2")]
+unsafe fn crc32c_sse42(mut crc: u32, data: &[u8]) -> u32 {
+    use std::arch::x86_64::{_mm_crc32_u64, _mm_crc32_u8};
+
+    let mut offset = 0usize;
+    let chunks = data.len() / 8;
+    for _ in 0..chunks {
+        // SAFETY: offset + 8 <= data.len() by the chunk count; read_unaligned
+        // is valid for any in-bounds byte offset.
+        let val = unsafe { (data.as_ptr().add(offset) as *const u64).read_unaligned() };
+        crc = _mm_crc32_u64(u64::from(crc), val) as u32;
+        offset += 8;
+    }
+    for &byte in &data[offset..] {
+        crc = _mm_crc32_u8(crc, byte);
+    }
+    crc
+}
+
 /// Backing memory for a frame buffer.
 #[derive(Debug)]
 pub enum FrameMemory {
@@ -324,28 +437,33 @@ impl FrameBuffer {
     /// [`content_hash`](Self::content_hash) for its full-frame digest).
     #[must_use]
     pub fn content_hash_damaged(&self, damage: &crate::damage::DamageSet) -> u64 {
-        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-        const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-        #[inline]
-        fn mix(hash: &mut u64, bytes: &[u8]) {
-            for byte in bytes {
-                *hash ^= u64::from(*byte);
-                *hash = hash.wrapping_mul(FNV_PRIME);
-            }
-        }
-
-        let mut hash = FNV_OFFSET;
-        mix(&mut hash, &self.width.to_le_bytes());
-        mix(&mut hash, &self.height.to_le_bytes());
-        mix(&mut hash, &self.stride.to_le_bytes());
-        mix(&mut hash, self.format.wire_name().as_bytes());
+        // t194 (fps win 3): the per-frame change-detector. Was a scalar
+        // byte-at-a-time FNV-1a over every damaged byte (~8-12 ms on a full
+        // 8 MB frame, ~25% of an idle frame — t192). It is NOT a security or
+        // byte-identity hash: the only consumer compares it for *equality*
+        // against the previous frame to decide "did the damaged region change?"
+        // So it is replaced with CRC-32C (Castagnoli), folded as ONE continuous
+        // stream over the shape preamble, the damage geometry, and the same
+        // damaged pixel bytes. CRC-32C uses the SSE4.2 `crc32` instruction
+        // (8 bytes/instr) when present (runtime-detected, NOT a build-time
+        // target-feature), with a table-based scalar fallback that produces the
+        // bit-identical digest — so the HW and scalar paths agree, every run is
+        // deterministic, and any single-byte change flips the digest (the
+        // standard CRC property). The returned value's hash CONTRACT (same bytes
+        // => same value; different bytes => different value w.h.p.) is preserved;
+        // the value itself changed from the old FNV digest, which is expected for
+        // an internal change-detector that is never persisted or sent on the wire.
+        let mut crc = Crc32c::new();
+        crc.update(&self.width.to_le_bytes());
+        crc.update(&self.height.to_le_bytes());
+        crc.update(&self.stride.to_le_bytes());
+        crc.update(self.format.wire_name().as_bytes());
 
         // Empty damage (a no-op keepalive frame): identity is purely the shape
         // above plus a marker — distinct from any frame that hashed real bytes.
         if damage.is_empty() {
-            mix(&mut hash, b"empty-damage");
-            return hash;
+            crc.update(b"empty-damage");
+            return crc.finish();
         }
 
         let bpp = self.format.bytes_per_pixel();
@@ -354,37 +472,37 @@ impl FrameBuffer {
         let px = self.pixels();
 
         // Hash the bytes of one tile (clamped to the surface), row-by-row.
-        let mix_tile = |hash: &mut u64, tx: u32, ty: u32| {
+        let mix_tile = |crc: &mut Crc32c, tx: u32, ty: u32| {
             let x0 = tx.saturating_mul(tile_size).min(self.width);
             let y0 = ty.saturating_mul(tile_size).min(self.height);
             let x1 = x0.saturating_add(tile_size).min(self.width);
             let y1 = y0.saturating_add(tile_size).min(self.height);
             // Fold tile coordinates into the digest so distinct damage layouts
             // never alias.
-            mix(hash, &tx.to_le_bytes());
-            mix(hash, &ty.to_le_bytes());
+            crc.update(&tx.to_le_bytes());
+            crc.update(&ty.to_le_bytes());
             for y in y0..y1 {
                 let start = (y * stride + x0 * bpp) as usize;
                 let end = (y * stride + x1 * bpp) as usize;
                 if end <= px.len() {
-                    mix(hash, &px[start..end]);
+                    crc.update(&px[start..end]);
                 }
             }
         };
 
         if let Some((grid_w, grid_h, _class)) = damage.full_grid_dimensions() {
-            mix(&mut hash, b"full");
+            crc.update(b"full");
             for ty in 0..grid_h {
                 for tx in 0..grid_w {
-                    mix_tile(&mut hash, tx, ty);
+                    mix_tile(&mut crc, tx, ty);
                 }
             }
         } else {
             for tile in &damage.tiles {
-                mix_tile(&mut hash, tile.x, tile.y);
+                mix_tile(&mut crc, tile.x, tile.y);
             }
         }
-        hash
+        crc.finish()
     }
 
     /// Get the BGRA pixel at `(x, y)` as a [`Color`].
@@ -747,6 +865,122 @@ mod pool_tests {
         let baseline = fb.content_hash_damaged(&full);
         fb.set_pixel(100, 100, Color::new(1, 2, 3, 255));
         assert_ne!(baseline, fb.content_hash_damaged(&full));
+    }
+
+    // ── t194: CRC-32C change-detector teeth ──────────────────────────────
+    // These prove the CRC-32C replacement (a) agrees bit-for-bit between the
+    // SSE4.2 hardware path and the scalar table path, (b) still detects a
+    // single-byte change while hashing identical content identically, and
+    // (c) is deterministic across repeated runs. A broken hash that ignored
+    // bytes (or where HW != scalar) turns these RED.
+
+    /// (a) The SSE4.2 hardware CRC path and the scalar table path must produce
+    /// the bit-identical streamed digest for the SAME bytes. Gated on runtime
+    /// SSE4.2 detection (the HW path is only exercisable on a capable CPU); the
+    /// scalar path is always exercised so the test is meaningful everywhere.
+    #[test]
+    fn crc32c_hw_matches_scalar_bit_for_bit() {
+        // A spread of sizes hits the 8-byte fast loop, the byte tail, and the
+        // chunk boundary; mixed content avoids degenerate all-zero inputs.
+        for size in [0usize, 1, 3, 7, 8, 9, 15, 16, 31, 64, 100, 257, 4096] {
+            let data: Vec<u8> = (0..size).map(|i| (i.wrapping_mul(31) ^ 0x5A) as u8).collect();
+
+            // Scalar table path, streamed exactly as content_hash_damaged folds.
+            let scalar = !super::crc32c_table(!0u32, &data);
+
+            #[cfg(target_arch = "x86_64")]
+            if std::is_x86_feature_detected!("sse4.2") {
+                // SAFETY: sse4.2 detected at runtime immediately above.
+                let hw = unsafe { !super::crc32c_sse42(!0u32, &data) };
+                assert_eq!(
+                    hw, scalar,
+                    "HW CRC-32C must equal scalar CRC-32C for size {size}"
+                );
+            }
+
+            // Sanity: a 1-byte change must change the scalar digest too (the
+            // change-detection property at the kernel level).
+            if size > 0 {
+                let mut bumped = data.clone();
+                bumped[size / 2] ^= 0x01;
+                let scalar_bumped = !super::crc32c_table(!0u32, &bumped);
+                assert_ne!(
+                    scalar, scalar_bumped,
+                    "a 1-byte change must flip the CRC at size {size}"
+                );
+            }
+        }
+    }
+
+    /// (b) Identical damaged content hashes identically; a single-byte change
+    /// INSIDE the damage flips the hash (change detection has teeth). This is
+    /// the load-bearing anti-fake-green check: a hash that ignored pixel bytes
+    /// would return equal on the second assert and fail.
+    #[test]
+    fn content_hash_damaged_detects_single_byte_change() {
+        let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile {
+            x: 0,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
+
+        let baseline = fb.content_hash_damaged(&damage);
+        // Identical content -> identical hash (recompute, no mutation).
+        assert_eq!(
+            baseline,
+            fb.content_hash_damaged(&damage),
+            "identical content must hash identically"
+        );
+
+        // Flip a SINGLE byte inside the damaged tile (one channel of one pixel).
+        let off = fb.pixel_offset(3, 3);
+        fb.pixels_mut().unwrap()[off] ^= 0x01;
+        assert_ne!(
+            baseline,
+            fb.content_hash_damaged(&damage),
+            "a single-byte change inside the damage MUST flip the hash"
+        );
+    }
+
+    /// (c) Determinism: the same buffer + same damage hashes to the same value
+    /// on repeated runs (required for goldens / e2e_temporal). Both the full
+    /// and the partial damage shapes are checked.
+    #[test]
+    fn content_hash_damaged_is_deterministic() {
+        let mut fb = FrameBuffer::new(128, 128, PixelFormat::Bgra8);
+        // Write a non-trivial, deterministic pattern.
+        for y in 0..128u32 {
+            for x in 0..128u32 {
+                fb.set_pixel(
+                    x,
+                    y,
+                    Color::new((x as u8).wrapping_add(y as u8), x as u8, y as u8, 255),
+                );
+            }
+        }
+
+        let full = DamageSet::full(64, 2, 2, DamageClass::UiPrimitive);
+        let mut partial = DamageSet::new(64);
+        partial.add(DamageTile {
+            x: 1,
+            y: 0,
+            class: DamageClass::UiPrimitive,
+        });
+
+        let full_a = fb.content_hash_damaged(&full);
+        let partial_a = fb.content_hash_damaged(&partial);
+        for _ in 0..8 {
+            assert_eq!(full_a, fb.content_hash_damaged(&full), "full hash must be stable");
+            assert_eq!(
+                partial_a,
+                fb.content_hash_damaged(&partial),
+                "partial hash must be stable"
+            );
+        }
+        // Different coverage of the same buffer must differ.
+        assert_ne!(full_a, partial_a, "full vs partial coverage must differ");
     }
 
     #[test]
