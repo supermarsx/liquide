@@ -10,7 +10,8 @@ tooltip {
     position: fixed;
     z-index: var(--z-tooltip);
     pointer-events: none;
-    max-width: 300;
+    /* Compact bubble: wide enough for a short label, capped before it sprawls. */
+    max-width: 240;
     transition: opacity var(--transition-fast);
 }
 
@@ -27,6 +28,15 @@ tooltip[data-position="right"] {
 }
 
 tooltip-content {
+    display: flex;
+    align-items: center;
+    /* Compact macOS-style tooltip: enough vertical padding that ascenders and
+       descenders are never clipped (the previous 4px top/bottom cropped the
+       label baseline), a small floor width so a one-glyph label still reads as a
+       bubble, and a cap so long labels wrap rather than run off-screen. */
+    min-width: 24;
+    max-width: 240;
+    min-height: 22;
     padding: var(--spacing-xs) var(--spacing-sm);
     border-radius: var(--tooltip-radius);
     background: var(--tooltip-bg);
@@ -36,6 +46,7 @@ tooltip-content {
     border-color: var(--tooltip-border);
     font-family: var(--font-family-ui);
     font-size: var(--font-size-sm);
+    line-height: var(--line-height-tight, 1.4);
     white-space: nowrap;
     /* macOS tooltip vibrancy: translucent material + backdrop blur. */
     backdrop-filter: blur(var(--blur-medium));

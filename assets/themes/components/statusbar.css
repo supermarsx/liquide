@@ -113,6 +113,18 @@ statusbar-item#clock {
     cursor: default;
 }
 
+/* Notification indicator. The shell emits the unread *count* as the element's
+   text content; this rule styles it as a compact centred pill that tints to the
+   accent colour when there are unread items (`.active`).
+
+   NOTE (engine constraint): macOS hides the count entirely at 0, but in this
+   engine these status-bar indicator elements are laid out at an intrinsic
+   line-box size and their text colour/size is driven outside this rule, so
+   `color:transparent` / `font-size:0` do NOT suppress the "0" glyph — hiding it
+   requires the shell to omit the text (dom_sync), not CSS. The indicator is
+   therefore styled with paint properties only (no glyph `::before`, since the
+   packaged UI font has no bell/signal pictographs and would render a blank
+   `.notdef` tofu box — the original "empty pill" jank). */
 notification-indicator {
     display: flex;
     align-items: center;
@@ -132,6 +144,7 @@ notification-indicator:hover {
     background: var(--statusbar-hover-bg);
 }
 
+/* Unread present: filled accent badge highlighting the count. */
 notification-indicator.active {
     background: var(--accent-subtle);
     color: var(--text-primary);
@@ -142,33 +155,42 @@ notification-indicator.dnd {
     opacity: 0.6;
 }
 
+/* Connection-quality indicator. Carries no text — it is a CSS-painted status
+   dot whose colour/fill encodes signal quality. (A glyph `::before` rendered an
+   empty `.notdef` tofu box in the packaged UI font — the original empty-pill
+   jank — so this is a pure paint shape instead.) */
 status-indicator {
     display: flex;
     align-items: center;
+    justify-content: center;
     height: 22;
     padding: 0 var(--spacing-xs);
-    border-radius: var(--radius-small);
-    font-size: var(--font-size-sm);
-    color: var(--statusbar-text);
+    border-radius: var(--radius-round);
+    /* Soft filled status dot (muted by default; quality classes recolour it). */
+    background: var(--success, rgb(48, 209, 88));
+    opacity: 0.85;
 }
 
 status-indicator:hover {
-    background: var(--statusbar-hover-bg);
+    opacity: 1;
 }
 
-status-indicator.connected::before {
-    content: "●";
-    margin-right: var(--spacing-xs);
+/* Quality-coded fills — green (good), amber (degraded), hollow grey (down). */
+status-indicator.connected {
+    background: var(--success, rgb(48, 209, 88));
 }
 
-status-indicator.degraded::before {
-    content: "◐";
-    margin-right: var(--spacing-xs);
+status-indicator.degraded {
+    background: var(--warning, rgb(255, 214, 10));
 }
 
-status-indicator.disconnected::before {
-    content: "○";
-    margin-right: var(--spacing-xs);
+/* Disconnected: hollow ring instead of a filled dot. */
+status-indicator.disconnected {
+    background: transparent;
+    border-width: var(--border-width);
+    border-style: solid;
+    border-color: var(--text-tertiary, rgba(170, 170, 170, 0.74));
+    opacity: 0.7;
 }
 
 status-tray {

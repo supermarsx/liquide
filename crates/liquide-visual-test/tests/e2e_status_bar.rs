@@ -31,7 +31,8 @@
 
 use liquide_visual_test::capture::{Frame, capture_desktop_scripted_readback};
 use liquide_visual_test::scenarios::{
-    SCENARIO_HEIGHT, SCENARIO_WIDTH, STATUS_BAR_HEIGHT, region_status_bar_center, scenario_options,
+    SCENARIO_HEIGHT, SCENARIO_WIDTH, STATUS_BAR_HEIGHT, region_status_bar_center,
+    region_status_bar_right, scenario_options,
 };
 
 use liquide_platform::NativeWindowHandle;
@@ -445,6 +446,45 @@ fn clock_center_region_has_painted_glyphs() {
     );
 }
 
+/// CONNECTION INDICATOR IS A PAINTED (NON-EMPTY) STATUS DOT.
+///
+/// (t188 chrome-polish, bucket F.) The `status-indicator` element carries no text
+/// of its own; its glyph used to come from a `::before { content:"●" }` rule.
+/// The packaged UI font has no `●` glyph, so the pseudo rendered a blank
+/// `.notdef` tofu box — the status bar showed an EMPTY rounded pill. The fix
+/// styles the indicator as a CSS-painted, quality-coloured fill (green when
+/// connected) instead of relying on a font glyph.
+///
+/// TEETH: with the default connection quality (100% → `connected`), the
+/// right-cluster region MUST contain a meaningful patch of green-ish fill pixels.
+/// Reverting to the empty-pill (`::before` glyph / no background) produces ~0
+/// green pixels and fails. Theme-agnostic: the green fill is declared in the
+/// shared `components/statusbar.css` and survives the liquid-glass cascade (which
+/// only recolours the [unused] text `color`, never the background).
+#[test]
+fn connection_indicator_is_painted_filled_dot_not_empty_pill() {
+    let (frame, _) = capture_desktop_scripted_readback(
+        &scenario_options(THEME),
+        no_events,
+        |shell| {
+            // Default fresh bar has ConnectionQuality { quality_percent: 100 } →
+            // the `connected` class → the green fill. Tick once so the bar paints.
+            shell.tick(SEC_US);
+        },
+    )
+    .expect("capture should succeed");
+
+    let right = crop(&frame, region_status_bar_right(frame.width, frame.height));
+    let green = greenish_pixels(&right);
+    assert!(
+        green >= 40,
+        "the connection status-indicator must paint a filled green 'connected' \
+         dot in the right cluster — only {green} green-ish pixels found. A blank \
+         `.notdef` tofu pill (the original empty-indicator jank, or a revert to a \
+         font-glyph `::before` with no background) paints ~0 green pixels here."
+    );
+}
+
 // ===========================================================================
 // BADGE reflects state
 // ===========================================================================
@@ -773,6 +813,20 @@ fn pixel_diff_count(a: &Frame, b: &Frame, tol: u8) -> usize {
             pa.iter()
                 .zip(pb.iter())
                 .any(|(&x, &y)| x.abs_diff(y) > tol)
+        })
+        .count()
+}
+
+/// Count pixels that read as a saturated green (the `connected` status-indicator
+/// fill). Green dominant over both red and blue by a clear margin, and bright
+/// enough to be a real fill rather than dark chrome.
+fn greenish_pixels(frame: &Frame) -> usize {
+    frame
+        .rgba
+        .chunks_exact(4)
+        .filter(|px| {
+            let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
+            g > 130 && g - r > 40 && g - b > 40
         })
         .count()
 }
