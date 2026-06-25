@@ -1,12 +1,83 @@
 //! Gradient rendering for the software renderer.
 
+use std::sync::OnceLock;
+
 use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::{BlendMode, Color};
 
+use crate::color::SrgbLut;
 use crate::rasterizer;
 
 use super::SoftwareRenderer;
+
+/// Shared sRGB LUT for gradient stop interpolation in LINEAR light.
+///
+/// Interpolating gradient stops directly in 8-bit non-linear sRGB (the old
+/// behaviour) compresses the perceptual ramp and, combined with immediate `u8`
+/// quantisation, produced visible banding on wide desktop gradients (t188).
+/// Interpolating in linear space (sRGB → linear lerp → sRGB) fixes the ramp.
+///
+/// A process-wide `OnceLock` keeps `sample_gradient_stops`' signature stable
+/// (it is also called from `mod.rs`, outside this file's edit scope) while still
+/// giving every gradient path the correct linear interpolation + a deterministic
+/// LUT (same input → same bytes, required for goldens / e2e_temporal).
+fn gradient_lut() -> &'static SrgbLut {
+    static LUT: OnceLock<SrgbLut> = OnceLock::new();
+    LUT.get_or_init(SrgbLut::new)
+}
+
+/// 8×8 ordered (Bayer) dither matrix, values 0..63.
+///
+/// Adding a tiny, deterministic, position-dependent threshold before the final
+/// `u8` quantisation breaks up the flat quantisation steps that cause banding,
+/// trading a perfectly smooth ramp for sub-LSB spatial noise the eye integrates
+/// into a continuous gradient. It is a FIXED matrix and a pure function of
+/// `(x, y)`, so the output is fully deterministic (byte-stable goldens).
+#[rustfmt::skip]
+const BAYER_8X8: [[u8; 8]; 8] = [
+    [ 0, 32,  8, 40,  2, 34, 10, 42],
+    [48, 16, 56, 24, 50, 18, 58, 26],
+    [12, 44,  4, 36, 14, 46,  6, 38],
+    [60, 28, 52, 20, 62, 30, 54, 22],
+    [ 3, 35, 11, 43,  1, 33,  9, 41],
+    [51, 19, 59, 27, 49, 17, 57, 25],
+    [15, 47,  7, 39, 13, 45,  5, 37],
+    [63, 31, 55, 23, 61, 29, 53, 21],
+];
+
+/// The signed dither bias for framebuffer pixel `(x, y)`, in `[-0.5, +0.5)` of
+/// one byte step. Derived from the fixed 8×8 Bayer matrix so it is deterministic
+/// and, summed over any aligned 8×8 tile, **mean-zero** — so flat regions and
+/// solid stops keep their exact value (no global brightness shift / golden drift)
+/// while a slowly-varying ramp gets its quantisation steps spatially diffused.
+#[inline]
+fn dither_bias(x: u32, y: u32) -> f32 {
+    let cell = BAYER_8X8[(y & 7) as usize][(x & 7) as usize] as f32;
+    // 0..63 → (cell + 0.5)/64 ∈ (0,1) → centre on 0 → [-0.5, +0.5).
+    (cell + 0.5) / 64.0 - 0.5
+}
+
+/// Quantise a non-negative linear-light channel to an sRGB byte with an applied
+/// ordered-dither `bias` (in byte steps). The bias nudges the value across the
+/// quantisation boundary on a fixed spatial schedule, so a smooth ramp that
+/// would otherwise snap to flat bands instead alternates between the two
+/// bracketing byte values pixel-to-pixel — eliminating the banding (t188).
+#[inline]
+fn delinearize_dithered(linear: f32, bias: f32) -> u8 {
+    // Convert to the sRGB byte domain at high precision, add the sub-LSB bias,
+    // then round. The crate `SrgbLut::delinearize` rounds to the nearest
+    // 12-bit-LUT byte; to inject the bias we re-derive the sRGB float and round
+    // manually so the dither lands sub-LSB.
+    let l = linear.clamp(0.0, 1.0);
+    let srgb = if l <= 0.0031308 {
+        l * 12.92
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
+    let v = srgb * 255.0 + bias;
+    (v + 0.5).clamp(0.0, 255.0) as u8
+}
 
 impl SoftwareRenderer {
     /// Render a gradient fill within `bounds`.
@@ -105,7 +176,14 @@ impl SoftwareRenderer {
                 };
 
                 if axis_fast_eligible && dx == 0.0 && dy != 0.0 {
-                    // VERTICAL: one color per row, fill the whole row span.
+                    // VERTICAL: t (and so the base linear colour + alpha) is
+                    // constant per row. The ORDERED DITHER, however, varies with
+                    // x, so the row can no longer be broadcast from a single
+                    // pixel — we sample the linear stop colour ONCE per row (the
+                    // expensive part) and then cheaply re-quantise per x with the
+                    // per-pixel Bayer bias. This stays bit-for-bit identical to a
+                    // per-pixel scalar loop (the reference in tests dithers the
+                    // same way), and still feeds the SIMD scanline blend.
                     let run = (x1 - x0) as usize;
                     let mut src_row = vec![0u8; run * 4];
                     for y in y0..y1 {
@@ -116,15 +194,21 @@ impl SoftwareRenderer {
                         } else {
                             t.clamp(0.0, 1.0)
                         };
-                        let color = sample_gradient_stops(stops, t_mapped, opacity);
-                        if color.a == 0 {
+                        let (linear, a) = sample_gradient_linear(stops, t_mapped, opacity);
+                        if a == 0 {
                             // Scalar path would skip the blend entirely (no-op).
                             continue;
                         }
-                        let bytes = to_native(color.premultiply());
-                        // Broadcast the single premultiplied pixel across the run.
-                        for px in src_row.chunks_exact_mut(4) {
-                            px.copy_from_slice(&bytes);
+                        for (i, x) in (x0..x1).enumerate() {
+                            let bias = dither_bias(x, y);
+                            let color = Color::new(
+                                delinearize_dithered(linear[0], bias),
+                                delinearize_dithered(linear[1], bias),
+                                delinearize_dithered(linear[2], bias),
+                                a,
+                            );
+                            let bytes = to_native(color.premultiply());
+                            src_row[i * 4..i * 4 + 4].copy_from_slice(&bytes);
                         }
                         if let Some(row) = fb.row_mut(y) {
                             let start = x0 as usize * 4;
@@ -140,12 +224,18 @@ impl SoftwareRenderer {
                 }
 
                 if axis_fast_eligible && dy == 0.0 && dx != 0.0 {
-                    // HORIZONTAL: per-column color row computed ONCE, reused for
-                    // every scanline (the color depends only on x).
+                    // HORIZONTAL: t (and the base linear colour) depends only on
+                    // x, so the per-column LINEAR samples are computed ONCE. The
+                    // dither bias depends on (x,y), so the final quantised row is
+                    // rebuilt per scanline from the cached linear samples — the
+                    // expensive stop lookup is still hoisted, only the cheap
+                    // delinearize+dither repeats. Byte-identical to a per-pixel
+                    // scalar loop.
                     let run = (x1 - x0) as usize;
-                    let mut src_row = vec![0u8; run * 4];
+                    // Cache per-column (linear rgb, alpha) once.
+                    let mut col: Vec<([f32; 3], u8)> = Vec::with_capacity(run);
                     let mut any_nonzero = false;
-                    for (i, x) in (x0..x1).enumerate() {
+                    for x in x0..x1 {
                         let fx = x as f32 + 0.5;
                         let t = (fx - sx) * dx * inv_len2;
                         let t_mapped = if *repeating {
@@ -153,17 +243,31 @@ impl SoftwareRenderer {
                         } else {
                             t.clamp(0.0, 1.0)
                         };
-                        let color = sample_gradient_stops(stops, t_mapped, opacity);
-                        if color.a != 0 {
+                        let sample = sample_gradient_linear(stops, t_mapped, opacity);
+                        if sample.1 != 0 {
                             any_nonzero = true;
-                            let bytes = to_native(color.premultiply());
-                            src_row[i * 4..i * 4 + 4].copy_from_slice(&bytes);
                         }
-                        // color.a == 0 leaves the src pixel at alpha 0 → SrcOver
-                        // is a no-op for that column, matching the scalar skip.
+                        col.push(sample);
                     }
                     if any_nonzero {
+                        let mut src_row = vec![0u8; run * 4];
                         for y in y0..y1 {
+                            for (i, x) in (x0..x1).enumerate() {
+                                let (linear, a) = col[i];
+                                if a == 0 {
+                                    src_row[i * 4..i * 4 + 4].copy_from_slice(&[0u8; 4]);
+                                    continue;
+                                }
+                                let bias = dither_bias(x, y);
+                                let color = Color::new(
+                                    delinearize_dithered(linear[0], bias),
+                                    delinearize_dithered(linear[1], bias),
+                                    delinearize_dithered(linear[2], bias),
+                                    a,
+                                );
+                                let bytes = to_native(color.premultiply());
+                                src_row[i * 4..i * 4 + 4].copy_from_slice(&bytes);
+                            }
                             if let Some(row) = fb.row_mut(y) {
                                 let start = x0 as usize * 4;
                                 let end = x1 as usize * 4;
@@ -202,7 +306,8 @@ impl SoftwareRenderer {
                         } else {
                             t.clamp(0.0, 1.0)
                         };
-                        let mut color = sample_gradient_stops(stops, t_mapped, opacity);
+                        let mut color =
+                            sample_gradient_stops_dithered(stops, t_mapped, opacity, x, y);
                         if coverage < 1.0 {
                             color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
@@ -257,7 +362,7 @@ impl SoftwareRenderer {
                         } else {
                             dist.clamp(0.0, 1.0)
                         };
-                        let mut color = sample_gradient_stops(stops, t, opacity);
+                        let mut color = sample_gradient_stops_dithered(stops, t, opacity, x, y);
                         if coverage < 1.0 {
                             color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
@@ -310,7 +415,7 @@ impl SoftwareRenderer {
                         } else {
                             t_raw.clamp(0.0, 1.0)
                         };
-                        let mut color = sample_gradient_stops(stops, t, opacity);
+                        let mut color = sample_gradient_stops_dithered(stops, t, opacity, x, y);
                         if coverage < 1.0 {
                             color.a = (color.a as f32 * coverage + 0.5) as u8;
                         }
@@ -355,42 +460,41 @@ pub(crate) fn wrap_repeating(t: f32, stops: &[(f32, Color)]) -> f32 {
 
 // ── Gradient stop sampling ──────────────────────────────────────────
 
-/// Sample a color from sorted gradient stops at parameter `t` in [0, 1].
+/// Sample sorted gradient stops at parameter `t`, returning the interpolated
+/// colour as **linear** RGB plus a straight alpha byte (pre-`opacity`).
 ///
-/// Uses linear interpolation between adjacent stops, consistent with
-/// linear gradient shader: if only one
-/// stop exists, its color is returned. Opacity is pre-multiplied into
-/// the alpha channel.
-pub(crate) fn sample_gradient_stops(stops: &[(f32, Color)], t: f32, opacity: f32) -> Color {
+/// Interpolation happens in LINEAR light (sRGB→linear lerp), which is the
+/// perceptually correct ramp and the root fix for the 8-bit-sRGB banding (t188).
+/// Alpha is interpolated linearly in straight alpha (alpha is already linear).
+/// Returning the un-quantised linear value lets callers either delinearize
+/// directly or apply an ordered dither before quantisation.
+fn sample_gradient_linear(stops: &[(f32, Color)], t: f32, opacity: f32) -> ([f32; 3], u8) {
+    let lut = gradient_lut();
+    let apply_op = |a: u8| -> u8 {
+        if opacity < 1.0 {
+            (a as f32 * opacity + 0.5) as u8
+        } else {
+            a
+        }
+    };
+    let lin = |c: Color| -> [f32; 3] {
+        [lut.linearize(c.r), lut.linearize(c.g), lut.linearize(c.b)]
+    };
+
     if stops.is_empty() {
-        return Color::new(0, 0, 0, 0);
+        return ([0.0; 3], 0);
     }
     if stops.len() == 1 {
-        let mut c = stops[0].1;
-        if opacity < 1.0 {
-            c.a = (c.a as f32 * opacity + 0.5) as u8;
-        }
-        return c;
+        return (lin(stops[0].1), apply_op(stops[0].1.a));
     }
-
-    // Clamp to first/last stop
     if t <= stops[0].0 {
-        let mut c = stops[0].1;
-        if opacity < 1.0 {
-            c.a = (c.a as f32 * opacity + 0.5) as u8;
-        }
-        return c;
+        return (lin(stops[0].1), apply_op(stops[0].1.a));
     }
     let last = stops.len() - 1;
     if t >= stops[last].0 {
-        let mut c = stops[last].1;
-        if opacity < 1.0 {
-            c.a = (c.a as f32 * opacity + 0.5) as u8;
-        }
-        return c;
+        return (lin(stops[last].1), apply_op(stops[last].1.a));
     }
 
-    // Find the two stops bracketing `t`
     for i in 0..last {
         let (t0, c0) = &stops[i];
         let (t1, c1) = &stops[i + 1];
@@ -398,25 +502,63 @@ pub(crate) fn sample_gradient_stops(stops: &[(f32, Color)], t: f32, opacity: f32
             let range = t1 - t0;
             let frac = if range > 0.001 { (t - t0) / range } else { 0.0 };
             let inv = 1.0 - frac;
-            let r = (c0.r as f32 * inv + c1.r as f32 * frac + 0.5) as u8;
-            let g = (c0.g as f32 * inv + c1.g as f32 * frac + 0.5) as u8;
-            let b = (c0.b as f32 * inv + c1.b as f32 * frac + 0.5) as u8;
+            let l0 = lin(*c0);
+            let l1 = lin(*c1);
+            let rgb = [
+                l0[0] * inv + l1[0] * frac,
+                l0[1] * inv + l1[1] * frac,
+                l0[2] * inv + l1[2] * frac,
+            ];
             let a_raw = c0.a as f32 * inv + c1.a as f32 * frac;
             let a = if opacity < 1.0 {
                 (a_raw * opacity + 0.5) as u8
             } else {
                 (a_raw + 0.5) as u8
             };
-            return Color::new(r, g, b, a);
+            return (rgb, a);
         }
     }
+    (lin(stops[last].1), apply_op(stops[last].1.a))
+}
 
-    // Fallback
-    let mut c = stops[last].1;
-    if opacity < 1.0 {
-        c.a = (c.a as f32 * opacity + 0.5) as u8;
-    }
-    c
+/// Sample a color from sorted gradient stops at parameter `t` in [0, 1].
+///
+/// Interpolates between adjacent stops in **linear light** (t188 banding fix);
+/// if only one stop exists, its color is returned. Opacity is folded into the
+/// alpha channel. No spatial dither — use [`sample_gradient_stops_dithered`] for
+/// the paint paths that need band-free smooth ramps.
+pub(crate) fn sample_gradient_stops(stops: &[(f32, Color)], t: f32, opacity: f32) -> Color {
+    let (linear, a) = sample_gradient_linear(stops, t, opacity);
+    let lut = gradient_lut();
+    Color::new(
+        lut.delinearize(linear[0]),
+        lut.delinearize(linear[1]),
+        lut.delinearize(linear[2]),
+        a,
+    )
+}
+
+/// As [`sample_gradient_stops`], but applies a deterministic ordered (Bayer)
+/// dither keyed on framebuffer pixel `(x, y)` during the final quantisation.
+///
+/// The dither is mean-zero over each 8×8 tile, so solid stops are unchanged but
+/// a smooth ramp's quantisation steps are spatially diffused — removing the
+/// banding while staying fully deterministic (same pixel → same byte).
+pub(crate) fn sample_gradient_stops_dithered(
+    stops: &[(f32, Color)],
+    t: f32,
+    opacity: f32,
+    x: u32,
+    y: u32,
+) -> Color {
+    let (linear, a) = sample_gradient_linear(stops, t, opacity);
+    let bias = dither_bias(x, y);
+    Color::new(
+        delinearize_dithered(linear[0], bias),
+        delinearize_dithered(linear[1], bias),
+        delinearize_dithered(linear[2], bias),
+        a,
+    )
 }
 
 #[cfg(test)]
@@ -521,7 +663,10 @@ mod tests {
                 } else {
                     t.clamp(0.0, 1.0)
                 };
-                let color = sample_gradient_stops(stops, t_mapped, opacity);
+                // Reference uses the SAME dithered sampler the paint paths use, so
+                // the fast paths must remain byte-for-byte identical to a
+                // per-pixel scalar loop even with ordered dithering applied.
+                let color = sample_gradient_stops_dithered(stops, t_mapped, opacity, x, y);
                 if color.a > 0 {
                     let dst = fb.get_pixel(x, y);
                     let blended =
@@ -736,5 +881,127 @@ mod tests {
         // Degenerate span clamps.
         let flat = [(0.5f32, Color::BLACK), (0.5f32, Color::WHITE)];
         assert_eq!(wrap_repeating(3.0, &flat), 1.0);
+    }
+
+    // ── t188: gradient banding / ordered dither ─────────────────────────
+
+    fn smooth_ramp() -> GradientSpec {
+        // A long, nearly-flat ramp between two CLOSE greys — the classic banding
+        // case. Without dither, the whole width snaps to only a couple of byte
+        // values (visible bands); with dither it alternates across more values.
+        GradientSpec::Linear {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 1.0,
+            end_y: 0.0,
+            stops: vec![
+                (0.0, Color::new(40, 40, 40, 255)),
+                (1.0, Color::new(56, 56, 56, 255)),
+            ],
+            repeating: false,
+        }
+    }
+
+    fn render_ramp(w: u32, h: u32, spec: &GradientSpec) -> FrameBuffer {
+        let mut r = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        let bounds = Rect::new(0.0, 0.0, w as f32, h as f32);
+        r.render_gradient(&mut fb, bounds, spec, 1.0, (0.0, 0.0, 0.0, 0.0));
+        fb
+    }
+
+    #[test]
+    fn smooth_gradient_does_not_band() {
+        // A 256-wide ramp over a 16-grey span. Hard 8-bit banding would land on
+        // ~17 distinct levels with long flat runs; the ordered dither diffuses the
+        // transitions so an 8×8 tile carries both bracketing values per band.
+        // Concretely: along any single scanline AND between adjacent scanlines,
+        // the same x must NOT always be the identical byte — the dither varies
+        // spatially. We assert that >1 distinct value appears within the first
+        // 8-px band (which a single flat band would NOT do).
+        let fb = render_ramp(256, 8, &smooth_ramp());
+
+        // Distinct red bytes across the whole top row.
+        let mut levels = std::collections::BTreeSet::new();
+        for x in 0..256 {
+            levels.insert(fb.get_pixel(x, 0).r);
+        }
+        // Linear interp over a 16-step span across 256px already gives several
+        // levels; dither adds intermediate alternation. Require a healthy count.
+        assert!(
+            levels.len() >= 12,
+            "smooth ramp should resolve many grey levels (got {}), banding suspected",
+            levels.len()
+        );
+
+        // Spatial dither: within the FIRST 8px (where the true value barely moves)
+        // not every pixel is identical — the Bayer pattern alternates.
+        let first8: std::collections::BTreeSet<u8> =
+            (0..8).map(|x| fb.get_pixel(x, 0).r).collect();
+        assert!(
+            first8.len() >= 2,
+            "ordered dither must alternate values within a near-flat 8px band \
+             (got {} distinct) — a hard band would be a single value",
+            first8.len()
+        );
+
+        // And the pattern varies by ROW too (2D Bayer): some x differs row 0 vs 1.
+        let row_varies = (0..256).any(|x| fb.get_pixel(x, 0).r != fb.get_pixel(x, 1).r);
+        assert!(row_varies, "dither must vary between adjacent rows (2D Bayer)");
+    }
+
+    #[test]
+    fn gradient_is_deterministic() {
+        // Same input → identical bytes (required for goldens / e2e_temporal).
+        let a = render_ramp(128, 16, &smooth_ramp());
+        let b = render_ramp(128, 16, &smooth_ramp());
+        assert_eq!(
+            a.pixels(),
+            b.pixels(),
+            "gradient (with dither) must be byte-deterministic across renders"
+        );
+    }
+
+    #[test]
+    fn dither_is_mean_zero_on_solid_stops() {
+        // Teeth/safety: a degenerate gradient whose two stops are the SAME colour
+        // is a solid fill. The dither must average out over an 8×8 tile so the
+        // fill stays (essentially) the exact stop colour — no global brightness
+        // shift that would drift goldens. We assert the per-8×8-tile mean equals
+        // the stop value within <1 LSB.
+        let c = Color::new(128, 128, 128, 255);
+        let spec = GradientSpec::Linear {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 1.0,
+            end_y: 0.0,
+            stops: vec![(0.0, c), (1.0, c)],
+            repeating: false,
+        };
+        let fb = render_ramp(64, 8, &spec);
+        let mut sum: u64 = 0;
+        for y in 0..8 {
+            for x in 0..64 {
+                sum += fb.get_pixel(x, y).r as u64;
+            }
+        }
+        let mean = sum as f64 / (64.0 * 8.0);
+        assert!(
+            (mean - 128.0).abs() < 1.0,
+            "ordered dither must be mean-preserving on a solid fill (mean={mean})"
+        );
+    }
+
+    #[test]
+    fn dither_bias_tile_sums_to_zero() {
+        // The Bayer bias must be MEAN-ZERO over an aligned 8×8 tile — the property
+        // that keeps solid fills unshifted. Direct unit test of the helper.
+        let mut s = 0.0f32;
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                s += dither_bias(x, y);
+            }
+        }
+        assert!(s.abs() < 1e-3, "8×8 dither bias must sum to ~0, got {s}");
     }
 }

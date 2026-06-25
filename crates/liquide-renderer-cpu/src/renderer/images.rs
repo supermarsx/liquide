@@ -356,7 +356,11 @@ impl SoftwareRenderer {
         repeat: BackgroundRepeat,
     ) -> bool {
         match repeat {
-            BackgroundRepeat::Repeat | BackgroundRepeat::Space | BackgroundRepeat::Round => {
+            // Space/Round change the per-tile geometry (gaps / scale-to-fit), so
+            // they cannot use the simple pixel-aligned realized-tile fast path —
+            // route them to the legacy tiler which honours their CSS semantics.
+            BackgroundRepeat::Space | BackgroundRepeat::Round => false,
+            BackgroundRepeat::Repeat => {
                 Self::is_pixel_aligned(bounds.x) && Self::is_pixel_aligned(bounds.y)
             }
             BackgroundRepeat::RepeatX => {
@@ -373,6 +377,32 @@ impl SoftwareRenderer {
 
     fn is_pixel_aligned(value: f32) -> bool {
         value.is_finite() && (value - value.round()).abs() <= 0.001
+    }
+
+    /// CSS `background-repeat: round` per-axis sizing: choose the whole tile
+    /// count nearest to `extent / natural` (min 1) and the adjusted tile size
+    /// that makes that count fill `extent` exactly. Returns `(tile_size, count)`.
+    fn round_axis(extent: f32, natural: f32) -> (f32, u32) {
+        if extent <= 0.0 || !natural.is_finite() || natural <= 0.0 {
+            return (0.0, 0);
+        }
+        let count = (extent / natural).round().max(1.0);
+        (extent / count, count as u32)
+    }
+
+    /// CSS `background-repeat: space` per-axis layout: lay out as many natural
+    /// tiles as fit (min 1), distributing the leftover space as EQUAL gaps
+    /// between them. Returns `(gap, count)`. With 0 or 1 tile the gap is 0.
+    fn space_axis(extent: f32, natural: f32) -> (f32, u32) {
+        if extent <= 0.0 || !natural.is_finite() || natural <= 0.0 {
+            return (0.0, 0);
+        }
+        let count = (extent / natural).floor().max(1.0) as u32;
+        if count <= 1 {
+            return (0.0, count);
+        }
+        let leftover = (extent - count as f32 * natural).max(0.0);
+        (leftover / (count - 1) as f32, count)
     }
 
     fn pattern_repeat_mode(repeat: BackgroundRepeat) -> PatternRepeatMode {
@@ -607,33 +637,74 @@ impl SoftwareRenderer {
         dst_y: u32,
         opacity: f32,
     ) {
-        for y in 0..tile_texture.height {
-            for x in 0..tile_texture.width {
-                let src_idx = ((y * tile_texture.width + x) * 4) as usize;
-                if src_idx + 3 >= tile_texture.data.len() {
-                    continue;
-                }
+        // SIMD per-row SrcOver of the realized tile onto the framebuffer (t-prim
+        // #3). The premultiplied native-byte source row is byte-identical to the
+        // scalar path; a transparent (a==0) src pixel stays a SrcOver no-op,
+        // matching the old `continue`. Non-BGRA/RGBA formats fall back to scalar.
+        use liquide_compositor::pixel::PixelFormat;
+        let fmt = fb.format;
+        let simd_eligible = matches!(fmt, PixelFormat::Bgra8 | PixelFormat::Rgba8);
+        let to_native = |c: Color| -> [u8; 4] {
+            match fmt {
+                PixelFormat::Rgba8 => [c.r, c.g, c.b, c.a],
+                _ => c.to_bgra_bytes(),
+            }
+        };
+        let sample = |x: u32, y: u32| -> Option<Color> {
+            let src_idx = ((y * tile_texture.width + x) * 4) as usize;
+            if src_idx + 3 >= tile_texture.data.len() {
+                return None;
+            }
+            let mut src_color = Color::new(
+                tile_texture.data[src_idx],
+                tile_texture.data[src_idx + 1],
+                tile_texture.data[src_idx + 2],
+                tile_texture.data[src_idx + 3],
+            );
+            if src_color.a == 0 {
+                return None;
+            }
+            if opacity < 1.0 {
+                src_color.a = (src_color.a as f32 * opacity + 0.5) as u8;
+            }
+            Some(src_color.premultiply())
+        };
 
-                let mut src_color = Color::new(
-                    tile_texture.data[src_idx],
-                    tile_texture.data[src_idx + 1],
-                    tile_texture.data[src_idx + 2],
-                    tile_texture.data[src_idx + 3],
-                );
-                if src_color.a == 0 {
-                    continue;
-                }
-
-                if opacity < 1.0 {
-                    src_color.a = (src_color.a as f32 * opacity + 0.5) as u8;
-                }
-
-                src_color = src_color.premultiply();
-                let px = dst_x + x;
+        let tw = tile_texture.width;
+        if simd_eligible && dst_x + tw <= fb.width {
+            let run = tw as usize;
+            let mut src_row = vec![0u8; run * 4];
+            for y in 0..tile_texture.height {
                 let py = dst_y + y;
-                let dst_color = fb.get_pixel(px, py);
-                let blended = crate::blend::blend(dst_color, src_color, BlendMode::SrcOver);
-                fb.set_pixel(px, py, blended);
+                for x in 0..tw {
+                    let bytes = match sample(x, y) {
+                        Some(pm) => to_native(pm),
+                        None => [0, 0, 0, 0],
+                    };
+                    src_row[x as usize * 4..x as usize * 4 + 4].copy_from_slice(&bytes);
+                }
+                if let Some(row) = fb.row_mut(py) {
+                    let start = dst_x as usize * 4;
+                    let end = (dst_x + tw) as usize * 4;
+                    crate::blend::blend_scanline(
+                        &mut row[start..end],
+                        &src_row[..run * 4],
+                        BlendMode::SrcOver,
+                    );
+                }
+            }
+        } else {
+            for y in 0..tile_texture.height {
+                for x in 0..tw {
+                    let Some(src_color) = sample(x, y) else {
+                        continue;
+                    };
+                    let px = dst_x + x;
+                    let py = dst_y + y;
+                    let dst_color = fb.get_pixel(px, py);
+                    let blended = crate::blend::blend(dst_color, src_color, BlendMode::SrcOver);
+                    fb.set_pixel(px, py, blended);
+                }
             }
         }
     }
@@ -652,7 +723,7 @@ impl SoftwareRenderer {
             BackgroundRepeat::NoRepeat => {
                 self.draw_scaled_texture(fb, texture, src, img_rect, opacity);
             }
-            BackgroundRepeat::Repeat | BackgroundRepeat::Space | BackgroundRepeat::Round => {
+            BackgroundRepeat::Repeat => {
                 let mut ty = bounds.y;
                 while ty < bounds.y + bounds.height {
                     let mut tx = bounds.x;
@@ -662,6 +733,38 @@ impl SoftwareRenderer {
                         tx += img_rect.width;
                     }
                     ty += img_rect.height;
+                }
+            }
+            BackgroundRepeat::Round => {
+                // CSS `round`: scale each tile (independently per axis) so a WHOLE
+                // number of tiles fills the box with no gaps and no clipping.
+                let (tw, nx) = Self::round_axis(bounds.width, img_rect.width);
+                let (th, ny) = Self::round_axis(bounds.height, img_rect.height);
+                if tw <= 0.0 || th <= 0.0 {
+                    return;
+                }
+                for iy in 0..ny {
+                    let ty = bounds.y + iy as f32 * th;
+                    for ix in 0..nx {
+                        let tx = bounds.x + ix as f32 * tw;
+                        let tile = Rect::new(tx, ty, tw, th);
+                        self.draw_scaled_texture(fb, texture, src, tile, opacity);
+                    }
+                }
+            }
+            BackgroundRepeat::Space => {
+                // CSS `space`: tiles keep their natural size; whole tiles are laid
+                // out with EQUAL gaps between them (first/last flush to the edges).
+                // A single tile (or one that overflows) is centred / left flush.
+                let (gx, nx) = Self::space_axis(bounds.width, img_rect.width);
+                let (gy, ny) = Self::space_axis(bounds.height, img_rect.height);
+                for iy in 0..ny {
+                    let ty = bounds.y + iy as f32 * (img_rect.height + gy);
+                    for ix in 0..nx {
+                        let tx = bounds.x + ix as f32 * (img_rect.width + gx);
+                        let tile = Rect::new(tx, ty, img_rect.width, img_rect.height);
+                        self.draw_scaled_texture(fb, texture, src, tile, opacity);
+                    }
                 }
             }
             BackgroundRepeat::RepeatX => {
@@ -694,14 +797,221 @@ impl SoftwareRenderer {
                 BackgroundImage::ImageId(image_id) => {
                     let texture_key = image_texture_key(*image_id);
                     if let Some(texture) = self.texture_cache.get_by_key(texture_key) {
-                        let src = Rect::new(0.0, 0.0, texture.width as f32, texture.height as f32);
-                        self.draw_scaled_texture(fb, &texture, src, bounds, opacity);
+                        // ── CSS border-image 9-slice (t-prim #5) ──────────────
+                        //
+                        // Expand the border box by `outset`, slice the SOURCE into
+                        // 9 regions by the `slice` percentages, and map them to the
+                        // destination: the 4 CORNERS are drawn 1:1 (never
+                        // stretched), the 4 EDGES are stretched or tiled per the
+                        // repeat mode, and the CENTER is dropped (no `fill`).
+                        let sw = texture.width as f32;
+                        let sh = texture.height as f32;
+                        if sw <= 0.0 || sh <= 0.0 {
+                            return;
+                        }
+
+                        let (ot, or, ob, ol) = spec.outset;
+                        let outer = Rect::new(
+                            bounds.x - ol,
+                            bounds.y - ot,
+                            bounds.width + ol + or,
+                            bounds.height + ot + ob,
+                        );
+
+                        // Source slice insets (percent of source dims → pixels).
+                        let (st_p, sr_p, sb_p, sl_p) = spec.slice;
+                        let s_top = (st_p / 100.0).clamp(0.0, 1.0) * sh;
+                        let s_right = (sr_p / 100.0).clamp(0.0, 1.0) * sw;
+                        let s_bottom = (sb_p / 100.0).clamp(0.0, 1.0) * sh;
+                        let s_left = (sl_p / 100.0).clamp(0.0, 1.0) * sw;
+                        let s_cw = (sw - s_left - s_right).max(0.0);
+                        let s_ch = (sh - s_top - s_bottom).max(0.0);
+
+                        // Destination border widths (pixels), clamped so opposite
+                        // pairs never exceed the box (CSS shrinks them together).
+                        let (mut wt, mut wr, mut wb, mut wl) = spec.width;
+                        let sx = if wl + wr > outer.width && wl + wr > 0.0 {
+                            outer.width / (wl + wr)
+                        } else {
+                            1.0
+                        };
+                        let sy = if wt + wb > outer.height && wt + wb > 0.0 {
+                            outer.height / (wt + wb)
+                        } else {
+                            1.0
+                        };
+                        wt *= sy;
+                        wb *= sy;
+                        wl *= sx;
+                        wr *= sx;
+                        let d_cw = (outer.width - wl - wr).max(0.0);
+                        let d_ch = (outer.height - wt - wb).max(0.0);
+
+                        let tex = &texture;
+                        // src/dst region pairs. (corners stretch-mapped to corner
+                        // boxes, which for a 1:1 slice→width is exact; for unequal
+                        // slice vs width they scale, matching the CSS spec.)
+                        // Corner regions:
+                        let corners = [
+                            // (src, dst)
+                            (
+                                Rect::new(0.0, 0.0, s_left, s_top),
+                                Rect::new(outer.x, outer.y, wl, wt),
+                            ),
+                            (
+                                Rect::new(sw - s_right, 0.0, s_right, s_top),
+                                Rect::new(outer.right() - wr, outer.y, wr, wt),
+                            ),
+                            (
+                                Rect::new(0.0, sh - s_bottom, s_left, s_bottom),
+                                Rect::new(outer.x, outer.bottom() - wb, wl, wb),
+                            ),
+                            (
+                                Rect::new(sw - s_right, sh - s_bottom, s_right, s_bottom),
+                                Rect::new(outer.right() - wr, outer.bottom() - wb, wr, wb),
+                            ),
+                        ];
+                        for (s, d) in corners {
+                            if s.width > 0.0 && s.height > 0.0 && d.width > 0.0 && d.height > 0.0 {
+                                self.draw_scaled_texture(fb, tex, s, d, opacity);
+                            }
+                        }
+
+                        // Edges. Top/bottom tile/stretch horizontally; left/right
+                        // vertically. `repeat` selects stretch vs tile (round/space
+                        // approximated as repeat-to-fit here).
+                        let repeat = spec.repeat;
+                        // Top edge.
+                        self.draw_border_image_edge(
+                            fb,
+                            tex,
+                            Rect::new(s_left, 0.0, s_cw, s_top),
+                            Rect::new(outer.x + wl, outer.y, d_cw, wt),
+                            repeat,
+                            true,
+                            opacity,
+                        );
+                        // Bottom edge.
+                        self.draw_border_image_edge(
+                            fb,
+                            tex,
+                            Rect::new(s_left, sh - s_bottom, s_cw, s_bottom),
+                            Rect::new(outer.x + wl, outer.bottom() - wb, d_cw, wb),
+                            repeat,
+                            true,
+                            opacity,
+                        );
+                        // Left edge.
+                        self.draw_border_image_edge(
+                            fb,
+                            tex,
+                            Rect::new(0.0, s_top, s_left, s_ch),
+                            Rect::new(outer.x, outer.y + wt, wl, d_ch),
+                            repeat,
+                            false,
+                            opacity,
+                        );
+                        // Right edge.
+                        self.draw_border_image_edge(
+                            fb,
+                            tex,
+                            Rect::new(sw - s_right, s_top, s_right, s_ch),
+                            Rect::new(outer.right() - wr, outer.y + wt, wr, d_ch),
+                            repeat,
+                            false,
+                            opacity,
+                        );
+                        // Center is intentionally NOT filled (no `fill` keyword in
+                        // the scene spec).
                     }
                 }
                 BackgroundImage::Gradient(gradient) => {
                     self.render_gradient(fb, bounds, gradient, opacity, node.corner_radius);
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Draw one border-image edge region, tiling or stretching per `repeat`.
+    ///
+    /// `horizontal` selects the tiling axis (true = top/bottom edges tile along
+    /// x; false = left/right edges tile along y). `Stretch` scales the single
+    /// source slice to fill the whole edge; `Repeat`/`Round`/`Space` lay out
+    /// whole tiles to fit (Round/Space approximated as repeat-to-fill).
+    #[allow(clippy::too_many_arguments)]
+    fn draw_border_image_edge(
+        &mut self,
+        fb: &mut FrameBuffer,
+        texture: &CachedTexture,
+        src: Rect,
+        dst: Rect,
+        repeat: liquide_compositor::scene::BorderImageRepeat,
+        horizontal: bool,
+        opacity: f32,
+    ) {
+        use liquide_compositor::scene::BorderImageRepeat;
+        if src.width <= 0.0 || src.height <= 0.0 || dst.width <= 0.0 || dst.height <= 0.0 {
+            return;
+        }
+        match repeat {
+            BorderImageRepeat::Stretch => {
+                self.draw_scaled_texture(fb, texture, src, dst, opacity);
+            }
+            BorderImageRepeat::Repeat
+            | BorderImageRepeat::Round
+            | BorderImageRepeat::Space => {
+                // Natural tile size in destination space: the source slice keeps
+                // its aspect along the tiling axis, the cross axis fills the edge.
+                if horizontal {
+                    // Tile size = source slice width scaled by the edge's height
+                    // ratio so tiles aren't squashed; for Round, snap to a whole
+                    // count that fills the edge exactly.
+                    let scale = dst.height / src.height;
+                    let mut tile_w = (src.width * scale).max(1.0);
+                    let count = match repeat {
+                        BorderImageRepeat::Round => {
+                            let n = (dst.width / tile_w).round().max(1.0);
+                            tile_w = dst.width / n;
+                            n as u32
+                        }
+                        _ => (dst.width / tile_w).ceil().max(1.0) as u32,
+                    };
+                    for i in 0..count {
+                        let tx = dst.x + i as f32 * tile_w;
+                        let w = tile_w.min(dst.right() - tx);
+                        if w <= 0.0 {
+                            break;
+                        }
+                        // Crop source proportionally if the last tile is clipped.
+                        let src_w = src.width * (w / tile_w);
+                        let s = Rect::new(src.x, src.y, src_w, src.height);
+                        let d = Rect::new(tx, dst.y, w, dst.height);
+                        self.draw_scaled_texture(fb, texture, s, d, opacity);
+                    }
+                } else {
+                    let scale = dst.width / src.width;
+                    let mut tile_h = (src.height * scale).max(1.0);
+                    let count = match repeat {
+                        BorderImageRepeat::Round => {
+                            let n = (dst.height / tile_h).round().max(1.0);
+                            tile_h = dst.height / n;
+                            n as u32
+                        }
+                        _ => (dst.height / tile_h).ceil().max(1.0) as u32,
+                    };
+                    for i in 0..count {
+                        let ty = dst.y + i as f32 * tile_h;
+                        let h = tile_h.min(dst.bottom() - ty);
+                        if h <= 0.0 {
+                            break;
+                        }
+                        let src_h = src.height * (h / tile_h);
+                        let s = Rect::new(src.x, src.y, src.width, src_h);
+                        let d = Rect::new(dst.x, ty, dst.width, h);
+                        self.draw_scaled_texture(fb, texture, s, d, opacity);
+                    }
+                }
             }
         }
     }
@@ -758,89 +1068,132 @@ impl SoftwareRenderer {
         // exact 1:1 (and integer-multiple-free fractional) cases are detected.
         let scaled = (src_w - dst_w).abs() > 0.5 || (src_h - dst_h).abs() > 0.5;
 
-        for dst_y in sc_y0..sc_y1 {
-            for dst_x in sc_x0..sc_x1 {
-                let rel_x = (dst_x as f32 - dst_x0) / dst_w;
-                let rel_y = (dst_y as f32 - dst_y0) / dst_h;
+        // ── SIMD blit fast path (t-primitives #3) ───────────────────────────
+        //
+        // The largest per-frame pixel-bandwidth op (the full-screen wallpaper /
+        // image / pattern blit) previously SrcOver-blended one pixel at a time.
+        // We now build a PREMULTIPLIED source scanline in the framebuffer's
+        // native byte order — the SAME bytes `set_pixel(.., blend(..))` would
+        // ultimately rely on — and hand the whole row to the SIMD
+        // `blend_scanline_src_over` kernel (via `crate::blend::blend_scanline`),
+        // which is certified byte-identical to the scalar `crate::blend::blend`.
+        //
+        // The per-pixel SAMPLE math (bilinear / nearest, opacity, premultiply) is
+        // unchanged; only the blend is vectorised. Gated to 4-byte BGRA/RGBA
+        // (alpha at byte 3, what the SIMD kernel assumes); any other format takes
+        // the original scalar `set_pixel` loop, bit-for-bit unchanged.
+        use liquide_compositor::pixel::PixelFormat;
+        let fmt = fb.format;
+        let simd_eligible = matches!(fmt, PixelFormat::Bgra8 | PixelFormat::Rgba8);
+        let to_native = |c: Color| -> [u8; 4] {
+            match fmt {
+                PixelFormat::Rgba8 => [c.r, c.g, c.b, c.a],
+                _ => c.to_bgra_bytes(),
+            }
+        };
 
-                let mut src_color = if scaled {
-                    // Bilinear: sample the 4 texels around the (continuous) source
-                    // coordinate and lerp in straight (un-premultiplied) alpha.
-                    // Pixel centers sit at +0.5, so the sample center is
-                    // src0 + rel*span - 0.5.
-                    let fx = src_x0 as f32 + rel_x * src_w - 0.5;
-                    let fy = src_y0 as f32 + rel_y * src_h - 0.5;
-                    let x0 = fx.floor();
-                    let y0 = fy.floor();
-                    let tx = fx - x0;
-                    let ty = fy - y0;
-
-                    // Clamp sample coords into the valid source rect.
-                    let clamp_x = |v: f32| -> u32 {
-                        (v as i32).clamp(src_x0 as i32, src_x1 as i32 - 1) as u32
-                    };
-                    let clamp_y = |v: f32| -> u32 {
-                        (v as i32).clamp(src_y0 as i32, src_y1 as i32 - 1) as u32
-                    };
-                    let xa = clamp_x(x0);
-                    let xb = clamp_x(x0 + 1.0);
-                    let ya = clamp_y(y0);
-                    let yb = clamp_y(y0 + 1.0);
-
-                    let texel = |x: u32, y: u32| -> [f32; 4] {
-                        let i = ((y * texture.width + x) * 4) as usize;
-                        if i + 3 >= texture.data.len() {
-                            return [0.0; 4];
-                        }
-                        [
-                            texture.data[i] as f32,
-                            texture.data[i + 1] as f32,
-                            texture.data[i + 2] as f32,
-                            texture.data[i + 3] as f32,
-                        ]
-                    };
-
-                    let c00 = texel(xa, ya);
-                    let c10 = texel(xb, ya);
-                    let c01 = texel(xa, yb);
-                    let c11 = texel(xb, yb);
-
-                    let mut out = [0.0f32; 4];
-                    for k in 0..4 {
-                        let top = c00[k] + (c10[k] - c00[k]) * tx;
-                        let bot = c01[k] + (c11[k] - c01[k]) * tx;
-                        out[k] = top + (bot - top) * ty;
+        // Sample a single destination pixel → premultiplied straight Color, or
+        // `None` when the scalar path would `continue` (skip the write entirely).
+        let sample_px = |dst_x: u32, dst_y: u32| -> Option<Color> {
+            let rel_x = (dst_x as f32 - dst_x0) / dst_w;
+            let rel_y = (dst_y as f32 - dst_y0) / dst_h;
+            let mut src_color = if scaled {
+                let fx = src_x0 as f32 + rel_x * src_w - 0.5;
+                let fy = src_y0 as f32 + rel_y * src_h - 0.5;
+                let x0 = fx.floor();
+                let y0 = fy.floor();
+                let tx = fx - x0;
+                let ty = fy - y0;
+                let clamp_x =
+                    |v: f32| -> u32 { (v as i32).clamp(src_x0 as i32, src_x1 as i32 - 1) as u32 };
+                let clamp_y =
+                    |v: f32| -> u32 { (v as i32).clamp(src_y0 as i32, src_y1 as i32 - 1) as u32 };
+                let xa = clamp_x(x0);
+                let xb = clamp_x(x0 + 1.0);
+                let ya = clamp_y(y0);
+                let yb = clamp_y(y0 + 1.0);
+                let texel = |x: u32, y: u32| -> [f32; 4] {
+                    let i = ((y * texture.width + x) * 4) as usize;
+                    if i + 3 >= texture.data.len() {
+                        return [0.0; 4];
                     }
-                    Color::new(
-                        (out[0] + 0.5) as u8,
-                        (out[1] + 0.5) as u8,
-                        (out[2] + 0.5) as u8,
-                        (out[3] + 0.5) as u8,
-                    )
-                } else {
-                    // Nearest-neighbor for 1:1 blits.
-                    let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
-                    let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
-                    let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
-                    if src_idx + 3 >= texture.data.len() {
-                        continue;
-                    }
-                    Color::new(
-                        texture.data[src_idx],
-                        texture.data[src_idx + 1],
-                        texture.data[src_idx + 2],
-                        texture.data[src_idx + 3],
-                    )
+                    [
+                        texture.data[i] as f32,
+                        texture.data[i + 1] as f32,
+                        texture.data[i + 2] as f32,
+                        texture.data[i + 3] as f32,
+                    ]
                 };
-
-                if opacity < 1.0 {
-                    src_color.a = (src_color.a as f32 * opacity + 0.5) as u8;
+                let c00 = texel(xa, ya);
+                let c10 = texel(xb, ya);
+                let c01 = texel(xa, yb);
+                let c11 = texel(xb, yb);
+                let mut out = [0.0f32; 4];
+                for k in 0..4 {
+                    let top = c00[k] + (c10[k] - c00[k]) * tx;
+                    let bot = c01[k] + (c11[k] - c01[k]) * tx;
+                    out[k] = top + (bot - top) * ty;
                 }
+                Color::new(
+                    (out[0] + 0.5) as u8,
+                    (out[1] + 0.5) as u8,
+                    (out[2] + 0.5) as u8,
+                    (out[3] + 0.5) as u8,
+                )
+            } else {
+                let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
+                let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
+                let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
+                if src_idx + 3 >= texture.data.len() {
+                    return None;
+                }
+                Color::new(
+                    texture.data[src_idx],
+                    texture.data[src_idx + 1],
+                    texture.data[src_idx + 2],
+                    texture.data[src_idx + 3],
+                )
+            };
+            if opacity < 1.0 {
+                src_color.a = (src_color.a as f32 * opacity + 0.5) as u8;
+            }
+            Some(src_color.premultiply())
+        };
 
-                src_color = src_color.premultiply();
-                let dst_color = fb.get_pixel(dst_x, dst_y);
-                let blended = crate::blend::blend(dst_color, src_color, BlendMode::SrcOver);
-                fb.set_pixel(dst_x, dst_y, blended);
+        if simd_eligible {
+            let run = (sc_x1 - sc_x0) as usize;
+            let mut src_row = vec![0u8; run * 4];
+            for dst_y in sc_y0..sc_y1 {
+                for (i, dst_x) in (sc_x0..sc_x1).enumerate() {
+                    // Default to alpha-0 (a SrcOver no-op == the scalar skip /
+                    // `continue`, which left dst untouched).
+                    let bytes = match sample_px(dst_x, dst_y) {
+                        Some(pm) => to_native(pm),
+                        None => [0, 0, 0, 0],
+                    };
+                    src_row[i * 4..i * 4 + 4].copy_from_slice(&bytes);
+                }
+                if let Some(row) = fb.row_mut(dst_y) {
+                    let start = sc_x0 as usize * 4;
+                    let end = sc_x1 as usize * 4;
+                    crate::blend::blend_scanline(
+                        &mut row[start..end],
+                        &src_row[..run * 4],
+                        BlendMode::SrcOver,
+                    );
+                }
+            }
+        } else {
+            // Scalar fallback (non-BGRA/RGBA formats): byte-for-byte unchanged.
+            for dst_y in sc_y0..sc_y1 {
+                for dst_x in sc_x0..sc_x1 {
+                    let Some(src_color) = sample_px(dst_x, dst_y) else {
+                        continue;
+                    };
+                    let dst_color = fb.get_pixel(dst_x, dst_y);
+                    let blended = crate::blend::blend(dst_color, src_color, BlendMode::SrcOver);
+                    fb.set_pixel(dst_x, dst_y, blended);
+                }
             }
         }
     }
@@ -1454,5 +1807,403 @@ mod tests {
 
         assert_eq!(cached_renderer.texture_cache.pattern_len(), 1);
         assert_eq!(cached_fb.pixels(), legacy_fb.pixels());
+    }
+
+    // ── t-prim #3: SIMD blit must be byte-identical to the scalar SrcOver ──
+
+    // Independent SCALAR reference for `draw_scaled_texture` (the pre-SIMD path).
+    // Mirrors the sample math exactly but always uses the per-pixel
+    // get_pixel/blend/set_pixel loop, so it cannot share a bug with the SIMD path.
+    fn scalar_blit_reference(
+        fb: &mut FrameBuffer,
+        texture: &CachedTexture,
+        src_rect: Rect,
+        dst_rect: Rect,
+        opacity: f32,
+    ) {
+        let src_x0 = src_rect.x.max(0.0) as u32;
+        let src_y0 = src_rect.y.max(0.0) as u32;
+        let src_x1 = (src_rect.right().min(texture.width as f32)) as u32;
+        let src_y1 = (src_rect.bottom().min(texture.height as f32)) as u32;
+        let dst_x0 = dst_rect.x.max(0.0);
+        let dst_y0 = dst_rect.y.max(0.0);
+        let dst_x1 = dst_rect.right().min(fb.width as f32);
+        let dst_y1 = dst_rect.bottom().min(fb.height as f32);
+        if dst_x0 >= dst_x1 || dst_y0 >= dst_y1 {
+            return;
+        }
+        let src_w = (src_x1 - src_x0) as f32;
+        let src_h = (src_y1 - src_y0) as f32;
+        let dst_w = dst_x1 - dst_x0;
+        let dst_h = dst_y1 - dst_y0;
+        if src_w <= 0.0 || src_h <= 0.0 || dst_w <= 0.0 || dst_h <= 0.0 {
+            return;
+        }
+        let scaled = (src_w - dst_w).abs() > 0.5 || (src_h - dst_h).abs() > 0.5;
+        for dst_y in dst_y0 as u32..dst_y1.ceil() as u32 {
+            for dst_x in dst_x0 as u32..dst_x1.ceil() as u32 {
+                if dst_x >= fb.width || dst_y >= fb.height {
+                    continue;
+                }
+                let rel_x = (dst_x as f32 - dst_x0) / dst_w;
+                let rel_y = (dst_y as f32 - dst_y0) / dst_h;
+                let mut src_color = if scaled {
+                    let fx = src_x0 as f32 + rel_x * src_w - 0.5;
+                    let fy = src_y0 as f32 + rel_y * src_h - 0.5;
+                    let x0 = fx.floor();
+                    let y0 = fy.floor();
+                    let tx = fx - x0;
+                    let ty = fy - y0;
+                    let cx = |v: f32| -> u32 {
+                        (v as i32).clamp(src_x0 as i32, src_x1 as i32 - 1) as u32
+                    };
+                    let cy = |v: f32| -> u32 {
+                        (v as i32).clamp(src_y0 as i32, src_y1 as i32 - 1) as u32
+                    };
+                    let texel = |x: u32, y: u32| -> [f32; 4] {
+                        let i = ((y * texture.width + x) * 4) as usize;
+                        if i + 3 >= texture.data.len() {
+                            return [0.0; 4];
+                        }
+                        [
+                            texture.data[i] as f32,
+                            texture.data[i + 1] as f32,
+                            texture.data[i + 2] as f32,
+                            texture.data[i + 3] as f32,
+                        ]
+                    };
+                    let c00 = texel(cx(x0), cy(y0));
+                    let c10 = texel(cx(x0 + 1.0), cy(y0));
+                    let c01 = texel(cx(x0), cy(y0 + 1.0));
+                    let c11 = texel(cx(x0 + 1.0), cy(y0 + 1.0));
+                    let mut out = [0.0f32; 4];
+                    for k in 0..4 {
+                        let top = c00[k] + (c10[k] - c00[k]) * tx;
+                        let bot = c01[k] + (c11[k] - c01[k]) * tx;
+                        out[k] = top + (bot - top) * ty;
+                    }
+                    Color::new(
+                        (out[0] + 0.5) as u8,
+                        (out[1] + 0.5) as u8,
+                        (out[2] + 0.5) as u8,
+                        (out[3] + 0.5) as u8,
+                    )
+                } else {
+                    let src_x = (src_x0 as f32 + rel_x * src_w) as u32;
+                    let src_y = (src_y0 as f32 + rel_y * src_h) as u32;
+                    let src_idx = ((src_y * texture.width + src_x) * 4) as usize;
+                    if src_idx + 3 >= texture.data.len() {
+                        continue;
+                    }
+                    Color::new(
+                        texture.data[src_idx],
+                        texture.data[src_idx + 1],
+                        texture.data[src_idx + 2],
+                        texture.data[src_idx + 3],
+                    )
+                };
+                if opacity < 1.0 {
+                    src_color.a = (src_color.a as f32 * opacity + 0.5) as u8;
+                }
+                src_color = src_color.premultiply();
+                let dst_color = fb.get_pixel(dst_x, dst_y);
+                let blended = crate::blend::blend(dst_color, src_color, BlendMode::SrcOver);
+                fb.set_pixel(dst_x, dst_y, blended);
+            }
+        }
+    }
+
+    fn gradient_dst(w: u32, h: u32) -> FrameBuffer {
+        // A non-trivial dst so SrcOver over partial alpha differences would show.
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        for y in 0..h {
+            for x in 0..w {
+                fb.set_pixel(
+                    x,
+                    y,
+                    Color::new((x * 7 % 256) as u8, (y * 11 % 256) as u8, 90, 255),
+                );
+            }
+        }
+        fb
+    }
+
+    fn semi_texture(renderer: &mut SoftwareRenderer, id: u64, w: u32, h: u32) -> CachedTexture {
+        // RGBA with varying alpha so premultiply + SrcOver matter.
+        let mut data = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                data.push((x * 17 % 256) as u8);
+                data.push((y * 23 % 256) as u8);
+                data.push(((x + y) * 5 % 256) as u8);
+                data.push((40 + (x * y) % 200) as u8); // alpha 40..239
+            }
+        }
+        renderer.register_image_rgba(id, data, w, h);
+        renderer
+            .texture_cache
+            .get_by_key(image_texture_key(id))
+            .unwrap()
+    }
+
+    #[test]
+    fn simd_blit_byte_identical_to_scalar_unscaled() {
+        let mut r = SoftwareRenderer::new();
+        let tex = semi_texture(&mut r, 301, 16, 9);
+        let src = Rect::new(0.0, 0.0, 16.0, 9.0);
+        let dst = Rect::new(2.0, 1.0, 16.0, 9.0); // 1:1 → nearest
+
+        let mut simd_fb = gradient_dst(24, 16);
+        r.draw_scaled_texture(&mut simd_fb, &tex, src, dst, 1.0);
+
+        let mut scalar_fb = gradient_dst(24, 16);
+        scalar_blit_reference(&mut scalar_fb, &tex, src, dst, 1.0);
+
+        assert_eq!(
+            simd_fb.pixels(),
+            scalar_fb.pixels(),
+            "SIMD blit (nearest) must equal the scalar SrcOver byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn simd_blit_byte_identical_to_scalar_scaled_and_opacity() {
+        let mut r = SoftwareRenderer::new();
+        let tex = semi_texture(&mut r, 302, 8, 8);
+        let src = Rect::new(0.0, 0.0, 8.0, 8.0);
+        let dst = Rect::new(0.0, 0.0, 30.0, 22.0); // scaled → bilinear
+
+        let mut simd_fb = gradient_dst(32, 24);
+        r.draw_scaled_texture(&mut simd_fb, &tex, src, dst, 0.6);
+
+        let mut scalar_fb = gradient_dst(32, 24);
+        scalar_blit_reference(&mut scalar_fb, &tex, src, dst, 0.6);
+
+        assert_eq!(
+            simd_fb.pixels(),
+            scalar_fb.pixels(),
+            "SIMD blit (bilinear + opacity) must equal the scalar SrcOver byte-for-byte"
+        );
+    }
+
+    // ── t-prim #4: background-repeat space / round ──────────────────────
+
+    #[test]
+    fn background_repeat_space_leaves_gaps() {
+        // 4x4 opaque tile, box 15 wide → floor(15/4)=3 tiles=12px, 3px spread over
+        // 2 gaps = 1.5px each (≥1px → at least one fully-empty column).
+        let mut r = SoftwareRenderer::new();
+        r.register_image_rgba(401, vec![255u8; 4 * 4 * 4], 4, 4);
+        let node = background_node(
+            401,
+            BackgroundRepeat::Space,
+            BackgroundSize::Explicit { width: 4.0, height: 4.0 },
+            Rect::new(0.0, 0.0, 15.0, 4.0),
+        );
+        let mut fb = FrameBuffer::new(15, 4, PixelFormat::Bgra8);
+        r.render(std::slice::from_ref(&node), &mut fb, &full_damage())
+            .unwrap();
+
+        // First tile flush at x=0 painted.
+        assert_eq!(fb.get_pixel(0, 1).a, 255, "space: first tile flush-left");
+        // There must be at least one fully-unpainted (gap) column between tiles.
+        let gap_cols = (0..15).filter(|&x| (0..4).all(|y| fb.get_pixel(x, y).a == 0)).count();
+        assert!(
+            gap_cols > 0,
+            "background-repeat: space must leave gap columns between tiles (found {gap_cols})"
+        );
+    }
+
+    #[test]
+    fn background_repeat_space_differs_from_plain_repeat() {
+        // Teeth: plain Repeat fills edge-to-edge with NO gaps; Space must differ.
+        let mut r = SoftwareRenderer::new();
+        r.register_image_rgba(402, vec![255u8; 4 * 4 * 4], 4, 4);
+        let mk = |rep| {
+            background_node(
+                402,
+                rep,
+                BackgroundSize::Explicit { width: 4.0, height: 4.0 },
+                Rect::new(0.0, 0.0, 15.0, 4.0),
+            )
+        };
+        let mut rep_fb = FrameBuffer::new(15, 4, PixelFormat::Bgra8);
+        r.render(std::slice::from_ref(&mk(BackgroundRepeat::Repeat)), &mut rep_fb, &full_damage())
+            .unwrap();
+        let mut space_fb = FrameBuffer::new(15, 4, PixelFormat::Bgra8);
+        r.render(std::slice::from_ref(&mk(BackgroundRepeat::Space)), &mut space_fb, &full_damage())
+            .unwrap();
+        assert_ne!(
+            rep_fb.pixels(),
+            space_fb.pixels(),
+            "space must differ from plain repeat (gaps)"
+        );
+        let rep_gaps = (0..15).filter(|&x| (0..4).all(|y| rep_fb.get_pixel(x, y).a == 0)).count();
+        assert_eq!(rep_gaps, 0, "plain repeat must leave no gaps");
+    }
+
+    #[test]
+    fn background_repeat_round_scales_to_whole_tiles() {
+        // Box 18 wide, natural tile 4 → 18/4=4.5 → round to 4 tiles, each 4.5px.
+        // Result fills edge-to-edge with NO gaps (unlike plain repeat which would
+        // leave a clipped partial tile but still no transparent gaps; the key
+        // round property is exact whole-tile fit). Assert full coverage + the
+        // right edge is painted (a whole tile ends exactly at the box edge).
+        let mut r = SoftwareRenderer::new();
+        r.register_image_rgba(403, vec![255u8; 4 * 4 * 4], 4, 4);
+        let node = background_node(
+            403,
+            BackgroundRepeat::Round,
+            BackgroundSize::Explicit { width: 4.0, height: 4.0 },
+            Rect::new(0.0, 0.0, 18.0, 4.0),
+        );
+        let mut fb = FrameBuffer::new(18, 4, PixelFormat::Bgra8);
+        r.render(std::slice::from_ref(&node), &mut fb, &full_damage())
+            .unwrap();
+        // Full coverage, no gaps, including the far edge.
+        for x in [0u32, 8, 17] {
+            assert_eq!(fb.get_pixel(x, 1).a, 255, "round must fully cover x={x}");
+        }
+        let gap_cols = (0..18).filter(|&x| (0..4).all(|y| fb.get_pixel(x, y).a == 0)).count();
+        assert_eq!(gap_cols, 0, "round leaves no gaps (whole-tile fit)");
+    }
+
+    #[test]
+    fn round_axis_picks_whole_tile_count() {
+        // 20 / 6 = 3.33 → nearest whole count is 3, each tile resized to ~6.67px.
+        let (size, count) = SoftwareRenderer::round_axis(20.0, 6.0);
+        assert_eq!(count, 3);
+        assert!((size * count as f32 - 20.0).abs() < 1e-3, "tiles fill exactly: {size}");
+        // 22 / 4 = 5.5 → rounds up to 6 (round-half-away-from-zero), exact fit.
+        let (size6, count6) = SoftwareRenderer::round_axis(22.0, 4.0);
+        assert_eq!(count6, 6);
+        assert!((size6 * count6 as f32 - 22.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn space_axis_distributes_even_gaps() {
+        // 22 / 4 → 5 tiles (20px), 2px leftover over 4 gaps = 0.5px each.
+        let (gap, count) = SoftwareRenderer::space_axis(22.0, 4.0);
+        assert_eq!(count, 5);
+        assert!((gap - 0.5).abs() < 1e-4, "even gap: {gap}");
+        // A single tile (box smaller than 2 tiles) → no gap.
+        let (g1, c1) = SoftwareRenderer::space_axis(5.0, 4.0);
+        assert_eq!(c1, 1);
+        assert_eq!(g1, 0.0);
+    }
+
+    // ── t-prim #5: border-image 9-slice keeps corners unstretched ───────
+
+    fn border_image_node(image_id: u64, bounds: Rect, slice: f32, width: f32) -> FlatNode {
+        use liquide_compositor::scene::{BorderImageRepeat, BorderImageSpec};
+        FlatNode {
+            id: image_id,
+            kind: SceneNodeKind::BorderImage {
+                spec: BorderImageSpec {
+                    source: BackgroundImage::ImageId(image_id),
+                    slice: (slice, slice, slice, slice),
+                    width: (width, width, width, width),
+                    outset: (0.0, 0.0, 0.0, 0.0),
+                    repeat: BorderImageRepeat::Stretch,
+                },
+            }
+            .into(),
+            absolute_bounds: bounds,
+            absolute_transform: Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    // Build a 9x9 source as a 3x3 grid of SOLID 3x3 colour blocks. With a 33.33%
+    // slice each corner slice is a full solid 3x3 block, so corner sampling is a
+    // pure colour regardless of sub-pixel slice rounding (robust test).
+    //
+    //   TL(red)    T(yellow)  TR(green)
+    //   L(cyan)    C(white)   R(magenta)
+    //   BL(blue)   B(gray)    BR(dark)
+    fn nine_slice_source() -> Vec<u8> {
+        let block = |bx: u32, by: u32| -> [u8; 4] {
+            match (bx, by) {
+                (0, 0) => [255, 0, 0, 255],     // TL red
+                (1, 0) => [255, 255, 0, 255],   // T yellow
+                (2, 0) => [0, 255, 0, 255],     // TR green
+                (0, 1) => [0, 255, 255, 255],   // L cyan
+                (1, 1) => [255, 255, 255, 255], // C white
+                (2, 1) => [255, 0, 255, 255],   // R magenta
+                (0, 2) => [0, 0, 255, 255],     // BL blue
+                (1, 2) => [128, 128, 128, 255], // B gray
+                _ => [20, 20, 20, 255],         // BR dark
+            }
+        };
+        let mut data = Vec::with_capacity(9 * 9 * 4);
+        for y in 0..9u32 {
+            for x in 0..9u32 {
+                data.extend_from_slice(&block(x / 3, y / 3));
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn border_image_nine_slice_paints_corners_and_skips_center() {
+        let mut r = SoftwareRenderer::new();
+        r.register_image_rgba(501, nine_slice_source(), 9, 9);
+        // Box 30x30, slice ~33.33% (1 of 3 texels), border width 6px.
+        let node = border_image_node(501, Rect::new(0.0, 0.0, 30.0, 30.0), 33.3334, 6.0);
+        let mut fb = FrameBuffer::new(30, 30, PixelFormat::Bgra8);
+        r.render(std::slice::from_ref(&node), &mut fb, &full_damage())
+            .unwrap();
+
+        // Corners carry their distinct source texel colours (corners are NOT
+        // stretched away — they occupy the 6px corner boxes).
+        let tl = fb.get_pixel(1, 1);
+        assert_eq!((tl.r, tl.g, tl.b), (255, 0, 0), "TL corner = red, got {tl:?}");
+        let tr = fb.get_pixel(28, 1);
+        assert_eq!((tr.r, tr.g, tr.b), (0, 255, 0), "TR corner = green, got {tr:?}");
+        let bl = fb.get_pixel(1, 28);
+        assert_eq!((bl.r, bl.g, bl.b), (0, 0, 255), "BL corner = blue, got {bl:?}");
+
+        // The CENTER is NOT filled (no fill keyword) → transparent.
+        let center = fb.get_pixel(15, 15);
+        assert_eq!(center.a, 0, "border-image center must stay unfilled, got {center:?}");
+    }
+
+    #[test]
+    fn border_image_nine_slice_differs_from_plain_stretch() {
+        // Teeth: a plain full-image stretch would put the WHITE center texel in the
+        // middle and would NOT keep the corner colours in the corners. Compare the
+        // 9-slice render to a naive stretch of the whole image; they must differ,
+        // and the 9-slice corner must be the corner colour (not an interpolation).
+        let mut r = SoftwareRenderer::new();
+        r.register_image_rgba(502, nine_slice_source(), 9, 9);
+        let node = border_image_node(502, Rect::new(0.0, 0.0, 30.0, 30.0), 33.3334, 6.0);
+        let mut sliced = FrameBuffer::new(30, 30, PixelFormat::Bgra8);
+        r.render(std::slice::from_ref(&node), &mut sliced, &full_damage())
+            .unwrap();
+
+        // Naive full-image stretch reference.
+        let tex = r.texture_cache.get_by_key(image_texture_key(502)).unwrap();
+        let mut stretched = FrameBuffer::new(30, 30, PixelFormat::Bgra8);
+        r.draw_scaled_texture(
+            &mut stretched,
+            &tex,
+            Rect::new(0.0, 0.0, 9.0, 9.0),
+            Rect::new(0.0, 0.0, 30.0, 30.0),
+            1.0,
+        );
+
+        assert_ne!(
+            sliced.pixels(),
+            stretched.pixels(),
+            "9-slice must differ from a plain stretch"
+        );
+        // Stretch puts white (center texel, bilinearly mixed) in the middle;
+        // 9-slice leaves the middle transparent.
+        assert_eq!(sliced.get_pixel(15, 15).a, 0);
+        assert!(stretched.get_pixel(15, 15).a > 0, "stretch fills the middle");
     }
 }
