@@ -4,15 +4,49 @@ use serde::{Deserialize, Serialize};
 
 use crate::dimension::Dimension;
 
+/// A transform-translate component: either an absolute length (px) or a
+/// percentage that is resolved at apply time against the element's own box.
+///
+/// CSS: `translateX(%)` resolves against the element's border-box WIDTH and
+/// `translateY(%)` against its HEIGHT. The percentage cannot be resolved at
+/// compute time (the used box size isn't known until layout), so we carry it
+/// here and resolve it in the painter (`painter/transforms.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum LengthPercent {
+    /// Absolute length in CSS pixels.
+    Px(f32),
+    /// Percentage of the relevant box axis (0..100 == 0%..100%).
+    Percent(f32),
+}
+
+impl LengthPercent {
+    /// Zero-length convenience.
+    pub const ZERO: LengthPercent = LengthPercent::Px(0.0);
+
+    /// Resolve to pixels against the given axis length (element box size on the
+    /// relevant axis). For `Px`, the axis length is ignored.
+    pub fn resolve(self, axis_len: f32) -> f32 {
+        match self {
+            LengthPercent::Px(v) => v,
+            LengthPercent::Percent(p) => axis_len * p / 100.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Transform {
-    Translate(f32, f32),
+    /// 2D translate. Each axis is a length-or-percent; X percentages resolve
+    /// against the element width, Y against the element height.
+    Translate(LengthPercent, LengthPercent),
     Scale(f32, f32),
     Rotate(f32),
     Skew(f32, f32),
     Matrix(f32, f32, f32, f32, f32, f32),
     // 3D transform functions
-    Translate3d(f32, f32, f32),
+    /// 3D translate. X/Y are length-or-percent (resolved against element
+    /// width/height); Z is always an absolute length per CSS (`translateZ(%)`
+    /// is invalid).
+    Translate3d(LengthPercent, LengthPercent, f32),
     Rotate3d(f32, f32, f32, f32),
     Scale3d(f32, f32, f32),
     Matrix3d([f32; 16]),

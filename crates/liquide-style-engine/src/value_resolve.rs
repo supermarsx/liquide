@@ -632,22 +632,23 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                 let args = rest[open + 1..close].trim();
                 match func {
                     "translateX" => {
-                        if let Some(px) = parse_px(args) {
-                            result.push(Transform::Translate(px, 0.0));
-                        }
+                        let x = parse_length_percent(args).unwrap_or(LengthPercent::ZERO);
+                        result.push(Transform::Translate(x, LengthPercent::ZERO));
                     }
                     "translateY" => {
-                        if let Some(px) = parse_px(args) {
-                            result.push(Transform::Translate(0.0, px));
-                        }
+                        let y = parse_length_percent(args).unwrap_or(LengthPercent::ZERO);
+                        result.push(Transform::Translate(LengthPercent::ZERO, y));
                     }
                     "translate" => {
                         let parts: Vec<&str> = args.split(',').collect();
                         let x = parts
                             .first()
-                            .and_then(|s| parse_px(s.trim()))
-                            .unwrap_or(0.0);
-                        let y = parts.get(1).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                            .and_then(|s| parse_length_percent(s.trim()))
+                            .unwrap_or(LengthPercent::ZERO);
+                        let y = parts
+                            .get(1)
+                            .and_then(|s| parse_length_percent(s.trim()))
+                            .unwrap_or(LengthPercent::ZERO);
                         result.push(Transform::Translate(x, y));
                     }
                     "scale" => {
@@ -698,15 +699,23 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                         let parts: Vec<&str> = args.split(',').collect();
                         let x = parts
                             .first()
-                            .and_then(|s| parse_px(s.trim()))
-                            .unwrap_or(0.0);
-                        let y = parts.get(1).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
+                            .and_then(|s| parse_length_percent(s.trim()))
+                            .unwrap_or(LengthPercent::ZERO);
+                        let y = parts
+                            .get(1)
+                            .and_then(|s| parse_length_percent(s.trim()))
+                            .unwrap_or(LengthPercent::ZERO);
+                        // translateZ is an absolute length (percentages invalid).
                         let z = parts.get(2).and_then(|s| parse_px(s.trim())).unwrap_or(0.0);
                         result.push(Transform::Translate3d(x, y, z));
                     }
                     "translateZ" => {
                         if let Some(px) = parse_px(args) {
-                            result.push(Transform::Translate3d(0.0, 0.0, px));
+                            result.push(Transform::Translate3d(
+                                LengthPercent::ZERO,
+                                LengthPercent::ZERO,
+                                px,
+                            ));
                         }
                     }
                     "rotate3d" => {
@@ -765,6 +774,26 @@ pub fn parse_transform_list(css: &str) -> Vec<Transform> {
                             result.push(Transform::Scale3d(1.0, 1.0, v));
                         }
                     }
+                    "matrix" => {
+                        // 2D matrix(a, b, c, d, e, f). a/b/c/d are unitless
+                        // scalars; e/f are translations in px (unitless or px).
+                        let parts: Vec<f32> = args
+                            .split(',')
+                            .filter_map(|s| {
+                                let s = s.trim();
+                                s.strip_suffix("px")
+                                    .map(str::trim)
+                                    .unwrap_or(s)
+                                    .parse::<f32>()
+                                    .ok()
+                            })
+                            .collect();
+                        if parts.len() == 6 {
+                            result.push(Transform::Matrix(
+                                parts[0], parts[1], parts[2], parts[3], parts[4], parts[5],
+                            ));
+                        }
+                    }
                     "matrix3d" => {
                         let parts: Vec<f32> = args
                             .split(',')
@@ -801,6 +830,18 @@ fn parse_px(s: &str) -> Option<f32> {
     s.strip_suffix("px")
         .and_then(|v| v.trim().parse::<f32>().ok())
         .or_else(|| s.parse::<f32>().ok())
+}
+
+/// Parse a transform translate component: `<n>px`, bare `<n>` (treated as px),
+/// or `<n>%`. Percentages are kept symbolic so the painter can resolve them
+/// against the element's own box at apply time.
+fn parse_length_percent(s: &str) -> Option<LengthPercent> {
+    let s = s.trim();
+    if let Some(v) = s.strip_suffix('%') {
+        v.trim().parse::<f32>().ok().map(LengthPercent::Percent)
+    } else {
+        parse_px(s).map(LengthPercent::Px)
+    }
 }
 
 fn parse_degrees(s: &str) -> Option<f32> {
@@ -1025,5 +1066,76 @@ mod tests {
         let value = PropertyValue::Keyword("transparent".to_string());
         let color = resolve_color(&value).expect("expected transparent keyword to parse");
         assert_eq!(color.a, 0);
+    }
+
+    // ── transform parse teeth (au2 Gap 1 & 2) ──
+
+    #[test]
+    fn translate_percent_parses_as_percent_not_zero() {
+        // RED before fix: parse_px rejected "%", so translate(50%) collapsed to
+        // Px(0) — a percentage MUST survive as Percent so the painter can resolve
+        // it against the element box.
+        let t = parse_transform_list("translate(50%, 25%)");
+        assert_eq!(t.len(), 1, "expected one transform");
+        match &t[0] {
+            Transform::Translate(x, y) => {
+                assert_eq!(*x, LengthPercent::Percent(50.0));
+                assert_eq!(*y, LengthPercent::Percent(25.0));
+                // It must NOT be a px(0) collapse.
+                assert_ne!(*x, LengthPercent::Px(0.0));
+            }
+            other => panic!("expected Translate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn translate_x_y_axis_percent() {
+        let tx = parse_transform_list("translateX(50%)");
+        assert_eq!(
+            tx[0],
+            Transform::Translate(LengthPercent::Percent(50.0), LengthPercent::ZERO)
+        );
+        let ty = parse_transform_list("translateY(50%)");
+        assert_eq!(
+            ty[0],
+            Transform::Translate(LengthPercent::ZERO, LengthPercent::Percent(50.0))
+        );
+    }
+
+    #[test]
+    fn translate_px_still_works() {
+        let t = parse_transform_list("translate(10px, 20px)");
+        assert_eq!(
+            t[0],
+            Transform::Translate(LengthPercent::Px(10.0), LengthPercent::Px(20.0))
+        );
+    }
+
+    #[test]
+    fn translate3d_percent_xy_px_z() {
+        let t = parse_transform_list("translate3d(50%, 25%, 30px)");
+        assert_eq!(
+            t[0],
+            Transform::Translate3d(
+                LengthPercent::Percent(50.0),
+                LengthPercent::Percent(25.0),
+                30.0
+            )
+        );
+    }
+
+    #[test]
+    fn matrix_2d_parses() {
+        // RED before fix: no "matrix" arm → _ => {} → empty list.
+        let t = parse_transform_list("matrix(1, 0, 0, 1, 100, 50)");
+        assert_eq!(t.len(), 1, "matrix() must parse to one transform");
+        assert_eq!(t[0], Transform::Matrix(1.0, 0.0, 0.0, 1.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn matrix_2d_rejects_wrong_arg_count() {
+        // matrix needs exactly 6 args; 5 must not produce a transform.
+        let t = parse_transform_list("matrix(1, 0, 0, 1, 100)");
+        assert!(t.is_empty(), "matrix() with 5 args must not parse");
     }
 }

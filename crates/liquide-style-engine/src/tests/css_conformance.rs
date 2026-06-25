@@ -6526,8 +6526,8 @@ fn transform_translate3d() {
                     if style.transform.len() == 1 {
                         match &style.transform[0] {
                             Transform::Translate3d(x, y, z)
-                                if (*x - 10.0).abs() < 0.01
-                                    && (*y - 20.0).abs() < 0.01
+                                if (x.resolve(0.0) - 10.0).abs() < 0.01
+                                    && (y.resolve(0.0) - 20.0).abs() < 0.01
                                     && (*z - 30.0).abs() < 0.01 =>
                             {
                                 Ok(())

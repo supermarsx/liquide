@@ -107,6 +107,12 @@ pub enum PseudoElement {
     FirstLetter,
     Placeholder,
     Selection,
+    /// `::marker` — the list-item marker box (bullet/number). Parsing and
+    /// computing styles for it is handled here; the actual painting of the
+    /// marker box is the painter's responsibility (downstream) — list markers
+    /// are layout-generated (`BoxType::ListMarker`), so author styling via
+    /// `::marker` must be wired into the marker box's computed style by paint.
+    Marker,
 }
 
 /// `:nth-child(an+b)` parameter.
@@ -1059,6 +1065,7 @@ fn parse_pseudo_element(name: &str) -> Option<PseudoElement> {
         "first-letter" => Some(PseudoElement::FirstLetter),
         "placeholder" => Some(PseudoElement::Placeholder),
         "selection" => Some(PseudoElement::Selection),
+        "marker" => Some(PseudoElement::Marker),
         _ => None,
     }
 }
@@ -1590,6 +1597,29 @@ fn following_element_siblings(doc: &Document, node_id: NodeId) -> Vec<NodeId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// au2 Gap 5: `::marker` must parse to a real pseudo-element rule.
+    /// RED before fix: `parse_pseudo_element("marker")` returned `None`, so the
+    /// selector either dropped the pseudo or failed to record it as a marker.
+    #[test]
+    fn marker_pseudo_element_parses() {
+        let sel = ComplexSelector::parse("li::marker").expect("li::marker must parse");
+        let compound = sel.compounds.last().expect("at least one compound");
+        assert_eq!(
+            compound.pseudo_element,
+            Some(PseudoElement::Marker),
+            "::marker must resolve to PseudoElement::Marker, not be dropped"
+        );
+        assert_eq!(compound.tag.as_deref(), Some("li"));
+    }
+
+    #[test]
+    fn marker_parse_function_maps_name() {
+        // Teeth: the name->variant mapping itself must include marker and still
+        // reject genuinely unknown pseudo-elements.
+        assert_eq!(parse_pseudo_element("marker"), Some(PseudoElement::Marker));
+        assert_eq!(parse_pseudo_element("not-a-pseudo"), None);
+    }
 
     /// Regression: relative `:has()` selectors with a leading combinator and a
     /// short/long inner compound chain must never index past the compound list

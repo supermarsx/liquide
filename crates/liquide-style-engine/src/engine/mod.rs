@@ -551,3 +551,95 @@ mod transition_integration_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod default_display_tests {
+    use super::*;
+    use crate::computed::Display;
+    use liquide_dom::Document;
+
+    /// au2 Gap 10: an unknown/custom element (tag with a hyphen) that has NO
+    /// explicit `display` must default to `inline`, not `block`, so its inline
+    /// content flows beside text instead of breaking onto its own line.
+    /// RED before fix: it inherited `ComputedStyle::default()` == Block.
+    #[test]
+    fn unknown_custom_element_defaults_to_inline() {
+        let engine = StyleEngine::default(); // no stylesheet → no display rule
+        let mut doc = Document::new();
+        let root = doc.root();
+        let custom = doc.create_element("lq-highlight");
+        doc.append_child(root, custom);
+
+        let map = engine.restyle_all(&doc);
+        let style = map.get(custom).expect("style exists");
+        assert_eq!(
+            style.display,
+            Display::Inline,
+            "unknown custom element must default to display:inline (got {:?})",
+            style.display
+        );
+    }
+
+    /// Teeth: a registered widget that sets `display: block` in CSS must KEEP
+    /// block — the inline default must only kick in when display is unset.
+    #[test]
+    fn custom_element_with_explicit_display_is_respected() {
+        let mut engine = StyleEngine::default();
+        engine.add_stylesheet("lq-panel { display: block; }");
+        let mut doc = Document::new();
+        let root = doc.root();
+        let panel = doc.create_element("lq-panel");
+        doc.append_child(root, panel);
+
+        let map = engine.restyle_all(&doc);
+        let style = map.get(panel).expect("style exists");
+        assert_eq!(
+            style.display,
+            Display::Block,
+            "explicit display:block on a custom element must be respected"
+        );
+    }
+
+    /// Teeth: a plain unknown HTML tag WITHOUT a hyphen keeps the block default
+    /// (we intentionally scope the inline override to custom elements, so a bare
+    /// `<div>`-like tag is unaffected and the engine's block-by-default model is
+    /// preserved).
+    #[test]
+    fn non_custom_unknown_tag_keeps_block_default() {
+        let engine = StyleEngine::default();
+        let mut doc = Document::new();
+        let root = doc.root();
+        let div = doc.create_element("div");
+        doc.append_child(root, div);
+
+        let map = engine.restyle_all(&doc);
+        let style = map.get(div).expect("style exists");
+        assert_eq!(style.display, Display::Block);
+    }
+
+    /// Inline-flow proof: a custom element sits BESIDE preceding text on the
+    /// same line, not on its own line. We assert via display:inline (the
+    /// property that drives inline-collection in layout).
+    #[test]
+    fn custom_element_flows_inline_beside_text() {
+        let engine = StyleEngine::default();
+        let mut doc = Document::new();
+        let root = doc.root();
+        let para = doc.create_element("p");
+        doc.append_child(root, para);
+        let text = doc.create_text("before ");
+        doc.append_child(para, text);
+        let hl = doc.create_element("lq-highlight");
+        doc.append_child(para, hl);
+        let inner = doc.create_text("highlighted");
+        doc.append_child(hl, inner);
+
+        let map = engine.restyle_all(&doc);
+        let hl_style = map.get(hl).expect("highlight style exists");
+        assert_eq!(
+            hl_style.display,
+            Display::Inline,
+            "an inline custom element must be inline so it flows beside text"
+        );
+    }
+}

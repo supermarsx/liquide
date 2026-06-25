@@ -216,7 +216,14 @@ impl HitTestEngine {
                     abs_border.height,
                     style.font_size,
                 );
-            match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
+            match inverse_transform_point(
+                point,
+                &style.transform,
+                origin_x,
+                origin_y,
+                abs_border.width,
+                abs_border.height,
+            ) {
                 Some(p) => p,
                 None => return None, // Singular transform — can't hit
             }
@@ -508,7 +515,14 @@ impl HitTestEngine {
                     abs_border.height,
                     style.font_size,
                 );
-            match inverse_transform_point(point, &style.transform, origin_x, origin_y) {
+            match inverse_transform_point(
+                point,
+                &style.transform,
+                origin_x,
+                origin_y,
+                abs_border.width,
+                abs_border.height,
+            ) {
                 Some(p) => p,
                 None => return,
             }
@@ -633,9 +647,11 @@ fn inverse_transform_point(
     transforms: &[Transform],
     origin_x: f32,
     origin_y: f32,
+    box_width: f32,
+    box_height: f32,
 ) -> Option<Point> {
     // Use the same matrix composition as the painter (Affine2D convention)
-    let transform = compose_transform_matrix(transforms, origin_x, origin_y);
+    let transform = compose_transform_matrix(transforms, origin_x, origin_y, box_width, box_height);
 
     // Invert the Affine2D matrix
     // Affine2D: x' = a*x + b*y + tx, y' = c*x + d*y + ty
@@ -672,7 +688,13 @@ fn inverse_transform_point(
 /// The resulting Affine2D uses the convention:
 ///   x' = a * x + b * y + tx
 ///   y' = c * x + d * y + ty
-fn compose_transform_matrix(transforms: &[Transform], origin_x: f32, origin_y: f32) -> Affine2D {
+fn compose_transform_matrix(
+    transforms: &[Transform],
+    origin_x: f32,
+    origin_y: f32,
+    box_width: f32,
+    box_height: f32,
+) -> Affine2D {
     // Start with identity matrix
     let mut a = 1.0f32;
     let mut b = 0.0f32;
@@ -707,7 +729,8 @@ fn compose_transform_matrix(transforms: &[Transform], origin_x: f32, origin_y: f
     for t in transforms {
         match t {
             Transform::Translate(x, y) => {
-                mul(1.0, 0.0, 0.0, 1.0, *x, *y);
+                // translate(%) resolves against the element's own box: X% width, Y% height.
+                mul(1.0, 0.0, 0.0, 1.0, x.resolve(box_width), y.resolve(box_height));
             }
             Transform::Scale(sx, sy) => {
                 mul(*sx, 0.0, 0.0, *sy, 0.0, 0.0);
@@ -864,6 +887,7 @@ mod tests {
     use super::*;
     use liquide_dom::Document;
     use liquide_layout::{DefaultImageMeasurer, DefaultTextMeasurer, LayoutEngine, Size};
+    use liquide_style_engine::computed::LengthPercent;
     use liquide_style_engine::engine::StyleEngine;
 
     /// t88-p0a: a generated-content `::before` box must NOT register a hit on
@@ -1007,7 +1031,7 @@ mod tests {
         let origin_x = 50.0;
         let origin_y = 50.0;
 
-        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
+        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y, 0.0, 0.0);
         let original = Point::new(75.0, 50.0);
 
         // Forward transform using Affine2D
@@ -1017,7 +1041,8 @@ mod tests {
         let transformed_point = Point::new(transformed.x, transformed.y);
 
         // Inverse transform
-        let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
+        let recovered =
+            inverse_transform_point(transformed_point, &transforms, origin_x, origin_y, 0.0, 0.0);
 
         assert!(recovered.is_some(), "Should be able to inverse transform");
         let recovered = recovered.unwrap();
@@ -1043,12 +1068,12 @@ mod tests {
         let transforms = vec![
             Transform::Rotate(30.0),
             Transform::Scale(2.0, 1.5),
-            Transform::Translate(100.0, 50.0),
+            Transform::Translate(LengthPercent::Px(100.0), LengthPercent::Px(50.0)),
         ];
         let origin_x = 100.0;
         let origin_y = 100.0;
 
-        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
+        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y, 0.0, 0.0);
         let original = Point::new(150.0, 75.0);
 
         // Forward transform
@@ -1058,7 +1083,8 @@ mod tests {
         let transformed_point = Point::new(transformed.x, transformed.y);
 
         // Inverse transform
-        let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
+        let recovered =
+            inverse_transform_point(transformed_point, &transforms, origin_x, origin_y, 0.0, 0.0);
 
         assert!(recovered.is_some(), "Should be able to inverse transform");
         let recovered = recovered.unwrap();
@@ -1084,7 +1110,7 @@ mod tests {
         let origin_x = 50.0;
         let origin_y = 50.0;
 
-        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y);
+        let matrix = compose_transform_matrix(&transforms, origin_x, origin_y, 0.0, 0.0);
         let original = Point::new(80.0, 60.0);
 
         let transformed = matrix.transform_point(liquide_compositor::geometry::Point::new(
@@ -1092,7 +1118,8 @@ mod tests {
         ));
         let transformed_point = Point::new(transformed.x, transformed.y);
 
-        let recovered = inverse_transform_point(transformed_point, &transforms, origin_x, origin_y);
+        let recovered =
+            inverse_transform_point(transformed_point, &transforms, origin_x, origin_y, 0.0, 0.0);
 
         assert!(recovered.is_some());
         let recovered = recovered.unwrap();

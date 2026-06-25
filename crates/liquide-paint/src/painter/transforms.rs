@@ -1,8 +1,20 @@
 //! Transform matrix composition and origin resolution.
 
 use liquide_compositor::geometry::Affine2D;
-use liquide_style_engine::computed::{BackfaceVisibility, Perspective, Transform, TransformStyle};
+use liquide_style_engine::computed::{
+    BackfaceVisibility, LengthPercent, Perspective, Transform, TransformStyle,
+};
 use liquide_style_engine::dimension::Dimension;
+
+/// Resolve a translate component against the element's own box axis length.
+///
+/// Per CSS, `translateX(%)` is relative to the element's WIDTH and
+/// `translateY(%)` to its HEIGHT. `box_axis` must be the element's border-box
+/// size on the axis the component applies to.
+#[inline]
+fn resolve_translate(lp: LengthPercent, box_axis: f32) -> f32 {
+    lp.resolve(box_axis)
+}
 
 /// Resolve a transform-origin dimension to pixels.
 ///
@@ -33,11 +45,15 @@ pub(crate) fn compose_transform_matrix(
     transforms: &[Transform],
     origin_x: f32,
     origin_y: f32,
+    box_width: f32,
+    box_height: f32,
 ) -> Affine2D {
     compose_transform_matrix_ext(
         transforms,
         origin_x,
         origin_y,
+        box_width,
+        box_height,
         &Perspective::None,
         TransformStyle::Flat,
         BackfaceVisibility::Visible,
@@ -50,6 +66,8 @@ pub(crate) fn compose_transform_matrix_ext(
     transforms: &[Transform],
     origin_x: f32,
     origin_y: f32,
+    box_width: f32,
+    box_height: f32,
     perspective: &Perspective,
     _transform_style: TransformStyle,
     backface_visibility: BackfaceVisibility,
@@ -58,7 +76,9 @@ pub(crate) fn compose_transform_matrix_ext(
         transforms.iter().any(|t| t.is_3d()) || matches!(perspective, Perspective::Length(_));
 
     if has_3d {
-        let m4 = compose_transform_matrix_3d(transforms, origin_x, origin_y, perspective);
+        let m4 = compose_transform_matrix_3d(
+            transforms, origin_x, origin_y, box_width, box_height, perspective,
+        );
 
         // Backface visibility: if hidden, check if the element is facing away.
         // The z-component of the transformed normal (determinant of the upper-left 3×3
@@ -85,7 +105,7 @@ pub(crate) fn compose_transform_matrix_ext(
         // currently only supports Affine2D.
         project_4x4_to_affine2d(&m4)
     } else {
-        compose_transform_matrix_2d(transforms, origin_x, origin_y)
+        compose_transform_matrix_2d(transforms, origin_x, origin_y, box_width, box_height)
     }
 }
 
@@ -97,6 +117,8 @@ pub(crate) fn compose_transform_matrix_3d(
     transforms: &[Transform],
     origin_x: f32,
     origin_y: f32,
+    box_width: f32,
+    box_height: f32,
     perspective: &Perspective,
 ) -> [f32; 16] {
     let mut m = mat4_identity();
@@ -114,8 +136,16 @@ pub(crate) fn compose_transform_matrix_3d(
     // Apply each transform function in order
     for t in transforms {
         let tm = match t {
-            Transform::Translate(x, y) => mat4_translate(*x, *y, 0.0),
-            Transform::Translate3d(x, y, z) => mat4_translate(*x, *y, *z),
+            Transform::Translate(x, y) => mat4_translate(
+                resolve_translate(*x, box_width),
+                resolve_translate(*y, box_height),
+                0.0,
+            ),
+            Transform::Translate3d(x, y, z) => mat4_translate(
+                resolve_translate(*x, box_width),
+                resolve_translate(*y, box_height),
+                *z,
+            ),
             Transform::Scale(sx, sy) => mat4_scale(*sx, *sy, 1.0),
             Transform::Scale3d(sx, sy, sz) => mat4_scale(*sx, *sy, *sz),
             Transform::Rotate(deg) => {
@@ -283,7 +313,13 @@ fn mat4_mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
 }
 
 /// Compose a list of 2D-only CSS transforms into a single 2D affine matrix.
-fn compose_transform_matrix_2d(transforms: &[Transform], origin_x: f32, origin_y: f32) -> Affine2D {
+fn compose_transform_matrix_2d(
+    transforms: &[Transform],
+    origin_x: f32,
+    origin_y: f32,
+    box_width: f32,
+    box_height: f32,
+) -> Affine2D {
     // Start with identity matrix
     // We use the convention: (a, b, c, d, tx, ty) where
     //   x' = a * x + b * y + tx
@@ -321,7 +357,14 @@ fn compose_transform_matrix_2d(transforms: &[Transform], origin_x: f32, origin_y
     for t in transforms {
         match t {
             Transform::Translate(x, y) => {
-                mul(1.0, 0.0, 0.0, 1.0, *x, *y);
+                mul(
+                    1.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    resolve_translate(*x, box_width),
+                    resolve_translate(*y, box_height),
+                );
             }
             Transform::Scale(sx, sy) => {
                 mul(*sx, 0.0, 0.0, *sy, 0.0, 0.0);
@@ -354,4 +397,125 @@ fn compose_transform_matrix_2d(transforms: &[Transform], origin_x: f32, origin_y
     mul(1.0, 0.0, 0.0, 1.0, -origin_x, -origin_y);
 
     Affine2D { a, b, c, d, tx, ty }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use liquide_compositor::geometry::Point;
+
+    fn apply(transforms: &[Transform], box_w: f32, box_h: f32) -> Affine2D {
+        // origin 0,0 so the translation is read directly off tx/ty.
+        compose_transform_matrix_ext(
+            transforms,
+            0.0,
+            0.0,
+            box_w,
+            box_h,
+            &Perspective::None,
+            TransformStyle::Flat,
+            BackfaceVisibility::Visible,
+        )
+    }
+
+    /// au2 Gap 1: translate(50%) on a 200px-wide element moves it 100px, NOT 0.
+    /// RED before fix: the percent was dropped (parse_px returned None → 0).
+    #[test]
+    fn translate_percent_x_resolves_against_width() {
+        let m = apply(
+            &[Transform::Translate(
+                LengthPercent::Percent(50.0),
+                LengthPercent::ZERO,
+            )],
+            200.0,
+            80.0,
+        );
+        assert!(
+            (m.tx - 100.0).abs() < 1e-3,
+            "translate(50%) on 200px width must move 100px, got {}",
+            m.tx
+        );
+        assert!((m.ty).abs() < 1e-3, "Y must be untouched, got {}", m.ty);
+    }
+
+    /// translateY(%) resolves against HEIGHT, not width.
+    #[test]
+    fn translate_percent_y_resolves_against_height() {
+        let m = apply(
+            &[Transform::Translate(
+                LengthPercent::ZERO,
+                LengthPercent::Percent(25.0),
+            )],
+            200.0,
+            80.0,
+        );
+        // 25% of height(80) = 20; if it (wrongly) used width(200) it'd be 50.
+        assert!(
+            (m.ty - 20.0).abs() < 1e-3,
+            "translateY(25%) must use height(80)->20, got {}",
+            m.ty
+        );
+        assert!((m.tx).abs() < 1e-3);
+    }
+
+    /// A px translate must NOT be scaled by the box (regression guard for the
+    /// LengthPercent::Px path).
+    #[test]
+    fn translate_px_is_not_scaled_by_box() {
+        let m = apply(
+            &[Transform::Translate(
+                LengthPercent::Px(30.0),
+                LengthPercent::Px(40.0),
+            )],
+            200.0,
+            80.0,
+        );
+        assert!((m.tx - 30.0).abs() < 1e-3);
+        assert!((m.ty - 40.0).abs() < 1e-3);
+    }
+
+    /// translate3d X/Y percentages resolve against width/height too.
+    #[test]
+    fn translate3d_percent_resolves_against_box() {
+        let m = apply(
+            &[Transform::Translate3d(
+                LengthPercent::Percent(50.0),
+                LengthPercent::Percent(50.0),
+                0.0,
+            )],
+            200.0,
+            80.0,
+        );
+        assert!((m.tx - 100.0).abs() < 1e-3, "x=50% of 200 -> 100, got {}", m.tx);
+        assert!((m.ty - 40.0).abs() < 1e-3, "y=50% of 80 -> 40, got {}", m.ty);
+    }
+
+    /// au2 Gap 2: matrix(a,b,c,d,e,f) maps a known point correctly.
+    /// matrix(2,0,0,3,10,20): x' = 2x+10, y' = 3y+20.
+    #[test]
+    fn matrix_2d_maps_point() {
+        let m = apply(&[Transform::Matrix(2.0, 0.0, 0.0, 3.0, 10.0, 20.0)], 0.0, 0.0);
+        let p = m.transform_point(Point::new(5.0, 7.0));
+        assert!(
+            (p.x - 20.0).abs() < 1e-3,
+            "x' = 2*5+10 = 20, got {}",
+            p.x
+        );
+        assert!(
+            (p.y - 41.0).abs() < 1e-3,
+            "y' = 3*7+20 = 41, got {}",
+            p.y
+        );
+    }
+
+    /// matrix() with a shear (b,c != 0) must map off-axis correctly so the
+    /// CSS->Affine2D column mapping isn't silently transposed.
+    #[test]
+    fn matrix_2d_shear_maps_point() {
+        // CSS matrix(1, 2, 3, 1, 0, 0): x' = 1*x + 3*y, y' = 2*x + 1*y
+        let m = apply(&[Transform::Matrix(1.0, 2.0, 3.0, 1.0, 0.0, 0.0)], 0.0, 0.0);
+        let p = m.transform_point(Point::new(1.0, 1.0));
+        assert!((p.x - 4.0).abs() < 1e-3, "x' = 1+3 = 4, got {}", p.x);
+        assert!((p.y - 3.0).abs() < 1e-3, "y' = 2+1 = 3, got {}", p.y);
+    }
 }

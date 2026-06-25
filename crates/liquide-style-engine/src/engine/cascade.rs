@@ -244,9 +244,16 @@ impl StyleEngine {
         let resolved = cascade.resolve();
         let empty_scope = ScopeVars::new();
         let inherited_style = style.clone();
+        let mut display_was_set = false;
         for (prop, val) in &resolved {
+            if prop == "display" {
+                display_was_set = true;
+            }
             self.apply_cascaded_property(prop, val, &mut style, &inherited_style, &empty_scope);
         }
+
+        // Unknown/custom elements default to display:inline (mirrors restyle_node).
+        apply_unknown_element_default_display(&mut style, &tag_name, display_was_set);
 
         // ── Post-cascade assembly — identical to the tree path so this helper
         //    matches `restyle_node` semantics for everything except @container /
@@ -631,7 +638,11 @@ impl StyleEngine {
             let effective_vars = owned_vars.as_ref().unwrap_or(scope_vars);
             let inherited_style = style.clone();
 
+            let mut display_was_set = false;
             for (prop, val) in &resolved {
+                if prop == "display" {
+                    display_was_set = true;
+                }
                 self.apply_cascaded_property(
                     prop,
                     val,
@@ -640,6 +651,10 @@ impl StyleEngine {
                     effective_vars,
                 );
             }
+
+            // Unknown/custom elements default to display:inline (not block) so
+            // inline content keeps flowing. Registered widgets set display in CSS.
+            apply_unknown_element_default_display(&mut style, &tag_name, display_was_set);
 
             // Assemble TextDecoration composite from longhands if set
             Self::assemble_text_decoration(&mut style);
@@ -1051,6 +1066,35 @@ fn is_allowed_pseudo_property(pseudo_name: &str, property: &str) -> bool {
     }
 }
 
+/// Apply the user-agent default display for unknown/custom elements.
+///
+/// HTML unknown elements and (un-styled) custom elements default to
+/// `display: inline`, NOT `block`. The engine's `ComputedStyle::default()` is
+/// `Block` (correct for most HTML block tags, which the theme/UA CSS keeps
+/// block), so we only override to `Inline` when:
+///   1. the element is a custom element (its tag name contains `-`, per the
+///      HTML custom-element naming rule), AND
+///   2. no rule / inline style explicitly set `display`.
+///
+/// This keeps inline content (e.g. an inline `<lq-highlight>` span) flowing
+/// beside text instead of breaking onto its own line, while leaving the
+/// registered `lq-*` widgets untouched — they set `display` explicitly in
+/// `widgets.css`, so condition (2) fails for them.
+fn apply_unknown_element_default_display(
+    style: &mut ComputedStyle,
+    tag_name: &str,
+    display_was_set: bool,
+) {
+    if !display_was_set && is_custom_element_tag(tag_name) {
+        style.display = Display::Inline;
+    }
+}
+
+/// A custom element per the HTML spec: a tag name containing a hyphen.
+fn is_custom_element_tag(tag_name: &str) -> bool {
+    tag_name.contains('-')
+}
+
 fn prepared_rule_pseudo_element(rule: &super::PreparedRule) -> Option<&str> {
     rule.pseudo_element.as_deref().or_else(|| {
         rule.selector
@@ -1064,6 +1108,7 @@ fn prepared_rule_pseudo_element(rule: &super::PreparedRule) -> Option<&str> {
                 crate::selector::PseudoElement::FirstLetter => "first-letter",
                 crate::selector::PseudoElement::Placeholder => "placeholder",
                 crate::selector::PseudoElement::Selection => "selection",
+                crate::selector::PseudoElement::Marker => "marker",
             })
     })
 }

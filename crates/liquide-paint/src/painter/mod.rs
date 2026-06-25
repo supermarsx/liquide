@@ -259,6 +259,10 @@ impl Painter {
                 &style.transform,
                 origin_x,
                 origin_y,
+                // translate(%) resolves against the element's own border box:
+                // X% against width, Y% against height (CSS Transforms L1).
+                abs_border.width,
+                abs_border.height,
                 &style.perspective,
                 style.transform_style,
                 style.backface_visibility,
@@ -492,14 +496,34 @@ impl Painter {
         // background-origin determines the reference box for background-position:
         //   border-box → abs_border, padding-box → abs_padding (default),
         //   content-box → abs_content.
-        let bg_origin_rect = match style.background_origin {
+        let mut bg_origin_rect = match style.background_origin {
             BackgroundOrigin::BorderBox => abs_border,
             BackgroundOrigin::PaddingBox => abs_padding,
             BackgroundOrigin::ContentBox => abs_content,
         };
-        // background-attachment: fixed → background is viewport-relative.
-        // We note it here; the compositor should pin this layer to viewport coords.
-        let _bg_attachment_fixed = style.background_attachment == BackgroundAttachment::Fixed;
+        // background-attachment: fixed → the background's POSITIONING AREA is the
+        // viewport, not the element box (CSS Backgrounds & Borders L3 §3.10). The
+        // background still paints only within the element's clip box, but its
+        // origin/size resolve against the viewport — so it does NOT scroll with
+        // the element's content (the tile stays put as the page scrolls). The CPU
+        // painter pins it by retargeting `bg_origin_rect` to the layout root's
+        // absolute border rect (the viewport). The clip box (`bg_clip_rect`) is
+        // left as the element box, so a fixed background shows through the
+        // element's window onto a viewport-anchored tile.
+        //
+        // BEST-EFFORT / LIMITATION: this anchors to the *viewport* rect, which is
+        // correct for the common full-page case. True per-scroll-offset pinning
+        // (when the element lives inside a nested scroller) would need the live
+        // scroll offset of the viewport here; that is not reachable from the
+        // painter's inputs, so nested-scroller fixed backgrounds are pinned to
+        // the static viewport rect rather than the dynamic scroll position.
+        let bg_attachment_fixed = style.background_attachment == BackgroundAttachment::Fixed;
+        if bg_attachment_fixed {
+            let viewport = layout.absolute_border_rect(layout.root);
+            if viewport.width > 0.0 && viewport.height > 0.0 {
+                bg_origin_rect = viewport;
+            }
+        }
 
         // Push background blend mode if not normal (SrcOver)
         let bg_blend = style.background_blend_mode != BlendMode::SrcOver;
@@ -908,6 +932,57 @@ impl Painter {
                                 rect: abs_content,
                                 icon_id,
                                 color: style.color,
+                            });
+                        }
+                    }
+
+                    // ── ::placeholder text on an empty field ──
+                    //
+                    // CSS `::placeholder` styles the placeholder text shown in an
+                    // empty form control. The style engine does not compute a
+                    // dedicated `::placeholder` pseudo style (no `PseudoKind` for
+                    // it), so this is a best-effort paint keyed off the standard
+                    // HTML `placeholder` attribute: when an element carries a
+                    // non-empty `placeholder` and is EMPTY (no `value` text and no
+                    // child text content), emit the placeholder string in a dimmed
+                    // host colour — the conventional placeholder appearance. A
+                    // filled field (value/children present) suppresses it, so the
+                    // real value is never overpainted.
+                    if let Some(placeholder) = doc.get_attribute(layout_box.node, "placeholder") {
+                        let value_empty = doc
+                            .get_attribute(layout_box.node, "value")
+                            .map_or(true, |v| v.is_empty());
+                        let has_text_child = doc.children(layout_box.node).iter().any(|&c| {
+                            doc.get(c)
+                                .map_or(false, |n| matches!(&n.data, NodeData::Text(t) if !t.trim().is_empty()))
+                        });
+                        if !placeholder.is_empty() && value_empty && !has_text_child {
+                            // Dim the host text colour to the conventional
+                            // placeholder appearance (~54% opacity), matching the
+                            // UA default for `::placeholder`.
+                            let mut ph_color = style.color;
+                            ph_color.a = ((ph_color.a as u16 * 138) / 255) as u8;
+                            list.push(DisplayItem::Text {
+                                rect: abs_content,
+                                text: placeholder,
+                                color: ph_color,
+                                font_size: style.font_size,
+                                font_family: Arc::clone(&style.font_family),
+                                font_weight: style.font_weight,
+                                font_style: style.font_style.clone(),
+                                letter_spacing: style.letter_spacing,
+                                word_spacing: style.word_spacing,
+                                line_height: style.line_height.clone(),
+                                text_align: style.text_align,
+                                text_transform: style.text_transform,
+                                text_overflow: style.text_overflow,
+                                white_space: style.white_space,
+                                word_break: style.word_break,
+                                text_indent: style.text_indent,
+                                text_decoration: None,
+                                text_shadows: Vec::new(),
+                                text_emphasis: None,
+                                caret_color: None,
                             });
                         }
                     }
@@ -2214,6 +2289,198 @@ mod tests {
             (color.r, color.g, color.b),
             (0, 128, 0),
             "pseudo text must use the pseudo-element's own color"
+        );
+    }
+
+    // ── Inline-element text paint (au3 HIGH; t195 launcher-highlight) ──
+
+    /// Build `<label>Fi<match>le</match>s</label>` and return the painted Text
+    /// items as (text, color, x). This is the exact launcher-highlight shape
+    /// that t195 had to revert because the matched inline run was DROPPED.
+    fn paint_label_highlight(extra_css: &str) -> Vec<(String, liquide_compositor::pixel::Color, f32)> {
+        // A block container holding an inline <label> whose content mixes a
+        // leading text run, an inline <match> run, and a trailing text run:
+        //   <container><label>Fi<match>le</match>s</label></container>
+        // The inline label establishes a single inline formatting context, so
+        // "Fi", "le" and "s" flow on one line — the exact launcher-highlight
+        // shape t195 reverted because the matched run was dropped at paint.
+        let mut doc = Document::new();
+        let root = doc.root();
+        let container = doc.create_element("container");
+        doc.append_child(root, container);
+        let label = doc.create_element("label");
+        doc.append_child(container, label);
+        let t_fi = doc.create_text("Fi");
+        doc.append_child(label, t_fi);
+        let m = doc.create_element("match");
+        doc.append_child(label, m);
+        let t_le = doc.create_text("le");
+        doc.append_child(m, t_le);
+        let t_s = doc.create_text("s");
+        doc.append_child(label, t_s);
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(&format!(
+            r#"container {{ display: block; width: 400px; }}
+               label {{ display: inline; color: rgb(0,0,0); font-size: 16px; }}
+               match {{ display: inline; }}
+               {extra_css}"#
+        ));
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree =
+            le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        let painter = Painter::new();
+        let dl = painter.paint(&doc, &layout_tree, &style_map);
+
+        dl.items
+            .iter()
+            .filter_map(|item| match item {
+                DisplayItem::Text { text, color, rect, .. } => {
+                    Some((text.clone(), *color, rect.x))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The inner inline run (`<match>le</match>`) must be PAINTED — and it must
+    /// sit between the leading "Fi" and trailing "s" runs (x ordering). Before
+    /// the fix the matched run was dropped entirely (the t195 blocker).
+    #[test]
+    fn inline_element_text_is_painted_between_neighbours() {
+        let texts = paint_label_highlight("");
+        let find = |s: &str| texts.iter().find(|(t, _, _)| t == s).cloned();
+
+        let fi = find("Fi").expect("leading text 'Fi' must paint");
+        let le = find("le").expect(
+            "inner inline-element text 'le' must be painted (au3 HIGH / t195 \
+             launcher-highlight). It is DROPPED without the inline-text emit.",
+        );
+        let s = find("s").expect("trailing text 's' must paint");
+
+        // The matched run's ink must be present BETWEEN the surrounding text.
+        assert!(
+            fi.2 < le.2 && le.2 < s.2,
+            "inline run must paint between neighbours: Fi.x={}, le.x={}, s.x={}",
+            fi.2,
+            le.2,
+            s.2
+        );
+        // It must start after "Fi" advances (non-zero, to the right of origin).
+        assert!(le.2 > 0.0, "matched run must be offset right of the label origin");
+    }
+
+    /// A styled inline run paints in its OWN (inherited) colour, distinct from
+    /// the surrounding host text colour.
+    #[test]
+    fn styled_inline_run_paints_in_its_own_color() {
+        let texts = paint_label_highlight("match { color: rgb(220, 40, 10); }");
+        let le = texts
+            .iter()
+            .find(|(t, _, _)| t == "le")
+            .expect("matched run must paint");
+        assert_eq!(
+            (le.1.r, le.1.g, le.1.b),
+            (220, 40, 10),
+            "matched inline run must paint in its own colour, got {:?}",
+            le.1
+        );
+        // The surrounding text keeps the host colour (black).
+        let fi = texts
+            .iter()
+            .find(|(t, _, _)| t == "Fi")
+            .expect("leading text must paint");
+        assert_eq!(
+            (fi.1.r, fi.1.g, fi.1.b),
+            (0, 0, 0),
+            "surrounding text must keep host colour"
+        );
+    }
+
+    /// TEETH: this mirrors what happens if the inline-text emit (inline.rs §5b)
+    /// is removed — the matched run vanishes. We simulate the regression by
+    /// asserting that WITHOUT any inline text being collected (an inline element
+    /// with NO text) nothing spurious is painted, and WITH text it IS. The
+    /// positive case above already fails RED if the emit is deleted; this guards
+    /// the inverse so a blanket "always paint" can't fake-green it.
+    #[test]
+    fn empty_inline_element_paints_no_phantom_text() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        let label = doc.create_element("label");
+        doc.append_child(root, label);
+        let m = doc.create_element("match");
+        doc.append_child(label, m); // no text child
+
+        let mut se = StyleEngine::default();
+        se.add_stylesheet(
+            "label { display: block; } match { display: inline; }",
+        );
+        let style_map = se.restyle_all(&doc);
+        let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+        let layout_tree =
+            le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let painter = Painter::new();
+        let dl = painter.paint(&doc, &layout_tree, &style_map);
+        let any_text = dl
+            .items
+            .iter()
+            .any(|item| matches!(item, DisplayItem::Text { text, .. } if !text.is_empty()));
+        assert!(!any_text, "an empty inline element must paint no text");
+    }
+
+    // ── ::placeholder best-effort paint ──
+
+    /// An empty field with a `placeholder` attribute paints the placeholder text
+    /// (dimmed). A filled field (with a `value`) must NOT paint it.
+    #[test]
+    fn placeholder_paints_on_empty_field_and_suppresses_when_filled() {
+        fn paint_input(value: Option<&str>) -> Vec<(String, u8)> {
+            let mut doc = Document::new();
+            let root = doc.root();
+            let input = doc.create_element("input");
+            doc.set_attribute(input, "placeholder", "Search…");
+            if let Some(v) = value {
+                doc.set_attribute(input, "value", v);
+            }
+            doc.append_child(root, input);
+
+            let mut se = StyleEngine::default();
+            se.add_stylesheet("input { display: block; width: 200px; height: 24px; color: rgb(0,0,0); }");
+            let style_map = se.restyle_all(&doc);
+            let mut le = LayoutEngine::new(Size::new(800.0, 600.0), 16.0);
+            let layout_tree =
+                le.layout(&doc, &style_map, &DefaultTextMeasurer, &DefaultImageMeasurer);
+            let painter = Painter::new();
+            let dl = painter.paint(&doc, &layout_tree, &style_map);
+            dl.items
+                .iter()
+                .filter_map(|item| match item {
+                    DisplayItem::Text { text, color, .. } => Some((text.clone(), color.a)),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        // Empty field → placeholder painted, and DIMMED (alpha < 255).
+        let empty = paint_input(None);
+        let ph = empty
+            .iter()
+            .find(|(t, _)| t == "Search…")
+            .expect("::placeholder text must paint on an empty field");
+        assert!(
+            ph.1 < 255,
+            "placeholder must be dimmed (alpha {} should be < 255)",
+            ph.1
+        );
+
+        // Filled field → placeholder suppressed (teeth: must not overpaint value).
+        let filled = paint_input(Some("hello"));
+        assert!(
+            !filled.iter().any(|(t, _)| t == "Search…"),
+            "placeholder must be suppressed when the field has a value"
         );
     }
 }

@@ -10,8 +10,8 @@ use liquide_layout::geometry::{Point, Rect};
 use liquide_layout::tree::{BoxType, LayoutTree};
 use liquide_style_engine::StyleMap;
 use liquide_style_engine::computed::{
-    ComputedStyle, ContentVisibility, Display, Overflow, PointerEvents, Position, Transform,
-    Visibility,
+    ComputedStyle, ContentVisibility, Display, LengthPercent, Overflow, PointerEvents, Position,
+    Transform, Visibility,
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -385,7 +385,10 @@ fn hit_test_translate_moves_hit_region() {
 
     // Translate child by (200, 200) — should move its hit region
     let mut s = ComputedStyle::default();
-    s.transform = vec![Transform::Translate(200.0, 200.0)];
+    s.transform = vec![Transform::Translate(
+        LengthPercent::Px(200.0),
+        LengthPercent::Px(200.0),
+    )];
     styles.insert(child_node, s);
 
     let engine = HitTestEngine::from_owned(tree, styles);
@@ -463,7 +466,10 @@ fn hit_test_composed_translate_then_scale() {
     let mut styles = default_styles_for(&[root_node, child_node]);
 
     let mut s = ComputedStyle::default();
-    s.transform = vec![Transform::Translate(100.0, 0.0), Transform::Scale(2.0, 2.0)];
+    s.transform = vec![
+        Transform::Translate(LengthPercent::Px(100.0), LengthPercent::ZERO),
+        Transform::Scale(2.0, 2.0),
+    ];
     styles.insert(child_node, s);
 
     let engine = HitTestEngine::from_owned(tree, styles);
@@ -1030,7 +1036,7 @@ fn hit_test_overflow_clip_respects_transform_space() {
             cs.overflow_y = Overflow::Hidden;
             styles.insert(clipper_node, cs);
             let mut ms = ComputedStyle::default();
-            ms.transform = vec![Transform::Translate(100.0, 0.0)];
+            ms.transform = vec![Transform::Translate(LengthPercent::Px(100.0), LengthPercent::ZERO)];
             styles.insert(middle_node, ms);
             styles.insert(child_node, ComputedStyle::default());
             styles

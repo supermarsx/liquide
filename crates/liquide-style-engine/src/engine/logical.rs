@@ -312,9 +312,21 @@ impl StyleEngine {
         // AFTER the transform property list.
         if let Some(ref t) = style.translate {
             let parts: Vec<&str> = t.split_whitespace().collect();
-            let tx = Self::parse_px_value(parts.first().copied().unwrap_or("0")).unwrap_or(0.0);
-            let ty = Self::parse_px_value(parts.get(1).copied().unwrap_or("0")).unwrap_or(0.0);
-            if tx != 0.0 || ty != 0.0 {
+            let parse_lp = |s: &str| -> LengthPercent {
+                let s = s.trim();
+                if let Some(v) = s.strip_suffix('%') {
+                    v.trim()
+                        .parse::<f32>()
+                        .ok()
+                        .map(LengthPercent::Percent)
+                        .unwrap_or(LengthPercent::ZERO)
+                } else {
+                    LengthPercent::Px(Self::parse_px_value(s).unwrap_or(0.0))
+                }
+            };
+            let tx = parse_lp(parts.first().copied().unwrap_or("0"));
+            let ty = parse_lp(parts.get(1).copied().unwrap_or("0"));
+            if tx != LengthPercent::ZERO || ty != LengthPercent::ZERO {
                 style.transform.push(Transform::Translate(tx, ty));
             }
         }

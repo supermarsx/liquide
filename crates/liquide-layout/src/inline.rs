@@ -101,7 +101,8 @@ impl InlineEdges {
 enum InlineItem {
     /// A word (non-whitespace run) with its measured width.
     Word {
-        #[allow(dead_code)] // Retained for debugging/future use
+        /// The literal word text — carried into `PlacedFragment` so the painter
+        /// can emit it as a `DisplayItem::Text` for inline-nested text.
         text: String,
         width: f32,
         height: f32,
@@ -148,13 +149,19 @@ enum InlineItem {
 struct PlacedFragment {
     x: f32,
     width: f32,
-    #[allow(dead_code)] // Used for vertical alignment calculations
     height: f32,
-    #[allow(dead_code)] // Used for baseline alignment calculations
     baseline: f32,
     node_id: NodeId,
     /// Bidi embedding level (even = LTR, odd = RTL).
     bidi_level: u8,
+    /// The literal text of this fragment (empty for spaces / atomic inlines).
+    ///
+    /// Carried from the originating `InlineItem::Word` so the painter can emit
+    /// a `DisplayItem::Text` for text that lives inside inline elements — text
+    /// that has no standalone `NodeData::Text` layout box. Without this, text
+    /// nested in `<span>`/`<em>`/inline custom elements is dropped at paint
+    /// (au3 HIGH; t195 launcher-highlight blocker).
+    text: String,
 }
 
 /// A completed line with placed fragments.
@@ -1025,6 +1032,7 @@ fn layout_lines(
         for &idx in line {
             match &items[idx] {
                 InlineItem::Word {
+                    text,
                     width,
                     height,
                     baseline,
@@ -1039,6 +1047,7 @@ fn layout_lines(
                         baseline: *baseline,
                         node_id: *node_id,
                         bidi_level: level,
+                        text: text.clone(),
                     });
                     cursor_x += width;
                 }
@@ -1051,6 +1060,7 @@ fn layout_lines(
                         baseline: 0.0,
                         node_id: *node_id,
                         bidi_level: level,
+                        text: " ".to_string(),
                     });
                     cursor_x += width;
                 }
@@ -1073,6 +1083,7 @@ fn layout_lines(
                         baseline: result.base_height * 0.8 + result.annotation_overhead(),
                         node_id: *node_id,
                         bidi_level: level,
+                        text: String::new(),
                     });
                     cursor_x += result.inline_advance;
                 }
@@ -1494,6 +1505,120 @@ pub fn layout_inline(
         }
     }
 
+    // ── 5b. Emit paintable text-run boxes for inline text ───────────────
+    //
+    // The painter only emits a `DisplayItem::Text` for a layout box whose DOM
+    // node is itself `NodeData::Text`. Text that lives inside an inline element
+    // (`<span>`/`<em>`/inline custom elements, e.g. the matched run in
+    // `<label>Fi<match>le</match>s</label>`) is tokenised into `Word` items and
+    // flattened onto line boxes; it is NEVER given a standalone `NodeData::Text`
+    // box, so it was DROPPED at paint (au3 HIGH; the t195 launcher-highlight
+    // blocker). Here we synthesise a real `BoxType::Text` child box for each
+    // inline-nested text DOM node, anchored at the node's laid-out fragments,
+    // carrying the node's own (inherited) style. The existing painter
+    // `NodeData::Text` path then paints each run — the matched `<match>`
+    // substring in its own colour, the surrounding text in the host colour — at
+    // the correct x between its neighbours.
+    //
+    // ONE box per text node (deduplicated), matching the bare-text-node path in
+    // `block.rs` (which also creates a single full-text box per node and lets
+    // the renderer wrap within the rect). The box spans the union of the node's
+    // fragments on its FIRST line and is anchored at that line's baseline; the
+    // painter paints the whole node's text, so emitting per-line boxes would
+    // duplicate it. Anonymous allocation keeps the canonical `node → box`
+    // mapping on the host element rather than these synthetic boxes.
+    {
+        // Skip nodes that already own a canonical (`alloc`-registered) box —
+        // those are painted by their own box (e.g. a text node that is also a
+        // direct block child). Inline-nested text nodes have no such box.
+        let mut emitted: Vec<NodeId> = Vec::new();
+        for built in &built_lines {
+            let line_baseline = built.line_y + built.ascent;
+            let mut i = 0usize;
+            while i < built.fragments.len() {
+                let frag = &built.fragments[i];
+                // Skip fragments that carry no paintable WORD ink as the run
+                // anchor: empty fragments (atomic inlines) and pure whitespace
+                // (Space fragments have `height == 0.0`). A leading space must
+                // not anchor the box at the wrong x or collapse its height.
+                if frag.text.is_empty() || frag.height == 0.0 {
+                    i += 1;
+                    continue;
+                }
+                // Only real text DOM nodes; element fragments paint via their
+                // own boxes.
+                let is_text_node = doc.get(frag.node_id).map_or(false, |n| n.is_text());
+                if !is_text_node {
+                    i += 1;
+                    continue;
+                }
+                let run_node = frag.node_id;
+                // Coalesce contiguous same-node fragments on this line into the
+                // run span. Take the min x as the run start and the max baseline/
+                // height across the group; interior spaces (height 0) extend the
+                // span but do not shrink the box.
+                let mut run_start_x = frag.x;
+                let mut run_end_x = frag.x + frag.width;
+                let mut run_baseline = frag.baseline;
+                let mut run_height = frag.height;
+                let mut j = i + 1;
+                while j < built.fragments.len() {
+                    let next = &built.fragments[j];
+                    if next.node_id != run_node || next.text.is_empty() {
+                        break;
+                    }
+                    if next.x < run_start_x {
+                        run_start_x = next.x;
+                    }
+                    run_end_x = run_end_x.max(next.x + next.width);
+                    if next.baseline > run_baseline {
+                        run_baseline = next.baseline;
+                    }
+                    if next.height > run_height {
+                        run_height = next.height;
+                    }
+                    j += 1;
+                }
+
+                // Emit at most one box per text node (the painter paints the
+                // whole node text; further lines would duplicate it).
+                if emitted.contains(&run_node) || tree.find_box_id_by_node(run_node).is_some() {
+                    i = j;
+                    continue;
+                }
+                emitted.push(run_node);
+
+                // Children of the IFC root inherit its content origin
+                // (`offset_x`, `offset_y`) via `accumulated_offset`, so these
+                // rects are IFC-root-content-relative — do NOT fold the offset
+                // in (that would double-count).
+                let run_top = line_baseline - run_baseline;
+                let run_rect = Rect::new(
+                    run_start_x,
+                    run_top,
+                    (run_end_x - run_start_x).max(0.0),
+                    run_height,
+                );
+                let run_box = tree.alloc_anonymous(
+                    run_node,
+                    BoxType::Text {
+                        line_boxes: Vec::new(),
+                    },
+                );
+                if let Some(b) = tree.get_mut(run_box) {
+                    b.content_rect = run_rect;
+                    b.padding_rect = run_rect;
+                    b.border_rect = run_rect;
+                    b.margin_rect = run_rect;
+                    b.baseline = Some(run_baseline);
+                }
+                tree.add_child(box_id, run_box);
+
+                i = j;
+            }
+        }
+    }
+
     // ── 6. Set geometry on the root inline box ──────────────────────────
 
     // Apply the root element's own inline edges.
@@ -1830,6 +1955,7 @@ mod tests {
             baseline: 12.0,
             node_id: node as u64,
             bidi_level: level,
+            text: String::new(),
         }
     }
 
