@@ -1311,6 +1311,7 @@ impl Default for LayoutEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tree::BoxType;
     use crate::{DefaultImageMeasurer, DefaultTextMeasurer};
     use liquide_dom::Document;
     use liquide_style_engine::engine::{StyleEngine, ViewportSize};
@@ -1356,6 +1357,106 @@ mod tests {
         assert!(
             (r.width - 1280.0).abs() < 0.01 && (r.height - 720.0).abs() < 0.01,
             "fixed inset:0 box must span the full viewport (1280x720), got {}x{}",
+            r.width,
+            r.height
+        );
+    }
+
+    /// Regression (fix-layout-rootbox): the root DOM node must map to exactly
+    /// ONE layout box, and an absolute child with `width:100%; height:100%`
+    /// must fill the viewport.
+    ///
+    /// Previously `flush_inline_run` (block.rs) allocated the anonymous block
+    /// wrapper for the root's inline content via `tree.alloc(parent_node, ..)`,
+    /// which OVERWROTE `node_index[root]` to point at a height-0 anonymous box.
+    /// The viewport fix-up patched the real root box, but `find_by_node(root)`
+    /// (used as the containing block for absolute children) returned the
+    /// height-0 anonymous box — so `height:100%` resolved to 0 and a fullscreen
+    /// background collapsed to nothing.
+    #[test]
+    fn root_has_single_box_and_absolute_full_size_fills_viewport() {
+        let mut doc = Document::new();
+        let root = doc.root();
+        // Mixed content under the root: inline text runs (as produced by HTML
+        // whitespace between elements) interleaved with the absolute child.
+        // The inline runs force `flush_inline_run` to allocate anonymous block
+        // wrappers for the root — these must NOT steal `node_index[root]`.
+        let t1 = doc.create_text("a");
+        doc.append_child(root, t1);
+        let bg = doc.create_element("desktop-background");
+        doc.append_child(root, bg);
+        let t2 = doc.create_text("b");
+        doc.append_child(root, t2);
+        // A block-level sibling forces the preceding inline run to be flushed
+        // into an anonymous block box (the real pipeline interleaves whitespace
+        // text with block elements like statusbar/workspace/dock under root).
+        let block_sibling = doc.create_element("statusbar");
+        doc.append_child(root, block_sibling);
+        let t3 = doc.create_text("c");
+        doc.append_child(root, t3);
+
+        let mut style_engine = StyleEngine::new(
+            ViewportSize {
+                width: 200.0,
+                height: 100.0,
+            },
+            16.0,
+        );
+        style_engine.add_stylesheet(
+            "desktop-background { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }",
+        );
+        let styles = style_engine.restyle_all(&doc);
+        let mut layout = LayoutEngine::new(Size::new(200.0, 100.0), 16.0);
+        let tree = layout.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+
+        // The root DOM node must own exactly ONE layout box.
+        let root_box_count = tree
+            .boxes
+            .iter()
+            .filter(|b| b.node == root && !matches!(b.box_type, BoxType::AnonBlock))
+            .count();
+        assert_eq!(
+            root_box_count, 1,
+            "root DOM node must have exactly one element box, got {root_box_count}"
+        );
+
+        // `find_by_node(root)` must agree with the viewport-sized root box.
+        let cb = tree
+            .find_by_node(root)
+            .expect("root box")
+            .padding_rect;
+        assert_eq!(
+            (cb.width, cb.height),
+            (200.0, 100.0),
+            "root containing block must be the viewport, got {}x{}",
+            cb.width,
+            cb.height
+        );
+
+        // The absolute full-size child must fill the viewport.
+        let bg_id = tree
+            .find_box_id_by_node(bg)
+            .expect("desktop-background box");
+        let r = tree.get(bg_id).unwrap().border_rect;
+        assert_eq!(
+            (r.width, r.height),
+            (200.0, 100.0),
+            "absolute width/height:100% child must fill viewport, got {}x{}",
+            r.width,
+            r.height
+        );
+
+        // After a viewport change it must track the new viewport.
+        layout.viewport = Size::new(320.0, 180.0);
+        let tree = layout.layout(&doc, &styles, &DefaultTextMeasurer, &DefaultImageMeasurer);
+        let bg_id = tree
+            .find_box_id_by_node(bg)
+            .expect("desktop-background box");
+        let r = tree.get(bg_id).unwrap().border_rect;
+        assert_eq!(
+            (r.width, r.height),
+            (320.0, 180.0),
+            "after set_viewport, absolute full-size child must fill new viewport, got {}x{}",
             r.width,
             r.height
         );

@@ -442,9 +442,17 @@ pub fn layout_block<TM: TextMeasurer + ?Sized, IM: ImageMeasurer + ?Sized>(
             return;
         }
 
-        // Create the anonymous block box — it inherits the parent node id
-        // but has its own layout box.
-        let anon_box = tree.alloc(parent_node, BoxType::AnonBlock);
+        // Create the anonymous block box — it carries the parent node id (so the
+        // painter can resolve the parent's style) but is NOT the canonical box
+        // for that node. It MUST use `alloc_anonymous`: using `alloc` would
+        // overwrite `node_index[parent_node]` to point at this height-collapsed
+        // wrapper, so `find_by_node(parent)` (used as the containing block for
+        // absolute children, and patched separately by the root viewport fix-up)
+        // would return the wrong box. With block siblings interleaving inline
+        // runs, the parent would otherwise accrue several such boxes, the last
+        // of which would win the index — collapsing a `height:100%` absolute
+        // child of the root to the (near-zero) anon-run height.
+        let anon_box = tree.alloc_anonymous(parent_node, BoxType::AnonBlock);
         let mut inner_y = 0.0f32;
 
         for &cid in run.iter() {
