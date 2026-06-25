@@ -16,7 +16,7 @@
 use liquide_font_rasterizer::database::{FontDatabase, FontFaceId};
 use liquide_font_rasterizer::shaper::{FontFeature, TextShaper};
 
-use crate::renderer::text_shaping::shape_line;
+use crate::renderer::text_shaping::{shape_line, shaped_run_width};
 
 /// Load a real system font's bytes, or `None` if none of the usual paths exist.
 fn system_font_bytes() -> Option<Vec<u8>> {
@@ -228,6 +228,177 @@ fn missing_codepoint_falls_back_to_a_covering_face() {
         "the glyph must be shaped from the covering FALLBACK face, not the primary"
     );
     assert_ne!(g.face_id, primary, "must not stay on the primary face");
+}
+
+// ── Wrap pre-pass uses shaped width (the fix-wrap-prepass tooth) ─────────────
+//
+// The renderer's line-WRAP pre-pass decides where to break by measuring candidate
+// runs. It MUST measure with the same shaper that paint uses, so a run that fits
+// its box when painted is not wrapped by a divergent estimate. The historical bug:
+// the pre-pass summed a `char_advance` closure that looked the glyph up by
+// CODEPOINT in an atlas keyed by SHAPED glyph id (keys never matched) → it always
+// fell back to `glyph_height * 0.55` (~131px for "Confirm action" at 16px) and
+// wrapped the dialog title even though its shaped width (~105px) fit the box.
+
+/// Render a single LTR text node and return how many distinct horizontal text
+/// "bands" (lines) it painted, by grouping lit rows separated by blank gaps. A
+/// one-line run yields 1; a wrapped run yields ≥2.
+fn rendered_line_count(text: &str, font_size: f32, box_width: f32) -> usize {
+    use liquide_compositor::Renderer;
+    use liquide_compositor::damage::{DamageClass, DamageSet};
+    use liquide_compositor::framebuffer::FrameBuffer;
+    use liquide_compositor::geometry::{Affine2D, Rect};
+    use liquide_compositor::pixel::{Color, PixelFormat};
+    use liquide_compositor::scene::{FlatNode, SceneNodeKind};
+
+    use crate::renderer::SoftwareRenderer;
+
+    let bytes = system_font_bytes().expect("caller guards on a system font");
+    let mut r = SoftwareRenderer::with_font_db({
+        let mut d = FontDatabase::new();
+        for fam in ["Inter", "Noto Sans", "Manrope"] {
+            d.load_bytes(bytes.clone(), fam, 400, false).ok();
+        }
+        d
+    });
+
+    // Tall enough for several wrapped lines; box width is the wrap constraint.
+    let (w, h) = (box_width.ceil() as u32 + 20, (font_size * 8.0) as u32);
+    let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+    let backdrop = FlatNode {
+        id: 1,
+        kind: SceneNodeKind::Background { color: Color::new(0, 0, 0, 255) }.into(),
+        absolute_bounds: Rect::new(0.0, 0.0, w as f32, h as f32),
+        absolute_transform: Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+    let text_node = FlatNode {
+        id: 10,
+        kind: SceneNodeKind::Text {
+            text: text.to_string(),
+            color: Color::WHITE,
+            scale: 1,
+            font_family: "Inter".to_string(),
+            font_size,
+            font_weight: 400,
+            font_style_italic: false,
+            letter_spacing: 0.0,
+            word_spacing: 0.0,
+            line_height: font_size * 1.3,
+            text_align: 0,
+            text_transform: 0,
+            text_overflow: 0,
+            // white_space: normal (allows wrapping).
+            white_space: 0,
+            word_break: liquide_compositor::scene::WordBreak::Normal,
+            text_indent: 0.0,
+            text_decoration: None,
+            text_shadows: Vec::new(),
+            text_emphasis: None,
+        }
+        .into(),
+        // The text box width IS the wrap constraint.
+        absolute_bounds: Rect::new(2.0, 2.0, box_width, h as f32 - 4.0),
+        absolute_transform: Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: 0,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    };
+    let nodes = [backdrop, text_node];
+    let damage = DamageSet::full(64, w.div_ceil(64), h.div_ceil(64), DamageClass::UiPrimitive);
+    // Glyphs are requested on a frame and drawn the next — resubmit until the atlas
+    // is warm, exactly like the live/golden loop.
+    for _ in 0..4 {
+        r.render(&nodes, &mut fb, &damage).unwrap();
+        if !r.has_pending_glyphs() {
+            break;
+        }
+    }
+
+    // Count text bands: rows with any lit text pixel, grouped into runs separated
+    // by ≥2 fully-blank rows (intra-glyph gaps are 1px; the inter-line gap is the
+    // line-height minus the cap height, several px).
+    let row_lit: Vec<bool> = (0..h)
+        .map(|y| {
+            (0..w).any(|x| {
+                let p = fb.get_pixel(x, y);
+                p.r > 60 || p.g > 60 || p.b > 60
+            })
+        })
+        .collect();
+    let mut bands = 0usize;
+    let mut blank_run = usize::MAX; // start "in a gap" so the first lit row opens a band
+    for &lit in &row_lit {
+        if lit {
+            if blank_run >= 2 {
+                bands += 1;
+            }
+            blank_run = 0;
+        } else {
+            blank_run = blank_run.saturating_add(1);
+        }
+    }
+    bands
+}
+
+/// The dialog title "Confirm action" at 16px must fit its ~105px content box on
+/// ONE line, and a genuinely-too-long string in the SAME box must wrap to ≥2
+/// lines. This asserts the wrap DECISION via both the shaped-width helper the
+/// pre-pass now calls and the rendered line count. RED on the old codepoint-keyed
+/// `0.55*height` estimate (~131px for the title → spurious wrap to 2 lines).
+#[test]
+fn dialog_title_fits_one_line_but_long_text_still_wraps() {
+    let Some(_bytes) = system_font_bytes() else {
+        return;
+    };
+
+    let mut db = FontDatabase::new();
+    let bytes = system_font_bytes().unwrap();
+    for fam in ["Inter", "Noto Sans"] {
+        db.load_bytes(bytes.clone(), fam, 400, false).ok();
+    }
+
+    let size = 16.0_f32;
+    // The dialog content box width the layout produces for the title (~105px). Give
+    // a small headroom so the assertion is about the wrap heuristic, not sub-px.
+    let box_w = 120.0_f32;
+
+    // The wrap pre-pass's actual decision input: the shaped width of the whole
+    // title must be < the box (so it is NOT wrapped). On the buggy estimate this
+    // value was ~131px (> box) and forced a wrap.
+    let title_w = shaped_run_width(&db, "Confirm action", "Inter", size, 400, false, 0.0, 0.0);
+    assert!(
+        title_w > 0.0 && title_w < box_w,
+        "shaped width of 'Confirm action' ({title_w}px) must FIT the {box_w}px box \
+         so the wrap pre-pass keeps it on one line"
+    );
+
+    // A genuinely-too-long string's shaped width must EXCEED the box (so real
+    // wrapping still triggers — the fix must not disable legitimate wrapping).
+    let long = "Confirm action immediately because the operation cannot be undone later";
+    let long_w = shaped_run_width(&db, long, "Inter", size, 400, false, 0.0, 0.0);
+    assert!(
+        long_w > box_w,
+        "a long string ({long_w}px) must exceed the {box_w}px box so it still wraps"
+    );
+
+    // End-to-end via the renderer: the title renders on ONE band; the long string
+    // renders on ≥2 bands (real word-boundary wrapping).
+    assert_eq!(
+        rendered_line_count("Confirm action", size, box_w),
+        1,
+        "'Confirm action' must render on ONE line in a {box_w}px box (no spurious wrap)"
+    );
+    assert!(
+        rendered_line_count(long, size, box_w) >= 2,
+        "a too-long string must still wrap to multiple lines"
+    );
 }
 
 // ── Visual harness (ignored) ────────────────────────────────────────────────

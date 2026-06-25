@@ -1,8 +1,12 @@
 //! Font metrics provider — real metrics from TrueType/OpenType tables.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use ab_glyph::{Font, ScaleFont};
 
 use crate::database::{FontDatabase, FontFaceId};
+use crate::shaper::{FontFeature, TextShaper};
 
 /// Real font metrics extracted from font tables.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -86,16 +90,47 @@ impl RealFontMetrics {
     }
 }
 
+/// The OpenType features applied when measuring text width.
+///
+/// These MUST match the features the live paint path enables
+/// (`renderer-cpu/renderer/text_shaping.rs::default_features`): standard
+/// kerning + standard ligatures + contextual alternates — the CSS defaults for
+/// `normal` text. Measuring with the same features is what makes the measured
+/// width equal the shaped painted width, so layout and paint agree and text no
+/// longer wraps/overlaps where it fits when painted.
+fn measure_features() -> [FontFeature; 3] {
+    [
+        FontFeature::kerning(true),
+        FontFeature::ligatures(true),
+        FontFeature::contextual_alternates(true),
+    ]
+}
+
+/// Cache key for a measured advance width: (face, quantized size, text).
+///
+/// The size is quantized to 1/64 px so float jitter in size_px does not blow up
+/// the cache while still distinguishing genuinely different sizes.
+type WidthKey = (FontFaceId, u32, String);
+
 /// Provides real font metrics from loaded font faces.
 pub struct FontMetricsProvider<'a> {
     db: &'a FontDatabase,
+    /// Per-`(face, size, text)` shaped advance-width cache. Shaping a run with
+    /// rustybuzz is more expensive than the old kerning-only loop, and layout
+    /// re-measures the same strings repeatedly, so we memoize the shaped width.
+    /// `RefCell` keeps `measure_text` on `&self` (the layout trait measures
+    /// through a shared reference).
+    width_cache: RefCell<HashMap<WidthKey, f32>>,
 }
 
 impl<'a> FontMetricsProvider<'a> {
     /// Create a new metrics provider backed by the given database.
     #[must_use]
     pub fn new(db: &'a FontDatabase) -> Self {
-        Self { db }
+        Self {
+            db,
+            width_cache: RefCell::new(HashMap::new()),
+        }
     }
 
     /// Get metrics for a font face at the given pixel size.
@@ -153,7 +188,20 @@ impl<'a> FontMetricsProvider<'a> {
         }
     }
 
-    /// Measure text width using real glyph advances.
+    /// Measure text width using the SAME OpenType shaping as paint.
+    ///
+    /// The width is produced by [`TextShaper`] (rustybuzz GSUB/GPOS — kerning,
+    /// ligatures, contextual alternates) with the exact feature set the live
+    /// paint path enables, so a string's measured advance width equals its
+    /// shaped painted width. This is the core of measure==paint: previously this
+    /// did only ab_glyph pair-kerning (no ligatures/contextual shaping), so the
+    /// measured width underestimated the painted width and text wrapped /
+    /// overlapped in fixed-height boxes.
+    ///
+    /// The returned width is the run advance with letter-/word-spacing = 0;
+    /// callers fold spacing in on top (matching paint, which applies
+    /// letter-spacing per glyph and word-spacing per space). Returns
+    /// `(width, height)` where height is the font's ascent + descent at `size_px`.
     #[must_use]
     pub fn measure_text(&self, face_id: FontFaceId, size_px: f32, text: &str) -> (f32, f32) {
         let Some(face) = self.db.get(face_id) else {
@@ -164,24 +212,28 @@ impl<'a> FontMetricsProvider<'a> {
             );
         };
 
+        // Height is a cheap pure-metrics read (no shaping needed).
         let scaled = face.font.as_scaled(ab_glyph::PxScale::from(size_px));
-        let mut width = 0.0_f32;
-        let mut prev_glyph: Option<ab_glyph::GlyphId> = None;
+        let height = scaled.ascent() + (-scaled.descent());
 
-        for ch in text.chars() {
-            let glyph_id = face.font.glyph_id(ch);
-            // Apply kerning.
-            if let Some(prev) = prev_glyph {
-                width += scaled.kern(prev, glyph_id);
-            }
-            width += scaled.h_advance(glyph_id);
-            prev_glyph = Some(glyph_id);
+        if text.is_empty() {
+            return (0.0, height);
         }
 
-        let ascent = scaled.ascent();
-        let descent = -scaled.descent();
-        let height = ascent + descent;
+        // Quantize size to 1/64 px for a stable cache key.
+        let size_key = (size_px * 64.0).round() as u32;
+        let key: WidthKey = (face_id, size_key, text.to_string());
+        if let Some(&w) = self.width_cache.borrow().get(&key) {
+            return (w, height);
+        }
 
+        // Shape with the same features paint uses; letter-spacing 0 (callers add
+        // spacing). `shape_with_features` returns the total advance width.
+        let shaper = TextShaper::new(self.db);
+        let (_glyphs, width) =
+            shaper.shape_with_features(face_id, text, size_px, 0.0, &measure_features());
+
+        self.width_cache.borrow_mut().insert(key, width);
         (width, height)
     }
 
@@ -203,6 +255,105 @@ impl<'a> FontMetricsProvider<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shaper::TextShaper;
+
+    /// A database with the embedded fallback face registered, plus its resolved
+    /// `FontFaceId`. The embedded Roboto carries real GPOS kerning + GSUB
+    /// ligatures, so it exercises full shaping (not just pair-kerning).
+    fn db_with_face() -> (FontDatabase, FontFaceId) {
+        let mut db = FontDatabase::new();
+        let registered = db.register_embedded_fallback();
+        assert!(registered >= 1, "embedded fallback must register a face");
+        let fid = db
+            .resolve("sans-serif", 400, false)
+            .or_else(|| db.resolve(crate::database::EMBEDDED_FALLBACK_FAMILY, 400, false))
+            .expect("embedded fallback must resolve");
+        (db, fid)
+    }
+
+    /// CORE measure==paint guarantee: the width returned by `measure_text` MUST
+    /// equal the width the shaper (rustybuzz, same kern/liga/calt features paint
+    /// uses) produces for the same string — so layout and paint agree and text
+    /// no longer wraps/overlaps where it fits when painted.
+    ///
+    /// Teeth: if `measure_text` regresses to ab_glyph kerning-only (no GSUB
+    /// ligatures / contextual shaping), its width diverges from the shaped width
+    /// for the kerning/ligature strings below and this fails.
+    #[test]
+    fn measured_width_equals_shaped_paint_width() {
+        let (db, fid) = db_with_face();
+        let shaper = TextShaper::new(&db);
+        let features = measure_features();
+
+        // Strings chosen to trigger kerning pairs (AV, To, Wa, Ye) and standard
+        // ligatures (fi, fl, ffi) — exactly where kerning-only measurement
+        // underestimated the shaped width.
+        let cases = [
+            "AVAWaToYe",
+            "office fluff, waffle, final",
+            "Confirm action",
+            "Are you sure you want to proceed?",
+        ];
+        for size in [12.0_f32, 14.0, 18.0, 24.0] {
+            for text in cases {
+                let (measured, _h) = FontMetricsProvider::new(&db).measure_text(fid, size, text);
+                let (_g, shaped) =
+                    shaper.shape_with_features(fid, text, size, 0.0, &features);
+                assert!(
+                    (measured - shaped).abs() <= 0.01,
+                    "measure_text width must equal shaped paint width \
+                     (text={text:?}, size={size}): measured={measured}, shaped={shaped}"
+                );
+                assert!(measured > 0.0, "non-empty text must measure > 0");
+            }
+        }
+    }
+
+    /// The shaped measurement must differ from naive ab_glyph pair-kerning for a
+    /// ligature-bearing string — proving full shaping is actually in effect (and
+    /// guarding against a silent revert to kerning-only).
+    #[test]
+    fn shaped_measure_differs_from_kerning_only() {
+        use ab_glyph::{Font, ScaleFont};
+        let (db, fid) = db_with_face();
+        let face = db.get(fid).expect("face");
+        let size = 16.0_f32;
+        let text = "office final affluent waffle"; // many fi/fl ligatures
+
+        // Old kerning-only path (what measure_text used to do).
+        let scaled = face.font.as_scaled(ab_glyph::PxScale::from(size));
+        let mut kern_only = 0.0_f32;
+        let mut prev: Option<ab_glyph::GlyphId> = None;
+        for ch in text.chars() {
+            let gid = face.font.glyph_id(ch);
+            if let Some(p) = prev {
+                kern_only += scaled.kern(p, gid);
+            }
+            kern_only += scaled.h_advance(gid);
+            prev = Some(gid);
+        }
+
+        let (shaped, _h) = FontMetricsProvider::new(&db).measure_text(fid, size, text);
+        // Ligatures collapse glyph pairs into single (often narrower) glyphs, so
+        // the shaped width is not identical to the kerning-only sum. If they were
+        // bit-identical, shaping is not actually engaged.
+        assert!(
+            (shaped - kern_only).abs() > 0.01,
+            "shaped width ({shaped}) must differ from kerning-only ({kern_only}) — \
+             full GSUB/GPOS shaping is not engaged"
+        );
+    }
+
+    /// The width cache must not change the result (a cached re-measure equals the
+    /// first measure exactly).
+    #[test]
+    fn width_cache_is_transparent() {
+        let (db, fid) = db_with_face();
+        let provider = FontMetricsProvider::new(&db);
+        let (first, _) = provider.measure_text(fid, 14.0, "Confirm action");
+        let (again, _) = provider.measure_text(fid, 14.0, "Confirm action");
+        assert_eq!(first, again, "cached width must equal first measurement");
+    }
 
     #[test]
     fn test_approximate_metrics() {

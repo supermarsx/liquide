@@ -744,6 +744,16 @@ impl Shell {
         };
         let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
         css_pipeline.set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
+        // Lay out chrome text (dialogs, notification center, …) with the SAME
+        // real font faces the renderer paints with, so the LAYOUT advances agree
+        // with the rustybuzz PAINT advances. Without this the pipeline falls back
+        // to the `char_width = font_size * 0.6` estimate, which underestimates the
+        // shaped painted width — fixed-height boxes then wrapped/overlapped (the
+        // "Confirm action" dialog title wrapped to two lines, notification-center
+        // entries overlapped). The font DB is always non-empty (embedded fallback).
+        css_pipeline.set_font_db(std::sync::Arc::new(std::sync::RwLock::new(
+            Self::build_font_database(),
+        )));
 
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
         sandbox_manager.register_app("com.liquide.shell".to_string());
@@ -861,6 +871,50 @@ impl Shell {
         };
     }
 
+    /// Build the font database used to MEASURE chrome text in the CSS pipeline.
+    ///
+    /// Loads the packaged TrueType faces from the resolved assets directory (the
+    /// same faces the renderer paints with), falling back to the embedded font
+    /// when no on-disk fonts are present — so the result is ALWAYS non-empty.
+    /// Seeding the pipeline with this DB is what makes layout measurement use
+    /// real shaped glyph advances (measure==paint) instead of the 0.6-em estimate.
+    fn build_font_database() -> liquide_font_rasterizer::FontDatabase {
+        liquide_font_rasterizer::FontDatabase::with_default_fonts(Self::resolve_asset_root())
+    }
+
+    /// Resolve the assets directory, mirroring the host's resolver order so the
+    /// shell measures with the same fonts the host paints with: explicit
+    /// `LIQUIDE_ASSETS_DIR`, then CWD-relative `assets`, then next to the
+    /// executable, then this crate's workspace-root `../../assets`.
+    fn resolve_asset_root() -> std::path::PathBuf {
+        if let Some(dir) = std::env::var_os("LIQUIDE_ASSETS_DIR") {
+            let candidate = std::path::PathBuf::from(dir);
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+        let cwd_relative = std::path::PathBuf::from("assets");
+        if cwd_relative.is_dir() {
+            return cwd_relative;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                let candidate = exe_dir.join("assets");
+                if candidate.is_dir() {
+                    return candidate;
+                }
+            }
+        }
+        let manifest_relative = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("assets");
+        if manifest_relative.is_dir() {
+            return manifest_relative;
+        }
+        cwd_relative
+    }
+
     /// Create a new shell with custom history capacities.
     #[must_use]
     pub fn with_history_capacity(
@@ -888,6 +942,11 @@ impl Shell {
         };
         let mut css_pipeline = DesktopPipeline::new(&pipeline_cfg);
         css_pipeline.set_preferred_color_scheme(Self::preferred_color_scheme_for_theme(&theme));
+        // Seed the same real font DB as the renderer so layout MEASURE == paint
+        // (see the matching comment in `from_config`).
+        css_pipeline.set_font_db(std::sync::Arc::new(std::sync::RwLock::new(
+            Self::build_font_database(),
+        )));
 
         let sandbox_manager = crate::sandboxing::SandboxManager::new();
         sandbox_manager.register_app("com.liquide.shell".to_string());

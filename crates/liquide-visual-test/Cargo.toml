@@ -60,6 +60,10 @@ liquide-input.workspace = true
 liquide-shell.workspace = true
 # Notification value object for the notification_shown scenario builder.
 liquide-interop.workspace = true
+# TemplateNode + HTML fragment parsing for the primitive-render capability
+# harness (test-harden): mounts author-supplied HTML/CSS onto a clean canvas
+# and drives the real Shell pipeline so capability goldens have full teeth.
+liquide-components.workspace = true
 # PNG encode/decode for goldens, diffs, and snapshot output.
 image = { version = "0.25", features = ["png"] }
 tracing.workspace = true

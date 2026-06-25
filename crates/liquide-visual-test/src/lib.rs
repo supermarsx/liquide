@@ -38,6 +38,11 @@
 pub mod capture;
 pub mod diff;
 pub mod golden;
+// test-harden: headless primitive-render harness for capability goldens (text
+// shaping width, border styles, group opacity, gradient smoothness, transform
+// translate(%)). Drives the same Shell → flatten → SoftwareRenderer pipeline as
+// the desktop capture path over an author-supplied HTML/CSS fragment.
+pub mod primitive_render;
 // t56-f7: reusable scenario builders + deterministic test-assets root (additive
 // module declaration; the scenarios themselves live in scenarios.rs, f7's lock).
 pub mod scenarios;

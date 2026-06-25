@@ -199,8 +199,6 @@ impl SoftwareRenderer {
 
             // Render using the atlas
             {
-                let estimated_advance = glyph_height as f32 * 0.55;
-
                 // Word-wrap aware line splitting
                 let white_space_val = node.kind_ref().text_white_space().unwrap_or(0);
                 let allows_wrap = matches!(white_space_val, 0 | 3 | 4 | 5);
@@ -217,21 +215,36 @@ impl SoftwareRenderer {
                 // break-word only breaks words too long to ever fit.
                 let break_eagerly = matches!(word_break, WordBreak::BreakAll);
 
-                // Helper closure: measure a char advance using atlas or estimate
-                let char_advance = |ch: char| -> f32 {
-                    let key = GlyphKey {
-                        font_id,
-                        glyph_id: ch as u32,
-                        size_px,
-                        subpixel: false,
-                    };
-                    let base = if let Some(cached) = self.glyph_atlas.get(&key) {
-                        cached.advance
-                    } else {
-                        estimated_advance
-                    };
-                    let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                    base + *letter_spacing + extra
+                // Hold the font-database lock across BOTH the wrap pre-pass and the
+                // per-line shaping below. The wrap decision now measures candidate
+                // runs with the SAME shaper (`shaped_run_width`) that `shape_line`
+                // uses to position painted glyphs, so the width the wrap pre-pass
+                // tests against equals the painted width — a run that fits its box
+                // when shaped is no longer wrapped by a divergent estimate. (The
+                // previous pre-pass summed a `char_advance` closure that looked the
+                // glyph up by CODEPOINT in an atlas keyed by SHAPED glyph id, so the
+                // key never matched and it always fell back to `glyph_height * 0.55`,
+                // over-counting and wrapping text that actually fits.)
+                let db = self
+                    .font_worker
+                    .font_db()
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+
+                // Shaped width of a candidate run (word or single char), measured
+                // with the same shaper as paint. Folds in word-spacing per space
+                // and letter-spacing exactly as `shape_line` does.
+                let run_width = |run: &str| -> f32 {
+                    text_shaping::shaped_run_width(
+                        &db,
+                        run,
+                        font_family,
+                        glyph_height as f32,
+                        *font_weight,
+                        *font_style_italic,
+                        *letter_spacing,
+                        *word_spacing,
+                    )
                 };
 
                 // Split into visual lines (pre-allocate for typical text)
@@ -249,7 +262,7 @@ impl SoftwareRenderer {
                         let mut current_width = indent;
 
                         for word in WordSplitter::new(hard_line) {
-                            let word_width: f32 = word.chars().map(&char_advance).sum();
+                            let word_width: f32 = run_width(word);
 
                             // Decide whether this word must be broken character
                             // by character. With break-all every word is a
@@ -273,8 +286,9 @@ impl SoftwareRenderer {
                                 }
                                 // Emit characters, wrapping whenever the next
                                 // character would overflow the line.
+                                let mut buf = [0u8; 4];
                                 for ch in word.chars() {
-                                    let cw = char_advance(ch);
+                                    let cw = run_width(ch.encode_utf8(&mut buf));
                                     if !current_line.is_empty()
                                         && current_width + cw > max_line_width
                                     {
@@ -322,30 +336,28 @@ impl SoftwareRenderer {
                 // shaped advances drive alignment and the shaped glyph ids/faces
                 // drive atlas keying + rasterization. Shaping is a pure function of
                 // (text, font database), so the result is identical run-to-run.
+                // Reuses the font-db lock already held for the wrap pre-pass, so the
+                // wrap measurement and the paint shaping see the identical database.
                 let mut shaped_lines: Vec<(Vec<ShapedRunGlyph>, f32)> =
                     Vec::with_capacity(wrapped_lines.len());
-                {
-                    let db = self
-                        .font_worker
-                        .font_db()
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner());
-                    for line_text in &wrapped_lines {
-                        // Drop a stray CR; shaping operates on the visual line text.
-                        let clean: String = line_text.chars().filter(|&c| c != '\r').collect();
-                        let shaped = text_shaping::shape_line(
-                            &db,
-                            &clean,
-                            font_family,
-                            glyph_height as f32,
-                            *font_weight,
-                            *font_style_italic,
-                            *letter_spacing,
-                            *word_spacing,
-                        );
-                        shaped_lines.push(shaped);
-                    }
+                for line_text in &wrapped_lines {
+                    // Drop a stray CR; shaping operates on the visual line text.
+                    let clean: String = line_text.chars().filter(|&c| c != '\r').collect();
+                    let shaped = text_shaping::shape_line(
+                        &db,
+                        &clean,
+                        font_family,
+                        glyph_height as f32,
+                        *font_weight,
+                        *font_style_italic,
+                        *letter_spacing,
+                        *word_spacing,
+                    );
+                    shaped_lines.push(shaped);
                 }
+                // Release the font-database lock before glyph requests / blits so
+                // the font worker can rasterize the requested glyphs.
+                drop(db);
 
                 // Common-glyph prewarm: warm the SHAPED atlas keys for the run's
                 // primary face so a freshly-seen (family, size) seeds the common

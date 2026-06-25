@@ -103,6 +103,74 @@ fn fallback_face_for(
     None
 }
 
+/// Measure the shaped advance width of a candidate run of text, using the SAME
+/// shaper (rustybuzz GSUB/GPOS — kerning + ligatures + contextual alternates) and
+/// the SAME per-glyph multi-font fallback as [`shape_line`], plus the identical
+/// per-space `word_spacing` application.
+///
+/// This is the width the wrap pre-pass MUST use: the live paint path positions
+/// glyphs by their shaped advances (via [`shape_line`]), so a wrap decision made
+/// against any other estimate (e.g. a codepoint-keyed atlas lookup or a
+/// `glyph_height * 0.55` fallback) disagrees with what is actually painted and
+/// wraps text that in fact fits its box. Measuring here with the same shaper makes
+/// the wrap decision width equal the painted width.
+///
+/// Bidi reordering does not change a run's total advance (it only permutes glyph
+/// positions), so this measures the run as a single LTR shaping pass — the sum of
+/// advances is order-independent and matches `shape_line`'s returned width for the
+/// same text. Pure function of (text, font database) → identical run-to-run.
+pub(crate) fn shaped_run_width(
+    db: &FontDatabase,
+    text: &str,
+    font_family: &str,
+    font_size: f32,
+    font_weight: u16,
+    italic: bool,
+    letter_spacing: f32,
+    word_spacing: f32,
+) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+
+    let primary = db
+        .resolve(font_family, font_weight, italic)
+        .unwrap_or(FontFaceId::FALLBACK);
+
+    let shaper = TextShaper::new(db);
+    let features = default_features();
+
+    let (glyphs, _w) =
+        shaper.shape_with_features(primary, text, font_size, letter_spacing, &features);
+
+    let mut width = 0.0_f32;
+    for g in &glyphs {
+        let mut advance = g.x_advance;
+        // Mirror shape_line's per-glyph fallback: a .notdef whose codepoint a
+        // fallback face covers is reshaped, which can change its advance, so the
+        // measured width must account for the fallback glyph's advance too.
+        if g.glyph_id == 0 && !g.codepoint.is_whitespace() && g.codepoint != '\0' {
+            if let Some(fb_face) = fallback_face_for(db, primary, g.codepoint, font_weight, italic) {
+                let mut buf = [0u8; 4];
+                let cluster_str = g.codepoint.encode_utf8(&mut buf);
+                let (fb_glyphs, _) = shaper.shape_with_features(
+                    fb_face,
+                    cluster_str,
+                    font_size,
+                    letter_spacing,
+                    &features,
+                );
+                if let Some(fg) = fb_glyphs.first() {
+                    advance = fg.x_advance;
+                }
+            }
+        }
+        let extra = if g.codepoint == ' ' { word_spacing } else { 0.0 };
+        width += advance + extra;
+    }
+    width
+}
+
 /// Shape one already-wrapped visual line of text into ordered glyphs.
 ///
 /// * Bidi: the line is split into directional runs and the runs are laid out in

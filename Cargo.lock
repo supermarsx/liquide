@@ -4545,6 +4545,7 @@ name = "liquide-visual-test"
 version = "0.1.0"
 dependencies = [
  "image",
+ "liquide-components",
  "liquide-compositor",
  "liquide-font-rasterizer",
  "liquide-input",

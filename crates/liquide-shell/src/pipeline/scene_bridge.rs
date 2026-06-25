@@ -48,6 +48,22 @@ impl DesktopPipeline {
             /// Z-order to give the BEGIN marker so it sorts BEFORE the element's
             /// own draws (which were assigned higher z as they were appended).
             clip_path_start_z: Option<u32>,
+            /// Group-opacity scope (CSS `opacity < 1`, which per spec creates a
+            /// stacking context with GROUP opacity). When `Some(op)`, this scope
+            /// opened an isolated layer: at PopOpacity a `RenderLayer { isolate:
+            /// true }` carrying `op` is INSERTED at `group_opacity_start_idx` (with
+            /// `group_opacity_start_z`) so the subtree composites onto an offscreen
+            /// layer and merges ONCE at the group opacity — matching the renderer's
+            /// LayerScope. Children are NOT dimmed individually (they paint at full
+            /// alpha onto the isolated layer), so overlapping translucent children
+            /// no longer double-composite. `None` when this `opacity == 1` scope
+            /// (the common case) did NOT open a layer.
+            group_opacity: Option<f32>,
+            /// Index in `nodes` where this group-opacity scope opened — the
+            /// insertion point for the layer node (captured before any child draw).
+            group_opacity_start_idx: Option<usize>,
+            /// Reserved z for the layer node so it sorts BEFORE the subtree's draws.
+            group_opacity_start_z: Option<u32>,
         }
 
         impl Default for PipelineState {
@@ -61,6 +77,9 @@ impl DesktopPipeline {
                     clip_path_bounds: None,
                     clip_path_start_idx: None,
                     clip_path_start_z: None,
+                    group_opacity: None,
+                    group_opacity_start_idx: None,
+                    group_opacity_start_z: None,
                 }
             }
         }
@@ -102,6 +121,13 @@ impl DesktopPipeline {
                     // are restored when this overflow PopClip pops.
                     current.clip_path_start_idx = None;
                     current.clip_path_start_z = None;
+                    // The overflow-clip scope does not itself open a group-opacity
+                    // layer; its own (balanced) PopClip restores the saved parent
+                    // state, so clearing these here keeps the inner scope from being
+                    // mistaken for an opacity-group scope.
+                    current.group_opacity = None;
+                    current.group_opacity_start_idx = None;
+                    current.group_opacity_start_z = None;
                 }
                 DisplayItem::PopClip => {
                     // Save clip-path info before restoring parent state
@@ -159,11 +185,69 @@ impl DesktopPipeline {
 
                 DisplayItem::PushOpacity { opacity } => {
                     stack.push(current.clone());
-                    current.opacity *= opacity;
+                    // CSS `opacity < 1` creates a stacking context AND group
+                    // opacity (CSS Color §opacity / Compositing §pgl): the
+                    // element's whole subtree must composite onto an isolated
+                    // layer and merge ONCE at the group opacity, so overlapping
+                    // translucent descendants resolve WITHIN the layer first and
+                    // are dimmed a single time. Previously the bridge merely folded
+                    // `opacity` into `current.opacity` and applied it to each leaf
+                    // node individually — that double-composites overlaps (the gap
+                    // the renderer's LayerScope fix could not reach because no
+                    // `RenderLayer { isolate }` node was ever emitted on the CSS
+                    // path).
+                    //
+                    // Open a group-opacity scope: remember where the subtree's
+                    // draws begin and RESERVE a z for the layer node (bumping `z`
+                    // here guarantees its z is strictly LESS than every child's, so
+                    // it sorts ahead of the subtree). The `RenderLayer` is INSERTED
+                    // at PopOpacity once the union of the children's bounds (the
+                    // layer window the renderer snapshots/clears) is known. We do
+                    // NOT fold `opacity` into `current.opacity`: the children paint
+                    // at full alpha onto the isolated layer and the group opacity is
+                    // applied exactly once when the layer composites.
+                    //
+                    // `opacity == 1.0` is the overwhelmingly common case (every
+                    // fully-opaque element) and is a compositing no-op: leave it
+                    // entirely untouched — no layer node, no behaviour/perf change.
+                    if *opacity < 1.0 {
+                        current.group_opacity = Some(opacity.clamp(0.0, 1.0));
+                        current.group_opacity_start_idx = Some(nodes.len());
+                        current.group_opacity_start_z = Some(z);
+                        z += 1;
+                    }
                 }
                 DisplayItem::PopOpacity => {
+                    // Snapshot the group-opacity scope info before restoring the
+                    // parent state (the parent state has no group scope of its own
+                    // at this position).
+                    let group_opacity = current.group_opacity.take();
+                    let start_idx = current.group_opacity_start_idx.take();
+                    let start_z = current.group_opacity_start_z.take();
                     if let Some(prev) = stack.pop() {
                         current = prev;
+                    }
+                    if let (Some(op), Some(idx), Some(layer_z)) =
+                        (group_opacity, start_idx, start_z)
+                    {
+                        let idx = idx.min(nodes.len());
+                        // Layer window = union of every node emitted inside the
+                        // scope. The renderer snapshots/clears exactly this window
+                        // and merges the group onto it, so it MUST cover all child
+                        // pixels. An empty group emits no layer (nothing to merge).
+                        if let Some(bounds) = union_bounds(&nodes[idx..]) {
+                            let id = self.alloc_id();
+                            let mut node = SceneNode::new(
+                                id,
+                                SceneNodeKind::RenderLayer {
+                                    blend_mode: liquide_compositor::pixel::BlendMode::SrcOver,
+                                    isolate: true,
+                                },
+                                NodeProperties::new(bounds).with_z_order(layer_z),
+                            );
+                            node.properties.opacity = op;
+                            nodes.insert(idx, node);
+                        }
                     }
                 }
 
@@ -1032,6 +1116,36 @@ impl DesktopPipeline {
             }
         }
     }
+}
+
+/// Smallest rect (in the bridge's emit coordinate space) that contains every
+/// node in `nodes`, accounting for each node's own pending transform.
+///
+/// Used to size the isolated `RenderLayer` emitted for a CSS group-opacity scope:
+/// the renderer snapshots/clears exactly this window before compositing the group
+/// onto it, so the window MUST cover all of the group's child pixels. Each child's
+/// footprint is `transform · bounds` — the same space the layer node's own
+/// (identity-transform) `properties.bounds` lives in, so both map identically
+/// through any ancestor transform at flatten time. Returns `None` if the scope is
+/// empty or every node has a degenerate (zero-area) footprint (nothing to merge).
+fn union_bounds(nodes: &[SceneNode]) -> Option<CRect> {
+    let mut acc: Option<CRect> = None;
+    for node in nodes {
+        let b = node.properties.bounds;
+        if b.width <= 0.0 || b.height <= 0.0 {
+            continue;
+        }
+        let abs = if node.properties.transform.is_identity() {
+            b
+        } else {
+            node.properties.transform.transform_rect(b)
+        };
+        acc = Some(match acc {
+            Some(prev) => prev.union(&abs),
+            None => abs,
+        });
+    }
+    acc
 }
 
 /// t64-f10: map the style-engine `WordBreak` (carried on `DisplayItem::Text`)
