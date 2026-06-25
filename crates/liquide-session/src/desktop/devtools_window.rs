@@ -586,21 +586,44 @@ mod tests {
     }
 
     #[test]
-    fn window_text_paint_matches_real_font_not_the_bitmap_fallback() {
+    fn window_text_paint_uses_real_shaped_outlines_not_the_bitmap_fallback() {
         // TEETH (the assertion that goes RED if the fix is reverted):
         //
-        // The bitmap fallback (used by a font-EMPTY renderer) advances every glyph
-        // by ~ceil(font_size/2) — a uniform half-em — so it lays a string out at a
-        // DIFFERENT width than a real proportional font (Inter at 11px is much
-        // narrower). We render the SAME scene with (a) the window's OWN renderer
+        // The window renderer must paint devtools text with the REAL font seeded
+        // into it (`SoftwareRenderer::with_font_db(build_window_font_database())`),
+        // i.e. via rustybuzz shaping + the concrete face's antialiased outlines —
+        // NOT via the built-in blocky 8x16 bitmap font that a font-EMPTY renderer
+        // falls back to. We render the SAME scene with (a) the window's OWN renderer
         // (the path under test) and (b) an explicit empty-DB `SoftwareRenderer::
-        // new()` baseline, then measure the painted ink WIDTH of the "Elements"
-        // tab label in each.
+        // new()` baseline, then compare the painted INK of the first tab-label
+        // cluster ("Elements").
         //
-        // - FIXED: the window renderer is font-seeded → its ink width matches the
-        //   real-font advances and DIFFERS from the empty-DB bitmap width.
-        // - REVERTED (window back to `SoftwareRenderer::new()`): the window
-        //   renderer is ALSO empty-DB, so both widths are identical → RED.
+        // WHY NOT the old ">=3px width differential": the original t170 assertion
+        // compared the painted INK WIDTH of the label in each path, on the premise
+        // that an empty-DB renderer lays every glyph out at a uniform ~half-em
+        // advance, so its width grossly diverges from a proportional real font. That
+        // premise is now obsolete: the shaper's no-real-face path
+        // (`TextShaper::shape_fallback`) no longer uses a uniform advance — it uses
+        // `approx_char_advance`, a PROPORTIONAL per-character-class estimate (narrow
+        // i/l/., wide W/M/m, ~0.95em uppercase, ~0.75em lowercase). So even the
+        // empty-DB layout is now proportional and lands within ~1-3px of the real
+        // font's width for short labels — the width differential collapsed (measured
+        // window=44px vs empty=41px for "Elements"). Text shaping made the fallback
+        // path's GEOMETRY much closer to real, which is an improvement, so a width
+        // delta is no longer a reliable signal.
+        //
+        // What still cleanly separates the two paths is the GLYPH RASTERIZATION, not
+        // the layout: the window paints real Roboto outlines (light, antialiased),
+        // while the empty-DB path rasterizes the 8x16 bitmap font for each codepoint
+        // (`rasterize_glyph_by_id` → `db.get(FALLBACK)` = None → `rasterize_glyph_
+        // bitmap`). The blocky bitmap glyphs ink dramatically MORE pixels per cell
+        // than the thin AA outlines. We therefore compare per-cluster ink DENSITY:
+        //
+        // - FIXED (window font-seeded, shaping real outlines): the cluster ink count
+        //   is far LOWER than the empty-DB bitmap cluster (measured window=129 vs
+        //   empty=207 inked px over ~comparable-width clusters).
+        // - REVERTED (window back to `SoftwareRenderer::new()` / regressed to bitmap):
+        //   the window paints the SAME bitmap glyphs → densities converge → RED.
         let (mut window, shell, panel) = detached_window_and_panel();
         let (layout, styles) = (
             shell.layout_tree().expect("layout"),
@@ -615,60 +638,114 @@ mod tests {
         let fb_h = window.height;
         let y0 = bounds.1.max(0.0).floor() as u32;
         let h = (bounds.3.ceil() as u32).min(fb_h.saturating_sub(y0)).max(1);
-        // Scan a generous horizontal span starting at the label origin so a WIDER
-        // (bitmap) run is fully captured.
+        // Scan from the label origin to the right window edge; the cluster scanner
+        // below isolates just the first label (it stops at the gap before the next
+        // tab), so a generous span is fine.
         let scan_x0 = bounds.0.max(0.0).floor() as u32;
-        let scan_w = ((bounds.2 * 3.0).ceil() as u32).min(fb_w.saturating_sub(scan_x0));
+        let scan_w = fb_w.saturating_sub(scan_x0);
 
-        // Measure the painted ink width (rightmost − leftmost inked column) of the
-        // label in a frame, relative to the local row background.
-        let ink_width = |px: &[u8]| -> u32 {
-            let mut min_x: Option<u32> = None;
-            let mut max_x: Option<u32> = None;
+        // A near-white pixel over the dark panel background is "inked".
+        let col_inked = |px: &[u8], x: u32| -> bool {
+            (y0..(y0 + h)).any(|y| {
+                let idx = ((y * fb_w + x) * 4) as usize;
+                idx + 4 <= px.len() && luma(&px[idx..idx + 4]) > 120
+            })
+        };
+
+        // (width, inked-pixel count) of the FIRST inked cluster in the row band.
+        // The cluster runs from the first inked column until a run of >= GAP_PX
+        // fully-blank columns (the inter-tab gap), so neighbouring tab labels are
+        // excluded and we measure ONLY the first label ("Elements").
+        const GAP_PX: u32 = 6;
+        let first_cluster = |px: &[u8]| -> (u32, u32) {
+            let mut x = scan_x0;
+            while x < scan_x0 + scan_w && !col_inked(px, x) {
+                x += 1;
+            }
+            let start = x;
+            let mut last_inked = start;
+            let mut blank = 0u32;
+            while x < scan_x0 + scan_w {
+                if col_inked(px, x) {
+                    last_inked = x;
+                    blank = 0;
+                } else {
+                    blank += 1;
+                    if blank >= GAP_PX {
+                        break;
+                    }
+                }
+                x += 1;
+            }
+            if last_inked < start {
+                return (0, 0);
+            }
+            let width = last_inked - start + 1;
+            let mut ink = 0u32;
             for y in y0..(y0 + h) {
-                for x in scan_x0..(scan_x0 + scan_w) {
-                    let idx = ((y * fb_w + x) * 4) as usize;
-                    if idx + 4 <= px.len() {
-                        let l = luma(&px[idx..idx + 4]);
-                        // The label text is near-white over the dark panel bg.
-                        if l > 120 {
-                            min_x = Some(min_x.map_or(x, |m| m.min(x)));
-                            max_x = Some(max_x.map_or(x, |m| m.max(x)));
-                        }
+                for cx in start..=last_inked {
+                    let idx = ((y * fb_w + cx) * 4) as usize;
+                    if idx + 4 <= px.len() && luma(&px[idx..idx + 4]) > 120 {
+                        ink += 1;
                     }
                 }
             }
-            match (min_x, max_x) {
-                (Some(a), Some(b)) => b - a + 1,
-                _ => 0,
-            }
+            (width, ink)
         };
 
-        // (a) Window's own renderer (path under test), rendered twice for glyphs.
+        // (a) Window's own renderer (path under test), rendered twice so the async
+        // font worker's glyphs land in the atlas before we measure.
         let _ = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
         let window_px = window.render_to_pixels_for_test(&panel, shell.document(), layout, styles);
-        let window_w = ink_width(&window_px);
+        let (window_w, window_ink) = first_cluster(&window_px);
 
-        // (b) Explicit empty-DB baseline of the SAME scene (the bitmap path).
+        // (b) Explicit empty-DB baseline of the SAME scene (the 8x16 bitmap path).
         let mut empty = SoftwareRenderer::new();
         let _ = window.rasterize_scene_with_for_test(&scene, &mut empty);
         let empty_px = window.rasterize_scene_with_for_test(&scene, &mut empty);
-        let empty_w = ink_width(&empty_px);
+        let (empty_w, empty_ink) = first_cluster(&empty_px);
 
+        // The window must paint real glyph ink for the label.
         assert!(
-            window_w > 0,
-            "the window must paint real glyph ink for the label (got width 0)"
+            window_w > 0 && window_ink > 0,
+            "the window must paint real glyph ink for the label \
+             (got cluster width {window_w}px, {window_ink} inked px)"
         );
+        // Sanity: the empty-DB bitmap path must still paint something to compare to.
         assert!(
-            empty_w > 0,
-            "sanity: the empty-DB bitmap path must still paint something (got width 0)"
+            empty_w > 0 && empty_ink > 0,
+            "sanity: the empty-DB bitmap path must paint a label cluster \
+             (got width {empty_w}px, {empty_ink} inked px)"
         );
+
+        // Positive proof the window's ink tracks the REAL FONT layout: the painted
+        // cluster width is within a couple px of the shaped layout width the scene
+        // node carries (the real proportional advances). A regression to a naive /
+        // uniform-advance path would diverge from the layout width.
+        let layout_w = bounds.2; // shaped advance width of "Elements"
         assert!(
-            window_w.abs_diff(empty_w) >= 3,
-            "the window's painted text width ({window_w}px) must differ from the \
-             empty-DB bitmap width ({empty_w}px): a font-seeded window paints with \
-             real proportional advances, the bitmap fallback with a uniform half-em. \
-             Equal widths mean the window is still empty-DB (fix not effective / reverted)."
+            (window_w as f32 - layout_w).abs() <= 4.0,
+            "the window's painted cluster width ({window_w}px) must track the shaped \
+             layout width ({layout_w:.1}px) — divergence means the window is not \
+             painting at the real shaped advances"
+        );
+
+        // TEETH: the window paints thin antialiased OUTLINES, the empty-DB path the
+        // blocky 8x16 BITMAP — the bitmap inks far more pixels per cluster. Compare
+        // ink DENSITY (inked px per cluster px) so the result is independent of the
+        // small width difference. If the window regressed to the bitmap/empty-DB
+        // path it would paint the SAME blocky glyphs → densities converge → RED.
+        let window_density = window_ink as f32 / window_w as f32;
+        let empty_density = empty_ink as f32 / empty_w as f32;
+        assert!(
+            empty_density >= window_density * 1.25,
+            "the window's painted text must use REAL shaped outlines, not the 8x16 \
+             bitmap fallback: the empty-DB bitmap cluster must ink substantially \
+             MORE pixels per column than the real-font window cluster. Got window \
+             {window_ink}px/{window_w}px = {window_density:.2} px/col vs empty \
+             {empty_ink}px/{empty_w}px = {empty_density:.2} px/col. Densities this \
+             close mean the window is painting the bitmap font (fix reverted / not \
+             shaping real outlines)."
         );
     }
 }
