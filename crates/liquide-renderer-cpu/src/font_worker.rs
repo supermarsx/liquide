@@ -58,6 +58,11 @@ struct GlyphRequest {
     font_weight: u16,
     /// Whether italic/oblique styling is requested for this glyph.
     italic: bool,
+    /// Shaped-glyph target: when set, rasterize `key.glyph_id` as a REAL font
+    /// glyph id from this exact face (the output of OpenType shaping — kerning,
+    /// ligatures, substitutions — where the glyph id maps to no single codepoint).
+    /// When `None`, the legacy codepoint path is used (`key.glyph_id == codepoint`).
+    shaped_face: Option<FontFaceId>,
 }
 
 /// A completed rasterized glyph returned from the worker.
@@ -171,6 +176,41 @@ impl FontWorker {
             font_family,
             font_weight,
             italic,
+            shaped_face: None,
+        };
+        if self.request_tx.send(WorkerMsg::Rasterize(req)).is_ok() {
+            self.pending.insert(key);
+        }
+    }
+
+    /// Submit a request to rasterize a SHAPED glyph by its real font glyph id.
+    ///
+    /// Unlike [`request_glyph_with_font`](Self::request_glyph_with_font), which
+    /// resolves a face from a family and then maps a `char` to a glyph, this takes
+    /// the concrete [`FontFaceId`] and the real font `glyph_id` (in `key.glyph_id`)
+    /// produced by OpenType shaping. This is the only path that can rasterize a
+    /// ligature / substituted glyph (whose id maps to no single input codepoint)
+    /// or a per-glyph fallback-face glyph. `codepoint` is kept only for the
+    /// rasterizer's empty-outline (space) shortcut and diagnostics.
+    pub fn request_shaped_glyph(
+        &mut self,
+        key: GlyphKey,
+        face_id: FontFaceId,
+        codepoint: char,
+        target_height: u32,
+    ) {
+        if self.pending.contains(&key) {
+            return;
+        }
+        let req = GlyphRequest {
+            key,
+            generation: self.generation,
+            codepoint,
+            target_height,
+            font_family: String::new(),
+            font_weight: 400,
+            italic: false,
+            shaped_face: Some(face_id),
         };
         if self.request_tx.send(WorkerMsg::Rasterize(req)).is_ok() {
             self.pending.insert(key);
@@ -399,6 +439,19 @@ impl FontWorker {
         bitmap_font: &BitmapFont,
         req: &GlyphRequest,
     ) -> RasterizedGlyph {
+        // Shaped path: rasterize the REAL glyph id from the exact face produced by
+        // OpenType shaping (ligatures / substitutions / per-glyph fallback). This
+        // is the path the live shaped text-draw uses; a glyph id maps to no single
+        // codepoint, so it cannot go through the family→char resolver below.
+        if let Some(face_id) = req.shaped_face {
+            if let Some(g) = Self::rasterize_glyph_by_id(db, face_id, req) {
+                return g;
+            }
+            // Face vanished / outline failed — fall through to the bitmap font so
+            // the run still shows something rather than dropping the glyph.
+            return Self::rasterize_glyph_bitmap(bitmap_font, req);
+        }
+
         // Try to resolve a real font face if a family was specified.
         if !req.font_family.is_empty() {
             // Ask the database for an italic face when requested. The resolver
@@ -437,6 +490,86 @@ impl FontWorker {
 
         // Fallback: supersampled bitmap font.
         Self::rasterize_glyph_bitmap(bitmap_font, req)
+    }
+
+    /// Rasterize a glyph by its REAL font glyph id (grayscale), mirroring the
+    /// font-rasterizer's grayscale outline path but keyed on a `GlyphId` rather
+    /// than a codepoint. This is what lets shaped/ligature/substituted glyphs —
+    /// whose ids correspond to no single input codepoint — reach the atlas.
+    ///
+    /// Returns `None` when the face is unknown (the caller falls back to the
+    /// bitmap font). An empty outline (e.g. a space) returns a zero-size bitmap
+    /// with the correct advance, exactly like the codepoint path.
+    fn rasterize_glyph_by_id(
+        db: &FontDatabase,
+        face_id: FontFaceId,
+        req: &GlyphRequest,
+    ) -> Option<RasterizedGlyph> {
+        use ab_glyph::{Font, GlyphId, ScaleFont, point};
+
+        let face = db.get(face_id)?;
+        let size_px = (req.target_height as f32).clamp(1.0, 500.0);
+        let glyph_id = GlyphId(req.key.glyph_id as u16);
+
+        let scale = ab_glyph::PxScale::from(size_px);
+        let scaled = face.font.as_scaled(scale);
+        let advance = scaled.h_advance(glyph_id);
+
+        let glyph = glyph_id.with_scale_and_position(scale, point(0.0, scaled.ascent()));
+        let Some(outlined) = face.font.outline_glyph(glyph) else {
+            // No outline (space / non-spacing) — empty bitmap, correct advance.
+            return Some(RasterizedGlyph {
+                key: req.key,
+                generation: req.generation,
+                bitmap: Vec::new(),
+                metrics: GlyphMetrics {
+                    width: 0,
+                    height: 0,
+                    bearing_x: 0,
+                    bearing_y: 0,
+                    advance,
+                },
+            });
+        };
+
+        let bounds = outlined.px_bounds();
+        let w = bounds.width().ceil() as u32;
+        let h = bounds.height().ceil() as u32;
+        if w == 0 || h == 0 {
+            return Some(RasterizedGlyph {
+                key: req.key,
+                generation: req.generation,
+                bitmap: Vec::new(),
+                metrics: GlyphMetrics {
+                    width: 0,
+                    height: 0,
+                    bearing_x: bounds.min.x.round() as i32,
+                    bearing_y: (-bounds.min.y + scaled.ascent()).round() as i32,
+                    advance,
+                },
+            });
+        }
+
+        let mut pixels = vec![0u8; (w * h) as usize];
+        outlined.draw(|x, y, coverage| {
+            let idx = (y * w + x) as usize;
+            if idx < pixels.len() {
+                pixels[idx] = (coverage * 255.0 + 0.5) as u8;
+            }
+        });
+
+        Some(RasterizedGlyph {
+            key: req.key,
+            generation: req.generation,
+            bitmap: pixels,
+            metrics: GlyphMetrics {
+                width: w,
+                height: h,
+                bearing_x: bounds.min.x.round() as i32,
+                bearing_y: (-bounds.min.y + scaled.ascent()).round() as i32,
+                advance,
+            },
+        })
     }
 
     /// Rasterize a single glyph using 4× supersampled box-filter downsampling.
@@ -740,6 +873,7 @@ mod tests {
             font_family: String::new(),
             font_weight: 400,
             italic: false,
+            shaped_face: None,
         }
     }
 

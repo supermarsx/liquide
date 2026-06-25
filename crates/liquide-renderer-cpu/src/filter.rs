@@ -179,29 +179,6 @@ impl PixelFilter {
     }
 }
 
-/// Apply a 5×4 color matrix to a single pixel.
-///
-/// Layout: `[R_r, R_g, R_b, R_a, R_offset, G_r, G_g, G_b, G_a, G_offset, ...]`
-#[allow(dead_code)]
-fn apply_color_matrix(c: Color, m: &[f32; 20]) -> Color {
-    let r = c.r as f32;
-    let g = c.g as f32;
-    let b = c.b as f32;
-    let a = c.a as f32;
-
-    Color::new(
-        clamp_u8(m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4] * 255.0),
-        clamp_u8(m[5] * r + m[6] * g + m[7] * b + m[8] * a + m[9] * 255.0),
-        clamp_u8(m[10] * r + m[11] * g + m[12] * b + m[13] * a + m[14] * 255.0),
-        clamp_u8(m[15] * r + m[16] * g + m[17] * b + m[18] * a + m[19] * 255.0),
-    )
-}
-
-#[allow(dead_code)]
-fn clamp_u8(v: f32) -> u8 {
-    v.round().clamp(0.0, 255.0) as u8
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

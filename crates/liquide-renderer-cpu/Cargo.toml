@@ -15,6 +15,12 @@ liquide-paint.workspace = true
 liquide-renderer-css.workspace = true
 liquide-text-engine.workspace = true
 liquide-theme-css.workspace = true
+# Pure-Rust TrueType/OpenType parsing + outline rasterization. Used directly by
+# the text-shaping wiring (per-glyph fallback coverage checks) and the font
+# worker's rasterize-by-glyph-id path so shaped/ligature glyph ids — which map to
+# no single codepoint — can be rasterized. Same crate the font database parses
+# faces with, so no second font parser is pulled in.
+ab_glyph = { workspace = true }
 # Full image decoding (PNG/JPEG/GIF/WebP/BMP -> RGBA). Curated feature set
 # (no exr/tiff/avif/qoi) to bound compile time per t134 engine plan item 3b;
 # `bmp` is built into the crate. default-features OFF so we do not pull the

@@ -1,14 +1,12 @@
 //! Cursor tracking state — position, shape, hardware/software cursor management.
 //!
-//! When `liquide-cursor-vector` initializes successfully, software cursors
-//! are rendered as high-definition vector images instead of basic rectangles.
-
-use std::sync::Arc;
+//! Software cursors are rendered through the imperative `cursor_flat_node`
+//! (`SceneNodeKind::Cursor`) path; the OS hardware cursor is preferred when
+//! available. (A `liquide-cursor-vector` HD-vector cache was scaffolded here but
+//! never consumed by the software-cursor raster, so it was removed —
+//! wire-or-remove.)
 
 use liquide_compositor::scene::CursorShape;
-use liquide_cursor_vector::cache::{CachedCursor, VectorCursorCache};
-use liquide_cursor_vector::cursor_set::VectorCursorSet;
-use tracing::{info, warn};
 
 /// Default software cursor size in logical pixels.
 pub(super) const CURSOR_SIZE: f32 = 24.0;
@@ -23,28 +21,10 @@ pub(super) struct CursorState {
     pub(super) use_hardware: bool,
     pub(super) last_hw_shape: CursorShape,
     pub(super) hw_needs_sync: bool,
-    /// Vector cursor set (loaded once on init, None if unavailable).
-    cursor_set: Option<VectorCursorSet>,
-    /// Per-shape RGBA pixel cache for software cursor rendering.
-    #[allow(dead_code)]
-    cursor_cache: Option<VectorCursorCache<'static>>,
 }
 
 impl CursorState {
     pub(super) fn new(center_x: f32, center_y: f32) -> Self {
-        // Attempt to load the built-in vector cursor set.
-        let (cursor_set, cursor_cache) = match VectorCursorSet::load_default() {
-            Ok(set) => {
-                info!(shapes = set.shapes().len(), "loaded vector cursor set");
-                let cache = VectorCursorCache::new(64);
-                (Some(set), Some(cache))
-            }
-            Err(e) => {
-                warn!("vector cursors unavailable, using basic fallback: {}", e);
-                (None, None)
-            }
-        };
-
         Self {
             x: center_x,
             y: center_y,
@@ -54,8 +34,6 @@ impl CursorState {
             use_hardware: false,
             last_hw_shape: CursorShape::Arrow,
             hw_needs_sync: false,
-            cursor_set,
-            cursor_cache,
         }
     }
 
@@ -101,26 +79,5 @@ impl CursorState {
         } else {
             None
         }
-    }
-
-    /// Get cached vector cursor RGBA pixels for the given shape.
-    ///
-    /// Returns `None` if vector cursors aren't available or the shape
-    /// isn't in the cursor set — caller should fall back to the basic
-    /// `SceneNodeKind::Cursor` rectangle.
-    #[allow(dead_code)]
-    pub(super) fn vector_cursor(&self, shape: CursorShape) -> Option<Arc<CachedCursor>> {
-        let set = self.cursor_set.as_ref()?;
-        let cache = self.cursor_cache.as_ref()?;
-        let cursor = set.get(shape).ok()?;
-        cache
-            .get_or_render(cursor, shape, CURSOR_SIZE as u32, 1.0)
-            .ok()
-    }
-
-    /// Whether vector cursors are available.
-    #[allow(dead_code)]
-    pub(super) fn has_vector_cursors(&self) -> bool {
-        self.cursor_set.is_some()
     }
 }

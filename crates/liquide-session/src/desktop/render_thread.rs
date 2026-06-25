@@ -21,13 +21,95 @@ use super::PresentPacingState;
 use super::cursor_state::CURSOR_SIZE;
 use super::scene_split::{SplitScene, split_flat_nodes};
 
+// ---------------------------------------------------------------------------
+// Fast-path engagement counters (PRODUCTION-VISIBLE).
+//
+// The retained/incremental flatten, authoritative-damage, and blit-move fast
+// paths are mechanically sound and unit-tested, but their engagement was
+// previously only observable through `#[cfg(test)]` thread-local counters
+// ("never read in production"). That is exactly the dormancy blind spot that hid
+// t192's "0/200 engaged" bug: a fast path can silently stop firing in the real
+// binary and no test would notice.
+//
+// These atomic counters are bumped at the LIVE decision sites inside the worker
+// (`render_full_job`, which in production runs on the dedicated render thread —
+// so process-global atomics, not thread-locals, are the correct primitive). They
+// are read back by:
+//   * the worker's periodic `debug_perf` log line (live observability), and
+//   * tests, which assert the counter advances when a realistic frame takes the
+//     fast path (proving the counter is wired to the live decision, not to a
+//     test-only shim).
+// Relaxed ordering is sufficient: these are monotonic statistics with no
+// happens-before requirement against other state.
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Snapshot of the fast-path engagement counters at a point in time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct FastPathEngagement {
+    /// Frames where `retained_flatten_into` patched in place (incremental).
+    pub(super) retained_flatten_incremental: u64,
+    /// Frames where `retained_flatten_into` fell back to a full overwrite.
+    pub(super) retained_flatten_full: u64,
+    /// Frames that used shell-precomputed authoritative damage (diff bypassed).
+    pub(super) authoritative_damage: u64,
+    /// Frames that ran the conservative per-frame `scene_diff_damage`.
+    pub(super) scene_diff: u64,
+    /// Drag frames that took the byte-identical blit-move copy.
+    pub(super) blit_move: u64,
+    /// Drag frames that rendered the window full to ESTABLISH blittable pixels.
+    pub(super) blit_establish: u64,
+    /// Drag frames that fell back to the legacy skeleton (outline) path.
+    pub(super) blit_skeleton: u64,
+}
+
+static RETAINED_FLATTEN_INCREMENTAL: AtomicU64 = AtomicU64::new(0);
+static RETAINED_FLATTEN_FULL: AtomicU64 = AtomicU64::new(0);
+static AUTHORITATIVE_DAMAGE: AtomicU64 = AtomicU64::new(0);
+static SCENE_DIFF: AtomicU64 = AtomicU64::new(0);
+static BLIT_MOVE: AtomicU64 = AtomicU64::new(0);
+static BLIT_ESTABLISH: AtomicU64 = AtomicU64::new(0);
+static BLIT_SKELETON: AtomicU64 = AtomicU64::new(0);
+
+/// Read the current fast-path engagement counters (production-visible).
+pub(super) fn fast_path_engagement() -> FastPathEngagement {
+    FastPathEngagement {
+        retained_flatten_incremental: RETAINED_FLATTEN_INCREMENTAL.load(Ordering::Relaxed),
+        retained_flatten_full: RETAINED_FLATTEN_FULL.load(Ordering::Relaxed),
+        authoritative_damage: AUTHORITATIVE_DAMAGE.load(Ordering::Relaxed),
+        scene_diff: SCENE_DIFF.load(Ordering::Relaxed),
+        blit_move: BLIT_MOVE.load(Ordering::Relaxed),
+        blit_establish: BLIT_ESTABLISH.load(Ordering::Relaxed),
+        blit_skeleton: BLIT_SKELETON.load(Ordering::Relaxed),
+    }
+}
+
+#[inline]
+fn note_authoritative_damage() {
+    AUTHORITATIVE_DAMAGE.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn note_blit_move() {
+    BLIT_MOVE.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn note_blit_establish() {
+    BLIT_ESTABLISH.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+fn note_blit_skeleton() {
+    BLIT_SKELETON.fetch_add(1, Ordering::Relaxed);
+}
+
 // Test-observable counter of how many times the worker actually executed the
 // per-frame `scene_diff_damage` (the O(n) diff) inside `render_full_job`
 // (t83-snappy lever #4). The incremental fast path bumps this NOT at all when a
 // frame carries authoritative precomputed damage, and exactly once on a frame
-// that takes the conservative diff path. Used only by tests to prove the bypass
-// (a) skips the diff on an incremental frame and (b) still runs it on a full
-// rebuild.
+// that takes the conservative diff path. The production-visible `SCENE_DIFF`
+// atomic above is the live engagement signal; the thread-local below remains for
+// existing single-thread tests that drive `render_full_job` directly.
 //
 // THREAD-LOCAL on purpose: in tests `render_full_job` is invoked directly on the
 // calling test thread, so a thread-local counter is fully isolated from other
@@ -42,12 +124,15 @@ thread_local! {
 #[cfg(test)]
 #[inline]
 fn note_scene_diff_ran() {
+    SCENE_DIFF.fetch_add(1, Ordering::Relaxed);
     SCENE_DIFF_RUNS.with(|c| c.set(c.get() + 1));
 }
 
 #[cfg(not(test))]
 #[inline]
-fn note_scene_diff_ran() {}
+fn note_scene_diff_ran() {
+    SCENE_DIFF.fetch_add(1, Ordering::Relaxed);
+}
 
 // Test-observable record of the LAST `retained_flatten_into` outcome: how many
 // flat nodes were structurally patched in place from the retained buffer
@@ -79,6 +164,7 @@ thread_local! {
 #[cfg(test)]
 #[inline]
 fn note_retained_flatten(patched: usize, copied_changed: usize, full: bool) {
+    note_retained_flatten_engagement(full);
     LAST_RETAINED_FLATTEN.with(|c| {
         c.set(RetainedFlattenStat {
             patched,
@@ -90,7 +176,19 @@ fn note_retained_flatten(patched: usize, copied_changed: usize, full: bool) {
 
 #[cfg(not(test))]
 #[inline]
-fn note_retained_flatten(_patched: usize, _copied_changed: usize, _full: bool) {}
+fn note_retained_flatten(_patched: usize, _copied_changed: usize, full: bool) {
+    note_retained_flatten_engagement(full);
+}
+
+/// Bump the production-visible retained-flatten engagement atomics.
+#[inline]
+fn note_retained_flatten_engagement(full: bool) {
+    if full {
+        RETAINED_FLATTEN_FULL.fetch_add(1, Ordering::Relaxed);
+    } else {
+        RETAINED_FLATTEN_INCREMENTAL.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Render thread types
@@ -2537,8 +2635,11 @@ impl DesktopCompositor {
         mut compositor: Compositor,
         rx: mpsc::Receiver<RenderMsg>,
         tx: mpsc::Sender<RenderedFrame>,
-        _debug_perf: bool,
+        debug_perf: bool,
     ) {
+        // Count of full jobs handled, used only to throttle the periodic
+        // fast-path engagement log (below) to once every N frames.
+        let mut full_job_count: u64 = 0;
         let mut fb: Option<FrameBuffer> = None;
         let mut tile_hash_tracker = FrameTileHashTracker::default();
         // Recycles the per-frame pixel snapshot Arc so a small-damage frame does
@@ -2793,6 +2894,27 @@ impl DesktopCompositor {
                         &mut prev_blit_window,
                         &tx,
                     );
+
+                    // Live engagement observability (anti-dormancy): periodically
+                    // log the cumulative fast-path engagement counters so a path
+                    // that silently stops firing in the real binary is VISIBLE in
+                    // logs (the t192 "0/200 engaged" blind spot). These counters
+                    // are bumped at the live decision sites inside `render_full_job`.
+                    full_job_count += 1;
+                    if debug_perf && full_job_count % 60 == 0 {
+                        let e = fast_path_engagement();
+                        debug!(
+                            full_jobs = full_job_count,
+                            retained_incremental = e.retained_flatten_incremental,
+                            retained_full = e.retained_flatten_full,
+                            authoritative_damage = e.authoritative_damage,
+                            scene_diff = e.scene_diff,
+                            blit_move = e.blit_move,
+                            blit_establish = e.blit_establish,
+                            blit_skeleton = e.blit_skeleton,
+                            "fast-path engagement"
+                        );
+                    }
                 }
             }
         }
@@ -2897,6 +3019,7 @@ impl DesktopCompositor {
         // never narrow damage, so no stale pixel survives the bypass.
         let has_authoritative = latest_job.authoritative_damage.is_some();
         let scene_damage = if has_authoritative {
+            note_authoritative_damage();
             None
         } else if latest_job.dragged_window.is_none() {
             note_scene_diff_ran();
@@ -3037,13 +3160,16 @@ impl DesktopCompositor {
                 if eligible {
                     render_window_full = true;
                     *prev_blit_window = Some((window_id, new_bounds));
+                    note_blit_establish();
                 } else {
                     *prev_blit_window = None;
+                    note_blit_skeleton();
                 }
             } else {
                 // Successful blit-move: the retained fb now holds the window at
                 // its NEW rect.
                 *prev_blit_window = Some((window_id, new_bounds));
+                note_blit_move();
             }
         } else {
             // Not a drag frame (or no new bounds) — the retained fb no longer
@@ -4465,6 +4591,97 @@ mod tests {
         assert!(
             cached_flat_nodes.is_none(),
             "authoritative frame must invalidate the prev-scene cache (clone skipped)"
+        );
+    }
+
+    #[test]
+    fn production_engagement_counters_fire_on_live_fast_path() {
+        // ANTI-DORMANCY (t192 blind spot): the production-visible atomic
+        // engagement counters MUST advance when `render_full_job` — the LIVE
+        // worker decision path — actually takes the authoritative-damage +
+        // incremental-retained-flatten fast path. This proves the counters are
+        // wired to the real decision sites, not to a `#[cfg(test)]`-only shim
+        // (the exact gap this remediation closes).
+        //
+        // The atomics are process-global, so OTHER tests running in parallel may
+        // also advance them between our snapshots. We therefore assert only that
+        // each counter STRICTLY INCREASES across a frame that provably takes that
+        // path (monotonic — never decreases), and use the thread-local diff
+        // counter (isolated to this test thread) for the diff-SKIP proof.
+        let mut renderer = RecordingRenderer::default();
+        let mut compositor =
+            Compositor::new(128, 128, 64, liquide_compositor::QualityProfile::Balanced);
+        let mut fb = None;
+        let mut tile_hash_tracker = FrameTileHashTracker::default();
+        let mut cached = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+
+        // Frame 1: a normal full frame (no authoritative damage). Establishes the
+        // framebuffer + the retained flat buffer (a full overwrite) and runs the
+        // conservative scene diff — both production counters must advance.
+        let base = warm_multi_node_scene();
+        let before_f1 = fast_path_engagement();
+        run_job(
+            job_for(base.clone(), None),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached,
+            &mut buf,
+            &mut retained,
+        );
+        let after_f1 = fast_path_engagement();
+        assert!(
+            after_f1.retained_flatten_full > before_f1.retained_flatten_full,
+            "frame 1 (no authoritative damage) must take the full retained-flatten \
+             path and bump the production counter"
+        );
+        assert!(
+            after_f1.scene_diff > before_f1.scene_diff,
+            "frame 1 must run the conservative scene_diff and bump its counter"
+        );
+
+        // Frame 2: a CONTAINED change (move node 101 only) carrying authoritative
+        // precomputed damage — the incremental fast path. Cloning the base scene
+        // preserves the kind Arcs so the structural-identity check passes and the
+        // incremental patch (not a full overwrite) is taken.
+        let mut moved = base.clone();
+        if let Some(child) = moved.children.iter_mut().find(|c| c.id == 101) {
+            child.properties.bounds.x += 4.0;
+        }
+        let mut authoritative = DamageSet::new(64);
+        authoritative.mark_tile(0, 0);
+
+        let diff_before = scene_diff_runs();
+        let before_f2 = fast_path_engagement();
+        run_job(
+            job_for(moved, Some(authoritative)),
+            &mut renderer,
+            &mut compositor,
+            &mut fb,
+            &mut tile_hash_tracker,
+            &mut cached,
+            &mut buf,
+            &mut retained,
+        );
+        let after_f2 = fast_path_engagement();
+        assert!(
+            after_f2.authoritative_damage > before_f2.authoritative_damage,
+            "an authoritative-damage frame must bump the production authoritative \
+             counter at the live decision site"
+        );
+        assert!(
+            after_f2.retained_flatten_incremental > before_f2.retained_flatten_incremental,
+            "a contained-change frame must take the incremental retained-flatten \
+             path and bump the production counter"
+        );
+        assert_eq!(
+            scene_diff_runs(),
+            diff_before,
+            "an authoritative-damage frame must NOT run the scene diff (thread-local \
+             diff counter, isolated to this test thread)"
         );
     }
 

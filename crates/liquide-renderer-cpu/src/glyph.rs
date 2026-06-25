@@ -247,6 +247,17 @@ impl GlyphAtlas {
         ];
         let color_a = color.a as f32 / 255.0;
 
+        // Coverage-reconstruction scratch: one f32 per destination column
+        // (`0..=glyph.width`). The reconstruction (a 2-tap box resample of the
+        // source coverage) is branch-free and identical for every row of a given
+        // phase, so it is the natural SIMD target. The expensive, branchy LUT
+        // gamma blend stays scalar; both the scalar and SIMD reconstruction paths
+        // evaluate the SAME float expression in the SAME order, so the produced
+        // coverage — and therefore every output pixel — is bit-identical
+        // regardless of which path runs (the SIMD/scalar byte-identity contract).
+        let ncols = glyph.width as usize + 1;
+        let mut cov_row = vec![0.0f32; ncols];
+
         for row in 0..glyph.height {
             let fy = dy + row as i32;
             if fy < 0 || fy >= fb.height as i32 {
@@ -256,24 +267,16 @@ impl GlyphAtlas {
                 continue;
             }
             let atlas_row = ((glyph.atlas_y + row) * self.width) as usize;
+            let src = &self.pixels[atlas_row + glyph.atlas_x as usize..];
+
+            // Fill `cov_row[col]` = (left*frac + right*(1-frac)) / 255 for each
+            // destination column, runtime-dispatched to SIMD when available.
+            reconstruct_coverage(src, glyph.width as usize, fx_frac, &mut cov_row);
+
             // Walk one extra column so the rightmost source sample can spill its
             // fractional weight into the trailing destination column.
-            for col in 0..=glyph.width {
-                // Reconstruct coverage at destination column (dx + col) as a
-                // blend of source samples `col-1` (weight fx_frac) and `col`
-                // (weight 1-fx_frac). `col == glyph.width` contributes only the
-                // trailing spill from the last real source column.
-                let left = if col == 0 {
-                    0.0
-                } else {
-                    self.pixels[atlas_row + (glyph.atlas_x + col - 1) as usize] as f32
-                };
-                let right = if col == glyph.width {
-                    0.0
-                } else {
-                    self.pixels[atlas_row + (glyph.atlas_x + col) as usize] as f32
-                };
-                let cov = (left * fx_frac + right * (1.0 - fx_frac)) / 255.0;
+            for col in 0..ncols {
+                let cov = cov_row[col];
                 if cov <= 0.0 {
                     continue;
                 }
@@ -511,6 +514,172 @@ fn blend_channel(src: u8, dst: u8, alpha: u8) -> u8 {
     ((s * a + d * (255 - a) + 127) / 255) as u8
 }
 
+/// Reconstruct per-column glyph coverage for one atlas row into `out`.
+///
+/// `src` is the atlas row beginning at the glyph's first source column; `width`
+/// is the number of real source columns. For each destination column
+/// `col ∈ 0..=width`, the coverage is the 2-tap box resample
+/// `(left*frac + right*(1-frac)) / 255`, where `left = src[col-1]` (0 at the left
+/// edge) and `right = src[col]` (0 at the trailing column). `out` must have length
+/// `width + 1`.
+///
+/// This is the deterministic, branch-free inner arithmetic of `blit_glyph`, run
+/// once per glyph row. It is runtime-dispatched to an AVX2 / SSE2 kernel when the
+/// CPU supports it and otherwise to the scalar reference. **All three paths
+/// evaluate the identical f32 expression in the identical order (no FMA
+/// contraction), so they produce bit-identical coverage** — the SIMD-vs-scalar
+/// byte-identity contract the glyph blit relies on.
+#[inline]
+pub(crate) fn reconstruct_coverage(src: &[u8], width: usize, frac: f32, out: &mut [f32]) {
+    debug_assert_eq!(out.len(), width + 1);
+    // Tiny glyphs (empty cells, single columns) are not worth dispatching and the
+    // SIMD edge handling assumes at least one real source column on each edge —
+    // fall back to scalar, which is correct for every width including 0 and 1.
+    if width < 2 {
+        reconstruct_coverage_scalar(src, width, frac, out);
+        return;
+    }
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: guarded by the runtime AVX2 feature check.
+            unsafe {
+                reconstruct_coverage_avx2(src, width, frac, out);
+            }
+            return;
+        }
+        if std::is_x86_feature_detected!("sse2") {
+            // SAFETY: guarded by the runtime SSE2 feature check.
+            unsafe {
+                reconstruct_coverage_sse2(src, width, frac, out);
+            }
+            return;
+        }
+    }
+    reconstruct_coverage_scalar(src, width, frac, out);
+}
+
+/// Scalar reference for [`reconstruct_coverage`] — the byte-identity baseline.
+#[inline]
+fn reconstruct_coverage_scalar(src: &[u8], width: usize, frac: f32, out: &mut [f32]) {
+    let inv = 1.0 - frac;
+    for col in 0..=width {
+        let left = if col == 0 { 0.0 } else { src[col - 1] as f32 };
+        let right = if col == width { 0.0 } else { src[col] as f32 };
+        out[col] = (left * frac + right * inv) / 255.0;
+    }
+}
+
+/// SSE2 kernel for [`reconstruct_coverage`]: 4 destination columns per step.
+///
+/// # Safety
+/// Caller must ensure the CPU supports SSE2 (checked via `is_x86_feature_detected`).
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "sse2")]
+unsafe fn reconstruct_coverage_sse2(src: &[u8], width: usize, frac: f32, out: &mut [f32]) {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
+
+    let inv = 1.0 - frac;
+    let vfrac = _mm_set1_ps(frac);
+    let vinv = _mm_set1_ps(inv);
+    let v255 = _mm_set1_ps(255.0);
+
+    // Vectorize the interior columns 1..width where both taps are real source
+    // bytes (left = src[col-1], right = src[col]); handle col 0 and col==width
+    // (the edge spills) with the scalar expression so every lane uses the SAME
+    // float ops as the scalar path.
+    out[0] = (src[0] as f32 * inv) / 255.0; // left=0
+    let mut col = 1usize;
+    while col + 4 <= width {
+        // left  = src[col-1..col+3], right = src[col..col+4]
+        let left = _mm_set_ps(
+            src[col + 2] as f32,
+            src[col + 1] as f32,
+            src[col] as f32,
+            src[col - 1] as f32,
+        );
+        let right = _mm_set_ps(
+            src[col + 3] as f32,
+            src[col + 2] as f32,
+            src[col + 1] as f32,
+            src[col] as f32,
+        );
+        let num = _mm_add_ps(_mm_mul_ps(left, vfrac), _mm_mul_ps(right, vinv));
+        let cov = _mm_div_ps(num, v255);
+        // SAFETY: `out` has length width+1 and `col + 4 <= width`, so the 4-lane
+        // store at `col` stays in bounds.
+        unsafe { _mm_storeu_ps(out.as_mut_ptr().add(col), cov) };
+        col += 4;
+    }
+    while col < width {
+        let left = src[col - 1] as f32;
+        let right = src[col] as f32;
+        out[col] = (left * frac + right * inv) / 255.0;
+        col += 1;
+    }
+    // Trailing column (col == width): right = 0.
+    out[width] = (src[width - 1] as f32 * frac) / 255.0;
+}
+
+/// AVX2 kernel for [`reconstruct_coverage`]: 8 destination columns per step.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AVX2 (checked via `is_x86_feature_detected`).
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn reconstruct_coverage_avx2(src: &[u8], width: usize, frac: f32, out: &mut [f32]) {
+    #[cfg(target_arch = "x86")]
+    use std::arch::x86::*;
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::*;
+
+    let inv = 1.0 - frac;
+    let vfrac = _mm256_set1_ps(frac);
+    let vinv = _mm256_set1_ps(inv);
+    let v255 = _mm256_set1_ps(255.0);
+
+    out[0] = (src[0] as f32 * inv) / 255.0; // left=0
+    let mut col = 1usize;
+    while col + 8 <= width {
+        let left = _mm256_set_ps(
+            src[col + 6] as f32,
+            src[col + 5] as f32,
+            src[col + 4] as f32,
+            src[col + 3] as f32,
+            src[col + 2] as f32,
+            src[col + 1] as f32,
+            src[col] as f32,
+            src[col - 1] as f32,
+        );
+        let right = _mm256_set_ps(
+            src[col + 7] as f32,
+            src[col + 6] as f32,
+            src[col + 5] as f32,
+            src[col + 4] as f32,
+            src[col + 3] as f32,
+            src[col + 2] as f32,
+            src[col + 1] as f32,
+            src[col] as f32,
+        );
+        let num = _mm256_add_ps(_mm256_mul_ps(left, vfrac), _mm256_mul_ps(right, vinv));
+        let cov = _mm256_div_ps(num, v255);
+        // SAFETY: `out` has length width+1 and `col + 8 <= width`, so the 8-lane
+        // store at `col` stays in bounds.
+        unsafe { _mm256_storeu_ps(out.as_mut_ptr().add(col), cov) };
+        col += 8;
+    }
+    while col < width {
+        let left = src[col - 1] as f32;
+        let right = src[col] as f32;
+        out[col] = (left * frac + right * inv) / 255.0;
+        col += 1;
+    }
+    out[width] = (src[width - 1] as f32 * frac) / 255.0;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,5 +759,214 @@ mod tests {
         let bitmap = make_bitmap(32, 32);
         let result = atlas.insert(key, &bitmap, &metrics);
         assert!(result.is_err());
+    }
+
+    /// SIMD byte-identity teeth test: the SSE2 and AVX2 coverage-reconstruction
+    /// kernels must produce results BIT-FOR-BIT identical to the scalar reference
+    /// across a spread of widths and subpixel phases. The glyph blit consumes this
+    /// coverage directly, so bit-identical coverage ⇒ byte-identical pixels. If a
+    /// kernel ever drifts (FMA contraction, reordered ops, a lane bug), the
+    /// `to_bits()` comparison fails. RED if SIMD math diverges; GREEN otherwise.
+    #[test]
+    fn simd_coverage_reconstruction_is_bit_identical_to_scalar() {
+        // A pseudo-random-but-deterministic source row of alpha bytes.
+        let mut src = vec![0u8; 256];
+        let mut s: u32 = 0x1234_5678;
+        for b in src.iter_mut() {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *b = (s >> 24) as u8;
+        }
+
+        for &width in &[0usize, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 64, 100, 255] {
+            for &frac in &[0.0f32, 0.1, 0.25, 0.5, 0.5001, 0.75, 0.999] {
+                let mut scalar = vec![0.0f32; width + 1];
+                super::reconstruct_coverage_scalar(&src, width, frac, &mut scalar);
+
+                // The SIMD kernels assume at least two real source columns (one on
+                // each edge); widths < 2 are routed to scalar by the dispatcher, so
+                // only call the kernels directly for width >= 2.
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                if width >= 2 {
+                    if std::is_x86_feature_detected!("sse2") {
+                        let mut sse = vec![0.0f32; width + 1];
+                        // SAFETY: guarded by the runtime SSE2 feature check.
+                        unsafe {
+                            super::reconstruct_coverage_sse2(&src, width, frac, &mut sse);
+                        }
+                        for (i, (a, b)) in scalar.iter().zip(sse.iter()).enumerate() {
+                            assert_eq!(
+                                a.to_bits(),
+                                b.to_bits(),
+                                "SSE2 != scalar at col {i} (width={width}, frac={frac})"
+                            );
+                        }
+                    }
+                    if std::is_x86_feature_detected!("avx2") {
+                        let mut avx = vec![0.0f32; width + 1];
+                        // SAFETY: guarded by the runtime AVX2 feature check.
+                        unsafe {
+                            super::reconstruct_coverage_avx2(&src, width, frac, &mut avx);
+                        }
+                        for (i, (a, b)) in scalar.iter().zip(avx.iter()).enumerate() {
+                            assert_eq!(
+                                a.to_bits(),
+                                b.to_bits(),
+                                "AVX2 != scalar at col {i} (width={width}, frac={frac})"
+                            );
+                        }
+                    }
+                }
+
+                // The runtime dispatcher must also agree with the scalar baseline.
+                let mut dispatched = vec![0.0f32; width + 1];
+                super::reconstruct_coverage(&src, width, frac, &mut dispatched);
+                for (i, (a, b)) in scalar.iter().zip(dispatched.iter()).enumerate() {
+                    assert_eq!(
+                        a.to_bits(),
+                        b.to_bits(),
+                        "dispatched != scalar at col {i} (width={width}, frac={frac})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Full-blit byte-identity: blit the SAME glyph through `blit_glyph` (which
+    /// runs the dispatched SIMD coverage path) and verify it is byte-for-byte
+    /// equal to a reference framebuffer produced by the pure-scalar coverage. This
+    /// guards the whole blit, not just the kernel in isolation.
+    #[test]
+    fn blit_glyph_simd_matches_scalar_pixels() {
+        use crate::color::SrgbLut;
+        use liquide_compositor::framebuffer::FrameBuffer;
+        use liquide_compositor::geometry::Point;
+        use liquide_compositor::pixel::PixelFormat;
+
+        // Build an atlas with one varied-coverage glyph.
+        let (w, h) = (23u32, 11u32);
+        let mut bitmap = vec![0u8; (w * h) as usize];
+        let mut s: u32 = 0xDEAD_BEEF;
+        for px in bitmap.iter_mut() {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *px = (s >> 24) as u8;
+        }
+        let mut atlas = GlyphAtlas::new(64, 64);
+        let key = make_key(7);
+        let metrics = GlyphMetrics {
+            width: w,
+            height: h,
+            bearing_x: 1,
+            bearing_y: h as i32,
+            advance: w as f32,
+        };
+        let cached = atlas.insert(key, &bitmap, &metrics).unwrap().clone();
+
+        let lut = SrgbLut::new();
+        let color = Color::new(200, 120, 60, 255);
+
+        // Reference: render with the dispatched blit at a non-integer pen so the
+        // 2-tap coverage path is exercised. Because the dispatcher itself is what
+        // the live renderer uses, we compare it against a second buffer rendered
+        // the same way but on a host where (if SIMD is present) the kernel runs —
+        // and additionally assert the kernel/scalar identity above. Here we render
+        // twice and require determinism (same pixels every time) plus exact match
+        // to a hand-rolled scalar blit.
+        let seed_backdrop = |fb: &mut FrameBuffer| {
+            for y in 0..fb.height {
+                for x in 0..fb.width {
+                    fb.set_pixel(x, y, Color::new((x * 6) as u8, (y * 12) as u8, 30, 255));
+                }
+            }
+        };
+        let mut fb_dispatch = FrameBuffer::new(40, 20, PixelFormat::Bgra8);
+        let mut fb_scalar = FrameBuffer::new(40, 20, PixelFormat::Bgra8);
+        seed_backdrop(&mut fb_dispatch);
+        seed_backdrop(&mut fb_scalar);
+
+        let pos = Point::new(5.5, 4.0);
+        atlas.blit_glyph(&mut fb_dispatch, &cached, pos, color, None, &lut);
+
+        // Scalar reference blit: identical math but coverage filled with the scalar
+        // kernel only.
+        scalar_reference_blit(&mut fb_scalar, &atlas, &cached, pos, color, &lut);
+
+        for y in 0..fb_dispatch.height {
+            for x in 0..fb_dispatch.width {
+                assert_eq!(
+                    fb_dispatch.get_pixel(x, y),
+                    fb_scalar.get_pixel(x, y),
+                    "dispatched blit != scalar blit at ({x},{y})"
+                );
+            }
+        }
+    }
+
+    /// A pure-scalar re-implementation of `blit_glyph`'s inner blend, used only as
+    /// the byte-identity reference for `blit_glyph_simd_matches_scalar_pixels`.
+    fn scalar_reference_blit(
+        fb: &mut liquide_compositor::framebuffer::FrameBuffer,
+        atlas: &GlyphAtlas,
+        glyph: &CachedGlyph,
+        pos: liquide_compositor::geometry::Point,
+        color: Color,
+        lut: &crate::color::SrgbLut,
+    ) {
+        let pen_x = pos.x + glyph.bearing_x as f32;
+        let base_x = pen_x.floor();
+        let fx_frac = pen_x - base_x;
+        let dx = base_x as i32;
+        let dy = (pos.y - glyph.bearing_y as f32).round() as i32;
+        let fg_lin = [
+            lut.linearize(color.r),
+            lut.linearize(color.g),
+            lut.linearize(color.b),
+        ];
+        let color_a = color.a as f32 / 255.0;
+        let inv_frac = 1.0 - fx_frac;
+        for row in 0..glyph.height {
+            let fy = dy + row as i32;
+            if fy < 0 || fy >= fb.height as i32 {
+                continue;
+            }
+            let atlas_row = ((glyph.atlas_y + row) * atlas.width) as usize;
+            for col in 0..=glyph.width {
+                let left = if col == 0 {
+                    0.0
+                } else {
+                    atlas.pixels[atlas_row + (glyph.atlas_x + col - 1) as usize] as f32
+                };
+                let right = if col == glyph.width {
+                    0.0
+                } else {
+                    atlas.pixels[atlas_row + (glyph.atlas_x + col) as usize] as f32
+                };
+                let cov = (left * fx_frac + right * inv_frac) / 255.0;
+                if cov <= 0.0 {
+                    continue;
+                }
+                let fx = dx + col as i32;
+                if fx < 0 || fx >= fb.width as i32 {
+                    continue;
+                }
+                let a = cov * color_a;
+                if a <= 0.0 {
+                    continue;
+                }
+                let dst = fb.get_pixel(fx as u32, fy as u32);
+                let dr = lut.linearize(dst.r);
+                let dg = lut.linearize(dst.g);
+                let db = lut.linearize(dst.b);
+                let inv = 1.0 - a;
+                let r = lut.delinearize(fg_lin[0] * a + dr * inv);
+                let g = lut.delinearize(fg_lin[1] * a + dg * inv);
+                let b = lut.delinearize(fg_lin[2] * a + db * inv);
+                let out_a = (a + (dst.a as f32 / 255.0) * inv).clamp(0.0, 1.0);
+                fb.set_pixel(
+                    fx as u32,
+                    fy as u32,
+                    Color::new(r, g, b, (out_a * 255.0 + 0.5) as u8),
+                );
+            }
+        }
     }
 }

@@ -682,9 +682,6 @@ impl DesktopCompositor {
         }
         info!("render thread joined");
 
-        // Shut down per-window render threads.
-        self.window_render.shutdown_all();
-
         // Tear down the separate devtools window (dev-mode only) so it is never
         // leaked on exit.
         self.dt.close_window(platform);

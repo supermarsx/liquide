@@ -58,7 +58,6 @@ use devtools_state::DevToolsState;
 use paint_state::PaintState;
 use render_thread::{RenderMsg, RenderedFrame};
 use tile_state::TileEncoderState;
-use window_render::WindowRenderManager;
 
 /// A single captured desktop frame returned by
 /// [`DesktopCompositor::capture_once`]. Re-exported for the visual-test harness.
@@ -163,8 +162,6 @@ pub struct DesktopCompositor {
     paint: PaintState,
     /// Render pipeline metrics (from liquide-render-coordinator).
     render_metrics: Arc<MetricsCollector>,
-    /// Per-window chrome/content render thread pairs (opt-in fault isolation).
-    window_render: WindowRenderManager,
     /// Telemetry viewer metrics registry — counters, gauges, histograms.
     viewer_metrics: MetricsRegistry,
     /// Snapshot of the most recently PRESENTED frame, retained so a host-side
@@ -293,7 +290,6 @@ impl DesktopCompositor {
             tiles: TileEncoderState::new(width, height, tile_size),
             paint: PaintState::new(),
             render_metrics: Arc::new(MetricsCollector::new()),
-            window_render: WindowRenderManager::new(),
             viewer_metrics: MetricsRegistry::with_builtins(),
             last_presented_frame: None,
             last_presented_content_hash: None,

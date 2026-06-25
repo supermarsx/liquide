@@ -1137,26 +1137,49 @@ fn capture_render_is_byte_deterministic_and_matches_quiesced_live() {
 
 #[test]
 fn renderer_options_disable_common_glyph_prewarm() {
-    let mut renderer = SoftwareRenderer::with_options(SoftwareRendererOptions {
-        glyph_prewarm: GlyphPrewarmMode::Disabled,
-    });
+    // A real font must be loaded: with the shaping rewrite, prewarming warms the
+    // SHAPED atlas keys of the resolved primary face, so a real face is required
+    // for prewarm to have anything to warm. With prewarm DISABLED only the single
+    // visible glyph ('A') is requested regardless.
+    let Some(bytes) = fixture_font_bytes() else {
+        return;
+    };
+    let mut db = FontDatabase::new();
+    db.load_bytes(bytes, "Inter", 400, false).unwrap();
+    let mut renderer = SoftwareRenderer::with_font_db_and_options(
+        db,
+        SoftwareRendererOptions {
+            glyph_prewarm: GlyphPrewarmMode::Disabled,
+        },
+    );
 
     render_text_once(&mut renderer, text_node("A", "Inter"));
 
     assert_eq!(renderer.prewarmed_font_count(), 0);
-    assert_eq!(renderer.pending_glyph_request_count(), 1);
+    assert_eq!(
+        renderer.pending_glyph_request_count(),
+        1,
+        "with prewarm disabled, only the single visible shaped glyph is requested"
+    );
 }
 
 #[test]
 fn renderer_default_options_prewarm_common_glyphs() {
-    let mut renderer = SoftwareRenderer::new();
+    // Prewarm now warms SHAPED keys (real font glyph ids of the resolved primary
+    // face), so a real font must be present for there to be glyphs to prewarm.
+    let Some(bytes) = fixture_font_bytes() else {
+        return;
+    };
+    let mut db = FontDatabase::new();
+    db.load_bytes(bytes, "Inter", 400, false).unwrap();
+    let mut renderer = SoftwareRenderer::with_font_db(db);
 
     render_text_once(&mut renderer, text_node("A", "Inter"));
 
     assert_eq!(renderer.prewarmed_font_count(), 1);
     assert!(
         renderer.pending_glyph_request_count() > 1,
-        "default prewarm should enqueue common glyphs in addition to visible text"
+        "default prewarm should enqueue common shaped glyphs in addition to visible text"
     );
 }
 
@@ -1603,16 +1626,25 @@ fn render_text_damage_overrides_bitmap_damage_on_same_tile() {
 // ── word-break / text-emphasis primitive tests ─────────────────────────
 //
 // These use a renderer with synthetically-inserted glyphs (no system font
-// dependency) so wrapping/emphasis behaviour is deterministic. An empty
-// font_family with weight 400, upright, yields the `compute_font_id` value used
-// by the text path (the single source of truth for atlas keying) and
-// glyph_height = 16, and suppresses the common-glyph prewarm path. We derive the
-// id via the same function the renderer uses so the inserted glyphs are found.
+// dependency) so wrapping/emphasis behaviour is deterministic. With the live
+// shaping path wired in, the text renderer now keys glyphs by the SHAPED atlas
+// identity: the concrete font face a glyph was shaped from (here the FALLBACK
+// face, since an empty font database resolves to it) folded via
+// `compute_shaped_font_id`, with the glyph id being the codepoint (the shaper's
+// no-font fallback maps `glyph_id = ch`). We derive the id the same way the
+// renderer does so the synthetically-inserted glyphs are found by the shaped
+// lookup. glyph_height = 16 and the empty family suppress the common-glyph
+// prewarm path.
 
 const TEST_SIZE_PX: u16 = 16;
 
 fn test_font_id() -> u32 {
-    crate::renderer::compute_font_id("", 400, false)
+    // Empty font database → primary face is FALLBACK(0); the shaped path keys on
+    // that face id, not on the family-hashed legacy id.
+    crate::renderer::compute_shaped_font_id(
+        liquide_font_rasterizer::database::FontFaceId::FALLBACK.0,
+        false,
+    )
 }
 
 /// Insert a solid square glyph of the given logical width/height with a known
@@ -1643,6 +1675,11 @@ fn insert_block_glyph(renderer: &mut SoftwareRenderer, ch: char, advance: f32) {
 }
 
 /// Insert a small mark glyph at the emphasis size (round(16 * 0.5) = 8).
+///
+/// The text-emphasis MARK is still drawn via the legacy codepoint atlas path
+/// (`compute_font_id` over the family), not the shaped path — emphasis marks are
+/// a single decorative glyph, not part of the shaped run — so it is keyed under
+/// the legacy id here.
 fn insert_mark_glyph(renderer: &mut SoftwareRenderer, ch: char) {
     let w = 4u32;
     let h = 4u32;
@@ -1651,7 +1688,7 @@ fn insert_mark_glyph(renderer: &mut SoftwareRenderer, ch: char) {
         .glyph_atlas_mut()
         .insert(
             GlyphKey {
-                font_id: test_font_id(),
+                font_id: crate::renderer::compute_font_id("", 400, false),
                 glyph_id: ch as u32,
                 size_px: 8,
                 subpixel: false,

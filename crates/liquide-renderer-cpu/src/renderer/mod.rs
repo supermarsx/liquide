@@ -12,8 +12,12 @@ mod occlusion;
 #[cfg(test)]
 pub(crate) use occlusion::{reset_cull_probe, was_culled};
 mod text;
+/// Live text shaping (rustybuzz OpenType + Unicode bidi + multi-font fallback)
+/// wired into the text-draw path. Declared from `mod.rs` (which this executor
+/// owns) so it sits beside `text.rs` rather than under a `text/` directory.
+pub(crate) mod text_shaping;
 #[cfg(test)]
-pub(crate) use text::compute_font_id;
+pub(crate) use text::{compute_font_id, compute_shaped_font_id};
 
 use std::collections::HashMap;
 
@@ -112,6 +116,34 @@ struct ClipScope {
     snapshot: Vec<Color>,
 }
 
+/// An OPEN isolated render layer (group opacity / isolation).
+///
+/// A `RenderLayer { isolate: true }` scene node marks the start of a compositing
+/// group: every node painted after it (until the layer closes) must be rendered
+/// as ONE unit and then composited a single time at the group's opacity. The flat
+/// node list carries no end-of-layer marker, so the layer is closed either when a
+/// later layer at the same/shallower nesting opens (its bounds are not contained
+/// in this one) or at the end of the node walk.
+///
+/// The isolation algorithm: on open, snapshot the window's backdrop pixels and
+/// then CLEAR the window to transparent black so the group's children composite
+/// onto an empty layer (not onto the backdrop). On close, the window holds the
+/// fully-merged group content; composite it once over the saved backdrop weighted
+/// by the group opacity. Because the children draw onto a clear layer at full
+/// alpha and the group opacity is applied exactly once at the end, overlapping
+/// children no longer double-darken the backdrop (each overlap is resolved WITHIN
+/// the layer first, then the merged result is dimmed a single time).
+struct LayerScope {
+    /// Pixel window the layer covers: (x0, y0, x1, y1) in framebuffer coords,
+    /// already clamped to the framebuffer and the active write-scissor.
+    window: (u32, u32, u32, u32),
+    /// Backdrop snapshot of `window` (row-major BGRA8, width = x1-x0), captured
+    /// before the window was cleared so the layer can be composited over it.
+    backdrop: Vec<Color>,
+    /// Group opacity in `[0, 1]` applied ONCE when the layer is composited.
+    opacity: f32,
+}
+
 /// A renderer-local structural identity for a `ClipPathKind` + bounds, used to
 /// pair a BEGIN marker with its matching APPLY marker. `ClipPathKind` does not
 /// derive `PartialEq` (and lives in `liquide-compositor`, out of this crate's
@@ -165,6 +197,15 @@ fn clip_scope_identity(
             (3, v, b)
         }
     }
+}
+
+/// Whether pixel window `inner` is fully contained within window `outer`.
+/// Windows are `(x0, y0, x1, y1)` inclusive-exclusive in framebuffer coords.
+/// Used to decide whether a newly-opened render layer is nested inside an
+/// already-open one (kept open) or is a sibling/shallower layer (closes the
+/// earlier one). A degenerate `outer` contains nothing but itself.
+fn window_contains(outer: (u32, u32, u32, u32), inner: (u32, u32, u32, u32)) -> bool {
+    outer.0 <= inner.0 && outer.1 <= inner.1 && outer.2 >= inner.2 && outer.3 >= inner.3
 }
 
 /// Upper bound (milliseconds) on how long the deterministic capture render
@@ -309,6 +350,16 @@ pub struct SoftwareRenderer {
     /// underneath it (the pre-t149 flat mask zeroed those too). Each entry holds the
     /// scope identity (to pair begin↔apply) plus the snapshot window + pixels.
     clip_scopes: Vec<ClipScope>,
+    /// Stack of OPEN isolated render layers (group opacity / isolation). A
+    /// `RenderLayer { isolate: true }` with group opacity < 1 opens a layer here:
+    /// the backdrop under the layer window is snapshotted and the window cleared
+    /// so the group's children composite onto an empty layer at full alpha. The
+    /// layer is closed (its content composited once at the group opacity over the
+    /// saved backdrop) when a later same/shallower layer opens or at walk end.
+    /// This makes overlapping children under a group opacity composite as a single
+    /// unit instead of double-darkening the backdrop (the pre-fix stub discarded
+    /// `isolate` and premultiplied each node's own alpha).
+    layer_scopes: Vec<LayerScope>,
     /// Resolved cursor appearance (CSS seam). Defaults to the historic
     /// black-outline / white-fill, node-driven shape.
     cursor_theme: cursors::CursorTheme,
@@ -389,6 +440,7 @@ impl SoftwareRenderer {
             prewarmed_fonts: std::collections::HashSet::new(),
             active_blend_mode: BlendMode::SrcOver,
             clip_scopes: Vec::new(),
+            layer_scopes: Vec::new(),
             cursor_theme: cursors::CursorTheme::default(),
             raster_clip: None,
             deterministic_blur: false,
@@ -470,46 +522,65 @@ impl SoftwareRenderer {
 
     /// Pre-warm the glyph atlas for a font by synchronously requesting
     /// common ASCII characters.
-    fn prewarm_glyphs(
+    /// Prewarm common glyphs for the SHAPED text path.
+    ///
+    /// The shaped path keys the atlas by the concrete font face id + the REAL font
+    /// glyph id (not the codepoint), so the legacy codepoint-keyed
+    /// [`prewarm_glyphs`](Self::prewarm_glyphs) would warm entries the shaped path
+    /// never reads. This resolves the run's primary face, maps each common
+    /// character to its real glyph id in that face, and requests those shaped keys
+    /// — exactly the entries the next frames' shaping will look up. Characters the
+    /// face does not cover (glyph id 0) are skipped (their fallback face is warmed
+    /// lazily when first shaped). Runs after the per-line shape so the shared
+    /// font-database lock is uncontended during shaping.
+    fn prewarm_shaped_glyphs(
         &mut self,
-        font_id: u32,
         size_px: u16,
         target_height: u32,
         font_family: &str,
         font_weight: u16,
+        italic: bool,
     ) {
         const PREWARM_CHARS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\
-             0123456789 .,;:!?-\u{2013}\u{2014}'\"()[]{}/<>@#$%^&*+=_~`|\\\u{2026}\u{2022}\u{00b7}";
-        // Latin Extended-A accented characters, common symbols, and list markers.
-        const EXTENDED_PREWARM: &str = "\
-            \u{00e0}\u{00e1}\u{00e2}\u{00e3}\u{00e4}\u{00e5}\u{00e6}\u{00e7}\
-            \u{00e8}\u{00e9}\u{00ea}\u{00eb}\u{00ec}\u{00ed}\u{00ee}\u{00ef}\
-            \u{00f0}\u{00f1}\u{00f2}\u{00f3}\u{00f4}\u{00f5}\u{00f6}\u{00f9}\
-            \u{00fa}\u{00fb}\u{00fc}\u{00fd}\u{00fe}\u{00ff}\
-            \u{00c0}\u{00c1}\u{00c2}\u{00c3}\u{00c4}\u{00c5}\u{00c6}\u{00c7}\
-            \u{00c8}\u{00c9}\u{00ca}\u{00cb}\u{00cc}\u{00cd}\u{00ce}\u{00cf}\
-            \u{00d0}\u{00d1}\u{00d2}\u{00d3}\u{00d4}\u{00d5}\u{00d6}\u{00d9}\
-            \u{00da}\u{00db}\u{00dc}\u{00dd}\u{00de}\
-            \u{20ac}\u{00a3}\u{00a5}\u{00a9}\u{00ae}\u{2122}\u{00b0}\u{00b1}\
-            \u{00d7}\u{00f7}\u{2026}\u{2014}\u{2013}\u{2018}\u{2019}\u{201c}\
-            \u{201d}\u{00ab}\u{00bb}\u{00bf}\u{00a1}\
-            \u{2022}\u{25e6}\u{25aa}\u{25b8}\u{25b9}";
-        for ch in PREWARM_CHARS.chars().chain(EXTENDED_PREWARM.chars()) {
+             0123456789 .,;:!?-'\"()[]/";
+
+        // Resolve the primary face and snapshot (char, glyph_id) pairs while
+        // holding the lock briefly, then drop the lock before enqueueing requests.
+        let face_and_glyphs: Option<(liquide_font_rasterizer::database::FontFaceId, Vec<(char, u32)>)> = {
+            use ab_glyph::Font;
+            let db = self
+                .font_worker
+                .font_db()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            db.resolve(font_family, font_weight, italic).and_then(|face_id| {
+                db.get(face_id).map(|face| {
+                    let pairs = PREWARM_CHARS
+                        .chars()
+                        .filter_map(|ch| {
+                            let gid = face.font.glyph_id(ch).0 as u32;
+                            (gid != 0).then_some((ch, gid))
+                        })
+                        .collect::<Vec<_>>();
+                    (face_id, pairs)
+                })
+            })
+        };
+
+        let Some((face_id, pairs)) = face_and_glyphs else {
+            return;
+        };
+        let font_id = text::compute_shaped_font_id(face_id.0, italic);
+        for (ch, gid) in pairs {
             let key = GlyphKey {
                 font_id,
-                glyph_id: ch as u32,
+                glyph_id: gid,
                 size_px,
                 subpixel: false,
             };
             if self.glyph_atlas.get(&key).is_none() {
-                self.font_worker.request_glyph_with_font(
-                    key,
-                    ch,
-                    target_height,
-                    font_family.to_string(),
-                    font_weight,
-                    false,
-                );
+                self.font_worker
+                    .request_shaped_glyph(key, face_id, ch, target_height);
             }
         }
     }
@@ -1308,6 +1379,9 @@ impl SoftwareRenderer {
         // markers are balanced within a frame; clearing here also guards against
         // an unbalanced list leaking a snapshot into the next frame.
         self.clip_scopes.clear();
+        // Likewise start with no open render layers; any opened during the walk
+        // are drained (composited) by `finish_layers` after the loop.
+        self.layer_scopes.clear();
 
         for (i, node) in nodes.iter().enumerate() {
             // Skip nodes completely outside the damage bounding box.
@@ -1337,6 +1411,12 @@ impl SoftwareRenderer {
 
             self.render_node_with_lod(node, fb, lod_level);
         }
+
+        // Composite any still-open isolated render layers (group opacity) once,
+        // innermost first, over their saved backdrops. The flat node list has no
+        // end-of-layer marker, so layers that were not closed by a later
+        // same/shallower layer are closed here at walk end.
+        self.finish_layers(fb);
     }
 
     fn classify_damage_tiles(
@@ -1777,11 +1857,18 @@ impl SoftwareRenderer {
             } => {
                 // Unconditionally set the blend mode so that a normal
                 // (SrcOver) layer resets the mode after a previous
-                // non-default layer.  True isolation would require
-                // rendering children into a temp buffer, but the flat
-                // node list has no end-of-layer marker.
+                // non-default layer.
                 self.active_blend_mode = *blend_mode;
-                let _ = isolate;
+
+                // Isolated group with group opacity < 1: open an offscreen layer
+                // so the group's children composite as a single unit and are
+                // dimmed exactly once (no double-darkening of overlaps). A fully
+                // opaque isolated group is a visual no-op for compositing (the
+                // merged content equals painting the children directly), so we
+                // only pay the snapshot/clear cost when opacity actually matters.
+                if *isolate && opacity < 0.999 {
+                    self.open_layer(&bounds, opacity, fb);
+                }
             }
 
             SceneNodeKind::Border { .. } => {
@@ -1851,6 +1938,132 @@ impl SoftwareRenderer {
                     }
                 }
             }
+        }
+    }
+
+    /// Compute the framebuffer pixel window a layer/effect covers, clamped to the
+    /// framebuffer and the active write-scissor. Returns `None` for an empty window.
+    fn clamped_window(&self, bounds: &Rect, fb: &FrameBuffer) -> Option<(u32, u32, u32, u32)> {
+        let x0 = (bounds.x.max(0.0) as u32).min(fb.width);
+        let y0 = (bounds.y.max(0.0) as u32).min(fb.height);
+        let x1 = (bounds.right().ceil() as u32).min(fb.width);
+        let y1 = (bounds.bottom().ceil() as u32).min(fb.height);
+        let (x0, y0, x1, y1) = rasterizer::scissor_clamp_window(x0, y0, x1, y1);
+        if x0 >= x1 || y0 >= y1 {
+            None
+        } else {
+            Some((x0, y0, x1, y1))
+        }
+    }
+
+    /// Open an isolated render layer for group opacity (see [`LayerScope`]).
+    ///
+    /// Before opening, any currently-open layers whose window does NOT contain the
+    /// new layer's window are closed first — they are siblings/ancestors that have
+    /// ended (the flat list has no end marker, so a new same/shallower layer is the
+    /// signal that earlier ones are finished). Then the backdrop under the new
+    /// layer's window is snapshotted and the window cleared to transparent black so
+    /// the group's children composite onto an empty layer.
+    fn open_layer(&mut self, bounds: &Rect, opacity: f32, fb: &mut FrameBuffer) {
+        let Some(window) = self.clamped_window(bounds, fb) else {
+            return;
+        };
+
+        // Close any open layers that this new layer is NOT nested inside (their
+        // content has ended). Containment is by pixel window.
+        while let Some(top) = self.layer_scopes.last() {
+            if window_contains(top.window, window) {
+                break;
+            }
+            self.close_top_layer(fb);
+        }
+
+        let (x0, y0, x1, y1) = window;
+        let w = (x1 - x0) as usize;
+        let h = (y1 - y0) as usize;
+        let mut backdrop = Vec::with_capacity(w * h);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                backdrop.push(fb.get_pixel(x, y));
+            }
+        }
+        // Clear the window so the group's children composite onto an empty layer.
+        let clear = Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
+        for y in y0..y1 {
+            for x in x0..x1 {
+                fb.set_pixel(x, y, clear);
+            }
+        }
+        self.layer_scopes.push(LayerScope {
+            window,
+            backdrop,
+            opacity: opacity.clamp(0.0, 1.0),
+        });
+    }
+
+    /// Close (composite) the top open layer: blend the layer's merged content over
+    /// its saved backdrop a single time, weighted by the group opacity. The window
+    /// after this holds `backdrop  SrcOver  (layer * group_opacity)`.
+    fn close_top_layer(&mut self, fb: &mut FrameBuffer) {
+        let Some(scope) = self.layer_scopes.pop() else {
+            return;
+        };
+        let (x0, y0, x1, _y1) = scope.window;
+        let w = (x1 - x0) as usize;
+        for y in y0..scope.window.3 {
+            for x in x0..x1 {
+                let layer = fb.get_pixel(x, y);
+                let idx = (y - y0) as usize * w + (x - x0) as usize;
+                let back = scope.backdrop.get(idx).copied().unwrap_or(Color {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 0,
+                });
+                // SrcOver of the isolated layer (scaled by group opacity) over the
+                // saved backdrop. The layer is straight-alpha BGRA; scaling its
+                // alpha by the group opacity dims the whole group once. Channels
+                // are straight (non-premultiplied), so blend channels with the
+                // effective source alpha.
+                let sa = (layer.a as f32 / 255.0) * scope.opacity;
+                if sa <= 0.0 {
+                    // Layer contributed nothing here: restore the backdrop verbatim.
+                    fb.set_pixel(x, y, back);
+                    continue;
+                }
+                let inv = 1.0 - sa;
+                let ba = back.a as f32 / 255.0;
+                let out_a = sa + ba * inv;
+                let mix = |s: u8, d: u8| -> u8 {
+                    // Straight-alpha SrcOver: out = (s*sa + d*da*inv) / out_a.
+                    let num = s as f32 * sa + d as f32 * ba * inv;
+                    if out_a <= 0.0 {
+                        0
+                    } else {
+                        (num / out_a + 0.5).clamp(0.0, 255.0) as u8
+                    }
+                };
+                let out = Color {
+                    r: mix(layer.r, back.r),
+                    g: mix(layer.g, back.g),
+                    b: mix(layer.b, back.b),
+                    a: (out_a * 255.0 + 0.5).clamp(0.0, 255.0) as u8,
+                };
+                fb.set_pixel(x, y, out);
+            }
+        }
+    }
+
+    /// Close every open render layer (innermost first). Called at the end of the
+    /// node walk so no layer leaks past the frame.
+    fn finish_layers(&mut self, fb: &mut FrameBuffer) {
+        while !self.layer_scopes.is_empty() {
+            self.close_top_layer(fb);
         }
     }
 

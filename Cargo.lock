@@ -4036,6 +4036,7 @@ dependencies = [
 name = "liquide-renderer-cpu"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "criterion",
  "image",
  "liquide-common",
@@ -4146,7 +4147,6 @@ dependencies = [
  "liquide-components",
  "liquide-compositor",
  "liquide-cursor",
- "liquide-cursor-vector",
  "liquide-devtools",
  "liquide-display",
  "liquide-dom",

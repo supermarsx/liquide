@@ -9,6 +9,7 @@ use crate::glyph::GlyphKey;
 use crate::rasterizer;
 
 use super::{SoftwareRenderer, WordSplitter};
+use super::text_shaping::{self, ShapedRunGlyph};
 
 /// Derive a collision-resistant 32-bit `font_id` from a (family, weight,
 /// italic) tuple for use as the `GlyphKey::font_id` discriminator.
@@ -32,6 +33,30 @@ pub(crate) fn compute_font_id(font_family: &str, font_weight: u16, italic: bool)
     h = (h ^ 0xFF).wrapping_mul(FNV_PRIME);
     h = (h ^ (font_weight as u32 & 0xFF)).wrapping_mul(FNV_PRIME);
     h = (h ^ ((font_weight as u32 >> 8) & 0xFF)).wrapping_mul(FNV_PRIME);
+    h = (h ^ u32::from(italic)).wrapping_mul(FNV_PRIME);
+    h
+}
+
+/// Derive an atlas `font_id` for a SHAPED glyph keyed on the concrete font face
+/// it was rasterized from.
+///
+/// Shaped glyphs are keyed by their REAL font glyph id (not codepoint), and
+/// per-glyph fallback means two glyphs in one run may come from different faces.
+/// The atlas `font_id` must therefore distinguish (a) the exact face a glyph came
+/// from, and (b) shaped entries from the legacy codepoint-keyed entries (whose
+/// `font_id` comes from [`compute_font_id`] over a family string). We fold the
+/// raw `FontFaceId` through FNV-1a with a distinct domain tag so a shaped glyph id
+/// `N` from face `F` never aliases a legacy codepoint entry, and two faces never
+/// share an id. Pure function of its inputs → stable across runs (determinism).
+pub(crate) fn compute_shaped_font_id(face_raw: u32, italic: bool) -> u32 {
+    const FNV_OFFSET: u32 = 0x811c_9dc5;
+    const FNV_PRIME: u32 = 0x0100_0193;
+    let mut h = FNV_OFFSET;
+    // Domain tag distinguishing shaped entries from family-hashed legacy entries.
+    h = (h ^ 0x5A).wrapping_mul(FNV_PRIME);
+    for b in face_raw.to_le_bytes() {
+        h = (h ^ b as u32).wrapping_mul(FNV_PRIME);
+    }
     h = (h ^ u32::from(italic)).wrapping_mul(FNV_PRIME);
     h
 }
@@ -120,8 +145,6 @@ impl SoftwareRenderer {
             let font_id = compute_font_id(font_family, *font_weight, *font_style_italic);
 
             let size_px = glyph_height as u16;
-            #[allow(unused_assignments)]
-            let mut pen_x = bounds.x + text_indent;
             let mut pen_y = bounds.y;
             let line_h = if *line_height > 0.0 {
                 *line_height
@@ -130,43 +153,19 @@ impl SoftwareRenderer {
             };
 
             // Pre-warm common glyphs when enabled for this renderer.
-            // Prewarm only upright runs: the prewarm path requests glyphs with
-            // italic=false, so an italic-flagged font_id must not be prewarmed
-            // (it would seed upright glyphs under an italic key).
-            let prewarm_key = (font_id, size_px);
-            if self.common_glyph_prewarm_enabled()
-                && !font_family.is_empty()
-                && !*font_style_italic
-                && !self.prewarmed_fonts.contains(&prewarm_key)
-            {
-                self.prewarmed_fonts.insert(prewarm_key);
-                self.prewarm_glyphs(font_id, size_px, glyph_height, font_family, *font_weight);
-            }
+            // NOTE: common-glyph prewarming is deferred until AFTER this run's
+            // lines are shaped (see below). Prewarming enqueues async glyph
+            // rasterizations that make the font worker grab the shared font-database
+            // lock; shaping also needs that lock, so prewarming FIRST would make the
+            // shape step block behind the worker on the first text frame (a
+            // multi-millisecond stall on the live present path). Shaping first —
+            // while the worker is still idle — keeps the lock uncontended.
 
-            // First pass: request missing glyphs
-            for ch in render_text.chars() {
-                if ch == '\n' || ch == '\r' {
-                    continue;
-                }
-                let glyph_id = ch as u32;
-                let key = GlyphKey {
-                    font_id,
-                    glyph_id,
-                    size_px,
-                    subpixel: false,
-                };
-                if self.glyph_atlas.get(&key).is_none() {
-                    self.has_pending_glyphs = true;
-                    self.font_worker.request_glyph_with_font(
-                        key,
-                        ch,
-                        glyph_height,
-                        font_family.clone(),
-                        *font_weight,
-                        *font_style_italic,
-                    );
-                }
-            }
+            // Glyph requesting for the main text is handled per-line by the shaped
+            // render path below (it shapes each visual line and requests each
+            // SHAPED glyph id from its concrete face). The legacy per-codepoint
+            // request loop is gone — it could not request ligature/substituted or
+            // fallback-face glyph ids.
 
             // text-emphasis: marks are rendered as glyphs at ~50% of the text
             // size. Request the mark glyph up-front so it is in the atlas by the
@@ -314,7 +313,101 @@ impl SoftwareRenderer {
 
                 num_wrapped_lines = wrapped_lines.len().max(1);
 
-                // Render text shadows BEFORE the main text (CSS: shadows behind text)
+                // ── Shape each visual line ONCE via the rustybuzz/bidi engine ──
+                //
+                // This is the live shaping seam: each wrapped line is shaped with
+                // OpenType (kerning/ligatures/contextual) + the Unicode bidi
+                // algorithm + per-glyph multi-font fallback, producing glyphs in
+                // VISUAL left-to-right order (so RTL renders right-to-left). The
+                // shaped advances drive alignment and the shaped glyph ids/faces
+                // drive atlas keying + rasterization. Shaping is a pure function of
+                // (text, font database), so the result is identical run-to-run.
+                let mut shaped_lines: Vec<(Vec<ShapedRunGlyph>, f32)> =
+                    Vec::with_capacity(wrapped_lines.len());
+                {
+                    let db = self
+                        .font_worker
+                        .font_db()
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    for line_text in &wrapped_lines {
+                        // Drop a stray CR; shaping operates on the visual line text.
+                        let clean: String = line_text.chars().filter(|&c| c != '\r').collect();
+                        let shaped = text_shaping::shape_line(
+                            &db,
+                            &clean,
+                            font_family,
+                            glyph_height as f32,
+                            *font_weight,
+                            *font_style_italic,
+                            *letter_spacing,
+                            *word_spacing,
+                        );
+                        shaped_lines.push(shaped);
+                    }
+                }
+
+                // Common-glyph prewarm: warm the SHAPED atlas keys for the run's
+                // primary face so a freshly-seen (family, size) seeds the common
+                // ASCII/Latin glyphs the next frames will use, without re-requesting
+                // per frame. This runs AFTER shaping so the font-database lock is
+                // uncontended during shape (prewarm enqueues async rasterizations
+                // that make the worker grab the same lock). Prewarm only upright
+                // runs (the prewarm path requests italic=false glyphs).
+                let prewarm_key = (font_id, size_px);
+                if self.common_glyph_prewarm_enabled()
+                    && !font_family.is_empty()
+                    && !*font_style_italic
+                    && !self.prewarmed_fonts.contains(&prewarm_key)
+                {
+                    self.prewarmed_fonts.insert(prewarm_key);
+                    self.prewarm_shaped_glyphs(
+                        size_px,
+                        glyph_height,
+                        font_family,
+                        *font_weight,
+                        *font_style_italic,
+                    );
+                }
+
+                // Request every shaped glyph by its REAL id from its concrete face,
+                // so ligature/substituted/fallback glyphs reach the atlas. Whitespace
+                // glyphs with no outline still get requested (the rasterizer returns
+                // an empty bitmap with the correct advance — harmless, and keyed so
+                // we don't re-request). The `font_size` (not the ceil'd glyph_height)
+                // is the shaping size; the atlas key size is the integer cell height.
+                for (glyphs, _w) in &shaped_lines {
+                    for g in glyphs {
+                        let key = GlyphKey {
+                            font_id: compute_shaped_font_id(g.face_id.0, *font_style_italic),
+                            glyph_id: g.glyph_id,
+                            size_px,
+                            subpixel: false,
+                        };
+                        if self.glyph_atlas.get(&key).is_none() {
+                            self.has_pending_glyphs = true;
+                            self.font_worker.request_shaped_glyph(
+                                key,
+                                g.face_id,
+                                g.codepoint,
+                                glyph_height,
+                            );
+                        }
+                    }
+                }
+
+                // Helper: align offset for a shaped line of width `lw`.
+                let align_offset = |lw: f32, is_first: bool| -> f32 {
+                    let indent = if is_first { *text_indent } else { 0.0 };
+                    let base = match text_align {
+                        1 => ((bounds.width - lw) / 2.0).max(0.0),
+                        2 => (bounds.width - lw).max(0.0),
+                        _ => 0.0,
+                    };
+                    base + indent
+                };
+
+                // ── Text shadows BEFORE the main text (CSS: shadows behind text) ──
                 if !text_shadows.is_empty() {
                     for shadow in text_shadows {
                         let mut shadow_c = shadow.color;
@@ -327,56 +420,24 @@ impl SoftwareRenderer {
                         let sx = shadow.offset_x;
                         let sy = shadow.offset_y;
                         let mut s_pen_y = bounds.y + sy;
-                        let mut s_first = true;
-                        for s_line in &wrapped_lines {
-                            // Measure line for alignment
-                            let mut lw = 0.0f32;
-                            if s_first {
-                                lw += text_indent;
-                            }
-                            for ch in s_line.chars() {
-                                if ch == '\r' {
-                                    continue;
-                                }
+                        for (i, (glyphs, lw)) in shaped_lines.iter().enumerate() {
+                            let ax = align_offset(*lw, i == 0);
+                            let line_x = bounds.x + ax + sx;
+                            for g in glyphs {
                                 let key = GlyphKey {
-                                    font_id,
-                                    glyph_id: ch as u32,
-                                    size_px,
-                                    subpixel: false,
-                                };
-                                let base = if let Some(cached) = self.glyph_atlas.get(&key) {
-                                    cached.advance
-                                } else {
-                                    estimated_advance
-                                };
-                                let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                                lw += base + *letter_spacing + extra;
-                            }
-                            let ax = match text_align {
-                                1 => ((bounds.width - lw) / 2.0).max(0.0),
-                                2 => (bounds.width - lw).max(0.0),
-                                _ => 0.0,
-                            };
-                            let mut s_pen_x = bounds.x + ax + sx;
-                            if s_first {
-                                s_pen_x += text_indent;
-                            }
-                            for ch in s_line.chars() {
-                                if ch == '\r' {
-                                    continue;
-                                }
-                                let key = GlyphKey {
-                                    font_id,
-                                    glyph_id: ch as u32,
+                                    font_id: compute_shaped_font_id(
+                                        g.face_id.0,
+                                        *font_style_italic,
+                                    ),
+                                    glyph_id: g.glyph_id,
                                     size_px,
                                     subpixel: false,
                                 };
                                 if let Some(cached) = self.glyph_atlas.get(&key) {
                                     let pos = liquide_compositor::geometry::Point::new(
-                                        s_pen_x,
+                                        line_x + g.x,
                                         s_pen_y + glyph_height as f32,
                                     );
-                                    let advance = cached.advance;
                                     self.glyph_atlas.blit_glyph(
                                         fb,
                                         cached,
@@ -385,77 +446,48 @@ impl SoftwareRenderer {
                                         clip,
                                         &self.srgb_lut,
                                     );
-                                    let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                                    s_pen_x += advance + *letter_spacing + extra;
-                                } else {
-                                    let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                                    s_pen_x += estimated_advance + *letter_spacing + extra;
                                 }
                             }
                             s_pen_y += line_h;
-                            s_first = false;
                         }
                     }
                 }
 
-                let mut is_first_line = true;
-                for line_text in &wrapped_lines {
-                    // Measure line width for alignment
-                    let mut line_width = 0.0f32;
-                    if is_first_line {
-                        line_width += text_indent;
-                    }
-                    for ch in line_text.chars() {
-                        if ch == '\r' {
-                            continue;
-                        }
-                        let key = GlyphKey {
-                            font_id,
-                            glyph_id: ch as u32,
-                            size_px,
-                            subpixel: false,
-                        };
-                        if let Some(cached) = self.glyph_atlas.get(&key) {
-                            let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                            line_width += cached.advance + *letter_spacing + extra;
-                        } else {
-                            let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                            line_width += estimated_advance + *letter_spacing + extra;
-                        }
-                    }
+                // ── Main shaped text pass ──
+                let max_x = bounds.x + bounds.width;
+                for (i, (glyphs, lw)) in shaped_lines.iter().enumerate() {
+                    let is_first_line = i == 0;
+                    let ax = align_offset(*lw, is_first_line);
+                    let line_x = bounds.x + ax;
+                    // Text overflow: ellipsis (1) when the shaped line exceeds the box.
+                    let use_ellipsis = *text_overflow == 1 && *lw > bounds.width;
 
-                    // Text-align offset: 0=left, 1=center, 2=right, 3=justify
-                    let align_x = match text_align {
-                        1 => ((bounds.width - line_width) / 2.0).max(0.0),
-                        2 => (bounds.width - line_width).max(0.0),
-                        _ => 0.0,
-                    };
-
-                    pen_x = bounds.x + align_x;
-                    if is_first_line {
-                        pen_x += text_indent;
-                    }
-
-                    // Text overflow: ellipsis (1)
-                    let max_x = bounds.x + bounds.width;
-                    let use_ellipsis = *text_overflow == 1 && line_width > bounds.width;
-
-                    for ch in line_text.chars() {
-                        if ch == '\r' {
-                            continue;
-                        }
-
-                        // Ellipsis check
-                        if use_ellipsis && pen_x + glyph_height as f32 * 0.6 > max_x {
+                    for g in glyphs {
+                        let gx = line_x + g.x;
+                        // Ellipsis: stop and draw "…" once we near the right edge.
+                        if use_ellipsis && gx + glyph_height as f32 * 0.6 > max_x {
                             let ellipsis_key = GlyphKey {
                                 font_id,
                                 glyph_id: '\u{2026}' as u32,
                                 size_px,
                                 subpixel: false,
                             };
+                            // Request the ellipsis from the legacy codepoint path so
+                            // it is available regardless of shaping.
+                            if self.glyph_atlas.get(&ellipsis_key).is_none() {
+                                self.has_pending_glyphs = true;
+                                self.font_worker.request_glyph_with_font(
+                                    ellipsis_key,
+                                    '\u{2026}',
+                                    glyph_height,
+                                    font_family.clone(),
+                                    *font_weight,
+                                    *font_style_italic,
+                                );
+                            }
                             if let Some(cached) = self.glyph_atlas.get(&ellipsis_key) {
                                 let pos = liquide_compositor::geometry::Point::new(
-                                    pen_x,
+                                    gx,
                                     pen_y + glyph_height as f32,
                                 );
                                 self.glyph_atlas.blit_glyph(
@@ -471,25 +503,25 @@ impl SoftwareRenderer {
                         }
 
                         let key = GlyphKey {
-                            font_id,
-                            glyph_id: ch as u32,
+                            font_id: compute_shaped_font_id(g.face_id.0, *font_style_italic),
+                            glyph_id: g.glyph_id,
                             size_px,
                             subpixel: false,
                         };
                         if let Some(cached) = self.glyph_atlas.get(&key) {
                             let pos = liquide_compositor::geometry::Point::new(
-                                pen_x,
+                                gx,
                                 pen_y + glyph_height as f32,
                             );
                             let advance = cached.advance;
                             self.glyph_atlas
                                 .blit_glyph(fb, cached, pos, c, clip, &self.srgb_lut);
 
-                            // text-emphasis: draw the mark centered over (or
-                            // under) this character. Skip whitespace — emphasis
-                            // marks are not drawn on separators (CSS Text Deco 3).
+                            // text-emphasis: draw the mark centered over (or under)
+                            // each non-space glyph. Skip whitespace — emphasis marks
+                            // are not drawn on separators (CSS Text Deco 3).
                             if let Some(emph) = text_emphasis {
-                                if !ch.is_whitespace() {
+                                if !g.codepoint.is_whitespace() {
                                     if let Some(mark_ch) = emph.mark.chars().next() {
                                         let mark_key = GlyphKey {
                                             font_id,
@@ -502,22 +534,12 @@ impl SoftwareRenderer {
                                             if opacity < 1.0 {
                                                 mc.a = (mc.a as f32 * opacity + 0.5) as u8;
                                             }
-                                            // Center the mark over the character cell.
                                             let mark_x =
-                                                pen_x + (advance - mark_glyph.advance) * 0.5;
+                                                gx + (advance - mark_glyph.advance) * 0.5;
                                             use liquide_compositor::scene::TextEmphasisPosition;
                                             let mark_y = match emph.position {
-                                                TextEmphasisPosition::Over => {
-                                                    // Marks sit above the text top.
-                                                    // The glyph cell occupies
-                                                    // [pen_y, pen_y + glyph_height];
-                                                    // place the mark baseline at the
-                                                    // line top so it renders just above.
-                                                    pen_y
-                                                }
+                                                TextEmphasisPosition::Over => pen_y,
                                                 TextEmphasisPosition::Under => {
-                                                    // Below the descender: baseline
-                                                    // one mark-height under the cell.
                                                     pen_y
                                                         + glyph_height as f32
                                                         + emphasis_height as f32
@@ -538,16 +560,9 @@ impl SoftwareRenderer {
                                     }
                                 }
                             }
-
-                            let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                            pen_x += advance + *letter_spacing + extra;
-                        } else {
-                            let extra = if ch == ' ' { *word_spacing } else { 0.0 };
-                            pen_x += estimated_advance + *letter_spacing + extra;
                         }
                     }
                     pen_y += line_h;
-                    is_first_line = false;
                 }
             }
 
