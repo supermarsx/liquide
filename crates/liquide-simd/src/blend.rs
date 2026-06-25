@@ -268,6 +268,9 @@ pub fn blend_scanline_multiply(dst: &mut [u8], src: &[u8]) {
 
     #[cfg(target_arch = "x86_64")]
     {
+        if crate::detect::has_avx512() {
+            unsafe { return blend_scanline_multiply_avx512(dst, src) }
+        }
         if crate::detect::has_avx2() {
             unsafe { return blend_scanline_multiply_avx2(dst, src) }
         }
@@ -422,6 +425,115 @@ unsafe fn blend_scanline_multiply_sse2(dst: &mut [u8], src: &[u8]) {
 
     if offset < len {
         blend_scanline_multiply_scalar(&mut dst[offset..], &src[offset..]);
+    }
+}
+
+/// AVX-512 premultiplied-alpha Multiply: 16 BGRA pixels per iteration.
+///
+/// Byte-identical to [`blend_scanline_multiply_avx2`] / SSE2: every lane runs
+/// the same `div255` (`(x+128 + ((x+128)>>8)) >> 8`) per term, same alpha merge.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn blend_scanline_multiply_avx512(dst: &mut [u8], src: &[u8]) {
+    use std::arch::x86_64::*;
+
+    let len = dst.len();
+    let chunks = len / 64; // 16 pixels = 64 bytes
+    let mut offset = 0;
+
+    let zero = _mm512_setzero_si512();
+    let all_ff = _mm512_set1_epi16(0x00FF);
+    let half = _mm512_set1_epi16(128);
+    // Alpha lanes repeat per 128-bit lane: lane 3 and 7 within each unpacked half.
+    #[rustfmt::skip]
+    let alpha_mask = _mm512_set_epi16(
+        -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0,
+        -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0,
+    );
+
+    for _ in 0..chunks {
+        let d_ptr = dst.as_mut_ptr().add(offset) as *mut __m512i;
+        let s_ptr = src.as_ptr().add(offset) as *const __m512i;
+
+        let s_packed = _mm512_loadu_si512(s_ptr);
+        let d_packed = _mm512_loadu_si512(d_ptr);
+
+        let s_lo = _mm512_unpacklo_epi8(s_packed, zero);
+        let s_hi = _mm512_unpackhi_epi8(s_packed, zero);
+        let d_lo = _mm512_unpacklo_epi8(d_packed, zero);
+        let d_hi = _mm512_unpackhi_epi8(d_packed, zero);
+
+        let sa_lo = _mm512_shufflehi_epi16::<0xFF>(_mm512_shufflelo_epi16::<0xFF>(s_lo));
+        let sa_hi = _mm512_shufflehi_epi16::<0xFF>(_mm512_shufflelo_epi16::<0xFF>(s_hi));
+        let da_lo = _mm512_shufflehi_epi16::<0xFF>(_mm512_shufflelo_epi16::<0xFF>(d_lo));
+        let da_hi = _mm512_shufflehi_epi16::<0xFF>(_mm512_shufflelo_epi16::<0xFF>(d_hi));
+
+        let inv_sa_lo = _mm512_sub_epi16(all_ff, sa_lo);
+        let inv_sa_hi = _mm512_sub_epi16(all_ff, sa_hi);
+        let inv_da_lo = _mm512_sub_epi16(all_ff, da_lo);
+        let inv_da_hi = _mm512_sub_epi16(all_ff, da_hi);
+
+        // term1 = div255(s * d)
+        let sd_lo = _mm512_mullo_epi16(s_lo, d_lo);
+        let sd_hi = _mm512_mullo_epi16(s_hi, d_hi);
+        let b1_lo = _mm512_add_epi16(sd_lo, half);
+        let b1_hi = _mm512_add_epi16(sd_hi, half);
+        let t1_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(b1_lo, _mm512_srli_epi16::<8>(b1_lo)));
+        let t1_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(b1_hi, _mm512_srli_epi16::<8>(b1_hi)));
+
+        // term2 = div255(s * inv_da)
+        let s_invda_lo = _mm512_mullo_epi16(s_lo, inv_da_lo);
+        let s_invda_hi = _mm512_mullo_epi16(s_hi, inv_da_hi);
+        let b2_lo = _mm512_add_epi16(s_invda_lo, half);
+        let b2_hi = _mm512_add_epi16(s_invda_hi, half);
+        let t2_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(b2_lo, _mm512_srli_epi16::<8>(b2_lo)));
+        let t2_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(b2_hi, _mm512_srli_epi16::<8>(b2_hi)));
+
+        // term3 = div255(d * inv_sa)
+        let d_invsa_lo = _mm512_mullo_epi16(d_lo, inv_sa_lo);
+        let d_invsa_hi = _mm512_mullo_epi16(d_hi, inv_sa_hi);
+        let b3_lo = _mm512_add_epi16(d_invsa_lo, half);
+        let b3_hi = _mm512_add_epi16(d_invsa_hi, half);
+        let t3_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(b3_lo, _mm512_srli_epi16::<8>(b3_lo)));
+        let t3_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(b3_hi, _mm512_srli_epi16::<8>(b3_hi)));
+
+        let rgb_lo = _mm512_add_epi16(_mm512_add_epi16(t1_lo, t2_lo), t3_lo);
+        let rgb_hi = _mm512_add_epi16(_mm512_add_epi16(t1_hi, t2_hi), t3_hi);
+
+        // Alpha: sa + da - (sa*da + 128)/255
+        let sa_da_lo = _mm512_mullo_epi16(sa_lo, da_lo);
+        let sa_da_hi = _mm512_mullo_epi16(sa_hi, da_hi);
+        let a_biased_lo = _mm512_add_epi16(sa_da_lo, half);
+        let a_biased_hi = _mm512_add_epi16(sa_da_hi, half);
+        let a_div_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            a_biased_lo,
+            _mm512_srli_epi16::<8>(a_biased_lo),
+        ));
+        let a_div_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            a_biased_hi,
+            _mm512_srli_epi16::<8>(a_biased_hi),
+        ));
+        let alpha_lo = _mm512_sub_epi16(_mm512_add_epi16(sa_lo, da_lo), a_div_lo);
+        let alpha_hi = _mm512_sub_epi16(_mm512_add_epi16(sa_hi, da_hi), a_div_hi);
+
+        let out_lo = _mm512_or_si512(
+            _mm512_and_si512(alpha_mask, alpha_lo),
+            _mm512_andnot_si512(alpha_mask, rgb_lo),
+        );
+        let out_hi = _mm512_or_si512(
+            _mm512_and_si512(alpha_mask, alpha_hi),
+            _mm512_andnot_si512(alpha_mask, rgb_hi),
+        );
+
+        let result = _mm512_packus_epi16(out_lo, out_hi);
+        _mm512_storeu_si512(d_ptr, result);
+
+        offset += 64;
+    }
+
+    // Fall through to AVX2 for remaining pixels
+    if offset < len {
+        blend_scanline_multiply_avx2(&mut dst[offset..], &src[offset..]);
     }
 }
 
@@ -760,6 +872,9 @@ pub fn blend_scanline_screen(dst: &mut [u8], src: &[u8]) {
 
     #[cfg(target_arch = "x86_64")]
     {
+        if crate::detect::has_avx512() {
+            unsafe { return blend_scanline_screen_avx512(dst, src) }
+        }
         if crate::detect::has_avx2() {
             unsafe { return blend_scanline_screen_avx2(dst, src) }
         }
@@ -827,6 +942,66 @@ unsafe fn blend_scanline_screen_sse2(dst: &mut [u8], src: &[u8]) {
 
     if offset < len {
         blend_scanline_screen_scalar(&mut dst[offset..], &src[offset..]);
+    }
+}
+
+/// AVX-512 Screen blend: 16 BGRA pixels per iteration.
+///
+/// Byte-identical to the AVX2 / SSE2 path: same `s*d/255` rounding and
+/// `s + d - (s*d/255)` per lane.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn blend_scanline_screen_avx512(dst: &mut [u8], src: &[u8]) {
+    use std::arch::x86_64::*;
+
+    let len = dst.len();
+    let chunks = len / 64;
+    let mut offset = 0;
+
+    let zero = _mm512_setzero_si512();
+    let half = _mm512_set1_epi16(128);
+
+    for _ in 0..chunks {
+        let d_ptr = dst.as_mut_ptr().add(offset) as *mut __m512i;
+        let s_ptr = src.as_ptr().add(offset) as *const __m512i;
+
+        let s = _mm512_loadu_si512(s_ptr);
+        let d = _mm512_loadu_si512(d_ptr);
+
+        let s_lo = _mm512_unpacklo_epi8(s, zero);
+        let s_hi = _mm512_unpackhi_epi8(s, zero);
+        let d_lo = _mm512_unpacklo_epi8(d, zero);
+        let d_hi = _mm512_unpackhi_epi8(d, zero);
+
+        // s * d / 255
+        let prod_lo = _mm512_mullo_epi16(s_lo, d_lo);
+        let prod_hi = _mm512_mullo_epi16(s_hi, d_hi);
+        let biased_lo = _mm512_add_epi16(prod_lo, half);
+        let biased_hi = _mm512_add_epi16(prod_hi, half);
+        let div_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_lo,
+            _mm512_srli_epi16::<8>(biased_lo),
+        ));
+        let div_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_hi,
+            _mm512_srli_epi16::<8>(biased_hi),
+        ));
+
+        // s + d - (s * d / 255)
+        let sum_lo = _mm512_add_epi16(s_lo, d_lo);
+        let sum_hi = _mm512_add_epi16(s_hi, d_hi);
+        let out_lo = _mm512_sub_epi16(sum_lo, div_lo);
+        let out_hi = _mm512_sub_epi16(sum_hi, div_hi);
+
+        let result = _mm512_packus_epi16(out_lo, out_hi);
+        _mm512_storeu_si512(d_ptr, result);
+
+        offset += 64;
+    }
+
+    // Fall through to AVX2 for remaining pixels
+    if offset < len {
+        blend_scanline_screen_avx2(&mut dst[offset..], &src[offset..]);
     }
 }
 
@@ -990,6 +1165,12 @@ pub fn blend_scanline_overlay(dst: &mut [u8], src: &[u8]) {
 
     #[cfg(target_arch = "x86_64")]
     {
+        if crate::detect::has_avx512() {
+            unsafe { return blend_scanline_overlay_avx512(dst, src) }
+        }
+        if crate::detect::has_avx2() {
+            unsafe { return blend_scanline_overlay_avx2(dst, src) }
+        }
         unsafe { return blend_scanline_overlay_sse2(dst, src) }
     }
     #[cfg(not(target_arch = "x86_64"))]
@@ -1104,6 +1285,208 @@ unsafe fn blend_scanline_overlay_sse2(dst: &mut [u8], src: &[u8]) {
 
     if offset < len {
         blend_scanline_overlay_scalar(&mut dst[offset..], &src[offset..]);
+    }
+}
+
+/// AVX2 Overlay blend: 8 BGRA pixels per iteration.
+///
+/// Byte-identical to the SSE2 path: same multiply path `2*(s*d/255)`, screen
+/// path `255 - 2*((255-s)*(255-d)/255)`, `d < 128` select, alpha = `max(d,s)`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn blend_scanline_overlay_avx2(dst: &mut [u8], src: &[u8]) {
+    use std::arch::x86_64::*;
+
+    let len = dst.len();
+    let chunks = len / 32;
+    let mut offset = 0;
+
+    let zero = _mm256_setzero_si256();
+    let half = _mm256_set1_epi16(128);
+    let all_ff = _mm256_set1_epi16(255);
+    let threshold = _mm256_set1_epi16(128);
+
+    for _ in 0..chunks {
+        let d_ptr = dst.as_mut_ptr().add(offset) as *mut __m256i;
+        let s_ptr = src.as_ptr().add(offset) as *const __m256i;
+
+        let s = _mm256_loadu_si256(s_ptr);
+        let d = _mm256_loadu_si256(d_ptr);
+
+        let s_lo = _mm256_unpacklo_epi8(s, zero);
+        let s_hi = _mm256_unpackhi_epi8(s, zero);
+        let d_lo = _mm256_unpacklo_epi8(d, zero);
+        let d_hi = _mm256_unpackhi_epi8(d, zero);
+
+        // Multiply path: 2*(s*d/255)
+        let prod_lo = _mm256_mullo_epi16(s_lo, d_lo);
+        let biased_lo = _mm256_add_epi16(prod_lo, half);
+        let div_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_lo,
+            _mm256_srli_epi16::<8>(biased_lo),
+        ));
+        let mul_result_lo = _mm256_add_epi16(div_lo, div_lo);
+
+        let prod_hi = _mm256_mullo_epi16(s_hi, d_hi);
+        let biased_hi = _mm256_add_epi16(prod_hi, half);
+        let div_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_hi,
+            _mm256_srli_epi16::<8>(biased_hi),
+        ));
+        let mul_result_hi = _mm256_add_epi16(div_hi, div_hi);
+
+        // Screen path: 255 - 2*((255-s)*(255-d)/255)
+        let inv_s_lo = _mm256_sub_epi16(all_ff, s_lo);
+        let inv_s_hi = _mm256_sub_epi16(all_ff, s_hi);
+        let inv_d_lo = _mm256_sub_epi16(all_ff, d_lo);
+        let inv_d_hi = _mm256_sub_epi16(all_ff, d_hi);
+
+        let scr_prod_lo = _mm256_mullo_epi16(inv_s_lo, inv_d_lo);
+        let scr_biased_lo = _mm256_add_epi16(scr_prod_lo, half);
+        let scr_div_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            scr_biased_lo,
+            _mm256_srli_epi16::<8>(scr_biased_lo),
+        ));
+        let scr_result_lo = _mm256_sub_epi16(all_ff, _mm256_add_epi16(scr_div_lo, scr_div_lo));
+
+        let scr_prod_hi = _mm256_mullo_epi16(inv_s_hi, inv_d_hi);
+        let scr_biased_hi = _mm256_add_epi16(scr_prod_hi, half);
+        let scr_div_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            scr_biased_hi,
+            _mm256_srli_epi16::<8>(scr_biased_hi),
+        ));
+        let scr_result_hi = _mm256_sub_epi16(all_ff, _mm256_add_epi16(scr_div_hi, scr_div_hi));
+
+        // mask: 0xFFFF where d < 128. No cmplt in AVX2, so (threshold > d).
+        let mask_lo = _mm256_cmpgt_epi16(threshold, d_lo);
+        let mask_hi = _mm256_cmpgt_epi16(threshold, d_hi);
+
+        let out_lo = _mm256_or_si256(
+            _mm256_and_si256(mask_lo, mul_result_lo),
+            _mm256_andnot_si256(mask_lo, scr_result_lo),
+        );
+        let out_hi = _mm256_or_si256(
+            _mm256_and_si256(mask_hi, mul_result_hi),
+            _mm256_andnot_si256(mask_hi, scr_result_hi),
+        );
+
+        let result = _mm256_packus_epi16(out_lo, out_hi);
+
+        // Preserve alpha as max(d, s)
+        let alpha_mask =
+            _mm256_set_epi8(-1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0,
+                0, 0, -1, 0, 0, 0, -1, 0, 0, 0);
+        let max_alpha = _mm256_max_epu8(d, s);
+        let result = _mm256_or_si256(
+            _mm256_andnot_si256(alpha_mask, result),
+            _mm256_and_si256(alpha_mask, max_alpha),
+        );
+
+        _mm256_storeu_si256(d_ptr, result);
+        offset += 32;
+    }
+
+    // SSE2 for remaining 4-pixel chunks, scalar otherwise
+    if offset + 16 <= len {
+        blend_scanline_overlay_sse2(&mut dst[offset..], &src[offset..]);
+    } else if offset < len {
+        blend_scanline_overlay_scalar(&mut dst[offset..], &src[offset..]);
+    }
+}
+
+/// AVX-512 Overlay blend: 16 BGRA pixels per iteration.
+///
+/// Byte-identical to the AVX2 / SSE2 path. Uses an AVX-512 mask register for
+/// the `d < 128` select and `max(d,s)` for alpha.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn blend_scanline_overlay_avx512(dst: &mut [u8], src: &[u8]) {
+    use std::arch::x86_64::*;
+
+    let len = dst.len();
+    let chunks = len / 64;
+    let mut offset = 0;
+
+    let zero = _mm512_setzero_si512();
+    let half = _mm512_set1_epi16(128);
+    let all_ff = _mm512_set1_epi16(255);
+    let threshold = _mm512_set1_epi16(128);
+
+    for _ in 0..chunks {
+        let d_ptr = dst.as_mut_ptr().add(offset) as *mut __m512i;
+        let s_ptr = src.as_ptr().add(offset) as *const __m512i;
+
+        let s = _mm512_loadu_si512(s_ptr);
+        let d = _mm512_loadu_si512(d_ptr);
+
+        let s_lo = _mm512_unpacklo_epi8(s, zero);
+        let s_hi = _mm512_unpackhi_epi8(s, zero);
+        let d_lo = _mm512_unpacklo_epi8(d, zero);
+        let d_hi = _mm512_unpackhi_epi8(d, zero);
+
+        // Multiply path: 2*(s*d/255)
+        let prod_lo = _mm512_mullo_epi16(s_lo, d_lo);
+        let biased_lo = _mm512_add_epi16(prod_lo, half);
+        let div_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_lo,
+            _mm512_srli_epi16::<8>(biased_lo),
+        ));
+        let mul_result_lo = _mm512_add_epi16(div_lo, div_lo);
+
+        let prod_hi = _mm512_mullo_epi16(s_hi, d_hi);
+        let biased_hi = _mm512_add_epi16(prod_hi, half);
+        let div_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_hi,
+            _mm512_srli_epi16::<8>(biased_hi),
+        ));
+        let mul_result_hi = _mm512_add_epi16(div_hi, div_hi);
+
+        // Screen path: 255 - 2*((255-s)*(255-d)/255)
+        let inv_s_lo = _mm512_sub_epi16(all_ff, s_lo);
+        let inv_s_hi = _mm512_sub_epi16(all_ff, s_hi);
+        let inv_d_lo = _mm512_sub_epi16(all_ff, d_lo);
+        let inv_d_hi = _mm512_sub_epi16(all_ff, d_hi);
+
+        let scr_prod_lo = _mm512_mullo_epi16(inv_s_lo, inv_d_lo);
+        let scr_biased_lo = _mm512_add_epi16(scr_prod_lo, half);
+        let scr_div_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            scr_biased_lo,
+            _mm512_srli_epi16::<8>(scr_biased_lo),
+        ));
+        let scr_result_lo = _mm512_sub_epi16(all_ff, _mm512_add_epi16(scr_div_lo, scr_div_lo));
+
+        let scr_prod_hi = _mm512_mullo_epi16(inv_s_hi, inv_d_hi);
+        let scr_biased_hi = _mm512_add_epi16(scr_prod_hi, half);
+        let scr_div_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            scr_biased_hi,
+            _mm512_srli_epi16::<8>(scr_biased_hi),
+        ));
+        let scr_result_hi = _mm512_sub_epi16(all_ff, _mm512_add_epi16(scr_div_hi, scr_div_hi));
+
+        // mask: bit set where d < 128 → choose multiply path, else screen path.
+        let mask_lo = _mm512_cmplt_epi16_mask(d_lo, threshold);
+        let mask_hi = _mm512_cmplt_epi16_mask(d_hi, threshold);
+        // mask_blend selects b where mask bit set: pass screen as `a`, mul as `b`.
+        let out_lo = _mm512_mask_blend_epi16(mask_lo, scr_result_lo, mul_result_lo);
+        let out_hi = _mm512_mask_blend_epi16(mask_hi, scr_result_hi, mul_result_hi);
+
+        let result = _mm512_packus_epi16(out_lo, out_hi);
+
+        // Preserve alpha as max(d, s)
+        let alpha_mask = _mm512_set1_epi32(i32::from_ne_bytes([0x00, 0x00, 0x00, 0xFF_u8]));
+        let max_alpha = _mm512_max_epu8(d, s);
+        let result = _mm512_or_si512(
+            _mm512_andnot_si512(alpha_mask, result),
+            _mm512_and_si512(alpha_mask, max_alpha),
+        );
+
+        _mm512_storeu_si512(d_ptr, result);
+        offset += 64;
+    }
+
+    // Fall through to AVX2 for remaining pixels
+    if offset < len {
+        blend_scanline_overlay_avx2(&mut dst[offset..], &src[offset..]);
     }
 }
 
@@ -1970,4 +2353,72 @@ mod tests {
             assert_eq!(dst[3], expected_alpha, "{name} alpha mismatch");
         }
     }
+
+    // ── Byte-identical wide-path equality (no-fake-green) ────────────────
+    // Each new wide path must produce bit-for-bit identical output to the
+    // narrow reference path it falls through to. assert_eq (NOT ±1) over many
+    // inputs incl. tail / non-multiple widths. Gated on feature detection.
+    #[cfg(target_arch = "x86_64")]
+    fn blend_input_pair(n: usize, ds: usize, ss: usize) -> (Vec<u8>, Vec<u8>) {
+        let dst: Vec<u8> = (0..n * 4).map(|i| ((i * ds + 7) % 256) as u8).collect();
+        let src: Vec<u8> = (0..n * 4).map(|i| ((i * ss + 13) % 256) as u8).collect();
+        (dst, src)
+    }
+
+    // Counts exercise every tail: not multiples of 4/8/16, exact boundaries,
+    // plus large buffers.
+    #[cfg(target_arch = "x86_64")]
+    const BLEND_COUNTS: [usize; 16] =
+        [0, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 33, 64, 137, 1000];
+
+    macro_rules! wide_eq_test {
+        ($name:ident, $narrow:ident, $wide:ident, $gate:expr, $label:literal) => {
+            #[test]
+            #[cfg(target_arch = "x86_64")]
+            fn $name() {
+                if !$gate {
+                    eprintln!(concat!("skipping: ", $label, " not available"));
+                    return;
+                }
+                for &n in &BLEND_COUNTS {
+                    let (mut dn, sn) = blend_input_pair(n, 5, 3);
+                    let (mut dw, sw) = blend_input_pair(n, 5, 3);
+                    unsafe {
+                        $narrow(&mut dn, &sn);
+                        $wide(&mut dw, &sw);
+                    }
+                    assert_eq!(dw, dn, concat!($label, " mismatch at {} pixels"), n);
+                }
+            }
+        };
+    }
+
+    wide_eq_test!(
+        multiply_avx512_byte_identical_to_sse2,
+        blend_scanline_multiply_sse2,
+        blend_scanline_multiply_avx512,
+        crate::detect::has_avx512(),
+        "multiply AVX-512 vs SSE2"
+    );
+    wide_eq_test!(
+        screen_avx512_byte_identical_to_sse2,
+        blend_scanline_screen_sse2,
+        blend_scanline_screen_avx512,
+        crate::detect::has_avx512(),
+        "screen AVX-512 vs SSE2"
+    );
+    wide_eq_test!(
+        overlay_avx2_byte_identical_to_sse2,
+        blend_scanline_overlay_sse2,
+        blend_scanline_overlay_avx2,
+        crate::detect::has_avx2(),
+        "overlay AVX2 vs SSE2"
+    );
+    wide_eq_test!(
+        overlay_avx512_byte_identical_to_sse2,
+        blend_scanline_overlay_sse2,
+        blend_scanline_overlay_avx512,
+        crate::detect::has_avx512(),
+        "overlay AVX-512 vs SSE2"
+    );
 }

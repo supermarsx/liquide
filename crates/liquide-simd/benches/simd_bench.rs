@@ -214,10 +214,106 @@ fn bench_color_matrix(c: &mut Criterion) {
     });
 }
 
+fn bench_premultiply_scalar(c: &mut Criterion) {
+    let size = 1920 * 4;
+    let buf: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+    c.bench_function("premultiply_scalar_1920px", |b| {
+        b.iter(|| {
+            let mut buf = buf.clone();
+            liquide_simd::fill::premultiply_alpha_scalar(black_box(&mut buf));
+        })
+    });
+}
+
+fn bench_unpremultiply(c: &mut Criterion) {
+    let size = 1920 * 4;
+    let base: Vec<u8> = (0..size).map(|i| ((i * 37 + 11) % 256) as u8).collect();
+    c.bench_function("unpremultiply_1920px", |b| {
+        b.iter(|| {
+            let mut buf = base.clone();
+            liquide_simd::convert::unpremultiply_alpha(black_box(&mut buf));
+        })
+    });
+    c.bench_function("unpremultiply_scalar_1920px", |b| {
+        b.iter(|| {
+            let mut buf = base.clone();
+            liquide_simd::convert::unpremultiply_alpha_scalar(black_box(&mut buf));
+        })
+    });
+}
+
+fn bench_upsample(c: &mut Criterion) {
+    let w = 480u32;
+    let h = 270u32;
+    let src: Vec<u8> = (0..(w * h * 4) as usize)
+        .map(|i| ((i * 17 + 31) % 256) as u8)
+        .collect();
+    c.bench_function("upsample_2x_480x270", |b| {
+        b.iter(|| {
+            black_box(liquide_simd::convert::upsample_2x_bilinear(
+                black_box(&src),
+                w,
+                h,
+            ));
+        })
+    });
+}
+
+fn bench_blend_multiply(c: &mut Criterion) {
+    let size = 1920 * 4;
+    let src: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+    let base = vec![128u8; size];
+    c.bench_function("blend_multiply_1920px", |b| {
+        b.iter(|| {
+            let mut dst = base.clone();
+            liquide_simd::blend::blend_scanline_multiply(black_box(&mut dst), black_box(&src));
+        })
+    });
+    c.bench_function("blend_multiply_scalar_1920px", |b| {
+        b.iter(|| {
+            let mut dst = base.clone();
+            liquide_simd::blend::blend_scanline_multiply_scalar(
+                black_box(&mut dst),
+                black_box(&src),
+            );
+        })
+    });
+}
+
+fn bench_blend_screen(c: &mut Criterion) {
+    let size = 1920 * 4;
+    let src: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+    let base = vec![128u8; size];
+    c.bench_function("blend_screen_1920px", |b| {
+        b.iter(|| {
+            let mut dst = base.clone();
+            liquide_simd::blend::blend_scanline_screen(black_box(&mut dst), black_box(&src));
+        })
+    });
+}
+
+fn bench_blend_overlay(c: &mut Criterion) {
+    let size = 1920 * 4;
+    let src: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
+    let base: Vec<u8> = (0..size).map(|i| ((i * 7 + 13) % 256) as u8).collect();
+    c.bench_function("blend_overlay_1920px", |b| {
+        b.iter(|| {
+            let mut dst = base.clone();
+            liquide_simd::blend::blend_scanline_overlay(black_box(&mut dst), black_box(&src));
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_blend_src_over,
     bench_blend_src_over_scalar,
+    bench_premultiply_scalar,
+    bench_unpremultiply,
+    bench_upsample,
+    bench_blend_multiply,
+    bench_blend_screen,
+    bench_blend_overlay,
     bench_xor_delta,
     bench_xor_delta_large,
     bench_xor_popcount,

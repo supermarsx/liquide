@@ -206,13 +206,19 @@ pub fn premultiply_alpha(buf: &mut [u8]) {
 
     #[cfg(target_arch = "x86_64")]
     {
+        if crate::detect::has_avx512() {
+            unsafe { return premultiply_alpha_avx512(buf) }
+        }
+        if crate::detect::has_avx2() {
+            unsafe { return premultiply_alpha_avx2(buf) }
+        }
         unsafe { return premultiply_alpha_sse2(buf) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     premultiply_alpha_scalar(buf);
 }
 
-fn premultiply_alpha_scalar(buf: &mut [u8]) {
+pub fn premultiply_alpha_scalar(buf: &mut [u8]) {
     let pixels = buf.len() / 4;
     for i in 0..pixels {
         let off = i * 4;
@@ -294,6 +300,128 @@ unsafe fn premultiply_alpha_sse2(buf: &mut [u8]) {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn premultiply_alpha_avx2(buf: &mut [u8]) {
+    use std::arch::x86_64::*;
+
+    let zero = _mm256_setzero_si256();
+    let half = _mm256_set1_epi16(128);
+    // Alpha lanes within each 128-bit half: lane 3 and lane 7 (matches SSE2 pattern,
+    // _mm256 unpack/shuffle operate per 128-bit lane).
+    let alpha_mask = _mm256_set_epi16(-1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0);
+
+    let pixels = buf.len() / 4;
+    let chunks = pixels / 8; // 8 pixels = 32 bytes
+    let mut offset = 0;
+
+    for _ in 0..chunks {
+        let ptr = buf.as_mut_ptr().add(offset) as *mut __m256i;
+        let packed = _mm256_loadu_si256(ptr);
+
+        let lo = _mm256_unpacklo_epi8(packed, zero);
+        let hi = _mm256_unpackhi_epi8(packed, zero);
+
+        // Broadcast alpha for each pixel across its 4 channels
+        let a_lo = _mm256_shufflehi_epi16::<0xFF>(_mm256_shufflelo_epi16::<0xFF>(lo));
+        let a_hi = _mm256_shufflehi_epi16::<0xFF>(_mm256_shufflelo_epi16::<0xFF>(hi));
+
+        // channel * alpha / 255 (matches SSE2: (x+128 + ((x+128)>>8)) >> 8)
+        let prod_lo = _mm256_mullo_epi16(lo, a_lo);
+        let prod_hi = _mm256_mullo_epi16(hi, a_hi);
+        let biased_lo = _mm256_add_epi16(prod_lo, half);
+        let biased_hi = _mm256_add_epi16(prod_hi, half);
+        let result_lo = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_lo,
+            _mm256_srli_epi16::<8>(biased_lo),
+        ));
+        let result_hi = _mm256_srli_epi16::<8>(_mm256_add_epi16(
+            biased_hi,
+            _mm256_srli_epi16::<8>(biased_hi),
+        ));
+
+        // Restore original alpha lanes (alpha*alpha/255 != alpha)
+        let result_lo = _mm256_or_si256(
+            _mm256_andnot_si256(alpha_mask, result_lo),
+            _mm256_and_si256(alpha_mask, lo),
+        );
+        let result_hi = _mm256_or_si256(
+            _mm256_andnot_si256(alpha_mask, result_hi),
+            _mm256_and_si256(alpha_mask, hi),
+        );
+
+        let result = _mm256_packus_epi16(result_lo, result_hi);
+        _mm256_storeu_si256(ptr, result);
+        offset += 32;
+    }
+
+    // Fall through to SSE2 for remaining pixels (4-pixel chunks + scalar tail)
+    if offset / 4 < pixels {
+        premultiply_alpha_sse2(&mut buf[offset..]);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512bw")]
+unsafe fn premultiply_alpha_avx512(buf: &mut [u8]) {
+    use std::arch::x86_64::*;
+
+    let zero = _mm512_setzero_si512();
+    let half = _mm512_set1_epi16(128);
+    // Alpha lanes repeat per 128-bit lane: lane 3 and 7 within each.
+    #[rustfmt::skip]
+    let alpha_mask = _mm512_set_epi16(
+        -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0,
+        -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0, -1, 0, 0, 0,
+    );
+
+    let pixels = buf.len() / 4;
+    let chunks = pixels / 16; // 16 pixels = 64 bytes
+    let mut offset = 0;
+
+    for _ in 0..chunks {
+        let ptr = buf.as_mut_ptr().add(offset) as *mut __m512i;
+        let packed = _mm512_loadu_si512(ptr as *const __m512i);
+
+        let lo = _mm512_unpacklo_epi8(packed, zero);
+        let hi = _mm512_unpackhi_epi8(packed, zero);
+
+        let a_lo = _mm512_shufflehi_epi16::<0xFF>(_mm512_shufflelo_epi16::<0xFF>(lo));
+        let a_hi = _mm512_shufflehi_epi16::<0xFF>(_mm512_shufflelo_epi16::<0xFF>(hi));
+
+        let prod_lo = _mm512_mullo_epi16(lo, a_lo);
+        let prod_hi = _mm512_mullo_epi16(hi, a_hi);
+        let biased_lo = _mm512_add_epi16(prod_lo, half);
+        let biased_hi = _mm512_add_epi16(prod_hi, half);
+        let result_lo = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_lo,
+            _mm512_srli_epi16::<8>(biased_lo),
+        ));
+        let result_hi = _mm512_srli_epi16::<8>(_mm512_add_epi16(
+            biased_hi,
+            _mm512_srli_epi16::<8>(biased_hi),
+        ));
+
+        let result_lo = _mm512_or_si512(
+            _mm512_andnot_si512(alpha_mask, result_lo),
+            _mm512_and_si512(alpha_mask, lo),
+        );
+        let result_hi = _mm512_or_si512(
+            _mm512_andnot_si512(alpha_mask, result_hi),
+            _mm512_and_si512(alpha_mask, hi),
+        );
+
+        let result = _mm512_packus_epi16(result_lo, result_hi);
+        _mm512_storeu_si512(ptr, result);
+        offset += 64;
+    }
+
+    // Fall through to AVX2 for remaining pixels
+    if offset / 4 < pixels {
+        premultiply_alpha_avx2(&mut buf[offset..]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +496,65 @@ mod tests {
                 "byte {i}: simd={} scalar={}",
                 buf[i],
                 buf_scalar[i]
+            );
+        }
+    }
+
+    // ── Byte-identical wide-path equality (no-fake-green) ────────────────
+    // Each wide path MUST produce bit-for-bit identical output to the SSE2
+    // narrow path for the same input. Exercises tail / non-multiple widths.
+    #[cfg(target_arch = "x86_64")]
+    fn premultiply_inputs() -> Vec<Vec<u8>> {
+        // Pixel counts chosen to exercise every tail: not multiples of 4/8/16,
+        // plus exact boundaries and large buffers.
+        let counts = [0usize, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 33, 64, 137, 1000];
+        counts
+            .iter()
+            .map(|&n| {
+                (0..n * 4)
+                    .map(|i| ((i * 37 + 11) % 256) as u8)
+                    .collect::<Vec<u8>>()
+            })
+            .collect()
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn premultiply_avx2_byte_identical_to_sse2() {
+        if !crate::detect::has_avx2() {
+            eprintln!("skipping: AVX2 not available");
+            return;
+        }
+        for input in premultiply_inputs() {
+            let mut sse2 = input.clone();
+            let mut avx2 = input.clone();
+            unsafe {
+                premultiply_alpha_sse2(&mut sse2);
+                premultiply_alpha_avx2(&mut avx2);
+            }
+            assert_eq!(avx2, sse2, "AVX2 != SSE2 for {} pixels", input.len() / 4);
+        }
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn premultiply_avx512_byte_identical_to_sse2() {
+        if !crate::detect::has_avx512() {
+            eprintln!("skipping: AVX-512 not available");
+            return;
+        }
+        for input in premultiply_inputs() {
+            let mut sse2 = input.clone();
+            let mut avx512 = input.clone();
+            unsafe {
+                premultiply_alpha_sse2(&mut sse2);
+                premultiply_alpha_avx512(&mut avx512);
+            }
+            assert_eq!(
+                avx512,
+                sse2,
+                "AVX-512 != SSE2 for {} pixels",
+                input.len() / 4
             );
         }
     }

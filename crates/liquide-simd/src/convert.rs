@@ -129,6 +129,9 @@ pub fn unpremultiply_alpha(buf: &mut [u8]) {
 
     #[cfg(target_arch = "x86_64")]
     {
+        if crate::detect::has_avx2() {
+            unsafe { return unpremultiply_alpha_avx2(buf) }
+        }
         // SSE2 is always available on x86-64
         unsafe { return unpremultiply_alpha_sse2(buf) }
     }
@@ -136,7 +139,7 @@ pub fn unpremultiply_alpha(buf: &mut [u8]) {
     unpremultiply_alpha_scalar(buf);
 }
 
-fn unpremultiply_alpha_scalar(buf: &mut [u8]) {
+pub fn unpremultiply_alpha_scalar(buf: &mut [u8]) {
     for pixel in buf.chunks_exact_mut(4) {
         let a = pixel[3] as u16;
         if a == 0 || a == 255 {
@@ -195,6 +198,82 @@ unsafe fn unpremultiply_alpha_sse2(buf: &mut [u8]) {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn unpremultiply_alpha_avx2(buf: &mut [u8]) {
+    use std::arch::x86_64::*;
+
+    let ff = _mm256_set1_ps(255.0);
+    let max_f = _mm256_set1_ps(255.0);
+    let zero_f = _mm256_setzero_ps();
+    let half_f = _mm256_set1_ps(0.5);
+    let zero128 = _mm_setzero_si128();
+
+    let pixels = buf.len() / 4;
+    let pairs = pixels / 2;
+
+    // Load a single pixel's BGRA bytes into the low 4 f32 lanes of a __m128.
+    let load_pixel = |off: usize, buf: &[u8]| -> __m128 {
+        let px = _mm_cvtsi32_si128(i32::from_le_bytes([
+            buf[off],
+            buf[off + 1],
+            buf[off + 2],
+            buf[off + 3],
+        ]));
+        let px16 = _mm_unpacklo_epi8(px, zero128);
+        let px32 = _mm_unpacklo_epi16(px16, zero128);
+        _mm_cvtepi32_ps(px32)
+    };
+
+    for p in 0..pairs {
+        let off0 = p * 8;
+        let off1 = off0 + 4;
+        let a0 = buf[off0 + 3];
+        let a1 = buf[off1 + 3];
+
+        // Per-pixel scale = 255.0 / alpha, broadcast within each 128-bit half.
+        // div-then-mul ordering matches the SSE2 path exactly for bit-identical output.
+        let alpha0 = _mm_set1_ps(a0 as f32);
+        let alpha1 = _mm_set1_ps(a1 as f32);
+        let scale = _mm256_set_m128(
+            _mm_div_ps(_mm256_castps256_ps128(ff), alpha1),
+            _mm_div_ps(_mm256_castps256_ps128(ff), alpha0),
+        );
+
+        let px = _mm256_set_m128(load_pixel(off1, buf), load_pixel(off0, buf));
+
+        let result = _mm256_mul_ps(px, scale);
+        let result = _mm256_add_ps(result, half_f);
+        let result = _mm256_max_ps(_mm256_min_ps(result, max_f), zero_f);
+
+        let int = _mm256_cvttps_epi32(result);
+        // Extract each 128-bit half and pack to bytes exactly like SSE2.
+        let lo = _mm256_castsi256_si128(int);
+        let hi = _mm256_extracti128_si256::<1>(int);
+        let packed_lo = _mm_packus_epi16(_mm_packs_epi32(lo, lo), zero128);
+        let packed_hi = _mm_packus_epi16(_mm_packs_epi32(hi, hi), zero128);
+        let v0 = (_mm_cvtsi128_si32(packed_lo) as u32).to_le_bytes();
+        let v1 = (_mm_cvtsi128_si32(packed_hi) as u32).to_le_bytes();
+
+        // Only write B,G,R for pixels whose alpha is not 0 or 255 (skip == unchanged).
+        if a0 != 0 && a0 != 255 {
+            buf[off0] = v0[0];
+            buf[off0 + 1] = v0[1];
+            buf[off0 + 2] = v0[2];
+        }
+        if a1 != 0 && a1 != 255 {
+            buf[off1] = v1[0];
+            buf[off1 + 1] = v1[1];
+            buf[off1 + 2] = v1[2];
+        }
+    }
+
+    // Odd trailing pixel: fall through to SSE2 (handles the single-pixel tail).
+    if pairs * 2 < pixels {
+        unpremultiply_alpha_sse2(&mut buf[pairs * 8..]);
+    }
+}
+
 // ── 3. Bilinear 2× upsample ─────────────────────────────────────────
 
 /// Bilinear 2× upsample: each pixel in src maps to a 2×2 block in the output.
@@ -208,6 +287,12 @@ pub fn upsample_2x_bilinear(src: &[u8], width: u32, height: u32) -> (Vec<u8>, u3
 
     #[cfg(target_arch = "x86_64")]
     {
+        if crate::detect::has_avx2() && crate::detect::has_fma() {
+            unsafe {
+                upsample_2x_bilinear_avx2(src, width, height, &mut dst, dst_w);
+            }
+            return (dst, dst_w, dst_h);
+        }
         if crate::detect::has_fma() {
             unsafe {
                 upsample_2x_bilinear_fma(src, width, height, &mut dst, dst_w);
@@ -417,6 +502,148 @@ unsafe fn upsample_2x_bilinear_fma(
             dst[dst_off + 1] = bytes[1];
             dst[dst_off + 2] = bytes[2];
             dst[dst_off + 3] = bytes[3];
+        }
+    }
+}
+
+/// AVX2+FMA bilinear 2× upsample: 2 output pixels per iteration.
+///
+/// Byte-identical to [`upsample_2x_bilinear_fma`]: each 128-bit lane of the
+/// 256-bit FMA pipeline performs the exact same `fmadd`/round/clamp/truncate
+/// sequence as the single-pixel FMA path.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn upsample_2x_bilinear_avx2(
+    src: &[u8],
+    width: u32,
+    height: u32,
+    dst: &mut [u8],
+    dst_w: u32,
+) {
+    use std::arch::x86_64::*;
+
+    let w = width as usize;
+    let h = height as usize;
+    let dw = dst_w as usize;
+    let out_w = w * 2;
+    let zero = _mm_setzero_si128();
+    let max_f = _mm256_set1_ps(255.0);
+    let zero_f = _mm256_setzero_ps();
+    let half_f = _mm256_set1_ps(0.5);
+
+    // Load one source pixel into the low 4 f32 lanes of a __m128.
+    let load_pixel = |off: usize| -> __m128 {
+        let px = _mm_cvtsi32_si128(i32::from_le_bytes([
+            src[off],
+            src[off + 1],
+            src[off + 2],
+            src[off + 3],
+        ]));
+        let px16 = _mm_unpacklo_epi8(px, zero);
+        let px32 = _mm_unpacklo_epi16(px16, zero);
+        _mm_cvtepi32_ps(px32)
+    };
+
+    // Compute one output pixel as a __m128 (pre-round f32), mirroring the FMA path.
+    let compute = |dx: usize, dy: usize| -> __m128 {
+        let sx_f = (dx as f32) * 0.5;
+        let sy_f = (dy as f32) * 0.5;
+
+        let sx0 = (sx_f.floor() as usize).min(w - 1);
+        let sy0 = (sy_f.floor() as usize).min(h - 1);
+        let sx1 = (sx0 + 1).min(w - 1);
+        let sy1 = (sy0 + 1).min(h - 1);
+
+        let fx = _mm_set1_ps(sx_f - sx0 as f32);
+        let fy = _mm_set1_ps(sy_f - sy0 as f32);
+
+        let s00 = (sy0 * w + sx0) * 4;
+        let s10 = (sy0 * w + sx1) * 4;
+        let s01 = (sy1 * w + sx0) * 4;
+        let s11 = (sy1 * w + sx1) * 4;
+
+        let p00 = load_pixel(s00);
+        let p10 = load_pixel(s10);
+        let p01 = load_pixel(s01);
+        let p11 = load_pixel(s11);
+
+        let top = _mm_fmadd_ps(_mm_sub_ps(p10, p00), fx, p00);
+        let bot = _mm_fmadd_ps(_mm_sub_ps(p11, p01), fx, p01);
+        _mm_fmadd_ps(_mm_sub_ps(bot, top), fy, top)
+    };
+
+    // Fused compute of an (even dx, dx+1) pair sharing the same source column
+    // pair (sx0/sx1). Source pixels are loaded once; the two outputs differ only
+    // in fx. Byte-identical to two separate `compute` calls.
+    let compute_pair = |dx: usize, dy: usize| -> __m256 {
+        let sy_f = (dy as f32) * 0.5;
+        let sy0 = (sy_f.floor() as usize).min(h - 1);
+        let sy1 = (sy0 + 1).min(h - 1);
+        let fy = _mm256_set1_ps(sy_f - sy0 as f32);
+
+        // dx (even): sx_f = dx*0.5 = integer → sx0 = dx/2, fx = 0
+        // dx+1:      sx_f = (dx+1)*0.5 = sx0 + 0.5 → same sx0, fx = 0.5
+        let sx0 = ((dx / 2) as usize).min(w - 1);
+        let sx1 = (sx0 + 1).min(w - 1);
+        // fx for lane group 0 (dx) = 0.0, lane group 1 (dx+1) = 0.5
+        let fx = _mm256_set_m128(_mm_set1_ps(0.5), _mm_set1_ps(0.0));
+
+        let s00 = (sy0 * w + sx0) * 4;
+        let s10 = (sy0 * w + sx1) * 4;
+        let s01 = (sy1 * w + sx0) * 4;
+        let s11 = (sy1 * w + sx1) * 4;
+
+        // Broadcast each shared source pixel to both 128-bit lanes.
+        let p00 = _mm256_broadcast_ps(&load_pixel(s00));
+        let p10 = _mm256_broadcast_ps(&load_pixel(s10));
+        let p01 = _mm256_broadcast_ps(&load_pixel(s01));
+        let p11 = _mm256_broadcast_ps(&load_pixel(s11));
+
+        let top = _mm256_fmadd_ps(_mm256_sub_ps(p10, p00), fx, p00);
+        let bot = _mm256_fmadd_ps(_mm256_sub_ps(p11, p01), fx, p01);
+        _mm256_fmadd_ps(_mm256_sub_ps(bot, top), fy, top)
+    };
+
+    for dy in 0..(h * 2) {
+        let mut dx = 0;
+        // Process 2 output pixels per iteration. The main loop always starts at
+        // dx=0 (even), so each pair is (even, even+1) sharing the same sx0/sx1.
+        while dx + 1 < out_w {
+            let v = compute_pair(dx, dy);
+
+            let v = _mm256_add_ps(v, half_f);
+            let v = _mm256_max_ps(_mm256_min_ps(v, max_f), zero_f);
+            let int = _mm256_cvttps_epi32(v);
+
+            let lo = _mm256_castsi256_si128(int);
+            let hi = _mm256_extracti128_si256::<1>(int);
+            let b0 =
+                (_mm_cvtsi128_si32(_mm_packus_epi16(_mm_packs_epi32(lo, lo), zero)) as u32)
+                    .to_le_bytes();
+            let b1 =
+                (_mm_cvtsi128_si32(_mm_packus_epi16(_mm_packs_epi32(hi, hi), zero)) as u32)
+                    .to_le_bytes();
+
+            let o0 = (dy * dw + dx) * 4;
+            dst[o0..o0 + 4].copy_from_slice(&b0);
+            let o1 = (dy * dw + dx + 1) * 4;
+            dst[o1..o1 + 4].copy_from_slice(&b1);
+
+            dx += 2;
+        }
+        // Odd trailing output column: single-pixel FMA-identical compute.
+        if dx < out_w {
+            let v = compute(dx, dy);
+            let v = _mm_add_ps(v, _mm256_castps256_ps128(half_f));
+            let v = _mm_max_ps(
+                _mm_min_ps(v, _mm256_castps256_ps128(max_f)),
+                _mm256_castps256_ps128(zero_f),
+            );
+            let int = _mm_cvttps_epi32(v);
+            let b = (_mm_cvtsi128_si32(_mm_packus_epi16(_mm_packs_epi32(int, int), zero)) as u32)
+                .to_le_bytes();
+            let o = (dy * dw + dx) * 4;
+            dst[o..o + 4].copy_from_slice(&b);
         }
     }
 }
@@ -839,6 +1066,70 @@ mod tests {
                 dst_auto[i],
                 dst_scalar[i]
             );
+        }
+    }
+
+    // ── Byte-identical wide-path equality (no-fake-green) ────────────────
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn unpremultiply_avx2_byte_identical_to_sse2() {
+        if !crate::detect::has_avx2() {
+            eprintln!("skipping: AVX2 not available");
+            return;
+        }
+        // Pixel counts exercise odd/even tails; data includes alpha==0 and
+        // alpha==255 (skip cases) plus channel>alpha (clamp) by construction.
+        let counts = [0usize, 1, 2, 3, 5, 8, 9, 15, 16, 33, 137, 1000];
+        for &n in &counts {
+            let input: Vec<u8> = (0..n * 4)
+                .map(|i| {
+                    // Force a spread of alphas including 0 and 255.
+                    if i % 4 == 3 {
+                        match (i / 4) % 5 {
+                            0 => 0,
+                            1 => 255,
+                            2 => 1,
+                            3 => 128,
+                            _ => ((i * 13) % 256) as u8,
+                        }
+                    } else {
+                        ((i * 37 + 11) % 256) as u8
+                    }
+                })
+                .collect();
+            let mut sse2 = input.clone();
+            let mut avx2 = input.clone();
+            unsafe {
+                unpremultiply_alpha_sse2(&mut sse2);
+                unpremultiply_alpha_avx2(&mut avx2);
+            }
+            assert_eq!(avx2, sse2, "AVX2 != SSE2 for {n} pixels");
+        }
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn upsample_avx2_byte_identical_to_fma() {
+        if !(crate::detect::has_avx2() && crate::detect::has_fma()) {
+            eprintln!("skipping: AVX2+FMA not available");
+            return;
+        }
+        // Sizes chosen so dst widths are both even and odd to exercise the
+        // 2-pixel main loop and the single-pixel tail column.
+        let sizes = [(1u32, 1u32), (2, 2), (3, 1), (1, 3), (4, 3), (5, 7), (17, 9)];
+        for &(width, height) in &sizes {
+            let len = (width * height * 4) as usize;
+            let src: Vec<u8> = (0..len).map(|i| ((i * 17 + 31) % 256) as u8).collect();
+            let dst_w = width * 2;
+            let dst_h = height * 2;
+            let mut fma = vec![0u8; (dst_w * dst_h * 4) as usize];
+            let mut avx2 = fma.clone();
+            unsafe {
+                upsample_2x_bilinear_fma(&src, width, height, &mut fma, dst_w);
+                upsample_2x_bilinear_avx2(&src, width, height, &mut avx2, dst_w);
+            }
+            assert_eq!(avx2, fma, "AVX2 != FMA for {width}x{height}");
         }
     }
 
