@@ -42,6 +42,14 @@ path = "src/bin/frame_time_harness.rs"
 name = "perf_ops"
 path = "src/bin/perf_ops.rs"
 
+# Diagnostic: group-opacity layer incremental-vs-full PNGs (fix-incremental-artifacts).
+# Renders an `opacity<1` group over a gap-tile sparse-damage scene three ways
+# (full repaint / incremental WITH the damage-expansion fix / incremental WITHOUT)
+# and saves PNGs to .orchestration/shots/ so the artifact + fix are visible.
+[[bin]]
+name = "layer_artifact_shot"
+path = "src/bin/layer_artifact_shot.rs"
+
 [dependencies]
 # CPU rasterizer (SoftwareRenderer) for the raster stage of the render_bench bin.
 liquide-renderer-cpu.workspace = true

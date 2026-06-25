@@ -589,6 +589,112 @@ fn full_damage(tile_size: u32, width: u32, height: u32) -> DamageSet {
     DamageSet::full(tile_size, grid_w, grid_h, DamageClass::UiPrimitive)
 }
 
+/// Expand a partial-damage set to cover the FULL bounds of every isolated
+/// group-opacity layer (`RenderLayer { isolate: true }` with effective
+/// `opacity < 1`) whose bounds INTERSECT the current damage.
+///
+/// WHY (incremental == full invariant — the artifact-class fix): an isolated
+/// group-opacity layer composites as ONE unit. In the CPU renderer this is done by
+/// `open_layer`, which SNAPSHOTS the framebuffer under the layer window as the
+/// "backdrop", CLEARS the window, lets the group's children paint at full alpha,
+/// then merges the result ONCE over that snapshot at the group opacity. That is
+/// correct only when the snapshot is the CLEAN pre-group backdrop. On a full frame
+/// it always is (the tile was cleared and the real backdrop repainted). But on a
+/// PARTIAL frame the framebuffer is PERSISTENT: any part of the layer window that
+/// is NOT in the damaged tiles still holds the PRIOR frame's already-composited
+/// group pixels (the layer's own prior output), so the snapshot captures stale
+/// content and the merge double-composites over it — trails / stale pixels /
+/// wrong glass, EVERYWHERE a translucent (`opacity < 1`) element repaints. Since
+/// `fix-isolation` routes CSS `opacity < 1` to this layer, that is most of the
+/// glass theme. The capture/golden path never shows it because it always uses FULL
+/// damage.
+///
+/// FIX (damage-correct, the documented safe choice): when the damage touches such
+/// a layer, repaint the WHOLE layer window. Marking the layer's tiles damaged
+/// makes `clear_damage_tiles` clear them, the renderer's write-scissor admit them,
+/// and the backdrop nodes repaint cleanly under the group — so `open_layer`
+/// snapshots clean pixels and the merge is pixel-identical to a full repaint. The
+/// post-raster hash trim (`trim_damage`) then drops any tile whose pixels did not
+/// actually change, so the PRESENTED/blitted set stays minimal; only the RASTER
+/// region grows, never the output. A full/empty damage set is returned unchanged
+/// (it is already a clean wholesale repaint).
+fn expand_damage_for_group_layers(
+    damage: &mut DamageSet,
+    nodes: &[FlatNode],
+    tile_size: u32,
+    width: u32,
+    height: u32,
+) {
+    if tile_size == 0 || damage.is_empty() || damage.is_full() {
+        return;
+    }
+    let grid_w = width.div_ceil(tile_size);
+    let grid_h = height.div_ceil(tile_size);
+    let fw = width as f32;
+    let fh = height as f32;
+
+    // Helper: does a pixel rect overlap any currently-damaged tile?
+    let intersects_damage = |b: &Rect, d: &DamageSet| -> bool {
+        let tx0 = (b.x.max(0.0).min(fw) as u32) / tile_size;
+        let ty0 = (b.y.max(0.0).min(fh) as u32) / tile_size;
+        let tx1 = ((b.right().max(0.0).min(fw).ceil() as u32).saturating_sub(1)) / tile_size;
+        let ty1 = ((b.bottom().max(0.0).min(fh).ceil() as u32).saturating_sub(1)) / tile_size;
+        d.tiles
+            .iter()
+            .any(|t| t.x >= tx0 && t.x <= tx1 && t.y >= ty0 && t.y <= ty1)
+    };
+
+    // Iterate to a fixed point: expanding for one layer can bring another,
+    // previously-disjoint layer into contact (adjacent glass panels). Bounded by
+    // the number of group layers; one or two passes in practice.
+    loop {
+        let mut grew = false;
+        for node in nodes {
+            let SceneNodeKind::RenderLayer { isolate, .. } = node.kind_ref() else {
+                continue;
+            };
+            if !*isolate || node.opacity >= 0.999 {
+                continue;
+            }
+            let b = &node.absolute_bounds;
+            let x0 = b.x.max(0.0).min(fw);
+            let y0 = b.y.max(0.0).min(fh);
+            let x1 = b.right().max(0.0).min(fw);
+            let y1 = b.bottom().max(0.0).min(fh);
+            if x1 <= x0 || y1 <= y0 {
+                continue; // degenerate / off-screen
+            }
+            if !intersects_damage(b, damage) {
+                continue;
+            }
+            // Are all of the layer's tiles already damaged? If so, no growth.
+            let tx0 = (x0 as u32) / tile_size;
+            let ty0 = (y0 as u32) / tile_size;
+            let tx1 = ((x1.ceil() as u32).saturating_sub(1)) / tile_size;
+            let ty1 = ((y1.ceil() as u32).saturating_sub(1)) / tile_size;
+            let fully_covered = (ty0..=ty1).all(|ty| {
+                (tx0..=tx1).all(|tx| damage.tiles.iter().any(|t| t.x == tx && t.y == ty))
+            });
+            if fully_covered {
+                continue;
+            }
+            damage.mark_rect(
+                x0 as u32,
+                y0 as u32,
+                (x1 - x0).ceil() as u32,
+                (y1 - y0).ceil() as u32,
+                grid_w,
+                grid_h,
+            );
+            damage.dedup();
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+}
+
 /// Convert a shell-precomputed, superset-safe damage rect set (screen-pixel
 /// space, already padded with the 48px backdrop-blur margin by the producer —
 /// see `Shell::take_precomputed_damage`) into a tile [`DamageSet`] for the
@@ -3308,6 +3414,22 @@ impl DesktopCompositor {
         };
         damage.dedup();
 
+        // 5a-layers. GROUP-OPACITY DAMAGE EXPANSION (incremental == full).
+        // Any isolated `opacity < 1` layer the damage touches must be repainted
+        // WHOLESALE so its backdrop snapshot is clean and its single merge matches
+        // a full repaint — otherwise the persistent framebuffer leaves stale
+        // already-composited group pixels under the layer and the merge
+        // double-composites them (trails / stale glass). See the helper for the
+        // full correctness argument. No-op on a full/empty damage set, and the
+        // post-raster hash trim keeps the PRESENTED damage minimal.
+        expand_damage_for_group_layers(
+            &mut damage,
+            flat_nodes_buf,
+            latest_job.tile_size,
+            latest_job.width,
+            latest_job.height,
+        );
+
         // 5a-blit. SELF-BLIT the window's previously-presented pixels from its
         // OLD position to its NEW position BEFORE clearing/rastering. The copy
         // populates the blit_rect interior; the strip/footprint damage (above)
@@ -3606,6 +3728,108 @@ mod tests {
         );
         // Case-insensitive function name.
         assert_eq!(strip_css_url("URL(x.png)").as_deref(), Some("x.png"));
+    }
+
+    // ── Group-opacity damage expansion (incremental == full) ──────────────
+    use liquide_compositor::damage::DamageTile;
+
+    // A flat node helper for the expansion tests: only `kind`, `bounds`, and
+    // `opacity` matter to `expand_damage_for_group_layers`.
+    fn flat(id: u64, kind: SceneNodeKind, bounds: Rect, opacity: f32) -> FlatNode {
+        FlatNode {
+            id,
+            kind: kind.into(),
+            absolute_bounds: bounds,
+            absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+            clip: None,
+            opacity,
+            z_order: 0,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    fn group_layer(id: u64, bounds: Rect, opacity: f32) -> FlatNode {
+        flat(
+            id,
+            SceneNodeKind::RenderLayer {
+                blend_mode: liquide_compositor::pixel::BlendMode::SrcOver,
+                isolate: true,
+            },
+            bounds,
+            opacity,
+        )
+    }
+
+    fn has_tile(d: &DamageSet, tx: u32, ty: u32) -> bool {
+        d.tiles.iter().any(|t| t.x == tx && t.y == ty)
+    }
+
+    /// A `opacity < 1` group layer that the damage TOUCHES must be expanded to its
+    /// FULL tile bounds, so the renderer repaints the whole group window (clean
+    /// snapshot → single merge == full repaint). The GAP tile that the original
+    /// sparse damage skipped MUST become damaged.
+    #[test]
+    fn expand_damage_covers_touched_group_layer_full_bounds() {
+        // 256x64, tile 64 → 4x1 grid. Damage only the FIRST tile (0,0).
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
+
+        // A translucent group spanning tiles 0..4 (the whole row).
+        let nodes = vec![group_layer(900, Rect::new(0.0, 0.0, 256.0, 64.0), 0.5)];
+
+        expand_damage_for_group_layers(&mut damage, &nodes, 64, 256, 64);
+
+        for tx in 0..4u32 {
+            assert!(
+                has_tile(&damage, tx, 0),
+                "tile ({tx},0) under the touched group layer must be damaged after expansion"
+            );
+        }
+    }
+
+    /// A group layer the damage does NOT touch is left alone (no needless repaint),
+    /// and a FULLY-OPAQUE isolated layer is never expanded (it composites directly,
+    /// no snapshot/merge, so no stale-backdrop hazard).
+    #[test]
+    fn expand_damage_ignores_untouched_and_opaque_layers() {
+        let mut damage = DamageSet::new(64);
+        damage.add(DamageTile { x: 0, y: 0, class: DamageClass::UiPrimitive });
+        let before = damage.tiles.len();
+
+        let nodes = vec![
+            // Untouched translucent group (tiles 2..4): must NOT expand into damage.
+            group_layer(900, Rect::new(128.0, 0.0, 128.0, 64.0), 0.5),
+            // Touched but FULLY OPAQUE isolated layer: no merge → must NOT expand.
+            group_layer(901, Rect::new(0.0, 0.0, 256.0, 64.0), 1.0),
+        ];
+
+        expand_damage_for_group_layers(&mut damage, &nodes, 64, 256, 64);
+
+        assert_eq!(
+            damage.tiles.len(),
+            before,
+            "neither an untouched group nor a fully-opaque layer may expand the damage"
+        );
+        assert!(!has_tile(&damage, 2, 0), "untouched group tile must stay undamaged");
+        assert!(!has_tile(&damage, 3, 0), "untouched group tile must stay undamaged");
+    }
+
+    /// A FULL damage set is returned unchanged (already a wholesale repaint), and
+    /// an EMPTY set stays empty (a keepalive frame has nothing to expand).
+    #[test]
+    fn expand_damage_noop_on_full_and_empty() {
+        let nodes = vec![group_layer(900, Rect::new(0.0, 0.0, 256.0, 64.0), 0.5)];
+
+        let mut full = full_damage(64, 256, 64);
+        let full_before = full.tiles.len();
+        expand_damage_for_group_layers(&mut full, &nodes, 64, 256, 64);
+        assert!(full.is_full(), "full damage stays full");
+        assert_eq!(full.tiles.len(), full_before, "full damage unchanged");
+
+        let mut empty = DamageSet::new(64);
+        expand_damage_for_group_layers(&mut empty, &nodes, 64, 256, 64);
+        assert!(empty.is_empty(), "empty damage stays empty");
     }
 
     #[test]

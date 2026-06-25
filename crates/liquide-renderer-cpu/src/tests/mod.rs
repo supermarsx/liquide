@@ -5,6 +5,7 @@ mod color_tests;
 mod effects_tests;
 mod glyph_tests;
 mod group_opacity_tests;
+mod layer_damage_tests;
 mod occlusion_tests;
 mod path_tests;
 mod rasterizer_tests;
