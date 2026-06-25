@@ -74,7 +74,7 @@ const WIDGETS_CSS: &str = include_str!("../../../assets/themes/widgets.css");
 /// offsets), so we only widen it so the columns are comfortably hittable.
 const TEST_CSS: &str = r#"
 app-content-host { display: block; }
-lq-checkbox, lq-button, lq-slider, lq-dropdown {
+lq-checkbox, lq-switch, lq-button, lq-slider, lq-dropdown {
     display: block;
     width: 260px;
     height: 44px;
@@ -85,7 +85,12 @@ lq-checkbox, lq-button, lq-slider, lq-dropdown {
    click router only forwards points inside the window). */
 lq-breadcrumb { display: block; width: 520px; height: 28px; margin: 0; }
 lq-list { display: block; width: 260px; height: 110px; overflow: hidden; }
-lq-toolbar { display: block; height: 40px; overflow: hidden; }
+/* A toolbar is a horizontal row; it must be tall enough to fully CONTAIN its
+   controls so the layout-derived hit on a control's box center is not clipped
+   away by the row. The settings labelled rows wrap a 44px control, so the row
+   is sized to hold it (no clipping); the files button bar (36px buttons) fits
+   comfortably too. */
+lq-toolbar { display: block; min-height: 48px; }
 lq-toolbar > lq-button { display: inline-block; width: 90px; height: 36px; margin: 0; }
 lq-table { display: block; width: 560px; }
 lq-tabs { display: block; }
@@ -195,7 +200,15 @@ fn find_owned(model: &mut AppWidgetModel, key: &str) -> Option<AppWidget> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SETTINGS — a real click on a CSS-laid-out checkbox flips the setting
+// SETTINGS — a real click on a CSS-laid-out toggle (Switch) flips the setting
+//
+// NOTE (t191): the settings model maps a `SettingKind::Toggle` to an
+// `AppWidget::Switch` (a macOS-style pill) rather than a bare `AppWidget::Checkbox`.
+// The control choice does NOT change routing — the shell maps BOTH Switch and
+// Checkbox to the `"toggle"` action (see `app_widgets::behavior_for`), and the
+// settings runtime flips the bool on `(SettingKind::Toggle, "toggle")`. So these
+// E2E tests still drive the REAL laid-out toggle and assert the REAL setting
+// flips; they just observe the model as a `Switch`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn settings_runtime() -> SettingsRuntime {
@@ -204,37 +217,37 @@ fn settings_runtime() -> SettingsRuntime {
     rt
 }
 
-/// E2E: clicking the `display.night_light` checkbox at its LAID-OUT box center
-/// drives the whole pipeline and flips the real setting from false → true,
+/// E2E: clicking the `display.night_light` toggle (Switch) at its LAID-OUT box
+/// center drives the whole pipeline and flips the real setting from false → true,
 /// observed back through `app_view().widget_model()`.
 #[test]
 fn settings_checkbox_click_flips_the_real_setting() {
     let (mut shell, wid) = shell_with_app(Box::new(settings_runtime()));
 
-    // The checkbox mounted as a host widget.
+    // The toggle mounted as a host widget.
     let cb_key = "display.night_light";
     assert!(
         shell
             .document()
             .get_element_by_id(&widget_id(wid, cb_key))
             .is_some(),
-        "the night_light checkbox must mount as a host widget"
+        "the night_light toggle must mount as a host widget"
     );
 
-    // Pre-state: unchecked in the model.
+    // Pre-state: the toggle is an OFF Switch in the model (correct setting, read off).
     let mut before = current_model(&shell, wid);
     assert!(
         matches!(
             find_owned(&mut before, cb_key),
-            Some(AppWidget::Checkbox { checked: false, .. })
+            Some(AppWidget::Switch { checked: false, .. })
         ),
         "night_light must start unchecked, got {:?}",
         find_owned(&mut before, cb_key)
     );
 
     // Click the laid-out box CENTER (geometry from layout, not a constant).
-    let b = widget_box(&shell, wid, cb_key).expect("checkbox laid-out box");
-    assert!(b.width > 1.0 && b.height > 1.0, "checkbox box {b:?}");
+    let b = widget_box(&shell, wid, cb_key).expect("toggle laid-out box");
+    assert!(b.width > 1.0 && b.height > 1.0, "toggle box {b:?}");
     click(&mut shell, b.x + b.width / 2.0, b.y + b.height / 2.0);
     let _ = shell.build_scene(); // drive loop drains + applies + re-renders
 
@@ -243,14 +256,14 @@ fn settings_checkbox_click_flips_the_real_setting() {
     assert!(
         matches!(
             find_owned(&mut after, cb_key),
-            Some(AppWidget::Checkbox { checked: true, .. })
+            Some(AppWidget::Switch { checked: true, .. })
         ),
         "a real click must flip the night_light setting to checked, got {:?}",
         find_owned(&mut after, cb_key)
     );
 }
 
-/// Teeth for the geometry: a click OUTSIDE the checkbox box must NOT toggle the
+/// Teeth for the geometry: a click OUTSIDE the toggle box must NOT flip the
 /// setting — proving the hit lands on the real laid-out box, not an always-accept
 /// stub.
 #[test]
@@ -258,8 +271,8 @@ fn settings_click_outside_checkbox_does_not_flip() {
     let (mut shell, wid) = shell_with_app(Box::new(settings_runtime()));
     let cb_key = "display.night_light";
 
-    let b = widget_box(&shell, wid, cb_key).expect("checkbox laid-out box");
-    // Far below the checkbox box (still on screen, but not on the widget).
+    let b = widget_box(&shell, wid, cb_key).expect("toggle laid-out box");
+    // Far below the toggle box (still on screen, but not on the widget).
     click(&mut shell, b.x + b.width / 2.0, b.y + b.height + 240.0);
     let _ = shell.build_scene();
 
@@ -267,7 +280,7 @@ fn settings_click_outside_checkbox_does_not_flip() {
     assert!(
         matches!(
             find_owned(&mut after, cb_key),
-            Some(AppWidget::Checkbox { checked: false, .. })
+            Some(AppWidget::Switch { checked: false, .. })
         ),
         "a miss must leave night_light unchecked, got {:?}",
         find_owned(&mut after, cb_key)
