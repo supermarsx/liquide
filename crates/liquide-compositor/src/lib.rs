@@ -18,6 +18,7 @@ pub mod property_tree;
 pub mod renderer;
 pub mod scene;
 pub mod scissor;
+pub mod surface_cache;
 
 pub use compositor::{Compositor, CompositorContract, FrameLifecycle};
 pub use cursor::{CursorBitmap, CursorUpdate};
@@ -48,6 +49,10 @@ pub use scene::{
 };
 pub use scissor::{
     scissor_allows, scissor_clamp_window, set_write_scissor, write_scissor, write_scissor_window,
+};
+pub use surface_cache::{
+    CachedSurface, SurfaceCache, SurfaceCacheStats, SurfaceKey, SurfaceOwner,
+    DEFAULT_SURFACE_CACHE_BUDGET_MB, SURFACE_CACHE_BUDGET_ENV,
 };
 
 use thiserror::Error;
