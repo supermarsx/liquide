@@ -186,6 +186,10 @@ pub use screen_time::{
 };
 pub use shell::Shell;
 pub use shell::{DialogContent, SessionRequest, WiringBit, WiringReport};
+// Surface-cache owner keys (t2-e4): one per cacheable surface owner (wallpaper,
+// each window, each isolated chrome layer). The live render thread (t2-e3) reads
+// these via `Shell::surface_keys()` to drive the composite-only-changed loop.
+pub use shell::scene::{SurfaceKey, SurfaceOwner};
 pub use shell::batch::{
     MoveValidRect, WindowBatch, WindowOp, ZOrderOp, compute_move_valid_rect,
 };

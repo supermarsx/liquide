@@ -13,6 +13,9 @@ use liquide_compositor::framebuffer::FrameBuffer;
 use liquide_compositor::geometry::Rect;
 use liquide_compositor::pixel::PixelFormat;
 use liquide_compositor::scene::{CursorShape, FlatNode, NodeProperties, SceneNode, SceneNodeKind};
+use liquide_compositor::surface_cache::{
+    SurfaceCache, SurfaceKey as CacheSurfaceKey, SurfaceOwner as CacheSurfaceOwner,
+};
 use liquide_compositor::{Compositor, CompositorContract};
 use tracing::{debug, info, warn};
 
@@ -101,6 +104,36 @@ fn note_blit_establish() {
 #[inline]
 fn note_blit_skeleton() {
     BLIT_SKELETON.fetch_add(1, Ordering::Relaxed);
+}
+
+// ── Surface-cache engagement (t2-e3 composite-only-changed loop) ────────────
+//
+// `SURFACE_BLITTED` counts owner surfaces COMPOSITED FROM CACHE this run (a
+// cache HIT → a cheap blit, no re-raster of that owner's expensive
+// Decoration/Gradient/Glass). `SURFACE_RERASTERED` counts owner surfaces that
+// were re-rastered (MISS or a not-yet-safe HIT). On an IDLE frame (no content
+// change, empty damage) every cacheable owner HITS → `rerastered == 0`; a
+// single-window content change re-rasters ONLY that owner. These are the
+// numbers the perf claim rests on, so they are production-visible.
+static SURFACE_BLITTED: AtomicU64 = AtomicU64::new(0);
+static SURFACE_RERASTERED: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+fn note_surface_blitted(n: u64) {
+    SURFACE_BLITTED.fetch_add(n, Ordering::Relaxed);
+}
+
+#[inline]
+fn note_surface_rerastered(n: u64) {
+    SURFACE_RERASTERED.fetch_add(n, Ordering::Relaxed);
+}
+
+/// Cumulative surface-cache engagement counters (production-visible).
+pub(super) fn surface_cache_engagement() -> (u64, u64) {
+    (
+        SURFACE_BLITTED.load(Ordering::Relaxed),
+        SURFACE_RERASTERED.load(Ordering::Relaxed),
+    )
 }
 
 // Test-observable counter of how many times the worker actually executed the
@@ -239,6 +272,17 @@ pub(super) struct RenderJob {
     /// CSS-resolved cursor appearance to push to the renderer's cursor seam
     /// before rendering, so the themed cursor color paints (t74-realimg item 3).
     pub(super) cursor_theme: liquide_renderer_cpu::CursorTheme,
+    /// Per-owner SURFACE-CACHE keys snapshot from `Shell::surface_keys()` (t2-e3):
+    /// one per cacheable owner (wallpaper, each window, each chrome layer). The
+    /// worker drives its `SurfaceCache` from these — reusing a cached pixel
+    /// surface on a HIT (content/size/dpi unchanged) instead of re-rastering the
+    /// owner's expensive Decoration/Gradient/Glass. Empty = no surface caching
+    /// this frame (the worker renders exactly as before).
+    pub(super) surface_keys: Vec<liquide_shell::SurfaceKey>,
+    /// Live device-pixel ratio the worker re-stamps onto each surface key's
+    /// physical size + dpi (the shell paints in LOGICAL px at scale 1.0). A DPI
+    /// change re-keys every surface, invalidating stale-resolution pixels.
+    pub(super) dpi_scale: f32,
 }
 
 /// A completed rendered frame sent back from the render thread.
@@ -1424,6 +1468,541 @@ fn subtract_rect_into(frag: &Rect, cut: &Rect, out: &mut Vec<Rect>) {
     }
 }
 
+// ===========================================================================
+// Surface cache: composite-only-changed loop (t2-e3)
+// ===========================================================================
+//
+// The live render thread CACHES each cacheable owner (the wallpaper, each
+// window, each isolated chrome layer — see `Shell::surface_keys()`) as a pixel
+// SurfaceBuffer and, on a steady-state frame, COMPOSITES the cached pixels
+// instead of re-rasterising the owner's expensive Decoration / Gradient / Glass
+// from scene nodes. This is the retained PIXEL half of the compositor (the
+// retained SCENE half — `WindowSceneCache` — already exists).
+//
+// HOW it stays PIXEL-IDENTICAL to a full repaint (the non-negotiable gate):
+//   * It does NOT introduce a new compositor. It reuses the EXISTING, already
+//     scissor-correct renderer (`render_live`) as the back-to-front compositor.
+//     The cache pass merely SUBSTITUTES an unchanged owner's contiguous run of
+//     flat nodes with a single `Surface` node carrying the cached buffer at the
+//     owner's footprint. `render_live` then BLITS that surface in the owner's
+//     z-slot via the same `blit_*_stride_clipped` path it already uses for
+//     `Surface` nodes — clamped to the Tier-1 write-scissor (`damage ∩ bbox`).
+//     A `Surface` blit is byte-identical to compositing the owner's subtree
+//     (E2's `render_subtree_to_surface` contract for opaque; for glass the
+//     cached pixels ARE the in-place re-blur result captured over the same
+//     backdrop — see below). Z-order / opacity / clip are unchanged because the
+//     Surface sits at the same buffer index (paint order) the subtree did.
+//   * A substituted `Surface` node is NEVER an opaque occluder
+//     (`occlusion::opaque_occluder_rect` only treats `Background`/
+//     `BackgroundFill` as occluders), so substitution can never OVER-occlude a
+//     lower node — it cannot cause the disappear class.
+//
+// WHEN a cached blit is SAFE (each rule is independently byte-identical):
+//   * WALLPAPER (opaque, screen-bottom): always reusable on a HIT — its cached
+//     pixels are its own opaque content; re-blitting over the cleared damage
+//     region reproduces the re-raster. Captured offscreen via E2's
+//     `render_subtree_to_surface` (the only owner that is both occluded AND
+//     fully opaque, so an offscreen own-pixel raster is required + correct).
+//   * OPAQUE WINDOW: reusable on a HIT when the owner's footprint is DISJOINT
+//     from this frame's damage (nothing under/around it is being repainted, so
+//     the backdrop its translucent shadow edges sampled is unchanged) OR when
+//     `blit_move_is_byte_identical` holds (topmost + fully opaque over the
+//     footprint — the existing blit-move proof, which also covers a pure MOVE).
+//   * GLASS / DECORATED window / chrome glass layer (backdrop-dependent):
+//     reusable on a HIT only when the footprint EXPANDED by the blur radius is
+//     disjoint from damage (the backdrop the blur samples is unchanged) AND the
+//     owner is topmost (so the captured pixels are its own, not an occluder's).
+//   On a MISS / not-yet-safe HIT the owner's nodes are KEPT and `render_live`
+//   re-rasters them in place exactly as before; the result is then captured for
+//   the next frame (wallpaper offscreen; others via `capture_region`, gated on
+//   the owner being topmost so the capture is its own pixels).
+//
+// CAPTURE / GOLDEN determinism: this pass runs ONLY on the live worker path
+// (`render_full_job`, always `RenderMode::LiveFull`). The deterministic capture
+// path (`render_frame_sync`) never calls it, so goldens are full direct rasters
+// and stay byte-stable; the cache is a live optimisation only.
+
+/// Owner-classification z-bands and id encoding (mirrors `shell/scene.rs`:
+/// background band `z < WORKSPACE`, windows under the workspace at
+/// `[WORKSPACE, CHROME)` with id `NODE_WINDOW_BASE + id*STRIDE + k`, chrome band
+/// at `z >= CHROME`). Kept in sync with the shell builder; a mismatch only ever
+/// declassifies an owner (it then falls back to the existing `render_live`
+/// path — never an incorrect substitution).
+const SURFACE_WORKSPACE_Z: u32 = 100;
+const SURFACE_CHROME_Z_BASE: u32 = 10_000;
+const SURFACE_NODE_WINDOW_BASE: u64 = 10_000;
+const SURFACE_NODE_WINDOW_STRIDE: u64 = 10;
+
+/// One owner's resolved membership in the flat-node list for this frame.
+struct OwnerNodes {
+    owner: CacheSurfaceOwner,
+    /// Shell metadata for the owner's surface key.
+    content_sig: u64,
+    phys_size: (u32, u32),
+    dpi_scale: f32,
+    backdrop_dependent: bool,
+    /// Contiguous `[start, end)` index range of the owner's nodes in the buffer.
+    start: usize,
+    end: usize,
+    /// Union of the member nodes' painted bounds (the blit/capture footprint).
+    footprint: Rect,
+    /// Max blur radius across the member nodes (0 for non-glass owners).
+    blur_radius: u32,
+    /// `true` if any member node carries opacity < 1 or is a `RenderLayer` — such
+    /// an owner is NOT cached (its composited result is not a flat opaque blit).
+    has_group_opacity: bool,
+    /// `true` if the owner is the screen-bottom wallpaper.
+    is_wallpaper: bool,
+}
+
+/// A surface to (re)capture into the cache AFTER `render_live` has produced the
+/// final composited frame (the owner's pixels are then on the screen FB).
+struct SurfaceCaptureJob {
+    owner: CacheSurfaceOwner,
+    key: CacheSurfaceKey,
+    footprint: Rect,
+    blur_radius: u32,
+    backdrop_dependent: bool,
+}
+
+/// Outcome of the pre-render surface-cache pass (test-observable).
+#[derive(Default)]
+struct SurfaceCacheOutcome {
+    /// Owners composited from a cached surface (cache HIT → blit, no re-raster).
+    blitted: usize,
+    /// Owners re-rastered this frame (MISS or not-yet-safe HIT).
+    rerastered: usize,
+    /// Surfaces to capture after the render completes.
+    captures: Vec<SurfaceCaptureJob>,
+}
+
+/// Map a shell owner to the compositor cache owner (the two enums are
+/// structurally identical; the shell key lives in `liquide-shell`, the store key
+/// in `liquide-compositor`).
+fn to_cache_owner(owner: liquide_shell::SurfaceOwner) -> CacheSurfaceOwner {
+    match owner {
+        liquide_shell::SurfaceOwner::Wallpaper => CacheSurfaceOwner::Wallpaper,
+        liquide_shell::SurfaceOwner::Window(id) => CacheSurfaceOwner::Window(id),
+        liquide_shell::SurfaceOwner::Layer(id) => CacheSurfaceOwner::Layer(id),
+    }
+}
+
+/// Classify a flat node to its cache owner, or `None` (a structural / cheap
+/// chrome / cursor node that is composited per-frame, never cached). Uses the
+/// z-band + id encoding the shell builder assigns; an owner is only returned
+/// when the shell actually emitted a surface key for it (`windows`/`layers`/
+/// `wallpaper`).
+fn surface_owner_for_node(
+    node: &FlatNode,
+    windows: &HashSet<u64>,
+    layers: &HashSet<u64>,
+    wallpaper: bool,
+) -> Option<CacheSurfaceOwner> {
+    if node.id == CURSOR_FLAT_NODE_ID {
+        return None;
+    }
+    let z = node.z_order;
+    if z >= SURFACE_CHROME_Z_BASE {
+        return layers
+            .contains(&node.id)
+            .then_some(CacheSurfaceOwner::Layer(node.id));
+    }
+    if z >= SURFACE_WORKSPACE_Z {
+        if node.id >= SURFACE_NODE_WINDOW_BASE {
+            let wid = (node.id - SURFACE_NODE_WINDOW_BASE) / SURFACE_NODE_WINDOW_STRIDE;
+            if windows.contains(&wid) {
+                return Some(CacheSurfaceOwner::Window(wid));
+            }
+        }
+        return None;
+    }
+    // Background band (z < WORKSPACE) → the wallpaper layer.
+    wallpaper.then_some(CacheSurfaceOwner::Wallpaper)
+}
+
+/// The padded pixel bounding box of `damage` (mirrors the renderer's 32 px
+/// effect-fringe padding in `render_with_mode`). `None` for an empty damage set;
+/// the whole frame for a full set. Conservative: a rect is treated as "being
+/// repainted" iff it intersects this box, so a missed substitution only ever
+/// costs a re-raster, never correctness.
+fn damage_padded_bbox(damage: &DamageSet, width: u32, height: u32) -> Option<Rect> {
+    if damage.is_empty() {
+        return None;
+    }
+    if damage.is_full() {
+        return Some(Rect::new(0.0, 0.0, width as f32, height as f32));
+    }
+    let ts = damage.tile_size as f32;
+    let pad = 32.0_f32;
+    let min_x = damage.tiles.iter().map(|t| t.x).min().unwrap_or(0) as f32 * ts - pad;
+    let min_y = damage.tiles.iter().map(|t| t.y).min().unwrap_or(0) as f32 * ts - pad;
+    let max_x = (damage.tiles.iter().map(|t| t.x).max().unwrap_or(0) as f32 + 1.0) * ts + pad;
+    let max_y = (damage.tiles.iter().map(|t| t.y).max().unwrap_or(0) as f32 + 1.0) * ts + pad;
+    Some(Rect::new(min_x, min_y, max_x - min_x, max_y - min_y))
+}
+
+/// True iff `rect` does NOT intersect the damaged region — i.e. nothing in
+/// `rect` is being repainted this frame, so the backdrop a cached owner's edges
+/// sampled is unchanged and re-blitting the cached pixels is byte-identical.
+fn region_disjoint_from_damage(rect: Rect, damage_bbox: Option<Rect>) -> bool {
+    match damage_bbox {
+        None => true, // empty damage → nothing repainted anywhere
+        Some(d) => !rect.intersects(&d),
+    }
+}
+
+/// True iff `inner` is fully contained in `outer` (with a sub-pixel tolerance) —
+/// used to confirm an owner's whole footprint lies inside the region
+/// `render_live` actually repaints (the padded damage bbox), so a post-render
+/// `capture_region` captures only FRESH pixels (never a partially-stale surface).
+fn rect_contains(outer: Rect, inner: Rect) -> bool {
+    const EPS: f32 = 0.5;
+    inner.x >= outer.x - EPS
+        && inner.y >= outer.y - EPS
+        && inner.right() <= outer.right() + EPS
+        && inner.bottom() <= outer.bottom() + EPS
+}
+
+/// True iff no painting node OUTSIDE `[start, end)` with z-order >= `owner_top_z`
+/// overlaps `footprint` — i.e. the owner is the topmost surface over its
+/// footprint, so a `capture_region` of the composited frame yields the owner's
+/// OWN pixels (not an occluder's).
+fn owner_is_topmost(
+    nodes: &[FlatNode],
+    start: usize,
+    end: usize,
+    owner_top_z: u32,
+    footprint: Rect,
+) -> bool {
+    for (i, node) in nodes.iter().enumerate() {
+        if i >= start && i < end {
+            continue;
+        }
+        if node.id == CURSOR_FLAT_NODE_ID || !flat_node_paints(node) {
+            continue;
+        }
+        if node.z_order < owner_top_z {
+            continue;
+        }
+        if let Some(rect) = flat_node_paint_rect(node) {
+            if rect.intersects(&footprint) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Build a `Surface` flat node that BLITS `buffer` at the integer footprint
+/// origin (`floor(footprint.x/y)`), reproducing `capture_region(footprint)` /
+/// `render_subtree_to_surface(footprint)` exactly (same floor origin + buffer
+/// dims). Placed at the owner's representative id/z so paint order is preserved.
+fn surface_blit_node(
+    rep_id: u64,
+    rep_z: u32,
+    footprint: Rect,
+    buffer: liquide_compositor::scene::SurfaceBuffer,
+) -> FlatNode {
+    let bounds = Rect::new(
+        footprint.x.floor(),
+        footprint.y.floor(),
+        buffer.width as f32,
+        buffer.height as f32,
+    );
+    FlatNode {
+        id: rep_id,
+        kind: SceneNodeKind::Surface {
+            surface_id: rep_id,
+            buffer: Some(buffer),
+        }
+        .into(),
+        absolute_bounds: bounds,
+        absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+        clip: None,
+        opacity: 1.0,
+        z_order: rep_z,
+        corner_radius: (0.0, 0.0, 0.0, 0.0),
+        clip_radius: (0.0, 0.0, 0.0, 0.0),
+    }
+}
+
+/// Resolve each surface owner's contiguous node run + footprint + metadata from
+/// the flat-node list. An owner whose nodes are absent, non-contiguous, or carry
+/// group opacity is skipped (left on the `render_live` path — never substituted).
+fn resolve_owner_nodes(
+    nodes: &[FlatNode],
+    surface_keys: &[liquide_shell::SurfaceKey],
+    dpi_scale: f32,
+) -> Vec<OwnerNodes> {
+    let mut windows: HashSet<u64> = HashSet::new();
+    let mut layers: HashSet<u64> = HashSet::new();
+    let mut wallpaper = false;
+    for k in surface_keys {
+        match k.owner {
+            liquide_shell::SurfaceOwner::Wallpaper => wallpaper = true,
+            liquide_shell::SurfaceOwner::Window(id) => {
+                windows.insert(id);
+            }
+            liquide_shell::SurfaceOwner::Layer(id) => {
+                layers.insert(id);
+            }
+        }
+    }
+
+    // Collect per-owner node indices in buffer order.
+    let mut members: HashMap<CacheSurfaceOwner, Vec<usize>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if let Some(owner) = surface_owner_for_node(node, &windows, &layers, wallpaper) {
+            members.entry(owner).or_default().push(i);
+        }
+    }
+
+    let mut out = Vec::new();
+    for k in surface_keys {
+        let owner = to_cache_owner(k.owner);
+        let Some(idxs) = members.get(&owner) else {
+            continue; // owner emitted a key but no flat nodes carry it — skip
+        };
+        if idxs.is_empty() {
+            continue;
+        }
+        let start = idxs[0];
+        let end = idxs[idxs.len() - 1] + 1;
+        // Contiguity: the index span must contain ONLY this owner's nodes, so it
+        // can be replaced by a single Surface node without disturbing paint order.
+        if end - start != idxs.len() {
+            continue;
+        }
+        let mut footprint: Option<Rect> = None;
+        let mut blur_radius = 0u32;
+        let mut has_group_opacity = false;
+        for &i in idxs {
+            let node = &nodes[i];
+            if node.opacity < 1.0 || matches!(node.kind_ref(), SceneNodeKind::RenderLayer { .. }) {
+                has_group_opacity = true;
+            }
+            blur_radius = blur_radius
+                .max(liquide_renderer_cpu::SoftwareRenderer::glass_blur_radius(node));
+            let b = node.absolute_bounds;
+            footprint = Some(match footprint {
+                Some(f) => f.union(&b),
+                None => b,
+            });
+        }
+        let Some(footprint) = footprint else { continue };
+        let phys_size = (
+            ((k.size.0 as f32) * dpi_scale).round().max(1.0) as u32,
+            ((k.size.1 as f32) * dpi_scale).round().max(1.0) as u32,
+        );
+        out.push(OwnerNodes {
+            owner,
+            content_sig: k.content_sig,
+            phys_size,
+            dpi_scale,
+            backdrop_dependent: k.backdrop_dependent,
+            start,
+            end,
+            footprint,
+            blur_radius,
+            has_group_opacity,
+            is_wallpaper: matches!(owner, CacheSurfaceOwner::Wallpaper),
+        });
+    }
+    // Process bottom-to-top (ascending start index = ascending z) so the splice
+    // logic and any future ordering assumptions hold.
+    out.sort_by_key(|o| o.start);
+    out
+}
+
+/// Does the cache hold a surface for `owner` whose `(content_sig, size, dpi)`
+/// matches `key` (the backdrop signature is checked separately for glass via the
+/// damage-ring test, so it is ignored here)?
+fn cache_content_hit(cache: &SurfaceCache, owner: CacheSurfaceOwner, key: &CacheSurfaceKey) -> bool {
+    cache.entry(owner).is_some_and(|c| {
+        c.key.content_sig == key.content_sig
+            && c.key.size == key.size
+            && c.key.dpi_scale == key.dpi_scale
+    })
+}
+
+/// PRE-render surface-cache pass: decide, per owner, reuse (substitute a cached
+/// `Surface` node) vs re-raster (keep nodes; capture afterwards). Mutates
+/// `flat_nodes_buf` in place and returns the post-render capture plan + counters.
+///
+/// `sw` is the concrete CPU renderer (for the wallpaper offscreen raster + the
+/// glass blur radius); `framebuf` is the PRIOR frame (the wallpaper raster is
+/// opaque so its backdrop seed is irrelevant). Returns `None` (no-op) when there
+/// are no surface keys — the caller then renders exactly as before.
+#[allow(clippy::too_many_arguments)]
+fn surface_cache_pre_pass(
+    flat_nodes_buf: &mut Vec<FlatNode>,
+    surface_keys: &[liquide_shell::SurfaceKey],
+    dpi_scale: f32,
+    damage: &DamageSet,
+    width: u32,
+    height: u32,
+    sw: &mut liquide_renderer_cpu::SoftwareRenderer,
+    framebuf: &FrameBuffer,
+    cache: &mut SurfaceCache,
+    mode: RenderMode,
+) -> Option<SurfaceCacheOutcome> {
+    if surface_keys.is_empty() {
+        return None;
+    }
+    let owners = resolve_owner_nodes(flat_nodes_buf, surface_keys, dpi_scale);
+    if owners.is_empty() {
+        return None;
+    }
+    let damage_bbox = damage_padded_bbox(damage, width, height);
+
+    cache.begin_frame();
+
+    let mut outcome = SurfaceCacheOutcome::default();
+    // Substitutions to splice in AFTER the decision loop (so indices stay valid
+    // while we still read the original nodes). Each is `(start, end, node)`.
+    let mut substitutions: Vec<(usize, usize, FlatNode)> = Vec::new();
+
+    for o in &owners {
+        // Owners with group opacity are not flat opaque blits — never cached.
+        if o.has_group_opacity {
+            outcome.rerastered += 1;
+            continue;
+        }
+        let owner_top_z = flat_nodes_buf[o.start..o.end]
+            .iter()
+            .map(|n| n.z_order)
+            .max()
+            .unwrap_or(0);
+        let rep_id = flat_nodes_buf[o.start].id;
+        let rep_z = flat_nodes_buf[o.start].z_order;
+        let key = if o.backdrop_dependent {
+            CacheSurfaceKey::glass(o.content_sig, o.phys_size, o.dpi_scale, 0)
+        } else {
+            CacheSurfaceKey::opaque(o.content_sig, o.phys_size, o.dpi_scale)
+        };
+
+        let hit = cache_content_hit(cache, o.owner, &key);
+
+        // Is a cache HIT safe to BLIT this frame (byte-identical to a re-raster)?
+        let safe_to_blit = if !hit {
+            false
+        } else if o.is_wallpaper {
+            true // opaque screen-bottom: cached own pixels reproduce the raster
+        } else if o.backdrop_dependent {
+            // Glass: the sampled backdrop (footprint ± blur radius) must be
+            // unchanged, and the owner must be topmost (its cache is its own).
+            region_disjoint_from_damage(o.footprint.expand(o.blur_radius as f32), damage_bbox)
+                && owner_is_topmost(flat_nodes_buf, o.start, o.end, owner_top_z, o.footprint)
+        } else {
+            // Opaque window / chrome: backdrop disjoint from damage, OR the
+            // existing blit-move byte-identity proof (topmost + fully opaque,
+            // which also covers a pure MOVE to a new position).
+            region_disjoint_from_damage(o.footprint, damage_bbox)
+                || blit_move_is_byte_identical(
+                    flat_nodes_buf,
+                    match o.owner {
+                        CacheSurfaceOwner::Window(id) => id,
+                        _ => u64::MAX,
+                    },
+                    o.footprint,
+                    o.footprint,
+                    o.footprint,
+                )
+        };
+
+        if safe_to_blit {
+            if let Some(buf) = cache.entry(o.owner).map(|c| c.buffer.clone()) {
+                substitutions.push((o.start, o.end, surface_blit_node(rep_id, rep_z, o.footprint, buf)));
+                cache.mark_composited(o.owner);
+                outcome.blitted += 1;
+                continue;
+            }
+        }
+
+        // MISS / not-yet-safe → re-raster this owner this frame.
+        outcome.rerastered += 1;
+
+        if o.is_wallpaper {
+            // Wallpaper is occluded by everything above it, so it cannot be
+            // captured from the composited frame. Raster its OWN subtree
+            // offscreen (E2) and substitute the result — byte-identical because
+            // the wallpaper is fully opaque (its backdrop seed is irrelevant).
+            let subtree: Vec<FlatNode> = flat_nodes_buf[o.start..o.end].to_vec();
+            let surface = sw.render_subtree_to_surface(
+                &subtree,
+                o.footprint,
+                framebuf,
+                cache.pool_mut(),
+                mode,
+            );
+            cache.insert(o.owner, key, surface.clone());
+            substitutions.push((o.start, o.end, surface_blit_node(rep_id, rep_z, o.footprint, surface)));
+            continue;
+        }
+
+        // Opaque / glass non-wallpaper owners are re-rastered IN PLACE by
+        // `render_live` (kept in the buffer) and captured AFTER the frame, but
+        // only when BOTH (a) the owner is topmost (so the capture is its own
+        // pixels, not an occluder's) AND (b) its whole footprint lies inside the
+        // region `render_live` repaints this frame (the padded damage bbox), so
+        // the capture is fully FRESH (never a partially-stale surface).
+        let fully_repainted = damage_bbox.is_some_and(|d| rect_contains(d, o.footprint));
+        if fully_repainted
+            && owner_is_topmost(flat_nodes_buf, o.start, o.end, owner_top_z, o.footprint)
+        {
+            outcome.captures.push(SurfaceCaptureJob {
+                owner: o.owner,
+                key,
+                footprint: o.footprint,
+                blur_radius: o.blur_radius,
+                backdrop_dependent: o.backdrop_dependent,
+            });
+        } else {
+            // Can't capture a clean full surface this frame → drop any stale
+            // entry so a future frame cannot blit an occluded / partial capture.
+            cache.invalidate(o.owner);
+        }
+    }
+
+    // Splice substitutions in descending start order so earlier indices stay
+    // valid. Each replaces the owner's `[start, end)` run with one Surface node.
+    substitutions.sort_by(|a, b| b.0.cmp(&a.0));
+    for (start, end, node) in substitutions {
+        flat_nodes_buf.splice(start..end, std::iter::once(node));
+    }
+
+    note_surface_blitted(outcome.blitted as u64);
+    note_surface_rerastered(outcome.rerastered as u64);
+    Some(outcome)
+}
+
+/// POST-render surface-cache capture: refresh the cache from the now-composited
+/// frame for the owners that were re-rastered in place, then LRU-evict to
+/// budget. Glass surfaces are keyed with the backdrop CRC they were blurred over
+/// (E2's `glass_backdrop_sig`) for completeness; the live reuse decision uses
+/// the damage-ring test.
+fn surface_cache_post_pass(
+    captures: Vec<SurfaceCaptureJob>,
+    framebuf: &FrameBuffer,
+    cache: &mut SurfaceCache,
+) {
+    for job in captures {
+        let surface = framebuf.capture_region(job.footprint);
+        let key = if job.backdrop_dependent {
+            let sig = liquide_renderer_cpu::SoftwareRenderer::glass_backdrop_sig(
+                framebuf,
+                job.footprint,
+                job.blur_radius,
+            );
+            CacheSurfaceKey::glass(job.key.content_sig, job.key.size, f32::from_bits(job.key.dpi_scale), sig as u64)
+        } else {
+            job.key
+        };
+        cache.insert(job.owner, key, surface);
+    }
+    cache.end_frame();
+}
+
 fn cursor_flat_node(cursor_x: f32, cursor_y: f32, cursor_shape: CursorShape) -> FlatNode {
     let bounds = Rect::new(cursor_x, cursor_y, CURSOR_SIZE, CURSOR_SIZE);
     FlatNode {
@@ -2308,6 +2887,14 @@ impl DesktopCompositor {
             hardware_cursor: self.cursor.use_hardware,
             images,
             cursor_theme,
+            // Snapshot the shell's per-owner surface keys for the worker's
+            // composite-only-changed loop (t2-e3). `build_scene` (above) just
+            // recomputed them. The worker re-stamps `dpi_scale`; the shell paints
+            // logical (scale 1.0) and the desktop FB is physical, so the live
+            // ratio is 1.0 on the CPU path today (a real HiDPI ratio would flow
+            // here from the display once the CPU path scales).
+            surface_keys: self.shell.surface_keys().to_vec(),
+            dpi_scale: 1.0,
         };
 
         if let Some(ref tx) = self.render_tx {
@@ -2771,6 +3358,11 @@ impl DesktopCompositor {
         // re-establish before it can blit. Worker-owned because only the worker
         // knows what is actually in `fb`.
         let mut prev_blit_window: Option<(u64, Rect)> = None;
+        // Per-owner CACHED PIXEL SURFACES (t2-e3): the retained pixel half of the
+        // compositor. Worker-owned (only the worker rasters/blits). Reused across
+        // frames; LRU-evicted to a 256 MB budget. Cleared on resize (every
+        // owner's footprint/size changes → all keys stale).
+        let mut surface_cache = SurfaceCache::new();
 
         while let Ok(msg) = rx.recv() {
             match msg {
@@ -2788,6 +3380,7 @@ impl DesktopCompositor {
                     // The retained pixels are invalidated by a resize — drop the
                     // blit-move record so the next drag frame re-establishes.
                     prev_blit_window = None;
+                    surface_cache.clear();
                 }
                 RenderMsg::CursorOnly(mut cursor_job) => {
                     // Drain any queued messages — a full Job supersedes cursor-only.
@@ -2807,6 +3400,7 @@ impl DesktopCompositor {
                                 fb = None;
                                 tile_hash_tracker.reset();
                                 prev_blit_window = None;
+                                surface_cache.clear();
                             }
                             RenderMsg::Job(j) => {
                                 upgrade_to_full = Some(j);
@@ -2840,6 +3434,7 @@ impl DesktopCompositor {
                             &mut flat_nodes_buf,
                             &mut retained_flat,
                             &mut prev_blit_window,
+                            &mut surface_cache,
                             &tx,
                         );
                         continue;
@@ -2977,6 +3572,7 @@ impl DesktopCompositor {
                                 fb = None;
                                 tile_hash_tracker.reset();
                                 prev_blit_window = None;
+                                surface_cache.clear();
                             }
                             RenderMsg::Job(j) => {
                                 latest_job = j;
@@ -2998,6 +3594,7 @@ impl DesktopCompositor {
                         &mut flat_nodes_buf,
                         &mut retained_flat,
                         &mut prev_blit_window,
+                        &mut surface_cache,
                         &tx,
                     );
 
@@ -3009,6 +3606,7 @@ impl DesktopCompositor {
                     full_job_count += 1;
                     if debug_perf && full_job_count % 60 == 0 {
                         let e = fast_path_engagement();
+                        let (surf_blit, surf_reraster) = surface_cache_engagement();
                         debug!(
                             full_jobs = full_job_count,
                             retained_incremental = e.retained_flatten_incremental,
@@ -3018,6 +3616,8 @@ impl DesktopCompositor {
                             blit_move = e.blit_move,
                             blit_establish = e.blit_establish,
                             blit_skeleton = e.blit_skeleton,
+                            surface_blitted = surf_blit,
+                            surface_rerastered = surf_reraster,
                             "fast-path engagement"
                         );
                     }
@@ -3038,6 +3638,7 @@ impl DesktopCompositor {
         flat_nodes_buf: &mut Vec<FlatNode>,
         retained_flat: &mut Vec<FlatNode>,
         prev_blit_window: &mut Option<(u64, Rect)>,
+        surface_cache: &mut SurfaceCache,
         tx: &mpsc::Sender<RenderedFrame>,
     ) {
         let t_total = Instant::now();
@@ -3451,6 +4052,42 @@ impl DesktopCompositor {
             );
         }
 
+        // 5b'. SURFACE-CACHE pre-pass (t2-e3 composite-only-changed loop).
+        //
+        // Substitute each UNCHANGED cacheable owner's contiguous node run with a
+        // single cached `Surface` node (HIT → a cheap blit, no re-raster of its
+        // Decoration/Gradient/Glass); owners that changed (MISS) keep their nodes
+        // and `render_live` re-rasters them in place, then they are captured into
+        // the cache after the frame. Output is byte-identical to a full repaint
+        // (see the module docs). LIVE path only — gated off during a drag (the
+        // blit-move / skeleton paths own the buffer) and when the backend is not
+        // the CPU `SoftwareRenderer`. The deterministic capture path
+        // (`render_frame_sync`) never reaches here, so goldens are unaffected.
+        let mut surface_captures: Vec<SurfaceCaptureJob> = Vec::new();
+        let mut surface_pass_ran = false;
+        if latest_job.dragged_window.is_none() && blit_plan.is_none() {
+            if let Some(sw) = renderer
+                .as_any_mut()
+                .and_then(|any| any.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
+            {
+                if let Some(outcome) = surface_cache_pre_pass(
+                    flat_nodes_buf,
+                    &latest_job.surface_keys,
+                    latest_job.dpi_scale,
+                    &damage,
+                    latest_job.width,
+                    latest_job.height,
+                    sw,
+                    framebuf,
+                    surface_cache,
+                    RenderMode::LiveFull,
+                ) {
+                    surface_pass_ran = true;
+                    surface_captures = outcome.captures;
+                }
+            }
+        }
+
         // 5b. Clear only the damaged tiles. The framebuffer is intentionally
         // preserved between frames so partial damage has valid previous pixels.
         clear_damage_tiles(framebuf, &damage);
@@ -3487,6 +4124,16 @@ impl DesktopCompositor {
             renderer.render_live(flat_nodes_buf, framebuf, &damage, RenderMode::LiveFull);
         compositor.end_frame();
         compositor.present_frame();
+
+        // SURFACE-CACHE post-pass (t2-e3): refresh the cache from the now-
+        // composited frame for the owners that were re-rastered in place
+        // (topmost, so their footprint capture is their own pixels), then
+        // LRU-evict to the 256 MB budget. Pairs with the `begin_frame` the
+        // pre-pass issued; runs IFF the pre-pass ran.
+        if surface_pass_ran {
+            surface_cache_post_pass(std::mem::take(&mut surface_captures), framebuf, surface_cache);
+        }
+
         // Capture whether glyphs were still rasterising so the main loop can
         // schedule a bounded damage-only follow-up frame (text fills in).
         let pending_glyphs = renderer.has_pending_glyphs();
@@ -4484,6 +5131,8 @@ mod tests {
             hardware_cursor: true,
             images: Vec::new(),
             cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
+            surface_keys: Vec::new(),
+            dpi_scale: 1.0,
         }
     }
 
@@ -4511,6 +5160,8 @@ mod tests {
             hardware_cursor: true,
             images: Vec::new(),
             cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
+            surface_keys: Vec::new(),
+            dpi_scale: 1.0,
         }
     }
 
@@ -4631,6 +5282,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
         assert_eq!(
@@ -4649,6 +5301,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
         assert_eq!(
@@ -4684,6 +5337,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
 
@@ -4705,6 +5359,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
 
@@ -4773,6 +5428,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
         assert!(
@@ -4793,6 +5449,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
         assert_eq!(
@@ -4933,6 +5590,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
 
@@ -4950,6 +5608,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
         assert_eq!(
@@ -5012,6 +5671,7 @@ mod tests {
             flat_nodes_buf,
             retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
     }
@@ -5184,6 +5844,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
 
@@ -5209,6 +5870,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
 
@@ -5275,6 +5937,7 @@ mod tests {
                 &mut flat_nodes_buf,
                 &mut retained_flat,
                 &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+                &mut SurfaceCache::new(),
                 &tx,
             );
         }
@@ -5659,6 +6322,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
 
@@ -5698,6 +6362,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
         let cache_a = cached_flat_nodes.clone().expect("frame A publishes a cache");
@@ -5722,6 +6387,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
         let cache_b = cached_flat_nodes.as_ref().expect("frame B publishes a cache");
@@ -5863,6 +6529,7 @@ mod tests {
             &mut flat_nodes_buf,
             &mut retained_flat,
             &mut None::<(u64, liquide_compositor::geometry::Rect)>,
+            &mut SurfaceCache::new(),
             &tx,
         );
 
@@ -6636,6 +7303,8 @@ mod blit_move_tests {
             hardware_cursor: true,
             images: Vec::new(),
             cursor_theme: liquide_renderer_cpu::CursorTheme::default(),
+            surface_keys: Vec::new(),
+            dpi_scale: 1.0,
         }
     }
 
@@ -6663,6 +7332,7 @@ mod blit_move_tests {
         let (tx, rx) = mpsc::channel();
         DesktopCompositor::render_full_job(
             job, renderer, compositor, fb, tracker, recycler, cache, buf, retained, prev_blit,
+            &mut SurfaceCache::new(),
             &tx,
         );
         rx.recv().expect("frame produced").pixels
@@ -7037,5 +7707,496 @@ mod blit_move_tests {
             "a non-drag / capture-style render must equal a full re-raster (never blits)"
         );
         assert_eq!(prev_blit, None, "a non-drag frame clears any blit record");
+    }
+}
+
+// ===========================================================================
+// Surface-cache composite-only-changed loop tests (t2-e3) — NO FAKE GREEN.
+//
+// Each test renders the SAME scene state two ways — once via the surface-cache
+// composite (`surface_cache_pre_pass` → `render_live` → `surface_cache_post_pass`,
+// exactly the worker's live path) and once via a full direct re-raster
+// (`render_live` over the original nodes, the ground truth) — and asserts:
+//   (a) the cached-surface frame is PIXEL-IDENTICAL to the full repaint,
+//   (b) an IDLE frame (no damage) does ZERO re-raster (composites from cache),
+//   (c) a content change in ONE owner re-rasters ONLY that owner,
+//   (d) a window MOVE blits the cached surface (no re-raster),
+//   (e) a glass owner re-blurs when its backdrop region is damaged, blits when not.
+// TEETH: poisoning a cached surface makes the composited frame DIVERGE from the
+// full repaint — proving the blit really consumes the cache (not a re-raster) and
+// that cache validity is load-bearing.
+//
+// Determinism: tests use `RenderMode::Capture` (block-drained glyphs +
+// synchronous blur) so the two renders are byte-comparable; the cache decision
+// logic is identical under any mode (only the wallpaper offscreen raster takes
+// the mode, threaded through).
+#[cfg(test)]
+mod surface_cache_loop_tests {
+    use super::*;
+    use liquide_compositor::pixel::Color;
+    use liquide_compositor::scene::GlassParams;
+
+    const W: u32 = 200;
+    const H: u32 = 160;
+    const TILE: u32 = 64;
+
+    fn flat(id: u64, kind: SceneNodeKind, bounds: Rect, z: u32) -> FlatNode {
+        FlatNode {
+            id,
+            kind: kind.into(),
+            absolute_bounds: bounds,
+            absolute_transform: liquide_compositor::geometry::Affine2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            z_order: z,
+            corner_radius: (0.0, 0.0, 0.0, 0.0),
+            clip_radius: (0.0, 0.0, 0.0, 0.0),
+        }
+    }
+
+    fn bg(id: u64, z: u32, b: Rect, color: Color) -> FlatNode {
+        flat(id, SceneNodeKind::Background { color }, b, z)
+    }
+
+    fn glass(id: u64, z: u32, b: Rect) -> FlatNode {
+        flat(
+            id,
+            SceneNodeKind::Glass(GlassParams {
+                blur_radius: 8,
+                tint_color: Color::new(255, 255, 255, 48),
+                inner_glow: false,
+                parallax: false,
+            }),
+            b,
+            z,
+        )
+    }
+
+    fn shell_key(
+        owner: liquide_shell::SurfaceOwner,
+        content_sig: u64,
+        size: (u32, u32),
+        backdrop_dependent: bool,
+    ) -> liquide_shell::SurfaceKey {
+        liquide_shell::SurfaceKey {
+            owner,
+            content_sig,
+            size,
+            dpi_scale: 0x3f80_0000, // f32::to_bits(1.0); the worker re-stamps it
+            backdrop_dependent,
+        }
+    }
+
+    fn damage_rect(r: Rect) -> DamageSet {
+        let mut d = DamageSet::new(TILE);
+        let grid_w = W.div_ceil(TILE);
+        let grid_h = H.div_ceil(TILE);
+        let x0 = r.x.max(0.0).floor() as u32;
+        let y0 = r.y.max(0.0).floor() as u32;
+        let x1 = (r.x + r.width).min(W as f32).ceil() as u32;
+        let y1 = (r.y + r.height).min(H as f32).ceil() as u32;
+        d.mark_rect(x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0), grid_w, grid_h);
+        d.dedup();
+        d
+    }
+
+    fn full_render(r: &mut liquide_renderer_cpu::SoftwareRenderer, nodes: &[FlatNode]) -> FrameBuffer {
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let dmg = full_damage(TILE, W, H);
+        clear_damage_tiles(&mut fb, &dmg);
+        let _ = r.render_live(nodes, &mut fb, &dmg, RenderMode::Capture);
+        fb
+    }
+
+    /// Run the worker's surface-cache composite path for one frame: pre-pass
+    /// (substitute cached owners), clear+render, post-pass (capture). Returns
+    /// `(blitted, rerastered)`.
+    fn composite_cached(
+        r: &mut liquide_renderer_cpu::SoftwareRenderer,
+        fb: &mut FrameBuffer,
+        nodes: &[FlatNode],
+        keys: &[liquide_shell::SurfaceKey],
+        damage: &DamageSet,
+        cache: &mut SurfaceCache,
+    ) -> (usize, usize) {
+        let mut buf = nodes.to_vec();
+        let out = surface_cache_pre_pass(
+            &mut buf,
+            keys,
+            1.0,
+            damage,
+            fb.width,
+            fb.height,
+            r,
+            fb,
+            cache,
+            RenderMode::Capture,
+        )
+        .expect("surface keys present → pass runs");
+        let counts = (out.blitted, out.rerastered);
+        clear_damage_tiles(fb, damage);
+        let _ = r.render_live(&buf, fb, damage, RenderMode::Capture);
+        surface_cache_post_pass(out.captures, fb, cache);
+        counts
+    }
+
+    fn diff_pixels(a: &FrameBuffer, b: &FrameBuffer) -> usize {
+        a.pixels()
+            .chunks_exact(4)
+            .zip(b.pixels().chunks_exact(4))
+            .filter(|(x, y)| x != y)
+            .count()
+    }
+
+    /// An opaque desktop: wallpaper + two non-overlapping opaque windows.
+    fn opaque_scene() -> (Vec<FlatNode>, Vec<liquide_shell::SurfaceKey>) {
+        use liquide_shell::SurfaceOwner as O;
+        let nodes = vec![
+            bg(1, 0, Rect::new(0.0, 0.0, W as f32, H as f32), Color::new(30, 40, 50, 255)),
+            bg(10_010, 200, Rect::new(10.0, 20.0, 60.0, 40.0), Color::new(200, 60, 60, 255)),
+            bg(10_020, 210, Rect::new(120.0, 90.0, 50.0, 40.0), Color::new(60, 200, 60, 255)),
+        ];
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (W, H), false),
+            shell_key(O::Window(1), 0x2001, (60, 40), false),
+            shell_key(O::Window(2), 0x3001, (50, 40), false),
+        ];
+        (nodes, keys)
+    }
+
+    // ── (a) PIXEL-IDENTITY: cached composite == full repaint ──────────────────
+
+    #[test]
+    fn cached_composite_is_pixel_identical_to_full_repaint() {
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let (nodes, keys) = opaque_scene();
+        let ground = full_render(&mut r, &nodes);
+
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let full = full_damage(TILE, W, H);
+
+        // Frame 1 (cold cache → MISS path): must already equal the full repaint.
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+        assert_eq!(
+            diff_pixels(&fb, &ground),
+            0,
+            "MISS-path composite must equal a full repaint"
+        );
+
+        // Frame 2 (warm cache → owners blit from cache): still pixel-identical.
+        let (blit, _) = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+        assert!(blit >= 3, "warm frame must blit the cached owners (got {blit})");
+        assert_eq!(
+            diff_pixels(&fb, &ground),
+            0,
+            "cached-surface composite must be PIXEL-IDENTICAL to a full repaint"
+        );
+        // Non-vacuous: the windows actually painted over the wallpaper.
+        let blank = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        assert!(diff_pixels(&ground, &blank) > 1000, "scene must actually paint");
+    }
+
+    // ── (b) IDLE frame composites from cache with ZERO re-raster ──────────────
+
+    #[test]
+    fn idle_frame_does_zero_reraster() {
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let (nodes, keys) = opaque_scene();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let full = full_damage(TILE, W, H);
+
+        // Prime the cache.
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+
+        // Idle wake: EMPTY damage, nothing changed.
+        let empty = DamageSet::new(TILE);
+        let (blit, reraster) = composite_cached(&mut r, &mut fb, &nodes, &keys, &empty, &mut cache);
+        assert_eq!(reraster, 0, "an idle frame must RE-RASTER NOTHING");
+        assert_eq!(blit, 3, "every owner composites from cache on an idle frame");
+    }
+
+    // ── (c) a content change re-rasters ONLY the changed owner ────────────────
+
+    #[test]
+    fn single_window_change_rerasters_only_that_owner() {
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let (nodes, keys) = opaque_scene();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let full = full_damage(TILE, W, H);
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+
+        // Window 1's content changes: new colour + bumped content_sig; damage is
+        // confined to its footprint.
+        let mut nodes2 = nodes.clone();
+        nodes2[1] = bg(10_010, 200, Rect::new(10.0, 20.0, 60.0, 40.0), Color::new(20, 20, 220, 255));
+        let mut keys2 = keys.clone();
+        keys2[1].content_sig = 0x2002;
+        let dmg = damage_rect(Rect::new(10.0, 20.0, 60.0, 40.0));
+
+        let (_, reraster) = composite_cached(&mut r, &mut fb, &nodes2, &keys2, &dmg, &mut cache);
+        assert_eq!(reraster, 1, "ONLY the changed window re-rasters (others are cache hits)");
+
+        // ...and the result is correct (equals a full repaint of the new state).
+        let ground = full_render(&mut r, &nodes2);
+        assert_eq!(
+            diff_pixels(&fb, &ground),
+            0,
+            "per-owner invalidation must still be pixel-identical to a full repaint"
+        );
+    }
+
+    // ── (d) a window MOVE blits the cached surface (no re-raster) ─────────────
+
+    #[test]
+    fn window_move_blits_cached_surface_no_reraster() {
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let (nodes, keys) = opaque_scene();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let full = full_damage(TILE, W, H);
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+
+        // Move Window 1 down (same content_sig + size, new position) — a pure MOVE.
+        let old = Rect::new(10.0, 20.0, 60.0, 40.0);
+        let new = Rect::new(10.0, 70.0, 60.0, 40.0);
+        let mut nodes2 = nodes.clone();
+        nodes2[1] = bg(10_010, 200, new, Color::new(200, 60, 60, 255));
+        let dmg = damage_rect(old.union(&new));
+
+        let (blit, reraster) = composite_cached(&mut r, &mut fb, &nodes2, &keys, &dmg, &mut cache);
+        assert_eq!(reraster, 0, "a pure MOVE re-rasters nothing — the surface is blitted");
+        assert_eq!(blit, 3, "the moved window + wallpaper + other window all blit from cache");
+
+        let ground = full_render(&mut r, &nodes2);
+        assert_eq!(
+            diff_pixels(&fb, &ground),
+            0,
+            "a move-blit must be pixel-identical to a full repaint of the moved scene"
+        );
+    }
+
+    // ── (e) glass: re-blur when its backdrop is damaged, blit when not ────────
+
+    fn glass_scene() -> (Vec<FlatNode>, Vec<liquide_shell::SurfaceKey>) {
+        use liquide_shell::SurfaceOwner as O;
+        let nodes = vec![
+            bg(1, 0, Rect::new(0.0, 0.0, W as f32, H as f32), Color::new(30, 40, 50, 255)),
+            glass(5000, 10_000, Rect::new(10.0, 120.0, 70.0, 25.0)),
+        ];
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (W, H), false),
+            shell_key(O::Layer(5000), 0x4001, (70, 25), true),
+        ];
+        (nodes, keys)
+    }
+
+    #[test]
+    fn glass_blits_when_backdrop_unchanged_reblurs_when_damaged() {
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let (nodes, keys) = glass_scene();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let full = full_damage(TILE, W, H);
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+
+        // Damage FAR from the glass footprint+blur ring → backdrop unchanged →
+        // glass BLITS (re-raster excludes it; only the cheap blit runs).
+        let far = damage_rect(Rect::new(180.0, 0.0, 20.0, 20.0));
+        let (blit_far, reraster_far) = composite_cached(&mut r, &mut fb, &nodes, &keys, &far, &mut cache);
+        assert_eq!(reraster_far, 0, "glass must BLIT when its backdrop is unchanged");
+        assert_eq!(blit_far, 2, "wallpaper + glass both composite from cache");
+
+        // Damage INSIDE the glass footprint → backdrop changed → glass RE-BLURS.
+        let under = damage_rect(Rect::new(10.0, 120.0, 70.0, 25.0));
+        let (_, reraster_under) = composite_cached(&mut r, &mut fb, &nodes, &keys, &under, &mut cache);
+        assert_eq!(
+            reraster_under, 1,
+            "glass must RE-BLUR (re-raster) when its backdrop region is damaged"
+        );
+    }
+
+    // ── TEETH: a poisoned cache diverges from the full repaint ────────────────
+
+    #[test]
+    fn teeth_poisoned_cache_blit_diverges_from_full_repaint() {
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let (nodes, keys) = opaque_scene();
+        let ground = full_render(&mut r, &nodes);
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let full = full_damage(TILE, W, H);
+
+        // Prime: a clean cached frame equals the full repaint.
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+        assert_eq!(diff_pixels(&fb, &ground), 0, "clean cached frame must match");
+
+        // POISON Window 1's cached surface with solid magenta (same key/dims).
+        let owner = CacheSurfaceOwner::Window(1);
+        let entry = cache.entry(owner).expect("window 1 cached after prime");
+        let (cw, ch, key) = (entry.buffer.width, entry.buffer.height, entry.key);
+        let poison = liquide_compositor::scene::SurfaceBuffer {
+            pixels: std::sync::Arc::new(
+                [255u8, 0, 255, 255].repeat((cw * ch) as usize),
+            ),
+            width: cw,
+            height: ch,
+            stride: cw * 4,
+            format: PixelFormat::Bgra8,
+        };
+        cache.insert(owner, key, poison);
+
+        // Next frame BLITS the poisoned surface (HIT) → frame must DIVERGE from
+        // the full repaint. If it matched, the blit would not be reading the
+        // cache (the test would be fake-green).
+        let (blit, reraster) = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
+        assert_eq!(reraster, 0, "all opaque owners HIT — the poisoned window still blits (no re-raster)");
+        assert_eq!(blit, 3, "all three owners composite from cache (the poisoned one included)");
+        assert!(
+            diff_pixels(&fb, &ground) > 100,
+            "a poisoned cached blit MUST diverge from the full repaint (cache is load-bearing)"
+        );
+    }
+
+    // ── MEASUREMENT + PNG verification (run manually, not a gate) ────────────
+    //
+    //   cargo test -p liquide-session --lib surface_cache_perf -- --ignored --nocapture
+    //
+    // Renders a realistic 1080p scene (gradient wallpaper + glass band + windows)
+    // three ways and reports the per-frame work: a FULL re-raster (today's cost),
+    // an IDLE cached frame (expect ~0 re-raster), and a single-window TYPING frame
+    // (expect 1 re-raster + cheap blits). Writes the full repaint and the cached
+    // composite to `.orchestration/shots/` for eyeball verification (they must
+    // look identical).
+    #[test]
+    #[ignore = "manual perf/verify run; not a CI gate"]
+    fn surface_cache_perf_and_png_verify() {
+        use liquide_compositor::scene::GradientSpec;
+        const PW: u32 = 1920;
+        const PH: u32 = 1080;
+        const PT: u32 = 64;
+        let pdmg_full = full_damage(PT, PW, PH);
+
+        let grad = GradientSpec::Linear {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 1.0,
+            end_y: 1.0,
+            stops: vec![
+                (0.0, Color::new(20, 30, 60, 255)),
+                (1.0, Color::new(90, 40, 110, 255)),
+            ],
+            repeating: false,
+        };
+        use liquide_shell::SurfaceOwner as O;
+        let nodes = vec![
+            flat(1, SceneNodeKind::GradientFill { gradient: grad }, Rect::new(0.0, 0.0, PW as f32, PH as f32), 0),
+            bg(10_010, 200, Rect::new(120.0, 140.0, 520.0, 360.0), Color::new(210, 70, 70, 255)),
+            bg(10_020, 210, Rect::new(800.0, 200.0, 600.0, 420.0), Color::new(70, 200, 90, 255)),
+            bg(10_030, 220, Rect::new(1450.0, 120.0, 360.0, 700.0), Color::new(80, 120, 220, 255)),
+            glass(5000, 10_000, Rect::new(0.0, 0.0, PW as f32, 40.0)), // status band
+        ];
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (PW, PH), false),
+            shell_key(O::Window(1), 0x2001, (520, 360), false),
+            shell_key(O::Window(2), 0x3001, (600, 420), false),
+            shell_key(O::Window(3), 0x4001, (360, 700), false),
+            shell_key(O::Layer(5000), 0x5001, (PW, 40), true),
+        ];
+
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+
+        // FULL re-raster cost ("today"): min of a few runs.
+        let mut full_fb = FrameBuffer::new(PW, PH, PixelFormat::Bgra8);
+        let mut full_ms = f64::MAX;
+        for _ in 0..5 {
+            full_fb = FrameBuffer::new(PW, PH, PixelFormat::Bgra8);
+            let t = Instant::now();
+            clear_damage_tiles(&mut full_fb, &pdmg_full);
+            let _ = r.render_live(&nodes, &mut full_fb, &pdmg_full, RenderMode::Capture);
+            full_ms = full_ms.min(t.elapsed().as_secs_f64() * 1000.0);
+        }
+
+        // Warm the cache, then measure an IDLE frame and a TYPING frame.
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(PW, PH, PixelFormat::Bgra8);
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &pdmg_full, &mut cache); // prime
+        let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &pdmg_full, &mut cache); // all-blit
+
+        let empty = DamageSet::new(PT);
+        let t = Instant::now();
+        let (idle_blit, idle_reraster) =
+            composite_cached(&mut r, &mut fb, &nodes, &keys, &empty, &mut cache);
+        let idle_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+        // Typing in window 1: bump its sig, damage its footprint only.
+        let mut nodes2 = nodes.clone();
+        nodes2[1] = bg(10_010, 200, Rect::new(120.0, 140.0, 520.0, 360.0), Color::new(30, 30, 230, 255));
+        let mut keys2 = keys.clone();
+        keys2[1].content_sig = 0x2002;
+        let typ_dmg = damage_rect_dim(Rect::new(120.0, 140.0, 520.0, 360.0), PW, PH, PT);
+        let t = Instant::now();
+        let (typ_blit, typ_reraster) =
+            composite_cached(&mut r, &mut fb, &nodes2, &keys2, &typ_dmg, &mut cache);
+        let typ_ms = t.elapsed().as_secs_f64() * 1000.0;
+
+        eprintln!("── surface-cache frame work (1920x1080, 5 owners) ──");
+        eprintln!("FULL re-raster (today):  {full_ms:8.3} ms");
+        eprintln!("IDLE cached frame:       {idle_ms:8.3} ms  (blit {idle_blit}, reraster {idle_reraster})");
+        eprintln!("TYPING 1-window frame:   {typ_ms:8.3} ms  (blit {typ_blit}, reraster {typ_reraster})");
+        assert_eq!(idle_reraster, 0, "idle must re-raster nothing");
+        assert_eq!(typ_reraster, 1, "typing must re-raster only the typed window");
+
+        // PNG verification: full repaint vs a warm cached composite (full damage
+        // so every owner blits) — must look identical.
+        let mut cached_full = FrameBuffer::new(PW, PH, PixelFormat::Bgra8);
+        let _ = composite_cached(&mut r, &mut cached_full, &nodes, &keys, &pdmg_full, &mut cache);
+        let dir = std::path::Path::new(r"F:\Projects\liquide\.orchestration\shots");
+        let _ = std::fs::create_dir_all(dir);
+        for (name, frame) in [("t2-full-reraster", &full_fb), ("t2-cached-composite", &cached_full)] {
+            let sf = crate::desktop::screenshot::ScreenshotFrame {
+                width: frame.width,
+                height: frame.height,
+                stride: frame.stride,
+                pixels: frame.pixels(),
+            };
+            let path = dir.join(format!("{name}.png"));
+            crate::desktop::screenshot::write_png(&sf, &path).expect("write png");
+            eprintln!("wrote {}", path.display());
+        }
+    }
+
+    fn damage_rect_dim(r: Rect, w: u32, h: u32, tile: u32) -> DamageSet {
+        let mut d = DamageSet::new(tile);
+        let gw = w.div_ceil(tile);
+        let gh = h.div_ceil(tile);
+        let x0 = r.x.max(0.0).floor() as u32;
+        let y0 = r.y.max(0.0).floor() as u32;
+        let x1 = (r.x + r.width).min(w as f32).ceil() as u32;
+        let y1 = (r.y + r.height).min(h as f32).ceil() as u32;
+        d.mark_rect(x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0), gw, gh);
+        d.dedup();
+        d
+    }
+
+    // ── gate: no surface keys → the pass is a no-op (capture/bypass safety) ───
+
+    #[test]
+    fn empty_surface_keys_is_a_noop_pass() {
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let (nodes, _keys) = opaque_scene();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let full = full_damage(TILE, W, H);
+        let mut buf = nodes.clone();
+        let out = surface_cache_pre_pass(
+            &mut buf, &[], 1.0, &full, W, H, &mut r, &fb, &mut cache, RenderMode::Capture,
+        );
+        assert!(out.is_none(), "no surface keys → pass is skipped (capture path bypass)");
+        assert_eq!(buf.len(), nodes.len(), "buffer is untouched when the pass is skipped");
+        assert!(cache.is_empty(), "no begin_frame / inserts happen on a skipped pass");
+        let _ = &mut fb;
     }
 }

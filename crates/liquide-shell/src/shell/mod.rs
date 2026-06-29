@@ -8,7 +8,10 @@ mod devtools;
 mod dom_sync;
 mod events;
 pub mod hooks;
-mod scene;
+// `scene` is `pub` so the surface-cache owner keys (`SurfaceKey`/`SurfaceOwner`,
+// t2-e4) it defines can be re-exported from the crate root (`lib.rs`) for the
+// live render thread (t2-e3). The module's other items stay crate-internal.
+pub mod scene;
 mod theme;
 mod tick;
 mod windows;
