@@ -11,6 +11,11 @@ mod images;
 mod occlusion;
 #[cfg(test)]
 pub(crate) use occlusion::{reset_cull_probe, was_culled};
+/// Surface-cache raster helpers (t2-surface-cache E2): raster an opaque subtree
+/// to a cacheable [`liquide_compositor::scene::SurfaceBuffer`], and the glass
+/// backdrop-CRC / re-blur-in-place path. Declared here (mod.rs is this
+/// executor's lock) so it sits beside the renderer it extends.
+mod surface;
 mod text;
 /// Live text shaping (rustybuzz OpenType + Unicode bidi + multi-font fallback)
 /// wired into the text-draw path. Declared from `mod.rs` (which this executor
