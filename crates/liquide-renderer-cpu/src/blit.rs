@@ -48,22 +48,22 @@ pub fn blit_region(
         && dst_y_end <= dst.height as i32
     {
         let bytes_per_pixel = src.format.bytes_per_pixel() as usize;
-        let row_bytes = sw as usize * bytes_per_pixel;
         let src_stride = src.stride as usize;
-        let dst_stride = dst.stride as usize;
         let src_start_x = sx as usize * bytes_per_pixel;
-        let dst_start_x = dst_x as usize * bytes_per_pixel;
         let src_pixels = src.pixels();
-        let Some(dst_pixels) = dst.pixels_mut() else {
-            return;
-        };
 
-        for row in 0..sh as usize {
-            let src_offset = (sy as usize + row) * src_stride + src_start_x;
-            let dst_offset = (dst_y as usize + row) * dst_stride + dst_start_x;
-            dst_pixels[dst_offset..dst_offset + row_bytes]
-                .copy_from_slice(&src_pixels[src_offset..src_offset + row_bytes]);
-        }
+        // Route the bulk row copy through the framebuffer's scissor-clamping
+        // write API so this fast path CANNOT escape the active write-scissor.
+        // It previously wrote raw rows via `pixels_mut()` with no scissor
+        // consultation — the t79 / blit-move stale-pixel escape class. With no
+        // scissor installed and an in-bounds rect (guaranteed by the guard
+        // above) the clamp is a no-op, so the copied bytes are byte-identical.
+        dst.for_each_scissored_row(dst_x, dst_y, sw as u32, sh as u32, |row, col_skip, span| {
+            let src_offset = (sy as usize + row as usize) * src_stride
+                + src_start_x
+                + col_skip as usize * bytes_per_pixel;
+            span.copy_from_slice(&src_pixels[src_offset..src_offset + span.len()]);
+        });
         return;
     }
 
@@ -178,6 +178,33 @@ pub fn blit_within(fb: &mut FrameBuffer, src_rect: Rect, dst_x: i32, dst_y: i32)
         return;
     }
 
+    // Confine the move to the active write-scissor (damage). A window move that
+    // copies pixels to a new location must NOT write outside the damage rect or
+    // it leaves drag trails (the blit-move stale-pixel class). Intersect the
+    // DESTINATION window with the scissor and trim the source by the same amount
+    // so the two ranges stay aligned; the vertical move delta `dy` (which decides
+    // the overlap-safe row order) is preserved because source and destination
+    // shift together. With no scissor installed this is a no-op.
+    let (cx0, cy0, cx1, cy1) = liquide_compositor::scissor::scissor_clamp_window(
+        dx0 as u32,
+        dy0 as u32,
+        (dx0 + w) as u32,
+        (dy0 + h) as u32,
+    );
+    let (cx0, cy0, cx1, cy1) = (cx0 as i32, cy0 as i32, cx1 as i32, cy1 as i32);
+    if cx1 <= cx0 || cy1 <= cy0 {
+        return;
+    }
+    sx += cx0 - dx0;
+    sy += cy0 - dy0;
+    dx0 = cx0;
+    dy0 = cy0;
+    w = cx1 - cx0;
+    h = cy1 - cy0;
+    if w <= 0 || h <= 0 {
+        return;
+    }
+
     let stride = fb.stride as usize;
     let row_bytes = (w * bpp) as usize;
     let src_x_off = (sx * bpp) as usize;
@@ -223,17 +250,17 @@ pub fn clear_region(fb: &mut FrameBuffer, rect: Rect, color: Color) {
     let x1 = (rect.right().ceil() as u32).min(fb.width);
     let y1 = (rect.bottom().ceil() as u32).min(fb.height);
 
-    let w = (x1.saturating_sub(x0)) as usize;
-    if w == 0 {
+    let w = x1.saturating_sub(x0);
+    let h = y1.saturating_sub(y0);
+    if w == 0 || h == 0 {
         return;
     }
 
-    let stride = fb.stride as usize;
-    let pixels = fb.pixels_mut().expect("CPU framebuffer required");
-
-    for y in y0..y1 {
-        let row_start = y as usize * stride + x0 as usize * 4;
-        let row = &mut pixels[row_start..row_start + w * 4];
-        liquide_simd::fill::fill_pattern(row, bgra);
-    }
+    // Route the scanline fill through the scissor-clamping write API so a clear
+    // cannot wipe pixels outside the active damage rect (clear_region previously
+    // wrote raw `pixels_mut()` scanlines with no scissor consultation). With no
+    // scissor installed the clamp is a no-op and the filled bytes are identical.
+    fb.for_each_scissored_row(x0 as i32, y0 as i32, w, h, |_row, _col_skip, span| {
+        liquide_simd::fill::fill_pattern(span, bgra);
+    });
 }

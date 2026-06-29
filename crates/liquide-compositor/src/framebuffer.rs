@@ -578,6 +578,81 @@ impl FrameBuffer {
         }
     }
 
+    /// Visit each destination row of the integer pixel rectangle
+    /// `[dst_x, dst_x + w) × [dst_y, dst_y + h)` that survives BOTH the
+    /// framebuffer bounds AND the active per-thread write-scissor
+    /// ([`crate::scissor`]), handing the closure the CLAMPED, in-bounds,
+    /// in-scissor mutable destination byte span for that row together with the
+    /// number of columns trimmed off the left edge (`col_skip`) so the caller
+    /// can align its source data.
+    ///
+    /// This is the BY-CONSTRUCTION damage-confinement primitive for the bulk /
+    /// "fast path" writers (surface & wallpaper blit, blur write-back, solid
+    /// fills) that copy whole rows through the raw [`pixels_mut`](Self::pixels_mut)
+    /// slice and therefore historically bypassed the
+    /// [`set_pixel`](Self::set_pixel) scissor check (the disappear / stale-pixel
+    /// / blit-trail escape class). A caller that writes ONLY into the span it is
+    /// handed *physically cannot* write outside the scissor even if it never
+    /// threads a clip argument — the intersection is computed HERE, once per row
+    /// (no per-pixel cost), matching the performance of the raw row copies it
+    /// replaces.
+    ///
+    /// With no scissor installed (a full-damage frame) the only clamp is the
+    /// framebuffer bounds, so for an already in-bounds rectangle the spans are
+    /// the full rows and the bytes written are byte-identical to the old raw
+    /// path. `dst_x` / `dst_y` are signed: a partially off-screen origin is
+    /// trimmed, with the trim reflected in `col_skip` (x) and the reported
+    /// `row` index (y). The closure receives `(row, col_skip, span)` where
+    /// `row ∈ 0..h` is the source-relative row index, `col_skip` the leading
+    /// columns dropped, and `span.len() == clamped_width * bytes_per_pixel`.
+    /// Fully clipped rows (and a GPU-backed framebuffer) are skipped entirely.
+    pub fn for_each_scissored_row<F>(&mut self, dst_x: i32, dst_y: i32, w: u32, h: u32, mut f: F)
+    where
+        F: FnMut(u32, u32, &mut [u8]),
+    {
+        if w == 0 || h == 0 {
+            return;
+        }
+        let bpp = self.format.bytes_per_pixel() as usize;
+        if bpp == 0 {
+            return;
+        }
+        let stride = self.stride as usize;
+        let fb_w = i64::from(self.width);
+        let fb_h = i64::from(self.height);
+
+        // Destination window in i64 pixel space, clamped to the framebuffer.
+        let wx0 = i64::from(dst_x).max(0);
+        let wy0 = i64::from(dst_y).max(0);
+        let wx1 = (i64::from(dst_x) + i64::from(w)).min(fb_w);
+        let wy1 = (i64::from(dst_y) + i64::from(h)).min(fb_h);
+        if wx1 <= wx0 || wy1 <= wy0 {
+            return;
+        }
+
+        // Intersect with the active write-scissor (None => unconstrained). The
+        // window is already within `u32` framebuffer bounds, so the casts are
+        // lossless.
+        let (sx0, sy0, sx1, sy1) =
+            crate::scissor::scissor_clamp_window(wx0 as u32, wy0 as u32, wx1 as u32, wy1 as u32);
+        if sx1 <= sx0 || sy1 <= sy0 {
+            return;
+        }
+
+        let row_bytes = (sx1 - sx0) as usize * bpp;
+        let col_skip = (i64::from(sx0) - i64::from(dst_x)) as u32;
+        let x_byte = sx0 as usize * bpp;
+        let Some(pixels) = self.pixels_mut() else {
+            return;
+        };
+        for y in sy0..sy1 {
+            let row = (i64::from(y) - i64::from(dst_y)) as u32;
+            let start = y as usize * stride + x_byte;
+            let span = &mut pixels[start..start + row_bytes];
+            f(row, col_skip, span);
+        }
+    }
+
     /// Width of the tile grid for a given tile size.
     #[must_use]
     pub fn tile_grid_width(&self, tile_size: u32) -> u32 {

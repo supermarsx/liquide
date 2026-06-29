@@ -31,6 +31,29 @@ fn glyph_clip_window(clip: Option<Rect>) -> (i32, i32, i32, i32) {
     }
 }
 
+/// The glyph blit window: the optional per-node `clip` INTERSECTED with the
+/// active per-thread write-scissor ([`liquide_compositor::scissor`]).
+///
+/// A glyph blit writes per pixel through [`FrameBuffer::set_pixel`], which
+/// already drops any pixel outside the scissor, so the produced pixels are
+/// unchanged by this intersection — but hoisting the scissor into the row/column
+/// loop guard makes the damage confinement BY CONSTRUCTION (the loop never even
+/// visits an out-of-damage pixel) and skips the wasted blend work, instead of
+/// relying solely on the per-pixel drop. Byte-identical to honouring only
+/// `clip`, because `set_pixel` would have dropped exactly the pixels this now
+/// declines to compute.
+#[inline]
+fn glyph_blit_window(clip: Option<Rect>) -> (i32, i32, i32, i32) {
+    let (mut x0, mut y0, mut x1, mut y1) = glyph_clip_window(clip);
+    if let Some((sx0, sy0, sx1, sy1)) = liquide_compositor::scissor::write_scissor_window() {
+        x0 = x0.max(sx0 as i32);
+        y0 = y0.max(sy0 as i32);
+        x1 = x1.min(sx1 as i32);
+        y1 = y1.min(sy1 as i32);
+    }
+    (x0, y0, x1, y1)
+}
+
 /// Subpixel rendering mode for LCD text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SubpixelMode {
@@ -236,7 +259,7 @@ impl GlyphAtlas {
         let dx = base_x as i32;
         // Vertical: round to nearest to remove the half-pixel-down floor bias.
         let dy = (pos.y - glyph.bearing_y as f32).round() as i32;
-        let (cx0, cy0, cx1, cy1) = glyph_clip_window(clip);
+        let (cx0, cy0, cx1, cy1) = glyph_blit_window(clip);
 
         // Pre-linearize the foreground color once (coverage is applied in linear
         // light, then the result is converted back to sRGB).
@@ -396,7 +419,7 @@ impl GlyphAtlas {
     ) {
         let dx = (pos.x + glyph.bearing_x as f32) as i32;
         let dy = (pos.y - glyph.bearing_y as f32) as i32;
-        let (cx0, cy0, cx1, cy1) = glyph_clip_window(clip);
+        let (cx0, cy0, cx1, cy1) = glyph_blit_window(clip);
 
         for row in 0..glyph.height {
             let fy = dy + row as i32;

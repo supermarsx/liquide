@@ -10,4 +10,5 @@ mod occlusion_tests;
 mod path_tests;
 mod rasterizer_tests;
 mod renderer_tests;
+mod scissor_invariant_tests;
 mod text_shaping_tests;

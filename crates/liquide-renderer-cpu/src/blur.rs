@@ -131,16 +131,15 @@ pub fn blur_region(fb: &mut FrameBuffer, region: Rect, radius: u32) {
     // Pass 2: vertical
     blur_vertical(&tmp, &mut buf, w, h, &kernel);
 
-    // Write back
-    {
-        let pixels = fb.pixels_mut().expect("CPU framebuffer required");
-        for row in 0..h {
-            let src_off = (row * w * 4) as usize;
-            let dst_off = (y0 + row) as usize * stride + x0 as usize * 4;
-            let bytes = (w * 4) as usize;
-            pixels[dst_off..dst_off + bytes].copy_from_slice(&buf[src_off..src_off + bytes]);
-        }
-    }
+    // Write back through the scissor-clamping write API so the blur output cannot
+    // land outside the active damage rect. An in-place backdrop / box-shadow blur
+    // whose region extends past the damage previously wrote raw rows via
+    // `pixels_mut()`, escaping the scissor (the t79 disappear / stale-pixel
+    // class). With no scissor installed the clamp is a no-op (byte-identical).
+    fb.for_each_scissored_row(x0 as i32, y0 as i32, w, h, |row, col_skip, span| {
+        let src_off = (row * w * 4) as usize + col_skip as usize * 4;
+        span.copy_from_slice(&buf[src_off..src_off + span.len()]);
+    });
 }
 
 /// 2x box-filter downsample: each 2x2 block becomes one pixel (average).
@@ -269,16 +268,13 @@ pub fn blur_fast(fb: &mut FrameBuffer, region: Rect, radius: u32) {
     // Upsample back to original size
     let upsampled = blur_upsample_2x_bilinear(&blurred, dw, dh, w, h);
 
-    // Write back
-    {
-        let pixels = fb.pixels_mut().expect("CPU framebuffer required");
-        for row in 0..h {
-            let src_off = (row * w * 4) as usize;
-            let dst_off = (y0 + row) as usize * stride + x0 as usize * 4;
-            let bytes = (w * 4) as usize;
-            pixels[dst_off..dst_off + bytes].copy_from_slice(&upsampled[src_off..src_off + bytes]);
-        }
-    }
+    // Write back through the scissor-clamping write API (see `blur_region`): the
+    // blur output is confined to the active damage rect so it cannot escape the
+    // scissor. No-op clamp when no scissor is installed (byte-identical).
+    fb.for_each_scissored_row(x0 as i32, y0 as i32, w, h, |row, col_skip, span| {
+        let src_off = (row * w * 4) as usize + col_skip as usize * 4;
+        span.copy_from_slice(&upsampled[src_off..src_off + span.len()]);
+    });
 }
 
 /// Blur a standalone BGRA buffer (not in a framebuffer) in-place.
