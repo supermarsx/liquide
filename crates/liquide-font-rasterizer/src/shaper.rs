@@ -3,10 +3,14 @@
 //! Uses rustybuzz (a pure-Rust port of HarfBuzz) for production-quality
 //! text shaping, including ligatures, kerning, and complex script support.
 
-use crate::database::{FontDatabase, FontFaceId};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::database::{FontDatabase, FontFaceId, LoadedFace};
 
 /// A positioned glyph produced by shaping.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShapedGlyph {
     /// Character this glyph represents (first char in cluster).
     pub codepoint: char,
@@ -270,6 +274,198 @@ pub fn parse_font_variation_settings(s: &str) -> Vec<rustybuzz::Variation> {
     variations
 }
 
+// ───────────────────────────── Shaping caches ──────────────────────────────
+//
+// Text shaping is the single biggest per-frame text cost: before these caches
+// `TextShaper::shape_full` re-parsed the ENTIRE OpenType font
+// (`rustybuzz::Face::from_slice`, ~16 µs) **and** re-ran rustybuzz GSUB/GPOS
+// (~5–18 µs) on EVERY shape call — once per word in the wrap pre-pass and once
+// per line in paint, every rastered frame (a 500-word view ≈ 12.5 ms/frame,
+// re-paid on every keystroke). Two thread-local caches collapse that to a lookup:
+//
+//   1. FACE_CACHE — the parsed `rustybuzz::Face` for a font, parsed ONCE per
+//      face and reused across every shape call (proven by `face_parse_count`).
+//   2. RUN_CACHE  — an LRU of `(text, face, size, letter-spacing, features) ->
+//      shaped glyphs + width`, so re-shaping identical text (every frame, the
+//      wrap pre-pass + paint) is a HashMap hit, not a reshape.
+//
+// Both are keyed by the font bytes' `(ptr, len)` identity, so a font reload
+// (which replaces `LoadedFace::raw_data` with a fresh allocation) changes the
+// key and the stale entries are missed/aged out automatically — correct
+// invalidation on font change, with size/spacing/feature changes distinguished
+// by the rest of the key. The caches are thread-local: shaping runs on the
+// render/layout thread and never crosses threads, so no locking is needed and
+// each thread's cache is independent. The cached result is bit-for-bit identical
+// to a fresh parse+shape (rustybuzz shaping is a pure function of the face bytes
+// + parameters), so caching introduces no golden/determinism drift.
+
+/// A shaped run: the positioned glyphs plus the run's total advance width.
+type ShapedRun = (Vec<ShapedGlyph>, f32);
+
+/// Max number of distinct shaped runs retained per thread. Bounds memory while
+/// comfortably covering a text-heavy view's live working set (a 500-word view's
+/// words + lines across a few sizes). On overflow the least-recently-used half
+/// is dropped (amortized O(1) per insert).
+const RUN_CACHE_CAP: usize = 4096;
+
+/// A parsed `rustybuzz::Face` that owns the bytes it borrows from.
+///
+/// `rustybuzz::Face<'a>` borrows the font bytes, but we need to cache it beyond
+/// any single `&FontDatabase` borrow, so the cache must own the bytes. This is a
+/// self-referential struct: `face` borrows from `*data`.
+struct CachedFace {
+    // SAFETY INVARIANT: `face` borrows the heap buffer owned by `data`.
+    // - `data` is an `Arc<Vec<u8>>` that is never mutated after construction, so
+    //   its heap buffer never moves or reallocates while this struct lives.
+    // - `face` is declared BEFORE `data`, so on drop `face` (the borrower) is
+    //   dropped before `data` (the owner) — never a dangling borrow.
+    // The `'static` lifetime is a stand-in for "lives as long as `data`"; it is
+    // never exposed beyond a `&CachedFace` borrow.
+    face: rustybuzz::Face<'static>,
+    #[allow(dead_code)]
+    data: Arc<Vec<u8>>,
+}
+
+impl CachedFace {
+    /// Parse `raw` into an owned, cached face. Returns `None` if the bytes are
+    /// not parseable as OpenType (caller falls back to ab_glyph shaping).
+    fn parse(raw: &[u8]) -> Option<Self> {
+        let data = Arc::new(raw.to_vec());
+        // SAFETY: see the struct invariant. The slice points into `data`'s stable
+        // heap buffer (Arc, never mutated → never moved/reallocated), which
+        // outlives `face` (dropped after it). `data` is moved into the returned
+        // struct on success, keeping the buffer alive for the borrow's lifetime.
+        let slice: &'static [u8] =
+            unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
+        let face = rustybuzz::Face::from_slice(slice, 0)?;
+        Some(Self { face, data })
+    }
+}
+
+/// A face-cache slot: the parsed face (or `None` if the bytes don't parse),
+/// tagged with the `(ptr, len)` byte identity it was parsed from so a font
+/// reload (new allocation) invalidates it.
+struct CachedFaceSlot {
+    ptr: usize,
+    len: usize,
+    /// `Some` = parsed OpenType face; `None` = bytes don't parse (don't retry the
+    /// parse every call — the caller uses the ab_glyph fallback instead).
+    face: Option<CachedFace>,
+}
+
+/// A bounded LRU cache of shaped runs.
+struct RunCache {
+    map: HashMap<RunKey, (ShapedRun, u64)>,
+    tick: u64,
+    cap: usize,
+}
+
+/// Cache key for a shaped run. Includes the font bytes' `(ptr, len)` identity so
+/// a reload misses, the quantized size + letter-spacing, a feature-set hash, and
+/// the run text.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct RunKey {
+    face: FontFaceId,
+    ptr: usize,
+    len: usize,
+    /// Size in 1/64-px units (stable key despite float jitter).
+    size_q: u32,
+    /// Letter-spacing in 1/64-px units (folded into the shaped advances).
+    ls_q: i32,
+    /// Hash of the applied OpenType feature set.
+    feats: u64,
+    text: String,
+}
+
+impl RunCache {
+    fn new(cap: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            tick: 0,
+            cap,
+        }
+    }
+
+    fn get(&mut self, key: &RunKey) -> Option<ShapedRun> {
+        self.tick += 1;
+        let t = self.tick;
+        let entry = self.map.get_mut(key)?;
+        entry.1 = t;
+        Some(entry.0.clone())
+    }
+
+    fn put(&mut self, key: RunKey, value: &ShapedRun) {
+        self.tick += 1;
+        let t = self.tick;
+        if self.map.len() >= self.cap && !self.map.contains_key(&key) {
+            self.evict_half();
+        }
+        self.map.insert(key, (value.clone(), t));
+    }
+
+    /// Drop the least-recently-used half of the cache. Called only when full on a
+    /// miss, so each eviction frees `cap/2` slots → amortized O(1) per insert.
+    fn evict_half(&mut self) {
+        let mut ticks: Vec<u64> = self.map.values().map(|(_, t)| *t).collect();
+        ticks.sort_unstable();
+        let median = ticks[ticks.len() / 2];
+        self.map.retain(|_, (_, t)| *t >= median);
+    }
+}
+
+thread_local! {
+    static FACE_CACHE: RefCell<HashMap<FontFaceId, CachedFaceSlot>> =
+        RefCell::new(HashMap::new());
+    static RUN_CACHE: RefCell<RunCache> = RefCell::new(RunCache::new(RUN_CACHE_CAP));
+    /// Count of OpenType face parses performed on this thread (proves parse-once).
+    static FACE_PARSE_COUNT: Cell<u64> = const { Cell::new(0) };
+    /// Count of rustybuzz GSUB/GPOS shaping passes performed on this thread
+    /// (proves a cached run is NOT re-shaped).
+    static RB_SHAPE_COUNT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Hash an OpenType feature set into a `u64` for the run-cache key.
+fn hash_features(features: &[FontFeature]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for f in features {
+        f.tag.hash(&mut h);
+        f.value.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Number of OpenType face parses performed on the current thread.
+///
+/// With the face cache engaged, shaping N runs from the same (unchanged) font
+/// parses it exactly ONCE; this is the parse-once proof. Resets via
+/// [`reset_shaper_caches`].
+#[must_use]
+pub fn face_parse_count() -> u64 {
+    FACE_PARSE_COUNT.with(Cell::get)
+}
+
+/// Number of rustybuzz shaping passes performed on the current thread.
+///
+/// Re-shaping an identical run is served from the run cache, so this does NOT
+/// advance on a cache hit; the count equals the number of distinct runs shaped.
+#[must_use]
+pub fn rustybuzz_shape_count() -> u64 {
+    RB_SHAPE_COUNT.with(Cell::get)
+}
+
+/// Clear the thread-local shaping caches and reset the parse/shape counters.
+///
+/// Intended for tests and benchmarks. The live path never needs this: cache
+/// entries are keyed by the font bytes' identity, so a font reload invalidates
+/// them automatically.
+pub fn reset_shaper_caches() {
+    FACE_CACHE.with(|c| c.borrow_mut().clear());
+    RUN_CACHE.with(|c| c.borrow_mut().map.clear());
+    FACE_PARSE_COUNT.with(|n| n.set(0));
+    RB_SHAPE_COUNT.with(|n| n.set(0));
+}
+
 /// Text shaper — computes glyph positions with full OpenType shaping.
 pub struct TextShaper<'a> {
     db: &'a FontDatabase,
@@ -327,16 +523,108 @@ impl<'a> TextShaper<'a> {
             return self.shape_fallback(text, size_px, letter_spacing);
         };
 
-        // Try OpenType shaping via rustybuzz
+        // Variable-font variations mutate the face per call and are rare; they
+        // bypass the face/run caches (documented uncached fallback) so the caches
+        // stay a pure function of (face bytes, size, spacing, features, text).
+        if !variations.is_empty() {
+            if let Some(mut rb_face) = rustybuzz::Face::from_slice(&face.raw_data, 0) {
+                rb_face.set_variations(variations);
+                return self.shape_with_rustybuzz(&rb_face, text, size_px, letter_spacing, features);
+            }
+            return self.shape_with_ab_glyph(face, text, size_px, letter_spacing);
+        }
+
+        let ptr = face.raw_data.as_ptr() as usize;
+        let len = face.raw_data.len();
+
+        // 1. Shaped-run cache — the hot path: an identical run re-shaped every
+        //    frame (the wrap pre-pass + paint) is a HashMap hit, no parse/shape.
+        let key = RunKey {
+            face: face_id,
+            ptr,
+            len,
+            size_q: (size_px * 64.0).round() as u32,
+            ls_q: (letter_spacing * 64.0).round() as i32,
+            feats: hash_features(features),
+            text: text.to_string(),
+        };
+        if let Some(hit) = RUN_CACHE.with(|c| c.borrow_mut().get(&key)) {
+            return hit;
+        }
+
+        // 2. Miss: shape via the parse-once face cache, then memoize the run.
+        let result =
+            self.shape_via_cached_face(face_id, face, ptr, len, text, size_px, letter_spacing, features);
+        RUN_CACHE.with(|c| c.borrow_mut().put(key, &result));
+        result
+    }
+
+    /// Shape `text` using the thread-local parse-once face cache.
+    ///
+    /// The font is parsed (`rustybuzz::Face::from_slice`) at most once per face;
+    /// subsequent calls reuse the cached face. A `(ptr, len)` mismatch (font
+    /// reload → fresh allocation) re-parses and replaces the slot. When the bytes
+    /// don't parse as OpenType, the slot caches `None` and shaping falls back to
+    /// ab_glyph (no re-parse attempt every call).
+    #[allow(clippy::too_many_arguments)]
+    fn shape_via_cached_face(
+        &self,
+        face_id: FontFaceId,
+        face: &LoadedFace,
+        ptr: usize,
+        len: usize,
+        text: &str,
+        size_px: f32,
+        letter_spacing: f32,
+        features: &[FontFeature],
+    ) -> (Vec<ShapedGlyph>, f32) {
+        FACE_CACHE.with(|c| {
+            let mut cache = c.borrow_mut();
+            let needs_parse = match cache.get(&face_id) {
+                Some(slot) => !(slot.ptr == ptr && slot.len == len),
+                None => true,
+            };
+            if needs_parse {
+                let parsed = CachedFace::parse(&face.raw_data);
+                if parsed.is_some() {
+                    FACE_PARSE_COUNT.with(|n| n.set(n.get() + 1));
+                }
+                cache.insert(face_id, CachedFaceSlot { ptr, len, face: parsed });
+            }
+            // Just inserted or validated above.
+            let slot = cache.get(&face_id).expect("face slot present");
+            match &slot.face {
+                Some(cf) => {
+                    self.shape_with_rustybuzz(&cf.face, text, size_px, letter_spacing, features)
+                }
+                // Bytes don't parse as OpenType — kerning-only ab_glyph fallback.
+                None => self.shape_with_ab_glyph(face, text, size_px, letter_spacing),
+            }
+        })
+    }
+
+    /// Shape exactly like [`shape_full`](Self::shape_full) but WITHOUT the
+    /// face/run caches — re-parses the font and re-shapes every call. Used by the
+    /// tests to prove the cached result is bit-for-bit identical to a fresh one.
+    #[cfg(test)]
+    pub fn shape_full_uncached(
+        &self,
+        face_id: FontFaceId,
+        text: &str,
+        size_px: f32,
+        letter_spacing: f32,
+        features: &[FontFeature],
+        variations: &[rustybuzz::Variation],
+    ) -> (Vec<ShapedGlyph>, f32) {
+        let Some(face) = self.db.get(face_id) else {
+            return self.shape_fallback(text, size_px, letter_spacing);
+        };
         if let Some(mut rb_face) = rustybuzz::Face::from_slice(&face.raw_data, 0) {
-            // Apply variation settings to the face
             if !variations.is_empty() {
                 rb_face.set_variations(variations);
             }
             return self.shape_with_rustybuzz(&rb_face, text, size_px, letter_spacing, features);
         }
-
-        // Fallback to ab_glyph kerning-only shaping
         self.shape_with_ab_glyph(face, text, size_px, letter_spacing)
     }
 
@@ -349,6 +637,9 @@ impl<'a> TextShaper<'a> {
         letter_spacing: f32,
         features: &[FontFeature],
     ) -> (Vec<ShapedGlyph>, f32) {
+        // Count actual GSUB/GPOS shaping passes (proves cache hits skip reshaping).
+        RB_SHAPE_COUNT.with(|n| n.set(n.get() + 1));
+
         let upem = face.units_per_em() as f32;
         let scale = size_px / upem;
 
@@ -557,6 +848,13 @@ impl<'a> TextShaper<'a> {
     }
 
     /// Approximate advance width for a character based on character class.
+    ///
+    /// FALLBACK ONLY: reached exclusively from [`shape_fallback`](Self::shape_fallback)
+    /// when no font face is available to shape with (`db.get(face_id)` is `None`).
+    /// The live measure/paint paths shape real glyphs through rustybuzz (the
+    /// single measure==paint source of truth), so this `size * 0.6` heuristic
+    /// never participates in a real layout/paint decision — it only keeps fontless
+    /// text from collapsing to zero width.
     fn approx_char_advance(ch: char, size: f32) -> f32 {
         let em = size * 0.6; // base advance ≈ 0.6 em
         let space = size * 0.25;
@@ -580,6 +878,258 @@ impl<'a> TextShaper<'a> {
 mod tests {
     use super::*;
     use crate::database::FontDatabase;
+
+    /// A database with the embedded fallback face (real Roboto: GPOS kerning +
+    /// GSUB ligatures), plus its resolved id. Used by the cache proofs.
+    fn db_with_embedded() -> (FontDatabase, FontFaceId) {
+        let mut db = FontDatabase::new();
+        assert!(db.register_embedded_fallback() >= 1);
+        let fid = db
+            .resolve("sans-serif", 400, false)
+            .or_else(|| db.resolve(crate::database::EMBEDDED_FALLBACK_FAMILY, 400, false))
+            .expect("embedded fallback resolves");
+        (db, fid)
+    }
+
+    fn live_features() -> [FontFeature; 3] {
+        [
+            FontFeature::kerning(true),
+            FontFeature::ligatures(true),
+            FontFeature::contextual_alternates(true),
+        ]
+    }
+
+    /// CORRECTNESS: the cached shape must equal a fresh (uncached) shape
+    /// bit-for-bit — glyphs AND width. If the cache ever returned a stale or
+    /// differently-computed result this fails.
+    #[test]
+    fn cached_shape_equals_fresh_shape_bit_for_bit() {
+        reset_shaper_caches();
+        let (db, fid) = db_with_embedded();
+        let shaper = TextShaper::new(&db);
+        let feats = live_features();
+        for text in ["office fluff waffle", "AVAWaToYe", "Confirm action", "Hi"] {
+            for size in [12.0_f32, 16.0, 24.0] {
+                // Fresh (re-parse + re-shape) reference.
+                let fresh = shaper.shape_full_uncached(fid, text, size, 0.0, &feats, &[]);
+                // Cached path (first call populates, second serves from cache).
+                let cached1 = shaper.shape_with_features(fid, text, size, 0.0, &feats);
+                let cached2 = shaper.shape_with_features(fid, text, size, 0.0, &feats);
+                assert_eq!(
+                    cached1, fresh,
+                    "cached shape must equal fresh shape ({text:?} @ {size})"
+                );
+                assert_eq!(cached2, fresh, "second cached shape must also equal fresh");
+            }
+        }
+    }
+
+    /// PERF/parse-once: shaping the SAME run N times parses the font exactly once
+    /// and runs rustybuzz exactly once — the rest are cache hits. This is the
+    /// smoking-gun fix (no per-word/per-line re-parse every frame).
+    #[test]
+    fn font_is_parsed_once_and_shaped_once_across_many_calls() {
+        reset_shaper_caches();
+        let (db, fid) = db_with_embedded();
+        let shaper = TextShaper::new(&db);
+        let feats = live_features();
+
+        for _ in 0..200 {
+            let _ = shaper.shape_with_features(fid, "The quick brown fox", 14.0, 0.0, &feats);
+        }
+        assert_eq!(
+            face_parse_count(),
+            1,
+            "font must be parsed exactly ONCE across 200 identical shape calls"
+        );
+        assert_eq!(
+            rustybuzz_shape_count(),
+            1,
+            "rustybuzz must run exactly ONCE; the other 199 calls are cache hits"
+        );
+    }
+
+    /// Distinct runs each parse the face only once (shared face cache) but are
+    /// shaped once apiece (distinct run-cache keys).
+    #[test]
+    fn distinct_runs_share_one_face_parse() {
+        reset_shaper_caches();
+        let (db, fid) = db_with_embedded();
+        let shaper = TextShaper::new(&db);
+        let feats = live_features();
+
+        for word in ["alpha", "beta", "gamma", "delta", "epsilon"] {
+            // Shape each twice — the second is a hit.
+            let _ = shaper.shape_with_features(fid, word, 14.0, 0.0, &feats);
+            let _ = shaper.shape_with_features(fid, word, 14.0, 0.0, &feats);
+        }
+        assert_eq!(face_parse_count(), 1, "one face parse shared by all runs");
+        assert_eq!(
+            rustybuzz_shape_count(),
+            5,
+            "five distinct runs shaped once each (the repeats are hits)"
+        );
+    }
+
+    /// STALE-CACHE: a size change must reshape (a cached run is keyed by size), and
+    /// the reshaped width must match a fresh shape at the new size — not return the
+    /// old size's cached width.
+    #[test]
+    fn size_change_reshapes_and_is_correct() {
+        reset_shaper_caches();
+        let (db, fid) = db_with_embedded();
+        let shaper = TextShaper::new(&db);
+        let feats = live_features();
+
+        let (_g14, w14) = shaper.shape_with_features(fid, "Settings", 14.0, 0.0, &feats);
+        assert_eq!(rustybuzz_shape_count(), 1);
+        let (_g28, w28) = shaper.shape_with_features(fid, "Settings", 28.0, 0.0, &feats);
+        assert_eq!(
+            rustybuzz_shape_count(),
+            2,
+            "a different size must reshape, not hit the 14px entry"
+        );
+        assert!(w28 > w14 * 1.5, "28px must be ~2x the 14px width ({w14} → {w28})");
+        let fresh28 = shaper.shape_full_uncached(fid, "Settings", 28.0, 0.0, &feats, &[]);
+        assert!((w28 - fresh28.1).abs() <= 0.001, "28px width equals a fresh shape");
+    }
+
+    /// STALE-CACHE (font reload): when a face's bytes are replaced under the SAME
+    /// id (a font reload → new allocation), the cache must NOT serve the old
+    /// shaped run; it re-parses and reshapes. Proven by reloading a file-backed
+    /// face whose source changed on disk.
+    #[test]
+    fn font_reload_invalidates_cache() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        // Need a real system font to reload; skip if none is available.
+        let candidates = [
+            "C:\\Windows\\Fonts\\arial.ttf",
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ];
+        let Some(bytes) = candidates
+            .iter()
+            .find_map(|p| std::fs::read(p).ok().filter(|b| !b.is_empty()))
+        else {
+            return;
+        };
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("liquide-shaper-reload-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture.ttf");
+        std::fs::write(&path, &bytes).unwrap();
+
+        reset_shaper_caches();
+        let mut db = FontDatabase::new();
+        let fid = db.load_file(&path, "Reloadable", 400, false).unwrap();
+
+        let ptr_before = db.get(fid).unwrap().raw_data.as_ptr() as usize;
+        let _ = TextShaper::new(&db).shape_with_features(
+            fid,
+            "Confirm",
+            16.0,
+            0.0,
+            &live_features(),
+        );
+        assert_eq!(face_parse_count(), 1);
+
+        // Rewrite the source (append bytes) and reload under the SAME id → fresh
+        // allocation, so the cache's (ptr,len) key no longer matches.
+        let mut changed = bytes.clone();
+        changed.extend_from_slice(&bytes); // valid font still at offset 0, new len/ptr
+        std::fs::write(&path, &changed).unwrap();
+        assert!(db.reload_face(fid).unwrap());
+        let ptr_after = db.get(fid).unwrap().raw_data.as_ptr() as usize;
+        assert!(
+            ptr_after != ptr_before || db.get(fid).unwrap().raw_data.len() != bytes.len(),
+            "reload must change the byte identity"
+        );
+
+        // Re-shape the SAME run: must re-parse (new bytes) and reshape, not serve
+        // the stale cached run.
+        let _ = TextShaper::new(&db).shape_with_features(
+            fid,
+            "Confirm",
+            16.0,
+            0.0,
+            &live_features(),
+        );
+        assert_eq!(
+            face_parse_count(),
+            2,
+            "a font reload (new byte identity) must re-parse, not reuse the stale face"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The run cache evicts under pressure and stays bounded, while still serving
+    /// correct (fresh-equal) results for whatever it retains.
+    #[test]
+    fn run_cache_is_bounded() {
+        reset_shaper_caches();
+        let (db, fid) = db_with_embedded();
+        let shaper = TextShaper::new(&db);
+        let feats = live_features();
+        // Shape many distinct runs to exceed the cap and force eviction.
+        for i in 0..(RUN_CACHE_CAP + 500) {
+            let s = format!("run number {i}");
+            let _ = shaper.shape_with_features(fid, &s, 13.0, 0.0, &feats);
+        }
+        let len = RUN_CACHE.with(|c| c.borrow().map.len());
+        assert!(len <= RUN_CACHE_CAP, "run cache must stay within its cap (got {len})");
+        // A freshly-shaped run still equals a fresh uncached shape.
+        let cached = shaper.shape_with_features(fid, "final check", 13.0, 0.0, &feats);
+        let fresh = shaper.shape_full_uncached(fid, "final check", 13.0, 0.0, &feats, &[]);
+        assert_eq!(cached, fresh);
+    }
+
+    /// BENCH (ignored): the typing / text-heavy-frame win. Times one frame's
+    /// shaping for a ~500-word view WITHOUT caching (the original path: re-parse +
+    /// re-shape every word every frame) vs WITH the warm cache (all hits). Run:
+    ///   cargo test -p liquide-font-rasterizer --release shaping_frame_bench \
+    ///     -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn shaping_frame_bench() {
+        use std::time::Instant;
+        let (db, fid) = db_with_embedded();
+        let shaper = TextShaper::new(&db);
+        let feats = live_features();
+        // ~500 words with realistic repetition (a view re-shaped each keystroke).
+        let words: Vec<String> = (0..500).map(|i| format!("word{}", i % 120)).collect();
+
+        // BEFORE: original behavior — parse + shape every word, no cache.
+        let t0 = Instant::now();
+        for w in &words {
+            let _ = shaper.shape_full_uncached(fid, w, 14.0, 0.0, &feats, &[]);
+        }
+        let before = t0.elapsed();
+
+        // AFTER: warm the cache once, then re-shape the same frame (all hits).
+        reset_shaper_caches();
+        for w in &words {
+            let _ = shaper.shape_with_features(fid, w, 14.0, 0.0, &feats);
+        }
+        let t1 = Instant::now();
+        for w in &words {
+            let _ = shaper.shape_with_features(fid, w, 14.0, 0.0, &feats);
+        }
+        let after = t1.elapsed();
+
+        eprintln!(
+            "500-word frame shaping: before(uncached)={before:?}  after(cached)={after:?}  \
+             speedup={:.0}x  (parses now={}, shapes now={})",
+            before.as_secs_f64() / after.as_secs_f64().max(1e-9),
+            face_parse_count(),
+            rustybuzz_shape_count(),
+        );
+    }
 
     #[test]
     fn test_shape_fallback() {

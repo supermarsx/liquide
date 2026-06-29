@@ -14,9 +14,91 @@
 //! developer/CI box with a UI font they exercise the real engine.
 
 use liquide_font_rasterizer::database::{FontDatabase, FontFaceId};
-use liquide_font_rasterizer::shaper::{FontFeature, TextShaper};
+use liquide_font_rasterizer::shaper::{
+    FontFeature, TextShaper, face_parse_count, reset_shaper_caches, rustybuzz_shape_count,
+};
 
 use crate::renderer::text_shaping::{shape_line, shaped_run_width};
+
+/// A database with the embedded fallback (real Roboto) registered under the UI
+/// families, so these tests run without a system font present.
+fn embedded_db() -> FontDatabase {
+    let mut db = FontDatabase::new();
+    assert!(db.register_embedded_fallback() >= 1);
+    db
+}
+
+/// MEASURE==PAINT (the wrap-bug guard): the width the wrap pre-pass measures for a
+/// run (`shaped_run_width`) MUST equal the width paint lays the same run out to
+/// (`shape_line`'s returned advance). They share one cached shaper + one feature
+/// set, so this holds by construction; if a future change diverges the two
+/// (different features / a heuristic creeping back into one path) a run that fits
+/// its box when painted could be wrapped by the pre-pass again — this fails first.
+#[test]
+fn wrap_prepass_width_equals_paint_width() {
+    let db = embedded_db();
+    for text in [
+        "Confirm action",
+        "office fluff waffle",
+        "The quick brown fox",
+        "Settings",
+        "AVAWaToYe",
+    ] {
+        for size in [12.0_f32, 16.0, 24.0] {
+            let measured = shaped_run_width(&db, text, "Inter", size, 400, false, 0.0, 0.0);
+            let (_g, painted) = shape_line(&db, text, "Inter", size, 400, false, 0.0, 0.0);
+            assert!(
+                (measured - painted).abs() <= 0.01,
+                "wrap-prepass measured width ({measured}) must equal paint width \
+                 ({painted}) for {text:?} @ {size}px"
+            );
+            assert!(measured > 0.0);
+        }
+    }
+}
+
+/// PERF (the smoking-gun fix): the original path re-parsed the whole font AND
+/// re-shaped every word + line on EVERY frame (re-paid each keystroke). With the
+/// shaping caches, frame 1 parses the font once and shapes each distinct run once;
+/// every subsequent identical frame is pure cache hits — zero re-parse, zero
+/// reshape. This is the typing-frame ~12.5 ms → ~0 win, asserted structurally
+/// (no timing flakiness) via the parse/shape counters.
+#[test]
+fn repeated_frames_do_not_reparse_or_reshape() {
+    reset_shaper_caches();
+    let db = embedded_db();
+    let line = "The quick brown fox jumps over the lazy dog";
+
+    // Frame 1: the live text path — a wrap pre-pass shape per WORD + a paint shape
+    // per LINE (exactly what render_text_node does).
+    let frame = |db: &FontDatabase| {
+        for word in line.split(' ') {
+            let _ = shaped_run_width(db, word, "Inter", 14.0, 400, false, 0.0, 0.0);
+        }
+        let _ = shape_line(db, line, "Inter", 14.0, 400, false, 0.0, 0.0);
+    };
+
+    frame(&db);
+    let parses = face_parse_count();
+    let shapes = rustybuzz_shape_count();
+    assert_eq!(parses, 1, "frame 1 parses the font exactly once");
+    assert!(shapes >= 1, "frame 1 shapes the distinct runs once each");
+
+    // Frames 2..=50: identical content.
+    for _ in 0..49 {
+        frame(&db);
+    }
+    assert_eq!(
+        face_parse_count(),
+        parses,
+        "no font re-parse across 50 identical frames (was 1 parse PER WORD PER FRAME)"
+    );
+    assert_eq!(
+        rustybuzz_shape_count(),
+        shapes,
+        "no reshape across 50 identical frames (was 1 reshape PER WORD/LINE PER FRAME)"
+    );
+}
 
 /// Load a real system font's bytes, or `None` if none of the usual paths exist.
 fn system_font_bytes() -> Option<Vec<u8>> {

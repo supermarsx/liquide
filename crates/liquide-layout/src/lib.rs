@@ -294,11 +294,22 @@ pub trait ImageMeasurer {
     fn intrinsic_size(&self, src: &str) -> Option<Size>;
 }
 
-/// Fallback text measurer that estimates sizes using character-class width heuristics.
+/// Fallback text measurer that estimates sizes using character-class width
+/// heuristics.
+///
+/// FALLBACK ONLY. The single measure==paint source of truth is the rustybuzz
+/// shaped measurer (`liquide-font-rasterizer`'s `FontMetricsProvider::measure_text`
+/// / the cached `TextShaper`), which the live pipeline supplies as the
+/// `TextMeasurer` so layout's measured advance equals the painted shaped advance.
+/// This `size * 0.6` per-class estimate is used only when no font-backed measurer
+/// is available (e.g. headless layout tests, or a context with no font database);
+/// it must NOT be relied on for a real layout/paint geometry decision, or
+/// measure≠paint wrap/overlap drift returns.
 pub struct DefaultTextMeasurer;
 
 impl DefaultTextMeasurer {
     /// Approximate advance width for a character based on character class.
+    /// Heuristic fallback only — see [`DefaultTextMeasurer`].
     fn approx_char_advance(ch: char, size: f32) -> f32 {
         let em = size * 0.6;
         let space = size * 0.25;
