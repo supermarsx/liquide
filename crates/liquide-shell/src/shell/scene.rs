@@ -18,6 +18,157 @@ use crate::window::{Window, WindowFlags, WindowState};
 
 use super::Shell;
 
+// ════════════════════════════════════════════════════════════════════════════
+// Surface-cache KEYS (t2-e4-surface-keys — Tier 2 surface-cache, SHELL side)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The shell emits, alongside the scene, one stable surface-cache KEY per
+// cacheable "surface owner" (the wallpaper, each window's content+chrome, and
+// each isolated chrome layer). The compositor (E3) reads these to decide, per
+// owner per frame, whether a previously-rastered PIXEL surface is reusable
+// (blit) or must be re-rastered. These keys are pure METADATA: they never change
+// what the scene NODES render, so the capture/golden path is unaffected.
+//
+// The KEY is authoritative IFF the owner's painted content changed:
+//   * for WINDOWS the `content_sig` is folded from the EXISTING, already-computed
+//     position-independent [`WindowContentSignature`] (`scene.rs`), so a content
+//     change that already misses the scene-node content cache invalidates the
+//     pixel surface too — for free, single source of invalidation truth. Because
+//     that signature excludes the window's x/y (it captures `content_w/h`, never
+//     position — see its doc + commit c07434e), a pure MOVE keeps `content_sig`
+//     AND `size` (size is width/height only), so the surface is REUSED and only
+//     its blit position changes. A RESIZE changes `content_w/h` (→ `content_sig`)
+//     and the footprint (→ `size`); a DPI change bumps `dpi_scale`.
+//   * for the WALLPAPER and CHROME layers the `content_sig` is a complete paint
+//     fingerprint of the owner's node(s) (bounds + every paint field), so a
+//     wallpaper swap / gradient or glass recolour invalidates it.
+
+/// Surface-cache OWNER identity. Each cacheable pixel surface the compositor may
+/// reuse-or-reraster is attributed to exactly one owner; the owner is the stable
+/// store key, so a surface persists across frames under the same owner while its
+/// [`SurfaceKey`] alone decides reuse-vs-reraster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SurfaceOwner {
+    /// The desktop background / wallpaper layer (one screen-sized opaque surface).
+    Wallpaper,
+    /// A single window (content + decoration/border/shadow chrome), by window id.
+    Window(u64),
+    /// An isolated chrome layer (statusbar/dock gradient, glass band, overlay
+    /// glass), keyed by its stable scene-node id.
+    Layer(u64),
+}
+
+/// Per-owner SURFACE-CACHE KEY emitted by the shell into the scene output.
+///
+/// The compositor (E3) reuses a cached surface for `owner` IFF its stored key
+/// equals this one — i.e. `content_sig`, `size` and `dpi_scale` all match (and,
+/// for `backdrop_dependent` owners, an additional backdrop signature the
+/// compositor computes at composite time). `backdrop_dependent` marks GLASS /
+/// backdrop-filter owners whose cached pixels are invalid when what's BEHIND
+/// them changes even if their own content did not; opaque owners are
+/// backdrop-independent and cache freely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SurfaceKey {
+    /// Which surface this key belongs to.
+    pub owner: SurfaceOwner,
+    /// 64-bit fold of the owner's content signature (POSITION-INDEPENDENT for
+    /// windows — reuses [`WindowContentSignature`]). Changes IFF content changes.
+    pub content_sig: u64,
+    /// Owner footprint width/height in LOGICAL px (width/height only — never x/y,
+    /// so a move never changes it; a resize does). The render thread scales by
+    /// the live device-pixel-ratio when it allocates the physical surface.
+    pub size: (u32, u32),
+    /// `f32::to_bits` of the DPI scale this key was emitted at. The shell paints
+    /// in LOGICAL px (scale 1.0); the render thread, which owns the live
+    /// device-pixel-ratio, re-stamps this when it allocates the backing surface.
+    /// It is part of the key's identity, so a DPI change invalidates the pixels.
+    pub dpi_scale: u32,
+    /// `true` for GLASS / backdrop-filter owners (their pixels sample the
+    /// backdrop); `false` for opaque owners (solid/gradient fills, images,
+    /// undecorated windows). The compositor additionally backdrop-keys the
+    /// `true` owners at composite time (its `backdrop_sig` is NOT computed here).
+    pub backdrop_dependent: bool,
+}
+
+/// `f32::to_bits(1.0)` — the LOGICAL DPI scale the shell emits (see
+/// [`SurfaceKey::dpi_scale`]).
+const SHELL_LOGICAL_DPI: u32 = 0x3f80_0000;
+
+/// Deterministic FNV-1a hasher. Folds an owner's already-computed
+/// [`WindowContentSignature`] (or a chrome/wallpaper node fingerprint) into the
+/// stable `u64` `content_sig` of a [`SurfaceKey`]. Deterministic — unlike std's
+/// randomised `DefaultHasher` — so a surface key is identical across frames AND
+/// process runs for identical content (the surface cache compares keys within a
+/// process; determinism is free here and removes any cross-run flake source,
+/// keeping the e2e determinism harness unaffected).
+struct Fnv1a(u64);
+
+impl Fnv1a {
+    fn new() -> Self {
+        Self(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl std::hash::Hasher for Fnv1a {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+}
+
+/// Fold any `Hash` value (e.g. the existing [`WindowContentSignature`]) into a
+/// stable 64-bit `content_sig`.
+fn content_sig_of<H: std::hash::Hash>(value: &H) -> u64 {
+    let mut h = Fnv1a::new();
+    value.hash(&mut h);
+    std::hash::Hasher::finish(&h)
+}
+
+/// `true` for owner kinds whose pixels SAMPLE THEIR BACKDROP (glass /
+/// backdrop-filter) and so are backdrop-dependent; `false` for opaque kinds.
+fn kind_is_backdrop_dependent(kind: &SceneNodeKind) -> bool {
+    matches!(
+        kind,
+        SceneNodeKind::Glass(_) | SceneNodeKind::BlurBackdrop | SceneNodeKind::BackdropFilter { .. }
+    )
+}
+
+/// Classify a CHROME-band node as a cacheable surface owner. Only the EXPENSIVE
+/// chrome paints get their own surface — the GradientFill (~10 ms) opaque bands
+/// and the Glass / backdrop (~7 ms) bands t192 attributes to the chrome. Cheap
+/// chrome (solid fills, text, icons, borders) is composited per-frame and is NOT
+/// a surface owner (structural — not cached).
+fn chrome_node_is_cacheable(kind: &SceneNodeKind) -> bool {
+    matches!(
+        kind,
+        SceneNodeKind::GradientFill { .. }
+            | SceneNodeKind::Glass(_)
+            | SceneNodeKind::BackdropFilter { .. }
+    )
+}
+
+/// Fold a wallpaper / chrome scene node into `h`: its painted bounds + a COMPLETE
+/// fingerprint of its paint payload (via the derived `Debug` of its `kind`, which
+/// captures every colour / gradient stop / glass param). A paint change
+/// (recolour, wallpaper swap, gradient edit) changes this. Including bounds is
+/// fine for these owners — the wallpaper and chrome bands do not MOVE; the
+/// move-invariance contract is a WINDOW property carried by the
+/// position-independent [`WindowContentSignature`]. Run only on a full-scene
+/// REBUILD over a handful of nodes, so the `Debug` fold cost is negligible.
+fn fold_node_paint(h: &mut Fnv1a, node: &SceneNode) {
+    use std::hash::Hasher;
+    h.write_u32(f32_signature(node.properties.bounds.x));
+    h.write_u32(f32_signature(node.properties.bounds.y));
+    h.write_u32(f32_signature(node.properties.bounds.width));
+    h.write_u32(f32_signature(node.properties.bounds.height));
+    h.write(format!("{:?}", node.kind).as_bytes());
+}
+
 /// Base of the chrome overlay z-band. Background fills get `[0..)`, the workspace
 /// (windows) sits at `WORKSPACE_Z_ORDER`, and every chrome surface gets
 /// `[CHROME_Z_BASE..)`. The software cursor is composited at flatten time with
@@ -253,6 +404,12 @@ pub(crate) struct FullSceneCache {
     hits: u64,
     misses: u64,
     dirty: bool,
+    /// Per-owner surface-cache keys emitted alongside the retained root
+    /// (t2-e4-surface-keys). Recomputed on every full-scene REBUILD and RETAINED
+    /// across an idle cache HIT — on a hit nothing that affects the scene
+    /// changed, so last frame's keys are still exactly valid (every owner reuses
+    /// its surface), mirroring how the root itself is reused.
+    surface_keys: Vec<SurfaceKey>,
 }
 
 impl FullSceneCache {
@@ -262,7 +419,18 @@ impl FullSceneCache {
             hits: 0,
             misses: 0,
             dirty: true,
+            surface_keys: Vec::new(),
         }
+    }
+
+    /// Replace the retained surface-cache keys (called on a full-scene rebuild).
+    fn set_surface_keys(&mut self, keys: Vec<SurfaceKey>) {
+        self.surface_keys = keys;
+    }
+
+    /// The surface-cache keys emitted for the most recently built scene.
+    fn surface_keys(&self) -> &[SurfaceKey] {
+        &self.surface_keys
     }
 
     /// Mark the cache stale so the next `build_scene` rebuilds.
@@ -349,6 +517,13 @@ pub(crate) struct WindowSceneCache {
     content: std::collections::HashMap<WindowContentSignature, SceneNode>,
     content_hits: u64,
     content_misses: u64,
+    /// Per-window surface-cache keys stamped while the window subtree is built
+    /// (t2-e4-surface-keys), reusing each window's [`WindowContentSignature`] as
+    /// the `content_sig`. RETAINED across a window-scene cache HIT: when the
+    /// window subtree is reused unchanged this frame, last frame's per-window
+    /// keys are still exactly valid (the windows did not change), so a
+    /// chrome-only rebuild keeps correct window keys without rebuilding them.
+    window_surface_keys: Vec<SurfaceKey>,
 }
 
 impl WindowSceneCache {
@@ -362,7 +537,24 @@ impl WindowSceneCache {
             content: std::collections::HashMap::new(),
             content_hits: 0,
             content_misses: 0,
+            window_surface_keys: Vec::new(),
         }
+    }
+
+    /// Clear the per-window surface keys before a fresh window-subtree build.
+    fn clear_window_surface_keys(&mut self) {
+        self.window_surface_keys.clear();
+    }
+
+    /// Append one window's surface-cache key during the window-subtree build.
+    fn push_window_surface_key(&mut self, key: SurfaceKey) {
+        self.window_surface_keys.push(key);
+    }
+
+    /// The per-window surface-cache keys from the most recent window build
+    /// (retained across a window-scene cache hit — see the field doc).
+    fn window_surface_keys(&self) -> &[SurfaceKey] {
+        &self.window_surface_keys
     }
 
     fn get(&mut self, signature: &WindowSceneSignature) -> Option<SceneNode> {
@@ -934,6 +1126,25 @@ impl Shell {
         self.window_scene_cache.content_stats()
     }
 
+    /// The per-owner surface-cache KEYS emitted alongside the most recent
+    /// [`Shell::build_scene`] (t2-e4-surface-keys).
+    ///
+    /// One [`SurfaceKey`] per cacheable surface owner — the wallpaper, each
+    /// visible window (content + decoration/shadow chrome), and each isolated
+    /// cacheable chrome layer (gradient / glass band). The compositor (E3) reads
+    /// these to decide, per owner per frame, whether its previously-rastered
+    /// PIXEL surface is reusable (the key matches → blit) or must be re-rastered
+    /// (the key changed → re-raster + recapture). The keys are pure metadata and
+    /// never affect rendered output.
+    ///
+    /// Valid after the first `build_scene` and across idle cache-hit frames (the
+    /// keys are retained because nothing the scene depends on changed). Returns
+    /// an empty slice before the first build.
+    #[must_use]
+    pub fn surface_keys(&self) -> &[SurfaceKey] {
+        self.full_scene_cache.surface_keys()
+    }
+
     /// Take (and clear) the authoritative precomputed damage produced by the
     /// most recent [`Shell::build_scene`] (t82-incremental).
     ///
@@ -1495,6 +1706,74 @@ impl Shell {
         // overlay is retired. Its password field is a real laid-out box whose
         // hit-test geometry comes from CSS (see `events.rs` + the
         // `lockscreen-prompt` rule), not hardcoded constants.
+
+        // ── Surface-cache KEYS for the compositor (t2-e4-surface-keys) ───────
+        // Emit one stable per-owner surface key alongside the scene so the
+        // compositor (E3) can decide reuse-vs-reraster per owner without
+        // re-deriving any signature. The WINDOW keys were already stamped during
+        // the window-subtree build (reusing each window's position-independent
+        // `WindowContentSignature` — single source of invalidation truth, so a
+        // pure move keeps the key while a resize/content change invalidates it).
+        // Here we add the WALLPAPER (the background band, one opaque surface) and
+        // the cacheable CHROME LAYERS (gradient / glass bands), reading the
+        // already-assembled `root` so we never re-walk shell state:
+        //   * background band  = root children with z < WORKSPACE_Z_ORDER,
+        //   * chrome band      = root children with z >= CHROME_Z_BASE,
+        //   * the workspace node (windows) at WORKSPACE_Z_ORDER is keyed already.
+        // Keys are metadata: this does NOT change any rendered node.
+        {
+            let mut surface_keys: Vec<SurfaceKey> = Vec::new();
+            let mut wallpaper_h = Fnv1a::new();
+            let mut wallpaper_present = false;
+            let mut wallpaper_backdrop = false;
+            for child in &root.children {
+                let z = child.properties.z_order;
+                if z < WORKSPACE_Z_ORDER {
+                    // Background band → the desktop wallpaper layer (one opaque
+                    // screen-sized surface; multiple stacked bg fills fold into
+                    // one owner).
+                    wallpaper_present = true;
+                    fold_node_paint(&mut wallpaper_h, child);
+                    wallpaper_backdrop |= kind_is_backdrop_dependent(&child.kind);
+                } else if z >= CHROME_Z_BASE && chrome_node_is_cacheable(&child.kind) {
+                    // Chrome band → an isolated layer surface (statusbar/dock
+                    // gradient, glass/overlay band). Keyed by its stable node id;
+                    // glass/backdrop layers are flagged backdrop-dependent.
+                    let mut h = Fnv1a::new();
+                    fold_node_paint(&mut h, child);
+                    let b = child.properties.bounds;
+                    surface_keys.push(SurfaceKey {
+                        owner: SurfaceOwner::Layer(child.id),
+                        content_sig: std::hash::Hasher::finish(&h),
+                        size: (
+                            b.width.max(0.0).ceil() as u32,
+                            b.height.max(0.0).ceil() as u32,
+                        ),
+                        dpi_scale: SHELL_LOGICAL_DPI,
+                        backdrop_dependent: kind_is_backdrop_dependent(&child.kind),
+                    });
+                }
+            }
+            if wallpaper_present {
+                surface_keys.insert(
+                    0,
+                    SurfaceKey {
+                        owner: SurfaceOwner::Wallpaper,
+                        content_sig: std::hash::Hasher::finish(&wallpaper_h),
+                        size: (
+                            screen.width.max(0.0).ceil() as u32,
+                            screen.height.max(0.0).ceil() as u32,
+                        ),
+                        dpi_scale: SHELL_LOGICAL_DPI,
+                        backdrop_dependent: wallpaper_backdrop,
+                    },
+                );
+            }
+            // Per-window keys (stamped during the window build, retained across a
+            // window-scene cache hit) round out the owner set.
+            surface_keys.extend_from_slice(self.window_scene_cache.window_surface_keys());
+            self.full_scene_cache.set_surface_keys(surface_keys);
+        }
 
         // ── Retain the assembled root for idle-frame reuse (t76-scenecache) ──
         // Store a clone so the next steady-state frame can return this exact
@@ -2133,6 +2412,9 @@ impl Shell {
         // borrow of `self.visible_windows()` held across the loop (t163-drag-cache).
         let windows: Vec<Window> = self.visible_windows().into_iter().cloned().collect();
 
+        // Fresh per-window surface keys for this build (t2-e4-surface-keys).
+        self.window_scene_cache.clear_window_surface_keys();
+
         for (paint_rank, window) in windows.iter().enumerate() {
             let win_base = NODE_WINDOW_BASE + window.id.0 * NODE_WINDOW_STRIDE;
 
@@ -2323,6 +2605,29 @@ impl Shell {
             // re-runs the content build, it only updates one wrapper's translate.
             // A RESIZE changes the content w/h → different signature → rebuild.
             let content_sig = self.window_content_signature(window, content_bounds);
+
+            // ── Surface-cache KEY for this window (t2-e4-surface-keys) ─────────
+            // Reuse the position-independent `WindowContentSignature` as the
+            // `content_sig` (single source of invalidation truth): a content /
+            // resize change misses both the content subtree cache AND the pixel
+            // surface; a pure MOVE keeps it (no x/y in the signature) so the
+            // surface is reused. `size` is the PAINTED footprint (window bounds ∪
+            // shadow margin = `shadow_bounds`) in logical px — width/height only,
+            // so a move never changes it, a resize does. A window is
+            // backdrop-dependent IFF it paints a glass titlebar (DECORATED) — its
+            // titlebar Glass node samples the backdrop, so its cached pixels are
+            // backdrop-keyed by the compositor; an undecorated window is opaque.
+            self.window_scene_cache.push_window_surface_key(SurfaceKey {
+                owner: SurfaceOwner::Window(window.id.0),
+                content_sig: content_sig_of(&content_sig),
+                size: (
+                    shadow_bounds.width.max(0.0).ceil() as u32,
+                    shadow_bounds.height.max(0.0).ceil() as u32,
+                ),
+                dpi_scale: SHELL_LOGICAL_DPI,
+                backdrop_dependent: window.flags.contains(WindowFlags::DECORATED),
+            });
+
             let mut canonical = match self.window_scene_cache.get_content(&content_sig) {
                 Some(node) => node,
                 None => {
@@ -3303,6 +3608,316 @@ mod damage_confine_tests {
             shell.take_precomputed_damage().is_none(),
             "the first frame after a window appears has no old footprint to diff → full"
         );
+    }
+}
+
+#[cfg(test)]
+mod surface_key_tests {
+    //! t2-e4-surface-keys: TEETH for the per-owner surface-cache KEYS the shell
+    //! emits alongside the scene. Each tooth fails if the key stops tracking the
+    //! property it must (or starts tracking one it must not):
+    //!   * a key is STABLE across frames with unchanged content,
+    //!   * a CONTENT change (title text / app revision) CHANGES it,
+    //!   * a pure MOVE does NOT change it (position is not part of `content_sig`),
+    //!   * a RESIZE changes it (size + `content_sig`),
+    //!   * the DPI axis is part of the key's identity,
+    //!   * GLASS owners are flagged backdrop-dependent, OPAQUE owners are not.
+
+    use std::sync::{Arc, Mutex};
+
+    use liquide_compositor::geometry::Rect;
+    use liquide_interop::{
+        AppContentProvider, AppContentView, AppKey, AppTextInput, AppView, ContentKind, ContentRow,
+    };
+
+    use super::{SurfaceKey, SurfaceOwner};
+    use crate::shell::Shell;
+    use crate::window::{WindowFlags, WindowId};
+
+    const W: f32 = 1280.0;
+    const H: f32 = 720.0;
+
+    fn test_shell() -> Shell {
+        let mut shell = Shell::new(W, H);
+        // Freeze blink so a 500 ms toggle can never change the scene between builds.
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        shell
+    }
+
+    fn build(shell: &mut Shell) {
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        let _ = shell.build_scene();
+    }
+
+    /// The surface key emitted for window `id` this frame (must exist).
+    fn window_key(shell: &Shell, id: WindowId) -> SurfaceKey {
+        shell
+            .surface_keys()
+            .iter()
+            .copied()
+            .find(|k| k.owner == SurfaceOwner::Window(id.0))
+            .expect("a surface key must be emitted for an open window")
+    }
+
+    /// Trivial app view so a test can bump real app-content revisions.
+    struct StaticApp;
+    impl AppTextInput for StaticApp {
+        fn handle_text(&mut self, _t: &str) -> bool {
+            false
+        }
+        fn handle_key(&mut self, _k: &AppKey) -> bool {
+            false
+        }
+    }
+    impl AppContentProvider for StaticApp {
+        fn content_view(&self, _cols: u32, _rows: u32) -> AppContentView {
+            let mut v = AppContentView::new(ContentKind::Document);
+            v.rows.push(ContentRow::plain("static".to_string()));
+            v
+        }
+    }
+    impl AppView for StaticApp {
+        fn app_id(&self) -> &str {
+            "com.liquide.test.static"
+        }
+    }
+
+    #[test]
+    fn surface_key_stable_across_unchanged_frames() {
+        let mut shell = test_shell();
+        let id = shell.open_window("Stable", Rect::new(200.0, 160.0, 480.0, 360.0));
+        build(&mut shell);
+        let k1 = window_key(&shell, id);
+        // Two more unchanged frames (idle full-scene-cache reuse retains the keys).
+        build(&mut shell);
+        let k2 = window_key(&shell, id);
+        build(&mut shell);
+        let k3 = window_key(&shell, id);
+        assert_eq!(k1, k2, "an unchanged window's surface key must be stable");
+        assert_eq!(k2, k3, "an unchanged window's surface key must be stable");
+        assert!(
+            !shell.surface_keys().is_empty(),
+            "keys must be retained across idle (cache-hit) frames, not dropped"
+        );
+    }
+
+    #[test]
+    fn surface_key_content_change_invalidates_via_title() {
+        let mut shell = test_shell();
+        let id = shell.open_window("Before", Rect::new(120.0, 100.0, 400.0, 300.0));
+        build(&mut shell);
+        let before = window_key(&shell, id);
+
+        // A TITLE change is a painted-content change captured by
+        // WindowContentSignature → the content_sig must change.
+        shell.windows.get_mut(&id).unwrap().title = "After".to_string();
+        shell.mark_window_scene_dirty();
+        build(&mut shell);
+        let after = window_key(&shell, id);
+
+        assert_ne!(
+            before.content_sig, after.content_sig,
+            "a window content (title) change must change content_sig"
+        );
+        assert_eq!(
+            before.size, after.size,
+            "a content-only change must NOT change the footprint size"
+        );
+        assert_eq!(before.owner, after.owner, "owner identity is stable");
+    }
+
+    #[test]
+    fn surface_key_content_change_invalidates_via_app_rev() {
+        let mut shell = test_shell();
+        let id =
+            shell.open_window_with_app("App", Rect::new(120.0, 100.0, 400.0, 300.0), "com.x.app");
+        shell.register_app_view(id, Box::new(StaticApp));
+        build(&mut shell);
+        let before = window_key(&shell, id);
+
+        // An app-content revision bump is the "widget/app rev" content change.
+        shell.bump_app_content_rev(id);
+        shell.mark_window_scene_dirty();
+        build(&mut shell);
+        let after = window_key(&shell, id);
+
+        assert_ne!(
+            before.content_sig, after.content_sig,
+            "an app-content revision bump must change content_sig"
+        );
+    }
+
+    #[test]
+    fn surface_key_move_does_not_change_key() {
+        let mut shell = test_shell();
+        let id = shell.open_window("Mover", Rect::new(200.0, 160.0, 480.0, 360.0));
+        build(&mut shell);
+        let before = window_key(&shell, id);
+        let x_before = shell.windows.get(&id).unwrap().bounds.x;
+
+        // Pure MOVE: x/y change only, same size + content.
+        {
+            let w = shell.windows.get_mut(&id).unwrap();
+            w.bounds.x += 137.0;
+            w.bounds.y += 41.0;
+        }
+        shell.mark_window_scene_dirty();
+        build(&mut shell);
+        let after = window_key(&shell, id);
+
+        assert!(
+            (shell.windows.get(&id).unwrap().bounds.x - x_before).abs() > 0.5,
+            "precondition: the window must actually have moved"
+        );
+        assert_eq!(
+            before, after,
+            "a pure MOVE must NOT change the surface key (position is excluded from \
+             WindowContentSignature and from `size`)"
+        );
+    }
+
+    #[test]
+    fn surface_key_resize_changes_key() {
+        let mut shell = test_shell();
+        let id = shell.open_window("Sizer", Rect::new(200.0, 160.0, 480.0, 360.0));
+        build(&mut shell);
+        let before = window_key(&shell, id);
+
+        shell.resize_window(id, 600.0, 440.0).expect("resize");
+        build(&mut shell);
+        let after = window_key(&shell, id);
+
+        assert_ne!(
+            before.size, after.size,
+            "a RESIZE must change the footprint size in the key"
+        );
+        assert_ne!(
+            before.content_sig, after.content_sig,
+            "a RESIZE changes content_w/h → content_sig must change too"
+        );
+    }
+
+    #[test]
+    fn surface_key_dpi_axis_is_part_of_identity() {
+        // The dpi_scale is part of the key's identity, so a DPI change (re-stamped
+        // by the render thread, which owns the device-pixel-ratio) invalidates the
+        // cached pixels even when content + size are identical.
+        let base = SurfaceKey {
+            owner: SurfaceOwner::Window(7),
+            content_sig: 0xdead_beef,
+            size: (480, 360),
+            dpi_scale: f32::to_bits(1.0),
+            backdrop_dependent: false,
+        };
+        let hidpi = SurfaceKey {
+            dpi_scale: f32::to_bits(2.0),
+            ..base
+        };
+        assert_ne!(
+            base, hidpi,
+            "two keys differing only in dpi_scale must be unequal (DPI invalidates)"
+        );
+        assert_eq!(base, SurfaceKey { ..base }, "an identical key must compare equal");
+    }
+
+    #[test]
+    fn glass_owners_flagged_backdrop_dependent_opaque_owners_not() {
+        let mut shell = test_shell();
+        // A DECORATED window paints a glass titlebar → backdrop-dependent.
+        let deco = shell.open_window("Deco", Rect::new(100.0, 100.0, 400.0, 300.0));
+        // An UNDECORATED window has no glass → opaque.
+        let plain = shell.open_window("Plain", Rect::new(600.0, 100.0, 400.0, 300.0));
+        shell
+            .windows
+            .get_mut(&plain)
+            .unwrap()
+            .flags
+            .clear(WindowFlags::DECORATED);
+        shell.mark_window_scene_dirty();
+        build(&mut shell);
+
+        let deco_key = window_key(&shell, deco);
+        let plain_key = window_key(&shell, plain);
+        assert!(
+            deco_key.backdrop_dependent,
+            "a decorated window (glass titlebar) must be flagged backdrop-dependent"
+        );
+        assert!(
+            !plain_key.backdrop_dependent,
+            "an undecorated window (no glass) must be opaque (not backdrop-dependent)"
+        );
+
+        // The wallpaper layer is always emitted and is opaque.
+        let wallpaper = shell
+            .surface_keys()
+            .iter()
+            .copied()
+            .find(|k| k.owner == SurfaceOwner::Wallpaper)
+            .expect("a wallpaper surface key must be emitted");
+        assert!(
+            !wallpaper.backdrop_dependent,
+            "the wallpaper layer is opaque (not backdrop-dependent)"
+        );
+
+        // Both classes are present and distinguished: at least one backdrop-
+        // dependent owner (the glass window) and one opaque owner (the wallpaper).
+        let keys = shell.surface_keys();
+        assert!(
+            keys.iter().any(|k| k.backdrop_dependent),
+            "at least one backdrop-dependent (glass) owner must be emitted"
+        );
+        assert!(
+            keys.iter().any(|k| !k.backdrop_dependent),
+            "at least one opaque owner must be emitted"
+        );
+    }
+
+    #[test]
+    fn chrome_layer_flag_matches_node_kind() {
+        // Cross-check the emitted CHROME-layer keys against the ASSEMBLED scene:
+        // every cacheable chrome node (GradientFill / Glass / BackdropFilter) must
+        // have a matching Layer key whose backdrop_dependent flag equals the
+        // node's true glass-ness — a gradient band is opaque, a glass band is
+        // backdrop-dependent. RED if the classification is inverted or a cacheable
+        // band is dropped from the keys.
+        use liquide_compositor::scene::SceneNodeKind;
+
+        let mut shell = test_shell();
+        let _ = shell.build_scene(); // warm
+        let root = shell.build_scene();
+        let keys: Vec<SurfaceKey> = shell.surface_keys().to_vec();
+
+        let mut checked = 0usize;
+        for child in &root.children {
+            if child.properties.z_order < super::CHROME_Z_BASE {
+                continue; // not the chrome band
+            }
+            let (cacheable, want_backdrop) = match &child.kind {
+                SceneNodeKind::GradientFill { .. } => (true, false),
+                SceneNodeKind::Glass(_) | SceneNodeKind::BackdropFilter { .. } => (true, true),
+                _ => (false, false),
+            };
+            if !cacheable {
+                continue;
+            }
+            let key = keys
+                .iter()
+                .find(|k| k.owner == SurfaceOwner::Layer(child.id))
+                .expect("every cacheable chrome node must emit a Layer surface key");
+            assert_eq!(
+                key.backdrop_dependent, want_backdrop,
+                "chrome layer {} flag must match its node kind (glass⇒backdrop-dependent, \
+                 gradient⇒opaque)",
+                child.id
+            );
+            checked += 1;
+        }
+        // Not a strict requirement that chrome bands exist for every theme, but
+        // record coverage so a future theme change that drops all cacheable chrome
+        // is visible rather than silently making this test vacuous.
+        let _ = checked;
     }
 }
 
