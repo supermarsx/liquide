@@ -1641,6 +1641,25 @@ fn damage_padded_bbox(damage: &DamageSet, width: u32, height: u32) -> Option<Rec
     Some(Rect::new(min_x, min_y, max_x - min_x, max_y - min_y))
 }
 
+/// True iff `footprint`'s origin and extent are INTEGER-aligned (to a sub-pixel
+/// tolerance). A cached pixel surface is captured at `floor(footprint)` with
+/// integer dims; re-blitting it at `floor(footprint)` reproduces a full re-raster
+/// byte-for-byte ONLY when the footprint sits on integer pixel boundaries (so the
+/// floor is exact and the surface's sub-pixel phase matches the raster's). At a
+/// FRACTIONAL footprint a bitmap blit cannot reproduce the sub-pixel coverage a
+/// re-raster paints — the drag-trail / stale-edge class — so such an owner must be
+/// re-rastered, never reused. Used to gate BOTH the move-reuse decision and the
+/// capture (so every cached surface is integer-phase and any integer-aligned blit
+/// of it is exact).
+fn footprint_is_integer_aligned(footprint: Rect) -> bool {
+    const ALIGN_EPS: f32 = 1e-3;
+    let frac = |v: f32| (v - v.round()).abs();
+    frac(footprint.x) <= ALIGN_EPS
+        && frac(footprint.y) <= ALIGN_EPS
+        && frac(footprint.width) <= ALIGN_EPS
+        && frac(footprint.height) <= ALIGN_EPS
+}
+
 /// True iff `rect` does NOT intersect the damaged region — i.e. nothing in
 /// `rect` is being repainted this frame, so the backdrop a cached owner's edges
 /// sampled is unchanged and re-blitting the cached pixels is byte-identical.
@@ -1894,20 +1913,35 @@ fn surface_cache_pre_pass(
             region_disjoint_from_damage(o.footprint.expand(o.blur_radius as f32), damage_bbox)
                 && owner_is_topmost(flat_nodes_buf, o.start, o.end, owner_top_z, o.footprint)
         } else {
-            // Opaque window / chrome: backdrop disjoint from damage, OR the
-            // existing blit-move byte-identity proof (topmost + fully opaque,
-            // which also covers a pure MOVE to a new position).
+            // Opaque window / chrome. Reuse the cached surface when EITHER:
+            //   * the footprint is DISJOINT from this frame's damage — the window
+            //     did not move and nothing under/around it is repainted, so its
+            //     pixels AND its blit origin are unchanged since capture; OR
+            //   * the window is fully OPAQUE + TOPMOST over its footprint (no
+            //     backdrop dependence — `blit_move_is_byte_identical`, which also
+            //     covers a pure MOVE) AND its footprint is INTEGER-ALIGNED.
+            //
+            // The INTEGER-ALIGNED gate is the drag-trail fix. A cached surface is
+            // only ever captured at an integer-aligned footprint (see the capture
+            // gate below), so it is integer-phase; blitting it at an integer-
+            // aligned `floor(footprint)` lands on the exact pixels a full re-raster
+            // paints — byte-identical even across a move. At a FRACTIONAL footprint
+            // a bitmap blit at `floor(...)` cannot reproduce the sub-pixel coverage
+            // a re-raster produces (a ~1px-shifted edge → drag trails / stale-edge
+            // garbage), so the owner is RE-RASTERED in place instead (byte-
+            // identical to a full repaint, then re-captured iff it lands integer).
             region_disjoint_from_damage(o.footprint, damage_bbox)
-                || blit_move_is_byte_identical(
-                    flat_nodes_buf,
-                    match o.owner {
-                        CacheSurfaceOwner::Window(id) => id,
-                        _ => u64::MAX,
-                    },
-                    o.footprint,
-                    o.footprint,
-                    o.footprint,
-                )
+                || (footprint_is_integer_aligned(o.footprint)
+                    && blit_move_is_byte_identical(
+                        flat_nodes_buf,
+                        match o.owner {
+                            CacheSurfaceOwner::Window(id) => id,
+                            _ => u64::MAX,
+                        },
+                        o.footprint,
+                        o.footprint,
+                        o.footprint,
+                    ))
         };
 
         if safe_to_blit {
@@ -1942,12 +1976,17 @@ fn surface_cache_pre_pass(
 
         // Opaque / glass non-wallpaper owners are re-rastered IN PLACE by
         // `render_live` (kept in the buffer) and captured AFTER the frame, but
-        // only when BOTH (a) the owner is topmost (so the capture is its own
-        // pixels, not an occluder's) AND (b) its whole footprint lies inside the
+        // only when ALL of (a) the owner is topmost (so the capture is its own
+        // pixels, not an occluder's), (b) its whole footprint lies inside the
         // region `render_live` repaints this frame (the padded damage bbox), so
-        // the capture is fully FRESH (never a partially-stale surface).
+        // the capture is fully FRESH (never a partially-stale surface), AND (c)
+        // its footprint is INTEGER-ALIGNED — so the captured surface is integer-
+        // phase and any later integer-aligned reuse (incl. a move) is byte-
+        // identical (the drag-trail fix; a fractional footprint is never cached,
+        // so it always re-rasters rather than being blitted at the wrong phase).
         let fully_repainted = damage_bbox.is_some_and(|d| rect_contains(d, o.footprint));
         if fully_repainted
+            && footprint_is_integer_aligned(o.footprint)
             && owner_is_topmost(flat_nodes_buf, o.start, o.end, owner_top_z, o.footprint)
         {
             outcome.captures.push(SurfaceCaptureJob {
@@ -7948,8 +7987,14 @@ mod surface_cache_loop_tests {
         );
     }
 
-    // ── (d) a window MOVE blits the cached surface (no re-raster) ─────────────
-
+    // ── (d) an INTEGER-aligned window MOVE blits the cached surface ───────────
+    //
+    // An integer-aligned move is byte-identical to a full re-raster: the cached
+    // surface is integer-phase (captured only when integer-aligned), and integer
+    // translation of a bitmap reproduces the raster exactly. So a pure
+    // integer-aligned move re-rasters NOTHING — the moved owner blits from cache
+    // alongside the static owners. (A FRACTIONAL move cannot be reused — see the
+    // move-sequence tests — and is re-rastered instead.)
     #[test]
     fn window_move_blits_cached_surface_no_reraster() {
         let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
@@ -7959,7 +8004,7 @@ mod surface_cache_loop_tests {
         let full = full_damage(TILE, W, H);
         let _ = composite_cached(&mut r, &mut fb, &nodes, &keys, &full, &mut cache);
 
-        // Move Window 1 down (same content_sig + size, new position) — a pure MOVE.
+        // Move Window 1 down (same content_sig + size, new INTEGER position).
         let old = Rect::new(10.0, 20.0, 60.0, 40.0);
         let new = Rect::new(10.0, 70.0, 60.0, 40.0);
         let mut nodes2 = nodes.clone();
@@ -7967,7 +8012,7 @@ mod surface_cache_loop_tests {
         let dmg = damage_rect(old.union(&new));
 
         let (blit, reraster) = composite_cached(&mut r, &mut fb, &nodes2, &keys, &dmg, &mut cache);
-        assert_eq!(reraster, 0, "a pure MOVE re-rasters nothing — the surface is blitted");
+        assert_eq!(reraster, 0, "an integer-aligned MOVE re-rasters nothing — the surface is blitted");
         assert_eq!(blit, 3, "the moved window + wallpaper + other window all blit from cache");
 
         let ground = full_render(&mut r, &nodes2);
@@ -8198,5 +8243,365 @@ mod surface_cache_loop_tests {
         assert_eq!(buf.len(), nodes.len(), "buffer is untouched when the pass is skipped");
         assert!(cache.is_empty(), "no begin_frame / inserts happen on a skipped pass");
         let _ = &mut fb;
+    }
+
+    // ── (f) MOVE-SEQUENCE: every drag/move frame == a full repaint ────────────
+    //
+    // The original E3 harness (cases a–e) randomised DAMAGE but only ever moved a
+    // window ONCE, to an INTEGER position. A real drag is a SEQUENCE of moves to
+    // ARBITRARY (sub-pixel) positions, each frame carrying old∪new damage. That is
+    // the case the harness lacked — and where the surface-cache loop regressed:
+    // the opaque MOVE branch blitted a cached bitmap (captured at
+    // `floor(capture_footprint)`) at `floor(new_footprint)`, which only reproduces
+    // a full re-raster when the two share a sub-pixel phase. At a FRACTIONAL move
+    // the re-raster paints a ~1px-shifted edge the integer blit cannot reproduce →
+    // drag trails / edge garbage.
+    //
+    // This drives a window (opaque AND decorated/glass) over a GRADIENT backdrop
+    // with a static glass band through a randomised move sequence, asserting per
+    // frame: (1) PIXEL-IDENTICAL to a full repaint of that state, and (2) ZERO
+    // out-of-damage writes (containment). It FAILS on the pre-fix code (fractional
+    // moves diverge) and PASSES after (a moved window re-rasters in place).
+
+    struct SeqRng(u64);
+    impl SeqRng {
+        fn new(seed: u64) -> Self {
+            SeqRng(seed ^ 0x9E37_79B9_7F4A_7C15)
+        }
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 ^ (self.0 >> 31)
+        }
+        /// A sub-pixel (fractional) coordinate in `[lo, hi)`.
+        fn frac(&mut self, lo: f32, hi: f32) -> f32 {
+            lo + (self.next() % 1000) as f32 / 1000.0 * (hi - lo)
+        }
+    }
+
+    /// `make`: build the frame's flat nodes for a window rect. `keys`: the owner
+    /// keys. Drives a `frames`-long random move sequence and asserts each frame
+    /// equals a full repaint with no out-of-damage write. Returns the total number
+    /// of frames whose damaged region actually painted the window (non-vacuity).
+    fn assert_move_sequence_identical(
+        seed: u64,
+        frames: usize,
+        integer: bool,
+        keys: &[liquide_shell::SurfaceKey],
+        make: impl Fn(Rect) -> Vec<FlatNode>,
+    ) -> usize {
+        let mut rng = SeqRng::new(seed);
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let pos = |rng: &mut SeqRng| {
+            let (x, y) = (rng.frac(0.0, 130.0), rng.frac(0.0, 110.0));
+            if integer { Rect::new(x.round(), y.round(), 56.0, 38.0) } else { Rect::new(x, y, 56.0, 38.0) }
+        };
+        let mut total_blit = 0usize;
+
+        // Establishing frame: full repaint primes the cache.
+        let mut prev = pos(&mut rng);
+        let _ = composite_cached(&mut r, &mut fb, &make(prev), keys, &full_damage(TILE, W, H), &mut cache);
+
+        for f in 0..frames {
+            let np = pos(&mut rng);
+            let nodes = make(np);
+            let dmg = damage_rect(prev.union(&np));
+
+            // Snapshot for the containment check (pixels outside damage must not move).
+            let before = fb.pixels().to_vec();
+
+            let (blit, _reraster) = composite_cached(&mut r, &mut fb, &nodes, keys, &dmg, &mut cache);
+            total_blit += blit;
+
+            // (1) PIXEL-IDENTICAL to a full repaint of this frame's state.
+            let ground = full_render(&mut r, &nodes);
+            assert_eq!(
+                diff_pixels(&fb, &ground),
+                0,
+                "seed {seed} frame {f}: move-sequence frame diverged from a full repaint \
+                 (prev={prev:?} new={np:?}) — drag-trail / stale-edge class"
+            );
+
+            // (2) CONTAINMENT: no pixel OUTSIDE the damaged tiles changed.
+            for y in 0..H {
+                for x in 0..W {
+                    if in_damage(&dmg, x, y) {
+                        continue;
+                    }
+                    let off = fb.pixel_offset(x, y);
+                    assert_eq!(
+                        &fb.pixels()[off..off + 4],
+                        &before[off..off + 4],
+                        "seed {seed} frame {f}: write ESCAPED the damage scissor at ({x},{y})"
+                    );
+                }
+            }
+            prev = np;
+        }
+        total_blit
+    }
+
+    fn in_damage(d: &DamageSet, x: u32, y: u32) -> bool {
+        let tx = x / d.tile_size;
+        let ty = y / d.tile_size;
+        d.tiles.iter().any(|t| t.x == tx && t.y == ty)
+    }
+
+    #[test]
+    fn opaque_move_sequence_is_pixel_identical_to_full_repaint() {
+        use liquide_compositor::scene::GradientSpec;
+        use liquide_shell::SurfaceOwner as O;
+        let grad = GradientSpec::Linear {
+            start_x: 0.0, start_y: 0.0, end_x: 1.0, end_y: 1.0,
+            stops: vec![(0.0, Color::new(20, 30, 60, 255)), (1.0, Color::new(90, 40, 110, 255))],
+            repeating: false,
+        };
+        let win_base = 10_000 + 7 * 10;
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (W, H), false),
+            shell_key(O::Window(7), 0x2001, (56, 38), false),
+        ];
+        // A topmost opaque window moving over a gradient backdrop at FRACTIONAL
+        // (sub-pixel) positions: this is the regression case — pre-fix the opaque
+        // MOVE branch blitted a phase-mismatched cached bitmap at floor(footprint)
+        // and diverged from the sub-pixel re-raster (drag trails); post-fix the
+        // (non-integer-aligned) moved owner re-rasters in place.
+        for seed in 0..40u64 {
+            let grad = grad.clone();
+            assert_move_sequence_identical(seed, 6, false, &keys, move |wb| {
+                vec![
+                    flat(1, SceneNodeKind::GradientFill { gradient: grad.clone() },
+                         Rect::new(0.0, 0.0, W as f32, H as f32), 0),
+                    bg(win_base, 200, wb, Color::new(210, 70, 70, 255)),
+                ]
+            });
+        }
+    }
+
+    #[test]
+    fn integer_move_sequence_blits_and_stays_pixel_identical() {
+        // INTEGER-aligned moves MUST stay byte-identical to a full repaint AND
+        // still REUSE the cached surface (the preserved blit-move win): an integer
+        // translation of an integer-phase cached bitmap reproduces the raster
+        // exactly. Proves the fix is surgical (only fractional moves lost reuse).
+        use liquide_compositor::scene::GradientSpec;
+        use liquide_shell::SurfaceOwner as O;
+        let grad = GradientSpec::Linear {
+            start_x: 0.0, start_y: 0.0, end_x: 1.0, end_y: 1.0,
+            stops: vec![(0.0, Color::new(20, 30, 60, 255)), (1.0, Color::new(90, 40, 110, 255))],
+            repeating: false,
+        };
+        let win_base = 10_000 + 7 * 10;
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (W, H), false),
+            shell_key(O::Window(7), 0x2001, (56, 38), false),
+        ];
+        let mut blits = 0usize;
+        for seed in 0..24u64 {
+            let grad = grad.clone();
+            blits += assert_move_sequence_identical(seed, 6, true, &keys, move |wb| {
+                vec![
+                    flat(1, SceneNodeKind::GradientFill { gradient: grad.clone() },
+                         Rect::new(0.0, 0.0, W as f32, H as f32), 0),
+                    bg(win_base, 200, wb, Color::new(210, 70, 70, 255)),
+                ]
+            });
+        }
+        // Non-vacuity: integer moves must have actually composited from cache many
+        // times (wallpaper + the moved window), not silently re-rastered every
+        // frame (which would make the "stays identical" assertion trivial).
+        assert!(
+            blits > 24 * 6,
+            "integer move-sequence did not reuse the cache enough (got {blits} blits) — \
+             the move-blit win was lost"
+        );
+    }
+
+    #[test]
+    fn glass_titlebar_move_sequence_is_pixel_identical_to_full_repaint() {
+        use liquide_compositor::scene::GradientSpec;
+        use liquide_shell::SurfaceOwner as O;
+        let grad = GradientSpec::Linear {
+            start_x: 0.0, start_y: 0.0, end_x: 1.0, end_y: 1.0,
+            stops: vec![(0.0, Color::new(20, 30, 60, 255)), (1.0, Color::new(90, 40, 110, 255))],
+            repeating: false,
+        };
+        let win_base = 10_000 + 7 * 10;
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (W, H), false),
+            shell_key(O::Window(7), 0x2001, (56, 38), true), // decorated → backdrop_dependent
+        ];
+        // Decorated window: opaque body + glass titlebar, moving over a gradient
+        // at FRACTIONAL positions (the regression case).
+        for seed in 100..124u64 {
+            let grad = grad.clone();
+            assert_move_sequence_identical(seed, 6, false, &keys, move |wb| {
+                vec![
+                    flat(1, SceneNodeKind::GradientFill { gradient: grad.clone() },
+                         Rect::new(0.0, 0.0, W as f32, H as f32), 0),
+                    bg(win_base, 200, wb, Color::new(210, 70, 70, 255)),
+                    glass(win_base + 1, 205, Rect::new(wb.x, wb.y, wb.width, 14.0)),
+                ]
+            });
+        }
+    }
+
+    // ── PNG verify (manual): drag frames over a gradient + glass titlebar ─────
+    //
+    //   cargo test -p liquide-session --lib drag_frames_png_verify -- --ignored --nocapture
+    //
+    // Renders a decorated window (opaque body + glass titlebar) at two FRACTIONAL
+    // positions over a gradient backdrop through the surface-cache composite path,
+    // plus the full repaint of each, and writes them to `.orchestration/shots/`.
+    // Post-fix the cached composite must look identical to the full repaint (no
+    // trails / stale edges).
+    #[test]
+    #[ignore = "manual PNG verify; not a CI gate"]
+    fn drag_frames_png_verify() {
+        use liquide_compositor::scene::GradientSpec;
+        use liquide_shell::SurfaceOwner as O;
+        const PW: u32 = 480;
+        const PH: u32 = 360;
+        const PT: u32 = 64;
+        let grad = GradientSpec::Linear {
+            start_x: 0.0, start_y: 0.0, end_x: 1.0, end_y: 1.0,
+            stops: vec![(0.0, Color::new(20, 30, 60, 255)), (1.0, Color::new(120, 50, 150, 255))],
+            repeating: false,
+        };
+        let win_base = 10_000 + 7 * 10;
+        let make = |wb: Rect| -> Vec<FlatNode> {
+            vec![
+                flat(1, SceneNodeKind::GradientFill { gradient: grad.clone() },
+                     Rect::new(0.0, 0.0, PW as f32, PH as f32), 0),
+                bg(win_base, 200, wb, Color::new(210, 80, 80, 255)),
+                glass(win_base + 1, 205, Rect::new(wb.x, wb.y, wb.width, 28.0)),
+            ]
+        };
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (PW, PH), false),
+            shell_key(O::Window(7), 0x2001, (160, 110), true),
+        ];
+        let full_dmg = full_damage(PT, PW, PH);
+        let mark = |r: Rect| {
+            let mut d = DamageSet::new(PT);
+            let gw = PW.div_ceil(PT);
+            let gh = PH.div_ceil(PT);
+            d.mark_rect(
+                r.x.max(0.0).floor() as u32, r.y.max(0.0).floor() as u32,
+                (r.width.ceil() as u32).min(PW), (r.height.ceil() as u32).min(PH), gw, gh,
+            );
+            d.dedup();
+            d
+        };
+
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(PW, PH, PixelFormat::Bgra8);
+
+        let pa = Rect::new(60.4, 80.6, 160.0, 110.0);
+        let pb = Rect::new(240.7, 150.3, 160.0, 110.0);
+        // Prime at A, then drag to B (fractional) through the surface-cache path.
+        let _ = composite_cached(&mut r, &mut fb, &make(pa), &keys, &full_dmg, &mut cache);
+        let pa2 = Rect::new(60.4, 80.6, 160.0, 110.0);
+        let _ = composite_cached(&mut r, &mut fb, &make(pb), &keys, &mark(pa2.union(&pb)), &mut cache);
+        let cached_b = fb.capture_region(Rect::new(0.0, 0.0, PW as f32, PH as f32));
+        let full_b = full_render_dim(&mut r, &make(pb), PW, PH, PT);
+
+        let diff = cached_b.pixels.iter().zip(full_b.pixels().iter()).filter(|(a, b)| a != b).count();
+        eprintln!("drag-to-B cached vs full repaint: {diff} differing bytes (must be 0 — no trails)");
+
+        let dir = std::path::Path::new(r"F:\Projects\liquide\.orchestration\shots");
+        let _ = std::fs::create_dir_all(dir);
+        let save = |name: &str, w: u32, h: u32, stride: u32, px: &[u8]| {
+            let sf = crate::desktop::screenshot::ScreenshotFrame { width: w, height: h, stride, pixels: px };
+            let path = dir.join(format!("{name}.png"));
+            crate::desktop::screenshot::write_png(&sf, &path).expect("write png");
+            eprintln!("wrote {}", path.display());
+        };
+        save("drag-cached-to-B", cached_b.width, cached_b.height, cached_b.stride, &cached_b.pixels);
+        save("drag-full-to-B", full_b.width, full_b.height, full_b.stride, full_b.pixels());
+        assert_eq!(diff, 0, "cached drag frame must be pixel-identical to a full repaint (no trails)");
+    }
+
+    fn full_render_dim(
+        r: &mut liquide_renderer_cpu::SoftwareRenderer,
+        nodes: &[FlatNode],
+        w: u32, h: u32, tile: u32,
+    ) -> FrameBuffer {
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        let dmg = full_damage(tile, w, h);
+        clear_damage_tiles(&mut fb, &dmg);
+        let _ = r.render_live(nodes, &mut fb, &dmg, RenderMode::Capture);
+        fb
+    }
+
+    // ── TEETH: a stale-phase MOVE blit (the removed optimisation) diverges ─────
+    //
+    // Proves the harness/fix is load-bearing: if a MOVED opaque window were reused
+    // from cache (blit the captured bitmap at `floor(new_footprint)` — exactly the
+    // branch the fix removed) at a FRACTIONAL position, the frame DIVERGES from a
+    // full repaint. If this ever produced 0 diff, the move-blit would be safe and
+    // the fix (and this guard) would be vacuous.
+    #[test]
+    fn teeth_stale_phase_move_blit_diverges_from_full_repaint() {
+        use liquide_compositor::scene::GradientSpec;
+        use liquide_shell::SurfaceOwner as O;
+        let grad = GradientSpec::Linear {
+            start_x: 0.0, start_y: 0.0, end_x: 1.0, end_y: 1.0,
+            stops: vec![(0.0, Color::new(20, 30, 60, 255)), (1.0, Color::new(90, 40, 110, 255))],
+            repeating: false,
+        };
+        let win_base = 10_000 + 7 * 10;
+        let make = |wb: Rect| -> Vec<FlatNode> {
+            vec![
+                flat(1, SceneNodeKind::GradientFill { gradient: grad.clone() },
+                     Rect::new(0.0, 0.0, W as f32, H as f32), 0),
+                bg(win_base, 200, wb, Color::new(210, 70, 70, 255)),
+            ]
+        };
+        let keys = vec![
+            shell_key(O::Wallpaper, 0x1001, (W, H), false),
+            shell_key(O::Window(7), 0x2001, (56, 38), false),
+        ];
+
+        let mut r = liquide_renderer_cpu::SoftwareRenderer::new();
+        let mut cache = SurfaceCache::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+
+        // Prime the cache with the window at an INTEGER position (so it is
+        // captured — fractional footprints are deliberately never cached).
+        let pos_a = Rect::new(30.0, 40.0, 56.0, 38.0);
+        let _ = composite_cached(&mut r, &mut fb, &make(pos_a), &keys, &full_damage(TILE, W, H), &mut cache);
+        let cached = cache
+            .entry(CacheSurfaceOwner::Window(7))
+            .expect("integer-aligned window cached after prime")
+            .buffer
+            .clone();
+
+        // Move to a FRACTIONAL position (a different sub-pixel phase) — the case
+        // the fix routes to a re-raster instead of a blit.
+        let pos_b = Rect::new(80.2, 60.9, 56.0, 38.0);
+        let dmg = damage_rect(pos_a.union(&pos_b));
+
+        // Reconstruct the OLD (removed) MOVE-blit behaviour: substitute the window
+        // owner's node with the cached surface blitted at floor(new_footprint),
+        // exactly as `surface_blit_node` + the deleted blit_move branch did.
+        let mut buf = make(pos_b);
+        let win_idx = buf.iter().position(|n| n.id == win_base).unwrap();
+        buf[win_idx] = surface_blit_node(win_base, 200, pos_b, cached);
+        clear_damage_tiles(&mut fb, &dmg);
+        let _ = r.render_live(&buf, &mut fb, &dmg, RenderMode::Capture);
+
+        // A full repaint of the real (re-rastered) window at pos_b.
+        let ground = full_render(&mut r, &make(pos_b));
+        assert!(
+            diff_pixels(&fb, &ground) > 0,
+            "a stale-phase MOVE blit MUST diverge from a full repaint — if it matched, \
+             the removed move-blit optimisation would have been safe (teeth vacuous)"
+        );
     }
 }

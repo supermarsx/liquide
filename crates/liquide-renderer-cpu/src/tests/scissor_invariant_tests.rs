@@ -463,6 +463,105 @@ fn incremental_matches_full_over_random_local_scenes() {
 }
 
 // ===========================================================================
+// (a') INCREMENTAL == FULL over a MOVE SEQUENCE — the drag/move guard
+// ===========================================================================
+//
+// Case (a) randomised DAMAGE but never MOVED anything: a window stayed put while
+// only its damaged tiles varied. A real drag MOVES a window every frame, each
+// frame carrying old∪new damage. The incremental frame (start from the previous
+// frame, clear the old∪new tiles, re-raster with that damage) must still be
+// PIXEL-IDENTICAL — inside the damage — to a FULL repaint of the NEW state. This
+// is the by-construction guard the original harness lacked (it is the render-time
+// twin of the surface-cache loop's move-sequence regression: a moved owner's new
+// position AND its revealed old footprint must both repaint to the full-repaint
+// result). Opaque/local kinds only (same reason as case (a): the strict identity
+// holds for non-backdrop-reading kinds; glass backdrop ordering is exercised by
+// the CONTAINMENT case below and by the session surface-cache move tests).
+#[test]
+fn incremental_matches_full_over_move_sequence() {
+    let mut rnd = SoftwareRenderer::new();
+    let mut moved_frames = 0usize;
+    for seed in 0..64u64 {
+        let mut rng = Rng::new(seed ^ 0x4047);
+        // Static gradient backdrop the window moves over (a varying backdrop, so a
+        // mis-handled reveal of the old footprint shows up as a diff).
+        let backdrop = gradient_node(1, Rect::new(0.0, 0.0, W as f32, H as f32), &mut rng);
+        let wid = 2u64;
+        // Opaque window size; positions are sampled per frame (incl. sub-pixel).
+        let (ww, wh) = (24.0_f32, 20.0_f32);
+        let win_at = |b: Rect| node(wid, SceneNodeKind::Background { color: Color::new(220, 60, 60, 255) }, b, 1.0);
+        let win_pos = |rng: &mut Rng| {
+            let x = rng.range_i32(8, (W as i32) - 8) as f32 + (rng.below(4) as f32) / 4.0;
+            let y = rng.range_i32(8, (H as i32) - 8) as f32 + (rng.below(4) as f32) / 4.0;
+            Rect::new(x, y, ww, wh)
+        };
+
+        // Previous frame = a full render of the window at its old position.
+        let mut prev_rect = win_pos(&mut rng);
+        let mut prev_fb = render_full(&mut rnd, &[backdrop.clone(), win_at(prev_rect)]);
+
+        for _ in 0..5 {
+            let new_rect = win_pos(&mut rng);
+            let nodes = [backdrop.clone(), win_at(new_rect)];
+            let damage = move_damage(prev_rect, new_rect);
+
+            // Incremental: start from the previous frame, clear old∪new, re-raster.
+            let mut incr = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+            incr.pixels_mut().unwrap().copy_from_slice(prev_fb.pixels());
+            clear_damage_tiles(&mut incr, &damage);
+            let _ = rnd.render_live(&nodes, &mut incr, &damage, RenderMode::Capture).unwrap();
+
+            // incremental == full inside the damaged tiles (the moved window's new
+            // position AND its revealed old footprint must both match a full
+            // repaint). Out-of-scissor containment is covered generatively by
+            // `no_write_escapes_damage_over_random_scenes`.
+            let full = render_full(&mut rnd, &nodes);
+            let diff = diff_in_damage(&full, &incr, &damage);
+            assert_eq!(
+                diff, 0,
+                "seed {seed}: move-frame incremental differs from full repaint in {diff} pixels \
+                 (old={prev_rect:?} new={new_rect:?}) — drag-trail / stale-old-footprint class"
+            );
+
+            // Non-vacuity: the window actually painted somewhere in the damage.
+            if (0..H).any(|y| (0..W).any(|x| {
+                in_damage(&damage, x, y) && {
+                    let o = full.pixel_offset(x, y);
+                    full.pixels()[o] != 0 || full.pixels()[o + 1] != 0 || full.pixels()[o + 2] != 0
+                }
+            })) {
+                moved_frames += 1;
+            }
+
+            prev_rect = new_rect;
+            prev_fb = full; // next frame's "previous" is this state's full render
+        }
+    }
+    assert!(moved_frames > 200, "move-sequence harness too weak: only {moved_frames} painted frames");
+}
+
+/// Tile-aligned damage covering the union of two window rects (the drag old∪new
+/// contract): every tile either rect touches is marked.
+fn move_damage(old: Rect, new: Rect) -> DamageSet {
+    let mut d = DamageSet::new(TILE);
+    let grid_w = W.div_ceil(TILE);
+    let grid_h = H.div_ceil(TILE);
+    for r in [old, new] {
+        let x0 = (r.x.max(0.0) as u32) / TILE;
+        let y0 = (r.y.max(0.0) as u32) / TILE;
+        let x1 = ((r.x + r.width).min(W as f32).ceil() as u32).div_ceil(TILE).min(grid_w);
+        let y1 = ((r.y + r.height).min(H as f32).ceil() as u32).div_ceil(TILE).min(grid_h);
+        for ty in y0..y1 {
+            for tx in x0..x1 {
+                d.add(DamageTile { x: tx, y: ty, class: DamageClass::UiPrimitive });
+            }
+        }
+    }
+    d.dedup();
+    d
+}
+
+// ===========================================================================
 // (b) CONTAINMENT — generative, ALL node kinds incl. blur/glass/shadow
 // ===========================================================================
 
