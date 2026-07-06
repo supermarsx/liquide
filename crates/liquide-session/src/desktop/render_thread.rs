@@ -1844,6 +1844,46 @@ fn cache_content_hit(cache: &SurfaceCache, owner: CacheSurfaceOwner, key: &Cache
     })
 }
 
+// ---------------------------------------------------------------------------
+// SURFACE-CACHE kill-switch (t2-e3 composite loop is OPT-IN, DEFAULT OFF).
+//
+// The composite-only-changed surface-cache substitution (`surface_cache_pre_pass`
+// / `surface_cache_post_pass`) is net-neutral-to-negative for the live experience
+// today (off during drag, glass owners re-raster anyway, and it adds a
+// capture-region memcpy on full frames) and shipped a live-only fractional-move
+// trail regression. It is therefore gated behind `LIQUIDE_SURFACE_CACHE` and
+// SKIPPED entirely by default: with the switch OFF the live worker uses the proven
+// direct full raster (`render_live`) with the existing damage / blit-move paths,
+// exactly as before the E3 loop landed — so the surface cache contributes nothing
+// to the default build and cannot regress it. The store + its tests are retained;
+// set `LIQUIDE_SURFACE_CACHE=1` to engage the pass for future testing/refinement.
+// ---------------------------------------------------------------------------
+
+/// Parse the `LIQUIDE_SURFACE_CACHE` kill-switch value. OPT-IN / DEFAULT OFF: only
+/// an explicit `1` enables the composite loop. Every other value — unset (`None`),
+/// `0`, empty, or any other string — leaves it OFF.
+fn parse_surface_cache_flag(val: Option<&std::ffi::OsStr>) -> bool {
+    matches!(val, Some(v) if v == "1")
+}
+
+/// Whether the surface-cache composite loop is enabled for the LIVE path. Reads
+/// `LIQUIDE_SURFACE_CACHE` exactly ONCE (cached for the process lifetime) so the
+/// per-frame gate is a single load, never a repeated env lookup. DEFAULT OFF.
+fn surface_cache_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED
+        .get_or_init(|| parse_surface_cache_flag(std::env::var_os("LIQUIDE_SURFACE_CACHE").as_deref()))
+}
+
+/// The per-frame decision to run the surface-cache pre-pass, kept as a pure
+/// predicate so the gate is directly unit-testable (the env read in
+/// `surface_cache_enabled` is cached once per process and cannot be flipped
+/// mid-run). The pass runs ONLY when the kill-switch is enabled AND the frame is
+/// neither a drag nor a blit-move frame (those paths own the framebuffer).
+fn surface_cache_pass_should_run(enabled: bool, is_drag: bool, has_blit_plan: bool) -> bool {
+    enabled && !is_drag && !has_blit_plan
+}
+
 /// PRE-render surface-cache pass: decide, per owner, reuse (substitute a cached
 /// `Surface` node) vs re-raster (keep nodes; capture afterwards). Mutates
 /// `flat_nodes_buf` in place and returns the post-render capture plan + counters.
@@ -4102,9 +4142,19 @@ impl DesktopCompositor {
         // blit-move / skeleton paths own the buffer) and when the backend is not
         // the CPU `SoftwareRenderer`. The deterministic capture path
         // (`render_frame_sync`) never reaches here, so goldens are unaffected.
+        //
+        // KILL-SWITCH (OPT-IN, DEFAULT OFF): the whole pass is skipped unless
+        // `LIQUIDE_SURFACE_CACHE=1`. When OFF (the default), `surface_pass_ran`
+        // stays false so `render_live` below performs the proven direct full
+        // raster with the existing damage / blit-move behavior — byte-identical to
+        // the pre-E3 path, with no cache substitution and no post-pass capture.
         let mut surface_captures: Vec<SurfaceCaptureJob> = Vec::new();
         let mut surface_pass_ran = false;
-        if latest_job.dragged_window.is_none() && blit_plan.is_none() {
+        if surface_cache_pass_should_run(
+            surface_cache_enabled(),
+            latest_job.dragged_window.is_some(),
+            blit_plan.is_some(),
+        ) {
             if let Some(sw) = renderer
                 .as_any_mut()
                 .and_then(|any| any.downcast_mut::<liquide_renderer_cpu::SoftwareRenderer>())
@@ -7392,6 +7442,96 @@ mod blit_move_tests {
         fb.pixels().to_vec()
     }
 
+    // KILL-SWITCH (t2-e3 OPT-IN, DEFAULT OFF): with `LIQUIDE_SURFACE_CACHE` unset
+    // (the default — tests never set it, so the once-cached flag stays OFF), the
+    // surface-cache composite pre/post pass is SKIPPED in the worker even on a live
+    // frame that CARRIES surface keys for cacheable owners. Proof it is a genuine
+    // no-op: (1) after a full live frame the worker's `SurfaceCache` is still EMPTY
+    // (the pass never called `begin_frame` / captured anything), and (2) the pixels
+    // equal a direct full re-raster (the pre-E3 path). If the default were flipped
+    // to ON (or the gate removed) this frame WOULD populate the cache — the
+    // wallpaper + topmost, integer-aligned, fully-repainted window are exactly the
+    // capture case proven by `surface_cache_loop_tests` — so this fails loudly.
+    #[test]
+    fn surface_cache_pass_gated_off_by_default_is_noop_through_worker() {
+        let wid = 5;
+        let win = Rect::new(32.0, 32.0, 48.0, 48.0);
+
+        // A cacheable LIVE scene: full-frame opaque desktop (wallpaper owner, z=0)
+        // + an opaque, integer-aligned, TOPMOST window in the WORKSPACE band (z=200
+        // so `surface_owner_for_node` classifies it as `Window(wid)`).
+        let scene = || {
+            let mut root = SceneNode::new(
+                1,
+                SceneNodeKind::Root,
+                NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)),
+            );
+            root.add_child(SceneNode::new(
+                2,
+                opaque_fill(Color::new(20, 40, 60, 255)),
+                NodeProperties::new(Rect::new(0.0, 0.0, W as f32, H as f32)).with_z_order(0),
+            ));
+            root.add_child(SceneNode::new(
+                window_base(wid),
+                opaque_fill(Color::new(200, 120, 40, 255)),
+                NodeProperties::new(win).with_z_order(200),
+            ));
+            root
+        };
+
+        // The surface keys the shell WOULD emit for those owners — so the ONLY
+        // reason the pass no-ops is the kill-switch, never a missing key.
+        let keys = vec![
+            liquide_shell::SurfaceKey {
+                owner: liquide_shell::SurfaceOwner::Wallpaper,
+                content_sig: 0x00A1,
+                size: (W, H),
+                dpi_scale: 0x3f80_0000, // f32::to_bits(1.0)
+                backdrop_dependent: false,
+            },
+            liquide_shell::SurfaceKey {
+                owner: liquide_shell::SurfaceOwner::Window(wid),
+                content_sig: 0x00B2,
+                size: (48, 48),
+                dpi_scale: 0x3f80_0000,
+                backdrop_dependent: false,
+            },
+        ];
+
+        let mut job = drag_job(scene(), wid, None);
+        job.dragged_window = None; // a normal (non-drag) LIVE frame
+        job.surface_keys = keys;
+
+        let mut renderer = new_renderer();
+        let mut compositor = new_compositor();
+        let mut fb = None;
+        let mut tracker = FrameTileHashTracker::default();
+        let mut recycler = FrameSnapshotRecycler::default();
+        let mut node_cache = None;
+        let mut buf = Vec::new();
+        let mut retained = Vec::new();
+        let mut prev_blit = None;
+        let mut surface_cache = SurfaceCache::new();
+
+        let (tx, rx) = mpsc::channel();
+        DesktopCompositor::render_full_job(
+            job, &mut *renderer, &mut compositor, &mut fb, &mut tracker, &mut recycler,
+            &mut node_cache, &mut buf, &mut retained, &mut prev_blit, &mut surface_cache, &tx,
+        );
+        let pixels = rx.recv().expect("frame produced").pixels;
+
+        assert!(
+            surface_cache.is_empty(),
+            "DEFAULT OFF: the surface-cache pass must be a no-op — the worker's cache \
+             must stay EMPTY (no begin_frame / capture) on a live frame carrying keys"
+        );
+        assert_eq!(
+            pixels.as_slice(),
+            full_reraster(scene()).as_slice(),
+            "DEFAULT OFF must be byte-identical to the direct full re-raster (pre-E3 path)"
+        );
+    }
+
     // (a) + (b): a valid blit-move is BYTE-IDENTICAL to a full re-raster, with no
     // ghost of the old position and the window present at the new position.
     #[test]
@@ -8602,6 +8742,52 @@ mod surface_cache_loop_tests {
             diff_pixels(&fb, &ground) > 0,
             "a stale-phase MOVE blit MUST diverge from a full repaint — if it matched, \
              the removed move-blit optimisation would have been safe (teeth vacuous)"
+        );
+    }
+
+    // ── KILL-SWITCH: the composite loop is OPT-IN / DEFAULT OFF ────────────────
+    //
+    // These pin the gate decision itself (the env read is cached once per process
+    // via a OnceLock, so it cannot be flipped mid-run — hence the parse + predicate
+    // are exercised as pure functions). The functional proof that the pre-pass is a
+    // no-op through the worker when OFF (and that when ON the pass engages) lives in
+    // `blit_move_tests::surface_cache_pass_gated_off_by_default_matches_direct_raster`
+    // and the composite tests above (which drive the pass directly, i.e. the ON
+    // path) respectively.
+
+    #[test]
+    fn surface_cache_flag_defaults_off_and_only_1_enables() {
+        use std::ffi::OsStr;
+        // DEFAULT OFF: unset / 0 / empty / arbitrary values all stay OFF.
+        assert!(!parse_surface_cache_flag(None), "unset → OFF (default)");
+        assert!(!parse_surface_cache_flag(Some(OsStr::new("0"))), "0 → OFF");
+        assert!(!parse_surface_cache_flag(Some(OsStr::new(""))), "empty → OFF");
+        assert!(!parse_surface_cache_flag(Some(OsStr::new("true"))), "non-1 → OFF");
+        // OPT-IN: only an explicit `1` enables.
+        assert!(parse_surface_cache_flag(Some(OsStr::new("1"))), "1 → ON");
+    }
+
+    #[test]
+    fn surface_cache_gate_predicate_requires_enabled_and_non_drag() {
+        // OFF: the pass is SKIPPED even on an otherwise-eligible (non-drag, no
+        // blit-move) live frame. This is the default-build behavior.
+        assert!(
+            !surface_cache_pass_should_run(false, false, false),
+            "disabled → pass never runs, even on an eligible frame"
+        );
+        // ON + eligible: the pass engages.
+        assert!(
+            surface_cache_pass_should_run(true, false, false),
+            "enabled + non-drag + no blit-move → pass runs"
+        );
+        // ON but a drag / blit-move frame: still skipped (those paths own the fb).
+        assert!(
+            !surface_cache_pass_should_run(true, true, false),
+            "a drag frame skips the pass regardless of the flag"
+        );
+        assert!(
+            !surface_cache_pass_should_run(true, false, true),
+            "a blit-move frame skips the pass regardless of the flag"
         );
     }
 }
