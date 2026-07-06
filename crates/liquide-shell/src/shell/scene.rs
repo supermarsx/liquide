@@ -342,6 +342,10 @@ fn rebase_content_subtree(node: &mut SceneNode, id_delta: u64, z_delta: u32) {
 pub struct WindowSceneCacheStats {
     pub hits: u64,
     pub misses: u64,
+    /// MOVE-only reuse count (fix: drag fluidity): a pure window MOVE that reused
+    /// the cached subtree via a translate instead of rebuilding it. A drag
+    /// sequence bumps this once per frame while `misses` stays flat.
+    pub moves: u64,
     pub dirty: bool,
     pub cached: bool,
 }
@@ -410,6 +414,18 @@ pub(crate) struct FullSceneCache {
     /// changed, so last frame's keys are still exactly valid (every owner reuses
     /// its surface), mirroring how the root itself is reused.
     surface_keys: Vec<SurfaceKey>,
+    /// Footprint of the dock-hover tooltip overlay as emitted on the PREVIOUS
+    /// `build_scene` (fix: tooltip ghost). The tooltip is a manual overlay
+    /// OUTSIDE the CSS layout tree, so its appear/move/hide is invisible to the
+    /// chrome dirty set that drives `compute_precomputed_damage`; when a bounded
+    /// (authoritative) damage set is emitted it would omit the tooltip's OLD
+    /// footprint, so the removed/moved bubble is never repainted and ghosts.
+    /// Tracking last frame's rect lets the damage builder union the OLD (∪ new)
+    /// tooltip rect into the emitted damage on any appear/move/hide transition,
+    /// so the stale pixels are cleared. `None` when no tooltip was drawn last
+    /// frame. Stored here (rather than on `Shell`) to keep the fix self-contained
+    /// in this module.
+    last_tooltip_rect: Option<Rect>,
 }
 
 impl FullSceneCache {
@@ -420,12 +436,25 @@ impl FullSceneCache {
             misses: 0,
             dirty: true,
             surface_keys: Vec::new(),
+            last_tooltip_rect: None,
         }
     }
 
     /// Replace the retained surface-cache keys (called on a full-scene rebuild).
     fn set_surface_keys(&mut self, keys: Vec<SurfaceKey>) {
         self.surface_keys = keys;
+    }
+
+    /// The tooltip-overlay footprint recorded on the previous `build_scene`
+    /// (fix: tooltip ghost). `None` when no tooltip was drawn last frame.
+    fn last_tooltip_rect(&self) -> Option<Rect> {
+        self.last_tooltip_rect
+    }
+
+    /// Record this frame's tooltip-overlay footprint (or `None` when the tooltip
+    /// is not drawn) for the next frame's transition diff.
+    fn set_last_tooltip_rect(&mut self, rect: Option<Rect>) {
+        self.last_tooltip_rect = rect;
     }
 
     /// The surface-cache keys emitted for the most recently built scene.
@@ -517,6 +546,13 @@ pub(crate) struct WindowSceneCache {
     content: std::collections::HashMap<WindowContentSignature, SceneNode>,
     content_hits: u64,
     content_misses: u64,
+    /// MOVE-only reuse count (fix: drag fluidity). A pure window MOVE (drag) is
+    /// served by [`Self::get_translated`]: the cached workspace subtree is
+    /// REUSED and each moved window's subtree is TRANSLATED to its new position
+    /// WITHOUT a rebuild. Each such frame bumps this instead of `misses`, so a
+    /// drag sequence does zero subtree rebuilds. Distinct from `hits` (an EXACT
+    /// signature match, which a moving window never produces).
+    move_hits: u64,
     /// Per-window surface-cache keys stamped while the window subtree is built
     /// (t2-e4-surface-keys), reusing each window's [`WindowContentSignature`] as
     /// the `content_sig`. RETAINED across a window-scene cache HIT: when the
@@ -537,6 +573,7 @@ impl WindowSceneCache {
             content: std::collections::HashMap::new(),
             content_hits: 0,
             content_misses: 0,
+            move_hits: 0,
             window_surface_keys: Vec::new(),
         }
     }
@@ -564,15 +601,64 @@ impl WindowSceneCache {
                 return Some(node.clone());
             }
         }
-
-        self.misses = self.misses.saturating_add(1);
+        // NOT a miss: an exact-match failure may still be served MOVE-only by
+        // `get_translated`. `misses` (a real rebuild) is counted in `store`.
         None
+    }
+
+    /// MOVE-only fast path (fix: drag fluidity). When `new_sig` differs from the
+    /// cached signature ONLY in per-window POSITIONS — a pure drag/move, with no
+    /// content/size/stacking/animation/theme/focus change — reuse the cached
+    /// workspace subtree and TRANSLATE each moved window's subtree to its new
+    /// position, WITHOUT rebuilding it. This is what makes a drag frame do ~0
+    /// main-thread work: the expensive `build_uncached_window_workspace_node`
+    /// (per-window content clone + rebase + decoration/CSS-layout reads) is
+    /// skipped entirely; only a per-window wrapper translate changes.
+    ///
+    /// Deliberately IGNORES the `dirty` flag: a live drag calls
+    /// `mark_window_scene_dirty` every frame, but the SIGNATURE comparison is the
+    /// exact validator — anything other than a position change makes
+    /// `move_only_deltas` return `None` and we fall through to a real rebuild, so
+    /// serving a translated clone here can never leak stale content.
+    ///
+    /// The cached node/signature are the BASELINE (never mutated here): each move
+    /// frame computes its delta from that fixed baseline and returns a fresh
+    /// clone, so successive drag frames stay correct without re-storing.
+    fn get_translated(&mut self, new_sig: &WindowSceneSignature) -> Option<SceneNode> {
+        // Ends the immutable borrow of `self.signature` before we touch `node`.
+        let deltas = self.signature.as_ref()?.move_only_deltas(new_sig)?;
+        let mut node = self.node.as_ref()?.clone();
+        // The workspace node's direct children are the per-window effect groups
+        // (id = NODE_WINDOW_EFFECT_GROUP_BASE + window_id), each built at its
+        // baseline ABSOLUTE position with an IDENTITY transform. Setting the
+        // group's transform to the move delta shifts its whole subtree (shadow,
+        // decoration, glass, content wrapper, text field) — the flatten path
+        // accumulates the parent transform down to every child and composes it
+        // with the content wrapper's own translate — so the window renders at its
+        // new absolute position, pixel-identical to a full rebuild there.
+        for group in &mut node.children {
+            if group.id < NODE_WINDOW_EFFECT_GROUP_BASE {
+                continue;
+            }
+            let win_id = group.id - NODE_WINDOW_EFFECT_GROUP_BASE;
+            if let Some(&(_, dx, dy)) = deltas.iter().find(|(id, _, _)| *id == win_id) {
+                group.properties.transform = Affine2D::translation(dx, dy);
+            }
+        }
+        self.move_hits = self.move_hits.saturating_add(1);
+        // The signature comparison already proved the subtree is valid for this
+        // frame, so clear `dirty` (a redundant re-mark) — `get`'s own signature
+        // guard still prevents a stale EXACT hit.
+        self.dirty = false;
+        Some(node)
     }
 
     fn store(&mut self, signature: WindowSceneSignature, node: SceneNode) {
         self.signature = Some(signature);
         self.node = Some(node);
         self.dirty = false;
+        // A `store` is only reached after a real rebuild, so it IS the miss.
+        self.misses = self.misses.saturating_add(1);
     }
 
     /// Look up a cached CONTENT subtree for `signature`, returning a clone of the
@@ -611,6 +697,7 @@ impl WindowSceneCache {
         WindowSceneCacheStats {
             hits: self.hits,
             misses: self.misses,
+            moves: self.move_hits,
             dirty: self.dirty,
             cached: self.node.is_some(),
         }
@@ -775,6 +862,54 @@ impl WindowSceneSignature {
         }
         rects
     }
+
+    /// MOVE-ONLY diff (fix: drag fluidity). Returns `Some(per-window (id, dx, dy)
+    /// deltas)` iff `other` (THIS frame) differs from `self` (the CACHED baseline)
+    /// ONLY in per-window POSITIONS — a pure drag/move: every GLOBAL field is
+    /// equal, no window was added/removed/restacked/resized/retitled/re-stated,
+    /// no per-window paint state (focus/hover/blink/text/app-content) changed, and
+    /// NO animation is active in either frame. In that case the cached workspace
+    /// subtree can be REUSED and each window merely TRANSLATED by its delta
+    /// (see [`WindowSceneCache::get_translated`]). Any other difference returns
+    /// `None`, forcing a real rebuild — so this can never serve stale content.
+    ///
+    /// Animation is excluded (`effects` must be empty in BOTH frames): an active
+    /// effect tweens geometry/opacity, which a pure translate cannot reproduce.
+    fn move_only_deltas(&self, other: &Self) -> Option<Vec<(u64, f32, f32)>> {
+        if self.screen != other.screen
+            || self.active_workspace_id != other.active_workspace_id
+            || self.focused_id != other.focused_id
+            || self.hovered_button != other.hovered_button
+            || self.cursor_blink_on != other.cursor_blink_on
+            || self.decoration_style != other.decoration_style
+            || self.decoration_colors != other.decoration_colors
+            || self.decoration_layout != other.decoration_layout
+            || self.theme != other.theme
+            || self.focused_text != other.focused_text
+            || self.app_content != other.app_content
+            || !self.effects.is_empty()
+            || !other.effects.is_empty()
+            || self.windows.len() != other.windows.len()
+        {
+            return None;
+        }
+
+        let mut deltas = Vec::with_capacity(self.windows.len());
+        let mut any_moved = false;
+        for (base, now) in self.windows.iter().zip(other.windows.iter()) {
+            let (dx, dy) = base.moved_from(now)?;
+            if dx != 0.0 || dy != 0.0 {
+                any_moved = true;
+            }
+            deltas.push((now.id, dx, dy));
+        }
+        // No window actually moved ⇒ the signatures are equal and `get` would
+        // have served an exact hit; nothing to translate.
+        if !any_moved {
+            return None;
+        }
+        Some(deltas)
+    }
 }
 
 /// POSITION-INDEPENDENT cache key for a single window's CONTENT subtree
@@ -861,6 +996,33 @@ impl WindowRenderSignature {
             tile_zone: window.tile_zone,
             min_size: window.min_size.map(SizeSignature::from_size),
         }
+    }
+
+    /// If `now` is the SAME window as `self` with everything unchanged EXCEPT its
+    /// position (same id, title, app_id, state, z/stack, visibility, flags,
+    /// opacity, tiling, min-size AND identical SIZE), return the move delta
+    /// `(dx, dy)`; otherwise `None`. Used by [`WindowSceneSignature::move_only_deltas`]
+    /// to prove a frame is a pure MOVE (fix: drag fluidity).
+    fn moved_from(&self, now: &Self) -> Option<(f32, f32)> {
+        if self.id != now.id
+            || self.title != now.title
+            || self.app_id != now.app_id
+            || self.state != now.state
+            || self.z_order != now.z_order
+            || self.visible != now.visible
+            || self.flags != now.flags
+            || self.opacity != now.opacity
+            || self.tiled != now.tiled
+            || self.tile_zone != now.tile_zone
+            || self.min_size != now.min_size
+            || self.bounds.width != now.bounds.width
+            || self.bounds.height != now.bounds.height
+        {
+            return None;
+        }
+        let dx = f32::from_bits(now.bounds.x) - f32::from_bits(self.bounds.x);
+        let dy = f32::from_bits(now.bounds.y) - f32::from_bits(self.bounds.y);
+        Some((dx, dy))
     }
 }
 
@@ -1185,6 +1347,34 @@ impl Shell {
         /// the `OVERLAY_BACKDROP_MARGIN` used by `interactive_overlay_damage`.
         const BACKDROP_MARGIN: f32 = 48.0;
 
+        // ── Tooltip overlay transition guard (fix: tooltip ghost) ────────────
+        // The dock-hover tooltip is a MANUAL overlay OUTSIDE the CSS layout tree,
+        // so its appear/move/hide never lands in `dirty_chrome_nodes`. When a
+        // dock-item hover emits AUTHORITATIVE (bounded) damage, the worker skips
+        // the scene-diff that would otherwise clear removed/moved nodes — so the
+        // tooltip's OLD footprint is never repainted and ghosts/trails. We diff
+        // the tooltip footprint frame-to-frame here: on any appear/move/hide we
+        // union the OLD (∪ new) bubble rect (expanded by the glass-blur sample
+        // margin) into whatever bounded damage this frame emits, so the stale
+        // pixels are cleared. A held (unchanged) tooltip adds nothing, so a steady
+        // hover stays confined. The prior rect is tracked ALWAYS (even on the
+        // full-fallback returns below, where the full repaint already clears the
+        // overlay) so next frame's diff is correct.
+        let new_tooltip_rect = self.tooltip_overlay_rect();
+        let old_tooltip_rect = self.full_scene_cache.last_tooltip_rect();
+        self.full_scene_cache.set_last_tooltip_rect(new_tooltip_rect);
+        let mut tooltip_damage: Vec<Rect> = Vec::new();
+        if old_tooltip_rect != new_tooltip_rect {
+            for r in [old_tooltip_rect, new_tooltip_rect].into_iter().flatten() {
+                tooltip_damage.push(Rect::new(
+                    r.x - BACKDROP_MARGIN,
+                    r.y - BACKDROP_MARGIN,
+                    r.width + BACKDROP_MARGIN * 2.0,
+                    r.height + BACKDROP_MARGIN * 2.0,
+                ));
+            }
+        }
+
         // ── Window-scene change: confine to the changed windows (t176-damage-
         // confine), or bail to full when the change is not window-attributable. ──
         // The window subtree cache was dirty entering this build, which previously
@@ -1269,10 +1459,13 @@ impl Shell {
         // empty `window_damage` from the diff above — emit that alone. With NO
         // window damage either, there is no bounded footprint to emit → full.
         if dirty_chrome_nodes.is_empty() {
-            if window_damage.is_empty() {
+            // Union any tooltip appear/move/hide damage so the old bubble clears.
+            let mut combined = window_damage;
+            combined.extend(tooltip_damage);
+            if combined.is_empty() {
                 return;
             }
-            self.precomputed_damage = Some(window_damage);
+            self.precomputed_damage = Some(combined);
             return;
         }
 
@@ -1412,6 +1605,10 @@ impl Shell {
         // window-content update that also bumps a statusbar indicator). Both sets
         // are independent superset-safe rects in the same screen-pixel space.
         rects.extend(window_damage);
+        // Union any tooltip appear/move/hide damage: a bounded chrome change (a
+        // dock-item hover) that omits the tooltip's old footprint is EXACTLY the
+        // ghost path — including it here clears the stale bubble (fix).
+        rects.extend(tooltip_damage);
 
         if rects.is_empty() {
             return;
@@ -1722,6 +1919,15 @@ impl Shell {
         //   * the workspace node (windows) at WORKSPACE_Z_ORDER is keyed already.
         // Keys are metadata: this does NOT change any rendered node.
         {
+            // Base z of the TRANSIENT imperative overlays (overview thumbnails at
+            // 55_000, dock-hover tooltip at 60_000). These are per-frame overlays
+            // added AFTER the CSS pipeline, NOT retained chrome layers — their
+            // footprint/backdrop churns every appearance/move and they vanish on
+            // hide, so they must NEVER be registered as cached surface owners
+            // (fix 2b: the tooltip glass id 600_000 was wrongly keyed as a static
+            // Layer). CSS chrome sits densely from CHROME_Z_BASE (10_000) upward
+            // and never reaches this band, so this cleanly separates the two.
+            const TRANSIENT_OVERLAY_Z_BASE: u32 = 50_000;
             let mut surface_keys: Vec<SurfaceKey> = Vec::new();
             let mut wallpaper_h = Fnv1a::new();
             let mut wallpaper_present = false;
@@ -1735,7 +1941,10 @@ impl Shell {
                     wallpaper_present = true;
                     fold_node_paint(&mut wallpaper_h, child);
                     wallpaper_backdrop |= kind_is_backdrop_dependent(&child.kind);
-                } else if z >= CHROME_Z_BASE && chrome_node_is_cacheable(&child.kind) {
+                } else if z >= CHROME_Z_BASE
+                    && z < TRANSIENT_OVERLAY_Z_BASE
+                    && chrome_node_is_cacheable(&child.kind)
+                {
                     // Chrome band → an isolated layer surface (statusbar/dock
                     // gradient, glass/overlay band). Keyed by its stable node id;
                     // glass/backdrop layers are flagged backdrop-dependent.
@@ -1794,22 +2003,25 @@ impl Shell {
     /// manager reports the tooltip visible, so a held hover renders the same
     /// pixels frame-to-frame (no fade oscillation) — the stability the
     /// `dock_hover_tooltip_steady_is_stable_during_fade` tooth asserts.
-    fn add_tooltip_overlay(&self, root: &mut SceneNode, base_z: u32) {
-        let Some(text) = self.tooltip_text.as_ref() else {
-            return;
-        };
-        if text.is_empty() {
-            return;
+    /// The screen-space footprint of the dock-hover tooltip bubble for THIS
+    /// frame, or `None` when no tooltip will be drawn (fix: tooltip ghost).
+    ///
+    /// Single source of truth for the bubble geometry: [`Self::add_tooltip_overlay`]
+    /// paints at exactly this rect, and `compute_precomputed_damage` uses it to
+    /// damage the OLD (∪ new) footprint on an appear/move/hide transition so the
+    /// removed/moved bubble is repainted (no ghost). Returns `Some` iff the
+    /// canonical manager reports the tooltip visible AND a non-empty label is set.
+    pub(crate) fn tooltip_overlay_rect(&self) -> Option<Rect> {
+        if !self.tooltip_manager_visible() {
+            return None;
         }
-
-        // Reserved node id range for the tooltip overlay (above all chrome ids).
-        const NODE_TOOLTIP_BASE: u64 = 600_000;
-
+        let text = self.tooltip_text.as_ref()?;
+        if text.is_empty() {
+            return None;
+        }
         // Approximate the bubble size from the label. ~7 px per glyph at the
         // status font, plus horizontal padding; a fixed comfortable height.
-        let font_scale = 1u32;
         let pad_x = 8.0_f32;
-        let pad_y = 5.0_f32;
         let glyph_w = 7.0_f32;
         let text_w = (text.chars().count() as f32) * glyph_w;
         let bubble_w = (text_w + pad_x * 2.0).clamp(40.0, 300.0);
@@ -1826,7 +2038,27 @@ impl Shell {
             .tooltip_pos
             .y
             .clamp(screen.y + 2.0, (screen.y + screen.height - bubble_h - 2.0).max(screen.y + 2.0));
-        let bubble = Rect::new(x, y, bubble_w, bubble_h);
+        Some(Rect::new(x, y, bubble_w, bubble_h))
+    }
+
+    fn add_tooltip_overlay(&self, root: &mut SceneNode, base_z: u32) {
+        let Some(text) = self.tooltip_text.as_ref() else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        // Geometry from the single-source helper (also used by the damage guard).
+        let Some(bubble) = self.tooltip_overlay_rect() else {
+            return;
+        };
+
+        // Reserved node id range for the tooltip overlay (above all chrome ids).
+        const NODE_TOOLTIP_BASE: u64 = 600_000;
+
+        let font_scale = 1u32;
+        let pad_x = 8.0_f32;
+        let pad_y = 5.0_f32;
 
         use liquide_compositor::scene::GlassParams;
 
@@ -2284,6 +2516,11 @@ impl Shell {
     ) -> SceneNode {
         let signature = self.window_scene_signature(screen, button_colors, button_layout);
         if let Some(node) = self.window_scene_cache.get(&signature) {
+            return node;
+        }
+        // MOVE-only fast path (fix: drag fluidity): a pure drag reuses the cached
+        // subtree and just translates the moved window(s) — no rebuild.
+        if let Some(node) = self.window_scene_cache.get_translated(&signature) {
             return node;
         }
 

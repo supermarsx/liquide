@@ -177,7 +177,12 @@ fn scene_cache_window_geometry_and_focus_mutations_invalidate_cache() {
     assert!(shell.window_scene_cache_stats().dirty);
     let _ = build_scene(&mut shell);
     let after_move = shell.window_scene_cache_stats();
-    assert_eq!(after_move.misses, warm.misses + 1);
+    // FIX (drag fluidity): a pure MOVE now REUSES the cached window subtree via a
+    // translate rather than rebuilding it — `misses` stays flat and a move-hit is
+    // recorded instead. (Previously every drag frame rebuilt the whole subtree,
+    // the ~27 ms/frame fluidity killer.)
+    assert_eq!(after_move.misses, warm.misses, "a pure MOVE must not rebuild");
+    assert_eq!(after_move.moves, 1, "a pure MOVE is a translate reuse");
     assert!(!after_move.dirty);
 
     shell.resize_window(window_id, 460.0, 320.0).unwrap();
@@ -683,4 +688,274 @@ fn zzz_perf_probe_hover() {
         fs_idle.hits, fs_idle.misses);
     eprintln!("PERF full_scene after hover: hits={} misses={} | last hover_index={:?}",
         fs_after.hits, fs_after.misses, shell.context_menu_hover_index);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// fix-scene-fundamentals: FIX 1 (drag fluidity) — MOVE-invariant window subtree
+// ══════════════════════════════════════════════════════════════════════════
+
+use liquide_compositor::geometry::Point;
+use liquide_compositor::scene::FlatNode;
+use crate::shell::scene::SurfaceOwner;
+
+fn mouse_move(x: f32, y: f32) -> PlatformEvent {
+    PlatformEvent::MouseInput {
+        handle: NativeWindowHandle(0),
+        event: MouseEvent::Move { x, y },
+    }
+}
+
+/// Absolute top-left of the window Decoration node whose title == `title`.
+fn decoration_pos(flat: &[FlatNode], title: &str) -> Option<(f32, f32)> {
+    flat.iter().find_map(|n| match &*n.kind {
+        SceneNodeKind::Decoration { title: Some(t), .. } if t == title => {
+            Some((n.absolute_bounds.x, n.absolute_bounds.y))
+        }
+        _ => None,
+    })
+}
+
+/// FIX 1 (drag fluidity): a SEQUENCE of pure window MOVES must REUSE the cached
+/// window subtree (translate it) instead of rebuilding it — zero extra rebuilds
+/// (`misses` stays at the single warm build), one translate reuse (`moves`) per
+/// drag frame. This is the direct anti-fake-green counter for the ~27 ms/frame
+/// subtree-rebuild the drag previously paid.
+#[test]
+fn drag_sequence_reuses_subtree_zero_rebuilds() {
+    let mut shell = test_shell();
+    let id = shell.open_window("Drag", Rect::new(100.0, 120.0, 420.0, 320.0));
+
+    // Warm: one real rebuild (miss), no moves yet.
+    let _ = build_scene(&mut shell);
+    let warm = shell.window_scene_cache_stats();
+    assert_eq!(warm.misses, 1, "warm build is the one rebuild");
+    assert_eq!(warm.moves, 0);
+
+    // A drag: successive pure moves. Each frame must translate-reuse, never rebuild.
+    let path = [(160.0, 200.0), (223.5, 261.25), (300.0, 320.0), (90.0, 140.0)];
+    for (i, (x, y)) in path.iter().enumerate() {
+        shell.move_window(id, *x, *y).unwrap();
+        let _ = build_scene(&mut shell);
+        let s = shell.window_scene_cache_stats();
+        assert_eq!(
+            s.misses, 1,
+            "drag frame {i} must NOT rebuild the window subtree (still 1 warm build)"
+        );
+        assert_eq!(s.moves, (i as u64) + 1, "each drag frame is exactly one translate reuse");
+    }
+
+    // TEETH: a genuine content/size change (resize) must STILL rebuild — the
+    // fast path is specific to pure position changes, never stale content.
+    shell.resize_window(id, 540.0, 400.0).unwrap();
+    let _ = build_scene(&mut shell);
+    assert_eq!(
+        shell.window_scene_cache_stats().misses, 2,
+        "a RESIZE must rebuild (miss), proving the reuse is MOVE-only"
+    );
+}
+
+/// FIX 1 correctness (the incremental==full invariant): a window placed by the
+/// translate-reuse fast path must render PIXEL-IDENTICALLY to a from-scratch full
+/// rebuild at the same position — proven on the DECORATION node (part of the
+/// window subtree, not just the content), so a stale/half-applied translate fails.
+#[test]
+fn translated_drag_decoration_matches_full_rebuild() {
+    // Translate-reuse path: warm at origin, then drag to the target.
+    let mut a = test_shell();
+    let ida = a.open_window("Win", Rect::new(100.0, 120.0, 420.0, 320.0));
+    let _ = build_scene(&mut a); // warm baseline
+    a.move_window(ida, 317.0, 263.0).unwrap();
+    let moved = build_scene(&mut a).flatten();
+    assert_eq!(a.window_scene_cache_stats().moves, 1, "must be a translate reuse");
+    let (mx, my) = decoration_pos(&moved, "Win").expect("decoration after move");
+
+    // Full rebuild: a fresh shell opened DIRECTLY at the target (no cache to
+    // translate from → real build_uncached path).
+    let mut b = test_shell();
+    let _ = b.open_window("Win", Rect::new(317.0, 263.0, 420.0, 320.0));
+    let fresh = build_scene(&mut b).flatten();
+    let (fx, fy) = decoration_pos(&fresh, "Win").expect("decoration fresh");
+
+    assert!(
+        (mx - fx).abs() < 0.01 && (my - fy).abs() < 0.01,
+        "translate-reuse decoration ({mx},{my}) must match full rebuild ({fx},{fy})"
+    );
+}
+
+/// FIX 1 correctness with MULTIPLE windows: dragging ONE window must translate
+/// only that window and leave the others exactly where they were (no whole-scene
+/// shift, no stale position on the dragged one).
+#[test]
+fn drag_one_of_many_translates_only_that_window() {
+    let mut shell = test_shell();
+    let a = shell.open_window("Alpha", Rect::new(80.0, 90.0, 300.0, 200.0));
+    let _b = shell.open_window("Beta", Rect::new(500.0, 400.0, 300.0, 200.0));
+    let _ = build_scene(&mut shell); // warm
+
+    let before = build_scene(&mut shell).flatten();
+    let beta_before = decoration_pos(&before, "Beta").expect("beta before");
+
+    // Drag Alpha by a known delta.
+    let (dx, dy) = (120.0, 60.0);
+    shell.move_window(a, 80.0 + dx, 90.0 + dy).unwrap();
+    let after = build_scene(&mut shell).flatten();
+
+    let alpha_after = decoration_pos(&after, "Alpha").expect("alpha after");
+    let beta_after = decoration_pos(&after, "Beta").expect("beta after");
+
+    // Alpha moved by exactly the delta; Beta did not move at all.
+    assert!(
+        (alpha_after.0 - (80.0 + dx)).abs() < 0.01 && (alpha_after.1 - (90.0 + dy)).abs() < 0.01,
+        "dragged window must land at its new position, got {alpha_after:?}"
+    );
+    assert!(
+        (beta_after.0 - beta_before.0).abs() < 0.01
+            && (beta_after.1 - beta_before.1).abs() < 0.01,
+        "a non-dragged window must NOT move (was {beta_before:?}, now {beta_after:?})"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// fix-scene-fundamentals: FIX 2 (tooltip ghost) + FIX 2b (overlay surface keys)
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Hover a dock item and drive the canonical manager to fully Visible.
+fn show_tooltip_over(shell: &mut Shell, item_index: usize) {
+    let rects = shell.dock.compute_item_rects(shell.screen_rect);
+    let (_, r) = &rects[item_index];
+    let (cx, cy) = (r.x + r.width / 2.0, r.y + r.height / 2.0);
+    shell.handle_platform_event(&mouse_move(cx, cy));
+    // Pending → FadingIn → Visible (see tooltip_tests::dwell_past_show_delay).
+    shell.sync_tooltip_manager(600.0);
+    shell.sync_tooltip_manager(200.0);
+    shell.sync_tooltip_manager(1.0);
+}
+
+fn rect_contains(outer: &Rect, inner: &Rect) -> bool {
+    outer.x <= inner.x + 0.01
+        && outer.y <= inner.y + 0.01
+        && outer.x + outer.width >= inner.x + inner.width - 0.01
+        && outer.y + outer.height >= inner.y + inner.height - 0.01
+}
+
+/// Drive the tooltip to Visible DIRECTLY (bypassing the dock-hover mouse path).
+/// The offscreen harness routes a dock-item hover to a FULL-frame repaint (the
+/// dock chrome walks to the document root with no positioned ancestor, so
+/// `compute_precomputed_damage` conservatively bails to `None`), which would mask
+/// the confined-damage behaviour under test. Driving the manager from the hover
+/// slot directly isolates the tooltip transition so the damage it emits is the
+/// only variable.
+fn show_tooltip_direct(shell: &mut Shell, label: &str, x: f32, y: f32) {
+    shell.tooltip_text = Some(label.to_string());
+    shell.tooltip_pos = Point::new(x, y);
+    shell.sync_tooltip_manager(600.0); // Pending → FadingIn
+    shell.sync_tooltip_manager(200.0); // FadingIn → Visible
+    shell.sync_tooltip_manager(1.0); // stays Visible
+}
+
+/// FIX 2 (tooltip ghost) — the load-bearing anti-ghost behaviour, DETERMINISTIC.
+/// A pure tooltip MOVE must emit AUTHORITATIVE damage that COVERS the tooltip's
+/// OLD footprint (∪ the new one) so the removed bubble pixels are repainted. This
+/// is the exact mechanism that kills the trail: before the fix
+/// `compute_precomputed_damage` had no tooltip guard, so a tooltip-only transition
+/// emitted NO damage for the old bubble (the frame produced `None` here / a
+/// tooltip-omitting bounded set on the live path) — and the persistent framebuffer
+/// kept the stale pixels. TEETH: revert the tooltip guard and this frame emits no
+/// old-footprint damage → `expect` panics.
+#[test]
+fn tooltip_move_emits_authoritative_damage_covering_old_footprint() {
+    let mut shell = test_shell();
+    for _ in 0..5 {
+        let _ = build_scene(&mut shell); // stabilise chrome/pipeline caches
+    }
+
+    // Show the tooltip at A, then record its footprint.
+    show_tooltip_direct(&mut shell, "Tooltip label", 300.0, 300.0);
+    assert!(shell.tooltip_manager_visible(), "tooltip should be visible");
+    let _ = build_scene(&mut shell);
+    let old_rect = shell.tooltip_overlay_rect().expect("tooltip rect at A");
+    let _ = shell.take_precomputed_damage(); // clear the A-frame damage
+
+    // MOVE the tooltip (position-only). This must damage the OLD footprint.
+    shell.tooltip_pos = Point::new(700.0, 300.0);
+    let _ = build_scene(&mut shell);
+    let dmg = shell.take_precomputed_damage().expect(
+        "a tooltip MOVE must emit authoritative damage for the OLD footprint \
+         (anti-ghost); with the guard reverted this frame emits nothing and the \
+         old bubble ghosts",
+    );
+    assert!(
+        dmg.iter().any(|r| rect_contains(r, &old_rect)),
+        "the tooltip-move damage must COVER the OLD bubble {old_rect:?} so it is \
+         repainted (no ghost); got {dmg:?}"
+    );
+    // And the NEW footprint is damaged too (the bubble is drawn at B).
+    let new_rect = shell.tooltip_overlay_rect().expect("tooltip rect at B");
+    assert!(
+        dmg.iter().any(|r| rect_contains(r, &new_rect)),
+        "the tooltip-move damage must also cover the NEW bubble {new_rect:?}; got {dmg:?}"
+    );
+}
+
+/// FIX 2 (tooltip ghost) — the ANTI-GHOST INVARIANT on HIDE. Hiding the tooltip
+/// must repaint its old footprint: either via a FULL repaint (`None`) or a bounded
+/// set that COVERS the old rect — NEVER a bounded set that omits it (the ghost).
+/// (In the offscreen harness the DOM-overlay removal makes the chrome change
+/// unboundable, so this legitimately takes the full-repaint branch; the assertion
+/// still fails if a future change emitted a stale tooltip-omitting bounded set.)
+#[test]
+fn tooltip_hide_repaints_old_footprint_no_stale_bounded_set() {
+    let mut shell = test_shell();
+    for _ in 0..5 {
+        let _ = build_scene(&mut shell);
+    }
+    show_tooltip_direct(&mut shell, "Tooltip label", 300.0, 300.0);
+    let _ = build_scene(&mut shell);
+    let old_rect = shell.tooltip_overlay_rect().expect("tooltip rect while shown");
+    let _ = shell.take_precomputed_damage();
+
+    // Hide: clear the hover label + settle the manager to Hidden.
+    shell.tooltip_text = None;
+    shell.sync_tooltip_manager(6000.0);
+    assert!(!shell.tooltip_manager_visible(), "tooltip must be hidden now");
+
+    let _ = build_scene(&mut shell);
+    match shell.take_precomputed_damage() {
+        None => {} // full repaint clears the old bubble — acceptable
+        Some(rects) => assert!(
+            rects.iter().any(|r| rect_contains(r, &old_rect)),
+            "hiding the tooltip must damage its OLD footprint {old_rect:?} \
+             (a bounded set that omits it is the ghost); rects={rects:?}"
+        ),
+    }
+}
+
+/// FIX 2b: a TRANSIENT overlay (the dock-hover tooltip's glass backing, id
+/// 600000 at z 60000) must NEVER be registered as a cached surface Layer. Before
+/// the fix `chrome_node_is_cacheable(Glass)` keyed it as a static `Layer(600000)`.
+#[test]
+fn transient_tooltip_glass_not_a_surface_layer() {
+    let mut shell = test_shell();
+    for _ in 0..5 {
+        let _ = build_scene(&mut shell);
+    }
+    show_tooltip_over(&mut shell, 0);
+    let _ = build_scene(&mut shell);
+
+    // The tooltip must actually be drawn this frame (otherwise the test is moot).
+    assert!(shell.tooltip_overlay_rect().is_some(), "tooltip must be visible");
+
+    // The tooltip overlay reserves node ids 600_000..=600_003 (glass/fill/border/
+    // text) at z 60_000. NONE of those may be a cached surface Layer. (Legitimate
+    // CSS chrome glass bands — statusbar/dock — carry unrelated higher ids and a
+    // z well below the transient-overlay band, so they are correctly retained.)
+    let offending: Vec<_> = shell
+        .surface_keys()
+        .iter()
+        .filter(|k| matches!(k.owner, SurfaceOwner::Layer(idv) if (600_000..=600_003).contains(&idv)))
+        .collect();
+    assert!(
+        offending.is_empty(),
+        "transient tooltip glass must not be a cached surface layer; got {offending:?}"
+    );
 }

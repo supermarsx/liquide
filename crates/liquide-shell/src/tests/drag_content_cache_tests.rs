@@ -130,8 +130,13 @@ fn drag_move_hits_content_cache_and_does_not_rebuild_content() {
 
     // Simulate a drag-MOVE: change position only (same w/h, same content). This
     // dirties the window-scene cache (as the live drag path does via
-    // mark_window_scene_dirty), forcing the workspace subtree to reassemble — but
-    // the position-independent content cache must HIT.
+    // mark_window_scene_dirty). With the move-invariant window-subtree fast path
+    // (fix: drag fluidity), a pure MOVE now REUSES the whole cached workspace
+    // subtree and just TRANSLATES it — so the workspace is NOT reassembled at all,
+    // and the per-window content cache is not even consulted. The invariant this
+    // test guards — a MOVE must NOT rebuild content — is UNCHANGED and STRONGER:
+    // `content_view` is still never re-called, and now the content cache records
+    // no new lookup because the higher-level subtree reuse short-circuits it.
     shell.move_window(id, 260.0, 300.0).unwrap();
     let _ = build_scene(&mut shell);
 
@@ -146,16 +151,24 @@ fn drag_move_hits_content_cache_and_does_not_rebuild_content() {
         "a MOVE must not register a content-cache MISS"
     );
     assert_eq!(
-        stats_move.hits, 1,
-        "a MOVE must register a content-cache HIT"
+        stats_move.hits, 0,
+        "a MOVE now reuses the whole window subtree (translate), so the content \
+         cache is not consulted — no rebuild, no lookup"
+    );
+    // The move was served by the move-invariant subtree translate.
+    assert_eq!(
+        shell.window_scene_cache_stats().moves,
+        1,
+        "a pure MOVE is served by the window-subtree translate fast path"
     );
 
-    // A second move keeps hitting (no rebuild).
+    // A second move keeps reusing (no rebuild, still no content lookup).
     shell.move_window(id, 400.0, 200.0).unwrap();
     let _ = build_scene(&mut shell);
     assert_eq!(counter.load(Ordering::SeqCst), 1, "still no content rebuild");
-    assert_eq!(shell.window_content_cache_stats().hits, 2);
+    assert_eq!(shell.window_content_cache_stats().hits, 0);
     assert_eq!(shell.window_content_cache_stats().misses, 1);
+    assert_eq!(shell.window_scene_cache_stats().moves, 2, "second move also reuses");
 }
 
 /// (b) After a MOVE the window's content renders at the correct ABSOLUTE
