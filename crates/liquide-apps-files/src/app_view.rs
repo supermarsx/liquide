@@ -261,9 +261,24 @@ impl FilesRuntime {
             selected,
         };
 
+        // Fill layout: a horizontal row of [places sidebar | main column].
+        // The sidebar keeps its fixed width (a `lq-list`); the main column is a
+        // `Panel` that fills the remaining space and stacks the nav toolbar, the
+        // breadcrumb, and the FILE TABLE — the table grows to fill the window's
+        // width/height (widgets.css `app-content-body …`), so content fills the
+        // frame instead of sitting small at the top-left. (A single root
+        // container is what the content body stretches; the widgets keep their
+        // stable keys so hit-geometry + action routing are unchanged.)
+        let main_column = AppWidget::Panel {
+            children: vec![toolbar, crumbs, table],
+        };
+        let body = AppWidget::Toolbar {
+            children: vec![places, main_column],
+        };
+
         AppWidgetModel {
             title: Some(format!("Files — {}", listing.path)),
-            root: vec![places, toolbar, crumbs, table],
+            root: vec![body],
         }
     }
 
@@ -578,14 +593,21 @@ mod tests {
         let model = rt.widget_model().expect("files exposes a widget model");
 
         // Breadcrumb matches the current path. It carries no interaction key,
-        // so locate it structurally at the model root.
+        // so locate it structurally anywhere in the (nested) model tree.
+        fn find_crumbs(w: &AppWidget) -> Option<&Vec<String>> {
+            match w {
+                AppWidget::Breadcrumb { crumbs } => Some(crumbs),
+                AppWidget::Panel { children }
+                | AppWidget::Card { children, .. }
+                | AppWidget::GroupBox { children, .. }
+                | AppWidget::Toolbar { children } => children.iter().find_map(find_crumbs),
+                _ => None,
+            }
+        }
         let crumbs = model
             .root
             .iter()
-            .find_map(|w| match w {
-                AppWidget::Breadcrumb { crumbs } => Some(crumbs),
-                _ => None,
-            })
+            .find_map(find_crumbs)
             .expect("breadcrumb present");
         assert_eq!(crumbs, &vec!["/", "home", "user"]);
 

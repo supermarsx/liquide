@@ -149,9 +149,18 @@ impl EditorRuntime {
             readonly: false,
         };
 
+        // Fill layout: a single root Panel that fills the window and stacks the
+        // toolbar (natural height) above the editor body — the multi-line
+        // TextArea grows to fill the remaining width/height (widgets.css
+        // `app-content-body lq-textarea`), so the editor fills the frame instead
+        // of a small box at the top-left.
+        let root = AppWidget::Panel {
+            children: vec![toolbar, body],
+        };
+
         AppWidgetModel {
             title: Some(title),
-            root: vec![toolbar, body],
+            root: vec![root],
         }
     }
 

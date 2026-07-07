@@ -888,6 +888,91 @@
     flex-grow: 1;
   }
 
+  /* ── B6 app-window content fill (fix-window-fill) ─────────────
+     An app window mounts its `AppWidgetModel` under a per-window
+     `app-content-body` (a flex COLUMN set inline by the shell that fills the
+     window content rect — see `dom_sync.rs`). These rules make the model's
+     ROOT container + its main collection/editor grow to FILL that body, so an
+     app's UI stretches to the whole window frame instead of sitting small at
+     the top-left over a bare background. Everything is scoped under
+     `app-content-body` so the standalone widget gallery (fixed-width
+     `lq-list` 220px / `lq-table` 360px) is left untouched — only in-window
+     content fills.
+
+     Which widget is the MAIN (growing) content is inferred structurally:
+       • a `lq-list`/`lq-tree` that is a column in the top-level `sidebar |
+         content` row (a direct child of the root `lq-toolbar.horizontal`)
+         stays its fixed width and just fills the row HEIGHT — it's a sidebar;
+       • a `lq-table`, `lq-textarea`, or a `lq-list` that is a panel's main
+         child is the primary content and grows to fill BOTH axes. */
+
+  /* The model's single root container fills the body both ways. Scoped to
+     containers (not bare leaf controls) so a one-widget window is unaffected. */
+  app-content-body > lq-panel,
+  app-content-body > lq-toolbar,
+  app-content-body > lq-tabs,
+  app-content-body > lq-card,
+  app-content-body > lq-group-box {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* A panel inside a window lays out as a flex column and grows, so its
+     designated main child (table/list/textarea) can stretch to fill it. The
+     explicit `height: 100%` gives the panel a DEFINITE height so its
+     flex-column child can grow VERTICALLY: this engine does not treat a merely
+     cross-stretched flex item's height as definite for its OWN children's
+     flex-grow, so relying on `align-self: stretch` alone fills the panel's box
+     but leaves the table at its natural height. `100%` resolves against the
+     row's definite height (the row gets flex:1 in the definite-height body). */
+  app-content-body lq-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* Task-manager tabs: fill + stack so the process table can grow. Same
+     `height: 100%` reasoning as the panel above. */
+  app-content-body lq-tabs {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* The top-level two-column row (sidebar | content): the sidebar keeps its
+     fixed width and never shrinks, the content column takes the rest; both
+     stretch to the full row height (align-self overrides the toolbar's default
+     `align-items: center`, which only a button row wants). */
+  app-content-body > lq-toolbar.horizontal > lq-list,
+  app-content-body > lq-toolbar.horizontal > lq-tree {
+    flex: 0 0 auto;
+    align-self: stretch;
+  }
+  app-content-body > lq-toolbar.horizontal > lq-panel {
+    flex: 1 1 0;
+    align-self: stretch;
+    min-width: 0;
+  }
+
+  /* Main collection / editor widgets fill the available space and stretch to
+     the content width (dropping the standalone fixed width). A table/textarea
+     is always primary content; a list is primary only when it is a panel's
+     child (a sidebar list, matched above, is NOT). */
+  app-content-body lq-table,
+  app-content-body lq-textarea,
+  app-content-body lq-panel > lq-list {
+    flex: 1 1 0;
+    width: auto;
+    min-height: 0;
+  }
+
   /* ── B3 scroll area ───────────────────────────────────────────
      A clipped viewport (overflow: hidden) + a content element translated UP by a
      state-driven negative top-margin (the in-lock scroll — see scroll_area.rs).

@@ -1558,22 +1558,40 @@ impl Shell {
                     self.desktop_dom.doc.remove_child(host_node, child);
                     self.desktop_dom.doc.destroy_node(child);
                 }
-                // Mount the widget model under an IN-FLOW (display:block) body
-                // wrapper nested inside the position:fixed host — NOT directly
-                // under the host. This is load-bearing: the layout engine lays a
-                // flex container that is a DIRECT child of an out-of-flow
-                // (position:fixed/absolute) element as a vertical COLUMN even when
-                // its computed `flex-direction` is `row` (t186 jank bucket D — the
-                // Files nav toolbar rendered as a tall stacked box). Interposing a
-                // normal-flow block between the fixed host and the widget subtree
-                // restores correct flex-row layout for the toolbar (and any other
-                // flex-row widget) while the host keeps owning the fixed
-                // position + clip over the window's content rect.
+                // Mount the widget model under an IN-FLOW body wrapper nested
+                // inside the position:fixed host — NOT directly under the host.
+                // This is load-bearing: the layout engine lays a flex container
+                // that is a DIRECT child of an out-of-flow (position:fixed/
+                // absolute) element as a vertical COLUMN even when its computed
+                // `flex-direction` is `row` (t186 jank bucket D — the Files nav
+                // toolbar rendered as a tall stacked box). Interposing a
+                // normal-flow element between the fixed host and the widget
+                // subtree restores correct flex-row layout for a nested toolbar
+                // (whose parent is now this in-flow body, not the fixed host)
+                // while the host keeps owning the fixed position + clip over the
+                // window's content rect.
+                //
+                // FILL (fix-window-fill): the body is itself a flex COLUMN that
+                // fills the host (width/height 100%), so the app model's single
+                // root container STRETCHES to the window content rect instead of
+                // clustering small at the top-left. A flex-column is exactly the
+                // layout the "flex under fixed" quirk above already forces, so the
+                // body being a direct child of the fixed host is consistent (the
+                // quirk only mis-lays a flex-ROW; a column is intended). The
+                // structural fill of the model's children is done in widgets.css
+                // (`app-content-body …`); the flex/size here is inline so it holds
+                // regardless of which theme is loaded (like the host's position).
                 let body = self.desktop_dom.doc.create_element("app-content-body");
                 self.desktop_dom
                     .doc
                     .set_id(body, &format!("app-content-body-{}", st.id.0));
-                self.desktop_dom.doc.set_inline_style(body, "display", "block");
+                self.desktop_dom.doc.set_inline_style(body, "display", "flex");
+                self.desktop_dom
+                    .doc
+                    .set_inline_style(body, "flex-direction", "column");
+                self.desktop_dom
+                    .doc
+                    .set_inline_style(body, "align-items", "stretch");
                 self.desktop_dom.doc.set_inline_style(body, "width", "100%");
                 self.desktop_dom.doc.set_inline_style(body, "height", "100%");
                 self.desktop_dom.doc.append_child(host_node, body);

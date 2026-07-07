@@ -100,7 +100,7 @@ impl SoftwareCenterRuntime {
             selected,
         };
 
-        let mut root = vec![search, list];
+        let mut children = vec![search, list];
 
         // Per-selection action button: "Open" when installed, otherwise "Install".
         if let Some(pkg) = self
@@ -112,16 +112,23 @@ impl SoftwareCenterRuntime {
             } else {
                 (format!("Install {}", pkg.name), ButtonKind::Primary)
             };
-            root.push(AppWidget::Button {
+            children.push(AppWidget::Button {
                 id: ACTION_BUTTON_ID.to_string(),
                 label,
                 kind,
             });
         }
 
+        // Fill layout: a single root Panel that fills the window and stacks the
+        // search field, the package LIST (the main content, which grows to fill
+        // the remaining width/height — widgets.css `app-content-body lq-panel >
+        // lq-list`), and the per-selection action button. So the catalog fills
+        // the frame instead of a small cluster at the top-left.
+        let root = AppWidget::Panel { children };
+
         AppWidgetModel {
             title: Some("Software Center".to_string()),
-            root,
+            root: vec![root],
         }
     }
 
@@ -273,7 +280,19 @@ mod tests {
     }
 
     fn find<'a>(model: &'a AppWidgetModel, key: &str) -> Option<&'a AppWidget> {
-        model.root.iter().find(|w| w.key() == Some(key))
+        fn walk<'a>(w: &'a AppWidget, key: &str) -> Option<&'a AppWidget> {
+            if w.key() == Some(key) {
+                return Some(w);
+            }
+            match w {
+                AppWidget::Panel { children }
+                | AppWidget::Card { children, .. }
+                | AppWidget::GroupBox { children, .. }
+                | AppWidget::Toolbar { children } => children.iter().find_map(|c| walk(c, key)),
+                _ => None,
+            }
+        }
+        model.root.iter().find_map(|w| walk(w, key))
     }
 
     #[test]

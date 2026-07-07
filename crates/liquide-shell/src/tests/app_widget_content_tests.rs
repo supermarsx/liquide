@@ -25,7 +25,7 @@ use liquide_platform::window_host::NativeWindowHandle;
 
 use liquide_interop::{
     AppContentProvider, AppContentView, AppKey, AppTextInput, AppView, AppWidget, AppWidgetAction,
-    AppWidgetModel, ButtonKind, ContentKind, WidgetOption,
+    AppWidgetModel, ButtonKind, ContentKind, SelectionMode, TableColumn, WidgetOption,
 };
 
 use crate::shell::Shell;
@@ -527,6 +527,168 @@ fn widget_content_is_nested_under_an_in_flow_body() {
     assert!(
         reaches_body,
         "the mounted widget must be a descendant of the in-flow content body"
+    );
+}
+
+// ── fix-window-fill: app content fills the whole window frame ─────────────────
+
+/// A Files-shaped fill model: a horizontal row of [sidebar List | main Panel],
+/// the panel stacking a nav Toolbar, a Breadcrumb, and the main file Table.
+fn files_like_model() -> AppWidgetModel {
+    AppWidgetModel::with_root(vec![AppWidget::Toolbar {
+        children: vec![
+            AppWidget::List {
+                key: "places".into(),
+                items: vec!["Home".into(), "Documents".into(), "Downloads".into()],
+                selection_mode: SelectionMode::Single,
+                selected: vec![0],
+            },
+            AppWidget::Panel {
+                children: vec![
+                    AppWidget::Toolbar {
+                        children: vec![
+                            AppWidget::Button {
+                                id: "back".into(),
+                                label: "Back".into(),
+                                kind: ButtonKind::Normal,
+                            },
+                            AppWidget::Button {
+                                id: "fwd".into(),
+                                label: "Forward".into(),
+                                kind: ButtonKind::Normal,
+                            },
+                        ],
+                    },
+                    AppWidget::Breadcrumb {
+                        crumbs: vec!["/".into(), "home".into()],
+                    },
+                    AppWidget::Table {
+                        key: "listing".into(),
+                        columns: vec![
+                            TableColumn::new("Name"),
+                            TableColumn::new("Size"),
+                            TableColumn::new("Modified"),
+                        ],
+                        rows: vec![
+                            vec!["a.txt".into(), "1 KB".into(), "today".into()],
+                            vec!["b.txt".into(), "2 KB".into(), "today".into()],
+                        ],
+                        sort: None,
+                        selection_mode: SelectionMode::Multiple,
+                        selected: vec![],
+                    },
+                ],
+            },
+        ],
+    }])
+}
+
+/// A shell that loads ONLY the shipped `widgets.css` (no test-CSS size
+/// overrides) so the real fill rules govern the layout, with one widget window
+/// of the given rect open + a scene built.
+fn fill_shell(model: AppWidgetModel, win: Rect) -> (Shell, WindowId) {
+    let mut shell = Shell::new(W, H);
+    shell.cursor_blink_on = true;
+    shell.cursor_blink_time_us = u64::MAX;
+    shell.add_stylesheet(WIDGETS_CSS);
+    let wid = shell.open_window("Files", win);
+    let (app, _s, _a) = ModelApp::new(model);
+    shell.register_app_view(wid, Box::new(app));
+    let _ = shell.build_scene();
+    (shell, wid)
+}
+
+/// The laid-out screen box of an element by its DOM id.
+fn node_box(shell: &Shell, id: &str) -> Option<liquide_layout::geometry::Rect> {
+    let node = shell.desktop_dom.doc.get_element_by_id(id)?;
+    shell.hit_test_engine.as_ref()?.bounds_for_node(node)
+}
+
+/// fix-window-fill: an app window's content BODY fills the full window content
+/// rect, the MAIN table stretches to the available width/height, and a SIDEBAR
+/// list keeps its fixed width. RED before the fill fix (the table sat at its
+/// fixed 360px × natural height in the top-left, the sidebar filled no height);
+/// GREEN after (content fills the frame).
+#[test]
+fn app_content_fills_the_window_frame() {
+    let win = Rect::new(120.0, 90.0, 900.0, 600.0);
+    let (shell, wid) = fill_shell(files_like_model(), win);
+
+    let host = node_box(&shell, &format!("app-content-{}", wid.0)).expect("content host box");
+    let body = node_box(&shell, &format!("app-content-body-{}", wid.0)).expect("content body box");
+    let table = widget_box(&shell, wid, "listing").expect("main table box");
+    let list = widget_box(&shell, wid, "places").expect("sidebar list box");
+
+    // (1) The content body fills the host (the window content rect) both ways.
+    assert!(
+        body.width >= host.width - 2.0 && body.height >= host.height - 2.0,
+        "content body {body:?} must fill the content host {host:?}"
+    );
+
+    // (2) The MAIN table stretches to fill: it takes most of the content width
+    // (far more than its standalone 360px box) AND most of the content height,
+    // reaching near the bottom of the window content.
+    assert!(
+        table.width > host.width * 0.5 && table.width > 400.0,
+        "the main table must stretch to fill the content width \
+         (table {table:?}, host {host:?}); a fixed 360px box fails this"
+    );
+    assert!(
+        table.height > host.height * 0.4,
+        "the main table must stretch to fill the content height \
+         (table {table:?}, host {host:?})"
+    );
+    let host_bottom = host.y + host.height;
+    assert!(
+        table.y + table.height > host_bottom - host.height * 0.15,
+        "the main table must reach near the bottom of the window content \
+         (table bottom {}, host bottom {host_bottom})",
+        table.y + table.height
+    );
+
+    // (3) The SIDEBAR list keeps its fixed width (~220px, NOT stretched to the
+    // full frame) but fills the row HEIGHT.
+    assert!(
+        list.width > 180.0 && list.width < 300.0,
+        "the sidebar list must keep its fixed width (~220px), got {list:?}"
+    );
+    assert!(
+        list.height > host.height * 0.4,
+        "the sidebar list must fill the row height, got {list:?} (host {host:?})"
+    );
+
+    // Row layout: the main table sits to the RIGHT of the sidebar (the model is
+    // a horizontal split, not a flat top-left stack).
+    assert!(
+        table.x >= list.x + list.width - 2.0,
+        "the main table must sit to the right of the sidebar \
+         (table.x {}, sidebar right {})",
+        table.x,
+        list.x + list.width
+    );
+}
+
+/// Teeth for the fill at a DIFFERENT window size: the table box tracks the
+/// window (it is not a constant): a taller/wider window yields a taller/wider
+/// table. Proves the fill is layout-derived, not a fixed size that happens to
+/// pass at one dimension.
+#[test]
+fn app_content_fill_tracks_window_size() {
+    let small = Rect::new(100.0, 80.0, 640.0, 400.0);
+    let large = Rect::new(100.0, 80.0, 1100.0, 680.0);
+    let (s_shell, s_wid) = fill_shell(files_like_model(), small);
+    let (l_shell, l_wid) = fill_shell(files_like_model(), large);
+
+    let s_table = widget_box(&s_shell, s_wid, "listing").expect("small table");
+    let l_table = widget_box(&l_shell, l_wid, "listing").expect("large table");
+
+    assert!(
+        l_table.width > s_table.width + 100.0,
+        "a wider window must give a wider table (small {s_table:?}, large {l_table:?})"
+    );
+    assert!(
+        l_table.height > s_table.height + 100.0,
+        "a taller window must give a taller table (small {s_table:?}, large {l_table:?})"
     );
 }
 
