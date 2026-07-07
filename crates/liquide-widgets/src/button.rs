@@ -29,6 +29,8 @@ pub struct Button {
     action: String,
     /// Extra CSS class (e.g. `"primary"`, `"danger"`, `"ghost"`) or empty.
     variant: String,
+    /// Optional icon name drawn BEFORE the label; `None` = label-only.
+    icon: Option<String>,
     disabled: bool,
     pressed: bool,
     hovered: bool,
@@ -42,6 +44,7 @@ impl Button {
             label: label.into(),
             action: action.into(),
             variant: String::new(),
+            icon: None,
             disabled: false,
             pressed: false,
             hovered: false,
@@ -52,6 +55,14 @@ impl Button {
     /// Set a CSS variant class (`primary` / `danger` / `ghost` / `icon`).
     pub fn variant(mut self, v: impl Into<String>) -> Self {
         self.variant = v.into();
+        self
+    }
+
+    /// Set an icon name drawn BEFORE the label (resolves through the shared icon
+    /// name-map at paint time). An empty name leaves the button icon-less.
+    pub fn icon(mut self, icon: impl Into<String>) -> Self {
+        let name = icon.into();
+        self.icon = if name.is_empty() { None } else { Some(name) };
         self
     }
 
@@ -203,12 +214,20 @@ impl WidgetBehavior for Button {
             .class_if(&self.variant, !self.variant.is_empty())
             .pseudo_if(PseudoStateFlags::HOVER, self.hovered && !self.disabled)
             .pseudo_if(PseudoStateFlags::ACTIVE, self.pressed && !self.disabled)
-            .pseudo_if(PseudoStateFlags::DISABLED, self.disabled)
-            .child(
-                TemplateNode::el("lq-label")
-                    .attr("data-part", "label")
-                    .child(TemplateNode::text(&self.label)),
-            );
+            .pseudo_if(PseudoStateFlags::DISABLED, self.disabled);
+        // A button WITH an icon emits a dedicated `lq-button-icon` leaf carrying
+        // `data-icon` BEFORE the label, so the paint path draws the glyph (the
+        // name-map resolves it to a non-zero IconId). The whole button stays the
+        // click target — the icon is a small inline child that never steals the
+        // hit. Icon-less buttons render label-only, exactly as before (no leaf).
+        if let Some(icon) = &self.icon {
+            node = node.child(TemplateNode::el("lq-button-icon").attr("data-icon", icon));
+        }
+        node = node.child(
+            TemplateNode::el("lq-label")
+                .attr("data-part", "label")
+                .child(TemplateNode::text(&self.label)),
+        );
         if self.disabled {
             node = node.attr("disabled", "true");
         }

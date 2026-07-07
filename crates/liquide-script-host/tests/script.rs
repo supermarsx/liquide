@@ -43,7 +43,7 @@ fn ts_with_types_transpiles_runs_and_produces_a_panel_with_a_button() {
     };
     assert_eq!(children.len(), 1, "panel has one child");
 
-    let AppWidget::Button { id, label, kind } = &children[0] else {
+    let AppWidget::Button { id, label, kind, .. } = &children[0] else {
         panic!("expected a Button inside the panel, got {:?}", children[0]);
     };
     assert_eq!(id, "ok");

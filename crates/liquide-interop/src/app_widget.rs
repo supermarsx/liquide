@@ -312,6 +312,13 @@ pub enum AppWidget {
         label: String,
         #[serde(default)]
         kind: ButtonKind,
+        /// Optional icon name drawn BEFORE the label (e.g. `go-previous`,
+        /// `view-refresh`). Resolves through the shared icon name-map at paint
+        /// time. `None` renders a label-only button, exactly as before —
+        /// backward compatible: omit `icon` in serialized models and the button
+        /// deserializes icon-less (no phantom slot).
+        #[serde(default)]
+        icon: Option<String>,
     },
     /// An exclusive set of button-styled options; `selected` is the chosen value.
     Segmented {
@@ -681,6 +688,7 @@ mod tests {
                     id: "save".into(),
                     label: "Save".into(),
                     kind: ButtonKind::Primary,
+                    icon: None,
                 },
             ],
         }
@@ -752,6 +760,42 @@ mod tests {
                 assert_eq!(items.len(), 2);
             }
             other => panic!("expected List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn button_carries_optional_icon_and_round_trips() {
+        // A Button can carry an optional icon name drawn before the label; the
+        // whole node survives a serde round-trip carrying the icon.
+        let node = AppWidget::Button {
+            id: "back".into(),
+            label: "Back".into(),
+            kind: ButtonKind::Normal,
+            icon: Some("go-previous".into()),
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        assert!(json.contains("\"icon\":\"go-previous\""), "icon serialized: {json}");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+        assert!(matches!(
+            back,
+            AppWidget::Button { icon: Some(name), .. } if name == "go-previous"
+        ));
+    }
+
+    #[test]
+    fn button_icon_defaults_to_none_when_absent() {
+        // Backward compatibility: a Button JSON that predates the `icon` field
+        // (no `icon` key) deserializes to an icon-less button — never an error,
+        // and NOT a phantom Some("").
+        let json = r#"{"type":"button","id":"save","label":"Save"}"#;
+        let back: AppWidget = serde_json::from_str(json).expect("deserialize legacy button");
+        match back {
+            AppWidget::Button { icon, label, .. } => {
+                assert!(icon.is_none(), "absent icon defaults to None (icon-less)");
+                assert_eq!(label, "Save");
+            }
+            other => panic!("expected Button, got {other:?}"),
         }
     }
 
@@ -839,6 +883,7 @@ mod tests {
                     id: "go".into(),
                     label: "Go".into(),
                     kind: ButtonKind::Normal,
+                    icon: None,
                 },
             ],
         }]);
@@ -890,6 +935,7 @@ mod tests {
                     id: "ok".into(),
                     label: "OK".into(),
                     kind: ButtonKind::Primary,
+                    icon: None,
                 },
             ],
         }]);

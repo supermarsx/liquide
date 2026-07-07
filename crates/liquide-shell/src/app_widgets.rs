@@ -477,11 +477,17 @@ pub(crate) fn behavior_for(widget: &AppWidget) -> Option<Box<dyn WidgetBehavior>
         AppWidget::Progress { value } => Box::new(Progress::fraction(*value as f32)),
 
         // ── buttons ─────────────────────────────────────────────────────
-        AppWidget::Button { label, kind, .. } => {
+        AppWidget::Button { label, kind, icon, .. } => {
             // The button's `action` IS its key/id — translate_action keys on the
             // emitting widget id, so the action name carried by the widget can be
             // a fixed verb ("click").
-            Box::new(Button::new(label.clone(), "click").variant(button_variant(*kind)))
+            let mut button = Button::new(label.clone(), "click").variant(button_variant(*kind));
+            // Forward the model's optional icon so the button draws a glyph
+            // before its label (e.g. the Files nav toolbar's go-*/refresh icons).
+            if let Some(name) = icon {
+                button = button.icon(name.clone());
+            }
+            Box::new(button)
         }
 
         AppWidget::Segmented {
@@ -1178,6 +1184,7 @@ mod tests {
             id: "b".into(),
             label: "Save".into(),
             kind: ButtonKind::Primary,
+            icon: None,
         })
         .is_some());
         assert!(behavior_for(&AppWidget::Checkbox {
@@ -1341,6 +1348,7 @@ mod tests {
                 id: "save".into(),
                 label: "Save".into(),
                 kind: ButtonKind::Normal,
+                icon: None,
             }),
             &liquide_widgets::WidgetAction {
                 widget: "aw-1-save".into(),
@@ -1660,6 +1668,7 @@ mod tests {
                     id: "ok".into(),
                     label: "OK".into(),
                     kind: ButtonKind::Primary,
+                    icon: None,
                 },
             ],
         }]);
@@ -1812,6 +1821,7 @@ mod tests {
                     id: "ok".into(),
                     label: "OK".into(),
                     kind: ButtonKind::Primary,
+                    icon: None,
                 },
             ],
         }]);
@@ -2015,6 +2025,7 @@ mod tests {
                     id: "ok".into(),
                     label: "OK".into(),
                     kind: ButtonKind::Primary,
+                    icon: None,
                 },
             ],
         }]);

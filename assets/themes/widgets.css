@@ -386,6 +386,9 @@
     flex-direction: row;
     align-items: center;
     justify-content: center;
+    /* Icon→label spacing; only applies between flex items, so a label-only
+       (icon-less) button is wholly unaffected (a single child has no gap). */
+    gap: 6px;
     width: 120px;
     height: 36px;
     padding: 8px 14px;
@@ -397,6 +400,19 @@
   }
   lq-button > lq-label {
     display: inline;
+  }
+  /* Optional icon slot: a fixed 16×16 square drawn to the LEFT of the label.
+     Only buttons that carry an icon emit `<lq-button-icon data-icon=…>`, so
+     label-only buttons are wholly unaffected (no slot). `flex: 0 0 auto` keeps
+     the glyph at 16×16 and un-distorted; the button `gap` supplies the
+     icon→label spacing. The icon paints from `data-icon` (resolved through the
+     shared icon name-map); the button itself remains the click target. */
+  lq-button > lq-button-icon {
+    display: block;
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    color: var(--widget-fg, rgba(255, 255, 255, 0.92));
   }
   lq-button:hover {
     background-color: var(--widget-bg-hover-solid, #3a3a3c);

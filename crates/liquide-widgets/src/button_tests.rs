@@ -10,6 +10,7 @@ use crate::behavior::{KeyInput, WidgetBehavior};
 use crate::button::Button;
 use crate::gallery::Gallery;
 use crate::keys;
+use crate::layout_query::LayoutQuery;
 
 const W: u32 = 320;
 const H: u32 = 200;
@@ -226,6 +227,113 @@ fn primary_variant_paints_accent_fill() {
     assert!(
         Gallery::is_graphite_accent(pri_px),
         "primary fill must be the bright graphite accent (got {pri_px:?})"
+    );
+}
+
+// ---- optional icon (data-icon leaf forwarding) ---------------------------
+
+/// A button WITH an icon emits a dedicated `lq-button-icon` leaf carrying
+/// `data-icon="<name>"` BEFORE the label — and that name resolves to a NON-ZERO
+/// IconId through the real paint name-map (the `icon_id > 0` gate the painter
+/// uses to decide whether a glyph is drawn at all).
+#[test]
+fn button_with_icon_emits_data_icon_leaf_before_label() {
+    let tree = Button::new("Back", "go").icon("go-previous").render();
+
+    // The FIRST child is the icon leaf carrying the icon name.
+    let icon = &tree.children[0];
+    assert_eq!(icon.tag, "lq-button-icon", "first child is the icon slot");
+    let name = icon
+        .attrs
+        .iter()
+        .find(|(k, _)| k == "data-icon")
+        .map(|(_, v)| v.as_str());
+    assert_eq!(name, Some("go-previous"), "leaf carries the icon name");
+
+    // The emitted name resolves to a REAL, non-zero glyph id (not just any
+    // string): exactly what the painter gates on before drawing.
+    assert!(
+        liquide_paint::icons::icon_id_for_name("go-previous") > 0,
+        "data-icon name must resolve to a non-zero IconId in the paint name-map"
+    );
+
+    // The label element follows the icon (icon strictly BEFORE the label).
+    let icon_pos = tree
+        .children
+        .iter()
+        .position(|c| c.tag == "lq-button-icon")
+        .expect("icon child");
+    let label_pos = tree
+        .children
+        .iter()
+        .position(|c| c.tag == "lq-label")
+        .expect("label child");
+    assert!(icon_pos < label_pos, "icon leaf must precede the label");
+}
+
+/// A button WITHOUT an icon (`None`) emits NO `data-icon` leaf — it renders
+/// label-only, exactly as before this feature (no phantom slot).
+#[test]
+fn button_without_icon_emits_no_data_icon_leaf() {
+    let tree = Button::new("OK", "go").render();
+    assert!(
+        tree.children.iter().all(|c| c.tag != "lq-button-icon"),
+        "an icon-less button must not emit a data-icon leaf"
+    );
+    // The label is still present.
+    assert!(
+        tree.children.iter().any(|c| c.tag == "lq-label"),
+        "icon-less button still shows its label"
+    );
+}
+
+/// REAL-LAYOUT guard: an iconed button lays the icon to the LEFT of the label,
+/// both on the SAME row (vertically centered) — NOT stacked. Reads the laid-out
+/// boxes through the real pipeline + LayoutQuery.
+#[test]
+fn iconed_button_lays_icon_left_of_label_same_row() {
+    let mut g = gallery_with(Button::new("Back", "go").icon("go-previous"));
+    let root = g.host.root_of("btn").unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    let doc = g.doc();
+
+    let mut icon = None;
+    let mut label = None;
+    for &child in doc.children(root) {
+        match doc.tag_name(child).as_deref() {
+            Some("lq-button-icon") => icon = q.box_of(child),
+            Some("lq-label") => label = q.box_of(child),
+            _ => {}
+        }
+    }
+    let icon = icon.expect("iconed button carries an icon slot with a laid-out box");
+    let label = label.expect("button label box present");
+
+    // Icon strictly to the LEFT of the label (icon-beside-label, not stacked).
+    assert!(
+        icon.x + icon.width <= label.x + 0.5,
+        "icon must sit LEFT of the label (icon right edge {} <= label left {})",
+        icon.x + icon.width,
+        label.x
+    );
+
+    // Same ROW: the vertical extents OVERLAP (a stacked column would not).
+    let overlap = icon.y < label.y + label.height && label.y < icon.y + icon.height;
+    assert!(
+        overlap,
+        "icon and label must share a row (y-overlap): icon y[{}..{}] label y[{}..{}]",
+        icon.y,
+        icon.y + icon.height,
+        label.y,
+        label.y + label.height
+    );
+
+    // The icon slot keeps a consistent, undistorted 16x16 size in the flex row.
+    assert!(
+        (icon.width - 16.0).abs() < 1.0 && (icon.height - 16.0).abs() < 1.0,
+        "icon slot stays 16x16 (got {}x{})",
+        icon.width,
+        icon.height
     );
 }
 

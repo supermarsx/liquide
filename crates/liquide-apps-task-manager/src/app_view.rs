@@ -148,6 +148,7 @@ impl TaskManagerRuntime {
                 id: END_TASK_ID.to_string(),
                 label: "End task".to_string(),
                 kind: ButtonKind::Danger,
+                icon: None,
             });
         }
 

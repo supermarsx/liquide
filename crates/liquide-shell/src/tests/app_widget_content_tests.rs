@@ -304,6 +304,7 @@ fn idle_frame_after_mount_leaves_dom_clean() {
             id: "save".into(),
             label: "Save".into(),
             kind: ButtonKind::Primary,
+            icon: None,
         },
     ]);
     let (mut shell, _wid, _shared, _applied) = widget_shell(model);
@@ -446,9 +447,9 @@ fn text_only_window_gets_no_content_host() {
 fn toolbar_lays_buttons_out_horizontally() {
     let model = AppWidgetModel::with_root(vec![AppWidget::Toolbar {
         children: vec![
-            AppWidget::Button { id: "back".into(), label: "Back".into(), kind: ButtonKind::Normal },
-            AppWidget::Button { id: "fwd".into(), label: "Forward".into(), kind: ButtonKind::Normal },
-            AppWidget::Button { id: "up".into(), label: "Up".into(), kind: ButtonKind::Normal },
+            AppWidget::Button { id: "back".into(), label: "Back".into(), kind: ButtonKind::Normal, icon: None },
+            AppWidget::Button { id: "fwd".into(), label: "Forward".into(), kind: ButtonKind::Normal, icon: None },
+            AppWidget::Button { id: "up".into(), label: "Up".into(), kind: ButtonKind::Normal, icon: None },
         ],
     }]);
     let (shell, wid, _s, _a) = widget_shell(model);
@@ -491,6 +492,7 @@ fn widget_content_is_nested_under_an_in_flow_body() {
         id: "go".into(),
         label: "Go".into(),
         kind: ButtonKind::Normal,
+        icon: None,
     }]);
     let (shell, wid, _s, _a) = widget_shell(model);
     let doc = &shell.desktop_dom.doc;
@@ -552,11 +554,13 @@ fn files_like_model() -> AppWidgetModel {
                                 id: "back".into(),
                                 label: "Back".into(),
                                 kind: ButtonKind::Normal,
+                                icon: None,
                             },
                             AppWidget::Button {
                                 id: "fwd".into(),
                                 label: "Forward".into(),
                                 kind: ButtonKind::Normal,
+                                icon: None,
                             },
                         ],
                     },
@@ -701,11 +705,11 @@ fn widget_content_stays_within_its_window_rect() {
     let model = AppWidgetModel::with_root(vec![
         AppWidget::Toolbar {
             children: vec![
-                AppWidget::Button { id: "a".into(), label: "A".into(), kind: ButtonKind::Normal },
-                AppWidget::Button { id: "b".into(), label: "B".into(), kind: ButtonKind::Normal },
+                AppWidget::Button { id: "a".into(), label: "A".into(), kind: ButtonKind::Normal, icon: None },
+                AppWidget::Button { id: "b".into(), label: "B".into(), kind: ButtonKind::Normal, icon: None },
             ],
         },
-        AppWidget::Button { id: "c".into(), label: "C".into(), kind: ButtonKind::Normal },
+        AppWidget::Button { id: "c".into(), label: "C".into(), kind: ButtonKind::Normal, icon: None },
     ]);
     // A generously sized window so the (clipped) content rect is unambiguous.
     let mut shell = Shell::new(W, H);

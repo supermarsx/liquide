@@ -187,27 +187,34 @@ impl FilesRuntime {
         };
 
         // --- navigation toolbar ---------------------------------------------
+        // Each nav button carries a glyph before its label: Back/Forward/Up move
+        // through the history/hierarchy, Refresh re-shows the current path. The
+        // names resolve to real glyphs (43-46) through the shared icon name-map.
         let toolbar = AppWidget::Toolbar {
             children: vec![
                 AppWidget::Button {
                     id: BACK_ID.to_string(),
                     label: "Back".to_string(),
                     kind: Default::default(),
+                    icon: Some("go-previous".to_string()),
                 },
                 AppWidget::Button {
                     id: FORWARD_ID.to_string(),
                     label: "Forward".to_string(),
                     kind: Default::default(),
+                    icon: Some("go-next".to_string()),
                 },
                 AppWidget::Button {
                     id: UP_ID.to_string(),
                     label: "Up".to_string(),
                     kind: Default::default(),
+                    icon: Some("go-up".to_string()),
                 },
                 AppWidget::Button {
                     id: REFRESH_ID.to_string(),
                     label: "Refresh".to_string(),
                     kind: Default::default(),
+                    icon: Some("view-refresh".to_string()),
                 },
             ],
         };
@@ -789,6 +796,35 @@ mod tests {
         let changed = rt.apply_action(&AppWidgetAction::new(CRUMBS_KEY, "navigate", "2"));
         assert!(changed);
         assert_eq!(rt.current_listing().path, "/home/user");
+    }
+
+    #[test]
+    fn toolbar_nav_buttons_carry_direction_icons() {
+        // The Files nav toolbar buttons carry a glyph name before their label:
+        // Back=go-previous, Forward=go-next, Up=go-up, Refresh=view-refresh.
+        // RED before wiring: the buttons carried `icon: None`, so the toolbar was
+        // text-only. (Each name resolves to a real glyph id 43-46 through the
+        // shared paint name-map — proven in liquide-widgets' button_tests and the
+        // paint-layer icons.rs coverage; here we pin the names on the model.)
+        let rt = runtime_in_home();
+        let model = rt.widget_model().expect("model");
+        for (id, want) in [
+            (BACK_ID, "go-previous"),
+            (FORWARD_ID, "go-next"),
+            (UP_ID, "go-up"),
+            (REFRESH_ID, "view-refresh"),
+        ] {
+            match find(&model, id).unwrap_or_else(|| panic!("button {id} present")) {
+                AppWidget::Button { icon, .. } => {
+                    assert_eq!(
+                        icon.as_deref(),
+                        Some(want),
+                        "button {id} must carry the {want} icon"
+                    );
+                }
+                other => panic!("expected Button for {id}, got {other:?}"),
+            }
+        }
     }
 
     #[test]

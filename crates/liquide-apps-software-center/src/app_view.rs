@@ -118,6 +118,7 @@ impl SoftwareCenterRuntime {
                 id: ACTION_BUTTON_ID.to_string(),
                 label,
                 kind,
+                icon: None,
             });
         }
 

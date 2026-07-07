@@ -123,16 +123,19 @@ impl EditorRuntime {
                     id: NEW_BUTTON_ID.to_string(),
                     label: "New".to_string(),
                     kind: ButtonKind::Normal,
+                    icon: None,
                 },
                 AppWidget::Button {
                     id: OPEN_BUTTON_ID.to_string(),
                     label: "Open".to_string(),
                     kind: ButtonKind::Normal,
+                    icon: None,
                 },
                 AppWidget::Button {
                     id: SAVE_BUTTON_ID.to_string(),
                     label: "Save".to_string(),
                     kind: ButtonKind::Primary,
+                    icon: None,
                 },
             ],
         };
