@@ -172,6 +172,18 @@ pub fn icon_id_for_name(name: &str) -> u32 {
         "application-x-generic" | "file" | "file-generic" | "unknown"
         | "text-x-preview" => 42,
 
+        // ── 43: Navigate back (left arrow) ──
+        "go-previous" | "back" | "previous" | "go-back" => 43,
+
+        // ── 44: Navigate forward (right arrow) ──
+        "go-next" | "forward" | "next" | "go-forward" => 44,
+
+        // ── 45: Navigate up / parent (up arrow) ──
+        "go-up" | "up" | "go-parent" => 45,
+
+        // ── 46: Refresh / reload (circular arrow) ──
+        "view-refresh" | "refresh" | "reload" | "view-reload" => 46,
+
         _ => 0,
     }
 }
@@ -249,6 +261,40 @@ mod tests {
         ] {
             assert_ne!(icon_id_for_name(name), 0, "file-type name `{name}` must resolve");
         }
+    }
+
+    /// The navigation-toolbar icon names (Files Back/Forward/Up/Refresh, and
+    /// their freedesktop `go-previous`/`go-next`/`go-up`/`view-refresh` aliases)
+    /// must each resolve to a DISTINCT non-zero id, so a nav toolbar that emits
+    /// them shows four different arrow glyphs rather than placeholder boxes.
+    /// Teeth: an unmapped name (→ 0) or two names colliding on one id turns RED.
+    #[test]
+    fn nav_toolbar_names_resolve_to_distinct_glyphs() {
+        // Freedesktop canonical names.
+        let back = icon_id_for_name("go-previous");
+        let forward = icon_id_for_name("go-next");
+        let up = icon_id_for_name("go-up");
+        let refresh = icon_id_for_name("view-refresh");
+        for (name, id) in [
+            ("go-previous", back),
+            ("go-next", forward),
+            ("go-up", up),
+            ("view-refresh", refresh),
+        ] {
+            assert_ne!(id, 0, "nav name `{name}` must map to a real glyph, not the placeholder");
+        }
+        let ids = [back, forward, up, refresh];
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(ids[i], ids[j], "two nav names collided on id {}", ids[i]);
+            }
+        }
+        // Short aliases resolve to the same ids as their canonical names.
+        assert_eq!(icon_id_for_name("back"), back);
+        assert_eq!(icon_id_for_name("forward"), forward);
+        assert_eq!(icon_id_for_name("up"), up);
+        assert_eq!(icon_id_for_name("refresh"), refresh);
+        assert_eq!(icon_id_for_name("reload"), refresh);
     }
 
     /// The previously-blank names named in the visual-bug hunt (symptom 1)

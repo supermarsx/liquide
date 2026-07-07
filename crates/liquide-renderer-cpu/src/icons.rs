@@ -106,6 +106,14 @@ pub enum IconId {
     Video,
     /// Generic file / document (page with a folded corner).
     GenericFile,
+    /// Navigate back (left-pointing arrow).
+    NavBack,
+    /// Navigate forward (right-pointing arrow).
+    NavForward,
+    /// Navigate up / parent (up-pointing arrow).
+    NavUp,
+    /// Refresh / reload (circular arrow).
+    NavRefresh,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,13 +166,17 @@ pub fn icon_id_from_u32(id: u32) -> Option<IconId> {
         40 => Some(IconId::ProcessStop),
         41 => Some(IconId::Video),
         42 => Some(IconId::GenericFile),
+        43 => Some(IconId::NavBack),
+        44 => Some(IconId::NavForward),
+        45 => Some(IconId::NavUp),
+        46 => Some(IconId::NavRefresh),
         _ => None,
     }
 }
 
 /// Highest valid numeric icon ID (kept in sync with `icon_id_for_name` in
 /// `liquide-paint`). Used by tests to assert full id/glyph coverage.
-pub const MAX_ICON_ID: u32 = 42;
+pub const MAX_ICON_ID: u32 = 46;
 
 // ---------------------------------------------------------------------------
 // Coordinate helpers
@@ -356,6 +368,10 @@ pub fn draw_icon(fb: &mut FrameBuffer, icon_id: u32, bounds: Rect, color: Color,
         IconId::ProcessStop => draw_process_stop(fb, &bounds, color, detail, m, lut),
         IconId::Video => draw_video(fb, &bounds, color, detail, m, lut),
         IconId::GenericFile => draw_generic_file(fb, &bounds, color, detail, m, lut),
+        IconId::NavBack => draw_nav_back(fb, &bounds, color, detail, m, lut),
+        IconId::NavForward => draw_nav_forward(fb, &bounds, color, detail, m, lut),
+        IconId::NavUp => draw_nav_up(fb, &bounds, color, detail, m, lut),
+        IconId::NavRefresh => draw_nav_refresh(fb, &bounds, color, detail, m, lut),
     }
 }
 
@@ -1476,6 +1492,102 @@ fn draw_generic_file(
     }
 }
 
+/// Navigate back: a horizontal shaft with a left-pointing chevron head.
+fn draw_nav_back(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    _detail: Color,
+    m: BlendMode,
+    _lut: &SrgbLut,
+) {
+    let sw = pr(b, 0.10);
+    // Shaft (right → left).
+    stroke_path(fb, &line2(b, 0.82, 0.50, 0.26, 0.50), sw, color, m);
+    // Left-pointing chevron head at the tip.
+    let (hx, hy) = px(b, 0.26, 0.50);
+    let d = pr(b, 0.22);
+    let mut head = PathBuilder::new();
+    head.move_to(hx + d, hy - d).line_to(hx, hy).line_to(hx + d, hy + d);
+    stroke_path(fb, &head.build(), sw, color, m);
+}
+
+/// Navigate forward: a horizontal shaft with a right-pointing chevron head
+/// (the horizontal mirror of back).
+fn draw_nav_forward(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    _detail: Color,
+    m: BlendMode,
+    _lut: &SrgbLut,
+) {
+    let sw = pr(b, 0.10);
+    // Shaft (left → right).
+    stroke_path(fb, &line2(b, 0.18, 0.50, 0.74, 0.50), sw, color, m);
+    // Right-pointing chevron head at the tip.
+    let (hx, hy) = px(b, 0.74, 0.50);
+    let d = pr(b, 0.22);
+    let mut head = PathBuilder::new();
+    head.move_to(hx - d, hy - d).line_to(hx, hy).line_to(hx - d, hy + d);
+    stroke_path(fb, &head.build(), sw, color, m);
+}
+
+/// Navigate up / parent: a vertical shaft with an up-pointing chevron head.
+fn draw_nav_up(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    _detail: Color,
+    m: BlendMode,
+    _lut: &SrgbLut,
+) {
+    let sw = pr(b, 0.10);
+    // Shaft (bottom → top).
+    stroke_path(fb, &line2(b, 0.50, 0.82, 0.50, 0.26), sw, color, m);
+    // Up-pointing chevron head at the tip.
+    let (hx, hy) = px(b, 0.50, 0.26);
+    let d = pr(b, 0.22);
+    let mut head = PathBuilder::new();
+    head.move_to(hx - d, hy + d).line_to(hx, hy).line_to(hx + d, hy + d);
+    stroke_path(fb, &head.build(), sw, color, m);
+}
+
+/// Refresh / reload: a near-full circular arrow with a tangential arrowhead.
+fn draw_nav_refresh(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    _detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
+) {
+    let (cx, cy) = px(b, 0.50, 0.50);
+    let r = pr(b, 0.34);
+    let sw = pr(b, 0.09);
+    // Ring with a gap near the top so the arrowhead reads as motion.
+    let start = -0.35 * PI;
+    let sweep = 1.6 * PI; // clockwise, ~288°
+    let mut pb = PathBuilder::new();
+    pb.arc_to(cx, cy, r, start, sweep);
+    stroke_path(fb, &pb.build(), sw, color, m);
+    // Filled arrowhead at the arc end, pointing along the (clockwise) tangent.
+    let end = start + sweep;
+    let ex = cx + r * end.cos();
+    let ey = cy + r * end.sin();
+    let tx = -end.sin(); // clockwise tangent
+    let ty = end.cos();
+    let nx = end.cos(); // outward normal
+    let ny = end.sin();
+    let d = pr(b, 0.17);
+    let (ax, ay) = (ex + tx * d, ey + ty * d); // tip ahead along tangent
+    let (w1x, w1y) = (ex + nx * d * 0.9, ey + ny * d * 0.9);
+    let (w2x, w2y) = (ex - nx * d * 0.9, ey - ny * d * 0.9);
+    let mut head = PathBuilder::new();
+    head.move_to(w1x, w1y).line_to(ax, ay).line_to(w2x, w2y).close();
+    fill_path(fb, &head.build(), &Fill::Solid(color), m, lut);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1629,6 +1741,30 @@ mod tests {
         assert_ne!(render_glyph(38), render_glyph(39), "undo and redo render identically");
     }
 
+    /// The four navigation glyphs (back/forward/up/refresh, ids 43..=46) must
+    /// each produce visible ink AND be pixel-wise DISTINCT from one another —
+    /// back/forward are horizontal mirrors, up is vertical, refresh is circular,
+    /// so a toolbar that emits `go-previous`/`go-next`/`go-up`/`view-refresh`
+    /// shows four different arrows, not four placeholder boxes. Teeth: pointing
+    /// two of these ids at the same `draw_*` fn (or dropping a glyph) turns RED.
+    #[test]
+    fn nav_glyphs_produce_distinct_ink() {
+        let ids = [43_u32, 44, 45, 46];
+        let rendered: Vec<(u32, Vec<u8>)> = ids.iter().map(|&id| (id, render_glyph(id))).collect();
+        for (id, px) in &rendered {
+            assert!(px.iter().any(|&b| b != 0), "nav glyph id {id} produced no ink");
+        }
+        for i in 0..rendered.len() {
+            for j in (i + 1)..rendered.len() {
+                assert_ne!(
+                    rendered[i].1, rendered[j].1,
+                    "nav glyph id {} and id {} rendered pixel-identical (indistinguishable)",
+                    rendered[i].0, rendered[j].0
+                );
+            }
+        }
+    }
+
     /// Render a labelled strip of the new + improved glyphs (two rows: 40px and
     /// 16px) to `.orchestration/shots/` for manual inspection. Ignored in normal
     /// runs; invoke with `--ignored` to regenerate the artifact.
@@ -1636,8 +1772,8 @@ mod tests {
     #[ignore = "artifact generator; run with --ignored"]
     fn render_new_glyphs_strip() {
         let lut = crate::color::SrgbLut::new();
-        // Improved (terminal/search/wallpaper) + all new glyphs.
-        let ids: [u32; 11] = [2, 15, 30, 35, 36, 37, 38, 39, 40, 41, 42];
+        // Improved (terminal/search/wallpaper) + edit/file glyphs + nav glyphs.
+        let ids: [u32; 15] = [2, 15, 30, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46];
         let cell = 64u32;
         let big = 44.0f32;
         let small = 16.0f32;
