@@ -354,11 +354,17 @@ impl WidgetBehavior for ListView {
                 );
 
             // The item's inner structure is mode-aware so CSS can style each mode,
-            // but the HIT TARGET is always the item box (read from layout).
+            // but the HIT TARGET is always the item box (read from layout). The
+            // icon is a `data-icon` LEAF (not a text child): the painter resolves
+            // the name through the shared icon map and draws a real vector glyph,
+            // so the icon renders as an inline glyph — never a literal text /
+            // dingbat string stacked above the label (the CSS lays it icon-left in
+            // list/details, icon-above in the icons-grid mode). An item with an
+            // empty icon name emits an empty `data-icon`, which the painter skips.
             node = node.child(
                 TemplateNode::el("lq-listview-icon")
                     .attr("data-part-kind", "icon")
-                    .child(TemplateNode::text(&item.icon)),
+                    .attr("data-icon", &item.icon),
             );
             node = node.child(
                 TemplateNode::el("lq-listview-label")
@@ -394,5 +400,65 @@ impl WidgetBehavior for ListView {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+    use crate::behavior::WidgetBehavior;
+
+    fn find_item_icon(node: &TemplateNode) -> Option<&TemplateNode> {
+        // body → items → the icon leaf.
+        let body = node.children.iter().find(|c| c.tag == "lq-listview-body")?;
+        let item = body.children.iter().find(|c| c.tag == "lq-listview-item")?;
+        item.children.iter().find(|c| c.tag == "lq-listview-icon")
+    }
+
+    /// The per-item icon renders as a `data-icon` LEAF (the vector glyph path),
+    /// NOT a literal text child stacked above the label. Teeth: the pre-fix render
+    /// emitted `<lq-listview-icon>{text}</lq-listview-icon>` (a text child, no
+    /// data-icon) — this asserts the attribute is present AND there is no text
+    /// child, so a regression to the text-child form fails.
+    #[test]
+    fn item_icon_is_a_data_icon_leaf_not_text() {
+        let lv = ListView::new(
+            ViewMode::List,
+            [ViewItem::new("f", "folder", "Documents")],
+        );
+        let tree = lv.render();
+        let icon = find_item_icon(&tree).expect("item must emit an icon element");
+        let data_icon = icon
+            .attrs
+            .iter()
+            .find(|(k, _)| k == "data-icon")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(data_icon, Some("folder"), "icon must carry data-icon");
+        assert!(
+            icon.text.is_none() && icon.children.is_empty(),
+            "the icon is a vector leaf, not a text child (got text {:?}, {} children)",
+            icon.text,
+            icon.children.len()
+        );
+        assert!(
+            liquide_paint::icons::icon_id_for_name("folder") > 0,
+            "the emitted data-icon name must resolve to a real glyph"
+        );
+    }
+
+    /// The data-icon leaf is emitted in EVERY mode (the CSS decides icon-left vs
+    /// icon-above; the leaf itself is mode-independent).
+    #[test]
+    fn item_icon_leaf_emitted_in_every_mode() {
+        for mode in [ViewMode::Icons, ViewMode::List, ViewMode::Details, ViewMode::Tiles] {
+            let lv = ListView::new(mode, [ViewItem::new("t", "text-x-generic", "readme.txt")]);
+            let tree = lv.render();
+            let icon = find_item_icon(&tree)
+                .unwrap_or_else(|| panic!("mode {mode:?} must emit an icon leaf"));
+            assert!(
+                icon.attrs.iter().any(|(k, _)| k == "data-icon"),
+                "mode {mode:?}: icon must carry data-icon"
+            );
+        }
     }
 }

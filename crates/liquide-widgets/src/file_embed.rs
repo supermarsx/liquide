@@ -168,6 +168,27 @@ impl FileEmbed {
         }
     }
 
+    /// The `data-icon` glyph NAME for this file's type class. Every arm resolves
+    /// to a NON-ZERO IconId through the shared paint name-map
+    /// (`liquide_paint::icons::icon_id_for_name`), so the embed's icon slot paints
+    /// a real file-type glyph — never the placeholder box. The per-type CSS colour
+    /// tints the slot; the glyph is what makes the embed read as a file. Kept in
+    /// lock-step with [`type_class`](Self::type_class): every class it can return
+    /// has an arm here.
+    pub fn icon_name(&self) -> &'static str {
+        match self.type_class() {
+            "image" => "image-x-generic",
+            "video" => "video-x-generic",
+            "audio" => "audio-x-generic",
+            "pdf" => "application-pdf",
+            "archive" => "package-x-generic",
+            "code" => "text-x-source",
+            "document" => "text-x-generic",
+            // "file" and any future class fall back to the generic file glyph.
+            _ => "application-x-generic",
+        }
+    }
+
     /// Format a byte count into a short human string (e.g. `1.5 KB`).
     pub fn human_size(bytes: u64) -> String {
         const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -248,11 +269,15 @@ impl WidgetBehavior for FileEmbed {
             .class_if("error", matches!(self.state, FileState::Error { .. }))
             .pseudo_if(PseudoStateFlags::DISABLED, !present);
 
-        // Icon (its glyph/colour driven by the type class in CSS).
+        // Icon: a `data-icon` glyph (the real file-type icon) tinted by the
+        // per-type CSS colour. The `data-icon` name resolves to a non-zero
+        // IconId in the shared paint name-map, so the painter draws the glyph
+        // into the (padded, centered) icon box — not a bare coloured square.
         root = root.child(
             TemplateNode::el("lq-file-icon")
                 .attr("data-part", "icon")
                 .attr("data-type", self.type_class())
+                .attr("data-icon", self.icon_name())
                 .class(self.type_class()),
         );
 
@@ -308,5 +333,78 @@ impl WidgetBehavior for FileEmbed {
 
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
+    }
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    /// Every file-type class the embed can classify maps to a `data-icon` name
+    /// that resolves to a NON-ZERO IconId in the shared paint name-map — so the
+    /// embed always paints a real glyph, never the id-0 placeholder box. Teeth: a
+    /// class mapped to an unknown name (id 0) turns this RED. Covers one path per
+    /// type class plus the no-extension fallback.
+    #[test]
+    fn every_kind_icon_name_resolves_to_a_glyph() {
+        for path in [
+            "pic.png", "clip.mp4", "song.mp3", "report.pdf", "bundle.zip", "main.rs",
+            "notes.txt", "data.bin", "noext",
+        ] {
+            let fe = FileEmbed::new(path);
+            let name = fe.icon_name();
+            assert!(
+                liquide_paint::icons::icon_id_for_name(name) > 0,
+                "kind `{}` → data-icon `{name}` must resolve to a non-zero IconId",
+                fe.type_class()
+            );
+        }
+    }
+
+    /// The icon-kind mapping is exhaustive over `type_class`: the class each path
+    /// yields drives a distinct-enough glyph name, and image/audio/video/archive
+    /// map to their dedicated media glyphs (not the generic file). Teeth: a
+    /// regression collapsing, say, `image` back onto the generic file glyph shows
+    /// here.
+    #[test]
+    fn media_kinds_map_to_their_media_glyphs() {
+        assert_eq!(FileEmbed::new("a.png").icon_name(), "image-x-generic");
+        assert_eq!(FileEmbed::new("a.mp4").icon_name(), "video-x-generic");
+        assert_eq!(FileEmbed::new("a.mp3").icon_name(), "audio-x-generic");
+        assert_eq!(FileEmbed::new("a.zip").icon_name(), "package-x-generic");
+        assert_eq!(FileEmbed::new("a.bin").icon_name(), "application-x-generic");
+    }
+
+    /// The rendered `lq-file-icon` element carries a `data-icon` attribute (the
+    /// glyph name for the kind) and NOT a text child — so the painter draws the
+    /// vector glyph, not a bare box. Teeth: the pre-fix render emitted no
+    /// `data-icon` (a colour-only box), which fails the `Some(...)` assert.
+    #[test]
+    fn render_icon_carries_data_icon_and_no_text() {
+        let fe = FileEmbed::new("photo.png");
+        let tree = fe.render();
+        let icon = tree
+            .children
+            .iter()
+            .find(|c| c.tag == "lq-file-icon")
+            .expect("render must emit an lq-file-icon element");
+        let data_icon = icon
+            .attrs
+            .iter()
+            .find(|(k, _)| k == "data-icon")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(
+            data_icon,
+            Some("image-x-generic"),
+            "the icon must carry the kind's data-icon glyph name"
+        );
+        assert!(
+            icon.text.is_none() && icon.children.is_empty(),
+            "the icon is a data-icon leaf, not a text/child carrier"
+        );
+        assert!(
+            liquide_paint::icons::icon_id_for_name(data_icon.unwrap()) > 0,
+            "the emitted data-icon name must resolve to a real glyph"
+        );
     }
 }

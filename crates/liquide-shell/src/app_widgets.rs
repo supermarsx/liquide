@@ -859,6 +859,17 @@ fn mount_widget(
         let wrapper = doc.create_element("lq-app-embed");
         if is_placeholder_model(&inner) {
             doc.set_attribute(wrapper, "class", RUNTIME_PLACEHOLDER_CLASS);
+            // Give the unavailable-runtime notice an icon so it reads as an embed
+            // (a package/box for WASM, a script/document glyph for a script) — not
+            // text alone. Both names resolve to a non-zero IconId in the shared
+            // paint name-map, so the painter draws a real glyph, never a blank box.
+            let icon_name = match widget {
+                AppWidget::ScriptApp { .. } => "text-x-source",
+                _ => "package-x-generic",
+            };
+            let icon = doc.create_element("lq-embed-icon");
+            doc.set_attribute(icon, "data-icon", icon_name);
+            doc.append_child(wrapper, icon);
         }
         doc.append_child(parent, wrapper);
         for child in &inner.root {
@@ -899,6 +910,11 @@ fn mount_widget(
             let placeholder = video_placeholder_model(src);
             let wrapper = doc.create_element("lq-app-embed");
             doc.set_attribute(wrapper, "class", RUNTIME_PLACEHOLDER_CLASS);
+            // A video glyph on the "no codec" notice so it reads as an embed, not
+            // text alone (`video-x-generic` resolves to a real glyph in the map).
+            let icon = doc.create_element("lq-embed-icon");
+            doc.set_attribute(icon, "data-icon", "video-x-generic");
+            doc.append_child(wrapper, icon);
             doc.append_child(parent, wrapper);
             for child in &placeholder.root {
                 mount_widget(child, window_id, wrapper, host, doc, dispatcher, mounted);
@@ -1001,7 +1017,12 @@ fn mount_widget(
                     ("lq-card", None, title.as_deref(), children.iter().collect())
                 }
                 AppWidget::GroupBox { label, children } => (
-                    "lq-groupbox",
+                    // The tag MUST match the CSS selector name `lq-group-box`
+                    // (hyphenated) — the styled name used everywhere else in
+                    // widgets.css. Emitting the un-hyphenated `lq-groupbox` left
+                    // the wrapper (and the runtime/video placeholders inside it)
+                    // wholly unstyled (t167 class).
+                    "lq-group-box",
                     None,
                     Some(label.as_str()),
                     children.iter().collect(),
@@ -1518,6 +1539,88 @@ mod tests {
         );
     }
 
+    /// Collect every `data-icon` value at/under `node`.
+    fn data_icon_values(doc: &Document, node: NodeId) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if let Some(v) = doc.get_attribute(n, "data-icon") {
+                out.push(v);
+            }
+            for &c in doc.children(n) {
+                stack.push(c);
+            }
+        }
+        out
+    }
+
+    /// The GroupBox container wrapper is emitted under the tag `lq-group-box`
+    /// (hyphenated) — the SAME name widgets.css styles. Teeth: the pre-fix code
+    /// emitted `lq-groupbox` (no hyphen), which widgets.css never matched, so the
+    /// wrapper (and the runtime/video placeholders inside it) rendered unstyled.
+    /// Asserts the emitted tag == the CSS selector name AND the old name is gone.
+    #[test]
+    fn group_box_wrapper_tag_matches_the_styled_css_name() {
+        let model = AppWidgetModel::with_root(vec![AppWidget::GroupBox {
+            label: "Section".into(),
+            children: vec![AppWidget::Label { text: "body".into() }],
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+        let _ = mount_model_into(&model, 1, root, &mut host, &mut doc, &mut dispatcher);
+
+        assert!(
+            has_tag(&doc, root, "lq-group-box"),
+            "the wrapper tag must be the hyphenated `lq-group-box` (the CSS name)"
+        );
+        assert!(
+            !has_tag(&doc, root, "lq-groupbox"),
+            "the un-hyphenated `lq-groupbox` (unstyled) must not be emitted"
+        );
+    }
+
+    /// The WASM / Script "runtime unavailable" placeholder carries an ICON (a
+    /// `data-icon` leaf) so the notice reads as an embed — icon + text, not text
+    /// alone. The emitted name must resolve to a real glyph. Teeth: the pre-fix
+    /// placeholder emitted no icon at all → `data_icon_values` is empty → RED.
+    #[test]
+    fn wasm_and_script_placeholders_emit_a_resolving_icon() {
+        for (widget, want) in [
+            (
+                AppWidget::WasmApp {
+                    module: WasmModuleSource::Bytes { bytes: vec![0, 1] },
+                },
+                "package-x-generic",
+            ),
+            (
+                AppWidget::ScriptApp {
+                    source: "render(){}".into(),
+                    lang: ScriptLang::JavaScript,
+                },
+                "text-x-source",
+            ),
+        ] {
+            let model = AppWidgetModel::with_root(vec![widget]);
+            let mut doc = Document::new();
+            let root = doc.root();
+            let mut host = WidgetHost::new();
+            let mut dispatcher = EventDispatcher::new();
+            let _ = mount_model_into(&model, 2, root, &mut host, &mut doc, &mut dispatcher);
+
+            let icons = data_icon_values(&doc, root);
+            assert!(
+                icons.iter().any(|n| n == want),
+                "placeholder must emit the `{want}` icon, got {icons:?}"
+            );
+            assert!(
+                liquide_paint::icons::icon_id_for_name(want) > 0,
+                "the placeholder icon `{want}` must resolve to a real glyph"
+            );
+        }
+    }
+
     #[test]
     fn mounting_a_script_app_node_emits_the_placeholder_into_the_dom() {
         let model = AppWidgetModel::with_root(vec![AppWidget::ScriptApp {
@@ -1667,6 +1770,31 @@ mod tests {
             "placeholder text must reach the DOM, got: {text:?}"
         );
         assert!(text.contains("movies/demo.ivf"), "names the src: {text:?}");
+    }
+
+    /// The "no codec" video placeholder carries a video `data-icon` glyph so it
+    /// reads as an embed (icon + text). Teeth: the pre-fix placeholder emitted no
+    /// icon → the resolving-video-icon assertion fails.
+    #[test]
+    #[cfg(not(feature = "video"))]
+    fn video_placeholder_emits_a_resolving_video_icon() {
+        let model = AppWidgetModel::with_root(vec![AppWidget::Video {
+            src: "clip.ivf".into(),
+            autoplay: false,
+            loop_playback: false,
+        }]);
+        let mut doc = Document::new();
+        let root = doc.root();
+        let mut host = WidgetHost::new();
+        let mut dispatcher = EventDispatcher::new();
+        let _ = mount_model_into(&model, 4, root, &mut host, &mut doc, &mut dispatcher);
+
+        let icons = data_icon_values(&doc, root);
+        assert!(
+            icons.iter().any(|n| n == "video-x-generic"),
+            "video placeholder must emit the `video-x-generic` icon, got {icons:?}"
+        );
+        assert!(liquide_paint::icons::icon_id_for_name("video-x-generic") > 0);
     }
 
     #[test]

@@ -805,6 +805,33 @@
     display: block;
   }
 
+  /* ── Embedded-runtime placeholder (WASM / Script / Video unavailable) ──
+     The shell wraps an "unavailable" notice in an lq-app-embed carrying
+     `.app-runtime-unavailable`, prefixed by a leading lq-embed-icon whose
+     `data-icon` glyph (package for WASM, a document for a script, a video glyph
+     for video) makes the notice read as an embed — icon + the styled group-box
+     text, not text alone. A normal (available) embed has no class and stays a
+     plain block so its real UI flows unchanged. */
+  lq-app-embed {
+    display: block;
+  }
+  lq-app-embed.app-runtime-unavailable {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+  }
+  lq-app-embed.app-runtime-unavailable > lq-group-box {
+    flex: 1 1 auto;
+  }
+  lq-embed-icon {
+    display: block;
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    color: var(--widget-accent, #f59e0b);
+  }
+
   /* ── B4 tabs ──────────────────────────────────────────────────
      A tab strip + a single visible panel. The active tab carries :checked
      (and aria-selected="true") so CSS restyles it; only the active panel is
@@ -2898,8 +2925,15 @@
     padding: 8px;
     text-align: center;
   }
+  /* Icons grid: the glyph sits ABOVE the label (the desktop-grid stacking). It is
+     a sized `data-icon` box centered over the label; the painter draws the glyph
+     into this box. A fixed height is required — with no text child the box would
+     otherwise collapse to zero and paint nothing. */
   lq-listview.mode-icons lq-listview-icon {
-    font-size: 28px;
+    display: block;
+    width: 40px;
+    height: 34px;
+    margin: 0 auto 4px;
   }
 
   /* List mode: a compact single column (icon + label inline). */
@@ -2914,7 +2948,8 @@
   }
   lq-listview.mode-list lq-listview-icon {
     display: inline-block;
-    width: 20px;
+    width: 16px;
+    height: 16px;
     margin-right: 6px;
   }
   lq-listview.mode-list lq-listview-label {
@@ -2944,7 +2979,8 @@
   }
   lq-listview.mode-details lq-listview-icon {
     display: inline-block;
-    width: 20px;
+    width: 16px;
+    height: 16px;
     margin-right: 6px;
   }
   lq-listview.mode-details lq-listview-label {
@@ -2974,8 +3010,8 @@
   }
   lq-listview.mode-tiles lq-listview-icon {
     display: inline-block;
-    width: 32px;
-    font-size: 24px;
+    width: 24px;
+    height: 24px;
     margin-right: 8px;
   }
 
@@ -3513,22 +3549,29 @@
     border-color: var(--widget-accent-active, #b91c1c);
     background-color: rgba(127, 29, 29, 0.18);
   }
+  /* The icon slot: a fixed 40px rounded tile carrying a `data-icon` glyph. The
+     glyph paints into the padded content box (inset + centered), so the embed
+     shows a real file-type icon — not a bare coloured square. The per-type COLOUR
+     is the glyph ink (the icon IS the file-kind badge): PDF red, code green, etc.
+     A neutral tile background sits behind it so the coloured glyph reads clearly. */
   lq-file-icon {
     display: inline-block;
     width: 40px;
     height: 40px;
     flex-shrink: 0;
+    padding: 6px;
     border-radius: 6px;
     background-color: var(--widget-bg-active, rgba(255, 255, 255, 0.10));
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
   }
-  lq-file-icon.image  { background-color: #2563eb; }
-  lq-file-icon.video  { background-color: #7c3aed; }
-  lq-file-icon.audio  { background-color: #db2777; }
-  lq-file-icon.pdf    { background-color: #dc2626; }
-  lq-file-icon.archive{ background-color: #d97706; }
-  lq-file-icon.code   { background-color: #059669; }
-  lq-file-icon.document { background-color: #4b5563; }
-  lq-file-embed.error lq-file-icon { background-color: #7f1d1d; }
+  lq-file-icon.image  { color: #3b82f6; }
+  lq-file-icon.video  { color: #a855f7; }
+  lq-file-icon.audio  { color: #ec4899; }
+  lq-file-icon.pdf    { color: #dc2626; }
+  lq-file-icon.archive{ color: #f59e0b; }
+  lq-file-icon.code   { color: #059669; }
+  lq-file-icon.document { color: #d1d5db; }
+  lq-file-embed.error lq-file-icon { background-color: #7f1d1d; color: #fecaca; }
   lq-file-meta {
     display: block;
     flex-grow: 1;
