@@ -58,6 +58,11 @@ pub enum SelectionMode {
 pub struct List {
     /// (value, label) items in order.
     items: Vec<(String, String)>,
+    /// Optional per-item icon name, positionally parallel to `items`. `None`
+    /// (or a shorter vec) renders that row icon-less. An icon is emitted as a
+    /// dedicated `lq-list-item-icon` leaf carrying `data-icon` before the label
+    /// so the paint path draws it; the row itself stays the click target.
+    icons: Vec<Option<String>>,
     /// Selection mode.
     mode: SelectionMode,
     /// The selected row indices (a set so multi-select is order-independent).
@@ -79,12 +84,31 @@ impl List {
         let cursor = if items.is_empty() { None } else { Some(0) };
         Self {
             items,
+            icons: Vec::new(),
             mode: SelectionMode::Single,
             selected: BTreeSet::new(),
             cursor,
             anchor: None,
             hovered: None,
             disabled: false,
+        }
+    }
+
+    /// Attach per-item icon names (positionally parallel to the items). Entry
+    /// `i` names the icon drawn before item `i`'s label; `None` (or a shorter
+    /// vec) leaves that row icon-less. Passing an all-`None`/empty vec keeps the
+    /// list icon-less (the default), so existing usages are unaffected.
+    #[must_use]
+    pub fn with_icons(mut self, icons: Vec<Option<String>>) -> Self {
+        self.icons = icons;
+        self
+    }
+
+    /// The icon name for row `i`, if any (empty names count as no icon).
+    fn icon_of(&self, i: usize) -> Option<&str> {
+        match self.icons.get(i) {
+            Some(Some(name)) if !name.is_empty() => Some(name.as_str()),
+            _ => None,
         }
     }
 
@@ -323,7 +347,7 @@ impl WidgetBehavior for List {
         for (i, (value, label)) in self.items.iter().enumerate() {
             let sel = self.selected.contains(&i);
             let is_cursor = self.cursor == Some(i) && !self.disabled;
-            let row = TemplateNode::el("lq-list-item")
+            let mut row = TemplateNode::el("lq-list-item")
                 .key(value)
                 .attr("data-part", &Self::item_part(i))
                 .attr("data-index", &format!("{i}"))
@@ -338,8 +362,19 @@ impl WidgetBehavior for List {
                 .pseudo_if(
                     PseudoStateFlags::HOVER,
                     self.hovered == Some(i) && !self.disabled,
-                )
-                .child(TemplateNode::text(label));
+                );
+            // An item WITH an icon emits a dedicated `lq-list-item-icon` leaf
+            // carrying `data-icon` BEFORE the label, so the paint path draws the
+            // glyph (the name-map resolves it to a non-zero IconId). The icon is
+            // a small inline child; the row (`item-<i>` part) stays the click
+            // target, so the icon never steals the row hit. Items WITHOUT an icon
+            // render label-only, exactly as before (no `data-icon` leaf emitted).
+            if let Some(icon) = self.icon_of(i) {
+                row = row.child(
+                    TemplateNode::el("lq-list-item-icon").attr("data-icon", icon),
+                );
+            }
+            row = row.child(TemplateNode::text(label));
             list = list.child(row);
         }
         if self.disabled {

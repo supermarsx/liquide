@@ -8,11 +8,12 @@
 //! Space/Enter.
 #![cfg(test)]
 
-use crate::behavior::KeyInput;
+use crate::behavior::{KeyInput, WidgetBehavior};
 use crate::gallery::Gallery;
 use crate::keys;
 use crate::layout_query::LayoutQuery;
 use crate::list::{List, CHANGED_ACTION};
+use liquide_components::template::TemplateNode;
 
 const W: u32 = 320;
 const H: u32 = 320;
@@ -342,6 +343,118 @@ fn multi_select_range_fills_all_rows() {
         !row_region_differs(&g, "l", 5, &plain, &after),
         "row 5 outside the range must be unchanged"
     );
+}
+
+// ---- per-item icons (data-icon leaf forwarding) --------------------------
+
+/// A 3-row list where rows 0 and 2 carry icons and row 1 is icon-less.
+fn iconed_list() -> List {
+    List::new(items(3)).with_icons(vec![
+        Some("folder-home".to_string()),
+        None,
+        Some("starred".to_string()),
+    ])
+}
+
+/// The `i`-th `lq-list-item` row element of a rendered list tree.
+fn row_node(root: &TemplateNode, i: usize) -> &TemplateNode {
+    root.children
+        .iter()
+        .filter(|c| c.tag == "lq-list-item")
+        .nth(i)
+        .expect("row element present")
+}
+
+/// A row WITH an icon emits a dedicated `lq-list-item-icon` leaf carrying
+/// `data-icon="<name>"` BEFORE the label — and that name resolves to a NON-ZERO
+/// IconId through the real paint name-map (the `icon_id > 0` gate the painter
+/// uses to decide whether a glyph is drawn at all).
+#[test]
+fn item_with_icon_emits_data_icon_leaf_before_label() {
+    let tree = iconed_list().render();
+    let row0 = row_node(&tree, 0);
+
+    // The FIRST child is the icon leaf with the bookmark's icon name.
+    let icon = &row0.children[0];
+    assert_eq!(icon.tag, "lq-list-item-icon", "first child is the icon slot");
+    let name = icon
+        .attrs
+        .iter()
+        .find(|(k, _)| k == "data-icon")
+        .map(|(_, v)| v.as_str());
+    assert_eq!(name, Some("folder-home"), "leaf carries the icon name");
+
+    // The emitted name resolves to a REAL, non-zero glyph id (not just any
+    // string): this is exactly what the painter gates on before drawing.
+    assert!(
+        liquide_paint::icons::icon_id_for_name("folder-home") > 0,
+        "data-icon name must resolve to a non-zero IconId in the paint name-map"
+    );
+
+    // The label follows the icon (icon strictly BEFORE the label text).
+    let icon_pos = row0
+        .children
+        .iter()
+        .position(|c| c.tag == "lq-list-item-icon")
+        .expect("icon child");
+    let label_pos = row0
+        .children
+        .iter()
+        .position(|c| c.is_text())
+        .expect("label text child");
+    assert!(icon_pos < label_pos, "icon leaf must precede the label");
+    let label = row0.children[label_pos].text.as_deref();
+    assert_eq!(label, Some("Item 0"), "the label is still present");
+}
+
+/// A row WITHOUT an icon (`None`) emits NO `data-icon` leaf — it renders
+/// label-only, exactly as before this feature.
+#[test]
+fn item_without_icon_emits_no_data_icon_leaf() {
+    let tree = iconed_list().render();
+    let row1 = row_node(&tree, 1); // icon = None
+    assert!(
+        row1.children.iter().all(|c| c.tag != "lq-list-item-icon"),
+        "an icon-less row must not emit a data-icon leaf"
+    );
+    let label = row1.children.iter().find_map(|c| c.text.as_deref());
+    assert_eq!(label, Some("Item 1"), "icon-less row still shows its label");
+}
+
+/// A list built WITHOUT any icons (every existing usage) emits no icon leaves
+/// anywhere — the iconless path is unchanged.
+#[test]
+fn plain_list_emits_no_icon_leaves() {
+    let tree = List::new(items(4)).render();
+    for row in tree.children.iter().filter(|c| c.tag == "lq-list-item") {
+        assert!(
+            row.children.iter().all(|c| c.tag != "lq-list-item-icon"),
+            "a plain (icon-less) list must never emit lq-list-item-icon leaves"
+        );
+    }
+}
+
+/// Row selection still works when the row carries an icon: the row (not the
+/// icon child) is the click target, so clicking an iconed row selects it.
+#[test]
+fn row_selection_works_with_icon_present() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("l", Box::new(iconed_list()));
+    g.relayout();
+
+    // Row 0 HAS an icon; clicking its laid-out box must select row 0.
+    let actions = click_row(&mut g, "l", 0);
+    assert_eq!(
+        as_list(&g, "l").selected_indices(),
+        vec![0],
+        "clicking an iconed row must select it (icon doesn't steal the hit)"
+    );
+    assert_eq!(actions.len(), 1);
+    assert_eq!(actions[0].payload.as_deref(), Some("v0"));
+
+    // Row 2 also has an icon; selecting it moves the single selection.
+    let _ = click_row(&mut g, "l", 2);
+    assert_eq!(as_list(&g, "l").selected_indices(), vec![2]);
 }
 
 /// Disabled list swallows clicks and keys.

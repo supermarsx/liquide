@@ -542,6 +542,7 @@ fn files_like_model() -> AppWidgetModel {
                 items: vec!["Home".into(), "Documents".into(), "Downloads".into()],
                 selection_mode: SelectionMode::Single,
                 selected: vec![0],
+                icons: Vec::new(),
             },
             AppWidget::Panel {
                 children: vec![

@@ -372,6 +372,14 @@ pub enum AppWidget {
         /// Indices of the currently-selected items.
         #[serde(default)]
         selected: Vec<u32>,
+        /// Optional per-item icon name, positionally parallel to `items`. Entry
+        /// `i` names the icon drawn before `items[i]`; `None` (or a shorter
+        /// `icons` vec that doesn't reach index `i`) renders that row icon-less.
+        /// Names resolve through the shared icon name-map at paint time (e.g.
+        /// `folder-home`, `starred`, `network-server`). Backward compatible:
+        /// omit `icons` for an entirely icon-less list (the historical shape).
+        #[serde(default)]
+        icons: Vec<Option<String>>,
     },
     /// A tabular grid.
     Table {
@@ -707,6 +715,44 @@ mod tests {
             AppWidget::TextArea { value, gutter: true, readonly: true, .. }
                 if value == "first\nsecond\nthird"
         ));
+    }
+
+    #[test]
+    fn list_node_carries_optional_per_item_icons() {
+        // A List can carry an optional icon name per item, positionally parallel
+        // to `items`; `None` leaves that row icon-less. The whole thing survives
+        // a serde round-trip.
+        let node = AppWidget::List {
+            key: "places".into(),
+            items: vec!["Home".into(), "Documents".into(), "Trash".into()],
+            selection_mode: SelectionMode::Single,
+            selected: vec![0],
+            icons: vec![Some("folder-home".into()), None, Some("user-trash".into())],
+        };
+        let json = serde_json::to_string(&node).expect("serialize");
+        assert!(json.contains("\"folder-home\""), "icon name serialized: {json}");
+        let back: AppWidget = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(node, back);
+        assert!(matches!(
+            back,
+            AppWidget::List { icons, .. }
+                if icons == vec![Some("folder-home".to_string()), None, Some("user-trash".to_string())]
+        ));
+    }
+
+    #[test]
+    fn list_icons_default_to_empty_when_absent() {
+        // Backward compatibility: a List JSON that predates the `icons` field
+        // (no `icons` key) deserializes to an icon-less list — never an error.
+        let json = r#"{"type":"list","key":"k","items":["a","b"]}"#;
+        let back: AppWidget = serde_json::from_str(json).expect("deserialize legacy list");
+        match back {
+            AppWidget::List { icons, items, .. } => {
+                assert!(icons.is_empty(), "absent icons default to empty (icon-less)");
+                assert_eq!(items.len(), 2);
+            }
+            other => panic!("expected List, got {other:?}"),
+        }
     }
 
     #[test]

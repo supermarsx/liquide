@@ -545,6 +545,7 @@ pub(crate) fn behavior_for(widget: &AppWidget) -> Option<Box<dyn WidgetBehavior>
             items,
             selection_mode,
             selected,
+            icons,
             ..
         } => {
             // The list stores (value, label); the app uses indices as the value,
@@ -553,6 +554,13 @@ pub(crate) fn behavior_for(widget: &AppWidget) -> Option<Box<dyn WidgetBehavior>
                 .iter()
                 .map(|item| (item.clone(), item.clone()));
             let mut list = List::new(pairs);
+            // Forward the model's optional per-item icon names so the widget can
+            // emit a `data-icon` leaf per iconed row (the Files places sidebar
+            // supplies folder-home/folder/starred/… here). An empty `icons` vec
+            // keeps the list icon-less, matching every existing usage.
+            if icons.iter().any(|i| i.is_some()) {
+                list = list.with_icons(icons.clone());
+            }
             if matches!(selection_mode, SelectionMode::Multiple) {
                 list = list.multi();
             }
@@ -718,8 +726,18 @@ fn structure_into(widget: &AppWidget, out: &mut String) {
             key,
             items,
             selection_mode,
+            icons,
             ..
-        } => out.push_str(&format!("Li[{key}:{}:{selection_mode:?}];", items.len())),
+        } => {
+            // Fold the icon count into the signature so toggling a row's icon
+            // (an iconed → icon-less change, or vice versa) is a structural
+            // change that remounts the list with the new leaves.
+            let iconed = icons.iter().filter(|i| i.is_some()).count();
+            out.push_str(&format!(
+                "Li[{key}:{}:{selection_mode:?}:{iconed}];",
+                items.len()
+            ))
+        }
         AppWidget::Table {
             key, columns, rows, ..
         } => out.push_str(&format!("Ta[{key}:{}x{}];", columns.len(), rows.len())),

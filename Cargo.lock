@@ -4598,6 +4598,7 @@ dependencies = [
  "liquide-dom",
  "liquide-hit-test",
  "liquide-layout",
+ "liquide-paint",
  "liquide-renderer-cpu",
  "liquide-shell",
  "liquide-style-engine",

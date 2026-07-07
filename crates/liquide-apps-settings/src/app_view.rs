@@ -142,6 +142,8 @@ impl SettingsRuntime {
             items,
             selection_mode: SelectionMode::Single,
             selected: selected_idx.into_iter().collect(),
+            // The settings category sidebar is icon-less (label-only).
+            icons: Vec::new(),
         };
 
         // ── Right column: header + search + grouped settings cards ──────────
@@ -748,6 +750,7 @@ mod tests {
                 items: Category::ALL.iter().map(|c| c.label().to_string()).collect(),
                 selection_mode: SelectionMode::Single,
                 selected: vec![0],
+                icons: Vec::new(),
             },
             AppWidget::Panel { children: bare },
         ]);

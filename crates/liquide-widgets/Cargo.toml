@@ -31,3 +31,7 @@ liquide-style-engine.workspace = true
 # :hover restyle) can be proven against the framebuffer, not just the DOM.
 liquide-compositor.workspace = true
 liquide-renderer-cpu.workspace = true
+# The paint-layer icon name-map (`icon_id_for_name`) — the SAME resolver the
+# painter gates on (`icon_id > 0`) — so the list icon test can prove an emitted
+# `data-icon` name resolves to a real, non-zero glyph id (not just any string).
+liquide-paint.workspace = true

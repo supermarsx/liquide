@@ -98,6 +98,8 @@ impl SoftwareCenterRuntime {
             items,
             selection_mode: SelectionMode::Single,
             selected,
+            // The software-center app list is icon-less (label-only).
+            icons: Vec::new(),
         };
 
         let mut children = vec![search, list];

@@ -167,6 +167,11 @@ impl FilesRuntime {
         // equals the current directory) is selected.
         let bookmarks = self.sidebar().bookmarks();
         let place_items: Vec<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
+        // Each bookmark carries its own icon name (folder-home for Home, folder
+        // for Desktop/Documents/Downloads, starred/network-server/… as declared
+        // by the places model). Forward them positionally so the sidebar draws a
+        // glyph per bookmark; a bookmark with no icon (`None`) stays icon-less.
+        let place_icons: Vec<Option<String>> = bookmarks.iter().map(|b| b.icon.clone()).collect();
         let place_selected: Vec<u32> = bookmarks
             .iter()
             .enumerate()
@@ -178,6 +183,7 @@ impl FilesRuntime {
             items: place_items,
             selection_mode: SelectionMode::Single,
             selected: place_selected,
+            icons: place_icons,
         };
 
         // --- navigation toolbar ---------------------------------------------
@@ -720,6 +726,40 @@ mod tests {
             AppWidget::List { items, selected, .. } => {
                 let idx = items.iter().position(|n| n == "Proj").expect("bookmark listed");
                 assert_eq!(selected, &vec![idx as u32], "active place selected");
+            }
+            other => panic!("expected List, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn places_list_supplies_bookmark_icons() {
+        // The Files places/bookmarks sidebar List must carry each bookmark's
+        // icon name so the shell can draw a glyph per row (folder-home for Home,
+        // folder-* for the other system places). RED before wiring: the List
+        // carried only names, so `icons` was empty and the sidebar was blank.
+        let rt = FilesRuntime::new(FilesConfig::default());
+        let model = rt.widget_model().expect("model");
+        match find(&model, PLACES_KEY).unwrap() {
+            AppWidget::List { items, icons, .. } => {
+                // One icon slot per bookmark, positionally parallel to items.
+                assert_eq!(icons.len(), items.len(), "an icon slot per bookmark");
+                // Home is a default system bookmark carrying folder-home.
+                let home = items
+                    .iter()
+                    .position(|n| n == "Home")
+                    .expect("Home bookmark present");
+                assert_eq!(
+                    icons[home].as_deref(),
+                    Some("folder-home"),
+                    "the Home bookmark supplies its folder-home icon"
+                );
+                // Every default system bookmark supplies a non-empty icon name.
+                assert!(
+                    icons
+                        .iter()
+                        .all(|i| i.as_deref().is_some_and(|s| !s.is_empty())),
+                    "all default bookmarks supply an icon: {icons:?}"
+                );
             }
             other => panic!("expected List, got {other:?}"),
         }

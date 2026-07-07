@@ -1048,6 +1048,19 @@
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
     background-color: rgba(0, 0, 0, 0);
   }
+  /* Optional per-item icon slot: a small inline square drawn before the label.
+     Only rows that carry an icon emit `<lq-list-item-icon data-icon=…>`, so
+     icon-less rows are wholly unaffected (no slot, no layout change). The icon
+     paints from `data-icon` (resolved through the shared icon name-map); the row
+     itself remains the click target. */
+  lq-list > lq-list-item > lq-list-item-icon {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+    vertical-align: middle;
+    color: var(--widget-fg, rgba(250, 250, 250, 0.95));
+  }
   lq-list > lq-list-item:hover {
     background-color: var(--widget-bg-hover-solid, #3f3f46);
   }
