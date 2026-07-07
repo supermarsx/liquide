@@ -142,28 +142,11 @@ pub fn icon_node(id: u64, icon_id: u32, color: Color, bounds: Rect, z: u32) -> S
 
 /// Map a named icon string to the numeric icon ID used by the renderer.
 ///
-/// Returns 0 for unrecognised names (the renderer draws a filled rect
-/// as a fallback for unknown IDs).
+/// Single-sourced: this delegates to [`liquide_paint::icons::icon_id_for_name`]
+/// (the canonical name→ID table) so the shell and paint pipelines can never
+/// drift. Re-exported here for the shell's existing call sites.
+#[inline]
+#[must_use]
 pub fn icon_id_for_name(name: &str) -> u32 {
-    match name {
-        "folder" | "file-manager" => 1,
-        "terminal" | "console" | "utilities-terminal" => 2,
-        "web-browser" | "browser" | "internet-web-browser" => 3,
-        "preferences-system" | "settings" | "system-preferences" => 4,
-        "calculator" | "accessories-calculator" => 5,
-        "text-editor" | "accessories-text-editor" => 6,
-        "audio-x-generic" | "music" | "multimedia-audio-player" => 7,
-        "camera" | "camera-photo" => 8,
-        "mail" | "internet-mail" => 9,
-        "calendar" | "office-calendar" => 10,
-        "clock" | "preferences-clock" => 11,
-        "network-wireless" | "wifi" => 12,
-        "battery" | "battery-full" => 13,
-        "notification" | "preferences-desktop-notification" => 14,
-        "search" | "system-search" | "edit-find" => 15,
-        "power" | "system-shutdown" => 16,
-        "audio-volume-high" | "volume" => 17,
-        "user-trash" | "trash" => 18,
-        _ => 0,
-    }
+    liquide_paint::icons::icon_id_for_name(name)
 }

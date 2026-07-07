@@ -922,17 +922,26 @@ impl Painter {
                     // (Leaf icon carriers such as `status-tray-item`, which have no
                     // `data-icon` child, are unaffected and still paint normally.)
                     if let Some(icon_name) = doc.get_attribute(layout_box.node, "data-icon") {
-                        let child_carries_icon = doc
-                            .children(layout_box.node)
-                            .iter()
-                            .any(|&child| doc.get_attribute(child, "data-icon").is_some());
-                        let icon_id = icon_id_for_name(&icon_name);
-                        if icon_id > 0 && !child_carries_icon {
-                            list.push(DisplayItem::Icon {
-                                rect: abs_content,
-                                icon_id,
-                                color: style.color,
-                            });
+                        // An empty `data-icon` is not an icon (e.g. menu items
+                        // with no icon set the attribute to ""). Skip it so we
+                        // never paint a placeholder on an icon-less row.
+                        if !icon_name.is_empty() {
+                            let child_carries_icon = doc
+                                .children(layout_box.node)
+                                .iter()
+                                .any(|&child| doc.get_attribute(child, "data-icon").is_some());
+                            // Emit for ANY non-empty name, even an unmapped one
+                            // (id 0): the renderer draws a visible placeholder
+                            // glyph for id 0 so a future unmapped icon is
+                            // debuggable rather than silently blank.
+                            let icon_id = icon_id_for_name(&icon_name);
+                            if !child_carries_icon {
+                                list.push(DisplayItem::Icon {
+                                    rect: abs_content,
+                                    icon_id,
+                                    color: style.color,
+                                });
+                            }
                         }
                     }
 

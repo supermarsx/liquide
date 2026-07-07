@@ -2,33 +2,152 @@
 //!
 //! Maps named icon identifiers (from DOM `data-icon` attributes) to the
 //! numeric IDs used by the renderer's built-in vector icon system.
-//! This is the single source of truth for icon name resolution.
+//! This is the **single source of truth** for icon name resolution: the
+//! duplicate helper in `liquide-shell/src/scene_builder.rs` delegates here so
+//! the two cannot drift.
+//!
+//! The numeric IDs form the shared contract with the renderer's glyph table
+//! (`liquide-renderer-cpu/src/icons.rs`): `icon_id_from_u32` must decode every
+//! non-zero ID produced here, and every ID must have vector art. Keep the two
+//! tables in sync — the id/glyph coverage test in the renderer asserts it.
+//!
+//! ## Fallback policy
+//! An unrecognised (but non-empty) name resolves to `0`. The painter still
+//! emits an icon display item for id `0`, and the renderer draws a visible
+//! **placeholder** glyph (a bordered box with a dot) so a future unmapped icon
+//! is visible and debuggable rather than silently blank. Empty names are not
+//! icons and are skipped by the painter.
 
 /// Map a named icon string to the numeric icon ID used by the renderer.
 ///
-/// Returns 0 for unrecognised names (the renderer draws a simple filled
-/// rect as a fallback for unknown IDs).
+/// Returns 0 for unrecognised names. The renderer draws a visible placeholder
+/// glyph for id 0 (see module docs), so an unmapped name is never blank.
+///
+/// The numeric IDs correspond 1:1 with `IconId` in
+/// `liquide-renderer-cpu/src/icons.rs`.
 #[must_use]
 pub fn icon_id_for_name(name: &str) -> u32 {
     match name {
-        "folder" | "file-manager" => 1,
-        "terminal" | "console" | "utilities-terminal" => 2,
-        "web-browser" | "browser" | "internet-web-browser" => 3,
-        "preferences-system" | "settings" | "system-preferences" => 4,
+        // ── 1: Folder / file manager (generic folder glyph) ──
+        "folder" | "file-manager" | "system-file-manager" | "folder-documents"
+        | "folder-download" | "folder-downloads" | "folder-music" | "folder-pictures"
+        | "folder-videos" | "folder-desktop" | "user-desktop" | "folder-code"
+        | "folder-temp" => 1,
+
+        // ── 2: Terminal / console ──
+        "terminal" | "console" | "utilities-terminal" | "system-run" => 2,
+
+        // ── 3: Web browser / globe ──
+        "web-browser" | "browser" | "internet-web-browser" | "globe" => 3,
+
+        // ── 4: System settings / gear (generic preferences) ──
+        "preferences-system" | "settings" | "system-preferences" | "gear" | "system-ui"
+        | "preferences-other" | "preferences-system-windows" | "preferences-system-privacy"
+        | "preferences-desktop-peripherals" | "preferences-desktop-accessibility"
+        | "preferences-desktop-locale" => 4,
+
+        // ── 5: Calculator ──
         "calculator" | "accessories-calculator" => 5,
-        "text-editor" | "accessories-text-editor" => 6,
+
+        // ── 6: Text editor / document (page glyph) ──
+        "text-editor" | "accessories-text-editor" | "text-x-generic" | "text-plain"
+        | "text-x-uri" | "text-x-source" | "text-x-markup" | "document-open"
+        | "document-copy" | "document-multiple" | "document-properties"
+        | "application-pdf" => 6,
+
+        // ── 7: Music / audio file ──
         "audio-x-generic" | "music" | "multimedia-audio-player" => 7,
+
+        // ── 8: Camera / photo ──
         "camera" | "camera-photo" => 8,
+
+        // ── 9: Mail / envelope ──
         "mail" | "internet-mail" => 9,
+
+        // ── 10: Calendar ──
         "calendar" | "office-calendar" => 10,
-        "clock" | "preferences-clock" => 11,
+
+        // ── 11: Clock / time ──
+        "clock" | "preferences-clock" | "preferences-system-time" => 11,
+
+        // ── 12: Wi-Fi / wireless ──
         "network-wireless" | "wifi" => 12,
-        "battery" | "battery-full" => 13,
-        "notification" | "preferences-desktop-notification" => 14,
+
+        // ── 13: Battery ──
+        "battery" | "battery-full" | "battery-low" | "battery-critical" => 13,
+
+        // ── 14: Notification / bell (also generic info) ──
+        "notification" | "preferences-desktop-notification"
+        | "preferences-desktop-notifications" | "dialog-information" => 14,
+
+        // ── 15: Search / find ──
         "search" | "system-search" | "edit-find" => 15,
-        "power" | "system-shutdown" => 16,
-        "audio-volume-high" | "volume" => 17,
-        "user-trash" | "trash" => 18,
+
+        // ── 16: Power / shutdown ──
+        "power" | "system-shutdown" | "system-reboot" | "system-suspend"
+        | "preferences-system-power" => 16,
+
+        // ── 17: Volume / sound ──
+        "audio-volume-high" | "volume" | "audio-volume" | "audio-volume-change"
+        | "preferences-desktop-sound" | "speaker" | "audio-speakers"
+        | "audio-headphones" => 17,
+
+        // ── 18: Trash / delete ──
+        "user-trash" | "trash" | "edit-delete" => 18,
+
+        // ── 19: Home folder ──
+        "folder-home" => 19,
+
+        // ── 20: Open / new folder ──
+        "folder-open" | "folder-new" => 20,
+
+        // ── 21: Starred / favourite ──
+        "starred" | "bookmark" => 21,
+
+        // ── 22: Recent documents ──
+        "document-open-recent" => 22,
+
+        // ── 23: Network server / wired ──
+        "network-server" | "network-wired" | "network-workgroup" | "network-manager"
+        | "network-monitor" | "preferences-system-network" => 23,
+
+        // ── 24: Lock / password ──
+        "lock" | "dialog-password" => 24,
+
+        // ── 25: Warning / error ──
+        "warning" | "dialog-warning" | "dialog-error" => 25,
+
+        // ── 26: Edit / pencil ──
+        "edit-cut" | "edit-copy" | "edit-paste" | "edit-undo" | "edit-redo"
+        | "edit" | "document-edit" => 26,
+
+        // ── 27: Package / archive ──
+        "package-x-generic" | "package-install" | "package-remove" | "package-upgrade"
+        | "application-x-generic" | "system-update" => 27,
+
+        // ── 28: Window minimize ──
+        "window-minimize" | "minus" => 28,
+
+        // ── 29: Window maximize ──
+        "window-maximize" | "maximize" => 29,
+
+        // ── 30: Wallpaper / picture ──
+        "preferences-desktop-wallpaper" | "preferences-desktop-theme"
+        | "image-x-generic" | "image-viewer" => 30,
+
+        // ── 31: Display / monitor ──
+        "preferences-desktop-display" => 31,
+
+        // ── 32: User / person ──
+        "user-avatar" | "system-users" => 32,
+
+        // ── 33: Disk drive ──
+        "drive-harddisk" | "drive-removable" | "drive-removable-media"
+        | "media-eject" => 33,
+
+        // ── 34: Window close / X ──
+        "window-close" | "x" => 34,
+
         _ => 0,
     }
 }
@@ -50,5 +169,76 @@ mod tests {
     fn unknown_icon_returns_zero() {
         assert_eq!(icon_id_for_name("nonexistent"), 0);
         assert_eq!(icon_id_for_name(""), 0);
+    }
+
+    /// The previously-blank names named in the visual-bug hunt (symptom 1)
+    /// must now resolve to non-zero IDs. Teeth: any of these mapping back to 0
+    /// (a regression) turns this test RED.
+    #[test]
+    fn previously_blank_names_now_resolve() {
+        for name in [
+            "preferences-desktop-wallpaper",
+            "folder-home",
+            "starred",
+            "document-open-recent",
+            "network-server",
+            "globe",
+            "gear",
+            "lock",
+            "warning",
+            "battery-low",
+            "folder-open",
+            "folder-new",
+            "edit-cut",
+            "edit-copy",
+            "edit-paste",
+            "package-x-generic",
+            "window-minimize",
+            "window-maximize",
+        ] {
+            assert_ne!(icon_id_for_name(name), 0, "`{name}` must map to a glyph");
+        }
+    }
+
+    /// Every `data-icon` name that is actually produced somewhere in the
+    /// codebase must resolve to a non-zero ID (so it renders a real glyph, not
+    /// the placeholder). Enumerated from the icon producers: context-menu
+    /// presets, Files sidebar/places/favorites, settings schema, session menu,
+    /// dialogs, notifications, tray, dock, launcher. Teeth: a used name mapping
+    /// to 0 turns this RED.
+    #[test]
+    fn all_used_names_resolve() {
+        const USED: &[&str] = &[
+            // context-menu presets
+            "camera", "terminal", "folder", "web-browser", "preferences-system",
+            "edit-paste", "folder-new", "edit-cut", "edit-copy", "package-x-generic",
+            "document-properties", "edit-undo", "edit-redo", "window-minimize",
+            "window-maximize", "edit-delete", "document-open",
+            // Files sidebar / places / favorites / file picker
+            "folder-home", "user-trash", "document-open-recent", "starred",
+            "system-search", "network-server", "folder-documents", "folder-download",
+            "folder-downloads", "folder-music", "folder-pictures", "folder-videos",
+            "folder-desktop",
+            // settings schema categories
+            "preferences-desktop-theme", "preferences-desktop-wallpaper",
+            "preferences-desktop-display", "preferences-system-windows",
+            "preferences-desktop-peripherals", "preferences-system-power",
+            "preferences-desktop-notifications", "preferences-desktop-accessibility",
+            "preferences-system-privacy", "preferences-desktop-sound",
+            "preferences-system-network", "preferences-desktop-locale",
+            "preferences-other",
+            // session / status / dialogs / notifications / launcher
+            "power", "lock", "clock", "battery", "volume", "search", "globe",
+            "gear", "warning", "battery-low", "mail", "folder-open",
+            // window-decoration button glyphs (asset template)
+            "minus", "maximize", "x",
+        ];
+        for name in USED {
+            assert_ne!(
+                icon_id_for_name(name),
+                0,
+                "used data-icon name `{name}` resolves to blank (id 0)"
+            );
+        }
     }
 }
