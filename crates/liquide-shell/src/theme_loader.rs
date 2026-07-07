@@ -208,6 +208,30 @@ pub fn css_to_shell_theme(engine: &ThemeEngine) -> ShellTheme {
         menu_separator: query_color(engine, "menu-separator", &[], &[], "background")
             .unwrap_or_else(|| Color::new(255, 255, 255, 31)), // rgba(255,255,255,0.12)
 
+        // Tooltip — sourced from the `tooltip-content` element, whose background /
+        // color / border / radius / shadow resolve the `--tooltip-*` custom
+        // properties (variables.css + per-theme overrides such as macos_dark.css).
+        // This is the single source that makes the imperative dock-hover bubble
+        // (scene.rs::add_tooltip_overlay) read the SAME colors the CSS tooltip
+        // track describes — fixing the white-box bug where the bubble incorrectly
+        // pulled `launcher_search_bar`.
+        tooltip_bg: query_color(engine, "tooltip-content", &[], &[], "background")
+            .unwrap_or_else(|| Color::new(39, 39, 42, 245)), // rgba(39,39,42,0.96)
+
+        tooltip_text: query_color(engine, "tooltip-content", &[], &[], "color")
+            .unwrap_or_else(|| Color::new(250, 250, 250, 235)), // rgba(250,250,250,0.92)
+
+        tooltip_border: query_color(engine, "tooltip-content", &[], &[], "border-color")
+            .or_else(|| query_color(engine, "tooltip-content", &[], &[], "border-top-color"))
+            .unwrap_or_else(|| Color::new(255, 255, 255, 26)), // rgba(255,255,255,0.10)
+
+        tooltip_radius: query_number(engine, "tooltip-content", &[], &[], "border-radius")
+            .filter(|r| r.is_finite() && *r >= 0.0)
+            .unwrap_or(6.0),
+
+        tooltip_shadow: query_color(engine, "tooltip-content", &[], &[], "box-shadow-color")
+            .unwrap_or_else(|| Color::new(0, 0, 0, 115)), // rgba(0,0,0,0.45)
+
         // Loading overlay
         loading_overlay: query_color(engine, "loading-overlay", &[], &[], "background")
             .unwrap_or_else(|| Color::new(20, 20, 40, 217)), // rgba(20,20,40,0.85)

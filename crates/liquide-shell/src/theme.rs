@@ -90,6 +90,18 @@ pub struct ShellTheme {
     /// Background color for menu separators.
     pub menu_separator: Color,
 
+    // Tooltip (dock-hover bubble)
+    /// Background fill for the tooltip bubble (CSS `--tooltip-bg`).
+    pub tooltip_bg: Color,
+    /// Text color for the tooltip label (CSS `--tooltip-text`).
+    pub tooltip_text: Color,
+    /// Border color for the tooltip bubble (CSS `--tooltip-border`).
+    pub tooltip_border: Color,
+    /// Corner radius (logical px) for the tooltip bubble (CSS `--tooltip-radius`).
+    pub tooltip_radius: f32,
+    /// Drop-shadow color for the tooltip bubble (CSS `--shadow-medium` color).
+    pub tooltip_shadow: Color,
+
     // Loading overlay
     /// Full-screen loading overlay tint.
     pub loading_overlay: Color,
@@ -165,6 +177,16 @@ impl ShellTheme {
             cursor_scale: 1.0,
             menu_item_hover: Color::new(255, 255, 255, 40),
             menu_separator: Color::new(255, 255, 255, 40),
+
+            // Tooltip — macOS-restrained dark bubble: near-opaque dark fill,
+            // light text, hairline border, subtle drop shadow. Matches the
+            // `--tooltip-*` tokens in variables.css so the imperative bubble reads
+            // the same as the CSS spec even on the fallback path.
+            tooltip_bg: Color::new(39, 39, 42, 245),
+            tooltip_text: Color::new(250, 250, 250, 235),
+            tooltip_border: Color::new(255, 255, 255, 26),
+            tooltip_radius: 6.0,
+            tooltip_shadow: Color::new(0, 0, 0, 115),
 
             // Loading overlay
             loading_overlay: Color::new(0, 0, 0, 180),
@@ -276,5 +298,100 @@ mod tests {
             a >= 200,
             "macos_dark window-content must stay mostly opaque (>=200) for text readability, got {a}"
         );
+    }
+
+    fn resolve_theme(css: &str) -> ShellTheme {
+        let stylesheet = ThemeParser::new().parse_str(css).unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+        css_to_shell_theme(&engine)
+    }
+
+    /// fix-tooltip-render POLISH (color source): the tooltip colors must resolve
+    /// from the `--tooltip-*` tokens on `tooltip-content` — a DARK fill + LIGHT
+    /// text with real contrast, and the radius from `--tooltip-radius`.
+    ///
+    /// Teeth (no-fake-green): before the fix the imperative bubble read
+    /// `launcher_search_bar` (light) and rendered a white, unreadable box. This
+    /// asserts the resolver both EXPOSES a tooltip entry and sources it from the
+    /// tooltip tokens (var() resolved). A non-default radius (9) proves the radius
+    /// is genuinely CSS-sourced, not just the 6px fallback.
+    #[test]
+    fn tooltip_colors_resolve_from_tooltip_tokens_dark_bg_light_text() {
+        let css = "\
+            :root { \
+              --tooltip-bg: rgba(39, 39, 42, 0.96); \
+              --tooltip-text: rgba(250, 250, 250, 0.92); \
+              --tooltip-border: rgba(255, 255, 255, 0.10); \
+              --tooltip-radius: 9; \
+            } \
+            tooltip-content { \
+              background: var(--tooltip-bg); \
+              color: var(--tooltip-text); \
+              border-color: var(--tooltip-border); \
+              border-radius: var(--tooltip-radius); \
+            }";
+        let t = resolve_theme(css);
+        assert!(
+            t.tooltip_bg.r < 80 && t.tooltip_bg.g < 80 && t.tooltip_bg.b < 80,
+            "tooltip_bg must resolve DARK from --tooltip-bg, got {:?}",
+            t.tooltip_bg
+        );
+        assert!(
+            t.tooltip_text.r > 200 && t.tooltip_text.g > 200 && t.tooltip_text.b > 200,
+            "tooltip_text must resolve LIGHT from --tooltip-text, got {:?}",
+            t.tooltip_text
+        );
+        let lum = |c: Color| c.r as u32 + c.g as u32 + c.b as u32;
+        assert!(
+            lum(t.tooltip_text) > lum(t.tooltip_bg) + 300,
+            "tooltip label vs fill must have real contrast (NOT the white-on-white \
+             box); bg={:?} text={:?}",
+            t.tooltip_bg,
+            t.tooltip_text
+        );
+        assert!(
+            (t.tooltip_radius - 9.0).abs() < 0.5,
+            "tooltip_radius must resolve from --tooltip-radius (9), got {} — is the \
+             radius genuinely CSS-sourced?",
+            t.tooltip_radius
+        );
+    }
+
+    /// The shipped macOS-Dark theme's tooltip tokens must resolve to a dark,
+    /// readable bubble through the REAL asset cascade (variables + components +
+    /// theme) — the exact scenario that rendered a white box before the fix.
+    #[test]
+    fn macos_dark_tooltip_is_dark_with_light_text() {
+        let css = concat!(
+            include_str!("../../../assets/themes/variables.css"),
+            include_str!("../../../assets/themes/components/tooltip.css"),
+            include_str!("../../../assets/themes/macos_dark.css"),
+        );
+        let t = resolve_theme(css);
+        let lum = |c: Color| c.r as u32 + c.g as u32 + c.b as u32;
+        assert!(
+            lum(t.tooltip_bg) < 300,
+            "macos_dark tooltip fill must be dark, got {:?}",
+            t.tooltip_bg
+        );
+        assert!(
+            lum(t.tooltip_text) > 600,
+            "macos_dark tooltip text must be light, got {:?}",
+            t.tooltip_text
+        );
+    }
+
+    /// The hardcoded fallback must ALSO ship a dark, readable tooltip (a parse
+    /// failure must not silently reinstate the white box).
+    #[test]
+    fn default_dark_tooltip_is_dark_with_light_text() {
+        let t = ShellTheme::default_dark();
+        let lum = |c: Color| c.r as u32 + c.g as u32 + c.b as u32;
+        assert!(lum(t.tooltip_bg) < 300, "fallback tooltip fill must be dark");
+        assert!(
+            lum(t.tooltip_text) > 600,
+            "fallback tooltip text must be light"
+        );
+        assert!(t.tooltip_radius > 0.0, "fallback tooltip must be rounded");
     }
 }

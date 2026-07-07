@@ -85,11 +85,23 @@ impl Shell {
         // per-frame *drive* into the render path (`sync_tooltip_template`,
         // dom_sync.rs), which advances the show-delay / fade lifecycle in the
         // F07-safe order regardless of tick↔render ordering across the
-        // render-thread boundary. Tick only *reads* the manager's current
-        // visibility for its redraw hint (driving here too would double-advance
-        // the dwell). The render path is the retirement replacement for the old
-        // hand-rolled `tooltip_timer_us` 400 ms dwell.
-        let tooltip_visible = self.tooltip_manager_visible();
+        // render-thread boundary. Tick only *reads* the manager's current state
+        // for its redraw hint (driving here too would double-advance the dwell).
+        //
+        // JANK fix: previously ANY visible tooltip forced `dirty=true` every
+        // frame, which — combined with the scene-cache bypass — re-ran the whole
+        // CSS chrome pipeline at ~60fps for the entire hover (the caret-blink
+        // full-repaint class of bug). Now we only request a redraw while the fade
+        // is ANIMATING or on the settle/erase edge (opacity changed vs last tick).
+        // A STEADY tooltip (fade complete, opacity == 1.0, unchanged) requests NO
+        // frame, so the idle full-scene cache serves it (a cache HIT with zero
+        // damage) instead of rebuilding the chrome.
+        let tooltip_opacity = self
+            .chrome_tooltip
+            .as_ref()
+            .filter(|_| self.tooltip_manager_visible())
+            .map_or(0.0, liquide_tooltip::TooltipManager::opacity);
+        let tooltip_dirty = self.full_scene_cache.tick_tooltip_dirty(tooltip_opacity);
 
         ShellTickResult {
             dirty: bar_dirty
@@ -98,7 +110,7 @@ impl Shell {
                 || auto_hide_dirty
                 || app_views_dirty
                 || window_effects_dirty
-                || tooltip_visible,
+                || tooltip_dirty,
             status_bar_dirty: bar_dirty,
             notifications_dirty: !expired.is_empty(),
             windows_dirty: repatriation_dirty || app_views_dirty || window_effects_dirty,

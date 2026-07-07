@@ -159,28 +159,49 @@ fn tooltip_position_above_dock_item() {
 }
 
 #[test]
-fn tooltip_position_x_follows_mouse() {
+fn tooltip_position_x_anchored_to_item_center() {
+    // TEETH (fix-tooltip-position): the tooltip x is anchored to the hovered
+    // dock item's CENTER, not the cursor. Two different cursor-x positions over
+    // the SAME item must therefore produce the IDENTICAL tip x. Before the fix
+    // `tip_x = cursor_x - tip_w/2` tracked the pointer, so the two positions
+    // differed by the cursor delta → this assertion goes RED on that revert.
     let mut shell = Shell::new(1920.0, 1080.0);
     let item_rects = shell.dock.compute_item_rects(shell.screen_rect);
     let (_, first_rect) = &item_rects[0];
-    // Use a mouse X that is NOT the item center — offset slightly to the right.
-    let mouse_x = first_rect.x + first_rect.width / 2.0 + 5.0;
+    let center_x = first_rect.x + first_rect.width / 2.0;
+    let mid_y = first_rect.y + first_rect.height / 2.0;
 
-    shell.handle_platform_event(&make_mouse_move(
-        mouse_x,
-        first_rect.y + first_rect.height / 2.0,
-    ));
-    // Tooltip x should be centered on mouse, clamped to screen using approximate width.
-    let label = shell.tooltip_text.as_ref().unwrap();
-    let tip_w = (label.len() as f32 * 7.0 + 16.0).max(40.0_f32).min(300.0);
-    let expected_x = (mouse_x - tip_w / 2.0)
-        .max(4.0_f32)
-        .min(1920.0 - tip_w - 4.0);
+    // Cursor A: left of center, still inside the item.
+    let cursor_a = center_x - first_rect.width / 4.0;
+    shell.handle_platform_event(&make_mouse_move(cursor_a, mid_y));
+    assert!(shell.tooltip_text.is_some(), "tooltip must show over item");
+    let x_a = shell.tooltip_pos.x;
+
+    // Cursor B: right of center, same item — a distinctly different cursor x.
+    let cursor_b = center_x + first_rect.width / 4.0;
+    shell.handle_platform_event(&make_mouse_move(cursor_b, mid_y));
+    let x_b = shell.tooltip_pos.x;
+
     assert!(
-        (shell.tooltip_pos.x - expected_x).abs() < 0.01,
-        "tooltip x should follow mouse position (expected={}, got={})",
-        expected_x,
-        shell.tooltip_pos.x,
+        (cursor_a - cursor_b).abs() > 1.0,
+        "test precondition: the two cursor x's must actually differ",
+    );
+    assert!(
+        (x_a - x_b).abs() < 0.01,
+        "tip x must be steady across cursor moves within the same item \
+         (anchored, not cursor-tracking): x_a={x_a}, x_b={x_b}",
+    );
+
+    // And it must be the item-center anchor (minus half the bubble width),
+    // single-sourced with scene.rs::tooltip_overlay_rect's width estimate.
+    let label = shell.tooltip_text.as_ref().unwrap();
+    let tip_w = (label.chars().count() as f32 * 7.0 + 16.0).clamp(40.0, 300.0);
+    let expected_x = (center_x - tip_w / 2.0)
+        .max(4.0_f32)
+        .min((1920.0 - tip_w - 4.0).max(4.0));
+    assert!(
+        (x_a - expected_x).abs() < 0.01,
+        "tip x should equal item-center anchor (expected={expected_x}, got={x_a})",
     );
 }
 

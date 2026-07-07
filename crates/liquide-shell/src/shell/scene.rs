@@ -336,6 +336,28 @@ enum TransientOverlay {
     NotificationCenter,
 }
 
+/// Signature of the painted dock-hover tooltip, capturing everything that
+/// affects its pixels: geometry, label, and quantised fade opacity.
+///
+/// The full-scene cache stores the signature of the tooltip baked into the
+/// cached root; a later frame whose tooltip signature is byte-for-byte identical
+/// (a STEADY, fade-complete hover that hasn't moved) can therefore reuse the
+/// cached root — the tooltip in it is already correct. A change (appear / move /
+/// fade step / dismiss) makes the signatures differ, so the cache misses and the
+/// frame rebuilds. This is what lets a held tooltip stop re-running the whole CSS
+/// chrome pipeline every frame (jank fix) without ever serving a stale bubble.
+#[derive(Debug, Clone, PartialEq)]
+struct TooltipSig {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    text: String,
+    /// Opacity quantised to 1/1000 so exact float equality is stable frame over
+    /// frame for an unchanging tooltip.
+    opacity_q: u16,
+}
+
 /// Assign each pipeline node its final `z_order`, splitting the stream into a
 /// background band and a chrome overlay band.
 ///
@@ -575,6 +597,23 @@ pub(crate) struct FullSceneCache {
     /// can record without threading `&mut` through the scene build; the damage path
     /// reads it (before the build overwrites it) via `&mut self`.
     app_content_baseline: std::cell::RefCell<std::collections::HashMap<u64, liquide_interop::AppContentView>>,
+    /// Signature of the dock-hover tooltip baked into the currently cached root
+    /// (jank fix). `None` when the cached root carries no tooltip. The idle
+    /// fast-path serves the cached root only when THIS frame's tooltip signature
+    /// equals this — i.e. a steady, unchanged bubble — so a held tooltip no longer
+    /// forces a full CSS-chrome rebuild every frame, yet an appear/move/fade/hide
+    /// always misses and repaints.
+    tooltip_sig: Option<TooltipSig>,
+    /// The tooltip fade opacity applied on the PREVIOUS full-scene build, so the
+    /// damage path can re-damage the (geometrically stable) tooltip rect while its
+    /// opacity is still ramping — a pure fade changes no geometry, so the OLD∪NEW
+    /// footprint diff alone would miss it. `None` when the previous build painted
+    /// no tooltip.
+    last_tooltip_opacity: Option<f32>,
+    /// The tooltip fade opacity `tick_detailed` last observed, used to emit a
+    /// redraw request only while the fade is animating or on the settle/erase
+    /// edge — a STEADY tooltip requests no frame so the idle cache serves it.
+    tick_tooltip_opacity: f32,
     /// Per-frame memo of the app-content model the DAMAGE path already computed
     /// for a changed window, so the subsequent `build_app_view_content` reuses it
     /// instead of calling the app's `content_view` a SECOND time (the damage diff
@@ -594,6 +633,9 @@ impl FullSceneCache {
             last_overlay_rects: std::collections::HashMap::new(),
             app_content_baseline: std::cell::RefCell::new(std::collections::HashMap::new()),
             pending_models: std::cell::RefCell::new(std::collections::HashMap::new()),
+            tooltip_sig: None,
+            last_tooltip_opacity: None,
+            tick_tooltip_opacity: 0.0,
         }
     }
 
@@ -648,6 +690,37 @@ impl FullSceneCache {
     /// The surface-cache keys emitted for the most recently built scene.
     fn surface_keys(&self) -> &[SurfaceKey] {
         &self.surface_keys
+    }
+
+    /// Signature of the tooltip baked into the currently cached root.
+    fn tooltip_sig(&self) -> &Option<TooltipSig> {
+        &self.tooltip_sig
+    }
+
+    /// Record the tooltip signature of the root built this frame.
+    fn set_tooltip_sig(&mut self, sig: Option<TooltipSig>) {
+        self.tooltip_sig = sig;
+    }
+
+    /// Fade opacity of the tooltip painted on the previous full-scene build.
+    fn last_tooltip_opacity(&self) -> Option<f32> {
+        self.last_tooltip_opacity
+    }
+
+    /// Record the tooltip fade opacity painted this build for next frame's diff.
+    fn set_last_tooltip_opacity(&mut self, opacity: Option<f32>) {
+        self.last_tooltip_opacity = opacity;
+    }
+
+    /// Report the current tooltip fade opacity from `tick`; returns `true` while a
+    /// redraw must be requested (the fade is animating, or the opacity changed vs
+    /// the previous tick — the appear / settle / erase edge). A steady tooltip
+    /// (opacity unchanged) returns `false` so the idle cache can serve the frame.
+    pub(crate) fn tick_tooltip_dirty(&mut self, opacity: f32) -> bool {
+        let changed = (opacity - self.tick_tooltip_opacity).abs() > f32::EPSILON;
+        self.tick_tooltip_opacity = opacity;
+        let fading = opacity > 0.0 && opacity < 1.0;
+        changed || fading
     }
 
     /// Mark the cache stale so the next `build_scene` rebuilds.
@@ -1746,6 +1819,35 @@ impl Shell {
             }
         }
 
+        // ── Tooltip FADE re-damage (fix: TIMING fade painted no ramp) ─────────
+        // A tooltip fade changes only the bubble's OPACITY, not its geometry, so
+        // the OLD∪NEW footprint diff above (keyed on rects) misses it entirely —
+        // the rect is identical frame-to-frame while the pixels ramp. When the
+        // tooltip is present with the SAME rect but a DIFFERENT fade opacity than
+        // the previous build, damage its rect (+ shadow/blur margin) so the ramp
+        // actually repaints. A STEADY tooltip (opacity unchanged) adds nothing, so
+        // a held hover stays confined to zero damage. This block only computes
+        // tooltip DAMAGE — it never serves the scene cache (that decision was made
+        // above). The painted opacity is recorded below so the NEXT rebuild's diff
+        // is correct; it is recorded on every rebuild path through this function
+        // (including the conservative full-fallback `return`s further down, where
+        // the full repaint already covers the tooltip).
+        let tooltip_opacity_now = self.tooltip_overlay_rect().map(|_| self.tooltip_opacity());
+        if let Some(rect) = self.tooltip_overlay_rect() {
+            let now = self.tooltip_opacity();
+            let faded = self
+                .full_scene_cache
+                .last_tooltip_opacity()
+                .is_some_and(|prev| (prev - now).abs() > f32::EPSILON);
+            if faded {
+                if let Some(e) = expand(rect) {
+                    overlay_damage.push(e);
+                }
+            }
+        }
+        self.full_scene_cache
+            .set_last_tooltip_opacity(tooltip_opacity_now);
+
         // ── Caret BLINK confinement (fix: blink forced a full-screen repaint) ──
         // The 500 ms caret blink flips `cursor_blink_on`, which toggles the caret
         // node in the MANUAL window subtree — NOT the CSS layout tree, so it never
@@ -2092,27 +2194,49 @@ impl Shell {
         //       AND the pipeline's cached chrome output is stable (caches
         //       populated, no animation/transition) — so the chrome subtree is
         //       byte-identical to last frame;
-        //   (c) the timer-driven dock-hover tooltip overlay is neither visible
-        //       now nor was visible last frame (it can flip from elapsed time
-        //       alone, with no DOM/state mutation), so a cached root can never
-        //       drop its appearance/disappearance.
+        //   (c) the timer-driven dock-hover tooltip overlay paints IDENTICAL
+        //       pixels to the cached root — either neither frame had a tooltip, OR
+        //       a STEADY (fade-complete, unmoved) tooltip whose signature (rect +
+        //       label + fade opacity) is byte-for-byte unchanged. A held tooltip
+        //       therefore HITS the cache (jank fix: it no longer forces a full CSS
+        //       chrome rebuild every frame); an appear / move / fade step / dismiss
+        //       changes the signature and misses, so the bubble is never stale.
         // The hit-test engine, pending images, and pipeline caches all stay
         // valid across a hit because they reflect the same unchanged frame.
-        let tooltip_visible_now = self.tooltip_manager_visible();
+        let tooltip_sig_now = self.tooltip_paint_sig();
+        let tooltip_visible_now = tooltip_sig_now.is_some();
+        // Fast path (no signature allocation) for the common case: neither this
+        // frame nor the cached root carried a tooltip. Otherwise fall back to the
+        // exact signature comparison (a steady, unchanged bubble → reuse).
+        let tooltip_reusable = if !tooltip_visible_now && !self.last_full_scene_tooltip_visible {
+            true
+        } else {
+            tooltip_sig_now == *self.full_scene_cache.tooltip_sig()
+        };
+        // Reuse the cached root ONLY when the frame is provably idle. This keeps
+        // EVERY pre-existing hit condition intact — the cache is not dirty (no
+        // window/state/theme/overlay/DOM mutation, no blink) AND `chrome_stable`
+        // (sync_dom mutated nothing this frame AND the pipeline's chrome output is
+        // stable) — so a context-menu / launcher / notification / dropdown that is
+        // present-and-changing ALWAYS trips `chrome_changed` (or `dirty()`) and
+        // rebuilds exactly as before. The tooltip signature is folded in as an
+        // ADDITIONAL necessary condition, never a relaxation: `tooltip_reusable`
+        // is `true` for the no-tooltip case (identical to the historic
+        // `!tooltip_visible && !was_visible` gate) and, for a visible tooltip,
+        // requires the painted signature to match the cached root's — so only a
+        // truly-idle, held-STEADY tooltip may hit, and any appear/move/fade/dismiss
+        // misses. A hit therefore NEVER serves a stale root for a non-tooltip
+        // overlay.
         let chrome_stable = !chrome_changed && self.css_pipeline.chrome_output_stable();
-        if !self.full_scene_cache.dirty()
-            && chrome_stable
-            && !tooltip_visible_now
-            && !self.last_full_scene_tooltip_visible
-        {
+        if !self.full_scene_cache.dirty() && chrome_stable && tooltip_reusable {
             if let Some(cached) = self.full_scene_cache.node_clone() {
                 self.full_scene_cache.record_hit();
-                self.last_full_scene_tooltip_visible = false;
                 return cached;
             }
         }
         self.full_scene_cache.record_miss();
         self.last_full_scene_tooltip_visible = tooltip_visible_now;
+        self.full_scene_cache.set_tooltip_sig(tooltip_sig_now);
 
         // ── Run the CSS pipeline (all shell chrome) ─────────
         let (pipeline_nodes, pipeline_output, _animations_active) =
@@ -2434,6 +2558,36 @@ impl Shell {
     /// damage the OLD (∪ new) footprint on an appear/move/hide transition so the
     /// removed/moved bubble is repainted (no ghost). Returns `Some` iff the
     /// canonical manager reports the tooltip visible AND a non-empty label is set.
+    /// Current fade opacity (0.0–1.0) of the dock-hover tooltip, read from the
+    /// canonical [`liquide_tooltip::TooltipManager`]. `1.0` when no manager exists
+    /// (a tooltip won't paint in that case anyway). The manager ramps this during
+    /// FadingIn → 1.0 (Visible) → FadingOut, so applying it to the painted bubble
+    /// gives the soft appear/dismiss the diag flagged as missing (hard pop).
+    pub(crate) fn tooltip_opacity(&self) -> f32 {
+        self.chrome_tooltip
+            .as_ref()
+            .map_or(1.0, liquide_tooltip::TooltipManager::opacity)
+    }
+
+    /// Signature of the tooltip that WILL be painted this frame (geometry + label
+    /// + quantised opacity), or `None` when none will be drawn. Drives the
+    /// full-scene cache-hit gate: two frames with equal signatures paint identical
+    /// tooltip pixels, so the cached root is reusable (steady-tooltip cache hit).
+    fn tooltip_paint_sig(&self) -> Option<TooltipSig> {
+        let rect = self.tooltip_overlay_rect()?;
+        // `tooltip_overlay_rect` already guaranteed a non-empty label.
+        let text = self.tooltip_text.clone()?;
+        let opacity_q = (self.tooltip_opacity().clamp(0.0, 1.0) * 1000.0 + 0.5) as u16;
+        Some(TooltipSig {
+            x: rect.x,
+            y: rect.y,
+            w: rect.width,
+            h: rect.height,
+            text,
+            opacity_q,
+        })
+    }
+
     pub(crate) fn tooltip_overlay_rect(&self) -> Option<Rect> {
         if !self.tooltip_manager_visible() {
             return None;
@@ -2483,54 +2637,107 @@ impl Shell {
         let pad_x = 8.0_f32;
         let pad_y = 5.0_f32;
 
-        use liquide_compositor::scene::GlassParams;
+        use liquide_compositor::scene::{
+            BorderSide, BorderSideStyle, BorderSides, GlassParams,
+        };
 
-        // Glass backing so the bubble reads as a frosted overlay.
+        // Fade opacity from the canonical manager (FadingIn → 1.0 → FadingOut).
+        // Applied to EVERY tooltip node so the bubble ramps in/out instead of
+        // hard-popping (fix: TIMING fade discarded). A steady (Visible) tooltip
+        // reports 1.0, so a held hover is byte-stable — the value the scene cache
+        // hit-gate keys on to stop the per-frame chrome rebuild.
+        let opacity = self.tooltip_opacity().clamp(0.0, 1.0);
+
+        // macOS-restrained bubble: rounded corners + full border + soft drop
+        // shadow, all sourced from the `--tooltip-*` CSS tokens via `ShellTheme`
+        // (NOT the wrong `launcher_search_bar` struct that rendered a white box).
+        let radius = self.theme.tooltip_radius.max(0.0);
+        let corners = (radius, radius, radius, radius);
+
+        // (0) Soft drop shadow behind the bubble — a subtle offset+blur so the
+        // bubble floats. Baked offset (y+2) since Shadow nodes paint at offset 0.
+        let shadow_bounds = Rect::new(bubble.x, bubble.y + 2.0, bubble.width, bubble.height);
         root.add_child(SceneNode::new(
             NODE_TOOLTIP_BASE,
+            SceneNodeKind::Shadow {
+                spread: 0.0,
+                blur_radius: 12.0,
+                color: self.theme.tooltip_shadow,
+                corner_radius: radius,
+            },
+            NodeProperties::new(shadow_bounds)
+                .with_z_order(base_z)
+                .with_opacity(opacity),
+        ));
+
+        // (1) Glass backing so the bubble reads as a frosted overlay. Rounded so
+        // its tint honours the corner radius (no square corners poking out).
+        root.add_child(SceneNode::new(
+            NODE_TOOLTIP_BASE + 1,
             SceneNodeKind::Glass(GlassParams {
                 blur_radius: 10,
-                tint_color: self.theme.dock_glass_tint,
+                tint_color: self.theme.tooltip_bg,
                 inner_glow: false,
                 parallax: false,
             }),
-            NodeProperties::new(bubble).with_z_order(base_z),
+            NodeProperties::new(bubble)
+                .with_z_order(base_z + 1)
+                .with_corner_radius(corners)
+                .with_opacity(opacity),
         ));
 
-        // Solid dark fill so the bubble is unambiguously painted even when the
-        // glass blur degrades to a no-op on the fast path.
-        root.add_child(SceneNode::new(
-            NODE_TOOLTIP_BASE + 1,
-            SceneNodeKind::Background {
-                color: themed_alpha(self.theme.launcher_search_bar, 240),
-            },
-            NodeProperties::new(bubble).with_z_order(base_z + 1),
-        ));
-
-        // 1px border for definition.
+        // (2) Solid rounded fill so the bubble is unambiguously painted even when
+        // the glass blur degrades to a no-op on the fast path. Correct dark fill
+        // from `--tooltip-bg`.
         root.add_child(SceneNode::new(
             NODE_TOOLTIP_BASE + 2,
             SceneNodeKind::Background {
-                color: themed_alpha(self.theme.dock_border, 200),
+                color: self.theme.tooltip_bg,
             },
-            NodeProperties::new(Rect::new(bubble.x, bubble.y, bubble.width, 1.0))
-                .with_z_order(base_z + 2),
+            NodeProperties::new(bubble)
+                .with_z_order(base_z + 2)
+                .with_corner_radius(corners)
+                .with_opacity(opacity),
         ));
 
-        // The label text.
-        root.add_child(text_node(
+        // (3) FULL rounded border box (was a top-edge-only 1px strip).
+        let border_side = BorderSide {
+            width: 1.0,
+            style: BorderSideStyle::Solid,
+            color: self.theme.tooltip_border,
+        };
+        root.add_child(SceneNode::new(
             NODE_TOOLTIP_BASE + 3,
+            SceneNodeKind::Border {
+                sides: BorderSides {
+                    top: border_side,
+                    right: border_side,
+                    bottom: border_side,
+                    left: border_side,
+                },
+                radius: corners,
+            },
+            NodeProperties::new(bubble)
+                .with_z_order(base_z + 3)
+                .with_opacity(opacity),
+        ));
+
+        // (4) The label text — correct light color from `--tooltip-text`.
+        let mut label = text_node(
+            NODE_TOOLTIP_BASE + 4,
             text.clone(),
-            self.theme.status_bar_text,
+            self.theme.tooltip_text,
             Rect::new(
                 bubble.x + pad_x,
                 bubble.y + pad_y,
                 (bubble.width - pad_x * 2.0).max(1.0),
                 bubble.height - pad_y * 2.0,
             ),
-            base_z + 3,
+            base_z + 4,
             font_scale,
-        ));
+        );
+        label.properties.opacity = opacity;
+        root.add_child(label);
     }
 
     /// Capture cheap window thumbnails for the overview from the last composited
@@ -5442,6 +5649,312 @@ mod wallpaper_zorder_tests {
         assert!(
             z_of(&nodes, 2) > CURSOR_Z,
             "chrome content must stay above the cursor"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tooltip_render_tests {
+    //! fix-tooltip-render teeth (no-fake-green). Each asserts against the REAL
+    //! incremental/paint path and is RED before the corresponding fix:
+    //!  * POLISH — the painted bubble uses the `--tooltip-*` theme colors (dark
+    //!    fill / light text), NOT `launcher_search_bar` (RED: white box); it has a
+    //!    corner radius and its rounded corner leaves the corner pixel unfilled.
+    //!  * FADE — a mid-fade opacity (<1.0) is actually applied to painted pixels
+    //!    (RED: opacity discarded → constant paint → hard pop, identical pixels).
+    //!  * JANK — a STEADY (fade-complete, unmoved) tooltip is a full-scene cache
+    //!    HIT and requests NO per-frame redraw (RED: any visible tooltip bypassed
+    //!    the cache AND forced `dirty=true` every frame → full chrome rebuild).
+
+    use liquide_compositor::damage::{DamageClass, DamageSet};
+    use liquide_compositor::framebuffer::FrameBuffer;
+    use liquide_compositor::geometry::Point;
+    use liquide_compositor::pixel::{Color, PixelFormat};
+    use liquide_compositor::scene::{SceneNode, SceneNodeKind};
+    use liquide_renderer_cpu::{RenderMode, SoftwareRenderer};
+
+    use super::FullSceneCache;
+    use crate::shell::Shell;
+
+    const W: u32 = 1280;
+    const H: u32 = 720;
+    const TILE: u32 = 64;
+
+    // Node ids reserved by `add_tooltip_overlay` (NODE_TOOLTIP_BASE = 600_000).
+    const TOOLTIP_FILL_ID: u64 = 600_000 + 2;
+    const TOOLTIP_TEXT_ID: u64 = 600_000 + 4;
+
+    fn test_shell() -> Shell {
+        let mut shell = Shell::new(W as f32, H as f32);
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        // Pin the per-frame delta to 0 so a `build_scene` (which drives the
+        // tooltip manager via `sync_tooltip_template`) does NOT advance the fade —
+        // the manual `sync_tooltip_manager` calls below fully control the opacity.
+        shell.frame_delta_ms = 0.0;
+        shell
+    }
+
+    fn build(shell: &mut Shell) -> SceneNode {
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = u64::MAX;
+        shell.build_scene()
+    }
+
+    fn full_damage() -> DamageSet {
+        DamageSet::full(TILE, W.div_ceil(TILE), H.div_ceil(TILE), DamageClass::UiPrimitive)
+    }
+
+    fn render(nodes: &[liquide_compositor::scene::FlatNode]) -> FrameBuffer {
+        let mut rnd = SoftwareRenderer::new();
+        let mut fb = FrameBuffer::new(W, H, PixelFormat::Bgra8);
+        let _ = rnd.render_live(nodes, &mut fb, &full_damage(), RenderMode::Capture);
+        fb
+    }
+
+    /// Drive the canonical manager to fully Visible (steady, opacity 1.0).
+    fn show_steady(shell: &mut Shell, label: &str, x: f32, y: f32) {
+        shell.tooltip_text = Some(label.to_string());
+        shell.tooltip_pos = Point::new(x, y);
+        shell.sync_tooltip_manager(600.0); // Pending → FadingIn
+        shell.sync_tooltip_manager(200.0); // FadingIn → Visible
+        shell.sync_tooltip_manager(1.0); // stays Visible (opacity 1.0)
+    }
+
+    fn find_node(node: &SceneNode, id: u64) -> Option<&SceneNode> {
+        if node.id == id {
+            return Some(node);
+        }
+        node.children.iter().find_map(|c| find_node(c, id))
+    }
+
+    /// POLISH: the bubble fill + label read the `--tooltip-*` theme colors, NOT
+    /// `launcher_search_bar` (the white-box source), and the fill is rounded.
+    #[test]
+    fn tooltip_uses_tooltip_theme_colors_not_launcher_searchbar() {
+        let mut shell = test_shell();
+        // DARK fill + LIGHT text (correct source) vs a WHITE launcher_search_bar
+        // (the OLD wrong source). A regression to launcher_search_bar paints the
+        // fill white → the assertions below go RED.
+        shell.theme.tooltip_bg = Color::new(30, 31, 34, 245);
+        shell.theme.tooltip_text = Color::new(248, 249, 250, 235);
+        shell.theme.launcher_search_bar = Color::new(255, 255, 255, 240);
+        for _ in 0..3 {
+            let _ = build(&mut shell);
+        }
+        show_steady(&mut shell, "Files", 300.0, 300.0);
+        let root = build(&mut shell);
+
+        let fill = find_node(&root, TOOLTIP_FILL_ID).expect("tooltip fill node present");
+        match &fill.kind {
+            SceneNodeKind::Background { color } => {
+                assert_eq!(
+                    *color, shell.theme.tooltip_bg,
+                    "tooltip fill must use --tooltip-bg, got {color:?}"
+                );
+                assert_ne!(
+                    *color, shell.theme.launcher_search_bar,
+                    "tooltip fill must NOT be launcher_search_bar (the white-box bug)"
+                );
+            }
+            other => panic!("tooltip fill must be a Background node, got {other:?}"),
+        }
+        assert!(
+            fill.properties.corner_radius.0 > 0.5,
+            "tooltip fill must carry a corner radius (rounded bubble), got {:?}",
+            fill.properties.corner_radius
+        );
+
+        let text = find_node(&root, TOOLTIP_TEXT_ID).expect("tooltip text node present");
+        match &text.kind {
+            SceneNodeKind::Text { color, .. } => assert_eq!(
+                *color, shell.theme.tooltip_text,
+                "tooltip label must use --tooltip-text, got {color:?}"
+            ),
+            other => panic!("tooltip label must be a Text node, got {other:?}"),
+        }
+    }
+
+    /// POLISH (rendered): the bubble actually PAINTS its fill, and its ROUNDED
+    /// corner leaves the corner pixel unfilled. A distinctive opaque fill isolates
+    /// the bubble from the backdrop so both facts are unambiguous.
+    #[test]
+    fn tooltip_paints_fill_with_rounded_transparent_corner() {
+        let mut shell = test_shell();
+        let fill = Color::new(220, 40, 40, 255); // distinctive opaque red
+        shell.theme.tooltip_bg = fill;
+        for _ in 0..3 {
+            let _ = build(&mut shell);
+        }
+        show_steady(&mut shell, "Files", 300.0, 300.0);
+        let rect = shell.tooltip_overlay_rect().expect("bubble rect");
+        let fb = render(&build(&mut shell).flatten());
+
+        let cx = (rect.x + rect.width / 2.0) as u32;
+        let cy = (rect.y + rect.height / 2.0) as u32;
+        let center = fb.get_pixel(cx, cy);
+        let is_red = |c: &Color| c.r > 150 && c.g < 110 && c.b < 110;
+        assert!(
+            is_red(&center),
+            "the bubble must PAINT its fill at the center, got {center:?}"
+        );
+
+        // A pixel 1px diagonally inside the bounding box's top-left corner lies
+        // OUTSIDE the 6px rounded arc → it must NOT carry the fill (proves the
+        // corner radius; RED if the fill were a square Background).
+        let corner = fb.get_pixel(rect.x as u32 + 1, rect.y as u32 + 1);
+        assert!(
+            !is_red(&corner),
+            "the rounded corner must leave the corner pixel unfilled, got {corner:?}"
+        );
+    }
+
+    /// FADE: a mid-fade opacity is applied to the painted pixels. The same bubble
+    /// rendered at opacity 0.5 must be visibly dimmer (fill blends less over the
+    /// backdrop) than at opacity 1.0. RED before: opacity discarded → identical.
+    #[test]
+    fn tooltip_fade_opacity_dims_painted_pixels() {
+        // `partial`: None → drive to Visible (opacity 1.0); Some(dt) → FadingIn
+        // stopped at `dt`/50 opacity.
+        let fill_pixel = |partial: Option<f32>| -> Color {
+            let mut shell = test_shell();
+            shell.theme.tooltip_bg = Color::new(220, 40, 40, 255);
+            for _ in 0..3 {
+                let _ = build(&mut shell);
+            }
+            shell.tooltip_text = Some("Files".to_string());
+            shell.tooltip_pos = Point::new(300.0, 300.0);
+            shell.sync_tooltip_manager(600.0); // → FadingIn (opacity 0)
+            match partial {
+                Some(dt) => {
+                    shell.sync_tooltip_manager(dt);
+                }
+                None => {
+                    shell.sync_tooltip_manager(200.0); // → Visible (opacity 1.0)
+                }
+            }
+            let rect = shell.tooltip_overlay_rect().expect("bubble rect");
+            let fb = render(&build(&mut shell).flatten());
+            fb.get_pixel(
+                (rect.x + rect.width / 2.0) as u32,
+                (rect.y + rect.height / 2.0) as u32,
+            )
+        };
+
+        let full = fill_pixel(None); // opacity 1.0
+        let mid = fill_pixel(Some(25.0)); // FadingIn: 25/50 = 0.5
+        assert!(
+            (mid.r as i32) + 20 < (full.r as i32),
+            "a mid-fade bubble must be DIMMER than a full-opacity one (fade applied to \
+             pixels); full={full:?} mid={mid:?}"
+        );
+    }
+
+    /// JANK (cache): a STEADY, unmoved, fade-complete tooltip must be a full-scene
+    /// cache HIT — NOT a rebuild — every frame. RED before: a visible tooltip
+    /// bypassed the cache, so every frame was a miss + full CSS-chrome rebuild.
+    #[test]
+    fn steady_tooltip_is_full_scene_cache_hit_not_rebuild() {
+        let mut shell = test_shell();
+        for _ in 0..6 {
+            let _ = build(&mut shell);
+        }
+        show_steady(&mut shell, "Files", 300.0, 300.0);
+        assert!(shell.tooltip_manager_visible(), "tooltip must be visible");
+
+        // First build WITH the steady tooltip: a miss that caches the root+bubble.
+        let _ = build(&mut shell);
+        let a = shell.full_scene_cache_stats();
+        let _ = shell.take_precomputed_damage();
+
+        // Second build, NOTHING changed (steady, unmoved, fade-complete): HIT.
+        let _ = build(&mut shell);
+        let b = shell.full_scene_cache_stats();
+        assert_eq!(
+            b.misses, a.misses,
+            "a STEADY visible tooltip must NOT rebuild (miss) every frame (jank)"
+        );
+        assert_eq!(
+            b.hits,
+            a.hits + 1,
+            "a STEADY visible tooltip frame must be a full-scene cache HIT"
+        );
+    }
+
+    /// JANK (tick): the per-frame redraw request is emitted only while the fade
+    /// ANIMATES or on the settle/erase edge — a steady tooltip is silent. RED
+    /// before: `tooltip_visible` was OR'd into `dirty` every frame unconditionally.
+    #[test]
+    fn tick_tooltip_dirty_only_while_fading_or_on_edge() {
+        let mut cache = FullSceneCache::new();
+        assert!(
+            cache.tick_tooltip_dirty(0.5),
+            "appear/fade-in must request a frame"
+        );
+        assert!(cache.tick_tooltip_dirty(0.8), "mid-fade must request a frame");
+        assert!(
+            cache.tick_tooltip_dirty(1.0),
+            "the fade→steady settle frame requests once"
+        );
+        assert!(
+            !cache.tick_tooltip_dirty(1.0),
+            "a STEADY tooltip must NOT request a per-frame redraw (jank fix)"
+        );
+        assert!(
+            !cache.tick_tooltip_dirty(1.0),
+            "a steady tooltip stays silent frame over frame"
+        );
+        assert!(cache.tick_tooltip_dirty(0.6), "fade-out must request frames");
+        assert!(
+            cache.tick_tooltip_dirty(0.0),
+            "the erase frame (…→0) requests once"
+        );
+        assert!(
+            !cache.tick_tooltip_dirty(0.0),
+            "no tooltip → no per-frame redraw"
+        );
+    }
+
+    /// JANK (fade damage): a same-geometry fade STEP damages ONLY the tooltip rect
+    /// (confined), not the whole chrome. RED before: opacity was discarded, so a
+    /// stable-rect fade emitted no damage at all.
+    #[test]
+    fn tooltip_fade_step_confines_damage_to_the_bubble() {
+        let mut shell = test_shell();
+        for _ in 0..6 {
+            let _ = build(&mut shell);
+        }
+        shell.tooltip_text = Some("Files".to_string());
+        shell.tooltip_pos = Point::new(300.0, 300.0);
+        shell.sync_tooltip_manager(600.0); // → FadingIn (opacity 0)
+        shell.sync_tooltip_manager(20.0); // opacity 0.4
+        let _ = build(&mut shell); // paints partial, records opacity
+        let _ = shell.take_precomputed_damage();
+
+        // Advance the fade WITHOUT moving: opacity changes, geometry does not.
+        shell.sync_tooltip_manager(15.0); // opacity 0.7
+        let rect = shell.tooltip_overlay_rect().expect("bubble rect");
+        let _ = build(&mut shell);
+        let dmg = shell.take_precomputed_damage().expect(
+            "a same-geometry fade step must emit confined tooltip-rect damage \
+             (RED before: a stable-rect fade emitted no damage)",
+        );
+        let covers = |r: &liquide_compositor::geometry::Rect| {
+            r.x <= rect.x + 0.5
+                && r.y <= rect.y + 0.5
+                && r.x + r.width >= rect.x + rect.width - 0.5
+                && r.y + r.height >= rect.y + rect.height - 0.5
+        };
+        assert!(
+            dmg.iter().any(covers),
+            "fade damage must cover the bubble {rect:?}; got {dmg:?}"
+        );
+        // Confined: no damage rect may span the whole screen (that would be a full
+        // chrome repaint, the jank we are removing).
+        assert!(
+            dmg.iter().all(|r| r.width < W as f32 || r.height < H as f32),
+            "fade damage must stay confined to the tooltip region, not the full \
+             chrome; got {dmg:?}"
         );
     }
 }

@@ -1162,6 +1162,14 @@ impl Shell {
         }
         if dock_bounds.contains(pt) {
             let item_rects = self.dock.compute_item_rects(self.screen_rect);
+            // Exact hit-test with no hover hysteresis. Verified safe for the
+            // live dock: the default layout is `DockAlignment::Centered` with
+            // `spacing == 0.0`, so `compute_item_rects` packs items at
+            // `step == icon_size` — the rects are contiguous (…[8,56),[56,104)…)
+            // and `Rect::contains` is right-exclusive, so every cursor x maps to
+            // exactly one item. There is no inter-item dead-gap that could drop
+            // and re-arm hover while sweeping across adjacent items, so no
+            // gap-tolerance is needed (adding one would be an invented fix).
             let mut found = None;
             for (i, (_, rect)) in item_rects.iter().enumerate() {
                 if rect.contains(pt) {
@@ -1177,11 +1185,23 @@ impl Shell {
                 if idx < items.len() {
                     let label = items[idx].label.clone();
                     let (_, item_rect) = &item_rects[idx];
-                    // Approximate tooltip width to clamp position to screen
-                    let tip_w = (label.len() as f32 * 7.0 + 16.0).max(40.0).min(300.0);
-                    let tip_x = (x - tip_w / 2.0)
+                    // Approximate tooltip width to clamp position to screen.
+                    // Single-source the estimate with
+                    // `scene.rs::tooltip_overlay_rect` (chars * 7px glyph +
+                    // 2 * 8px padding, clamped 40..=300) so the clamp used here
+                    // and the painted bubble width agree, including multi-byte
+                    // labels (was `label.len()`, a byte count).
+                    let tip_w = (label.chars().count() as f32 * 7.0 + 16.0).clamp(40.0, 300.0);
+                    // Anchor the tip to the hovered item's CENTER, not the
+                    // cursor. This keeps the bubble STILL while the cursor moves
+                    // within the same item (was `x - tip_w/2`, which slid the
+                    // bubble under the pointer and re-fired OLD∪NEW damage every
+                    // mouse-move, defeating the steady-tooltip scene cache). The
+                    // tip still clamps fully on-screen at the edges.
+                    let item_center_x = item_rect.x + item_rect.width / 2.0;
+                    let tip_x = (item_center_x - tip_w / 2.0)
                         .max(4.0)
-                        .min(self.screen_rect.width - tip_w - 4.0);
+                        .min((self.screen_rect.width - tip_w - 4.0).max(4.0));
                     let tip_y = (item_rect.y - 32.0).max(4.0); // above the dock item
                     // The show-delay dwell is owned by the canonical
                     // TooltipManager (t51-e9/e15), driven from this hover state
