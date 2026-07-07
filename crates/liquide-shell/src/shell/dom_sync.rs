@@ -376,15 +376,23 @@ impl Shell {
                     ));
                 }
                 StatusBarItemKind::TrayArea => {
-                    right_html.push_str(&format!(
-                        "<status-tray id=\"{id}\" data-count=\"{count}\">",
-                        id = escape_html(&item.id),
-                        count = live_tray.len(),
-                    ));
-                    for tray in &live_tray {
-                        render_tray_item(tray, &mut right_html);
+                    // Only emit the tray slot when there is at least one live
+                    // tray icon. An empty `<status-tray>` renders as a bare
+                    // outlined CSS pill with no glyph next to the connection
+                    // indicator (audit-icons-e2e #6); the default desktop has no
+                    // notification/seamless tray icons, so omit the element
+                    // entirely rather than paint an empty pill.
+                    if !live_tray.is_empty() {
+                        right_html.push_str(&format!(
+                            "<status-tray id=\"{id}\" data-count=\"{count}\">",
+                            id = escape_html(&item.id),
+                            count = live_tray.len(),
+                        ));
+                        for tray in &live_tray {
+                            render_tray_item(tray, &mut right_html);
+                        }
+                        right_html.push_str("</status-tray>");
                     }
-                    right_html.push_str("</status-tray>");
                 }
                 StatusBarItemKind::SessionButton => {
                     right_html.push_str(&format!(
@@ -2617,5 +2625,72 @@ mod statusbar_clock_paint_only_tests {
 
         // Visible text unaffected by the marker.
         assert_eq!(text_of(&shell, clock_text_node(&shell)).as_deref(), Some("09:00"));
+    }
+}
+
+// The default desktop has no notification/seamless tray icons, so the
+// status-tray slot must NOT be emitted — an empty `<status-tray>` renders as a
+// bare outlined CSS pill with no glyph next to the connection indicator
+// (audit-icons-e2e #6). When the live tray HAS items, the slot IS emitted.
+#[cfg(test)]
+mod status_tray_empty_gate_tests {
+    use super::*;
+    use crate::shell::Shell;
+
+    /// TEETH: with an empty live tray (default desktop), the synced status-bar
+    /// DOM contains NO `<status-tray>` element. RED if the slot is emitted
+    /// unconditionally (the empty outlined pill).
+    #[test]
+    fn empty_tray_omits_status_tray_element() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        // Sanity: the default desktop truly has no live tray icons.
+        assert!(
+            shell.live_tray_items().is_empty(),
+            "precondition: default desktop must have an empty live tray"
+        );
+
+        shell.sync_statusbar_template();
+
+        assert!(
+            shell.desktop_dom.doc.get_element_by_id("tray").is_none(),
+            "an empty live tray must NOT emit a <status-tray> element \
+             (empty outlined pill, audit-icons-e2e #6)"
+        );
+        // Other right-cluster segments remain intact.
+        assert!(
+            shell
+                .desktop_dom
+                .doc
+                .get_element_by_id("notifications")
+                .is_some(),
+            "notification indicator must still render with an empty tray"
+        );
+    }
+
+    /// TEETH: with a NON-empty live tray, the `<status-tray>` slot IS emitted
+    /// carrying its item(s). Guards against over-gating that would drop a
+    /// populated tray.
+    #[test]
+    fn populated_tray_emits_status_tray_element() {
+        let mut shell = Shell::new(1920.0, 1080.0);
+        shell
+            .notifications
+            .add_tray_icon("Mail", "Unread mail", "mail-icon", 0);
+        assert!(
+            !shell.live_tray_items().is_empty(),
+            "precondition: adding a tray icon must populate the live tray"
+        );
+
+        shell.sync_statusbar_template();
+
+        let tray = shell
+            .desktop_dom
+            .doc
+            .get_element_by_id("tray")
+            .expect("a non-empty live tray MUST emit a <status-tray> element");
+        assert!(
+            !shell.desktop_dom.doc.children(tray).is_empty(),
+            "emitted status-tray must carry its tray item(s)"
+        );
     }
 }
