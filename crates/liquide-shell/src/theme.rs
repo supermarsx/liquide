@@ -172,7 +172,17 @@ impl ShellTheme {
             loading_text: Color::new(220, 220, 220, 255),
 
             // Window content
-            window_content_background: Color::new(35, 35, 40, 255),
+            //
+            // Translucent by default (alpha < 255) so a window composited over
+            // liquide's wallpaper/lower windows shows them faintly through — the
+            // macOS "vibrancy" aesthetic. This is the hardcoded fallback used
+            // only when the CSS theme fails to parse; the real value comes from
+            // the active theme's `window-content { background: rgba(...) }`
+            // (see theme_loader::css_to_shell_theme). The alpha is deliberately
+            // high (~0.90) so window text stays readable. The renderer honors
+            // this alpha (no forced-opaque clamp); a theme/app can lower it for
+            // a glassier window or raise it to 255 for a fully opaque one.
+            window_content_background: Color::new(30, 30, 34, 230),
 
             // App-specific
             app_settings_sidebar_item: Color::new(45, 45, 55, 200),
@@ -180,5 +190,91 @@ impl ShellTheme {
             app_terminal_text: Color::new(100, 220, 100, 255),
             app_browser_urlbar: Color::new(55, 55, 65, 255),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme_loader::css_to_shell_theme;
+    use liquide_theme_css::{ThemeEngine, ThemeParser};
+
+    fn resolve_content_bg(css: &str) -> Color {
+        let stylesheet = ThemeParser::new().parse_str(css).unwrap();
+        let engine = ThemeEngine::new(stylesheet);
+        css_to_shell_theme(&engine).window_content_background
+    }
+
+    /// WINDOW TRANSPARENCY — alpha passthrough (the load-bearing correctness).
+    ///
+    /// A theme that sets a sub-1.0 alpha on `window-content { background }` must
+    /// RESOLVE to that alpha in `ShellTheme.window_content_background`, NOT be
+    /// clamped up to opaque 255. This is what lets a window composite
+    /// translucently over liquide's wallpaper / lower windows.
+    ///
+    /// Teeth (no-fake-green): if the resolver forced the alpha to 255 (a
+    /// forced-opaque regression), `bg.a` would be 255 and every assertion below
+    /// fails. `0.85 * 255 = 216.75`, so a correct resolver yields ~217.
+    #[test]
+    fn window_content_background_alpha_passes_through() {
+        let bg = resolve_content_bg("window-content { background: rgba(28, 28, 30, 0.85); }");
+        assert_eq!(bg.r, 28, "red channel must pass through");
+        assert_eq!(bg.g, 28, "green channel must pass through");
+        assert_eq!(bg.b, 30, "blue channel must pass through");
+        assert!(
+            (216..=217).contains(&bg.a),
+            "alpha 0.85 must resolve to ~217 (0.85*255), got {} — forced-opaque regression?",
+            bg.a
+        );
+        assert!(
+            bg.a < 255,
+            "a translucent window-content must NOT be clamped to opaque 255 (got {})",
+            bg.a
+        );
+    }
+
+    /// A stronger differential: two themes with different sub-1.0 alphas must
+    /// resolve to DIFFERENT alphas, and a more-transparent CSS value must yield
+    /// a lower resolved alpha. A resolver that ignored/clamped alpha would make
+    /// these equal (both 255) and fail.
+    #[test]
+    fn window_content_alpha_tracks_the_css_value() {
+        let glassy = resolve_content_bg("window-content { background: rgba(20, 20, 24, 0.55); }").a;
+        let solidish = resolve_content_bg("window-content { background: rgba(20, 20, 24, 0.95); }").a;
+        assert!(
+            glassy < solidish,
+            "a more-transparent CSS window-content (0.55) must resolve to a lower alpha than 0.95 ({glassy} vs {solidish})"
+        );
+        assert!(glassy < 255 && solidish < 255, "neither may be forced opaque");
+    }
+
+    /// The hardcoded fallback (`default_dark`, used only when the CSS theme fails
+    /// to parse) must ALSO be translucent — otherwise a parse failure silently
+    /// forces every window opaque. Guards the removed `Color::new(35,35,40,255)`.
+    #[test]
+    fn default_dark_window_content_is_translucent() {
+        let a = ShellTheme::default_dark().window_content_background.a;
+        assert!(
+            a < 255,
+            "default_dark window_content_background must be translucent (<255), got {a} — hardcoded opaque default regressed"
+        );
+    }
+
+    /// The shipped DEFAULT theme (macOS Dark) must ship translucent windows
+    /// (vibrancy: wallpaper faintly shows) yet stay readable — alpha high enough
+    /// that window text remains legible over the wallpaper. Drives the REAL
+    /// shipped asset through the production resolver.
+    #[test]
+    fn macos_dark_ships_translucent_but_readable_windows() {
+        let css = include_str!("../../../assets/themes/macos_dark.css");
+        let a = resolve_content_bg(css).a;
+        assert!(
+            a < 255,
+            "macos_dark window-content must be translucent (<255) so wallpaper shows through, got {a}"
+        );
+        assert!(
+            a >= 200,
+            "macos_dark window-content must stay mostly opaque (>=200) for text readability, got {a}"
+        );
     }
 }

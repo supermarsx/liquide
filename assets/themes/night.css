@@ -357,6 +357,10 @@ minimize-button:hover {
 
 window-content {
     flex-grow: 1;
+    /* Night is OLED-optimized near-black; the interior stays mostly opaque
+       (alpha 0.96) so the surface reads as true black. The alpha is still < 1,
+       so the renderer composites it over the wallpaper without a forced-opaque
+       clamp — lower this alpha for a glassier window, raise to 1.0 for opaque. */
     background: rgba(10, 10, 10, 0.96);
 }
 

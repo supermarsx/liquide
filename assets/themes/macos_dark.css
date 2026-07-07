@@ -74,7 +74,15 @@
   --tooltip-text:   rgba(255, 255, 255, 0.92);
   --tooltip-border: rgba(255, 255, 255, 0.12);
 
-  --window-bg:      rgba(30, 30, 30, 0.92);
+  /* Window translucency (macOS "vibrancy"): the frame (`--window-bg`) and the
+     interior (`--window-content-bg`) carry alpha < 1 so a window shows the
+     wallpaper / lower windows faintly through it. Lower the alpha for a glassier
+     window; raise it to 1.0 for a fully opaque one. NOTE: the `--window-content-bg`
+     token is DOC/DOM-only — the renderer-painted window interior reads the LITERAL
+     `window-content { background }` rule below (the ShellTheme resolver parses this
+     file without variables.css, so var() does not resolve there). Keep them in sync. */
+  --window-bg:          rgba(30, 30, 30, 0.92);
+  --window-content-bg:  rgba(28, 28, 30, 0.90);
   --window-border:  rgba(255, 255, 255, 0.10);
   --titlebar-bg:    rgba(46, 46, 48, 0.96);
   --titlebar-text:  rgba(255, 255, 255, 0.85);
@@ -518,7 +526,12 @@ maximize-button:hover {
 
 window-content {
     flex-grow: 1;
-    background: rgba(28, 28, 30, 0.96);
+    /* Translucent interior (vibrancy) — LITERAL, kept in sync with the
+       `--window-content-bg` :root token. alpha 0.90 lets the wallpaper faintly
+       show through while keeping window text readable. The ShellTheme resolver
+       reads THIS alpha and the renderer honors it (no forced-opaque clamp), so
+       lowering it here makes windows glassier; 1.0 makes them fully opaque. */
+    background: rgba(28, 28, 30, 0.90);
 }
 
 /* ── Dock ── */

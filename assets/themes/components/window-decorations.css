@@ -6,6 +6,12 @@
 window-decoration {
     display: flex;
     flex-direction: column;
+    /* Window frame background. `--window-bg` carries alpha < 1 (see the theme's
+       :root, e.g. macos_dark `rgba(30,30,30,0.92)`), so the window frame is
+       translucent over liquide's wallpaper / lower windows. A theme (or an app
+       via its own override) makes a window more transparent by lowering this
+       alpha, or fully opaque by setting it to 1.0. The window INTERIOR is a
+       separate token/rule (`--window-content-bg` / `window-content { background }`). */
     background: var(--window-bg);
     border-width: var(--border-width);
     border-style: solid;
