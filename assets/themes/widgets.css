@@ -1041,24 +1041,36 @@
     background-color: var(--widget-bg, #27272a);
     padding: 4px;
   }
+  /* The row is a HORIZONTAL flex line: an optional icon sits to the LEFT and the
+     label takes the remaining width, both vertically centered — a normal
+     sidebar/menu row (NOT icon stacked ABOVE label). The label is emitted as a
+     bare text node by list.rs; the flex path measures a text child as its own
+     flex item (see flex.rs), so it lands beside the icon. An icon-LESS row is a
+     single-item flex line — a single-line label centered in a row with no extra
+     height lays out identically to the old block, so label-only rows are
+     visually unchanged. The row box stays the click target either way. */
   lq-list > lq-list-item {
-    display: block;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
     padding: 6px 10px;
     border-radius: 4px;
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
     background-color: rgba(0, 0, 0, 0);
   }
-  /* Optional per-item icon slot: a small inline square drawn before the label.
-     Only rows that carry an icon emit `<lq-list-item-icon data-icon=…>`, so
-     icon-less rows are wholly unaffected (no slot, no layout change). The icon
-     paints from `data-icon` (resolved through the shared icon name-map); the row
-     itself remains the click target. */
+  /* Optional per-item icon slot: a fixed 16×16 square drawn to the LEFT of the
+     label. Only rows that carry an icon emit `<lq-list-item-icon data-icon=…>`,
+     so icon-less rows are wholly unaffected (no slot). `flex: 0 0 auto` keeps the
+     glyph at 16×16 and un-distorted — it never grows or shrinks under a long
+     label; the `gap` above supplies the icon→label spacing. The icon paints from
+     `data-icon` (resolved through the shared icon name-map); the row itself
+     remains the click target. */
   lq-list > lq-list-item > lq-list-item-icon {
-    display: inline-block;
+    display: block;
+    flex: 0 0 auto;
     width: 16px;
     height: 16px;
-    margin-right: 6px;
-    vertical-align: middle;
     color: var(--widget-fg, rgba(250, 250, 250, 0.95));
   }
   lq-list > lq-list-item:hover {

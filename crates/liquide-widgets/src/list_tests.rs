@@ -421,6 +421,121 @@ fn item_without_icon_emits_no_data_icon_leaf() {
     assert_eq!(label, Some("Item 1"), "icon-less row still shows its label");
 }
 
+/// The laid-out icon-slot box (if any) and the label text box for row `i`,
+/// read from the REAL layout through the same [`LayoutQuery`] the hit-test uses.
+/// The label is emitted as a BARE text node by `list.rs`, so the flex path
+/// measures it as its own flex item — this reads that text box directly by its
+/// node id.
+fn row_icon_and_label_boxes(
+    g: &Gallery,
+    id: &str,
+    i: usize,
+) -> (
+    Option<liquide_layout::geometry::Rect>,
+    liquide_layout::geometry::Rect,
+) {
+    let root = g.host.root_of(id).unwrap();
+    let q = LayoutQuery::new(g.hit_test_engine(), g.doc());
+    let row = q
+        .find_part(root, &format!("item-{i}"))
+        .expect("row node present");
+    let doc = g.doc();
+    let mut icon = None;
+    let mut label = None;
+    for &child in doc.children(row) {
+        let is_text = doc.get(child).map(|n| n.is_text()).unwrap_or(false);
+        if is_text {
+            label = q.box_of(child);
+        } else if doc.tag_name(child).as_deref() == Some("lq-list-item-icon") {
+            icon = q.box_of(child);
+        }
+    }
+    (icon, label.expect("row label text box present"))
+}
+
+/// REAL-LAYOUT tidy guard: an iconed row lays the icon to the LEFT of the label,
+/// both on the SAME row (vertically centered) — NOT the icon stacked ABOVE the
+/// label. Reads the laid-out boxes through the real pipeline + LayoutQuery.
+///
+/// Teeth: before the flex-row tidy the row was `display:block`, so the icon leaf
+/// and the bare-text label stacked VERTICALLY (icon ABOVE, x-aligned). This
+/// asserts the OPPOSITE on both axes — icon.x < label.x AND the y-ranges OVERLAP
+/// (same row) — so the old block layout fails it; only the horizontal flex row
+/// passes. (Verified RED by reverting the row to `display:block`.)
+#[test]
+fn iconed_row_lays_icon_left_of_label_same_row() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("l", Box::new(iconed_list()));
+    g.relayout();
+
+    let (icon, label) = row_icon_and_label_boxes(&g, "l", 0);
+    let icon = icon.expect("row 0 carries an icon slot with a laid-out box");
+
+    // Icon strictly to the LEFT of the label (icon-beside-label, not stacked):
+    // the icon's right edge is at or before the label's left edge.
+    assert!(
+        icon.x + icon.width <= label.x + 0.5,
+        "icon must sit LEFT of the label (icon right edge {} <= label left {})",
+        icon.x + icon.width,
+        label.x
+    );
+
+    // Same ROW: the vertical extents OVERLAP. A stacked column would put the icon
+    // entirely ABOVE the label (icon.y + icon.height <= label.y, no overlap).
+    let overlap = icon.y < label.y + label.height && label.y < icon.y + icon.height;
+    assert!(
+        overlap,
+        "icon and label must share a row (y-overlap): icon y[{}..{}] label y[{}..{}]",
+        icon.y,
+        icon.y + icon.height,
+        label.y,
+        label.y + label.height
+    );
+
+    // Vertically centered (align-items:center): the icon's center sits within the
+    // label's vertical span, not riding above it.
+    let icon_cy = icon.y + icon.height / 2.0;
+    assert!(
+        icon_cy >= label.y - 2.0 && icon_cy <= label.y + label.height + 2.0,
+        "icon must be vertically centered against the label (icon cy {}, label y[{}..{}])",
+        icon_cy,
+        label.y,
+        label.y + label.height
+    );
+
+    // The icon slot keeps a consistent, undistorted 16x16 size in the flex row.
+    assert!(
+        (icon.width - 16.0).abs() < 1.0 && (icon.height - 16.0).abs() < 1.0,
+        "icon slot stays 16x16 (got {}x{})",
+        icon.width,
+        icon.height
+    );
+}
+
+/// An icon-LESS row is unaffected by the flex-row tidy: it has no icon box and
+/// its label starts at the row's content-left — LEFT of an iconed row's label
+/// (which the icon + gap push right), so the icon gap is never applied to
+/// icon-less rows.
+#[test]
+fn icon_less_row_label_unaffected() {
+    let mut g = Gallery::new(W, H, "lq-gallery { padding: 8px; }");
+    g.mount("l", Box::new(iconed_list()));
+    g.relayout();
+
+    // Row 1 is icon-less: no icon box, label still laid out.
+    let (icon1, label1) = row_icon_and_label_boxes(&g, "l", 1);
+    assert!(icon1.is_none(), "icon-less row must have no icon slot box");
+
+    // Row 0 has an icon; its label is pushed right by the icon + gap.
+    let (_icon0, label0) = row_icon_and_label_boxes(&g, "l", 0);
+    assert!(
+        label1.x + 1.0 < label0.x,
+        "icon-less label (x {}) must start LEFT of the iconed label (x {})",
+        label1.x,
+        label0.x
+    );
+}
+
 /// A list built WITHOUT any icons (every existing usage) emits no icon leaves
 /// anywhere — the iconless path is unchanged.
 #[test]
