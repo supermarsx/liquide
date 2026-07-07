@@ -53,10 +53,10 @@ pub fn icon_id_for_name(name: &str) -> u32 {
         "text-editor" | "accessories-text-editor" | "text-x-generic" | "text-plain"
         | "text-x-uri" | "text-x-source" | "text-x-markup" | "document-open"
         | "document-copy" | "document-multiple" | "document-properties"
-        | "application-pdf" => 6,
+        | "application-pdf" | "file-text" => 6,
 
         // ── 7: Music / audio file ──
-        "audio-x-generic" | "music" | "multimedia-audio-player" => 7,
+        "audio-x-generic" | "music" | "multimedia-audio-player" | "file-audio" => 7,
 
         // ── 8: Camera / photo ──
         "camera" | "camera-photo" => 8,
@@ -117,13 +117,12 @@ pub fn icon_id_for_name(name: &str) -> u32 {
         // ── 25: Warning / error ──
         "warning" | "dialog-warning" | "dialog-error" => 25,
 
-        // ── 26: Edit / pencil ──
-        "edit-cut" | "edit-copy" | "edit-paste" | "edit-undo" | "edit-redo"
-        | "edit" | "document-edit" => 26,
+        // ── 26: Edit / pencil (generic edit) ──
+        "edit" | "document-edit" => 26,
 
         // ── 27: Package / archive ──
         "package-x-generic" | "package-install" | "package-remove" | "package-upgrade"
-        | "application-x-generic" | "system-update" => 27,
+        | "system-update" => 27,
 
         // ── 28: Window minimize ──
         "window-minimize" | "minus" => 28,
@@ -131,9 +130,9 @@ pub fn icon_id_for_name(name: &str) -> u32 {
         // ── 29: Window maximize ──
         "window-maximize" | "maximize" => 29,
 
-        // ── 30: Wallpaper / picture ──
+        // ── 30: Wallpaper / picture (also generic image files) ──
         "preferences-desktop-wallpaper" | "preferences-desktop-theme"
-        | "image-x-generic" | "image-viewer" => 30,
+        | "image-x-generic" | "image-viewer" | "file-image" => 30,
 
         // ── 31: Display / monitor ──
         "preferences-desktop-display" => 31,
@@ -147,6 +146,31 @@ pub fn icon_id_for_name(name: &str) -> u32 {
 
         // ── 34: Window close / X ──
         "window-close" | "x" => 34,
+
+        // ── 35: Cut (scissors) ──
+        "edit-cut" | "cut" => 35,
+
+        // ── 36: Copy (two overlapping pages) ──
+        "edit-copy" | "copy" => 36,
+
+        // ── 37: Paste (clipboard) ──
+        "edit-paste" | "paste" => 37,
+
+        // ── 38: Undo (curved arrow left) ──
+        "edit-undo" | "undo" => 38,
+
+        // ── 39: Redo (curved arrow right) ──
+        "edit-redo" | "redo" => 39,
+
+        // ── 40: Process-stop / forbidden ──
+        "process-stop" | "stop" | "action-unavailable" => 40,
+
+        // ── 41: Video / movie file ──
+        "video-x-generic" | "file-video" | "video" | "multimedia-video-player" => 41,
+
+        // ── 42: Generic file / document ──
+        "application-x-generic" | "file" | "file-generic" | "unknown"
+        | "text-x-preview" => 42,
 
         _ => 0,
     }
@@ -169,6 +193,62 @@ mod tests {
     fn unknown_icon_returns_zero() {
         assert_eq!(icon_id_for_name("nonexistent"), 0);
         assert_eq!(icon_id_for_name(""), 0);
+    }
+
+    /// Cut / Copy / Paste / Undo / Redo must each resolve to a DISTINCT
+    /// non-zero id so they render distinguishable glyphs (they used to all
+    /// collapse onto id 26, a single pencil). Teeth: mapping any two of these
+    /// edit ops to the same id turns this RED.
+    #[test]
+    fn edit_ops_resolve_to_distinct_ids() {
+        let names = ["edit-cut", "edit-copy", "edit-paste", "edit-undo", "edit-redo"];
+        let ids: Vec<u32> = names.iter().map(|n| icon_id_for_name(n)).collect();
+        for (name, &id) in names.iter().zip(&ids) {
+            assert_ne!(id, 0, "`{name}` must map to a real glyph, not the placeholder");
+        }
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(
+                    ids[i], ids[j],
+                    "`{}` and `{}` must map to DISTINCT ids (both = {})",
+                    names[i], names[j], ids[i]
+                );
+            }
+        }
+        // The generic `edit` pencil is deliberately unchanged (still id 26) and
+        // must differ from every specific edit op.
+        let edit = icon_id_for_name("edit");
+        assert_eq!(edit, 26);
+        assert!(!ids.contains(&edit), "specific edit ops must not reuse the pencil id");
+    }
+
+    /// `process-stop` (authorization / forbidden action) must resolve to a real
+    /// glyph rather than the id-0 placeholder box. Teeth: dropping the mapping
+    /// turns this RED.
+    #[test]
+    fn process_stop_resolves() {
+        assert_ne!(icon_id_for_name("process-stop"), 0);
+    }
+
+    /// File-type names an embed peer requests via `data-icon` must all resolve
+    /// to real glyphs so embedded files show a type icon, not a placeholder.
+    #[test]
+    fn file_type_names_resolve() {
+        for name in [
+            "text-x-generic",
+            "file-text",
+            "image-x-generic",
+            "file-image",
+            "audio-x-generic",
+            "file-audio",
+            "video-x-generic",
+            "file-video",
+            "application-x-generic",
+            "file",
+            "folder",
+        ] {
+            assert_ne!(icon_id_for_name(name), 0, "file-type name `{name}` must resolve");
+        }
     }
 
     /// The previously-blank names named in the visual-bug hunt (symptom 1)

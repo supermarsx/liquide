@@ -90,6 +90,22 @@ pub enum IconId {
     Drive,
     /// Window close (X).
     WindowClose,
+    /// Cut (scissors).
+    EditCut,
+    /// Copy (two overlapping pages).
+    EditCopy,
+    /// Paste (clipboard with sheet).
+    EditPaste,
+    /// Undo (curved arrow pointing left).
+    EditUndo,
+    /// Redo (curved arrow pointing right).
+    EditRedo,
+    /// Process-stop / forbidden (octagon with a bar).
+    ProcessStop,
+    /// Video / movie file (screen with a play triangle).
+    Video,
+    /// Generic file / document (page with a folded corner).
+    GenericFile,
 }
 
 // ---------------------------------------------------------------------------
@@ -134,13 +150,21 @@ pub fn icon_id_from_u32(id: u32) -> Option<IconId> {
         32 => Some(IconId::User),
         33 => Some(IconId::Drive),
         34 => Some(IconId::WindowClose),
+        35 => Some(IconId::EditCut),
+        36 => Some(IconId::EditCopy),
+        37 => Some(IconId::EditPaste),
+        38 => Some(IconId::EditUndo),
+        39 => Some(IconId::EditRedo),
+        40 => Some(IconId::ProcessStop),
+        41 => Some(IconId::Video),
+        42 => Some(IconId::GenericFile),
         _ => None,
     }
 }
 
 /// Highest valid numeric icon ID (kept in sync with `icon_id_for_name` in
 /// `liquide-paint`). Used by tests to assert full id/glyph coverage.
-pub const MAX_ICON_ID: u32 = 34;
+pub const MAX_ICON_ID: u32 = 42;
 
 // ---------------------------------------------------------------------------
 // Coordinate helpers
@@ -324,6 +348,14 @@ pub fn draw_icon(fb: &mut FrameBuffer, icon_id: u32, bounds: Rect, color: Color,
         IconId::User => draw_user(fb, &bounds, color, detail, m, lut),
         IconId::Drive => draw_drive(fb, &bounds, color, detail, m, lut),
         IconId::WindowClose => draw_window_close(fb, &bounds, color, detail, m, lut),
+        IconId::EditCut => draw_edit_cut(fb, &bounds, color, detail, m, lut),
+        IconId::EditCopy => draw_edit_copy(fb, &bounds, color, detail, m, lut),
+        IconId::EditPaste => draw_edit_paste(fb, &bounds, color, detail, m, lut),
+        IconId::EditUndo => draw_edit_undo(fb, &bounds, color, detail, m, lut),
+        IconId::EditRedo => draw_edit_redo(fb, &bounds, color, detail, m, lut),
+        IconId::ProcessStop => draw_process_stop(fb, &bounds, color, detail, m, lut),
+        IconId::Video => draw_video(fb, &bounds, color, detail, m, lut),
+        IconId::GenericFile => draw_generic_file(fb, &bounds, color, detail, m, lut),
     }
 }
 
@@ -358,33 +390,36 @@ fn draw_file_manager(
     );
 }
 
-/// Rounded rectangle body with a ">_" prompt inside.
+/// Terminal: an open frame with a thick ">_" prompt inside. Drawn as a
+/// single-colour outline + heavy prompt strokes so it reads at 16px instead of
+/// collapsing to a featureless filled square (the low-contrast filled-body
+/// version did).
 fn draw_terminal(
     fb: &mut FrameBuffer,
     b: &Rect,
     color: Color,
-    detail: Color,
+    _detail: Color,
     m: BlendMode,
-    lut: &SrgbLut,
+    _lut: &SrgbLut,
 ) {
-    // Body.
-    fill_path(
+    // Frame outline (not a solid fill — leaves the interior open for the prompt).
+    stroke_path(
         fb,
-        &nrect(b, 0.05, 0.10, 0.90, 0.80, 0.08),
-        &Fill::Solid(color),
+        &nrect(b, 0.08, 0.14, 0.84, 0.72, 0.10),
+        pr(b, 0.06),
+        color,
         m,
-        lut,
     );
-    // ">" chevron.
-    let sw = pr(b, 0.04);
-    let (x1, y1) = px(b, 0.20, 0.38);
-    let (x2, y2) = px(b, 0.40, 0.50);
-    let (x3, y3) = px(b, 0.20, 0.62);
+    // ">" chevron — thick, high-contrast against the open interior.
+    let sw = pr(b, 0.085);
+    let (x1, y1) = px(b, 0.24, 0.34);
+    let (x2, y2) = px(b, 0.46, 0.50);
+    let (x3, y3) = px(b, 0.24, 0.66);
     let mut pb = PathBuilder::new();
     pb.move_to(x1, y1).line_to(x2, y2).line_to(x3, y3);
-    stroke_path(fb, &pb.build(), sw, detail, m);
+    stroke_path(fb, &pb.build(), sw, color, m);
     // "_" cursor.
-    stroke_path(fb, &line2(b, 0.48, 0.64, 0.68, 0.64), sw, detail, m);
+    stroke_path(fb, &line2(b, 0.54, 0.66, 0.76, 0.66), sw, color, m);
 }
 
 /// Globe with latitude / longitude grid lines.
@@ -781,29 +816,31 @@ fn draw_volume(
     stroke_path(fb, &pb.build(), sw, detail, m);
 }
 
-/// Magnifying glass: filled lens circle with a diagonal handle.
+/// Magnifying glass: an open lens ring with a thick diagonal handle. Drawn as a
+/// ring (not a filled disc) so it reads as a magnifier at 16px rather than a
+/// featureless dot.
 fn draw_search(
     fb: &mut FrameBuffer,
     b: &Rect,
     color: Color,
-    detail: Color,
+    _detail: Color,
     m: BlendMode,
-    lut: &SrgbLut,
+    _lut: &SrgbLut,
 ) {
-    // Lens (filled circle).
-    fill_path(
-        fb,
-        &circle_path(b, 0.40, 0.38, 0.26),
-        &Fill::Solid(color),
-        m,
-        lut,
-    );
-    // Handle (thick diagonal stroke).
+    // Lens ring (stroked, open centre).
     stroke_path(
         fb,
-        &line2(b, 0.58, 0.56, 0.88, 0.88),
-        pr(b, 0.07),
-        detail,
+        &circle_path(b, 0.42, 0.40, 0.24),
+        pr(b, 0.09),
+        color,
+        m,
+    );
+    // Handle (thick diagonal stroke off the lower-right of the lens).
+    stroke_path(
+        fb,
+        &line2(b, 0.60, 0.58, 0.88, 0.86),
+        pr(b, 0.11),
+        color,
         m,
     );
 }
@@ -1148,32 +1185,42 @@ fn draw_window_close(
     stroke_path(fb, &line2(b, 0.76, 0.24, 0.24, 0.76), sw, color, m);
 }
 
-/// Framed picture: frame, sun, and two mountains.
+/// Framed picture: an outlined frame containing a solid sun and mountain
+/// silhouettes. Drawn single-colour (frame outline + solid scene in the same
+/// ink) so the landscape registers at 16px instead of the old low-contrast
+/// fill-on-fill square.
 fn draw_wallpaper(
     fb: &mut FrameBuffer,
     b: &Rect,
     color: Color,
-    detail: Color,
+    _detail: Color,
     m: BlendMode,
     lut: &SrgbLut,
 ) {
-    // Photo frame.
-    fill_path(fb, &nrect(b, 0.08, 0.14, 0.84, 0.72, 0.06), &Fill::Solid(color), m, lut);
-    // Sun.
-    fill_path(fb, &circle_path(b, 0.34, 0.36, 0.10), &Fill::Solid(detail), m, lut);
-    // Mountains (detail).
-    let (a1, a1y) = px(b, 0.10, 0.84);
-    let (a2, a2y) = px(b, 0.40, 0.50);
-    let (a3, a3y) = px(b, 0.64, 0.84);
+    // Photo frame outline.
+    stroke_path(
+        fb,
+        &nrect(b, 0.08, 0.16, 0.84, 0.68, 0.06),
+        pr(b, 0.06),
+        color,
+        m,
+    );
+    // Sun (solid disc, upper-left).
+    fill_path(fb, &circle_path(b, 0.32, 0.36, 0.11), &Fill::Solid(color), m, lut);
+    // Front mountain (solid silhouette).
+    let (a1, a1y) = px(b, 0.12, 0.82);
+    let (a2, a2y) = px(b, 0.40, 0.46);
+    let (a3, a3y) = px(b, 0.62, 0.82);
     let mut pb = PathBuilder::new();
     pb.move_to(a1, a1y).line_to(a2, a2y).line_to(a3, a3y).close();
-    fill_path(fb, &pb.build(), &Fill::Solid(detail), m, lut);
-    let (c1, c1y) = px(b, 0.50, 0.84);
-    let (c2, c2y) = px(b, 0.72, 0.56);
-    let (c3, c3y) = px(b, 0.92, 0.84);
+    fill_path(fb, &pb.build(), &Fill::Solid(color), m, lut);
+    // Back mountain (solid silhouette).
+    let (c1, c1y) = px(b, 0.48, 0.82);
+    let (c2, c2y) = px(b, 0.70, 0.54);
+    let (c3, c3y) = px(b, 0.90, 0.82);
     let mut pb = PathBuilder::new();
     pb.move_to(c1, c1y).line_to(c2, c2y).line_to(c3, c3y).close();
-    fill_path(fb, &pb.build(), &Fill::Solid(detail), m, lut);
+    fill_path(fb, &pb.build(), &Fill::Solid(color), m, lut);
 }
 
 /// Monitor: screen with inner panel and a stand.
@@ -1218,6 +1265,215 @@ fn draw_drive(
     fill_path(fb, &circle_path(b, 0.62, 0.50, 0.14), &Fill::Solid(detail), m, lut);
     fill_path(fb, &circle_path(b, 0.62, 0.50, 0.04), &Fill::Solid(color), m, lut);
     fill_path(fb, &circle_path(b, 0.24, 0.50, 0.05), &Fill::Solid(detail), m, lut);
+}
+
+/// Scissors (cut): two crossed blades with ring finger-holes at the bottom.
+fn draw_edit_cut(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
+) {
+    let sw = pr(b, 0.065);
+    // Blades cross at the pivot and open toward the top.
+    stroke_path(fb, &line2(b, 0.28, 0.72, 0.84, 0.16), sw, color, m); // lower-left hole → upper-right tip
+    stroke_path(fb, &line2(b, 0.72, 0.72, 0.16, 0.16), sw, color, m); // lower-right hole → upper-left tip
+    // Pivot rivet.
+    fill_path(fb, &circle_path(b, 0.50, 0.50, 0.055), &Fill::Solid(detail), m, lut);
+    // Finger-hole rings.
+    stroke_path(fb, &circle_path(b, 0.26, 0.78, 0.12), pr(b, 0.05), color, m);
+    stroke_path(fb, &circle_path(b, 0.74, 0.78, 0.12), pr(b, 0.05), color, m);
+}
+
+/// Copy: two overlapping pages (a back sheet and an offset front sheet).
+fn draw_edit_copy(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
+) {
+    // Back sheet (upper-right), drawn solid.
+    fill_path(fb, &nrect(b, 0.34, 0.10, 0.44, 0.56, 0.04), &Fill::Solid(color), m, lut);
+    // Front sheet (lower-left): solid border via a color rect, then a detail
+    // inner fill so the two sheets read as distinct overlapping pages.
+    fill_path(fb, &nrect(b, 0.16, 0.32, 0.44, 0.56, 0.04), &Fill::Solid(color), m, lut);
+    fill_path(fb, &nrect(b, 0.20, 0.36, 0.36, 0.48, 0.03), &Fill::Solid(detail), m, lut);
+    // Text lines on the front sheet.
+    let sw = pr(b, 0.028);
+    stroke_path(fb, &line2(b, 0.26, 0.48, 0.50, 0.48), sw, color, m);
+    stroke_path(fb, &line2(b, 0.26, 0.60, 0.50, 0.60), sw, color, m);
+    stroke_path(fb, &line2(b, 0.26, 0.72, 0.44, 0.72), sw, color, m);
+}
+
+/// Paste: a clipboard with a top clip and a sheet of paper on the board.
+fn draw_edit_paste(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
+) {
+    // Clipboard board.
+    fill_path(fb, &nrect(b, 0.16, 0.14, 0.68, 0.80, 0.06), &Fill::Solid(color), m, lut);
+    // Paper sheet on the board (detail, inset).
+    fill_path(fb, &nrect(b, 0.26, 0.30, 0.48, 0.56, 0.03), &Fill::Solid(detail), m, lut);
+    // Top clip (a small tab straddling the board's top edge).
+    fill_path(fb, &nrect(b, 0.38, 0.06, 0.24, 0.16, 0.05), &Fill::Solid(color), m, lut);
+    fill_path(fb, &nrect(b, 0.43, 0.02, 0.14, 0.10, 0.04), &Fill::Solid(detail), m, lut);
+    // Text lines on the sheet.
+    let sw = pr(b, 0.028);
+    stroke_path(fb, &line2(b, 0.33, 0.44, 0.67, 0.44), sw, color, m);
+    stroke_path(fb, &line2(b, 0.33, 0.56, 0.67, 0.56), sw, color, m);
+    stroke_path(fb, &line2(b, 0.33, 0.68, 0.58, 0.68), sw, color, m);
+}
+
+/// Undo: a curved arrow arcing over the top and pointing to the lower-left.
+fn draw_edit_undo(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    _detail: Color,
+    m: BlendMode,
+    _lut: &SrgbLut,
+) {
+    let (cx, cy) = px(b, 0.52, 0.54);
+    let r = pr(b, 0.30);
+    let sw = pr(b, 0.075);
+    let start = -0.1 * PI;
+    let sweep = -1.15 * PI; // counter-clockwise, over the top, ending lower-left
+    let mut pb = PathBuilder::new();
+    pb.arc_to(cx, cy, r, start, sweep);
+    stroke_path(fb, &pb.build(), sw, color, m);
+    // Arrowhead (left-pointing chevron) at the tail.
+    let end = start + sweep;
+    let ex = cx + r * end.cos();
+    let ey = cy + r * end.sin();
+    let d = pr(b, 0.16);
+    let mut head = PathBuilder::new();
+    head.move_to(ex + d, ey - d).line_to(ex, ey).line_to(ex + d, ey + d);
+    stroke_path(fb, &head.build(), sw, color, m);
+}
+
+/// Redo: a curved arrow arcing over the top and pointing to the lower-right
+/// (the horizontal mirror of undo).
+fn draw_edit_redo(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    _detail: Color,
+    m: BlendMode,
+    _lut: &SrgbLut,
+) {
+    let (cx, cy) = px(b, 0.48, 0.54);
+    let r = pr(b, 0.30);
+    let sw = pr(b, 0.075);
+    let start = -0.9 * PI;
+    let sweep = 1.15 * PI; // clockwise, over the top, ending lower-right
+    let mut pb = PathBuilder::new();
+    pb.arc_to(cx, cy, r, start, sweep);
+    stroke_path(fb, &pb.build(), sw, color, m);
+    // Arrowhead (right-pointing chevron) at the tail.
+    let end = start + sweep;
+    let ex = cx + r * end.cos();
+    let ey = cy + r * end.sin();
+    let d = pr(b, 0.16);
+    let mut head = PathBuilder::new();
+    head.move_to(ex - d, ey - d).line_to(ex, ey).line_to(ex - d, ey + d);
+    stroke_path(fb, &head.build(), sw, color, m);
+}
+
+/// Process-stop / forbidden: a solid octagon (stop-sign shape) with a
+/// contrasting horizontal bar across the middle.
+fn draw_process_stop(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
+) {
+    let (cx, cy) = px(b, 0.50, 0.50);
+    let r = pr(b, 0.46);
+    // Octagon: 8 vertices, rotated so edges are flat top/bottom/left/right.
+    let mut pb = PathBuilder::new();
+    for i in 0..8 {
+        let angle = PI / 8.0 + i as f32 * PI / 4.0;
+        let x = cx + r * angle.cos();
+        let y = cy + r * angle.sin();
+        if i == 0 {
+            pb.move_to(x, y);
+        } else {
+            pb.line_to(x, y);
+        }
+    }
+    pb.close();
+    fill_path(fb, &pb.build(), &Fill::Solid(color), m, lut);
+    // Prohibition bar.
+    fill_path(fb, &nrect(b, 0.24, 0.43, 0.52, 0.14, 0.03), &Fill::Solid(detail), m, lut);
+}
+
+/// Video: a screen with a centred play triangle.
+fn draw_video(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
+) {
+    // Screen body.
+    fill_path(fb, &nrect(b, 0.08, 0.20, 0.84, 0.60, 0.08), &Fill::Solid(color), m, lut);
+    // Play triangle (detail, pointing right).
+    let (t1, t1y) = px(b, 0.40, 0.34);
+    let (t2, t2y) = px(b, 0.40, 0.66);
+    let (t3, t3y) = px(b, 0.66, 0.50);
+    let mut pb = PathBuilder::new();
+    pb.move_to(t1, t1y).line_to(t2, t2y).line_to(t3, t3y).close();
+    fill_path(fb, &pb.build(), &Fill::Solid(detail), m, lut);
+}
+
+/// Generic file / document: a page with a folded top-right corner.
+fn draw_generic_file(
+    fb: &mut FrameBuffer,
+    b: &Rect,
+    color: Color,
+    detail: Color,
+    m: BlendMode,
+    lut: &SrgbLut,
+) {
+    // Page body with the top-right corner cut off (folded).
+    let fold = 0.24;
+    let (p0x, p0y) = px(b, 0.22, 0.06);
+    let (p1x, p1y) = px(b, 0.78 - fold, 0.06);
+    let (p2x, p2y) = px(b, 0.78, 0.06 + fold);
+    let (p3x, p3y) = px(b, 0.78, 0.94);
+    let (p4x, p4y) = px(b, 0.22, 0.94);
+    let mut pb = PathBuilder::new();
+    pb.move_to(p0x, p0y)
+        .line_to(p1x, p1y)
+        .line_to(p2x, p2y)
+        .line_to(p3x, p3y)
+        .line_to(p4x, p4y)
+        .close();
+    fill_path(fb, &pb.build(), &Fill::Solid(color), m, lut);
+    // Folded corner (detail triangle).
+    let mut corner = PathBuilder::new();
+    corner
+        .move_to(p1x, p1y)
+        .line_to(p2x, p2y)
+        .line_to(px(b, 0.78 - fold, 0.06 + fold).0, px(b, 0.78 - fold, 0.06 + fold).1)
+        .close();
+    fill_path(fb, &corner.build(), &Fill::Solid(detail), m, lut);
+    // Text lines.
+    let sw = pr(b, 0.03);
+    for &ny in &[0.44_f32, 0.58, 0.72] {
+        stroke_path(fb, &line2(b, 0.32, ny, 0.68, ny), sw, detail, m);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1320,5 +1576,108 @@ mod tests {
         let light = Color::new(220, 220, 220, 255);
         let d = detail_color(light);
         assert!(d.r < light.r && d.g < light.g && d.b < light.b);
+    }
+
+    /// Render one glyph id to a fresh framebuffer and return its raw pixels.
+    fn render_glyph(id: u32) -> Vec<u8> {
+        let lut = crate::color::SrgbLut::new();
+        let mut fb = FrameBuffer::new(48, 48, PixelFormat::Bgra8);
+        draw_icon(&mut fb, id, Rect::new(4.0, 4.0, 40.0, 40.0), Color::new(230, 230, 230, 255), &lut);
+        fb.pixels().to_vec()
+    }
+
+    /// The five distinct edit ops (cut/copy/paste/undo/redo) — plus the other
+    /// new glyphs — must each produce non-empty ink AND be pixel-wise DISTINCT
+    /// from one another. They used to collapse onto a single pencil (id 26).
+    /// Teeth: point two of these ids at the same `draw_*` fn and this turns RED.
+    #[test]
+    fn new_glyphs_produce_distinct_ink() {
+        // 35..=42: EditCut, EditCopy, EditPaste, EditUndo, EditRedo,
+        //          ProcessStop, Video, GenericFile.
+        let ids = [35_u32, 36, 37, 38, 39, 40, 41, 42];
+        let rendered: Vec<(u32, Vec<u8>)> = ids.iter().map(|&id| (id, render_glyph(id))).collect();
+
+        for (id, px) in &rendered {
+            assert!(px.iter().any(|&b| b != 0), "new glyph id {id} produced no ink");
+        }
+        for i in 0..rendered.len() {
+            for j in (i + 1)..rendered.len() {
+                assert_ne!(
+                    rendered[i].1, rendered[j].1,
+                    "glyph id {} and id {} rendered pixel-identical (indistinguishable)",
+                    rendered[i].0, rendered[j].0
+                );
+            }
+        }
+    }
+
+    /// Explicit teeth for the reported bug: Cut, Copy and Paste must differ
+    /// from each other pixel-wise (they were one shared pencil before).
+    #[test]
+    fn cut_copy_paste_differ() {
+        let cut = render_glyph(35);
+        let copy = render_glyph(36);
+        let paste = render_glyph(37);
+        assert_ne!(cut, copy, "cut and copy render identically");
+        assert_ne!(copy, paste, "copy and paste render identically");
+        assert_ne!(cut, paste, "cut and paste render identically");
+    }
+
+    /// Undo and redo are horizontal mirrors — they must not render identically.
+    #[test]
+    fn undo_redo_differ() {
+        assert_ne!(render_glyph(38), render_glyph(39), "undo and redo render identically");
+    }
+
+    /// Render a labelled strip of the new + improved glyphs (two rows: 40px and
+    /// 16px) to `.orchestration/shots/` for manual inspection. Ignored in normal
+    /// runs; invoke with `--ignored` to regenerate the artifact.
+    #[test]
+    #[ignore = "artifact generator; run with --ignored"]
+    fn render_new_glyphs_strip() {
+        let lut = crate::color::SrgbLut::new();
+        // Improved (terminal/search/wallpaper) + all new glyphs.
+        let ids: [u32; 11] = [2, 15, 30, 35, 36, 37, 38, 39, 40, 41, 42];
+        let cell = 64u32;
+        let big = 44.0f32;
+        let small = 16.0f32;
+        let cols = ids.len() as u32;
+        let (w, h) = (cols * cell, cell * 2);
+        let mut fb = FrameBuffer::new(w, h, PixelFormat::Bgra8);
+        // Opaque dark background so the light glyphs are visible.
+        if let Some(buf) = fb.pixels_mut() {
+            for px in buf.chunks_exact_mut(4) {
+                px[0] = 32; // B
+                px[1] = 32; // G
+                px[2] = 32; // R
+                px[3] = 255; // A
+            }
+        }
+        let ink = Color::new(235, 235, 235, 255);
+        for (i, &id) in ids.iter().enumerate() {
+            let cx = i as u32 * cell;
+            // Big row.
+            let bx = cx as f32 + (cell as f32 - big) / 2.0;
+            draw_icon(&mut fb, id, Rect::new(bx, 10.0, big, big), ink, &lut);
+            // Small (16px) row — the legibility target.
+            let sx = cx as f32 + (cell as f32 - small) / 2.0;
+            let sy = cell as f32 + (cell as f32 - small) / 2.0;
+            draw_icon(&mut fb, id, Rect::new(sx, sy, small, small), ink, &lut);
+        }
+        // Convert BGRA → RGBA and save as PNG.
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for px in fb.pixels().chunks_exact(4) {
+            rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+        }
+        let img = image::RgbaImage::from_raw(w, h, rgba).expect("valid rgba buffer");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(".orchestration")
+            .join("shots");
+        std::fs::create_dir_all(&dir).expect("create shots dir");
+        let path = dir.join("new_glyphs_strip.png");
+        img.save(&path).expect("save png");
+        eprintln!("wrote glyph strip to {}", path.display());
     }
 }
