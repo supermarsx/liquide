@@ -12,3 +12,9 @@ liquide-compositor = { workspace = true }
 liquide-dom = { workspace = true }
 liquide-style-engine = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
+# Used only in preset tests to prove every preset icon name resolves to a real
+# (non-zero) icon id through the shared paint name-map — no producer should emit
+# a name that renders as the placeholder box.
+liquide-paint = { workspace = true }

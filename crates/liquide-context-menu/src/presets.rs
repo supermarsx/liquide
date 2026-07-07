@@ -62,7 +62,11 @@ pub fn desktop_menu() -> Vec<MenuItem> {
             "preferences-system",
             ACTION_DISPLAY_SETTINGS,
         ),
-        MenuItem::action_with_icon("Change Wallpaper", "camera", ACTION_CHANGE_WALLPAPER),
+        MenuItem::action_with_icon(
+            "Change Wallpaper",
+            "preferences-desktop-wallpaper",
+            ACTION_CHANGE_WALLPAPER,
+        ),
         MenuItem::action_with_icon("Open Terminal Here", "terminal", ACTION_OPEN_TERMINAL_HERE),
         MenuItem::action_with_icon("Open File Manager", "folder", ACTION_OPEN_FILE_MANAGER),
         MenuItem::action("Refresh Desktop", ACTION_REFRESH_DESKTOP),
@@ -171,7 +175,11 @@ pub const ACTION_OPEN_WITH_OTHER: MenuAction = MenuAction(523);
 /// Paste, New Folder, Open Terminal, Settings.
 pub fn desktop_context_menu() -> Vec<MenuItem> {
     vec![
-        MenuItem::action_with_icon("Change Wallpaper", "camera", ACTION_CHANGE_WALLPAPER),
+        MenuItem::action_with_icon(
+            "Change Wallpaper",
+            "preferences-desktop-wallpaper",
+            ACTION_CHANGE_WALLPAPER,
+        ),
         MenuItem::action_with_icon(
             "Display Settings",
             "preferences-system",
@@ -348,4 +356,90 @@ pub fn window_titlebar_menu() -> Vec<MenuItem> {
             .with_shortcut("Alt+F4")
             .with_danger(true),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MenuItemKind;
+    use liquide_paint::icons::icon_id_for_name;
+
+    /// Depth-first collect of every `(label, icon)` pair carried by a preset,
+    /// descending into submenus so nested items are audited too.
+    fn collect_icons(items: &[MenuItem], out: &mut Vec<(String, String)>) {
+        for item in items {
+            if let Some(icon) = &item.icon {
+                out.push((item.label.clone(), icon.clone()));
+            }
+            if let MenuItemKind::Submenu(children) = &item.kind {
+                collect_icons(children, out);
+            }
+        }
+    }
+
+    /// The icon id the placeholder box renders as. Any producer name that maps
+    /// here is a wrong/missing icon (renders as a debuggable box, not a glyph).
+    const PLACEHOLDER_ID: u32 = 0;
+
+    /// Every icon name emitted by every shipping preset menu must resolve to a
+    /// real (non-zero) glyph through the shared paint name-map. This guards the
+    /// whole family against a producer emitting an unmapped name (which would
+    /// render as the placeholder box).
+    #[test]
+    fn every_preset_icon_name_resolves_to_a_real_glyph() {
+        let mut icons = Vec::new();
+        collect_icons(&desktop_menu(), &mut icons);
+        collect_icons(&window_menu(), &mut icons);
+        collect_icons(&dock_pinned_menu(), &mut icons);
+        collect_icons(&dock_running_menu(), &mut icons);
+        collect_icons(&status_bar_menu(), &mut icons);
+        collect_icons(&desktop_context_menu(), &mut icons);
+        collect_icons(&file_context_menu(false, 1), &mut icons);
+        collect_icons(&file_context_menu(true, 3), &mut icons);
+        collect_icons(&text_context_menu(true, true), &mut icons);
+        collect_icons(&window_titlebar_menu(), &mut icons);
+
+        assert!(!icons.is_empty(), "presets should carry icons to audit");
+        for (label, icon) in &icons {
+            assert_ne!(
+                icon_id_for_name(icon),
+                PLACEHOLDER_ID,
+                "preset item {label:?} uses icon {icon:?} which does not resolve \
+                 to a real glyph (renders as the placeholder box)",
+            );
+        }
+    }
+
+    /// The "Change Wallpaper" action must carry the WALLPAPER glyph, not the
+    /// camera glyph (the t-icon-producers semantic fix). This is RED before the
+    /// fix (`camera` → id 8) and GREEN after (`preferences-desktop-wallpaper`
+    /// → id 30), in BOTH desktop menu builders that diverged.
+    #[test]
+    fn change_wallpaper_uses_the_wallpaper_glyph_not_camera() {
+        let wallpaper_id = icon_id_for_name("preferences-desktop-wallpaper");
+        let camera_id = icon_id_for_name("camera");
+        assert_ne!(wallpaper_id, PLACEHOLDER_ID, "wallpaper name must resolve");
+        assert_ne!(
+            wallpaper_id, camera_id,
+            "wallpaper and camera must be distinct glyphs for the test to bite"
+        );
+
+        for items in [desktop_menu(), desktop_context_menu()] {
+            let mut icons = Vec::new();
+            collect_icons(&items, &mut icons);
+            let (_, icon) = icons
+                .iter()
+                .find(|(label, _)| label == "Change Wallpaper")
+                .expect("a Change Wallpaper item is present");
+            assert_eq!(
+                icon, "preferences-desktop-wallpaper",
+                "Change Wallpaper must use the wallpaper icon name"
+            );
+            assert_eq!(
+                icon_id_for_name(icon),
+                wallpaper_id,
+                "Change Wallpaper icon must resolve to the wallpaper glyph"
+            );
+        }
+    }
 }

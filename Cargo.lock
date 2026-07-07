@@ -3361,6 +3361,7 @@ version = "0.1.0"
 dependencies = [
  "liquide-compositor",
  "liquide-dom",
+ "liquide-paint",
  "liquide-style-engine",
  "serde",
 ]
