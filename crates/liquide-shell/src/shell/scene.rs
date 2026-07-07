@@ -197,6 +197,145 @@ fn is_fullscreen_fill(node: &SceneNode, screen_area: f32) -> bool {
     ) && node_area >= screen_area * 0.9
 }
 
+// ── Imperative app-content (window body) layout metrics ─────────────────────
+// A single source for the grid `build_app_view_content` paints with, reused by
+// the CARET-rect and per-line DAMAGE paths so the drawn caret, the blink damage,
+// and the per-edit damage never drift from what is painted.
+
+/// Character-cell WIDTH hint used only to size the `cols` the app renders to and
+/// to advance an optional row gutter. Glyph X positions WITHIN a row are taken
+/// from SHAPED advances (see [`app_content_shaped_width`]), NOT this grid — a
+/// proportional font's glyphs do not sit on an 8 px monospace grid, so the caret
+/// must follow the shaped run, not `col * cell_w`.
+const APP_CONTENT_CELL_W: f32 = 8.0;
+/// Row height (logical px) for the imperative app-content grid.
+const APP_CONTENT_CELL_H: f32 = 18.0;
+const APP_CONTENT_PAD_X: f32 = 12.0;
+const APP_CONTENT_PAD_Y: f32 = 10.0;
+/// The px size the CPU renderer shapes an app-content `text_node` at: a `Text`
+/// node with `font_size == 0.0` and `scale == 1` rasterises at `16 * scale`
+/// (renderer `renderer/text.rs`), so measuring at 16 px reproduces the painted
+/// advances (`measure == paint`).
+const APP_CONTENT_GLYPH_SIZE: f32 = 16.0;
+
+/// Shaped advance width (logical px) of `text` at `size_px`, using the SAME
+/// rustybuzz shaping the paint path uses (`measure == paint`, via
+/// [`liquide_font_rasterizer::metrics::FontMetricsProvider::measure_text`]).
+/// Resolves the app-content family (`Inter` → `sans-serif` fallback) exactly as
+/// the renderer's text path does, so a substring's measured advance equals the
+/// painted glyph offset — this is what lets the caret sit on the glyphs instead
+/// of on a fixed `cell_w` grid. Backed by a process-wide font DB built ONCE from
+/// the packaged faces (the same faces the renderer paints with).
+fn app_content_shaped_width(text: &str, size_px: f32) -> f32 {
+    use std::sync::{Mutex, OnceLock};
+    if text.is_empty() {
+        return 0.0;
+    }
+    static DB: OnceLock<Mutex<liquide_font_rasterizer::FontDatabase>> = OnceLock::new();
+    let db = DB
+        .get_or_init(|| Mutex::new(Shell::build_font_database()))
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let provider = liquide_font_rasterizer::metrics::FontMetricsProvider::new(&db);
+    match db
+        .resolve("Inter", 400, false)
+        .or_else(|| db.resolve("sans-serif", 400, false))
+    {
+        Some(fid) => provider.measure_text(fid, size_px, text).0,
+        // No face at all (should never happen — the DB always carries the
+        // embedded fallback): a half-em estimate so the caret still advances.
+        None => text.chars().count() as f32 * size_px * 0.5,
+    }
+}
+
+/// The `(cols, rows)` character-cell hint for a content area (matches
+/// `build_app_view_content`).
+fn app_content_cols_rows(content: Rect) -> (u32, u32) {
+    let avail_w = (content.width - APP_CONTENT_PAD_X * 2.0).max(0.0);
+    let avail_h = (content.height - APP_CONTENT_PAD_Y * 2.0).max(0.0);
+    let cols = (avail_w / APP_CONTENT_CELL_W).floor().max(1.0) as u32;
+    let rows = (avail_h / APP_CONTENT_CELL_H).floor().max(1.0) as u32;
+    (cols, rows)
+}
+
+/// The y of the first BODY row (below the optional title line).
+fn app_content_row_base_y(content: Rect, model: &liquide_interop::AppContentView) -> f32 {
+    let mut y = content.y + APP_CONTENT_PAD_Y;
+    if model.title.is_some() {
+        y += APP_CONTENT_CELL_H + 4.0;
+    }
+    y
+}
+
+/// Max number of body rows that fit below the title (matches build).
+fn app_content_max_visible(content: Rect, model: &liquide_interop::AppContentView) -> usize {
+    let row_base_y = app_content_row_base_y(content, model);
+    ((content.y + content.height - row_base_y) / APP_CONTENT_CELL_H)
+        .floor()
+        .max(0.0) as usize
+}
+
+/// Absolute x of a body row's TEXT run (after left pad + optional gutter advance).
+fn app_content_row_text_x(content: Rect, row: Option<&liquide_interop::ContentRow>) -> f32 {
+    let mut x = content.x + APP_CONTENT_PAD_X;
+    if let Some(g) = row.and_then(|r| r.gutter.as_ref()) {
+        x += (g.chars().count() as f32 + 1.0) * APP_CONTENT_CELL_W;
+    }
+    x
+}
+
+/// The caret rect (screen space) for an already-built content `model`, or `None`
+/// when the model has no cursor / the cursor row is scrolled out. SHARED by the
+/// draw path ([`Shell::build_app_view_content`]) and the damage paths (blink +
+/// per-edit) so the drawn caret, the blink damage, and the edit damage stay
+/// byte-identical. The caret x is the SHAPED advance sum of the row text before
+/// the cursor column (measure==paint), NOT `col * cell_w`.
+fn app_content_caret_rect_for_model(
+    content: Rect,
+    model: &liquide_interop::AppContentView,
+) -> Option<Rect> {
+    use liquide_interop::ContentKind;
+    let (crow, ccol) = model.cursor?;
+    let max_visible = app_content_max_visible(content, model);
+    if (crow as usize) >= max_visible {
+        return None;
+    }
+    let row = model.rows.get(crow as usize);
+    let text_x = app_content_row_text_x(content, row);
+    let prefix: String = row
+        .map(|r| r.text.chars().take(ccol as usize).collect())
+        .unwrap_or_default();
+    let caret_x = text_x + app_content_shaped_width(&prefix, APP_CONTENT_GLYPH_SIZE);
+    let caret_y = app_content_row_base_y(content, model) + crow as f32 * APP_CONTENT_CELL_H;
+    let caret_w = if matches!(model.kind, ContentKind::Terminal) {
+        // Block caret spans the glyph under the cursor (its shaped advance).
+        let ch: String = row
+            .and_then(|r| r.text.chars().nth(ccol as usize))
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| " ".to_string());
+        app_content_shaped_width(&ch, APP_CONTENT_GLYPH_SIZE).max(2.0)
+    } else {
+        2.0
+    };
+    Some(Rect::new(caret_x, caret_y, caret_w, APP_CONTENT_CELL_H - 2.0))
+}
+
+/// A transient POP-UP overlay whose appear / move / DISMISS may not land in the
+/// CSS `dirty_chrome_nodes` set — either because it is a MANUAL overlay outside
+/// the CSS layout tree (the dock tooltip) or because a dismiss REMOVES its DOM
+/// node so its OLD laid-out rect is gone. A bounded frame that omits an overlay's
+/// OLD footprint would leave a stale ghost (the out-of-bounds-overlay class), so
+/// [`Shell::compute_precomputed_damage`] tracks each one's prior footprint and
+/// unions OLD∪NEW on any transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TransientOverlay {
+    Tooltip,
+    ContextMenu,
+    SessionMenu,
+    AppMenu,
+    NotificationCenter,
+}
+
 /// Assign each pipeline node its final `z_order`, splitting the stream into a
 /// background band and a chrome overlay band.
 ///
@@ -414,18 +553,34 @@ pub(crate) struct FullSceneCache {
     /// changed, so last frame's keys are still exactly valid (every owner reuses
     /// its surface), mirroring how the root itself is reused.
     surface_keys: Vec<SurfaceKey>,
-    /// Footprint of the dock-hover tooltip overlay as emitted on the PREVIOUS
-    /// `build_scene` (fix: tooltip ghost). The tooltip is a manual overlay
-    /// OUTSIDE the CSS layout tree, so its appear/move/hide is invisible to the
-    /// chrome dirty set that drives `compute_precomputed_damage`; when a bounded
-    /// (authoritative) damage set is emitted it would omit the tooltip's OLD
-    /// footprint, so the removed/moved bubble is never repainted and ghosts.
-    /// Tracking last frame's rect lets the damage builder union the OLD (∪ new)
-    /// tooltip rect into the emitted damage on any appear/move/hide transition,
-    /// so the stale pixels are cleared. `None` when no tooltip was drawn last
-    /// frame. Stored here (rather than on `Shell`) to keep the fix self-contained
-    /// in this module.
-    last_tooltip_rect: Option<Rect>,
+    /// Prior-frame footprints of EVERY tracked TRANSIENT overlay (dock tooltip +
+    /// the CSS context/session/app menus + the notification center), for the
+    /// generalized OLD∪NEW damage guard (fix: stale overlay ghost — the same
+    /// class as the tooltip ghost, generalized). Each such overlay's appear /
+    /// move / DISMISS may be invisible to the chrome dirty set that drives
+    /// `compute_precomputed_damage` (the tooltip is outside the CSS tree; a
+    /// dismissed menu's node is REMOVED so its old laid-out rect is gone), so a
+    /// bounded frame that omits its OLD footprint would ghost it. Diffing this map
+    /// frame-to-frame lets the damage builder union the OLD (∪ new) rect on any
+    /// transition so the stale pixels are cleared. Kept ALWAYS (even on the full-
+    /// fallback returns, where the full repaint already clears the overlay) so the
+    /// next frame's diff is correct. Stored here (rather than on `Shell`) to keep
+    /// the fix self-contained in this module.
+    last_overlay_rects: std::collections::HashMap<TransientOverlay, Rect>,
+    /// Per-window snapshot of the app-content model as LAST PAINTED (t70-s6 window
+    /// bodies), keyed by window id. Recorded by `build_app_view_content` on the
+    /// frame a window's body is (re)built, so the NEXT frame's damage path can diff
+    /// the new model against it and damage only the CHANGED lines (+ old/new caret)
+    /// instead of the whole window footprint. `RefCell` so the `&self` draw path
+    /// can record without threading `&mut` through the scene build; the damage path
+    /// reads it (before the build overwrites it) via `&mut self`.
+    app_content_baseline: std::cell::RefCell<std::collections::HashMap<u64, liquide_interop::AppContentView>>,
+    /// Per-frame memo of the app-content model the DAMAGE path already computed
+    /// for a changed window, so the subsequent `build_app_view_content` reuses it
+    /// instead of calling the app's `content_view` a SECOND time (the damage diff
+    /// and the paint would otherwise each invoke it once per changed frame). Keyed
+    /// by window id; consumed (taken) by the build and cleared each frame.
+    pending_models: std::cell::RefCell<std::collections::HashMap<u64, liquide_interop::AppContentView>>,
 }
 
 impl FullSceneCache {
@@ -436,7 +591,9 @@ impl FullSceneCache {
             misses: 0,
             dirty: true,
             surface_keys: Vec::new(),
-            last_tooltip_rect: None,
+            last_overlay_rects: std::collections::HashMap::new(),
+            app_content_baseline: std::cell::RefCell::new(std::collections::HashMap::new()),
+            pending_models: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -445,16 +602,47 @@ impl FullSceneCache {
         self.surface_keys = keys;
     }
 
-    /// The tooltip-overlay footprint recorded on the previous `build_scene`
-    /// (fix: tooltip ghost). `None` when no tooltip was drawn last frame.
-    fn last_tooltip_rect(&self) -> Option<Rect> {
-        self.last_tooltip_rect
+    /// The transient-overlay footprints recorded on the previous `build_scene`
+    /// (fix: stale overlay ghost). Empty when no tracked overlay was drawn.
+    fn overlay_rects(&self) -> &std::collections::HashMap<TransientOverlay, Rect> {
+        &self.last_overlay_rects
     }
 
-    /// Record this frame's tooltip-overlay footprint (or `None` when the tooltip
-    /// is not drawn) for the next frame's transition diff.
-    fn set_last_tooltip_rect(&mut self, rect: Option<Rect>) {
-        self.last_tooltip_rect = rect;
+    /// Record this frame's transient-overlay footprints for the next frame's
+    /// transition diff.
+    fn set_overlay_rects(&mut self, rects: std::collections::HashMap<TransientOverlay, Rect>) {
+        self.last_overlay_rects = rects;
+    }
+
+    /// The app-content model last painted for `window_id`, if any (a CLONE — the
+    /// map is behind a `RefCell` for `&self` recording).
+    fn app_content_baseline(&self, window_id: u64) -> Option<liquide_interop::AppContentView> {
+        self.app_content_baseline.borrow().get(&window_id).cloned()
+    }
+
+    /// Record the app-content model painted for `window_id` this frame, so the
+    /// NEXT frame's damage diff can bound a content change to the changed lines.
+    fn set_app_content_baseline(&self, window_id: u64, model: liquide_interop::AppContentView) {
+        self.app_content_baseline
+            .borrow_mut()
+            .insert(window_id, model);
+    }
+
+    /// Memoise the model the damage path computed for `window_id` this frame so the
+    /// build reuses it (avoids a second `content_view`).
+    fn stash_pending_model(&self, window_id: u64, model: liquide_interop::AppContentView) {
+        self.pending_models.borrow_mut().insert(window_id, model);
+    }
+
+    /// Take the memoised model for `window_id` this frame, if the damage path
+    /// computed one.
+    fn take_pending_model(&self, window_id: u64) -> Option<liquide_interop::AppContentView> {
+        self.pending_models.borrow_mut().remove(&window_id)
+    }
+
+    /// Drop any stale memoised models at the start of a frame.
+    fn clear_pending_models(&self) {
+        self.pending_models.borrow_mut().clear();
     }
 
     /// The surface-cache keys emitted for the most recently built scene.
@@ -861,6 +1049,36 @@ impl WindowSceneSignature {
             rects.push(e.bounds.to_rect());
         }
         rects
+    }
+
+    /// `true` iff `window_id`'s APP-CONTENT revision differs between frames — a
+    /// text/content edit, terminal drain, or scroll. Such a change is confined to
+    /// the CHANGED LINES (+ caret) by the per-line damage path, not the whole
+    /// window footprint (t-fix: one-char edit damaged the whole window).
+    fn app_content_changed_for(&self, other: &Self, window_id: u64) -> bool {
+        let rev = |sig: &Self| {
+            sig.app_content
+                .iter()
+                .find(|(w, _)| *w == window_id)
+                .map(|(_, r)| *r)
+        };
+        rev(self) != rev(other)
+    }
+
+    /// `true` iff a change for `window_id` recolors/relays its DECORATION or
+    /// typed-text FIELD — focus gain/loss, a titlebar-button hover flip, or the
+    /// focused typed-text buffer. These span the window's border/decoration (not a
+    /// single content line), so they keep the full-footprint damage.
+    fn border_changed_for(&self, other: &Self, window_id: u64) -> bool {
+        let is = |id: Option<u64>| id == Some(window_id);
+        let focus = self.focused_id != other.focused_id
+            && (is(self.focused_id) || is(other.focused_id));
+        let hover = self.hovered_button != other.hovered_button
+            && (self.hovered_button.map(|h| h.window_id) == Some(window_id)
+                || other.hovered_button.map(|h| h.window_id) == Some(window_id));
+        let text = self.focused_text != other.focused_text
+            && (is(self.focused_id) || is(other.focused_id));
+        focus || hover || text
     }
 
     /// MOVE-ONLY diff (fix: drag fluidity). Returns `Some(per-window (id, dx, dy)
@@ -1327,6 +1545,138 @@ impl Shell {
         self.precomputed_damage.take()
     }
 
+    /// Content-area rect (screen space) of a window's body, below the titlebar —
+    /// mirrors the `content_bounds` computed in the window build (uses the settled
+    /// `window.bounds`; the damage paths that call this run only when no window
+    /// geometry/animation differs, so the settled bounds ARE the painted footprint).
+    fn window_content_rect(&self, window: &Window) -> Rect {
+        let title_h = if window.flags.contains(WindowFlags::DECORATED) {
+            self.decoration_style.title_bar_height
+        } else {
+            0.0
+        };
+        Rect::new(
+            window.bounds.x,
+            window.bounds.y + title_h,
+            window.bounds.width,
+            (window.bounds.height - title_h).max(0.0),
+        )
+    }
+
+    /// The app-content caret rect (screen space) for `window`, or `None` when the
+    /// window has no registered app view / no cursor / the cursor is scrolled out.
+    /// Recomputes the live content model, then delegates to the shared
+    /// [`app_content_caret_rect_for_model`] so it matches the painted caret exactly.
+    fn app_content_caret_rect(&self, window: &Window) -> Option<Rect> {
+        let view = self.app_views.get(&window.id)?;
+        let content = self.window_content_rect(window);
+        let (cols, rows) = app_content_cols_rows(content);
+        let model = view.content_view(cols, rows);
+        app_content_caret_rect_for_model(content, &model)
+    }
+
+    /// Line-granular damage (screen space, UN-expanded) for an app-content change
+    /// in `window`: the union of every VISIBLE body row whose content differs from
+    /// the LAST PAINTED frame, plus the OLD and NEW caret rects (a cursor move with
+    /// no text change still moves the caret pixels). Falls back to the whole
+    /// visible content region when there is no baseline yet (first change) so the
+    /// result is ALWAYS a superset of the changed pixels. An insert/delete that
+    /// shifts lines makes every row below differ, so the damaged band grows exactly
+    /// to cover them — still a tight superset, still far smaller than the window
+    /// footprint for the common single-line edit.
+    fn app_content_line_damage(&self, window: &Window) -> Vec<Rect> {
+        let Some(view) = self.app_views.get(&window.id) else {
+            return Vec::new();
+        };
+        let content = self.window_content_rect(window);
+        let (cols, rows) = app_content_cols_rows(content);
+        let cur = view.content_view(cols, rows);
+        // Memoise the model so the subsequent `build_app_view_content` reuses it
+        // rather than calling `content_view` a second time this frame. Only sound
+        // when the window has NO active effect (its painted `content_bounds` then
+        // equals `window_content_rect`, so the cols/rows match); the per-id loop
+        // guards this by not taking the line-damage path for animated windows.
+        self.full_scene_cache
+            .stash_pending_model(window.id.0, cur.clone());
+        let prev = self.full_scene_cache.app_content_baseline(window.id.0);
+        let mut rects: Vec<Rect> = Vec::new();
+
+        // OLD + NEW caret rects.
+        if let Some(prev) = prev.as_ref() {
+            if let Some(r) = app_content_caret_rect_for_model(content, prev) {
+                rects.push(r);
+            }
+        }
+        if let Some(r) = app_content_caret_rect_for_model(content, &cur) {
+            rects.push(r);
+        }
+
+        let max_visible = app_content_max_visible(content, &cur);
+        let row_rect = |i: usize| -> Rect {
+            let y = app_content_row_base_y(content, &cur) + i as f32 * APP_CONTENT_CELL_H;
+            Rect::new(content.x, y, content.width, APP_CONTENT_CELL_H)
+        };
+
+        match prev {
+            Some(prev) => {
+                if prev.title != cur.title {
+                    rects.push(Rect::new(
+                        content.x,
+                        content.y + APP_CONTENT_PAD_Y,
+                        content.width,
+                        APP_CONTENT_CELL_H,
+                    ));
+                }
+                let n = prev.rows.len().max(cur.rows.len()).min(max_visible);
+                for i in 0..n {
+                    if prev.rows.get(i) != cur.rows.get(i) {
+                        rects.push(row_rect(i));
+                    }
+                }
+            }
+            None => {
+                // No baseline — damage the whole visible content region.
+                let base_y = app_content_row_base_y(content, &cur);
+                let h = (base_y - content.y + max_visible as f32 * APP_CONTENT_CELL_H)
+                    .min(content.height)
+                    .max(0.0);
+                rects.push(Rect::new(content.x, content.y, content.width, h));
+            }
+        }
+        rects
+    }
+
+    /// Current screen-space footprints of every tracked TRANSIENT overlay for the
+    /// generalized OLD∪NEW damage guard: the dock tooltip (shell-state geometry)
+    /// plus the CSS context/session/app menus and the notification center (their
+    /// laid-out DOM rects while present). A dismissed overlay simply drops out of
+    /// the map (its element is gone / not laid out), so the caller sees OLD present
+    /// / NEW absent and damages the old rect.
+    fn transient_overlay_footprints(
+        &self,
+        layout: &liquide_layout::LayoutTree,
+    ) -> std::collections::HashMap<TransientOverlay, Rect> {
+        let mut map = std::collections::HashMap::new();
+        if let Some(r) = self.tooltip_overlay_rect() {
+            map.insert(TransientOverlay::Tooltip, r);
+        }
+        let mut add_css = |key: TransientOverlay, id: &str| {
+            if let Some(node) = self.desktop_dom.doc.get_element_by_id(id) {
+                if let Some(box_id) = layout.find_box_id_by_node(node) {
+                    let r = layout.absolute_border_rect(box_id);
+                    if r.width > 0.0 && r.height > 0.0 {
+                        map.insert(key, Rect::new(r.x, r.y, r.width, r.height));
+                    }
+                }
+            }
+        };
+        add_css(TransientOverlay::ContextMenu, "context-menu");
+        add_css(TransientOverlay::SessionMenu, "session-menu");
+        add_css(TransientOverlay::AppMenu, "app-menu");
+        add_css(TransientOverlay::NotificationCenter, "notification-center");
+        map
+    }
+
     /// Compute the precomputed damage for a contained chrome change, storing the
     /// result in [`Shell::precomputed_damage`] (t82-incremental). See the call
     /// site in [`Shell::build_scene`] for the eligibility contract. Leaves the
@@ -1347,31 +1697,73 @@ impl Shell {
         /// the `OVERLAY_BACKDROP_MARGIN` used by `interactive_overlay_damage`.
         const BACKDROP_MARGIN: f32 = 48.0;
 
-        // ── Tooltip overlay transition guard (fix: tooltip ghost) ────────────
-        // The dock-hover tooltip is a MANUAL overlay OUTSIDE the CSS layout tree,
-        // so its appear/move/hide never lands in `dirty_chrome_nodes`. When a
-        // dock-item hover emits AUTHORITATIVE (bounded) damage, the worker skips
-        // the scene-diff that would otherwise clear removed/moved nodes — so the
-        // tooltip's OLD footprint is never repainted and ghosts/trails. We diff
-        // the tooltip footprint frame-to-frame here: on any appear/move/hide we
-        // union the OLD (∪ new) bubble rect (expanded by the glass-blur sample
-        // margin) into whatever bounded damage this frame emits, so the stale
-        // pixels are cleared. A held (unchanged) tooltip adds nothing, so a steady
-        // hover stays confined. The prior rect is tracked ALWAYS (even on the
-        // full-fallback returns below, where the full repaint already clears the
-        // overlay) so next frame's diff is correct.
-        let new_tooltip_rect = self.tooltip_overlay_rect();
-        let old_tooltip_rect = self.full_scene_cache.last_tooltip_rect();
-        self.full_scene_cache.set_last_tooltip_rect(new_tooltip_rect);
-        let mut tooltip_damage: Vec<Rect> = Vec::new();
-        if old_tooltip_rect != new_tooltip_rect {
-            for r in [old_tooltip_rect, new_tooltip_rect].into_iter().flatten() {
-                tooltip_damage.push(Rect::new(
-                    r.x - BACKDROP_MARGIN,
-                    r.y - BACKDROP_MARGIN,
-                    r.width + BACKDROP_MARGIN * 2.0,
-                    r.height + BACKDROP_MARGIN * 2.0,
-                ));
+        // Expand a rect by the backdrop-sample margin (superset over the glass /
+        // shadow fringe), skipping empty rects.
+        let expand = |r: Rect| -> Option<Rect> {
+            if r.width <= 0.0 || r.height <= 0.0 {
+                return None;
+            }
+            Some(Rect::new(
+                r.x - BACKDROP_MARGIN,
+                r.y - BACKDROP_MARGIN,
+                r.width + BACKDROP_MARGIN * 2.0,
+                r.height + BACKDROP_MARGIN * 2.0,
+            ))
+        };
+
+        // ── Transient-overlay transition guard (fix: stale overlay ghost) ────
+        // GENERALISES the tooltip old∪new guard to ALL transient pop-up overlays
+        // (dock tooltip + context/session/app menus + notification center). Each
+        // one's appear/move/DISMISS can escape `dirty_chrome_nodes` — the tooltip
+        // is outside the CSS tree, and a dismissed menu's node is REMOVED so its
+        // OLD laid-out rect is gone — so a bounded frame that omits its OLD
+        // footprint would ghost it (the out-of-bounds-overlay class). We diff each
+        // overlay's footprint frame-to-frame: on any appear/move/dismiss we union
+        // its OLD (∪ new) rect (expanded by the glass-blur margin) into whatever
+        // bounded damage this frame emits. Held/unchanged overlays add nothing, so
+        // a steady hover stays confined. The prior rects are tracked ALWAYS (even
+        // on the full-fallback returns below, where the full repaint already clears
+        // the overlay) so next frame's diff is correct.
+        let new_overlays = self.transient_overlay_footprints(&pipeline_output.layout);
+        let old_overlays = self.full_scene_cache.overlay_rects().clone();
+        self.full_scene_cache.set_overlay_rects(new_overlays.clone());
+        let mut overlay_damage: Vec<Rect> = Vec::new();
+        {
+            let mut keys: std::collections::HashSet<TransientOverlay> =
+                std::collections::HashSet::new();
+            keys.extend(old_overlays.keys().copied());
+            keys.extend(new_overlays.keys().copied());
+            for key in keys {
+                let old_r = old_overlays.get(&key);
+                let new_r = new_overlays.get(&key);
+                if old_r != new_r {
+                    for r in [old_r, new_r].into_iter().flatten() {
+                        if let Some(e) = expand(*r) {
+                            overlay_damage.push(e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Caret BLINK confinement (fix: blink forced a full-screen repaint) ──
+        // The 500 ms caret blink flips `cursor_blink_on`, which toggles the caret
+        // node in the MANUAL window subtree — NOT the CSS layout tree, so it never
+        // lands in `dirty_chrome_nodes`. Previously this bailed to a FULL-SCREEN
+        // repaint every half-second. Instead we damage exactly the caret RECT(S)
+        // of the visible app windows (the only pixels a blink changes), computed
+        // from the SHAPED caret geometry that is actually painted. A pure-blink
+        // frame does not mark the window-scene cache dirty, so this is the sole
+        // damage that frame; when the blink coincides with real content change the
+        // caret is already covered by the per-line damage below (harmless overlap).
+        let mut blink_damage: Vec<Rect> = Vec::new();
+        if blink_toggled {
+            for window in self.visible_windows() {
+                if let Some(caret) = self.app_content_caret_rect(window) {
+                    if let Some(e) = expand(caret) {
+                        blink_damage.push(e);
+                    }
+                }
             }
         }
 
@@ -1407,33 +1799,62 @@ impl Shell {
                     // / typing / caret): the COMPLETE set of windows whose pixels
                     // changed this frame. Since this path requires `windows` and
                     // `effects` to be EQUAL between frames, each changed window has
-                    // the SAME bounds in both frames, so a single footprint covers
-                    // it. Expand by `BACKDROP_MARGIN` to cover the drop-shadow +
-                    // glass-blur fringe: the window shadow blurs ≤12 px + spread
-                    // 4 px, and any glass titlebar — this window's own OR an
-                    // overlapping window stacked above it — samples ≤12 px beyond
-                    // its box; both are well inside the 48 px margin, so the rect
-                    // is a true SUPERSET of every pixel whose value depends on
-                    // this window's changed content (including a stacked window's
-                    // glass re-sampling the changed pixels through its backdrop).
+                    // the SAME bounds in both frames. We attribute EACH changed
+                    // window to WHY it changed and emit the tightest superset:
+                    //   * a DECORATION/border change (focus, titlebar-button hover,
+                    //     typed-text field) recolors the whole window frame → the
+                    //     full FOOTPRINT (+ margin);
+                    //   * an APP-CONTENT change (edit / scroll / terminal drain) is
+                    //     confined to the CHANGED LINES (+ old/new caret) rather
+                    //     than the whole window — a one-char edit no longer damages
+                    //     the entire window;
+                    //   * a caret BLINK-only difference contributes nothing here
+                    //     (its caret rect is covered by `blink_damage` above).
+                    // Every rect is expanded by `BACKDROP_MARGIN` to cover the
+                    // drop-shadow + glass-blur fringe (≤12 px + 4 px spread, well
+                    // inside 48 px), so it remains a true SUPERSET of every pixel
+                    // whose value depends on the change (including a stacked
+                    // window's glass re-sampling it through its backdrop).
                     let changed = old_sig.paint_changed_window_ids(&new_sig);
+                    let visible = self.visible_windows();
                     for id in changed {
-                        for fp in old_sig.footprints_for(id) {
-                            if fp.width <= 0.0 || fp.height <= 0.0 {
-                                continue;
+                        let border = old_sig.border_changed_for(&new_sig, id);
+                        let content = old_sig.app_content_changed_for(&new_sig, id);
+                        if border {
+                            for fp in old_sig.footprints_for(id) {
+                                if let Some(e) = expand(fp) {
+                                    window_damage.push(e);
+                                }
                             }
-                            window_damage.push(Rect::new(
-                                fp.x - BACKDROP_MARGIN,
-                                fp.y - BACKDROP_MARGIN,
-                                fp.width + BACKDROP_MARGIN * 2.0,
-                                fp.height + BACKDROP_MARGIN * 2.0,
-                            ));
+                        }
+                        if content {
+                            if let Some(window) = visible.iter().find(|w| w.id.0 == id).copied() {
+                                if self.active_window_effects.contains_key(&window.id) {
+                                    // Animated window: its painted bounds differ
+                                    // from the settled bounds, so a content-rect
+                                    // diff cannot be trusted — use the full
+                                    // footprint (this is normally already a
+                                    // structural bail; belt-and-suspenders).
+                                    for fp in old_sig.footprints_for(id) {
+                                        if let Some(e) = expand(fp) {
+                                            window_damage.push(e);
+                                        }
+                                    }
+                                } else {
+                                    for r in self.app_content_line_damage(window) {
+                                        if let Some(e) = expand(r) {
+                                            window_damage.push(e);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                    // If the diff found NO per-window change yet the cache is dirty
-                    // (something invalidated it that the signature does not
-                    // capture), be conservative and bail to full.
-                    if window_damage.is_empty() {
+                    // If the diff found NO per-window content/border change yet the
+                    // cache is dirty, the only difference is a caret blink (already
+                    // in `blink_damage`) OR something the signature does not capture.
+                    // When it is not a blink frame, be conservative and bail to full.
+                    if window_damage.is_empty() && !blink_toggled {
                         return;
                     }
                 }
@@ -1444,24 +1865,20 @@ impl Shell {
         if !self.css_pipeline.chrome_output_stable() {
             return;
         }
-        // The text caret blink toggles a node in the MANUAL window subtree, not
-        // the CSS layout tree, so its rect is not in `dirty_chrome_nodes`.
-        if blink_toggled {
-            return;
-        }
         // Manual full-screen overlays (overview / lock screen) are not chrome
         // layout boxes; if either is up, do not claim a bounded damage set.
         if self.overview_visible || self.is_session_locked() {
             return;
         }
         // Nothing chrome-level changed. A pure window change (scroll / content /
-        // window hover) reaches here with an empty chrome dirty set but a non-
-        // empty `window_damage` from the diff above — emit that alone. With NO
-        // window damage either, there is no bounded footprint to emit → full.
+        // window hover), a caret blink, or a transient-overlay transition reaches
+        // here with an empty chrome dirty set but non-empty confined damage from
+        // the diffs above — emit that alone. With NO confined damage at all, there
+        // is no bounded footprint to emit → full.
         if dirty_chrome_nodes.is_empty() {
-            // Union any tooltip appear/move/hide damage so the old bubble clears.
             let mut combined = window_damage;
-            combined.extend(tooltip_damage);
+            combined.extend(overlay_damage);
+            combined.extend(blink_damage);
             if combined.is_empty() {
                 return;
             }
@@ -1605,10 +2022,13 @@ impl Shell {
         // window-content update that also bumps a statusbar indicator). Both sets
         // are independent superset-safe rects in the same screen-pixel space.
         rects.extend(window_damage);
-        // Union any tooltip appear/move/hide damage: a bounded chrome change (a
-        // dock-item hover) that omits the tooltip's old footprint is EXACTLY the
-        // ghost path — including it here clears the stale bubble (fix).
-        rects.extend(tooltip_damage);
+        // Union any transient-overlay appear/move/dismiss damage: a bounded chrome
+        // change (a dock-item hover) that omits an overlay's OLD footprint is
+        // EXACTLY the ghost path — including it here clears the stale bubble/menu
+        // (fix, generalized from the tooltip guard). Also union any caret-blink
+        // damage so a blink coinciding with a bounded chrome change stays covered.
+        rects.extend(overlay_damage);
+        rects.extend(blink_damage);
 
         if rects.is_empty() {
             return;
@@ -1630,6 +2050,9 @@ impl Shell {
         // conservative damage path. Clearing first means a stale value from a
         // prior frame can never leak forward.
         self.precomputed_damage = None;
+        // Drop any per-frame model memos from a prior frame (the damage path
+        // stashes the changed window's model for the build to reuse).
+        self.full_scene_cache.clear_pending_models();
 
         // Toggle cursor blink every 500ms. A toggle changes the painted scene
         // (terminal/app caret + the window-scene signature), so when it flips we
@@ -2825,6 +3248,12 @@ impl Shell {
             // Content-area background (cheap, position-dependent): kept ABSOLUTE
             // and rebuilt each frame — it is a single fill, not the expensive
             // per-row content. It is NOT part of the translated content wrapper.
+            // Emitted with the theme's RESOLVED alpha — NOT forced opaque — so a
+            // `window-content { background: rgba(...) }` with alpha < 255 composites
+            // SrcOver over the wallpaper / lower windows (the renderer's alpha blit
+            // path handles it; occlusion already excludes alpha<255 owners). A
+            // translucent window is marked `backdrop_dependent` in the surface key
+            // below so it is not served a stale (frozen-at-cache-time) backdrop.
             win_group.add_child(solid_rect(
                 win_base + 2,
                 self.theme.window_content_background,
@@ -2851,9 +3280,14 @@ impl Shell {
             // surface is reused. `size` is the PAINTED footprint (window bounds ∪
             // shadow margin = `shadow_bounds`) in logical px — width/height only,
             // so a move never changes it, a resize does. A window is
-            // backdrop-dependent IFF it paints a glass titlebar (DECORATED) — its
-            // titlebar Glass node samples the backdrop, so its cached pixels are
-            // backdrop-keyed by the compositor; an undecorated window is opaque.
+            // backdrop-dependent IFF it paints a glass titlebar (DECORATED) OR its
+            // content background is TRANSLUCENT (alpha < 255): both sample what is
+            // BEHIND the window (the glass titlebar samples the backdrop; a
+            // translucent body lets the backdrop show through SrcOver), so their
+            // cached pixels are invalid when the backdrop changes and must be
+            // backdrop-keyed by the compositor. A fully-opaque undecorated window
+            // is backdrop-independent and caches freely.
+            let translucent_body = self.theme.window_content_background.a < 255;
             self.window_scene_cache.push_window_surface_key(SurfaceKey {
                 owner: SurfaceOwner::Window(window.id.0),
                 content_sig: content_sig_of(&content_sig),
@@ -2862,7 +3296,8 @@ impl Shell {
                     shadow_bounds.height.max(0.0).ceil() as u32,
                 ),
                 dpi_scale: SHELL_LOGICAL_DPI,
-                backdrop_dependent: window.flags.contains(WindowFlags::DECORATED),
+                backdrop_dependent: window.flags.contains(WindowFlags::DECORATED)
+                    || translucent_body,
             });
 
             let mut canonical = match self.window_scene_cache.get_content(&content_sig) {
@@ -3195,17 +3630,29 @@ impl Shell {
             return;
         };
 
-        // Cell metrics: monospace terminals/documents pack tightly; lists use a
-        // taller row. `cols`/`rows` are the character-cell hints the app sizes to.
-        let (cell_w, cell_h): (f32, f32) = (8.0, 18.0);
-        let pad_x = 12.0;
-        let pad_y = 10.0;
+        // Cell metrics: `cell_w`/`cell_h` size the character-cell hint (`cols`/
+        // `rows`) and the row height / gutter advance; glyph X positions within a
+        // row come from SHAPED advances (see below), NOT this grid. Single-sourced
+        // with the caret/damage paths via the `APP_CONTENT_*` consts so the drawn
+        // caret and the confined damage never drift.
+        let (cell_w, cell_h) = (APP_CONTENT_CELL_W, APP_CONTENT_CELL_H);
+        let pad_x = APP_CONTENT_PAD_X;
+        let pad_y = APP_CONTENT_PAD_Y;
         let avail_w = (content.width - pad_x * 2.0).max(0.0);
-        let avail_h = (content.height - pad_y * 2.0).max(0.0);
-        let cols = (avail_w / cell_w).floor().max(1.0) as u32;
-        let rows = (avail_h / cell_h).floor().max(1.0) as u32;
+        let (cols, rows) = app_content_cols_rows(content);
 
-        let model = view.content_view(cols, rows);
+        // Reuse the model the damage path already computed this frame (a content
+        // change computes it once for the diff; the paint reuses it), else compute
+        // it now. This keeps `content_view` at exactly ONE call per changed frame.
+        let model = self
+            .full_scene_cache
+            .take_pending_model(window.id.0)
+            .unwrap_or_else(|| view.content_view(cols, rows));
+        // Record the painted model as the per-window baseline so the NEXT frame's
+        // damage diff can bound a content change to the changed lines (t-fix:
+        // one-char edit). `&self` recording via the cache's interior mutability.
+        self.full_scene_cache
+            .set_app_content_baseline(window.id.0, model.clone());
         let text_color = theme.status_bar_text;
 
         // Background: terminals get the dark terminal surface; others keep the
@@ -3304,37 +3751,31 @@ impl Shell {
                 if sub.is_empty() {
                     continue;
                 }
-                let sx = text_x + span.start_col as f32 * cell_w;
+                // Position the colored sub-run by SHAPED advances so it overlays
+                // the SAME glyphs the base row painted (the base run is proportional
+                // shaped text, not an 8 px grid).
+                let prefix: String = row.text.chars().take(span.start_col as usize).collect();
+                let sx = text_x + app_content_shaped_width(&prefix, APP_CONTENT_GLYPH_SIZE);
+                let sw = app_content_shaped_width(&sub, APP_CONTENT_GLYPH_SIZE);
                 parent.add_child(text_node(
                     next_id(),
                     sub,
                     Color::from_rgba_u32(color),
-                    Rect::new(sx, ry, (span.end_col - span.start_col) as f32 * cell_w, cell_h),
+                    Rect::new(sx, ry, sw.max(1.0), cell_h),
                     z + 4,
                     1,
                 ));
             }
         }
 
-        // Caret: a solid block (terminal) / thin bar (document/list) at the
-        // app-reported cursor cell.
-        if let Some((crow, ccol)) = model.cursor {
-            if (crow as usize) < max_visible && (self.cursor_blink_on || crow == 0) {
-                let caret_x = content.x + pad_x + ccol as f32 * cell_w;
-                let caret_y = row_base_y + crow as f32 * cell_h;
-                let caret_w = if matches!(model.kind, ContentKind::Terminal) {
-                    cell_w
-                } else {
-                    2.0
-                };
-                if self.cursor_blink_on {
-                    parent.add_child(solid_rect(
-                        next_id(),
-                        row_fg,
-                        Rect::new(caret_x, caret_y, caret_w, cell_h - 2.0),
-                        z + 5,
-                    ));
-                }
+        // Caret: a solid block (terminal) / thin bar (document/list) positioned
+        // from the SHAPED advance sum of the row text before the cursor column, so
+        // it sits ON the painted glyphs (measure==paint) instead of an 8 px grid.
+        // Geometry is single-sourced with the blink/edit damage paths via
+        // `app_content_caret_rect_for_model`. Only drawn while the blink is ON.
+        if self.cursor_blink_on {
+            if let Some(caret) = app_content_caret_rect_for_model(content, &model) {
+                parent.add_child(solid_rect(next_id(), row_fg, caret, z + 5));
             }
         }
     }
@@ -3846,6 +4287,368 @@ mod damage_confine_tests {
             "the first frame after a window appears has no old footprint to diff → full"
         );
     }
+
+    // ── App with a live caret (rows + cursor both externally mutable) ────────────
+    struct CaretApp {
+        rows: Arc<Mutex<Vec<String>>>,
+        cursor: Arc<Mutex<Option<(u32, u32)>>>,
+    }
+    impl AppTextInput for CaretApp {
+        fn handle_text(&mut self, _t: &str) -> bool {
+            false
+        }
+        fn handle_key(&mut self, _k: &AppKey) -> bool {
+            false
+        }
+    }
+    impl AppContentProvider for CaretApp {
+        fn content_view(&self, _cols: u32, _rows: u32) -> AppContentView {
+            let mut v = AppContentView::new(ContentKind::Document);
+            for r in self.rows.lock().unwrap().iter() {
+                v.rows.push(ContentRow::plain(r.clone()));
+            }
+            v.cursor = *self.cursor.lock().unwrap();
+            v
+        }
+    }
+    impl AppView for CaretApp {
+        fn app_id(&self) -> &str {
+            "com.liquide.test.caret"
+        }
+    }
+
+    // ══ A1: caret BLINK confines to the caret rect, NOT a full-screen repaint. ═══
+    #[test]
+    fn blink_only_frame_damages_caret_not_fullscreen() {
+        let mut shell = test_shell();
+        let rows = Arc::new(Mutex::new(vec!["hello world".to_string()]));
+        let cursor = Arc::new(Mutex::new(Some((0u32, 6u32))));
+        let id = shell.open_window_with_app(
+            "Caret",
+            Rect::new(200.0, 160.0, 480.0, 360.0),
+            "com.liquide.test.caret",
+        );
+        shell.register_app_view(
+            id,
+            Box::new(CaretApp {
+                rows,
+                cursor,
+            }),
+        );
+
+        // Warm with blink FROZEN ON (caret drawn each frame).
+        let _ = build(&mut shell);
+        let _ = build(&mut shell);
+        let nodes_on = build(&mut shell); // caret ON
+
+        // Toggle the blink exactly once: unfreeze `blink_time` so `now - 0 ≥ 500ms`.
+        shell.cursor_blink_on = true;
+        shell.cursor_blink_time_us = 0;
+        let nodes_off = shell.build_scene().flatten(); // blink toggled → caret OFF
+        assert!(!shell.cursor_blink_on, "the blink must have toggled OFF this frame");
+        let damage = shell.take_precomputed_damage().expect(
+            "a caret-blink frame must emit CONFINED caret damage, not None (a full-screen repaint)",
+        );
+        assert!(!damage.is_empty(), "blink damage must have at least one rect");
+
+        // Bounded: caret-sized, NOT the whole screen.
+        let screen_area = (W * H) as f32;
+        let dmg_area: f32 = damage.iter().map(|r| r.width * r.height).sum();
+        assert!(
+            dmg_area < screen_area * 0.05,
+            "blink damage area {dmg_area} must be a small fraction of the {screen_area}px \
+             screen (caret-sized), not full-screen: {damage:?}"
+        );
+        for r in &damage {
+            assert!(
+                r.height < 200.0,
+                "each blink damage rect must be ~caret-height (+margin), not window/screen tall: {r:?}"
+            );
+        }
+
+        // Superset-safe: every pixel the blink actually changed (caret erased) is
+        // covered by the confined damage.
+        let mut rnd = SoftwareRenderer::new();
+        for _ in 0..4 {
+            let _ = render_full(&mut rnd, &nodes_off);
+            let _ = render_full(&mut rnd, &nodes_on);
+        }
+        let prev = render_full(&mut rnd, &nodes_on); // caret ON
+        let full = render_full(&mut rnd, &nodes_off); // caret OFF
+        let (uncovered, changed) = uncovered_changed_pixels(&damage, &prev, &full);
+        assert!(changed > 0, "the blink must actually change pixels (the caret toggled)");
+        assert_eq!(
+            uncovered, 0,
+            "{uncovered}/{changed} blink-changed pixels fell OUTSIDE the caret damage — \
+             the caret confinement missed pixels; damage={damage:?}"
+        );
+    }
+
+    // ══ A2: the caret sits on the SHAPED glyph advances, not the cell_w grid. ════
+    #[test]
+    fn caret_x_matches_shaped_advance_not_cell_grid() {
+        use liquide_compositor::scene::SceneNodeKind;
+        let mut shell = test_shell();
+        let rows = Arc::new(Mutex::new(vec!["hello".to_string()]));
+        let cursor = Arc::new(Mutex::new(Some((0u32, 3u32)))); // caret after "hel"
+        let id = shell.open_window_with_app(
+            "Caret",
+            Rect::new(200.0, 160.0, 480.0, 360.0),
+            "com.liquide.test.caret",
+        );
+        shell.register_app_view(id, Box::new(CaretApp { rows, cursor }));
+        let nodes = build(&mut shell);
+
+        let window = shell.windows.get(&id).unwrap();
+        let content = shell.window_content_rect(window);
+        let text_x = content.x + super::APP_CONTENT_PAD_X;
+        let shaped = super::app_content_shaped_width("hel", super::APP_CONTENT_GLYPH_SIZE);
+        let expected_x = text_x + shaped;
+        let grid_x = text_x + 3.0 * super::APP_CONTENT_CELL_W;
+
+        // The PAINTED caret bar: a thin (~2px) short (~16px) solid fill in content.
+        let caret = nodes
+            .iter()
+            .find(|n| {
+                matches!(n.kind_ref(), SceneNodeKind::Background { .. })
+                    && (n.absolute_bounds.width - 2.0).abs() < 0.6
+                    && (n.absolute_bounds.height - (super::APP_CONTENT_CELL_H - 2.0)).abs() < 0.6
+                    && n.absolute_bounds.x >= content.x
+                    && n.absolute_bounds.x < content.x + content.width
+                    && n.absolute_bounds.y >= content.y
+                    && n.absolute_bounds.y < content.y + content.height
+            })
+            .expect("the painted caret bar must exist in the flattened scene");
+
+        assert!(
+            (caret.absolute_bounds.x - expected_x).abs() < 0.5,
+            "painted caret x {} must equal the SHAPED advance sum {} (text_x {} + shaped('hel') \
+             {}), not the cell_w grid",
+            caret.absolute_bounds.x,
+            expected_x,
+            text_x,
+            shaped
+        );
+        assert!(
+            (expected_x - grid_x).abs() > 1.0,
+            "precondition: the shaped advance ({shaped}) must differ from the 8px grid \
+             ({}) or the test cannot distinguish the fix",
+            3.0 * super::APP_CONTENT_CELL_W
+        );
+    }
+
+    // ══ A3: a one-char edit damages a LINE-sized region, not the whole window. ═══
+    #[test]
+    fn one_char_edit_damages_line_not_whole_window() {
+        let rows = Arc::new(Mutex::new(vec![
+            "hello".to_string(),
+            "second line".to_string(),
+            "third".to_string(),
+        ]));
+        let cursor = Arc::new(Mutex::new(Some((0u32, 5u32))));
+        let win = std::cell::Cell::new(WindowId(0));
+        let setup = {
+            let rows = rows.clone();
+            let cursor = cursor.clone();
+            let winr = &win;
+            move |shell: &mut Shell| {
+                let id = shell.open_window_with_app(
+                    "Edit",
+                    Rect::new(200.0, 160.0, 480.0, 360.0),
+                    "com.liquide.test.caret",
+                );
+                winr.set(id);
+                shell.register_app_view(id, Box::new(CaretApp { rows, cursor }));
+            }
+        };
+        // Type ONE char at the caret: "hello"→"helloX", cursor 5→6, row 0 only.
+        let mutate = {
+            let rows = rows.clone();
+            let cursor = cursor.clone();
+            let winr = &win;
+            move |shell: &mut Shell| {
+                rows.lock().unwrap()[0] = "helloX".to_string();
+                *cursor.lock().unwrap() = Some((0, 6));
+                shell.bump_app_content_rev(winr.get());
+                shell.mark_window_scene_dirty();
+            }
+        };
+
+        let (damage, prev, full) = render_n_and_n1(setup, mutate);
+        let (uncovered, changed) = uncovered_changed_pixels(&damage, &prev, &full);
+        assert!(changed > 0, "a one-char edit must change pixels");
+        assert_eq!(
+            uncovered, 0,
+            "a one-char edit's line-granular damage missed changed pixels: {damage:?}"
+        );
+        // Line-sized: each rect ~one row (+margin), FAR below the 360px window height,
+        // and the total area far below the whole-window footprint.
+        for r in &damage {
+            assert!(
+                r.height < 160.0,
+                "a one-char edit damage rect must be line-sized (~row + margin), not \
+                 window-tall: {r:?}"
+            );
+        }
+        let dmg_area: f32 = damage.iter().map(|r| r.width * r.height).sum();
+        assert!(
+            dmg_area < 480.0 * 360.0 * 0.6,
+            "a one-char edit must damage a LINE, not the whole window: area={dmg_area} \
+             rects={damage:?}"
+        );
+    }
+
+    // ══ B: the generalized transient-overlay tracker follows CSS menus (not just ═
+    //       the dock tooltip), so a bounded frame can union their OLD∪NEW footprint
+    //       and never ghost a stale/moved/dismissed menu. The old∪new UNION itself
+    //       (pixel-superset) is exercised end-to-end by the dock-tooltip tests,
+    //       which now route through this same generalized guard; here we prove a
+    //       CSS context menu JOINS the tracked set on show and DROPS on dismiss —
+    //       the prerequisite that made the tooltip-only guard miss menus.
+    #[test]
+    fn context_menu_is_tracked_as_transient_overlay_and_dropped_on_dismiss() {
+        use liquide_compositor::geometry::Point;
+        let mut shell = test_shell();
+        shell.context_menu_visible = true;
+        shell.context_menu_pos = Point::new(300.0, 220.0);
+        let _ = build(&mut shell);
+
+        let layout = shell
+            .css_pipeline
+            .last_layout
+            .clone()
+            .expect("a laid-out chrome tree after build");
+        let shown = shell.transient_overlay_footprints(&layout);
+        assert!(
+            shown.contains_key(&super::TransientOverlay::ContextMenu),
+            "a visible context menu must be tracked as a transient-overlay footprint \
+             (so a confined frame can union its OLD rect and not ghost it)"
+        );
+        let menu_rect = shown[&super::TransientOverlay::ContextMenu];
+        assert!(
+            menu_rect.width > 0.0 && menu_rect.height > 0.0,
+            "the tracked menu footprint must be a real laid-out rect: {menu_rect:?}"
+        );
+
+        // Dismiss: the menu must drop out of the tracked set, so next frame's diff
+        // sees OLD present / NEW absent and damages the old footprint.
+        shell.context_menu_visible = false;
+        let _ = build(&mut shell);
+        let layout2 = shell
+            .css_pipeline
+            .last_layout
+            .clone()
+            .expect("a laid-out chrome tree after dismiss");
+        let hidden = shell.transient_overlay_footprints(&layout2);
+        assert!(
+            !hidden.contains_key(&super::TransientOverlay::ContextMenu),
+            "a dismissed context menu must drop out of the tracked footprints"
+        );
+    }
+
+    // ══ C: an alpha<255 window bg composites SrcOver over the backdrop AND is ════
+    //       flagged backdrop_dependent.
+    #[test]
+    fn translucent_window_composites_srcover_and_is_backdrop_dependent() {
+        use crate::window::WindowFlags;
+        use liquide_compositor::framebuffer::FrameBuffer;
+        use liquide_compositor::pixel::Color;
+
+        // Render a DECORATED window with a given content-bg color; return (fb, key).
+        let render_bg = |bg: Color| -> (FrameBuffer, super::SurfaceKey) {
+            let mut shell = test_shell();
+            shell.theme.window_content_background = bg;
+            let rows = Arc::new(Mutex::new(Vec::<String>::new())); // empty → no text over bg
+            let id = shell.open_window_with_app(
+                "Alpha",
+                Rect::new(300.0, 200.0, 400.0, 300.0),
+                "com.liquide.test.mutable",
+            );
+            register_mut_app(&mut shell, id, rows);
+            let nodes = build(&mut shell);
+            let key = shell
+                .surface_keys()
+                .iter()
+                .copied()
+                .find(|k| k.owner == super::SurfaceOwner::Window(id.0))
+                .expect("a window surface key must be emitted");
+            let mut rnd = SoftwareRenderer::new();
+            for _ in 0..4 {
+                let _ = render_full(&mut rnd, &nodes);
+            }
+            (render_full(&mut rnd, &nodes), key)
+        };
+
+        let (px, py) = (620u32, 460u32); // window-interior, no text over it
+        let sample = |fb: &FrameBuffer| -> [u8; 4] {
+            let o = fb.pixel_offset(px, py);
+            let s = &fb.pixels()[o..o + 4];
+            [s[0], s[1], s[2], s[3]]
+        };
+
+        // Bytes are BGRA8; Color::new(r,g,b,a) stores [B,G,R,A].
+        let (fb_backdrop, _) = render_bg(Color::new(200, 50, 60, 0)); // transparent → pure backdrop
+        let (fb_trans, key_t) = render_bg(Color::new(200, 50, 60, 128)); // translucent
+        let (fb_op, _key_o) = render_bg(Color::new(200, 50, 60, 255)); // opaque
+
+        let bd = sample(&fb_backdrop);
+        let tr = sample(&fb_trans);
+        let op = sample(&fb_op);
+
+        // The backdrop shows through: a translucent bg is NOT the opaque color.
+        assert_ne!(
+            tr, op,
+            "a translucent window bg must let the backdrop show through, not be forced opaque"
+        );
+        // SrcOver: translucent == srcover(bg alpha 128 over backdrop), per channel.
+        let alpha = 128.0 / 255.0;
+        let src = [60u8, 50u8, 200u8]; // B,G,R of (200,50,60)
+        for i in 0..3 {
+            let expect = (src[i] as f32 * alpha + bd[i] as f32 * (1.0 - alpha)).round() as i32;
+            assert!(
+                (tr[i] as i32 - expect).abs() <= 3,
+                "channel {i}: translucent {} must equal SrcOver(src {} over backdrop {}) = {} (±3)",
+                tr[i],
+                src[i],
+                bd[i],
+                expect
+            );
+        }
+        assert!(
+            key_t.backdrop_dependent,
+            "an alpha<255 window must be flagged backdrop_dependent (no stale-backdrop ghost)"
+        );
+
+        // Alpha ALONE drives it: an undecorated translucent window is backdrop-
+        // dependent; its opaque twin is not.
+        let key_undeco = |bg: Color| -> super::SurfaceKey {
+            let mut shell = test_shell();
+            shell.theme.window_content_background = bg;
+            let id = shell.open_window("Plain", Rect::new(300.0, 200.0, 400.0, 300.0));
+            shell
+                .windows
+                .get_mut(&id)
+                .unwrap()
+                .flags
+                .clear(WindowFlags::DECORATED);
+            shell.mark_window_scene_dirty();
+            let _ = build(&mut shell);
+            shell
+                .surface_keys()
+                .iter()
+                .copied()
+                .find(|k| k.owner == super::SurfaceOwner::Window(id.0))
+                .unwrap()
+        };
+        assert!(
+            key_undeco(Color::new(10, 10, 15, 128)).backdrop_dependent,
+            "an undecorated TRANSLUCENT window must be backdrop_dependent (alpha drives it)"
+        );
+        assert!(
+            !key_undeco(Color::new(10, 10, 15, 255)).backdrop_dependent,
+            "an undecorated OPAQUE window must NOT be backdrop_dependent"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3859,8 +4662,6 @@ mod surface_key_tests {
     //!   * a RESIZE changes it (size + `content_sig`),
     //!   * the DPI axis is part of the key's identity,
     //!   * GLASS owners are flagged backdrop-dependent, OPAQUE owners are not.
-
-    use std::sync::{Arc, Mutex};
 
     use liquide_compositor::geometry::Rect;
     use liquide_interop::{
@@ -4062,9 +4863,15 @@ mod surface_key_tests {
     #[test]
     fn glass_owners_flagged_backdrop_dependent_opaque_owners_not() {
         let mut shell = test_shell();
+        // Force an OPAQUE window-content background so the undecorated window
+        // exercises the OPAQUE branch (the shipped theme's content bg is itself
+        // translucent — alpha 235 — which correctly makes every window backdrop-
+        // dependent; here we isolate the glass-vs-opaque distinction).
+        shell.theme.window_content_background =
+            liquide_compositor::pixel::Color::new(20, 20, 25, 255);
         // A DECORATED window paints a glass titlebar → backdrop-dependent.
         let deco = shell.open_window("Deco", Rect::new(100.0, 100.0, 400.0, 300.0));
-        // An UNDECORATED window has no glass → opaque.
+        // An UNDECORATED window with an OPAQUE body has no glass → opaque.
         let plain = shell.open_window("Plain", Rect::new(600.0, 100.0, 400.0, 300.0));
         shell
             .windows
